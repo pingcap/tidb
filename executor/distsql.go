@@ -125,61 +125,32 @@ func timeZoneOffset(ctx sessionctx.Context) int64 {
 	return int64(offset)
 }
 
-// Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
-const (
-	// FlagIgnoreTruncate indicates if truncate error should be ignored.
-	// Read-only statements should ignore truncate error, write statements should not ignore truncate error.
-	FlagIgnoreTruncate uint64 = 1
-	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
-	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
-	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
-	FlagTruncateAsWarning = 1 << 1
-	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
-	FlagPadCharToFullLength = 1 << 2
-	// FlagInInsertStmt indicates if this is a INSERT statement.
-	FlagInInsertStmt = 1 << 3
-	// FlagInUpdateOrDeleteStmt indicates if this is a UPDATE statement or a DELETE statement.
-	FlagInUpdateOrDeleteStmt = 1 << 4
-	// FlagInSelectStmt indicates if this is a SELECT statement.
-	FlagInSelectStmt = 1 << 5
-	// FlagOverflowAsWarning indicates if overflow error should be returned as warning.
-	// In strict sql mode, overflow error should be returned as error,
-	// in non-strict sql mode, overflow error should be saved as warning.
-	FlagOverflowAsWarning = 1 << 6
-	// FlagIgnoreZeroInDate indicates if ZeroInDate error should be ignored.
-	// Read-only statements should ignore ZeroInDate error.
-	// Write statements should not ignore ZeroInDate error in strict sql mode.
-	FlagIgnoreZeroInDate = 1 << 7
-	// FlagDividedByZeroAsWarning indicates if DividedByZero should be returned as warning.
-	FlagDividedByZeroAsWarning = 1 << 8
-)
-
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
 func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
 	if sc.InInsertStmt {
-		flags |= FlagInInsertStmt
+		flags |= model.FlagInInsertStmt
 	} else if sc.InUpdateOrDeleteStmt {
-		flags |= FlagInUpdateOrDeleteStmt
+		flags |= model.FlagInUpdateOrDeleteStmt
 	} else if sc.InSelectStmt {
-		flags |= FlagInSelectStmt
+		flags |= model.FlagInSelectStmt
 	}
 	if sc.IgnoreTruncate {
-		flags |= FlagIgnoreTruncate
+		flags |= model.FlagIgnoreTruncate
 	} else if sc.TruncateAsWarning {
-		flags |= FlagTruncateAsWarning
+		flags |= model.FlagTruncateAsWarning
 	}
 	if sc.OverflowAsWarning {
-		flags |= FlagOverflowAsWarning
+		flags |= model.FlagOverflowAsWarning
 	}
 	if sc.IgnoreZeroInDate {
-		flags |= FlagIgnoreZeroInDate
+		flags |= model.FlagIgnoreZeroInDate
 	}
 	if sc.DividedByZeroAsWarning {
-		flags |= FlagDividedByZeroAsWarning
+		flags |= model.FlagDividedByZeroAsWarning
 	}
 	if sc.PadCharToFullLength {
-		flags |= FlagPadCharToFullLength
+		flags |= model.FlagPadCharToFullLength
 	}
 	return flags
 }
@@ -211,8 +182,11 @@ type TableReaderExecutor struct {
 	streaming     bool
 	feedback      *statistics.QueryFeedback
 
-	haveCorCol bool
-	plans      []plan.PhysicalPlan
+	// corColInFilter tells whether there's correlated column in filter.
+	corColInFilter bool
+	// corColInAccess tells whether there's correlated column in access conditions.
+	corColInAccess bool
+	plans          []plan.PhysicalPlan
 }
 
 // Close implements the Executor Close interface.
@@ -238,8 +212,17 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	defer span.Finish()
 
 	var err error
-	if e.haveCorCol {
+	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if e.corColInAccess {
+		ts := e.plans[0].(*plan.PhysicalTableScan)
+		access := ts.AccessCondition
+		pkTP := ts.Table.GetPkColInfo().FieldType
+		e.ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -338,6 +321,21 @@ func startSpanFollowsContext(ctx context.Context, operationName string) (opentra
 	return span, opentracing.ContextWithSpan(ctx, span)
 }
 
+// rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range
+// by substitute correlated column with the constant.
+func rebuildIndexRanges(ctx sessionctx.Context, is *plan.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
+	access := make([]expression.Expression, 0, len(is.AccessCondition))
+	for _, cond := range is.AccessCondition {
+		newCond, err1 := expression.SubstituteCorCol2Constant(cond)
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		access = append(access, newCond)
+	}
+	ranges, _, err = ranger.DetachSimpleCondAndBuildRangeForIndex(ctx, access, idxCols, colLens)
+	return ranges, err
+}
+
 // IndexReaderExecutor sends dag request and reads index data from kv layer.
 type IndexReaderExecutor struct {
 	baseExecutor
@@ -357,8 +355,11 @@ type IndexReaderExecutor struct {
 	streaming bool
 	feedback  *statistics.QueryFeedback
 
-	haveCorCol bool
-	plans      []plan.PhysicalPlan
+	corColInFilter bool
+	corColInAccess bool
+	idxCols        []*expression.Column
+	colLens        []int
+	plans          []plan.PhysicalPlan
 }
 
 // Close clears all resources hold by current object.
@@ -380,6 +381,13 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
+	var err error
+	if e.corColInAccess {
+		e.ranges, err = rebuildIndexRanges(e.ctx, e.plans[0].(*plan.PhysicalIndexScan), e.idxCols, e.colLens)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -393,7 +401,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	defer span.Finish()
 
 	var err error
-	if e.haveCorCol {
+	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
 		if err != nil {
 			return errors.Trace(err)
@@ -460,10 +468,20 @@ type IndexLookUpExecutor struct {
 	idxPlans        []plan.PhysicalPlan
 	corColInTblSide bool
 	tblPlans        []plan.PhysicalPlan
+	corColInAccess  bool
+	idxCols         []*expression.Column
+	colLens         []int
 }
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
+	var err error
+	if e.corColInAccess {
+		e.ranges, err = rebuildIndexRanges(e.ctx, e.idxPlans[0].(*plan.PhysicalIndexScan), e.idxCols, e.colLens)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -592,14 +610,14 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
-		table:        e.table,
-		tableID:      e.tableID,
-		dagPB:        e.tableRequest,
-		streaming:    e.tableStreaming,
-		feedback:     statistics.NewQueryFeedback(0, nil, 0, false),
-		haveCorCol:   e.corColInTblSide,
-		plans:        e.tblPlans,
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
+		table:          e.table,
+		tableID:        e.tableID,
+		dagPB:          e.tableRequest,
+		streaming:      e.tableStreaming,
+		feedback:       statistics.NewQueryFeedback(0, nil, 0, false),
+		corColInFilter: e.corColInTblSide,
+		plans:          e.tblPlans,
 	}, handles)
 	if err != nil {
 		log.Error(err)

@@ -58,6 +58,7 @@ type Domain struct {
 	exit            chan struct{}
 	etcdClient      *clientv3.Client
 	wg              sync.WaitGroup
+	gvc             GlobalVariableCache
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
@@ -338,10 +339,15 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
 			}
-		case <-syncer.GlobalVersionCh():
+		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
+			}
+			if !ok {
+				log.Warn("[ddl] reload schema in loop, schema syncer need rewatch")
+				// Make sure the rewatch doesn't affect load schema, so we watch the global schema version asynchronously.
+				syncer.WatchGlobalSchemaVer(context.Background())
 			}
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
@@ -392,6 +398,7 @@ func (do *Domain) Close() {
 	}
 	do.sysSessionPool.Close()
 	do.wg.Wait()
+	log.Info("[domain] close")
 }
 
 type ddlCallback struct {
@@ -623,7 +630,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
 	lease := do.statsLease
-	deltaUpdateDuration := lease * 5
+	deltaUpdateDuration := lease * 20
 	loadTicker := time.NewTicker(lease)
 	defer loadTicker.Stop()
 	deltaUpdateTicker := time.NewTicker(deltaUpdateDuration)
@@ -653,6 +660,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				log.Debug("[stats] update stats info fail: ", errors.ErrorStack(err))
 			}
 		case <-do.exit:
+			statsHandle.FlushStats()
 			do.wg.Done()
 			return
 			// This channel is sent only by ddl owner or the drop stats executor.
@@ -663,7 +671,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 		case t := <-statsHandle.AnalyzeResultCh():
 			for i, hg := range t.Hist {
-				err = statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i])
+				err = statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i], 1)
 				if err != nil {
 					log.Debug("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
 				}
@@ -674,10 +682,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				log.Debug("[stats] save meta to storage fail: ", errors.ErrorStack(err))
 			}
 		case <-deltaUpdateTicker.C:
-			err = statsHandle.DumpStatsDeltaToKV()
+			err = statsHandle.DumpStatsDeltaToKV(statistics.DumpDelta)
 			if err != nil {
 				log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
 			}
+			statsHandle.UpdateErrorRate(do.InfoSchema())
 		case <-loadHistogramTicker.C:
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {

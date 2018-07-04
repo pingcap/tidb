@@ -476,6 +476,10 @@ type SelectStmt struct {
 	LockTp SelectLockType
 	// TableHints represents the table level Optimizer Hint for join type
 	TableHints []*TableOptimizerHint
+	// IsAfterUnionDistinct indicates whether it's a stmt after "union distinct".
+	IsAfterUnionDistinct bool
+	// IsInBraces indicates whether it's a stmt in brace.
+	IsInBraces bool
 }
 
 // Accept implements Node Accept interface.
@@ -587,7 +591,6 @@ type UnionStmt struct {
 	dmlNode
 	resultSetNode
 
-	Distinct   bool
 	SelectList *UnionSelectList
 	OrderBy    *OrderByClause
 	Limit      *Limit
@@ -961,6 +964,9 @@ const (
 	ShowStatsHealthy
 	ShowPlugins
 	ShowProfiles
+	ShowMasterStatus
+	ShowPrivileges
+	ShowErrors
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.

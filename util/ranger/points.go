@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -192,11 +193,16 @@ func (r *builder) buildFromColumn(expr *expression.Column) []point {
 func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
-	var value types.Datum
-	var op string
-	var err error
-	if v, ok := expr.GetArgs()[0].(*expression.Constant); ok {
-		value, err = v.Eval(nil)
+	var (
+		op    string
+		value types.Datum
+		err   error
+	)
+	if _, ok := expr.GetArgs()[0].(*expression.Column); ok {
+		value, err = expr.GetArgs()[1].Eval(nil)
+		op = expr.FuncName.L
+	} else {
+		value, err = expr.GetArgs()[0].Eval(nil)
 		switch expr.FuncName.L {
 		case ast.GE:
 			op = ast.LE
@@ -209,9 +215,6 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		default:
 			op = expr.FuncName.L
 		}
-	} else {
-		value, err = expr.GetArgs()[1].(*expression.Constant).Eval(nil)
-		op = expr.FuncName.L
 	}
 	if err != nil {
 		return nil
@@ -421,11 +424,27 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
+		var (
+			isUnsignedIntCol bool
+			nonNegativePos   int
+		)
 		rangePoints, hasNull := r.buildFromIn(expr)
 		if hasNull {
 			return nil
 		}
-		retRangePoints := make([]point, 0, len(rangePoints)+2)
+		if x, ok := expr.GetArgs()[0].(*expression.Column); ok {
+			isUnsignedIntCol = mysql.HasUnsignedFlag(x.RetType.Flag) && mysql.IsIntegerType(x.RetType.Tp)
+		}
+		// negative ranges can be directly ignored for unsigned int columns.
+		if isUnsignedIntCol {
+			for nonNegativePos = 0; nonNegativePos < len(rangePoints); nonNegativePos += 2 {
+				if rangePoints[nonNegativePos].value.Kind() == types.KindUint64 || rangePoints[nonNegativePos].value.GetInt64() >= 0 {
+					break
+				}
+			}
+			rangePoints = rangePoints[nonNegativePos:]
+		}
+		retRangePoints := make([]point, 0, 2+len(rangePoints))
 		previousValue := types.Datum{}
 		for i := 0; i < len(rangePoints); i += 2 {
 			retRangePoints = append(retRangePoints, point{value: previousValue, start: true, excl: true})

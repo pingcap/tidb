@@ -34,6 +34,7 @@ const (
 	flagDecorrelate
 	flagMaxMinEliminate
 	flagPredicatePushDown
+	flagPartitionProcessor
 	flagAggregationOptimize
 	flagPushDownTopN
 )
@@ -45,6 +46,7 @@ var optRuleList = []logicalOptRule{
 	&decorrelateSolver{},
 	&maxMinEliminator{},
 	&ppdSolver{},
+	&partitionProcessor{},
 	&aggregationOptimizer{},
 	&pushDownTopNOptimizer{},
 }
@@ -144,18 +146,27 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 }
 
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
+	if _, err := logic.deriveStats(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	logic.preparePossibleProperties()
-	_, err := logic.deriveStats()
+
+	prop := &requiredProp{
+		taskTp:      rootTaskType,
+		expectedCnt: math.MaxFloat64,
+	}
+
+	t, err := logic.findBestTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	t, err := logic.findBestTask(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
-	if err != nil {
-		return nil, errors.Trace(err)
+	if t.invalid() {
+		return nil, ErrInternal.GenByArgs("Can't find a proper physical plan for this query")
 	}
-	p := t.plan()
-	p.ResolveIndices()
-	return p, nil
+
+	t.plan().ResolveIndices()
+	return t.plan(), nil
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {

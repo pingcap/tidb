@@ -63,10 +63,13 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.IndexSerialScanConcurrency, Equals, DefIndexSerialScanConcurrency)
 	c.Assert(vars.IndexLookupJoinConcurrency, Equals, DefIndexLookupJoinConcurrency)
 	c.Assert(vars.HashJoinConcurrency, Equals, DefTiDBHashJoinConcurrency)
+	c.Assert(vars.ProjectionConcurrency, Equals, int64(DefTiDBProjectionConcurrency))
+	c.Assert(vars.HashAggPartialConcurrency, Equals, DefTiDBHashAggPartialConcurrency)
+	c.Assert(vars.HashAggFinalConcurrency, Equals, DefTiDBHashAggFinalConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
-	c.Assert(vars.MemQuotaQuery, Equals, int64(DefTiDBMemQuotaQuery))
+	c.Assert(vars.MemQuotaQuery, Equals, int64(config.GetGlobalConfig().MemQuotaQuery))
 	c.Assert(vars.MemQuotaHashJoin, Equals, int64(DefTiDBMemQuotaHashJoin))
 	c.Assert(vars.MemQuotaMergeJoin, Equals, int64(DefTiDBMemQuotaMergeJoin))
 	c.Assert(vars.MemQuotaSort, Equals, int64(DefTiDBMemQuotaSort))
@@ -216,12 +219,30 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
 	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
 
+	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1))
+	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(1))
+
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
+	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
+
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(int64(maxDDLReorgWorkerCount)+1))
+	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(maxDDLReorgWorkerCount))
+
 	err = SetSessionSystemVar(v, TiDBRetryLimit, types.NewStringDatum("3"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBRetryLimit)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "3")
 	c.Assert(v.RetryLimit, Equals, int64(3))
+
+	c.Assert(v.EnableTablePartition, IsFalse)
+	err = SetSessionSystemVar(v, TiDBEnableTablePartition, types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBEnableTablePartition)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	c.Assert(v.EnableTablePartition, IsTrue)
 }
 
 type mockGlobalAccessor struct {

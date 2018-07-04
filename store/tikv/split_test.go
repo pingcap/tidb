@@ -35,7 +35,7 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	client, pdClient, err := mocktikv.NewTestClient(s.cluster, nil, "")
 	c.Assert(err, IsNil)
 
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil)
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Check(err, IsNil)
 	s.store = store.(*tikvStore)
 	s.bo = NewBackoffer(context.Background(), 5000)

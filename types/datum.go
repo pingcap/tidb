@@ -748,9 +748,14 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
 		f, err = TruncateFloat(f, target.Flen, target.Decimal)
-		err = sc.HandleOverflow(err, err)
+		if err = sc.HandleOverflow(err, err); err != nil {
+			return f, errors.Trace(err)
+		}
 	}
-	return f, errors.Trace(err)
+	if mysql.HasUnsignedFlag(target.Flag) && f < 0 {
+		return 0, overflow(f, target.Tp)
+	}
+	return f, nil
 }
 
 func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
@@ -1076,6 +1081,12 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 	dec, err1 = ProduceDecWithSpecifiedTp(dec, target, sc)
 	if err == nil && err1 != nil {
 		err = err1
+	}
+	if dec.negative && mysql.HasUnsignedFlag(target.Flag) {
+		*dec = zeroMyDecimal
+		if err == nil {
+			err = ErrOverflow.GenByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
+		}
 	}
 	ret.SetValue(dec)
 	return ret, errors.Trace(err)
@@ -1801,9 +1812,13 @@ func handleTruncateError(sc *stmtctx.StatementContext) error {
 }
 
 // DatumsToString converts several datums to formatted string.
-func DatumsToString(datums []Datum) (string, error) {
+func DatumsToString(datums []Datum, handleNULL bool) (string, error) {
 	var strs []string
 	for _, datum := range datums {
+		if datum.Kind() == KindNull && handleNULL {
+			strs = append(strs, "NULL")
+			continue
+		}
 		str, err := datum.ToString()
 		if err != nil {
 			return "", errors.Trace(err)

@@ -55,43 +55,39 @@ func (af *avgFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEv
 }
 
 // Update implements Aggregation interface.
-func (af *avgFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
-	if af.Mode == FinalMode {
-		return af.updateAvg(sc, evalCtx, row)
+func (af *avgFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) (err error) {
+	switch af.Mode {
+	case Partial1Mode, CompleteMode:
+		err = af.updateSum(sc, evalCtx, row)
+	case Partial2Mode, FinalMode:
+		err = af.updateAvg(sc, evalCtx, row)
+	case DedupMode:
+		panic("DedupMode is not supported now.")
 	}
-	return af.updateSum(sc, evalCtx, row)
+	return errors.Trace(err)
 }
 
 // GetResult implements Aggregation interface.
 func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
-	var x *types.MyDecimal
 	switch evalCtx.Value.Kind() {
 	case types.KindFloat64:
-		x = new(types.MyDecimal)
-		err := x.FromFloat64(evalCtx.Value.GetFloat64())
-		terror.Log(errors.Trace(err))
+		sum := evalCtx.Value.GetFloat64()
+		d.SetFloat64(sum / float64(evalCtx.Count))
+		return
 	case types.KindMysqlDecimal:
-		x = evalCtx.Value.GetMysqlDecimal()
-	default:
-		return
-	}
-	y := types.NewDecFromInt(evalCtx.Count)
-	to := new(types.MyDecimal)
-	err := types.DecimalDiv(x, y, to, types.DivFracIncr)
-	terror.Log(errors.Trace(err))
-	frac := af.RetTp.Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	err = to.Round(to, frac, types.ModeHalfEven)
-	terror.Log(errors.Trace(err))
-	if evalCtx.Value.Kind() == types.KindFloat64 {
-		f, err := to.ToFloat64()
+		x := evalCtx.Value.GetMysqlDecimal()
+		y := types.NewDecFromInt(evalCtx.Count)
+		to := new(types.MyDecimal)
+		err := types.DecimalDiv(x, y, to, types.DivFracIncr)
 		terror.Log(errors.Trace(err))
-		d.SetFloat64(f)
-		return
+		frac := af.RetTp.Decimal
+		if frac == -1 {
+			frac = mysql.MaxDecimalScale
+		}
+		err = to.Round(to, frac, types.ModeHalfEven)
+		terror.Log(errors.Trace(err))
+		d.SetMysqlDecimal(to)
 	}
-	d.SetMysqlDecimal(to)
 	return
 }
 

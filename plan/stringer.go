@@ -92,9 +92,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			id = "MergeInnerJoin"
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"
-		for _, eq := range x.EqualConditions {
-			l := eq.GetArgs()[0].String()
-			r := eq.GetArgs()[1].String()
+		for i := range x.LeftKeys {
+			l := x.LeftKeys[i].String()
+			r := x.RightKeys[i].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalApply, *PhysicalApply:
@@ -142,10 +142,14 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "UnionAll{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 	case *DataSource:
-		if x.TableAsName != nil && x.TableAsName.L != "" {
-			str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
+		if x.isPartition {
+			str = fmt.Sprintf("Partition(%d)", x.partitionID)
 		} else {
-			str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
+			if x.TableAsName != nil && x.TableAsName.L != "" {
+				str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
+			} else {
+				str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
+			}
 		}
 	case *LogicalSelection:
 		str = fmt.Sprintf("Sel(%s)", x.Conditions)

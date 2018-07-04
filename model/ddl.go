@@ -16,6 +16,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -46,6 +47,8 @@ const (
 	ActionSetDefaultValue    ActionType = 15
 	ActionShardRowID         ActionType = 16
 	ActionModifyTableComment ActionType = 17
+	ActionRenameIndex        ActionType = 18
+	ActionAddTablePartition  ActionType = 19
 )
 
 var actionMap = map[ActionType]string{
@@ -66,6 +69,8 @@ var actionMap = map[ActionType]string{
 	ActionSetDefaultValue:    "set default value",
 	ActionShardRowID:         "shard row ID",
 	ActionModifyTableComment: "modify table comment",
+	ActionRenameIndex:        "rename index",
+	ActionAddTablePartition:  "add partition",
 }
 
 // String return current ddl action in string
@@ -105,6 +110,20 @@ func (h *HistoryInfo) Clean() {
 	h.TableInfo = nil
 }
 
+// DDLReorgMeta is meta info of DDL reorganization.
+type DDLReorgMeta struct {
+	// EndHandle is the last handle of the adding indices table.
+	// We should only backfill indices in the range [startHandle, EndHandle].
+	EndHandle int64 `json:"end_handle"`
+}
+
+// NewDDLReorgMeta new a DDLReorgMeta.
+func NewDDLReorgMeta() *DDLReorgMeta {
+	return &DDLReorgMeta{
+		EndHandle: math.MaxInt64,
+	}
+}
+
 // Job is for a DDL operation.
 type Job struct {
 	ID       int64         `json:"id"`
@@ -135,6 +154,9 @@ type Job struct {
 
 	// Version indicates the DDL job version. For old jobs, it will be 0.
 	Version int64 `json:"version"`
+
+	// ReorgMeta is meta info of ddl reorganization.
+	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
 }
 
 // FinishTableJob is called when a job is finished.

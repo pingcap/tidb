@@ -112,9 +112,9 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		}
 	}
 	for _, col := range p.Schema().Columns {
-		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col.Clone()}, false)
+		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
-		schema4Agg.Append(col.Clone().(*expression.Column))
+		schema4Agg.Append(col)
 	}
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
@@ -635,8 +635,9 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 				resultTp = joinFieldType(resultTp, childTp)
 			}
 		}
-		col.RetType = resultTp
-		col.DBName = model.NewCIStr("")
+		unionSchema.Columns[i] = col.Clone().(*expression.Column)
+		unionSchema.Columns[i].RetType = resultTp
+		unionSchema.Columns[i].DBName = model.NewCIStr("")
 	}
 	// If the types of some child don't match the types of union, we add a projection with cast function.
 	for childID, child := range u.children {
@@ -646,10 +647,10 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			dstType := unionSchema.Columns[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
-				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
+				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol, dstType)
 				needProjection = true
 			} else {
-				exprs[i] = srcCol.Clone()
+				exprs[i] = srcCol
 			}
 		}
 		if _, isProj := child.(*LogicalProjection); needProjection || !isProj {
@@ -668,31 +669,83 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
-	u := LogicalUnionAll{}.init(b.ctx)
-	u.children = make([]LogicalPlan, len(union.SelectList.Selects))
-	for i, sel := range union.SelectList.Selects {
-		u.children[i] = b.buildSelect(sel)
-		if b.err != nil {
-			return nil
-		}
-		if u.children[i].Schema().Len() != u.children[0].Schema().Len() {
-			b.err = errors.New("The used SELECT statements have a different number of columns")
-			return nil
+	distinctSelectPlans, allSelectPlans := b.divideUnionSelectPlans(union.SelectList.Selects)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+
+	unionDistinctPlan := b.buildSubUnion(distinctSelectPlans)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+
+	if unionDistinctPlan != nil {
+		unionDistinctPlan = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
+		if len(allSelectPlans) > 0 {
+			allSelectPlans = append(allSelectPlans, unionDistinctPlan)
 		}
 	}
 
-	b.buildProjection4Union(u)
-	var p LogicalPlan = u
-	if union.Distinct {
-		p = b.buildDistinct(u, u.Schema().Len())
+	unionAllPlan := b.buildSubUnion(allSelectPlans)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
+
+	unionPlan := unionDistinctPlan
+	if unionAllPlan != nil {
+		unionPlan = unionAllPlan
+	}
+
 	if union.OrderBy != nil {
-		p = b.buildSort(p, union.OrderBy.Items, nil)
+		unionPlan = b.buildSort(unionPlan, union.OrderBy.Items, nil)
 	}
 	if union.Limit != nil {
-		p = b.buildLimit(p, union.Limit)
+		unionPlan = b.buildLimit(unionPlan, union.Limit)
 	}
-	return p
+	return unionPlan
+}
+
+// divideUnionSelectPlans resolves union's select stmts to logical plans.
+// and divide result plans into "union-distinct" and "union-all" parts.
+// divide rule ref: https://dev.mysql.com/doc/refman/5.7/en/union.html
+// "Mixed UNION types are treated such that a DISTINCT union overrides any ALL union to its left."
+func (b *planBuilder) divideUnionSelectPlans(selects []*ast.SelectStmt) (distinctSelects []LogicalPlan, allSelects []LogicalPlan) {
+	firstUnionAllIdx, columnNums := 0, -1
+	// The last slot is reserved for appending distinct union outside this function.
+	children := make([]LogicalPlan, len(selects), len(selects)+1)
+	for i := len(selects) - 1; i >= 0; i-- {
+		stmt := selects[i]
+		if firstUnionAllIdx == 0 && stmt.IsAfterUnionDistinct {
+			firstUnionAllIdx = i + 1
+		}
+		selectPlan := b.buildSelect(stmt)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil, nil
+		}
+		if columnNums == -1 {
+			columnNums = selectPlan.Schema().Len()
+		}
+		if selectPlan.Schema().Len() != columnNums {
+			b.err = ErrWrongNumberOfColumnsInSelect.GenByArgs()
+			return nil, nil
+		}
+		children[i] = selectPlan
+	}
+	return children[:firstUnionAllIdx], children[firstUnionAllIdx:]
+}
+
+func (b *planBuilder) buildSubUnion(subPlan []LogicalPlan) LogicalPlan {
+	if len(subPlan) == 0 {
+		return nil
+	}
+	u := LogicalUnionAll{}.init(b.ctx)
+	u.children = subPlan
+	b.buildProjection4Union(u)
+	return u
 }
 
 // ByItems wraps a "by" item.
@@ -1286,6 +1339,14 @@ func checkExprInGroupBy(p LogicalPlan, expr ast.ExprNode, offset int, loc string
 }
 
 func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectField, orderBy *ast.OrderByClause, gby *ast.GroupByClause, from ast.ResultSetNode, where ast.ExprNode) {
+	if gby != nil {
+		b.checkOnlyFullGroupByWithGroupClause(p, fields, orderBy, gby, from, where)
+		return
+	}
+	b.checkOnlyFullGroupByWithOutGroupClause(p, fields)
+}
+
+func (b *planBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, fields []*ast.SelectField, orderBy *ast.OrderByClause, gby *ast.GroupByClause, from ast.ResultSetNode, where ast.ExprNode) {
 	gbyCols := make(map[*expression.Column]struct{}, len(fields))
 	gbyExprs := make([]ast.ExprNode, 0, len(fields))
 	schema := p.Schema()
@@ -1340,6 +1401,52 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 		}
 		return
 	}
+}
+
+func (b *planBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fields []*ast.SelectField) {
+	resolver := colResolverForOnlyFullGroupBy{}
+	for idx, field := range fields {
+		resolver.exprIdx = idx
+		field.Accept(&resolver)
+		if err := resolver.Check(); err != nil {
+			b.err = errors.Trace(err)
+			return
+		}
+	}
+}
+
+// colResolverForOnlyFullGroupBy visits Expr tree to find out if an Expr tree is an aggregation function.
+// If so, find out the first column name that not in an aggregation function.
+type colResolverForOnlyFullGroupBy struct {
+	firstNonAggCol    *ast.ColumnName
+	exprIdx           int
+	firstNonAggColIdx int
+	hasAggFunc        bool
+}
+
+func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
+	switch t := node.(type) {
+	case *ast.AggregateFuncExpr:
+		c.hasAggFunc = true
+		return node, true
+	case *ast.ColumnNameExpr:
+		if c.firstNonAggCol == nil {
+			c.firstNonAggCol, c.firstNonAggColIdx = t.Name, c.exprIdx
+		}
+		return node, true
+	}
+	return node, false
+}
+
+func (c *colResolverForOnlyFullGroupBy) Leave(node ast.Node) (ast.Node, bool) {
+	return node, true
+}
+
+func (c *colResolverForOnlyFullGroupBy) Check() error {
+	if c.hasAggFunc && c.firstNonAggCol != nil {
+		return ErrMixOfGroupFuncAndFields.GenByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
+	}
+	return nil
 }
 
 type colResolver struct {
@@ -1512,10 +1619,11 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.err != nil {
 			return nil
 		}
-		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
-			b.checkOnlyFullGroupBy(p, sel.Fields.Fields, sel.OrderBy, sel.GroupBy, sel.From.TableRefs, sel.Where)
-		}
 	}
+	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil {
+		b.checkOnlyFullGroupBy(p, sel.Fields.Fields, sel.OrderBy, sel.GroupBy, sel.From.TableRefs, sel.Where)
+	}
+
 	// We must resolve having and order by clause before build projection,
 	// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
 	// which only can be done before building projection and extracting Agg functions.
@@ -1606,10 +1714,6 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
-// RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
-// and use pseudo estimation.
-var RatioOfPseudoEstimate = 0.7
-
 // getStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
 // 1. tidb-server started and statistics handle has not been initialized.
@@ -1631,12 +1735,10 @@ func (b *planBuilder) getStatsTable(tblInfo *model.TableInfo) *statistics.Table 
 	}
 
 	// 3. statistics is outdated.
-	if float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
-		countFromStats := statsTbl.Count
-		statsTbl = statistics.PseudoTable(tblInfo)
-		// Table row count from statistics is more meaningful than the
-		// pseudo row count in most cases.
-		statsTbl.Count = countFromStats
+	if statsTbl.IsOutdated() {
+		tbl := *statsTbl
+		tbl.Pseudo = true
+		statsTbl = &tbl
 		metrics.PseudoEstimation.Inc()
 	}
 	return statsTbl
@@ -1657,6 +1759,10 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	tableInfo := tbl.Meta()
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
 
+	if tableInfo.GetPartitionInfo() != nil {
+		b.optFlag = b.optFlag | flagPartitionProcessor
+	}
+
 	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
 	if err != nil {
 		b.err = errors.Trace(err)
@@ -1672,6 +1778,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 
 	ds := DataSource{
 		DBName:              dbName,
+		table:               tbl,
 		tableInfo:           tableInfo,
 		statisticTable:      b.getStatsTable(tableInfo),
 		indexHints:          tn.IndexHints,
@@ -1770,7 +1877,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 			}
 		}
 		if !exprIsGen {
-			expr = colExpr.Clone()
+			expr = colExpr
 		}
 		proj.Exprs = append(proj.Exprs, expr)
 	}
@@ -2025,7 +2132,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		}
 		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		p = np
-		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
+		newList = append(newList, &expression.Assignment{Col: col, Expr: newExpr})
 	}
 	return newList, p
 }

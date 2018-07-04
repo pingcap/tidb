@@ -32,17 +32,17 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPl
 	return []PhysicalPlan{us}
 }
 
-func getPermutation(cols1, cols2 []*expression.Column) ([]int, []*expression.Column) {
-	tmpSchema := expression.NewSchema(cols2...)
-	permutation := make([]int, 0, len(cols1))
-	for i, col1 := range cols1 {
-		offset := tmpSchema.ColumnIndex(col1)
+func getMaxSortPrefix(sortCols, allCols []*expression.Column) []int {
+	tmpSchema := expression.NewSchema(allCols...)
+	sortColOffsets := make([]int, 0, len(sortCols))
+	for _, sortCol := range sortCols {
+		offset := tmpSchema.ColumnIndex(sortCol)
 		if offset == -1 {
-			return permutation, cols1[:i]
+			return sortColOffsets
 		}
-		permutation = append(permutation, offset)
+		sortColOffsets = append(sortColOffsets, offset)
 	}
-	return permutation, cols1
+	return sortColOffsets
 }
 
 func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Column) int {
@@ -63,11 +63,8 @@ func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Colu
 	return maxLen
 }
 
-func (p *LogicalJoin) getEqAndOtherCondsByOffsets(offsets []int) ([]*expression.ScalarFunction, []expression.Expression) {
-	var (
-		eqConds    = make([]*expression.ScalarFunction, 0, len(p.EqualConditions))
-		otherConds = make([]expression.Expression, len(p.OtherConditions))
-	)
+func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Expression {
+	otherConds := make([]expression.Expression, len(p.OtherConditions))
 	copy(otherConds, p.OtherConditions)
 	for i, eqCond := range p.EqualConditions {
 		match := false
@@ -79,17 +76,15 @@ func (p *LogicalJoin) getEqAndOtherCondsByOffsets(offsets []int) ([]*expression.
 		}
 		if !match {
 			otherConds = append(otherConds, eqCond)
-		} else {
-			eqConds = append(eqConds, eqCond)
 		}
 	}
-	return eqConds, otherConds
+	return otherConds
 }
 
 // Only if the input required prop is the prefix fo join keys, we can pass through this property.
 func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *requiredProp) ([]*requiredProp, bool) {
-	lProp := &requiredProp{taskTp: rootTaskType, cols: p.leftKeys, expectedCnt: math.MaxFloat64}
-	rProp := &requiredProp{taskTp: rootTaskType, cols: p.rightKeys, expectedCnt: math.MaxFloat64}
+	lProp := &requiredProp{taskTp: rootTaskType, cols: p.LeftKeys, expectedCnt: math.MaxFloat64}
+	rProp := &requiredProp{taskTp: rootTaskType, cols: p.RightKeys, expectedCnt: math.MaxFloat64}
 	if !prop.isEmpty() {
 		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
 		if prop.desc {
@@ -112,16 +107,20 @@ func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *requiredProp) ([]*require
 func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties))
 	// The leftProperties caches all the possible properties that are provided by its children.
-	for _, leftCols := range p.leftProperties {
-		offsets, leftKeys := getPermutation(leftCols, p.LeftJoinKeys)
+	for _, lhsChildProperty := range p.leftProperties {
+		offsets := getMaxSortPrefix(lhsChildProperty, p.LeftJoinKeys)
 		if len(offsets) == 0 {
 			continue
 		}
+
+		leftKeys := lhsChildProperty[:len(offsets)]
 		rightKeys := expression.NewSchema(p.RightJoinKeys...).ColumnsByIndices(offsets)
+
 		prefixLen := findMaxPrefixLen(p.rightProperties, rightKeys)
 		if prefixLen == 0 {
 			continue
 		}
+
 		leftKeys = leftKeys[:prefixLen]
 		rightKeys = rightKeys[:prefixLen]
 		offsets = offsets[:prefixLen]
@@ -130,17 +129,118 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 			LeftConditions:  p.LeftConditions,
 			RightConditions: p.RightConditions,
 			DefaultValues:   p.DefaultValues,
-			leftKeys:        leftKeys,
-			rightKeys:       rightKeys,
+			LeftKeys:        leftKeys,
+			RightKeys:       rightKeys,
 		}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt))
 		mergeJoin.SetSchema(p.schema)
-		mergeJoin.EqualConditions, mergeJoin.OtherConditions = p.getEqAndOtherCondsByOffsets(offsets)
+		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
 			mergeJoin.childrenReqProps = reqProps
 			joins = append(joins, mergeJoin)
 		}
 	}
+	// If TiDB_SMJ hint is existed && no join keys in children property,
+	// it should to enforce merge join.
+	if len(joins) == 0 && (p.preferJoinType&preferMergeJoin) > 0 {
+		return p.getEnforcedMergeJoin(prop)
+	}
+
 	return joins
+}
+
+// Change JoinKeys order, by offsets array
+// offsets array is generate by prop check
+func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []*expression.Column {
+	newKeys := make([]*expression.Column, 0, len(oldJoinKeys))
+	for _, offset := range offsets {
+		newKeys = append(newKeys, oldJoinKeys[offset])
+	}
+	for pos, key := range oldJoinKeys {
+		isExist := false
+		for _, p := range offsets {
+			if p == pos {
+				isExist = true
+				break
+			}
+		}
+		if !isExist {
+			newKeys = append(newKeys, key)
+		}
+	}
+	return newKeys
+}
+
+// Change EqualConditions order, by offsets array
+// offsets array is generate by prop check
+func getNewEqualConditionsByOffsets(oldEqualCond []*expression.ScalarFunction, offsets []int) []*expression.ScalarFunction {
+	newEqualCond := make([]*expression.ScalarFunction, 0, len(oldEqualCond))
+	for _, offset := range offsets {
+		newEqualCond = append(newEqualCond, oldEqualCond[offset])
+	}
+	for pos, condition := range oldEqualCond {
+		isExist := false
+		for _, p := range offsets {
+			if p == pos {
+				isExist = true
+				break
+			}
+		}
+		if !isExist {
+			newEqualCond = append(newEqualCond, condition)
+		}
+	}
+	return newEqualCond
+}
+
+func (p *LogicalJoin) getEnforcedMergeJoin(prop *requiredProp) []PhysicalPlan {
+	// Check whether SMJ can satisfy the required property
+	offsets := make([]int, 0, len(p.LeftJoinKeys))
+	for _, col := range prop.cols {
+		isExist := false
+		for joinKeyPos := 0; joinKeyPos < len(p.LeftJoinKeys); joinKeyPos++ {
+			var key *expression.Column
+			if col.Equal(p.ctx, p.LeftJoinKeys[joinKeyPos]) {
+				key = p.LeftJoinKeys[joinKeyPos]
+			}
+			if col.Equal(p.ctx, p.RightJoinKeys[joinKeyPos]) {
+				key = p.RightJoinKeys[joinKeyPos]
+			}
+			if key == nil {
+				continue
+			}
+			for i := 0; i < len(offsets); i++ {
+				if offsets[i] == joinKeyPos {
+					isExist = true
+					break
+				}
+			}
+			if !isExist {
+				offsets = append(offsets, joinKeyPos)
+			}
+			isExist = true
+			break
+		}
+		if !isExist {
+			return nil
+		}
+	}
+	// Generate the enforced sort merge join
+	leftKeys := getNewJoinKeysByOffsets(p.LeftJoinKeys, offsets)
+	rightKeys := getNewJoinKeysByOffsets(p.RightJoinKeys, offsets)
+	lProp := &requiredProp{taskTp: rootTaskType, cols: leftKeys, expectedCnt: math.MaxFloat64, enforced: true, desc: prop.desc}
+	rProp := &requiredProp{taskTp: rootTaskType, cols: rightKeys, expectedCnt: math.MaxFloat64, enforced: true, desc: prop.desc}
+	enforcedPhysicalMergeJoin := PhysicalMergeJoin{
+		JoinType:        p.JoinType,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		DefaultValues:   p.DefaultValues,
+		LeftKeys:        leftKeys,
+		RightKeys:       rightKeys,
+		OtherConditions: p.OtherConditions,
+	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt))
+	enforcedPhysicalMergeJoin.SetSchema(p.schema)
+	enforcedPhysicalMergeJoin.childrenReqProps = []*requiredProp{lProp, rProp}
+	return []PhysicalPlan{enforcedPhysicalMergeJoin}
 }
 
 func (p *LogicalJoin) getHashJoins(prop *requiredProp) []PhysicalPlan {
@@ -178,36 +278,36 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) *PhysicalHas
 	return hashJoin
 }
 
-// joinKeysMatchIndex checks if all keys match columns in index.
-// It returns a slice a[] what a[i] means keys[i] is related with indexCols[a[i]].
+// joinKeysMatchIndex checks whether the join key is in the index.
+// It returns a slice a[] what a[i] means keys[i] is related with indexCols[a[i]], -1 for no matching column.
+// It will return nil if there's no column that matches index.
 func joinKeysMatchIndex(keys, indexCols []*expression.Column, colLengths []int) []int {
-	if len(indexCols) < len(keys) {
-		return nil
-	}
 	keyOff2IdxOff := make([]int, len(keys))
-	for keyOff, key := range keys {
-		idxOff := joinKeyMatchIndexCol(key, indexCols, colLengths)
-		if idxOff == -1 {
-			return nil
+	for i := range keyOff2IdxOff {
+		keyOff2IdxOff[i] = -1
+	}
+	// There should be at least one column in join keys which can match the index's column.
+	matched := false
+	tmpSchema := expression.NewSchema(keys...)
+	for i, idxCol := range indexCols {
+		if colLengths[i] != types.UnspecifiedLength {
+			continue
 		}
-		keyOff2IdxOff[keyOff] = idxOff
+		keyOff := tmpSchema.ColumnIndex(idxCol)
+		if keyOff == -1 {
+			continue
+		}
+		matched = true
+		keyOff2IdxOff[keyOff] = i
+	}
+	if !matched {
+		return nil
 	}
 	return keyOff2IdxOff
 }
 
-func joinKeyMatchIndexCol(key *expression.Column, indexCols []*expression.Column, colLengths []int) int {
-	for idxOff, idxCol := range indexCols {
-		if colLengths[idxOff] != types.UnspecifiedLength {
-			continue
-		}
-		if idxCol.ColName.L == key.ColName.L {
-			return idxOff
-		}
-	}
-	return -1
-}
-
-// When inner plan is TableReader, the last two parameter will be nil
+// When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
+// is generated during execution time.
 func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, outerJoinKeys []*expression.Column, outerIdx int,
 	innerPlan PhysicalPlan, ranges []*ranger.Range, keyOff2IdxOff []int) []PhysicalPlan {
 	joinType := p.JoinType
@@ -218,17 +318,31 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 	}
 	chReqProps := make([]*requiredProp, 2)
 	chReqProps[outerIdx] = &requiredProp{taskTp: rootTaskType, expectedCnt: prop.expectedCnt, cols: prop.cols, desc: prop.desc}
+	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
+	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
+	newKeyOff := make([]int, 0, len(keyOff2IdxOff))
+	newOtherConds := make([]expression.Expression, 0, len(p.OtherConditions)+len(p.EqualConditions))
+	copy(newOtherConds, p.OtherConditions)
+	for keyOff, idxOff := range keyOff2IdxOff {
+		if keyOff2IdxOff[keyOff] < 0 {
+			newOtherConds = append(newOtherConds, p.EqualConditions[keyOff])
+			continue
+		}
+		newInnerKeys = append(newInnerKeys, innerJoinKeys[keyOff])
+		newOuterKeys = append(newOuterKeys, outerJoinKeys[keyOff])
+		newKeyOff = append(newKeyOff, idxOff)
+	}
 	join := PhysicalIndexJoin{
 		OuterIndex:      outerIdx,
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
-		OtherConditions: p.OtherConditions,
+		OtherConditions: newOtherConds,
 		JoinType:        joinType,
-		OuterJoinKeys:   outerJoinKeys,
-		InnerJoinKeys:   innerJoinKeys,
+		OuterJoinKeys:   newOuterKeys,
+		InnerJoinKeys:   newInnerKeys,
 		DefaultValues:   p.DefaultValues,
 		innerPlan:       innerPlan,
-		KeyOff2IdxOff:   keyOff2IdxOff,
+		KeyOff2IdxOff:   newKeyOff,
 		Ranges:          ranges,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
 	join.SetSchema(p.schema)
@@ -263,11 +377,23 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 			break
 		}
 	}
-	if tblPath != nil && len(innerJoinKeys) == 1 {
+	if pkCol := x.getPKIsHandleCol(); pkCol != nil && tblPath != nil {
+		keyOff2IdxOff := make([]int, len(innerJoinKeys))
 		pkCol := x.getPKIsHandleCol()
-		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
+		pkMatched := false
+		for i, key := range innerJoinKeys {
+			if !key.Equal(nil, pkCol) {
+				keyOff2IdxOff[i] = -1
+				continue
+			}
+			pkMatched = true
+			keyOff2IdxOff[i] = 0
+		}
+		if pkMatched {
 			innerPlan := x.forceToTableScan(pkCol)
-			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, nil)
+			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
+			// comparing to other index.
+			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, keyOff2IdxOff)
 		}
 	}
 	var (
@@ -349,7 +475,10 @@ func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.C
 	conds := make([]expression.Expression, 0, len(keys)+len(innerPlan.pushedDownConds))
 	eqConds = make([]expression.Expression, 0, len(keys))
 	// Construct a fake equal expression for calculating the range.
-	for _, key := range keys {
+	for i, key := range keys {
+		if keyOff2IdxOff[i] < 0 {
+			continue
+		}
 		// Int datum 1 can convert to all column's type(numeric type, string type, json, time type, enum, set) safely.
 		fakeConstant := &expression.Constant{Value: types.NewIntDatum(1), RetType: key.GetType()}
 		eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, fakeConstant)
@@ -416,7 +545,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) ([]PhysicalPlan, boo
 // If the hint is not figured, we will pick all candidates.
 func (p *LogicalJoin) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	mergeJoins := p.getMergeJoin(prop)
-	if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
+	if (p.preferJoinType & preferMergeJoin) > 0 {
 		return mergeJoins
 	}
 	joins := make([]PhysicalPlan, 0, 5)
@@ -525,7 +654,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan 
 
 // exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
 func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *requiredProp) []PhysicalPlan {
-	panic("This function should not be called")
+	panic("baseLogicalPlan.exhaustPhysicalPlans() should never be called.")
 }
 
 func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
@@ -541,33 +670,35 @@ func (la *LogicalAggregation) getStreamAggs(prop *requiredProp) []PhysicalPlan {
 	if len(la.groupByCols) != len(la.GroupByItems) {
 		return nil
 	}
-	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*2)
-	for _, cols := range la.possibleProperties {
-		_, keys := getPermutation(cols, la.groupByCols)
-		if len(keys) != len(la.groupByCols) {
+
+	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1))
+	childProp := &requiredProp{
+		desc:        prop.desc,
+		expectedCnt: math.Max(prop.expectedCnt*la.inputCount/la.stats.count, prop.expectedCnt),
+	}
+
+	for _, possibleChildProperty := range la.possibleProperties {
+		sortColOffsets := getMaxSortPrefix(possibleChildProperty, la.groupByCols)
+		if len(sortColOffsets) != len(la.groupByCols) {
 			continue
 		}
-		for _, tp := range wholeTaskTypes {
-			// Second read in the double can't meet the stream aggregation's require prop.
-			if tp == copDoubleReadTaskType {
-				continue
-			}
-			childProp := &requiredProp{
-				taskTp:      tp,
-				cols:        keys,
-				desc:        prop.desc,
-				expectedCnt: prop.expectedCnt * la.inputCount / la.stats.count,
-			}
-			if childProp.expectedCnt < prop.expectedCnt {
-				childProp.expectedCnt = prop.expectedCnt
-			}
-			if !prop.isPrefix(childProp) {
-				continue
-			}
+
+		childProp.cols = possibleChildProperty[:len(sortColOffsets)]
+		if !prop.isPrefix(childProp) {
+			continue
+		}
+
+		// The table read of "copDoubleReadTaskType" can't promises the sort
+		// property that the stream aggregation required, no need to consider.
+		for _, taskTp := range []taskType{copSingleReadTaskType, rootTaskType} {
+			copiedChildProperty := new(requiredProp)
+			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
+			copiedChildProperty.taskTp = taskTp
+
 			agg := basePhysicalAgg{
 				GroupByItems: la.GroupByItems,
 				AggFuncs:     la.AggFuncs,
-			}.initForStream(la.ctx, la.stats.scaleByExpectCnt(prop.expectedCnt), childProp)
+			}.initForStream(la.ctx, la.stats.scaleByExpectCnt(prop.expectedCnt), copiedChildProperty)
 			agg.SetSchema(la.schema.Clone())
 			streamAggs = append(streamAggs, agg)
 		}
@@ -594,10 +725,7 @@ func (la *LogicalAggregation) getHashAggs(prop *requiredProp) []PhysicalPlan {
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	aggs := make([]PhysicalPlan, 0, len(la.possibleProperties)+1)
 	aggs = append(aggs, la.getHashAggs(prop)...)
-
-	streamAggs := la.getStreamAggs(prop)
-	aggs = append(aggs, streamAggs...)
-
+	aggs = append(aggs, la.getStreamAggs(prop)...)
 	return aggs
 }
 

@@ -39,7 +39,7 @@ import (
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(schema)
 	if ok {
 		return infoschema.ErrDatabaseExists.GenByArgs(schema)
@@ -81,7 +81,7 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetIn
 }
 
 func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error) {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	old, ok := is.SchemaByName(schema)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
@@ -366,7 +366,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 	if col.Tp == mysql.TypeYear {
 		// For Year field, it's charset is binary but does not have binary flag.
 		col.Flag &= ^mysql.BinaryFlag
-		col.Flag |= mysql.UnsignedFlag | mysql.ZerofillFlag
+		col.Flag |= mysql.ZerofillFlag
 	}
 	err := checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
@@ -535,6 +535,34 @@ func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	if len(colDefs) > TableColumnCountLimit {
 		return errTooManyFields
+	}
+	return nil
+}
+
+func checkAddColumnTooManyColumns(oldCols []*model.ColumnInfo) error {
+	if len(oldCols) > TableColumnCountLimit {
+		return errTooManyFields
+	}
+	return nil
+}
+
+// checkPointTypeColumns checks multiple decimal/float/double columns.
+func checkPointTypeColumns(colDefs []*ast.ColumnDef) error {
+	for _, colDef := range colDefs {
+		if err := checkPointTypeColumn(colDef.Name.OrigColName(), colDef.Tp); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// checkPointTypeColumn checks a decimal/float/double column.
+func checkPointTypeColumn(colName string, tp *types.FieldType) error {
+	switch tp.Tp {
+	case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
+		if tp.Flen < tp.Decimal {
+			return types.ErrMBiggerThanD.GenByArgs(colName)
+		}
 	}
 	return nil
 }
@@ -714,8 +742,8 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 	return
 }
 
-func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident) error {
-	is := d.getInformationSchema()
+func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error {
+	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(referIdent.Schema)
 	if !ok {
 		return infoschema.ErrTableNotExists.GenByArgs(referIdent.Schema, referIdent.Name)
@@ -729,6 +757,10 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
+		if ifNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenByArgs(ident))
+			return nil
+		}
 		return infoschema.ErrTableExists.GenByArgs(ident)
 	}
 
@@ -757,16 +789,17 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if s.ReferTable != nil {
 		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
-		return d.CreateTableWithLike(ctx, ident, referIdent)
+		return d.CreateTableWithLike(ctx, ident, referIdent, s.IfNotExists)
 	}
 	colDefs := s.Cols
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		if s.IfNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenByArgs(ident))
 			return nil
 		}
 		return infoschema.ErrTableExists.GenByArgs(ident)
@@ -787,6 +820,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
+	if err = checkPointTypeColumns(colDefs); err != nil {
+		return errors.Trace(err)
+	}
+
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints)
 	if err != nil {
 		return errors.Trace(err)
@@ -803,7 +840,8 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 	if s.Partition != nil {
 		pi := &model.PartitionInfo{
-			Type: s.Partition.Tp,
+			Type:   s.Partition.Tp,
+			Enable: ctx.GetSessionVars().EnableTablePartition,
 		}
 		if s.Partition.Expr != nil {
 			buf := new(bytes.Buffer)
@@ -968,6 +1006,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				return errRunMultiSchemaChanges
 			}
 			err = d.AddColumn(ctx, ident, spec)
+		case ast.AlterTableAddPartitions:
+			err = d.AddTablePartitions(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
@@ -999,6 +1039,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.RenameTable(ctx, ident, newIdent)
 		case ast.AlterTableDropPrimaryKey:
 			err = ErrUnsupportedModifyPrimaryKey.GenByArgs("drop")
+		case ast.AlterTableRenameIndex:
+			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableOption:
 			for _, opt := range spec.Options {
 				switch opt.Tp {
@@ -1030,7 +1072,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 }
 
 func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64) error {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
@@ -1078,7 +1120,7 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 }
 
 func (d *ddl) getSchemaAndTableByIdent(tableIdent ast.Ident) (dbInfo *model.DBInfo, t table.Table, err error) {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(tableIdent.Schema)
 	if !ok {
 		return nil, nil, infoschema.ErrDatabaseNotExists.GenByArgs(tableIdent.Schema)
@@ -1110,6 +1152,11 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
+	colName := specNewColumn.Name.Name.O
+	if err = checkPointTypeColumn(colName, specNewColumn.Tp); err != nil {
+		return errors.Trace(err)
+	}
+
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -1121,7 +1168,6 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	// Check whether added column has existed.
-	colName := specNewColumn.Name.Name.O
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
 		return infoschema.ErrColumnExists.GenByArgs(colName)
@@ -1175,6 +1221,54 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col, spec.Position, 0},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// AddTablePartitions will add a new partition to the table.
+func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if len(spec.PartDefinitions) == 0 {
+		return errors.Trace(ErrPartitionsMustBeDefined)
+	}
+
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(schema))
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta()
+	if meta.GetPartitionInfo() == nil && meta.Partition == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+	partInfo, err := buildPartitionInfo(meta, d, spec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = checkPartitionNotExists(meta, partInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = checkAddPartitionValue(meta, partInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		Type:       model.ActionAddTablePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partInfo},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -1394,6 +1488,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
+	if err = checkPointTypeColumn(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	newCol := table.ToColumn(&model.ColumnInfo{
 		ID: col.ID,
 		// We use this PR(https://github.com/pingcap/tidb/pull/6274) as the dividing line to define whether it is a new version or an old version TiDB.
@@ -1574,9 +1672,44 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	return errors.Trace(err)
 }
 
+// RenameIndex renames an index.
+// In TiDB, indexes are case-insensitive (so index 'a' and 'A" are considered the same index),
+// but index names are case-sensitive (we can rename index 'a' to 'A')
+func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+	duplicate, err := validateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
+	if duplicate {
+		return nil
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tb.Meta().ID,
+		Type:       model.ActionRenameIndex,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{spec.FromKey, spec.ToKey},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 // DropTable will proceed even if some table in the list does not exists.
 func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
@@ -1600,7 +1733,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 }
 
 func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
@@ -1626,7 +1759,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 }
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) error {
-	is := d.getInformationSchema()
+	is := d.GetInformationSchema()
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
 		return errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name)
@@ -1862,4 +1995,45 @@ func validateCommentLength(vars *variable.SessionVars, comment string, maxLen in
 		return comment[:maxLen], nil
 	}
 	return comment, nil
+}
+
+func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+	part := &model.PartitionInfo{
+		Type:    meta.Partition.Type,
+		Expr:    meta.Partition.Expr,
+		Columns: meta.Partition.Columns,
+		Enable:  meta.Partition.Enable,
+	}
+	buf := new(bytes.Buffer)
+	for _, def := range spec.PartDefinitions {
+		for _, expr := range def.LessThan {
+			tp := expr.GetType().Tp
+			if !(tp == mysql.TypeLong || tp == mysql.TypeLonglong) {
+				expr.Format(buf)
+				if strings.EqualFold(buf.String(), "MAXVALUE") {
+					continue
+				}
+				buf.Reset()
+				return nil, infoschema.ErrColumnNotExists.GenByArgs(buf.String(), "partition function")
+			}
+		}
+		pid, err1 := d.genGlobalID()
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		piDef := model.PartitionDefinition{
+			Name:    def.Name,
+			ID:      pid,
+			Comment: def.Comment,
+		}
+
+		buf := new(bytes.Buffer)
+		for _, expr := range def.LessThan {
+			expr.Format(buf)
+			piDef.LessThan = append(piDef.LessThan, buf.String())
+			buf.Reset()
+		}
+		part.Definitions = append(part.Definitions, piDef)
+	}
+	return part, nil
 }

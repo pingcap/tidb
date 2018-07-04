@@ -31,7 +31,7 @@ import (
 
 // Preprocess resolves table names of the node, and checks some statements validation.
 func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
-	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare}
+	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare, tableAliasInJoin: make([]map[string]interface{}, 0, 0)}
 	node.Accept(&v)
 	return errors.Trace(v.err)
 }
@@ -45,6 +45,12 @@ type preprocessor struct {
 	inPrepare bool
 	// inCreateOrDropTable is true when visiting create/drop table statement.
 	inCreateOrDropTable bool
+
+	// tableAliasInJoin is a stack that keeps the table alias names for joins.
+	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
+	tableAliasInJoin []map[string]interface{}
+
+	parentIsJoin bool
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -73,6 +79,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkUnionSelectList(node)
 	case *ast.DeleteTableList:
 		return in, true
+	case *ast.Join:
+		p.checkNonUniqTableAlias(node)
+	default:
+		p.parentIsJoin = false
 	}
 	return in, p.err != nil
 }
@@ -82,6 +92,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.CreateTableStmt:
 		p.inCreateOrDropTable = false
 		p.checkAutoIncrement(x)
+		p.checkContainDotColumn(x)
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.inCreateOrDropTable = false
 	case *ast.ParamMarkerExpr:
@@ -105,6 +116,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	case *ast.TableName:
 		p.handleTableName(x)
+	case *ast.Join:
+		if len(p.tableAliasInJoin) > 0 {
+			p.tableAliasInJoin = p.tableAliasInJoin[:len(p.tableAliasInJoin)-1]
+		}
 	}
 
 	return in, p.err == nil
@@ -208,14 +223,21 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	}
 }
 
+// checkUnionSelectList checks union's selectList.
+// refer: https://dev.mysql.com/doc/refman/5.7/en/union.html
+// "To apply ORDER BY or LIMIT to an individual SELECT, place the clause inside the parentheses that enclose the SELECT."
 func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
-	for idx, sel := range stmt.Selects {
-		if idx != len(stmt.Selects)-1 {
-			if sel.OrderBy != nil {
-				p.err = ErrWrongUsage.GenByArgs("UNION", "ORDER BY")
-			} else if sel.Limit != nil {
-				p.err = ErrWrongUsage.GenByArgs("UNION", "LIMIT")
-			}
+	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
+		if sel.IsInBraces {
+			continue
+		}
+		if sel.Limit != nil {
+			p.err = ErrWrongUsage.GenByArgs("UNION", "LIMIT")
+			return
+		}
+		if sel.OrderBy != nil {
+			p.err = ErrWrongUsage.GenByArgs("UNION", "ORDER BY")
+			return
 		}
 	}
 }
@@ -238,7 +260,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
 		return
 	}
-	p.checkContainDotColumn(stmt)
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
@@ -272,6 +293,14 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			}
 		}
 	}
+	if stmt.Select != nil {
+		// FIXME: a temp error noticing 'not implemented' (issue 4754)
+		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
+		return
+	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
+		p.err = ddl.ErrTableMustHaveColumns
+		return
+	}
 }
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
@@ -281,6 +310,33 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 			return
 		}
 	}
+}
+
+func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
+	if !p.parentIsJoin {
+		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
+	}
+	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
+	if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
+		p.err = err
+		return
+	}
+	if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
+		p.err = err
+		return
+	}
+	p.parentIsJoin = true
+}
+
+func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]interface{}) error {
+	if ts, ok := node.(*ast.TableSource); ok {
+		_, exists := tableAliases[ts.AsName.L]
+		if len(ts.AsName.L) != 0 && exists {
+			return ErrNonUniqTable.GenByArgs(ts.AsName)
+		}
+		tableAliases[ts.AsName.L] = nil
+	}
+	return nil
 }
 
 func isPrimary(ops []*ast.ColumnOption) int {
@@ -496,9 +552,14 @@ func isIncorrectName(name string) bool {
 // for example :create table t (c1.c2 int default null).
 func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 	tName := stmt.Table.Name.String()
+	sName := stmt.Table.Schema.String()
 
 	for _, colDef := range stmt.Cols {
-		// check table name.
+		// check schema and table names.
+		if colDef.Name.Schema.O != sName && len(colDef.Name.Schema.O) != 0 {
+			p.err = ddl.ErrWrongDBName.GenByArgs(colDef.Name.Schema.O)
+			return
+		}
 		if colDef.Name.Table.O != tName && len(colDef.Name.Table.O) != 0 {
 			p.err = ddl.ErrWrongTableName.GenByArgs(colDef.Name.Table.O)
 			return

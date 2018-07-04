@@ -18,10 +18,13 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -74,6 +77,50 @@ func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
 	_, err = tk.Exec("create table t( c1 varchar(2) default 'TiDB');")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue)
+}
+
+// for issue #3848
+func (s *testIntegrationSuite) TestInvalidNameWhenCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test;")
+
+	_, err := tk.Exec("create table t(xxx.t.a bigint)")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue)
+
+	_, err = tk.Exec("create table t(test.tttt.a bigint)")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongTableName), IsTrue)
+
+	_, err = tk.Exec("create table t(t.tttt.a bigint)")
+	c.Assert(err, NotNil)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue)
+}
+
+// for issue #6879
+func (s *testIntegrationSuite) TestCreateTableIfNotExists(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test;")
+
+	tk.MustExec("create table t1(a bigint)")
+	tk.MustExec("create table t(a bigint)")
+
+	// Test duplicate create-table with `LIKE` clause
+	tk.MustExec("create table if not exists t like t1;")
+	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), GreaterEqual, 1)
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), IsTrue)
+	c.Assert(lastWarn.Level, Equals, stmtctx.WarnLevelNote)
+
+	// Test duplicate create-table without `LIKE` clause
+	tk.MustExec("create table if not exists t(b bigint, c varchar(60));")
+	warnings = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), GreaterEqual, 1)
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), IsTrue)
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {

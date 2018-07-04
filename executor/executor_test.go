@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -70,6 +71,7 @@ func TestT(t *testing.T) {
 
 var _ = Suite(&testSuite{})
 var _ = Suite(&testContextOptionSuite{})
+var _ = Suite(&testBypassSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -257,9 +259,9 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
 	for _, tt := range tests {
 		c.Assert(ctx.NewTxn(), IsNil)
-		ctx.GetSessionVars().StmtCtx.IgnoreErr = true
+		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
-		ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
 		if tt.restData == nil {
@@ -821,12 +823,8 @@ func (s *testSuite) TestUnion(c *C) {
 	testSQL = `insert union_test values (1),(2)`
 	tk.MustExec(testSQL)
 
-	testSQL = `select id from union_test union select id from union_test;`
-	r := tk.MustQuery(testSQL)
-	r.Check(testkit.Rows("1", "2"))
-
 	testSQL = `select * from (select id from union_test union select id from union_test) t order by id;`
-	r = tk.MustQuery(testSQL)
+	r := tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1", "2"))
 
 	r = tk.MustQuery("select 1 union all select 1")
@@ -894,7 +892,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert into t (c1, c2) values (1, 1)")
 	tk.MustExec("insert into t (c1, c2) values (1, 2)")
 	tk.MustExec("insert into t (c1, c2) values (2, 3)")
-	r = tk.MustQuery("select * from t where t.c1 = 1 union select * from t where t.id = 1")
+	r = tk.MustQuery("select * from (select * from t where t.c1 = 1 union select * from t where t.id = 1) s order by s.id")
 	r.Check(testkit.Rows("1 1 1", "2 1 2"))
 
 	tk.MustExec("drop table if exists t")
@@ -962,6 +960,26 @@ func (s *testSuite) TestUnion(c *C) {
 	c.Assert(err, NotNil)
 	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
+
+	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
+	c.Assert(terror.ErrorEqual(err, plan.ErrWrongUsage), IsTrue)
+
+	_, err = tk.Exec("(select a from t limit 1) union all select a from t limit 1")
+	c.Assert(err, IsNil)
+	_, err = tk.Exec("(select a from t order by a) union all select a from t order by a")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t value(1),(2),(3)")
+
+	tk.MustQuery("(select a from t order by a limit 2) union all (select a from t order by a desc limit 2) order by a desc limit 1,2").Check(testkit.Rows("2", "2"))
+	tk.MustQuery("select a from t union all select a from t order by a desc limit 5").Check(testkit.Rows("3", "3", "2", "2", "1"))
+	tk.MustQuery("(select a from t order by a desc limit 2) union all select a from t group by a order by a").Check(testkit.Rows("1", "2", "2", "3", "3"))
+	tk.MustQuery("(select a from t order by a desc limit 2) union all select 33 as a order by a desc limit 2").Check(testkit.Rows("33", "3"))
+
+	tk.MustQuery("select 1 union select 1 union all select 1").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select 1 union all select 1 union select 1").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestIn(c *C) {
@@ -1809,6 +1827,11 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 	tk.MustExec("set @@tidb_snapshot = '" + snapshotTime.Format("2006-01-02 15:04:05.999999") + "'")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
+	tsoStr := strconv.FormatUint(oracle.EncodeTSO(snapshotTime.UnixNano()/int64(time.Millisecond)), 10)
+
+	tk.MustExec("set @@tidb_snapshot = '" + tsoStr + "'")
+	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2", "4"))
+
 	tk.MustExec("set @@tidb_snapshot = ''")
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
@@ -1839,9 +1862,9 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustQuery("select a from t where b > 1 and a < 3").Check(testkit.Rows())
 	tk.MustQuery("select count(*) from t where b > 1 and a < 3").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
-	tk.MustQuery("select count(*), c from t group by c").Check(testkit.Rows("2 1", "1 2", "1 3"))
-	tk.MustQuery("select sum(c) from t group by b").Check(testkit.Rows("4", "3"))
-	tk.MustQuery("select avg(a) from t group by b").Check(testkit.Rows("2.0000", "4.0000"))
+	tk.MustQuery("select count(*), c from t group by c order by c").Check(testkit.Rows("2 1", "1 2", "1 3"))
+	tk.MustQuery("select sum(c) as s from t group by b order by s").Check(testkit.Rows("3", "4"))
+	tk.MustQuery("select avg(a) as s from t group by b order by s").Check(testkit.Rows("2.0000", "4.0000"))
 	tk.MustQuery("select sum(distinct c) from t group by b").Check(testkit.Rows("3", "3"))
 
 	tk.MustExec("create index i on t(c,b)")
@@ -2145,6 +2168,10 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	c.Assert(err, IsNil)
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
@@ -2167,8 +2194,6 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
 	cli.mu.Unlock()
-	dom.Close()
-	store.Close()
 }
 
 func (s *testContextOptionSuite) TestAlterTableComment(c *C) {
@@ -2548,8 +2573,6 @@ func (s *testSuite) TestContainDotColumn(c *C) {
 func (s *testSuite) TestCheckIndex(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.Store = s.store
-	dom, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer se.Close()
@@ -2560,7 +2583,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "create table t (pk int primary key, c int default 1, c1 int default 1, unique key c(c))")
 	c.Assert(err, IsNil)
-	is := dom.InfoSchema()
+	is := s.domain.InfoSchema()
 	db := model.NewCIStr("test_admin")
 	dbInfo, ok := is.SchemaByName(db)
 	c.Assert(ok, IsTrue)
@@ -2786,4 +2809,96 @@ func (s *testSuite) TestYearTypeDeleteIndex(c *C) {
 	tk.MustExec("insert into t set a = '2151';")
 	tk.MustExec("delete from t;")
 	tk.MustExec("admin check table t")
+}
+
+func (s *testSuite) TestForSelectScopeInUnion(c *C) {
+	// A union B for update, the "for update" option belongs to union statement, so
+	// it should works on both A and B.
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t(a int)")
+	tk1.MustExec("insert into t values (1)")
+
+	tk1.MustExec("begin")
+	// 'For update' would act on the second select.
+	tk1.MustQuery("select 1 as a union select a from t for update")
+
+	tk2.MustExec("use test")
+	tk2.MustExec("update t set a = a + 1")
+
+	// As tk1 use select 'for update', it should dectect conflict and fail.
+	_, err := tk1.Exec("commit")
+	c.Assert(err, NotNil)
+
+	tk1.MustExec("begin")
+	// 'For update' would be ignored if 'order by' or 'limit' exists.
+	tk1.MustQuery("select 1 as a union select a from t limit 5 for update")
+	tk1.MustQuery("select 1 as a union select a from t order by a for update")
+
+	tk2.MustExec("update t set a = a + 1")
+
+	_, err = tk1.Exec("commit")
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
+	tests := []struct {
+		input  interface{}
+		hasErr bool
+		err    string
+	}{{
+		-1,
+		true,
+		"Out of range value for column",
+	}, {
+		"-1.1e-1",
+		true,
+		"Out of range value for column",
+	}, {
+		-1.1,
+		true,
+		"Out of range value for column",
+	}, {
+		-0,
+		false,
+		"",
+	},
+	}
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a decimal(10,2) unsigned)")
+	for _, t := range tests {
+		res, err := tk.Exec("insert into t values (?)", t.input)
+		if res != nil {
+			defer res.Close()
+		}
+		if t.hasErr {
+			c.Assert(err, NotNil)
+			c.Assert(strings.Contains(err.Error(), t.err), IsTrue)
+		} else {
+			c.Assert(err, IsNil)
+		}
+		if res != nil {
+			res.Close()
+		}
+	}
+
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (?)", -1)
+	r := tk.MustQuery("select a from t limit 1")
+	r.Check(testkit.Rows("0.00"))
+}
+
+func (s *testSuite) TestIndexJoinTableDualPanic(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table a (f1 int, f2 varchar(32), primary key (f1))")
+	tk.MustExec("insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c')")
+	tk.MustQuery("select a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
+		Check(testkit.Rows("1 a"))
 }

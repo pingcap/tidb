@@ -730,7 +730,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		p.SetSchema(buildShowTriggerSchema())
 	case ast.ShowEvents:
 		p.SetSchema(buildShowEventsSchema())
-	case ast.ShowWarnings:
+	case ast.ShowWarnings, ast.ShowErrors:
 		p.SetSchema(buildShowWarningsSchema())
 	default:
 		switch showTp {
@@ -866,7 +866,7 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 		}
 		for dep := range column.Dependences {
 			if _, ok := onDups[dep]; ok {
-				assign := &expression.Assignment{Col: colExpr, Expr: expr.Clone()}
+				assign := &expression.Assignment{Col: colExpr, Expr: expr}
 				igc.OnDuplicates = append(igc.OnDuplicates, assign)
 				break
 			}
@@ -1011,7 +1011,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			b.err = errors.Trace(err)
 			return nil
 		}
-		insertPlan.Setlist = append(insertPlan.Setlist, &expression.Assignment{
+		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
 			Col:  col,
 			Expr: expr,
 		})
@@ -1207,14 +1207,14 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	p := &Explain{StmtPlan: pp}
 	switch strings.ToLower(explain.Format) {
 	case ast.ExplainFormatROW:
-		retFields := []string{"id", "parents", "children", "task", "operator info", "count"}
+		retFields := []string{"id", "task", "operator info", "count"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		for _, fieldName := range retFields {
 			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
 		}
 		p.SetSchema(schema)
 		p.explainedPlans = map[int]bool{}
-		p.prepareRootTaskInfo(p.StmtPlan.(PhysicalPlan), "")
+		p.explainPlanInRowFormat(p.StmtPlan.(PhysicalPlan), "root", "", true)
 	case ast.ExplainFormatDOT:
 		retFields := []string{"dot contents"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
@@ -1318,7 +1318,7 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowColumns:
 		names = table.ColDescFieldNames(s.Full)
-	case ast.ShowWarnings:
+	case ast.ShowWarnings, ast.ShowErrors:
 		names = []string{"Level", "Code", "Message"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar}
 	case ast.ShowCharset:
@@ -1370,6 +1370,12 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 	case ast.ShowProfiles: // ShowProfiles is deprecated.
 		names = []string{"Query_ID", "Duration", "Query"}
 		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
+	case ast.ShowMasterStatus:
+		names = []string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
+	case ast.ShowPrivileges:
+		names = []string{"Privilege", "Context", "Comment"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)

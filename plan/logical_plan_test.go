@@ -254,7 +254,6 @@ func MockTable() *model.TableInfo {
 		FieldType: newLongType(),
 		ID:        10,
 	}
-
 	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
 	col0.Flag = mysql.NotNullFlag
@@ -435,6 +434,118 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+	}
+}
+
+func newPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
+	tableInfo := *MockTable()
+	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
+	cols = append(cols, tableInfo.Columns...)
+	cols = append(cols, &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    10,
+		Name:      model.NewCIStr("h"),
+		FieldType: newLongType(),
+		ID:        11,
+	})
+	partition := &model.PartitionInfo{
+		Type:        model.PartitionTypeRange,
+		Expr:        "h",
+		Enable:      true,
+		Definitions: definitions,
+	}
+	tableInfo.Columns = cols
+	tableInfo.Partition = partition
+	is := infoschema.MockInfoSchema([]*model.TableInfo{&tableInfo})
+	return is
+}
+
+func (s *testPlanSuite) TestTablePartition(c *C) {
+	defer testleak.AfterTest(c)()
+	definitions := []model.PartitionDefinition{
+		{
+			ID:       41,
+			Name:     "p1",
+			LessThan: []string{"16"},
+		},
+		{
+			ID:       42,
+			Name:     "p2",
+			LessThan: []string{"32"},
+		},
+		{
+			ID:       43,
+			Name:     "p3",
+			LessThan: []string{"64"},
+		},
+		{
+			ID:       44,
+			Name:     "p4",
+			LessThan: []string{"128"},
+		},
+		{
+			ID:       45,
+			Name:     "p5",
+			LessThan: []string{"maxvalue"},
+		},
+	}
+	is := newPartitionInfoSchema(definitions)
+	// is1 equals to is without maxvalue partition.
+	definitions1 := make([]model.PartitionDefinition, len(definitions)-1)
+	copy(definitions1, definitions)
+	is1 := newPartitionInfoSchema(definitions1)
+
+	tests := []struct {
+		sql   string
+		first string
+		best  string
+		is    infoschema.InfoSchema
+	}{
+		{
+			sql:  "select * from t",
+			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)}->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h < 31",
+			best: "UnionAll{Partition(41)->Partition(42)}->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h < 61",
+			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h > 17 and t.h < 61",
+			best: "UnionAll{Partition(42)->Partition(43)}->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h < 8",
+			best: "Partition(41)->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h > 128",
+			best: "Partition(45)->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h > 128",
+			best: "Dual->Projection",
+			is:   is1,
+		},
+	}
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := BuildLogicalPlan(s.ctx, stmt, ca.is)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(flagDecorrelate|flagPrunColumns|flagPredicatePushDown|flagPartitionProcessor, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
 	}
@@ -1428,6 +1539,65 @@ func checkVisitInfo(c *C, v1, v2 []visitInfo, comment CommentInterface) {
 	}
 }
 
+func (s *testPlanSuite) TestUnion(c *C) {
+	defer func() {
+		testleak.AfterTest(c)()
+	}()
+	tests := []struct {
+		sql  string
+		best string
+		err  bool
+	}{
+		{
+			sql:  "select a from t union select a from t",
+			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))",
+			err:  false,
+		},
+		{
+			sql:  "select a from t union all select a from t",
+			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}",
+			err:  false,
+		},
+		{
+			sql:  "select a from t union select a from t union all select a from t",
+			best: "UnionAll{DataScan(t)->Projection->UnionAll{DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))->Projection}",
+			err:  false,
+		},
+		{
+			sql:  "select a from t union select a from t union all select a from t union select a from t union select a from t",
+			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Aggr(firstrow(t.a))",
+			err:  false,
+		},
+		{
+			sql:  "select a from t union select a, b from t",
+			best: "",
+			err:  true,
+		},
+	}
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &planBuilder{
+			ctx:       mockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		c.Assert(builder.err, IsNil)
+		plan := builder.build(stmt)
+		if tt.err {
+			c.Assert(builder.err, NotNil)
+			return
+		}
+		c.Assert(builder.err, IsNil)
+		p := plan.(LogicalPlan)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}
+
 func (s *testPlanSuite) TestTopNPushDown(c *C) {
 	defer func() {
 		testleak.AfterTest(c)()
@@ -1525,6 +1695,11 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		{
 			sql:  "select * from t union all (select * from t s order by a) limit 5",
 			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->TopN([s.a],0,5)->Projection}->Limit",
+		},
+		// Test `ByItem` containing column from both sides.
+		{
+			sql:  "select ifnull(t1.b, t2.a) from t t1 left join t t2 on t1.e=t2.e order by ifnull(t1.b, t2.a) limit 5",
+			best: "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->TopN([ifnull(t1.b, t2.a)],0,5)->Projection->Projection",
 		},
 	}
 	for i, tt := range tests {

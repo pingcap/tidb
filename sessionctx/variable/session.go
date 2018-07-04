@@ -106,7 +106,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
 	item := tc.TableDeltaMap[tableID]
-	if item.ColSize == nil {
+	if item.ColSize == nil && colSize != nil {
 		item.ColSize = make(map[int64]int64)
 	}
 	item.Delta += delta
@@ -152,7 +152,8 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
-	RetryLimit int64
+	RetryLimit          int64
+	DisableTxnAutoRetry bool
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
@@ -279,6 +280,9 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in planner.
 	OptimizerSelectivityLevel int
 
+	// EnableTablePartition enables table partition feature.
+	EnableTablePartition bool
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -303,16 +307,20 @@ func NewSessionVars() *SessionVars {
 		AllowAggPushDown:          false,
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                DefTiDBRetryLimit,
+		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
 		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
+		ProjectionConcurrency:      DefTiDBProjectionConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
+		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
+		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:             DefTiDBMemQuotaQuery,
+		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
 		MemQuotaHashJoin:          DefTiDBMemQuotaHashJoin,
 		MemQuotaMergeJoin:         DefTiDBMemQuotaMergeJoin,
 		MemQuotaSort:              DefTiDBMemQuotaSort,
@@ -490,6 +498,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
 		s.HashJoinConcurrency = tidbOptPositiveInt32(val, DefTiDBHashJoinConcurrency)
+	case TiDBProjectionConcurrency:
+		s.ProjectionConcurrency = tidbOptInt64(val, DefTiDBProjectionConcurrency)
+	case TiDBHashAggPartialConcurrency:
+		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggPartialConcurrency)
+	case TiDBHashAggFinalConcurrency:
+		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -507,7 +521,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
 	case TIDBMemQuotaQuery:
-		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
+		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
 	case TIDBMemQuotaMergeJoin:
@@ -526,10 +540,17 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBRetryLimit:
 		s.RetryLimit = tidbOptInt64(val, DefTiDBRetryLimit)
+	case TiDBDisableTxnAutoRetry:
+		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
+	case TiDBEnableTablePartition:
+		s.EnableTablePartition = TiDBOptOn(val)
+	case TiDBDDLReorgWorkerCount:
+		workerCnt := tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
+		SetDDLReorgWorkerCounter(int32(workerCnt))
 	}
 	s.systems[name] = val
 	return nil
@@ -548,9 +569,10 @@ const (
 
 // TableDelta stands for the changed count for one table.
 type TableDelta struct {
-	Delta   int64
-	Count   int64
-	ColSize map[int64]int64
+	Delta    int64
+	Count    int64
+	ColSize  map[int64]int64
+	InitTime time.Time // InitTime is the time that this delta is generated.
 }
 
 // Concurrency defines concurrency values.
@@ -566,6 +588,15 @@ type Concurrency struct {
 
 	// HashJoinConcurrency is the number of concurrent hash join outer worker.
 	HashJoinConcurrency int
+
+	// ProjectionConcurrency is the number of concurrent projection worker.
+	ProjectionConcurrency int64
+
+	// HashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
+	HashAggPartialConcurrency int
+
+	// HashAggPartialConcurrency is the number of concurrent hash aggregation final worker.
+	HashAggFinalConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int

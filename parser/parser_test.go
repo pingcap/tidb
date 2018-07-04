@@ -451,7 +451,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select 1 from dual limit 1", true},
 		{"select 1 where exists (select 2)", false},
 		{"select 1 from dual where not exists (select 2)", true},
-
+		{"select 1 as a from dual order by a", true},
+		{"select 1 as a from dual where 1 < any (select 2) order by a", true},
 		{"select 1 order by 1", true},
 
 		// for https://github.com/pingcap/tidb/issues/320
@@ -461,6 +462,12 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{`SELECT /*!40001 SQL_NO_CACHE */ * FROM test WHERE 1 limit 0, 2000;`, true},
 
 		{`ANALYZE TABLE t`, true},
+
+		// for comments
+		{`/** 20180417 **/ show databases;`, true},
+		{`/* 20180417 **/ show databases;`, true},
+		{`/** 20180417 */ show databases;`, true},
+		{`/** 20180417 ******/ show databases;`, true},
 
 		// for Binlog stmt
 		{`BINLOG '
@@ -511,6 +518,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{`SHOW EVENTS FROM test_db WHERE definer = 'current_user'`, true},
 		{`SHOW PLUGINS`, true},
 		{`SHOW PROFILES`, true},
+		{`SHOW MASTER STATUS`, true},
+		{`SHOW PRIVILEGES`, true},
 		// for show character set
 		{"show character set;", true},
 		{"show charset", true},
@@ -787,6 +796,7 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`SELECT LOCATE('bar', 'foobarbar', 5);`, true},
 
 		{`SELECT tidb_version();`, true},
+		{`SELECT tidb_is_ddl_owner();`, true},
 
 		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
@@ -1196,14 +1206,28 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select avg(distinctrow all c1) from t;`, true},
 		{`select avg(c2) from t;`, true},
 		{`select bit_and(c1) from t;`, true},
+		{`select bit_and(all c1) from t;`, true},
+		{`select bit_and(distinct c1) from t;`, false},
+		{`select bit_and(distinctrow c1) from t;`, false},
+		{`select bit_and(distinctrow all c1) from t;`, false},
+		{`select bit_and(distinct all c1) from t;`, false},
 		{`select bit_and(), bit_and(distinct c1) from t;`, false},
 		{`select bit_and(), bit_and(distinctrow c1) from t;`, false},
 		{`select bit_and(), bit_and(all c1) from t;`, false},
 		{`select bit_or(c1) from t;`, true},
+		{`select bit_or(all c1) from t;`, true},
+		{`select bit_or(distinct c1) from t;`, false},
+		{`select bit_or(distinctrow c1) from t;`, false},
+		{`select bit_or(distinctrow all c1) from t;`, false},
+		{`select bit_or(distinct all c1) from t;`, false},
 		{`select bit_or(), bit_or(distinct c1) from t;`, false},
 		{`select bit_or(), bit_or(distinctrow c1) from t;`, false},
 		{`select bit_or(), bit_or(all c1) from t;`, false},
 		{`select bit_xor(c1) from t;`, true},
+		{`select bit_xor(all c1) from t;`, true},
+		{`select bit_xor(distinct c1) from t;`, false},
+		{`select bit_xor(distinctrow c1) from t;`, false},
+		{`select bit_xor(distinctrow all c1) from t;`, false},
 		{`select bit_xor(), bit_xor(distinct c1) from t;`, false},
 		{`select bit_xor(), bit_xor(distinctrow c1) from t;`, false},
 		{`select bit_xor(), bit_xor(all c1) from t;`, false},
@@ -1543,7 +1567,24 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table if not exists `t` (`id` int not null auto_increment comment '消息ID', primary key `pk_id` (`id`) );", true},
 		// Create table with like.
 		{"create table a like b", true},
+		{"create table a (like b)", true},
 		{"create table if not exists a like b", true},
+		{"create table if not exists a (like b)", true},
+		{"create table if not exists a like (b)", false},
+		{"create table a (t int) like b", false},
+		{"create table a (t int) like (b)", false},
+		// Create table with select statement
+		{"create table a select * from b", true},
+		{"create table a as select * from b", true},
+		{"create table a (m int, n datetime) as select * from b", true},
+		{"create table a (unique(n)) as select n from b", true},
+		{"create table a ignore as select n from b", true},
+		{"create table a replace as select n from b", true},
+		{"create table a (m int) replace as (select n as m from b union select n+1 as m from c group by 1 limit 2)", true},
+
+		// Create table with no option is valid for parser
+		{"create table a", true},
+
 		{"create table t (a timestamp default now)", false},
 		{"create table t (a timestamp default now())", true},
 		{"create table t (a timestamp default now() on update now)", false},
@@ -1563,6 +1604,13 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
+		{"ALTER TABLE employees ADD PARTITION", true},
+		{"ALTER TABLE employees ADD PARTITION ( PARTITION P1 VALUES LESS THAN (2010))", true},
+		{"ALTER TABLE employees ADD PARTITION ( PARTITION P2 VALUES LESS THAN MAXVALUE)", true},
+		{`ALTER TABLE employees ADD PARTITION (
+				PARTITION P1 VALUES LESS THAN (2010),
+				PARTITION P2 VALUES LESS THAN (2015),
+				PARTITION P3 VALUES LESS THAN MAXVALUE)`, true},
 		{"ALTER TABLE t DISABLE KEYS", true},
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
@@ -1617,6 +1665,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t CONVERT TO CHARSET utf8 COLLATE utf8_bin;", true},
 		{"ALTER TABLE t FORCE", true},
 		{"ALTER TABLE t DROP INDEX;", false},
+		{"ALTER TABLE t DROP COLUMN a CASCADE", true},
+
+		// For #6405
+		{"ALTER TABLE t RENAME KEY a TO b;", true},
+		{"ALTER TABLE t RENAME INDEX a TO b;", true},
 
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
@@ -2047,6 +2100,19 @@ func (s *testParserSuite) TestExplain(c *C) {
 		{"explain update t set id = id + 1 order by id desc;", true},
 		{"explain select c1 from t1 union (select c2 from t2) limit 1, 1", true},
 		{`explain format = "row" select c1 from t1 union (select c2 from t2) limit 1, 1`, true},
+	}
+	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestTrace(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{"trace select c1 from t1", true},
+		{"trace delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", true},
+		{"trace insert into t values (1), (2), (3)", true},
+		{"trace replace into foo values (1 || 2)", true},
+		{"trace update t set id = id + 1 order by id desc;", true},
+		{"trace select c1 from t1 union (select c2 from t2) limit 1, 1", true},
 	}
 	s.RunTest(c, table)
 }
