@@ -120,7 +120,11 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 
 // buildCount builds the AggFunc implementation for function "BIT_OR".
 func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return nil
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	return &bitOrUint64{base}
 }
 
 // buildCount builds the AggFunc implementation for function "BIT_XOR".
