@@ -5,7 +5,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestInsertOnDup(c *C) {
+func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
