@@ -32,11 +32,13 @@ var (
 	_ AggFunc = (*avgOriginal4Float64)(nil)
 	_ AggFunc = (*avgPartial4Float64)(nil)
 
-// All the AggFunc implementations for "FIRSTROW" are listed here.
-// All the AggFunc implementations for "MAX" are listed here.
-// All the AggFunc implementations for "MIN" are listed here.
-// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
-// All the AggFunc implementations for "BIT_OR" are listed here.
+	// All the AggFunc implementations for "FIRSTROW" are listed here.
+	// All the AggFunc implementations for "MAX" are listed here.
+	// All the AggFunc implementations for "MIN" are listed here.
+	// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
+	// All the AggFunc implementations for "BIT_OR" are listed here.
+	_ AggFunc = (*bitOrUint64)(nil)
+
 // All the AggFunc implementations for "BIT_XOR" are listed here.
 // All the AggFunc implementations for "BIT_AND" are listed here.
 )
