@@ -27,7 +27,12 @@ import (
 	"github.com/pingcap/tidb/table"
 )
 
-func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, cols []*table.Column) (*model.PartitionInfo, error) {
+var (
+	maxValue = "MAXVALUE"
+)
+
+// buildTablePartitionInfo build partition info and checks for some errors.
+func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, cols []*table.Column) (*model.PartitionInfo, error) {
 	if s.Partition == nil {
 		return nil, nil
 	}
@@ -86,14 +91,20 @@ func buildCreateTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.Create
 	return pi, nil
 }
 
-func checkCreatePartitionNameUnique(part *model.PartitionInfo) error {
+func checkCreatePartitionNameUnique(tbInfo *model.TableInfo, part *model.PartitionInfo) error {
+	partNames := make(map[string]struct{})
+	if tbInfo.Partition != nil {
+		oldPars := tbInfo.Partition.Definitions
+		for _, oldPar := range oldPars {
+			partNames[strings.ToLower(oldPar.Name)] = struct{}{}
+		}
+	}
 	newPars := part.Definitions
-	set := make(map[string]struct{})
 	for _, newPar := range newPars {
-		if _, ok := set[strings.ToLower(newPar.Name)]; ok {
+		if _, ok := partNames[strings.ToLower(newPar.Name)]; ok {
 			return ErrSameNamePartition.GenByArgs(newPar.Name)
 		}
-		set[strings.ToLower(newPar.Name)] = struct{}{}
+		partNames[strings.ToLower(newPar.Name)] = struct{}{}
 	}
 	return nil
 }
@@ -102,19 +113,19 @@ func checkCreatePartitionNameUnique(part *model.PartitionInfo) error {
 func checkCreatePartitionValue(part *model.PartitionInfo) error {
 	defs := part.Definitions
 	rangeValue := defs[0].LessThan[0]
-	if strings.EqualFold(rangeValue, "MAXVALUE") && len(defs) > 1 {
+	if strings.EqualFold(rangeValue, maxValue) && len(defs) > 1 {
 		return errors.Trace(ErrPartitionMaxvalue)
 	}
 	prevRangeValue, err := strconv.Atoi(rangeValue)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if strings.EqualFold(defs[len(defs)-1].LessThan[0], "MAXVALUE") {
+	if strings.EqualFold(defs[len(defs)-1].LessThan[0], maxValue) {
 		defs = defs[:len(defs)-1]
 	}
 
 	for i := 1; i < len(defs); i++ {
-		if strings.EqualFold(defs[i].LessThan[0], "MAXVALUE") && i != len(defs)-1 {
+		if strings.EqualFold(defs[i].LessThan[0], maxValue) && i != len(defs)-1 {
 			return errors.Trace(ErrPartitionMaxvalue)
 		}
 		currentRangeValue, err := strconv.Atoi(defs[i].LessThan[0])

@@ -839,21 +839,21 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	part, err := buildCreateTablePartitionInfo(ctx, d, s, cols)
+	part, err := buildTablePartitionInfo(ctx, d, s, cols)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	if part != nil && part.Type == model.PartitionTypeRange {
+		err = checkCreatePartitionNameUnique(tbInfo, part)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = checkCreatePartitionValue(part)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		tbInfo.Partition = part
-		err = checkCreatePartitionNameUnique(tbInfo.Partition)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = checkCreatePartitionValue(tbInfo.Partition)
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
 
 	job := &model.Job{
@@ -1225,7 +1225,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	err = checkPartitionNotExists(meta, partInfo)
+	err = checkCreatePartitionNameUnique(meta, partInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
