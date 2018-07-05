@@ -112,9 +112,9 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		}
 	}
 	for _, col := range p.Schema().Columns {
-		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col.Clone()}, false)
+		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
-		schema4Agg.Append(col.Clone().(*expression.Column))
+		schema4Agg.Append(col)
 	}
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
@@ -635,8 +635,9 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 				resultTp = joinFieldType(resultTp, childTp)
 			}
 		}
-		col.RetType = resultTp
-		col.DBName = model.NewCIStr("")
+		unionSchema.Columns[i] = col.Clone().(*expression.Column)
+		unionSchema.Columns[i].RetType = resultTp
+		unionSchema.Columns[i].DBName = model.NewCIStr("")
 	}
 	// If the types of some child don't match the types of union, we add a projection with cast function.
 	for childID, child := range u.children {
@@ -646,10 +647,10 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			dstType := unionSchema.Columns[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
-				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
+				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol, dstType)
 				needProjection = true
 			} else {
-				exprs[i] = srcCol.Clone()
+				exprs[i] = srcCol
 			}
 		}
 		if _, isProj := child.(*LogicalProjection); needProjection || !isProj {
@@ -1886,7 +1887,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 			}
 		}
 		if !exprIsGen {
-			expr = colExpr.Clone()
+			expr = colExpr
 		}
 		proj.Exprs = append(proj.Exprs, expr)
 	}
@@ -2141,7 +2142,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		}
 		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		p = np
-		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
+		newList = append(newList, &expression.Assignment{Col: col, Expr: newExpr})
 	}
 	return newList, p
 }
