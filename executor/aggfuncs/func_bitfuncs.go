@@ -29,16 +29,16 @@ type bitOrUint64 struct {
 
 type partialResult4BitFunc = uint64
 
-func (e *bitOrUint64) AllocPartialResult() PartialResult {
+func (e *baseBitAggFunc) AllocPartialResult() PartialResult {
 	return PartialResult(new(partialResult4BitFunc))
 }
 
-func (e *bitOrUint64) ResetPartialResult(pr PartialResult) {
+func (e *baseBitAggFunc) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4BitFunc)(pr)
 	*p = 0
 }
 
-func (e *bitOrUint64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseBitAggFunc) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4BitFunc)(pr)
 	chk.AppendUint64(e.ordinal, *p)
 	return nil
