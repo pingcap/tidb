@@ -110,7 +110,9 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 	idx := table.Indices[histID]
 	errorRate := ErrorRate{}
 	if isAnalyzed(row.GetInt64(8)) {
-		h.rateMap.clear(table.TableID, histID, true)
+		h.mu.Lock()
+		h.mu.rateMap.clear(table.TableID, histID, true)
+		h.mu.Unlock()
 	} else if idx != nil {
 		errorRate = idx.ErrorRate
 	}
@@ -148,7 +150,9 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 	col := table.Columns[histID]
 	errorRate := ErrorRate{}
 	if isAnalyzed(row.GetInt64(8)) {
-		h.rateMap.clear(table.TableID, histID, false)
+		h.mu.Lock()
+		h.mu.rateMap.clear(table.TableID, histID, false)
+		h.mu.Unlock()
 	} else if col != nil {
 		errorRate = col.ErrorRate
 	}

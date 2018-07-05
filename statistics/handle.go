@@ -38,6 +38,8 @@ type Handle struct {
 		ctx sessionctx.Context
 		// lastVersion is the latest update version before last lease.
 		lastVersion uint64
+		// rateMap contains the error rate delta from feedback.
+		rateMap errorRateDeltaMap
 	}
 
 	restrictedExec sqlexec.RestrictedSQLExecutor
@@ -50,8 +52,6 @@ type Handle struct {
 	listHead *SessionStatsCollector
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap tableDeltaMap
-	// rateMap contains the error rate delta from feedback.
-	rateMap errorRateDeltaMap
 	// feedback is used to store query feedback info.
 	feedback []*QueryFeedback
 
@@ -69,7 +69,7 @@ func (h *Handle) Clear() {
 	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
 	h.listHead = &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)}
 	h.globalMap = make(tableDeltaMap)
-	h.rateMap = make(errorRateDeltaMap)
+	h.mu.rateMap = make(errorRateDeltaMap)
 	h.mu.Unlock()
 }
 
@@ -84,13 +84,13 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		globalMap:  make(tableDeltaMap),
 		Lease:      lease,
 		feedback:   make([]*QueryFeedback, 0, MaxQueryFeedbackCount),
-		rateMap:    make(errorRateDeltaMap),
 	}
 	// It is safe to use it concurrently because the exec won't touch the ctx.
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
 	handle.mu.ctx = ctx
+	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.statsCache.Store(statsCache{})
 	return handle
 }

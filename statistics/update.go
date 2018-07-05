@@ -116,7 +116,9 @@ func (h *Handle) merge(s *SessionStatsCollector) {
 	for id, item := range s.mapper {
 		h.globalMap.update(id, item.Delta, item.Count, &item.ColSize)
 	}
-	h.rateMap.merge(s.rateMap)
+	h.mu.Lock()
+	h.mu.rateMap.merge(s.rateMap)
+	h.mu.Unlock()
 	s.rateMap = make(errorRateDeltaMap)
 	h.feedback = mergeQueryFeedback(h.feedback, s.feedback)
 	s.mapper = make(tableDeltaMap)
@@ -392,8 +394,9 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 
 // UpdateErrorRate updates the error rate of columns from h.rateMap to cache.
 func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
-	tbls := make([]*Table, 0, len(h.rateMap))
-	for id, item := range h.rateMap {
+	h.mu.Lock()
+	tbls := make([]*Table, 0, len(h.mu.rateMap))
+	for id, item := range h.mu.rateMap {
 		table, ok := is.TableByID(id)
 		if !ok {
 			continue
@@ -413,8 +416,9 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 			tbl.Indices[key] = &idx
 		}
 		tbls = append(tbls, tbl)
-		delete(h.rateMap, id)
+		delete(h.mu.rateMap, id)
 	}
+	h.mu.Unlock()
 	h.UpdateTableStats(tbls, nil)
 }
 
