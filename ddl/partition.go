@@ -83,6 +83,9 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 			for _, expr := range def.LessThan {
 				expr.Format(buf)
 				piDef.LessThan = append(piDef.LessThan, buf.String())
+				if strings.EqualFold(buf.String(), maxValue) {
+					piDef.MaxValue = true
+				}
 				buf.Reset()
 			}
 			pi.Definitions = append(pi.Definitions, piDef)
@@ -112,21 +115,19 @@ func checkCreatePartitionNameUnique(tbInfo *model.TableInfo, part *model.Partiti
 // checkCreatePartitionValue checks whether `less than value` is strictly increasing for each partition.
 func checkCreatePartitionValue(part *model.PartitionInfo) error {
 	defs := part.Definitions
-	rangeValue := defs[0].LessThan[0]
-	if strings.EqualFold(rangeValue, maxValue) && len(defs) > 1 {
-		return errors.Trace(ErrPartitionMaxvalue)
+	if len(defs) <= 1 {
+		return nil
 	}
-	prevRangeValue, err := strconv.Atoi(rangeValue)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if strings.EqualFold(defs[len(defs)-1].LessThan[0], maxValue) {
+	if defs[len(defs)-1].MaxValue {
 		defs = defs[:len(defs)-1]
 	}
-
 	for i := 1; i < len(defs); i++ {
-		if strings.EqualFold(defs[i].LessThan[0], maxValue) && i != len(defs)-1 {
+		if defs[i].MaxValue {
 			return errors.Trace(ErrPartitionMaxvalue)
+		}
+		prevRangeValue, err := strconv.Atoi(defs[i-1].LessThan[0])
+		if err != nil {
+			return errors.Trace(err)
 		}
 		currentRangeValue, err := strconv.Atoi(defs[i].LessThan[0])
 		if err != nil {

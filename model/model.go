@@ -287,6 +287,7 @@ type PartitionDefinition struct {
 	ID       int64    `json:"id"`
 	Name     string   `json:"name"`
 	LessThan []string `json:"less_than"`
+	MaxValue bool     `json:"max_value"`
 	Comment  string   `json:"comment,omitempty"`
 }
 
