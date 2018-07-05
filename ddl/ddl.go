@@ -347,7 +347,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 			// TODO: Add the type of DDL worker.
 			metrics.DDLCounter.WithLabelValues(metrics.CreateDDLWorker).Inc()
 
-			// For every start, we will send a fake job to let worker
+			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
 			asyncNotify(worker.ddlJobCh)
 		}
@@ -424,7 +424,7 @@ func checkJobMaxInterval(job *model.Job) time.Duration {
 }
 
 func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
-	// If the workes don't run, we needn't to notice workers.
+	// If the workers don't run, we needn't to notice workers.
 	if !RunWorker {
 		return
 	}
