@@ -549,7 +549,7 @@ func (c *twoPhaseCommitter) cleanupKeys(bo *Backoffer, keys [][]byte) error {
 // The max time a Txn may use (in ms) from its startTS to commitTS.
 // We use it to guarantee GC worker will not influence any active txn. The value
 // should be less than `gcRunInterval`.
-const maxTxnTimeUse = 590000
+const maxTxnTimeUse = 5900000
 
 // execute executes the two-phase commit protocol.
 func (c *twoPhaseCommitter) execute(ctx context.Context) error {
