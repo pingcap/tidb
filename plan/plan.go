@@ -323,6 +323,13 @@ type basePlan struct {
 	stats *statsInfo
 }
 
+func (p *DataSource) cardinality() float64 {
+	if p.statsAfterSelect == nil {
+		return math.MaxFloat64
+	}
+	return p.statsAfterSelect.count
+}
+
 func (p *basePlan) cardinality() float64 {
 	if p.stats == nil {
 		return math.MaxFloat64
