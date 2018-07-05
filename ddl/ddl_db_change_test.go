@@ -697,7 +697,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		return info
 	}
 	d := s.dom.DDL()
-	d.SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(callback)
 
 	// Make sure the connection 1 executes a SQL before the connection 2.
 	// And the connection 2 executes a SQL with an outdated information schema.
@@ -726,5 +726,5 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 	wg.Wait()
 
 	callback = &ddl.TestDDLCallback{}
-	d.SetHook(callback)
+	d.(ddl.DDLForTest).SetHook(callback)
 }

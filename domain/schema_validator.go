@@ -175,7 +175,8 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedTableIDs [
 	if schemaVer < s.latestSchemaVer {
 		// The DDL relatedTableIDs is empty.
 		if len(relatedTableIDs) == 0 {
-			log.Infof("[domain-ddl] the related table ID is empty, checking %d", schemaVer)
+			log.Infof("[domain-ddl] the related table ID is empty, current schema version %d, latest schema version %d",
+				schemaVer, s.latestSchemaVer)
 			return ResultFail
 		}
 
