@@ -652,10 +652,10 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	}
 	isIndex := q.hist.tp.Tp == mysql.TypeBlob
 	id := q.hist.ID
-	if isIndex && (t.Indices[id] == nil || t.Indices[id].IsPseudo() == false) {
+	if isIndex && (t.Indices[id] == nil || t.Indices[id].NotAccurate() == false) {
 		return nil
 	}
-	if !isIndex && (t.Columns[id] == nil || t.Columns[id].IsPseudo() == false) {
+	if !isIndex && (t.Columns[id] == nil || t.Columns[id].NotAccurate() == false) {
 		return nil
 	}
 

@@ -672,9 +672,9 @@ type ErrorRate struct {
 // then the column is not pseudo.
 const MaxErrorRate = 0.25
 
-// IsPseudo is true when the total of query is zero or the average error
+// NotAccurate is true when the total of query is zero or the average error
 // rate is greater than MaxErrorRate.
-func (e *ErrorRate) IsPseudo() bool {
+func (e *ErrorRate) NotAccurate() bool {
 	if e.QueryTotal == 0 {
 		return true
 	}
@@ -698,6 +698,15 @@ type Column struct {
 	Count int64
 	Info  *model.ColumnInfo
 	ErrorRate
+	// Pseudo is true means this column is not loaded from the storage.
+	Pseudo bool
+}
+
+func newPseudoColumn(info *model.ColumnInfo) *Column {
+	return &Column{
+		Info:   info,
+		Pseudo: true,
+	}
 }
 
 func (c *Column) String() string {
@@ -772,6 +781,15 @@ type Index struct {
 	ErrorRate
 	statsVer int64 // statsVer is the version of the current stats, used to maintain compatibility
 	Info     *model.IndexInfo
+	// Pseudo is true means this index is not loaded from the storage.
+	Pseudo bool
+}
+
+func newPseudoIndex(info *model.IndexInfo) *Index {
+	return &Index{
+		Info:   info,
+		Pseudo: true,
+	}
 }
 
 func (idx *Index) String() string {

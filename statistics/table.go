@@ -252,6 +252,12 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool)
 		table = table.copy()
 	}
 	table.Pseudo = false
+	for _, col := range table.Columns {
+		col.Pseudo = false
+	}
+	for _, idx := range table.Indices {
+		idx.Pseudo = false
+	}
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag from mysql.stats_histograms where table_id = %d", tableInfo.ID)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
@@ -339,7 +345,7 @@ func (t *Table) IsOutdated() bool {
 // as need histogram.
 func (coll *HistColl) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool {
 	col, ok := coll.Columns[colID]
-	if !ok || coll.Pseudo && col.IsPseudo() {
+	if !ok || col.Pseudo && col.NotAccurate() {
 		return true
 	}
 	if col.NDV > 0 && col.Len() == 0 {
@@ -419,7 +425,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
-	if idx == nil || t.Pseudo && idx.IsPseudo() || idx.Len() == 0 {
+	if idx == nil || idx.Pseudo && idx.NotAccurate() || idx.Len() == 0 {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -523,12 +529,12 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	}
 	for _, col := range tblInfo.Columns {
 		if col.State == model.StatePublic {
-			t.Columns[col.ID] = &Column{Info: col}
+			t.Columns[col.ID] = newPseudoColumn(col)
 		}
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
-			t.Indices[idx.ID] = &Index{Info: idx}
+			t.Indices[idx.ID] = newPseudoIndex(idx)
 		}
 	}
 	return t
