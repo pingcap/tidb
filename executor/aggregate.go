@@ -844,12 +844,6 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 				return nil
 			}
 		}
-		if e.newAggFuncs != nil {
-			err := e.consumeGroupRows()
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
 	}
 	return nil
 }
@@ -874,10 +868,19 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return nil
 	}
 
+	// Before fetching a new batch of input, we should consume the last group.
+	if e.newAggFuncs != nil {
+		err := e.consumeGroupRows()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	err = e.children[0].Next(ctx, e.childrenResults[0])
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	// No more data.
 	if e.childrenResults[0].NumRows() == 0 {
 		if !e.isChildExecReturnEmpty {
