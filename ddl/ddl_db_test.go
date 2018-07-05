@@ -1613,14 +1613,14 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	);`
 	s.testErrorCode(c, sql3, mysql.ErrPartitionMaxvalue)
 
-	sql4 := `create table employees (
-	id int not null,
-	hired date not null
+	sql4 := `create table t4 (
+	a int not null,
+  	b int not null
 	)
-	partition by range( year(hired) ) (
-		partition p1 values less than maxvalue，
-		partition p3 values less than (1998)
-		partition p3 values less than (2001)
+	partition by range( id ) (
+		partition p1 values less than maxvalue,
+  		partition p2 values less than (1991),
+  		partition p3 values less than (1995)
 	);`
 	s.testErrorCode(c, sql4, mysql.ErrPartitionMaxvalue)
 

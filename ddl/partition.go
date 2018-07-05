@@ -126,7 +126,9 @@ func checkCreatePartitionValue(part *model.PartitionInfo) error {
 			return errors.Trace(ErrPartitionMaxvalue)
 		}
 		prevRangeValue, err := strconv.Atoi(defs[i-1].LessThan[0])
-		if err != nil {
+		if defs[i-1].MaxValue && err != nil {
+			return errors.Trace(ErrPartitionMaxvalue)
+		} else {
 			return errors.Trace(err)
 		}
 		currentRangeValue, err := strconv.Atoi(defs[i].LessThan[0])
