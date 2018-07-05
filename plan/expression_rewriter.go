@@ -57,7 +57,6 @@ func (b *planBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mock
 	defer func() { b.rewriterCounter-- }()
 
 	rewriter := b.getExpressionRewriter(mockPlan)
-	rewriter.inInsertOnDuplicateUpdate = true
 	rewriter.insertPlan = insertPlan
 	rewriter.asScalar = true
 
@@ -99,14 +98,13 @@ func (b *planBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expression
 
 	if len(b.rewriterPool) < b.rewriterCounter {
 		rewriter = &expressionRewriter{
-			p:                         p,
-			b:                         b,
-			ctx:                       b.ctx,
-			aggrMap:                   nil,
-			asScalar:                  false,
-			preprocess:                nil,
-			inInsertOnDuplicateUpdate: false,
-			insertPlan:                nil,
+			p:          p,
+			b:          b,
+			ctx:        b.ctx,
+			aggrMap:    nil,
+			asScalar:   false,
+			preprocess: nil,
+			insertPlan: nil,
 		}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
@@ -119,7 +117,6 @@ func (b *planBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expression
 	rewriter.preprocess = nil
 	rewriter.ctxStack = rewriter.ctxStack[:0]
 	rewriter.insertPlan = nil
-	rewriter.inInsertOnDuplicateUpdate = false
 	return
 }
 
@@ -157,8 +154,9 @@ type expressionRewriter struct {
 	// preprocess is called for every ast.Node in Leave.
 	preprocess func(ast.Node) ast.Node
 
-	inInsertOnDuplicateUpdate bool
-	insertPlan                *Insert
+	// insertPlan is only used to rewrite the expressions inside the assignment
+	// of the "INSERT" statement.
+	insertPlan *Insert
 }
 
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
@@ -282,7 +280,10 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 	case *ast.ParenthesesExpr:
 	case *ast.ValuesExpr:
 		schema := er.schema
-		if er.inInsertOnDuplicateUpdate {
+		// NOTE: "er.insertPlan != nil" means that we are rewriting the
+		// expressions inside the assignment of "INSERT" statement. we have to
+		// use the "tableSchema" of that "insertPlan".
+		if er.insertPlan != nil {
 			schema = er.insertPlan.tableSchema
 		}
 		col, err := schema.FindColumn(v.Column.Name)

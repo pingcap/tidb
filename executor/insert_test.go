@@ -5,14 +5,9 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite) TestInsetOnDup(c *C) {
+func (s *testSuite) TestInsertOnDup(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a YEAR, PRIMARY KEY(a));")
-	tk.MustExec("insert into t set a = '2151';")
-	tk.MustExec("delete from t;")
-	tk.MustExec("admin check table t")
 
 	tk.MustExec(`drop table if exists t1, t2;`)
 	tk.MustExec(`create table t1(a1 bigint primary key, b1 bigint);`)

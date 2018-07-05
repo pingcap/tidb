@@ -250,12 +250,15 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow types.DatumRow, newRow 
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(newRow)
+
+	// NOTE: In order to execute the expression inside the column assignment,
+	// we have to put the value of "oldRow" before "newRow" in "row4Update" to
+	// be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
 	row4Update := make(types.DatumRow, 0, len(oldRow)+len(newRow))
 	row4Update = append(row4Update, oldRow...)
 	row4Update = append(row4Update, newRow...)
 
-	// Update old row when key is duplicated.
-	// Update generated columns in old row after old row is updated.
+	// Update old row when the key is duplicated.
 	for _, col := range cols {
 		val, err1 := col.Expr.Eval(row4Update)
 		if err1 != nil {
