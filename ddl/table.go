@@ -418,7 +418,7 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	err = checkCreatePartitionNameUnique(tblInfo, partInfo)
+	err = checkPartitionNameUnique(tblInfo, partInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

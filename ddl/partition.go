@@ -94,7 +94,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	return pi, nil
 }
 
-func checkCreatePartitionNameUnique(tbInfo *model.TableInfo, part *model.PartitionInfo) error {
+func checkPartitionNameUnique(tbInfo *model.TableInfo, part *model.PartitionInfo) error {
 	partNames := make(map[string]struct{})
 	if tbInfo.Partition != nil {
 		oldPars := tbInfo.Partition.Definitions
