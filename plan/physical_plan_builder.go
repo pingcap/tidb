@@ -400,6 +400,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	// Add filter condition to table plan now.
 	indexConds, tableConds := path.indexFilters, path.tableFilters
 	if indexConds != nil {
+		copTask.cst += copTask.count() * cpuFactor
 		count := path.countAfterAccess
 		if count >= 1.0 {
 			selectivity := path.countAfterIndex / path.countAfterAccess
@@ -409,14 +410,13 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx, stats)
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
-		copTask.cst += copTask.count() * cpuFactor
 	}
 	if tableConds != nil {
 		copTask.finishIndexPlan()
+		copTask.cst += copTask.count() * cpuFactor
 		tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.statsAfterSelect.scaleByExpectCnt(expectedCnt))
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
-		copTask.cst += copTask.count() * cpuFactor
 	}
 }
 
@@ -568,10 +568,9 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *statsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
+		copTask.cst += copTask.count() * cpuFactor
 		sel := PhysicalSelection{Conditions: ts.filterCondition}.init(ts.ctx, stats)
 		sel.SetChildren(ts)
 		copTask.tablePlan = sel
-		// FIXME: It seems wrong...
-		copTask.cst += copTask.count() * cpuFactor
 	}
 }
