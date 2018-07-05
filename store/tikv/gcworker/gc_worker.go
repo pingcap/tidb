@@ -115,11 +115,6 @@ const (
 	gcMaxConcurrency     = 128
 	// We don't want gc to sweep out the cached info belong to other processes, like coprocessor.
 	gcScanLockLimit = tikv.ResolvedCacheSize / 2
-
-	gcModeKey         = "tikv_gc_mode"
-	gcModeLegacy      = 0
-	gcModeDistributed = 1
-	gcModeDefault     = gcModeLegacy
 )
 
 var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
@@ -133,7 +128,6 @@ var gcVariableComments = map[string]string{
 	gcLifeTimeKey:    "All versions within life time will not be collected by GC, at least 10m, in Go format.",
 	gcSafePointKey:   "All versions after safe point can be accessed. (DO NOT EDIT)",
 	gcConcurrencyKey: "How many go routines used to do GC parallel, [1, 128], default 2",
-	gcModeKey:        "0: Legacy(Default); 1: Distributed. You may also need to update config of TiKV.",
 }
 
 func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
@@ -228,7 +222,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 		return nil
 	}
 
-	ok, mode, safePoint, err := w.prepare()
+	ok, safePoint, err := w.prepare()
 	if err != nil || !ok {
 		if err != nil {
 			gcJobFailureCounter.WithLabelValues("prepare").Inc()
@@ -245,38 +239,34 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 
 	w.gcIsRunning = true
 	log.Infof("[gc worker] %s starts the whole job, safePoint: %v", w.uuid, safePoint)
-	go w.runGCJob(ctx, safePoint, mode)
+	go w.runGCJob(ctx, safePoint)
 	return nil
 }
 
 // prepare checks required conditions for starting a GC job. It returns a bool
 // that indicates whether the GC job should start and the new safePoint.
-func (w *GCWorker) prepare() (ok bool, mode int, safePoint uint64, err error) {
+func (w *GCWorker) prepare() (bool, uint64, error) {
 	now, err := w.getOracleTime()
 	if err != nil {
-		return false, gcModeDefault, 0, errors.Trace(err)
+		return false, 0, errors.Trace(err)
 	}
-	ok, err = w.checkGCInterval(now)
+	ok, err := w.checkGCInterval(now)
 	if err != nil || !ok {
-		return false, gcModeDefault, 0, errors.Trace(err)
+		return false, 0, errors.Trace(err)
 	}
 	newSafePoint, err := w.calculateNewSafePoint(now)
 	if err != nil || newSafePoint == nil {
-		return false, gcModeDefault, 0, errors.Trace(err)
+		return false, 0, errors.Trace(err)
 	}
 	err = w.saveTime(gcLastRunTimeKey, now, w.session)
 	if err != nil {
-		return false, gcModeDefault, 0, errors.Trace(err)
+		return false, 0, errors.Trace(err)
 	}
 	err = w.saveTime(gcSafePointKey, *newSafePoint, w.session)
 	if err != nil {
-		return false, gcModeDefault, 0, errors.Trace(err)
+		return false, 0, errors.Trace(err)
 	}
-	mode, err = w.loadGCModeWithDefault()
-	if err != nil {
-		return false, gcModeDefault, 0, errors.Trace(err)
-	}
-	return true, mode, oracle.ComposeTS(oracle.GetPhysical(*newSafePoint), 0), nil
+	return true, oracle.ComposeTS(oracle.GetPhysical(*newSafePoint), 0), nil
 }
 
 func (w *GCWorker) getOracleTime() (time.Time, error) {
@@ -325,7 +315,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	return &safePoint, nil
 }
 
-func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, mode int) {
+func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 	gcWorkerCounter.WithLabelValues("run_job").Inc()
 	err := w.resolveLocks(ctx, safePoint)
 	if err != nil {
@@ -341,26 +331,15 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, mode int) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	switch mode {
-	case gcModeDistributed:
-		err = w.syncSafePointWithPd(ctx, safePoint)
-		if err != nil {
-			log.Errorf("[gc worker] %s failed to upload safe point to PD: %v", w.uuid, errors.ErrorStack(err))
-			w.gcIsRunning = false
-			gcJobFailureCounter.WithLabelValues("upload_safe_point").Inc()
-			w.done <- errors.Trace(err)
-			return
-		}
-	default:
-		err = w.doGC(ctx, safePoint)
-		if err != nil {
-			log.Errorf("[gc worker] %s do GC returns an error %v", w.uuid, errors.ErrorStack(err))
-			w.gcIsRunning = false
-			gcJobFailureCounter.WithLabelValues("gc").Inc()
-			w.done <- errors.Trace(err)
-			return
-		}
+	err = w.syncSafePointWithPd(ctx, safePoint)
+	if err != nil {
+		log.Errorf("[gc worker] %s failed to upload safe point to PD: %v", w.uuid, errors.ErrorStack(err))
+		w.gcIsRunning = false
+		gcJobFailureCounter.WithLabelValues("upload_safe_point").Inc()
+		w.done <- errors.Trace(err)
+		return
 	}
+
 	w.done <- nil
 }
 
@@ -430,30 +409,6 @@ func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
 	}
 
 	return jobConcurrency, nil
-}
-
-func (w *GCWorker) loadGCModeWithDefault() (int, error) {
-	str, err := w.loadValueFromSysTable(gcModeKey, w.session)
-	if err != nil {
-		return gcModeDefault, errors.Trace(err)
-	}
-	if str == "" {
-		err = w.saveValueToSysTable(gcModeKey, strconv.Itoa(gcModeDefault), w.session)
-		if err != nil {
-			return gcModeDefault, errors.Trace(err)
-		}
-		return gcModeDefault, nil
-	}
-
-	mode, err := strconv.Atoi(str)
-	if err != nil {
-		return gcModeDefault, err
-	}
-
-	if mode != gcModeLegacy && mode != gcModeDistributed {
-		mode = gcModeLegacy
-	}
-	return mode, nil
 }
 
 func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
