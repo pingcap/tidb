@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 )
 
 // Build is used to build a specific AggFunc implementation according to the
@@ -120,6 +121,15 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 
 // buildCount builds the AggFunc implementation for function "BIT_OR".
 func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	// BIT_OR doesn't need to handle the distinct property.
+	switch aggFuncDesc.Args[0].GetType().EvalType() {
+	case types.ETInt:
+		base := baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		}
+		return &bitOrUint64{baseBitAggFunc{base}}
+	}
 	return nil
 }
 
