@@ -1632,6 +1632,19 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 		 PARTITION p0 VALUES LESS THAN (6 , 10)
 	);`
 	s.testErrorCode(c, sql5, mysql.ErrTooManyValues)
+
+	sql6 := `create table t6 (
+	a int not null,
+  	b int not null
+	)
+	partition by range( id ) (
+		partition p1 values less than (1991),
+		partition p2 values less than maxvalue,
+  		partition p3 values less than maxvalue,
+  		partition p4 values less than (1995),
+		partition p5 values less than maxvalue
+	);`
+	s.testErrorCode(c, sql6, mysql.ErrPartitionMaxvalue)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
