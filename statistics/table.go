@@ -42,8 +42,7 @@ const (
 
 // Table represents statistics for a table.
 type Table struct {
-	*HistColl
-	TableID     int64
+	HistColl
 	ModifyCount int64 // Total modify count in a table.
 	Version     uint64
 	Pseudo      bool
@@ -52,7 +51,7 @@ type Table struct {
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
-	TblID       int64
+	TableID     int64
 	HaveTblID   bool
 	Columns     map[int64]*Column
 	Indices     map[int64]*Index
@@ -62,8 +61,8 @@ type HistColl struct {
 }
 
 func (t *Table) copy() *Table {
-	newHistColl := &HistColl{
-		TblID:       t.TblID,
+	newHistColl := HistColl{
+		TableID:     t.TableID,
 		HaveTblID:   t.HaveTblID,
 		Count:       t.Count,
 		Columns:     make(map[int64]*Column),
@@ -85,7 +84,6 @@ func (t *Table) copy() *Table {
 	}
 	nt := &Table{
 		HistColl:    newHistColl,
-		TableID:     t.TableID,
 		ModifyCount: t.ModifyCount,
 		Version:     t.Version,
 		Pseudo:      t.Pseudo,
@@ -235,8 +233,8 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool)
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if !ok {
-		histColl := &HistColl{
-			TblID:       tableInfo.ID,
+		histColl := HistColl{
+			TableID:     tableInfo.ID,
 			HaveTblID:   true,
 			Columns:     make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices:     make(map[int64]*Index, len(tableInfo.Indices)),
@@ -244,7 +242,6 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool)
 			colName2ID:  make(map[string]int64),
 		}
 		table = &Table{
-			TableID:  tableInfo.ID,
 			HistColl: histColl,
 		}
 	} else {
@@ -350,7 +347,7 @@ func (coll *HistColl) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64)
 	}
 	if col.NDV > 0 && col.Len() == 0 {
 		sc.SetHistogramsNotLoad()
-		histogramNeededColumns.insert(tableColumnID{tableID: coll.TblID, columnID: colID})
+		histogramNeededColumns.insert(tableColumnID{tableID: coll.TableID, columnID: colID})
 	}
 	return col.totalRowCount() == 0 || (col.NDV > 0 && col.Len() == 0)
 }
@@ -516,14 +513,15 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index,
 
 // PseudoTable creates a pseudo table statistics.
 func PseudoTable(tblInfo *model.TableInfo) *Table {
-	pseudoHistColl := &HistColl{
-		Count:   pseudoRowCount,
-		Columns: make(map[int64]*Column, len(tblInfo.Columns)),
-		Indices: make(map[int64]*Index, len(tblInfo.Indices)),
+	pseudoHistColl := HistColl{
+		Count:     pseudoRowCount,
+		TableID:   tblInfo.ID,
+		HaveTblID: true,
+		Columns:   make(map[int64]*Column, len(tblInfo.Columns)),
+		Indices:   make(map[int64]*Index, len(tblInfo.Indices)),
 	}
 	t := &Table{
 		HistColl:   pseudoHistColl,
-		TableID:    tblInfo.ID,
 		Pseudo:     true,
 		PKIsHandle: tblInfo.PKIsHandle,
 	}

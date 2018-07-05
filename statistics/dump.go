@@ -159,8 +159,8 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 
 // LoadStatsFromJSONToTable load statistic from JSONTable and return the Table of statistic.
 func (h *Handle) LoadStatsFromJSONToTable(tableInfo *model.TableInfo, jsonTbl *JSONTable) (*Table, error) {
-	newHistColl := &HistColl{
-		TblID:     tableInfo.ID,
+	newHistColl := HistColl{
+		TableID:   tableInfo.ID,
 		HaveTblID: true,
 		Count:     jsonTbl.Count,
 		Columns:   make(map[int64]*Column, len(jsonTbl.Columns)),
@@ -168,7 +168,6 @@ func (h *Handle) LoadStatsFromJSONToTable(tableInfo *model.TableInfo, jsonTbl *J
 	}
 	tbl := &Table{
 		HistColl:    newHistColl,
-		TableID:     tableInfo.ID,
 		ModifyCount: jsonTbl.ModifyCount,
 	}
 	for id, jsonIdx := range jsonTbl.Indices {

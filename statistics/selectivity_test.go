@@ -97,8 +97,8 @@ func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.
 }
 
 func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
-	histColl := &statistics.HistColl{
-		TblID:     tbl.ID,
+	histColl := statistics.HistColl{
+		TableID:   tbl.ID,
 		HaveTblID: true,
 		Count:     rowCount,
 		Columns:   make(map[int64]*statistics.Column, len(tbl.Columns)),
@@ -106,7 +106,6 @@ func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
 	}
 	statsTbl := &statistics.Table{
 		HistColl: histColl,
-		TableID:  tbl.ID,
 	}
 	return statsTbl
 }

@@ -455,7 +455,7 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data), Info: &model.ColumnInfo{}}
 	tbl := &Table{
-		HistColl: &HistColl{
+		HistColl: HistColl{
 			Count:   int64(col.totalRowCount()),
 			Columns: make(map[int64]*Column),
 		},
@@ -524,7 +524,7 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	c.Check(rowCount, Equals, int64(100000))
 	col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}}
 	tbl := &Table{
-		HistColl: &HistColl{
+		HistColl: HistColl{
 			Count:   int64(col.totalRowCount()),
 			Columns: make(map[int64]*Column),
 		},
@@ -616,7 +616,7 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 	idxInfo := &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}}
 	idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 	tbl := &Table{
-		HistColl: &HistColl{
+		HistColl: HistColl{
 			Count:   int64(idx.totalRowCount()),
 			Indices: make(map[int64]*Index),
 		},
