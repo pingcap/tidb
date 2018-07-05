@@ -74,6 +74,41 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
+// TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
+func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, index idx (id))")
+
+	var checkErr error
+	prevState := model.StateNone
+	callback := &ddl.TestDDLCallback{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState == prevState || checkErr != nil {
+			return
+		}
+		if job.SchemaState != model.StatePublic {
+			result := tk.MustQuery("show create table t")
+			got := result.Rows()[0][1]
+			var expected string
+			if job.Type == model.ActionAddIndex {
+				expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+			} else if job.Type == model.ActionAddColumn {
+				expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`),\n  KEY `idx1` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+			}
+			if got != expected {
+				checkErr = errors.Errorf("got %s, expected %s", got, expected)
+			}
+		}
+	}
+	d := s.dom.DDL()
+	d.(ddl.DDLForTest).SetHook(callback)
+	tk.MustExec("alter table t add index idx1(id)")
+	c.Assert(checkErr, IsNil)
+	tk.MustExec("alter table t add column c int")
+	c.Assert(checkErr, IsNil)
+}
+
 func (s *testStateChangeSuite) TestTwoStates(c *C) {
 	cnt := 5
 	// New the testExecInfo.
