@@ -41,8 +41,12 @@ type mockSessionManager struct {
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager) ShowProcessList() []util.ProcessInfo {
-	return msm.PS
+func (msm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
+	ret := make(map[uint64]util.ProcessInfo)
+	for _, item := range msm.PS {
+		ret[item.ID] = item
+	}
+	return ret
 }
 
 // Kill implements the SessionManager.Kill interface.
