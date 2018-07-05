@@ -1383,6 +1383,20 @@ func (d *MyDecimal) Compare(to *MyDecimal) int {
 	return 1
 }
 
+// DecimalNeg reverses decimal's sign.
+func DecimalNeg(from *MyDecimal) *MyDecimal {
+	to := *from
+	if from.IsZero() {
+		return &to
+	}
+	if from.IsNegative() {
+		to.negative = false
+	} else {
+		to.negative = true
+	}
+	return &to
+}
+
 // DecimalAdd adds two decimals, sets the result to 'to'.
 func DecimalAdd(from1, from2, to *MyDecimal) error {
 	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)

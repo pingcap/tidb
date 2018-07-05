@@ -254,7 +254,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte,
 		case mysql.TypeDouble:
 			buffer = dumpUint64(buffer, math.Float64bits(row.GetFloat64(i)))
 		case mysql.TypeNewDecimal:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
+			buffer = dumpLengthEncodedString(buffer, hack.Slice(string(row.GetMyDecimal(i).ToString())))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 			buffer = dumpLengthEncodedString(buffer, row.GetBytes(i))
@@ -312,7 +312,7 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, e
 			tmp = appendFormatFloat(tmp[:0], row.GetFloat64(i), prec, 64)
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeNewDecimal:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetMyDecimal(i).String()))
+			buffer = dumpLengthEncodedString(buffer, hack.Slice(string(row.GetMyDecimal(i).ToString())))
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 			buffer = dumpLengthEncodedString(buffer, row.GetBytes(i))
