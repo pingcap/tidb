@@ -744,19 +744,22 @@ func (e *HashAggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateCon
 type StreamAggExec struct {
 	baseExecutor
 
-	executed     bool
-	hasData      bool
-	StmtCtx      *stmtctx.StatementContext
-	AggFuncs     []aggregation.Aggregation
-	aggCtxs      []*aggregation.AggEvaluateContext
-	GroupByItems []expression.Expression
-	curGroupKey  []types.Datum
-	tmpGroupKey  []types.Datum
+	executed bool
+	// isChildExecReturnEmpty indicates whether the child executor only returns an empty input.
+	isChildExecReturnEmpty bool
+	StmtCtx                *stmtctx.StatementContext
+	AggFuncs               []aggregation.Aggregation
+	aggCtxs                []*aggregation.AggEvaluateContext
+	GroupByItems           []expression.Expression
+	curGroupKey            []types.Datum
+	tmpGroupKey            []types.Datum
 
 	inputIter  *chunk.Iterator4Chunk
 	inputRow   chunk.Row
 	mutableRow chunk.MutRow
 	rowBuffer  []types.Datum
+
+	defaultVal *chunk.Chunk
 
 	// for the new execution framework of aggregate functions
 	newAggFuncs    []aggfuncs.AggFunc
@@ -771,7 +774,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	}
 
 	e.executed = false
-	e.hasData = false
+	e.isChildExecReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childrenResults[0])
 	e.inputRow = e.inputIter.End()
 	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
@@ -866,30 +869,28 @@ func (e *StreamAggExec) consumeGroupRows() error {
 	return nil
 }
 
-func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk) error {
+func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.inputRow != e.inputIter.End() {
 		return nil
 	}
 
-	err := e.children[0].Next(ctx, e.childrenResults[0])
+	err = e.children[0].Next(ctx, e.childrenResults[0])
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// No more data.
 	if e.childrenResults[0].NumRows() == 0 {
-		if e.hasData || len(e.GroupByItems) == 0 {
-			err := e.appendResult2Chunk(chk)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		if !e.isChildExecReturnEmpty {
+			err = e.appendResult2Chunk(chk)
+		} else if e.defaultVal != nil {
+			chk.Append(e.defaultVal, 0, 1)
 		}
 		e.executed = true
-		return nil
+		return errors.Trace(err)
 	}
-
 	// Reach here, "e.childrenResults[0].NumRows() > 0" is guaranteed.
+	e.isChildExecReturnEmpty = false
 	e.inputRow = e.inputIter.Begin()
-	e.hasData = true
 	return nil
 }
 
