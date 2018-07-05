@@ -137,6 +137,25 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	return vars.SetSystemVar(name, sVal)
 }
 
+// ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
+func ValidateGetSystemVar(name string, isGlobal bool) error {
+	sysVar, exists := SysVars[name]
+	if !exists {
+		return UnknownSystemVar.GenByArgs(name)
+	}
+	switch sysVar.Scope {
+	case ScopeGlobal, ScopeNone:
+		if !isGlobal {
+			return ErrIncorrectScope.GenByArgs(name, "GLOBAL")
+		}
+	case ScopeSession:
+		if isGlobal {
+			return ErrIncorrectScope.GenByArgs(name, "SESSION")
+		}
+	}
+	return nil
+}
+
 // TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
 func TiDBOptOn(opt string) bool {
 	return strings.EqualFold(opt, "ON") || opt == "1"
