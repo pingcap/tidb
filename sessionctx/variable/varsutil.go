@@ -27,6 +27,20 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
+// Max worker count is maxDDLReorgWorkerCount.
+func SetDDLReorgWorkerCounter(cnt int32) {
+	if cnt > maxDDLReorgWorkerCount {
+		cnt = maxDDLReorgWorkerCount
+	}
+	atomic.StoreInt32(&ddlReorgWorkerCounter, cnt)
+}
+
+// GetDDLReorgWorkerCounter gets ddlReorgWorkerCounter.
+func GetDDLReorgWorkerCounter() int32 {
+	return atomic.LoadInt32(&ddlReorgWorkerCounter)
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -121,6 +135,25 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 		return errors.Trace(err)
 	}
 	return vars.SetSystemVar(name, sVal)
+}
+
+// ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
+func ValidateGetSystemVar(name string, isGlobal bool) error {
+	sysVar, exists := SysVars[name]
+	if !exists {
+		return UnknownSystemVar.GenByArgs(name)
+	}
+	switch sysVar.Scope {
+	case ScopeGlobal, ScopeNone:
+		if !isGlobal {
+			return ErrIncorrectScope.GenByArgs(name, "GLOBAL")
+		}
+	case ScopeSession:
+		if isGlobal {
+			return ErrIncorrectScope.GenByArgs(name, "SESSION")
+		}
+	}
+	return nil
 }
 
 // TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.

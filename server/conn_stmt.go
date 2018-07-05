@@ -80,7 +80,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 			}
 		}
 
-		if err := cc.writeEOF(false); err != nil {
+		if err := cc.writeEOF(0); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -95,7 +95,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 			}
 		}
 
-		if err := cc.writeEOF(false); err != nil {
+		if err := cc.writeEOF(0); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -119,8 +119,20 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 	flag := data[pos]
 	pos++
-	// Now we only support CURSOR_TYPE_NO_CURSOR flag.
-	if flag != 0 {
+	// Please refer to https://dev.mysql.com/doc/internals/en/com-stmt-execute.html
+	// The client indicates that it wants to use cursor by setting this flag.
+	// 0x00 CURSOR_TYPE_NO_CURSOR
+	// 0x01 CURSOR_TYPE_READ_ONLY
+	// 0x02 CURSOR_TYPE_FOR_UPDATE
+	// 0x04 CURSOR_TYPE_SCROLLABLE
+	// Now we only support forward-only, read-only cursor.
+	var useCursor bool
+	switch flag {
+	case 0:
+		useCursor = false
+	case 1:
+		useCursor = true
+	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag %d", flag)
 	}
 
@@ -172,7 +184,58 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		return errors.Trace(cc.writeOK())
 	}
 
-	return errors.Trace(cc.writeResultset(ctx, rs, true, false))
+	// if the client wants to use cursor
+	// we should hold the ResultSet in PreparedStatement for next stmt_fetch, and only send back ColumnInfo.
+	// Tell the client cursor exists in server by setting proper serverStatus.
+	if useCursor {
+		stmt.StoreResultSet(rs)
+		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// explicitly flush columnInfo to client.
+		return errors.Trace(cc.flush())
+	}
+	return errors.Trace(cc.writeResultset(ctx, rs, true, 0, 0))
+}
+
+// maxFetchSize constants
+const (
+	maxFetchSize = 1024
+)
+
+func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
+
+	stmtID, fetchSize, err := parseStmtFetchCmd(data)
+	if err != nil {
+		return err
+	}
+
+	stmt := cc.ctx.GetStatement(int(stmtID))
+	if stmt == nil {
+		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
+			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch")
+	}
+	rs := stmt.GetResultSet()
+	if rs == nil {
+		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
+			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs")
+	}
+
+	return errors.Trace(cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize)))
+}
+
+func parseStmtFetchCmd(data []byte) (uint32, uint32, error) {
+	if len(data) != 8 {
+		return 0, 0, mysql.ErrMalformPacket
+	}
+	// Please refer to https://dev.mysql.com/doc/internals/en/com-stmt-fetch.html
+	stmtID := binary.LittleEndian.Uint32(data[0:4])
+	fetchSize := binary.LittleEndian.Uint32(data[4:8])
+	if fetchSize > maxFetchSize {
+		fetchSize = maxFetchSize
+	}
+	return stmtID, fetchSize, nil
 }
 
 func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTypes, paramValues []byte) (err error) {
@@ -480,7 +543,7 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 	default:
 		return mysql.ErrMalformPacket
 	}
-	if err = cc.writeEOF(false); err != nil {
+	if err = cc.writeEOF(0); err != nil {
 		return errors.Trace(err)
 	}
 

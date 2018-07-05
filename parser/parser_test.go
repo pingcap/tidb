@@ -451,7 +451,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select 1 from dual limit 1", true},
 		{"select 1 where exists (select 2)", false},
 		{"select 1 from dual where not exists (select 2)", true},
-
+		{"select 1 as a from dual order by a", true},
+		{"select 1 as a from dual where 1 < any (select 2) order by a", true},
 		{"select 1 order by 1", true},
 
 		// for https://github.com/pingcap/tidb/issues/320
@@ -1566,7 +1567,24 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table if not exists `t` (`id` int not null auto_increment comment '消息ID', primary key `pk_id` (`id`) );", true},
 		// Create table with like.
 		{"create table a like b", true},
+		{"create table a (like b)", true},
 		{"create table if not exists a like b", true},
+		{"create table if not exists a (like b)", true},
+		{"create table if not exists a like (b)", false},
+		{"create table a (t int) like b", false},
+		{"create table a (t int) like (b)", false},
+		// Create table with select statement
+		{"create table a select * from b", true},
+		{"create table a as select * from b", true},
+		{"create table a (m int, n datetime) as select * from b", true},
+		{"create table a (unique(n)) as select n from b", true},
+		{"create table a ignore as select n from b", true},
+		{"create table a replace as select n from b", true},
+		{"create table a (m int) replace as (select n as m from b union select n+1 as m from c group by 1 limit 2)", true},
+
+		// Create table with no option is valid for parser
+		{"create table a", true},
+
 		{"create table t (a timestamp default now)", false},
 		{"create table t (a timestamp default now())", true},
 		{"create table t (a timestamp default now() on update now)", false},
@@ -1586,6 +1604,13 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
+		{"ALTER TABLE employees ADD PARTITION", true},
+		{"ALTER TABLE employees ADD PARTITION ( PARTITION P1 VALUES LESS THAN (2010))", true},
+		{"ALTER TABLE employees ADD PARTITION ( PARTITION P2 VALUES LESS THAN MAXVALUE)", true},
+		{`ALTER TABLE employees ADD PARTITION (
+				PARTITION P1 VALUES LESS THAN (2010),
+				PARTITION P2 VALUES LESS THAN (2015),
+				PARTITION P3 VALUES LESS THAN MAXVALUE)`, true},
 		{"ALTER TABLE t DISABLE KEYS", true},
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
