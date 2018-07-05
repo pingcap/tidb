@@ -1017,6 +1017,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		})
 	}
 
+	insertPlan.Schema4OnDuplicate = insertPlan.tableSchema
 	if insert.Select != nil {
 		selectPlan := b.build(insert.Select)
 		if b.err != nil {
@@ -1038,8 +1039,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 
 		insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, insertPlan.SelectPlan.Schema())
-	} else {
-		insertPlan.Schema4OnDuplicate = insertPlan.tableSchema
 	}
 
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)

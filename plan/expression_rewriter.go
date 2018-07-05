@@ -97,26 +97,18 @@ func (b *planBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expression
 	}()
 
 	if len(b.rewriterPool) < b.rewriterCounter {
-		rewriter = &expressionRewriter{
-			p:          p,
-			b:          b,
-			ctx:        b.ctx,
-			aggrMap:    nil,
-			asScalar:   false,
-			preprocess: nil,
-			insertPlan: nil,
-		}
+		rewriter = &expressionRewriter{p: p, b: b, ctx: b.ctx}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
 	}
 
 	rewriter = b.rewriterPool[b.rewriterCounter-1]
 	rewriter.p = p
-	rewriter.aggrMap = nil
 	rewriter.asScalar = false
+	rewriter.aggrMap = nil
 	rewriter.preprocess = nil
-	rewriter.ctxStack = rewriter.ctxStack[:0]
 	rewriter.insertPlan = nil
+	rewriter.ctxStack = rewriter.ctxStack[:0]
 	return
 }
 
