@@ -481,8 +481,8 @@ func (w *HashAggFinalWorker) consumeIntermData(sc *stmtctx.StatementContext) (er
 
 func (w *HashAggFinalWorker) getFinalResult(sc *stmtctx.StatementContext) {
 	groupIter := w.groupSet.NewIterator()
-	result, ok := <-w.finalResultHolderCh
-	if !ok {
+	result, finished := w.receiveFinalResultHolder()
+	if finished {
 		return
 	}
 	result.Reset()
@@ -503,12 +503,21 @@ func (w *HashAggFinalWorker) getFinalResult(sc *stmtctx.StatementContext) {
 		result.AppendRow(w.mutableRow.ToRow())
 		if result.NumRows() == w.maxChunkSize {
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
-			result, ok = <-w.finalResultHolderCh
-			if !ok {
+			result, finished = w.receiveFinalResultHolder()
+			if finished {
 				return
 			}
 			result.Reset()
 		}
+	}
+}
+
+func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
+	select {
+	case <-w.finishCh:
+		return nil, true
+	case result, ok := <-w.finalResultHolderCh:
+		return result, !ok
 	}
 }
 
@@ -832,12 +841,6 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 				return nil
 			}
 		}
-		if e.newAggFuncs != nil {
-			err := e.consumeGroupRows()
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
 	}
 	return nil
 }
@@ -860,6 +863,14 @@ func (e *StreamAggExec) consumeGroupRows() error {
 func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Chunk) error {
 	if e.inputRow != e.inputIter.End() {
 		return nil
+	}
+
+	// Before fetching a new batch of input, we should consume the last group.
+	if e.newAggFuncs != nil {
+		err := e.consumeGroupRows()
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	err := e.children[0].Next(ctx, e.childrenResults[0])
