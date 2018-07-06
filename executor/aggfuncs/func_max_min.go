@@ -20,10 +20,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-type partialResult4MaxMinInt int64
-type partialResult4MaxMinDecimal *types.MyDecimal
-type partialResult4MaxMinFloat32 float32
-type partialResult4MaxMinFloat64 float64
+type partialResult4MaxMinInt = int64
+type partialResult4MaxMinUint = uint64
+type partialResult4MaxMinDecimal = *types.MyDecimal
+type partialResult4MaxMinFloat32 = float32
+type partialResult4MaxMinFloat64 = float64
 
 // Todo
 type partialResult4MaxMinString string
@@ -31,11 +32,18 @@ type partialResult4MaxMinDatetime types.Time
 type partialResult4MaxMinTimestamp types.Time
 type partialResult4MaxMinDuration types.Duration
 
-type maxMin4Int struct {
+type baseMaxMinAggFunc struct {
 	baseAggFunc
 
-	isMax      bool
-	isUnsigned bool
+	isMax bool
+	// executed is used to indicates whether the partial result
+	// is the initialization value which should not be compared
+	// during evaluation.
+	executed bool
+}
+
+type maxMin4Int struct {
+	baseMaxMinAggFunc
 }
 
 func (e *maxMin4Int) AllocPartialResult() PartialResult {
@@ -47,17 +55,12 @@ func (e *maxMin4Int) ResetPartialResult(pr PartialResult) {
 }
 
 func (e *maxMin4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
-	if !e.isUnsigned {
-		chk.AppendInt64(e.ordinal, int64(*(*partialResult4MaxMinInt)(pr)))
-	} else {
-		chk.AppendUint64(e.ordinal, uint64(*(*partialResult4MaxMinInt)(pr)))
-	}
-
+	chk.AppendInt64(e.ordinal, *(*partialResult4MaxMinInt)(pr))
 	return nil
 }
 
 func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
-	tmp := (*partialResult4MaxMinInt)(pr)
+	p := (*partialResult4MaxMinInt)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
@@ -66,14 +69,52 @@ func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 		if isNull {
 			continue
 		}
-		if !e.isUnsigned {
-			if f0, f1 := int64(*tmp), int64(input); e.isMax && f1 > f0 || !e.isMax && f1 < f0 {
-				*tmp = partialResult4MaxMinInt(f1)
-			}
-		} else {
-			if f0, f1 := uint64(*tmp), uint64(input); e.isMax && f1 > f0 || !e.isMax && f1 < f0 {
-				*tmp = partialResult4MaxMinInt(f1)
-			}
+		if !e.executed {
+			*p = input
+			e.executed = true
+			continue
+		}
+		if f0, f1 := *p, input; e.isMax && f1 > f0 || !e.isMax && f1 < f0 {
+			*p = f1
+		}
+	}
+	return nil
+}
+
+type maxMin4Uint struct {
+	baseMaxMinAggFunc
+}
+
+func (e *maxMin4Uint) AllocPartialResult() PartialResult {
+	return PartialResult(new(partialResult4MaxMinUint))
+}
+
+func (e *maxMin4Uint) ResetPartialResult(pr PartialResult) {
+	*(*partialResult4MaxMinUint)(pr) = 0
+}
+
+func (e *maxMin4Uint) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	chk.AppendUint64(e.ordinal, *(*partialResult4MaxMinUint)(pr))
+	return nil
+}
+
+func (e *maxMin4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	p := (*partialResult4MaxMinUint)(pr)
+	for _, row := range rowsInGroup {
+		input, isNull, err := e.args[0].EvalInt(sctx, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull {
+			continue
+		}
+		if !e.executed {
+			*p = uint64(input)
+			e.executed = true
+			continue
+		}
+		if f0, f1 := *p, uint64(input); e.isMax && f1 > f0 || !e.isMax && f1 < f0 {
+			*p = partialResult4MaxMinUint(f1)
 		}
 	}
 	return nil
@@ -81,9 +122,7 @@ func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 
 // maxMin4Float32 gets a float32 input and returns a float32 result.
 type maxMin4Float32 struct {
-	baseAggFunc
-
-	isMax bool
+	baseMaxMinAggFunc
 }
 
 func (e *maxMin4Float32) AllocPartialResult() PartialResult {
@@ -100,7 +139,7 @@ func (e *maxMin4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 }
 
 func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
-	tmp := (*partialResult4MaxMinFloat32)(pr)
+	p := (*partialResult4MaxMinFloat32)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
@@ -109,17 +148,20 @@ func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		if f0, f1 := float32(*tmp), float32(input); e.isMax && f1 > f0 || !e.isMax && f1 < f0 {
-			*tmp = partialResult4MaxMinFloat32(f1)
+		if !e.executed {
+			*p = float32(input)
+			e.executed = true
+			continue
+		}
+		if f0, f1 := float32(*p), float32(input); e.isMax && f1 > f0 || !e.isMax && f1 < f0 {
+			*p = partialResult4MaxMinFloat32(f1)
 		}
 	}
 	return nil
 }
 
 type maxMin4Float64 struct {
-	baseAggFunc
-
-	isMax bool
+	baseMaxMinAggFunc
 }
 
 func (e *maxMin4Float64) AllocPartialResult() PartialResult {
@@ -136,7 +178,7 @@ func (e *maxMin4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 }
 
 func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
-	tmp := (*partialResult4MaxMinFloat64)(pr)
+	p := (*partialResult4MaxMinFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
@@ -145,17 +187,20 @@ func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		if f0, f1 := float64(*tmp), float64(input); e.isMax && f1 > f0 || !e.isMax && f1 < f0 {
-			*tmp = partialResult4MaxMinFloat64(f1)
+		if !e.executed {
+			*p = input
+			e.executed = true
+			continue
+		}
+		if f0, f1 := *p, input; e.isMax && f1 > f0 || !e.isMax && f1 < f0 {
+			*p = partialResult4MaxMinFloat64(f1)
 		}
 	}
 	return nil
 }
 
 type maxMin4Decimal struct {
-	baseAggFunc
-
-	isMax bool
+	baseMaxMinAggFunc
 }
 
 func (e *maxMin4Decimal) AllocPartialResult() PartialResult {
@@ -172,7 +217,7 @@ func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 }
 
 func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
-	tmp := (*partialResult4MaxMinDecimal)(pr)
+	p := (*partialResult4MaxMinDecimal)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
@@ -181,10 +226,15 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		f0, f1 := (*types.MyDecimal)(*tmp), (*types.MyDecimal)(input)
+		if !e.executed {
+			*p = input
+			e.executed = true
+			continue
+		}
+		f0, f1 := *p, input
 		cmp := f1.Compare(f0)
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
-			*tmp = partialResult4MaxMinDecimal(f1)
+			*p = partialResult4MaxMinDecimal(f1)
 		}
 	}
 	return nil

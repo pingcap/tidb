@@ -106,9 +106,12 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildMaxMin builds the AggFunc implementation for function "MAX" and "MIN".
 func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
-	base := baseAggFunc{
-		args:    aggFuncDesc.Args,
-		ordinal: ordinal,
+	base := baseMaxMinAggFunc{
+		baseAggFunc: baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+		isMax: isMax,
 	}
 
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
@@ -117,16 +120,19 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 	default:
 		switch evalType {
 		case types.ETInt:
-			return &maxMin4Int{base, isMax, mysql.HasUnsignedFlag(fieldType.Flag)}
+			if mysql.HasUnsignedFlag(fieldType.Flag) {
+				return &maxMin4Uint{base}
+			}
+			return &maxMin4Int{base}
 		case types.ETReal:
 			switch fieldType.Tp {
 			case mysql.TypeFloat:
-				return &maxMin4Float32{base, isMax}
+				return &maxMin4Float32{base}
 			case mysql.TypeDouble:
-				return &maxMin4Float64{base, isMax}
+				return &maxMin4Float64{base}
 			}
 		case types.ETDecimal:
-			return &maxMin4Decimal{base, isMax}
+			return &maxMin4Decimal{base}
 		}
 	}
 	return nil
