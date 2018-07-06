@@ -294,6 +294,10 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec(`insert into t values (7, '{"i": -1, "n": "n7"}')`)
 	tk.MustQuery("select sum(tags->'$.i') from t").Check(testkit.Rows("14"))
 
+	// test agg with empty input
+	result = tk.MustQuery("select count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95) from t where null")
+	result.Check(testkit.Rows())
+
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
 

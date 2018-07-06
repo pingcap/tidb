@@ -256,7 +256,11 @@ func (a *AggFuncDesc) calculateDefaultValue4Sum(ctx sessionctx.Context, schema *
 	if !ok || con.Value.IsNull() {
 		return types.Datum{}, ok
 	}
-	return con.Value, true
+	d, err := con.Value.ConvertTo(ctx.GetSessionVars().StmtCtx, a.RetTp)
+	if err != nil {
+		return types.Datum{}, false
+	}
+	return d, true
 }
 
 func (a *AggFuncDesc) calculateDefaultValue4BitAnd(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
