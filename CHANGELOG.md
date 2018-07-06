@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV changelog](https://github.com/pingcap/tikv/blob/master/CHANGELOG.md) and [PD changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [2.0.5] - 2018-07-06
+### New Features
+  - Add the `tidb_disable_txn_auto_retry` system variable, used to disable the automatic retry of transactions #6877
+### Improvements
+  - Optimize the cost calculation of `Selection` to make the result more accurate #6989
+  - Select the query condition that completely matches the unique index or the primary key as the query path directly #6966
+  - Execute necessary cleanup when failing to start the service #6964
+  - Handle `\N` as NULL in the `Load Data` statement #6962
+  - Optimize the code structure of COB #6953
+  - Report the monitoring metrics earlier when starting the service #6931
+  - Optimize the format of slow queries by removing the line breaks in SQL statements and adding user information #6920
+  - Support multiple asterisks in comments #6858
+### Bug Fixes
+  - Fix the issue that `KILL QUERY` always requires SUPER privilege #7003
+  - Fix the issue that users might fail to login when the number of users exceeds 1024 #6986
+  - Fix an issue about inserting unsigned `float`/`double` data #6929
+  - Fix the compatibility of the `COM_FIELD_LIST` command to resolve the panic issue in some MariaDB clients #6929
+  - Fix the `CREATE TABLE IF NOT EXISTS LIKE` behavior #6928
+  - Fix an issue in the process of TopN pushdown #6923
+  - Fix the ID record issue of the currently processing row when an error occurs in executing `Add Index` #6903
+
+
 ## [2.0.4] - 2018-06-15
 ### New Features
   - Support the `ALTER TABLE t DROP COLUMN a CASCADE` syntax
