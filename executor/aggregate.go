@@ -157,8 +157,8 @@ type HashAggExec struct {
 	partialWorkers   []HashAggPartialWorker
 	finalWorkers     []HashAggFinalWorker
 	defaultVal       *chunk.Chunk
-	// isChildExecReturnEmpty indicates whether the child executor only returns an empty input.
-	isChildExecReturnEmpty bool
+	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
+	isChildReturnEmpty bool
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -253,7 +253,7 @@ func (e *HashAggExec) initForParallelExec() {
 	sessionVars := e.ctx.GetSessionVars()
 	finalConcurrency := sessionVars.HashAggFinalConcurrency
 	partialConcurrency := sessionVars.HashAggPartialConcurrency
-	e.isChildExecReturnEmpty = true
+	e.isChildReturnEmpty = true
 	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency)
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)
 	e.finishCh = make(chan struct{}, 1)
@@ -621,13 +621,13 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 			if result != nil {
 				return errors.Trace(result.err)
 			}
-			if e.isChildExecReturnEmpty && e.defaultVal != nil {
+			if e.isChildReturnEmpty && e.defaultVal != nil {
 				chk.Append(e.defaultVal, 0, 1)
 			}
-			e.isChildExecReturnEmpty = false
+			e.isChildReturnEmpty = false
 			return nil
 		}
-		e.isChildExecReturnEmpty = false
+		e.isChildReturnEmpty = false
 		chk.SwapColumns(result.chk)
 		// Put result.chk back to the corresponded final worker's finalResultHolderCh.
 		result.giveBackCh <- result.chk
@@ -745,14 +745,14 @@ type StreamAggExec struct {
 	baseExecutor
 
 	executed bool
-	// isChildExecReturnEmpty indicates whether the child executor only returns an empty input.
-	isChildExecReturnEmpty bool
-	StmtCtx                *stmtctx.StatementContext
-	AggFuncs               []aggregation.Aggregation
-	aggCtxs                []*aggregation.AggEvaluateContext
-	GroupByItems           []expression.Expression
-	curGroupKey            []types.Datum
-	tmpGroupKey            []types.Datum
+	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
+	isChildReturnEmpty bool
+	StmtCtx            *stmtctx.StatementContext
+	AggFuncs           []aggregation.Aggregation
+	aggCtxs            []*aggregation.AggEvaluateContext
+	GroupByItems       []expression.Expression
+	curGroupKey        []types.Datum
+	tmpGroupKey        []types.Datum
 
 	inputIter  *chunk.Iterator4Chunk
 	inputRow   chunk.Row
@@ -774,7 +774,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	}
 
 	e.executed = false
-	e.isChildExecReturnEmpty = true
+	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childrenResults[0])
 	e.inputRow = e.inputIter.End()
 	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
@@ -870,7 +870,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 
 	// Before fetching a new batch of input, we should consume the last group.
 	if e.newAggFuncs != nil {
-		err := e.consumeGroupRows()
+		err = e.consumeGroupRows()
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -883,7 +883,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 
 	// No more data.
 	if e.childrenResults[0].NumRows() == 0 {
-		if !e.isChildExecReturnEmpty {
+		if !e.isChildReturnEmpty {
 			err = e.appendResult2Chunk(chk)
 		} else if e.defaultVal != nil {
 			chk.Append(e.defaultVal, 0, 1)
@@ -892,7 +892,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		return errors.Trace(err)
 	}
 	// Reach here, "e.childrenResults[0].NumRows() > 0" is guaranteed.
-	e.isChildExecReturnEmpty = false
+	e.isChildReturnEmpty = false
 	e.inputRow = e.inputIter.Begin()
 	return nil
 }
