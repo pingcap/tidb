@@ -264,8 +264,11 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if mysql.HasUnsignedFlag(argFieldTp.Flag) {
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
+
+	// TODO: FLEN is wrong in most of our func.
 	bf.tp.Flen = argFieldTp.Flen
-	bf.tp.Decimal = 0
+	bf.tp.Decimal = fixDecimal4RoundAndTruncate(ctx, args, argTp)
+
 	var sig builtinFunc
 	if len(args) > 1 {
 		switch argTp {
@@ -291,6 +294,33 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		}
 	}
 	return sig, nil
+}
+
+// fixDecimal4RoundAndTruncate fixes tp.decimals of round/truncate func.
+func fixDecimal4RoundAndTruncate(ctx sessionctx.Context, args []Expression, retType types.EvalType) int {
+	if retType == types.ETInt {
+		return 0
+	}
+	secondConst, secondIsConst := roundSecondArg(args)
+	if !secondIsConst {
+		return args[0].GetType().Decimal
+	}
+	argDec, isNull, err := secondConst.EvalInt(ctx, nil)
+	if isNull || err != nil || argDec < 0 {
+		return 0
+	}
+	if argDec > mysql.MaxDecimalScale {
+		return mysql.MaxDecimalScale
+	}
+	return int(argDec)
+}
+
+func roundSecondArg(args []Expression) (*Constant, bool) {
+	if len(args) <= 1 {
+		return nil, false
+	}
+	secondConst, secondIsConst := args[1].(*Constant)
+	return secondConst, secondIsConst
 }
 
 type builtinRoundRealSig struct {
@@ -423,7 +453,7 @@ func (b *builtinRoundWithFracDecSig) evalDecimal(row types.Row) (*types.MyDecima
 		return nil, isNull, errors.Trace(err)
 	}
 	to := new(types.MyDecimal)
-	if err = val.Round(to, int(frac), types.ModeHalfEven); err != nil {
+	if err = val.Round(to, mathutil.Min(int(frac), b.tp.Decimal), types.ModeHalfEven); err != nil {
 		return nil, true, errors.Trace(err)
 	}
 	return to, false, nil
@@ -1696,22 +1726,6 @@ type truncateFunctionClass struct {
 	baseFunctionClass
 }
 
-// getDecimal returns the `Decimal` value of return type for function `TRUNCATE`.
-func (c *truncateFunctionClass) getDecimal(ctx sessionctx.Context, arg Expression) int {
-	if constant, ok := arg.(*Constant); ok {
-		decimal, isNull, err := constant.EvalInt(ctx, nil)
-		if isNull || err != nil {
-			return 0
-		} else if decimal > 30 {
-			return 30
-		} else if decimal < 0 {
-			return 0
-		}
-		return int(decimal)
-	}
-	return 3
-}
-
 func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
@@ -1724,11 +1738,7 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, argTp, types.ETInt)
 
-	if argTp == types.ETInt {
-		bf.tp.Decimal = 0
-	} else {
-		bf.tp.Decimal = c.getDecimal(bf.ctx, args[1])
-	}
+	bf.tp.Decimal = fixDecimal4RoundAndTruncate(ctx, args, argTp)
 	bf.tp.Flen = args[0].GetType().Flen - args[0].GetType().Decimal + bf.tp.Decimal
 	bf.tp.Flag |= args[0].GetType().Flag
 
