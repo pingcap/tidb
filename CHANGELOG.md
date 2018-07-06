@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file. See also [R
   - Select the query condition that completely matches the unique index or the primary key as the query path directly #6966
   - Execute necessary cleanup when failing to start the service #6964
   - Handle `\N` as NULL in the `Load Data` statement #6962
-  - Optimize the code structure of COB #6953
+  - Optimize the code structure of CBO #6953
   - Report the monitoring metrics earlier when starting the service #6931
   - Optimize the format of slow queries by removing the line breaks in SQL statements and adding user information #6920
   - Support multiple asterisks in comments #6858
