@@ -33,6 +33,19 @@ import (
 	"golang.org/x/net/context"
 )
 
+type DDLForTest interface {
+	// SetHook sets the hook.
+	SetHook(h Callback)
+}
+
+// SetHook implements DDL.SetHook interface.
+func (d *ddl) SetHook(h Callback) {
+	d.hookMu.Lock()
+	defer d.hookMu.Unlock()
+
+	d.hook = h
+}
+
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")

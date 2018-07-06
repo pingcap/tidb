@@ -404,6 +404,8 @@ type CreateTableStmt struct {
 	Constraints []*Constraint
 	Options     []*TableOption
 	Partition   *PartitionOptions
+	OnDuplicate OnDuplicateCreateTableSelectType
+	Select      ResultSetNode
 }
 
 // Accept implements Node Accept interface.
@@ -439,6 +441,14 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Constraints[i] = node.(*Constraint)
 	}
+	if n.Select != nil {
+		node, ok := n.Select.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Select = node.(ResultSetNode)
+	}
+
 	return v.Leave(n)
 }
 
@@ -656,6 +666,17 @@ const (
 	RowFormatCompact
 )
 
+// OnDuplicateCreateTableSelectType is the option that handle unique key values in 'CREATE TABLE ... SELECT'.
+// See https://dev.mysql.com/doc/refman/5.7/en/create-table-select.html
+type OnDuplicateCreateTableSelectType int
+
+// OnDuplicateCreateTableSelect types
+const (
+	OnDuplicateCreateTableSelectError OnDuplicateCreateTableSelectType = iota
+	OnDuplicateCreateTableSelectIgnore
+	OnDuplicateCreateTableSelectReplace
+)
+
 // TableOption is used for parsing table option from SQL.
 type TableOption struct {
 	Tp        TableOptionType
@@ -719,6 +740,7 @@ const (
 	AlterTableAlgorithm
 	AlterTableRenameIndex
 	AlterTableForce
+	AlterTableAddPartitions
 
 // TODO: Add more actions
 )
@@ -739,18 +761,19 @@ const (
 type AlterTableSpec struct {
 	node
 
-	Tp            AlterTableType
-	Name          string
-	Constraint    *Constraint
-	Options       []*TableOption
-	NewTable      *TableName
-	NewColumns    []*ColumnDef
-	OldColumnName *ColumnName
-	Position      *ColumnPosition
-	LockType      LockType
-	Comment       string
-	FromKey       model.CIStr
-	ToKey         model.CIStr
+	Tp              AlterTableType
+	Name            string
+	Constraint      *Constraint
+	Options         []*TableOption
+	NewTable        *TableName
+	NewColumns      []*ColumnDef
+	OldColumnName   *ColumnName
+	Position        *ColumnPosition
+	LockType        LockType
+	Comment         string
+	FromKey         model.CIStr
+	ToKey           model.CIStr
+	PartDefinitions []*PartitionDefinition
 }
 
 // Accept implements Node Accept interface.

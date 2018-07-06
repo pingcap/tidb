@@ -741,7 +741,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 	return
 }
 
-func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident) error {
+func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error {
 	is := d.GetInformationSchema()
 	_, ok := is.SchemaByName(referIdent.Schema)
 	if !ok {
@@ -756,6 +756,10 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
+		if ifNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenByArgs(ident))
+			return nil
+		}
 		return infoschema.ErrTableExists.GenByArgs(ident)
 	}
 
@@ -784,7 +788,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if s.ReferTable != nil {
 		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
-		return d.CreateTableWithLike(ctx, ident, referIdent)
+		return d.CreateTableWithLike(ctx, ident, referIdent, s.IfNotExists)
 	}
 	colDefs := s.Cols
 	is := d.GetInformationSchema()
@@ -794,6 +798,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		if s.IfNotExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenByArgs(ident))
 			return nil
 		}
 		return infoschema.ErrTableExists.GenByArgs(ident)
@@ -834,7 +839,8 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 	if s.Partition != nil {
 		pi := &model.PartitionInfo{
-			Type: s.Partition.Tp,
+			Type:   s.Partition.Tp,
+			Enable: ctx.GetSessionVars().EnableTablePartition,
 		}
 		if s.Partition.Expr != nil {
 			buf := new(bytes.Buffer)
@@ -999,6 +1005,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 				return errRunMultiSchemaChanges
 			}
 			err = d.AddColumn(ctx, ident, spec)
+		case ast.AlterTableAddPartitions:
+			err = d.AddTablePartitions(ctx, ident, spec)
 		case ast.AlterTableDropColumn:
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
@@ -1221,6 +1229,54 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	return errors.Trace(err)
 }
 
+// AddTablePartitions will add a new partition to the table.
+func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if len(spec.PartDefinitions) == 0 {
+		return errors.Trace(ErrPartitionsMustBeDefined)
+	}
+
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(schema))
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+
+	meta := t.Meta()
+	if meta.GetPartitionInfo() == nil && meta.Partition == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+	partInfo, err := buildPartitionInfo(meta, d, spec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = checkPartitionNotExists(meta, partInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = checkAddPartitionValue(meta, partInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		Type:       model.ActionAddTablePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partInfo},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 // DropColumn will drop a column from the table, now we don't support drop the column with index covered.
 func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIStr) error {
 	is := d.infoHandle.Get()
@@ -1433,7 +1489,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
-	if err := checkPointTypeColumn(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
+	if err = checkPointTypeColumn(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1940,4 +1996,45 @@ func validateCommentLength(vars *variable.SessionVars, comment string, maxLen in
 		return comment[:maxLen], nil
 	}
 	return comment, nil
+}
+
+func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
+	part := &model.PartitionInfo{
+		Type:    meta.Partition.Type,
+		Expr:    meta.Partition.Expr,
+		Columns: meta.Partition.Columns,
+		Enable:  meta.Partition.Enable,
+	}
+	buf := new(bytes.Buffer)
+	for _, def := range spec.PartDefinitions {
+		for _, expr := range def.LessThan {
+			tp := expr.GetType().Tp
+			if !(tp == mysql.TypeLong || tp == mysql.TypeLonglong) {
+				expr.Format(buf)
+				if strings.EqualFold(buf.String(), "MAXVALUE") {
+					continue
+				}
+				buf.Reset()
+				return nil, infoschema.ErrColumnNotExists.GenByArgs(buf.String(), "partition function")
+			}
+		}
+		pid, err1 := d.genGlobalID()
+		if err1 != nil {
+			return nil, errors.Trace(err1)
+		}
+		piDef := model.PartitionDefinition{
+			Name:    def.Name,
+			ID:      pid,
+			Comment: def.Comment,
+		}
+
+		buf := new(bytes.Buffer)
+		for _, expr := range def.LessThan {
+			expr.Format(buf)
+			piDef.LessThan = append(piDef.LessThan, buf.String())
+			buf.Reset()
+		}
+		part.Definitions = append(part.Definitions, piDef)
+	}
+	return part, nil
 }

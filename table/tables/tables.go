@@ -24,6 +24,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -39,10 +41,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
+	"golang.org/x/net/context"
 )
 
 // Table implements table.Table interface.
@@ -60,8 +63,23 @@ type Table struct {
 	alloc           autoid.Allocator
 	meta            *model.TableInfo
 
-	// partitionExpr caches the partition definition expressions.
-	partitionExpr []expression.Expression
+	partitionExpr *PartitionExpr
+}
+
+// PartitionExpr is the partition definition expressions.
+// There are two expressions exist, because Locate use binary search, which requires:
+// Given a compare function, for any partition range i, if cmp[i] > 0, then cmp[i+1] > 0.
+// While partition prune must use the accurate range to do prunning.
+// partition by range (x)
+//   (partition
+//      p1 values less than (y1)
+//      p2 values less than (y2)
+//      p3 values less than (y3))
+// PartitionPrune: (x < y1); (y1 <= x < y2); (y2 <= x < y3)
+// Locate: (x < y1); (x < y2); (x < y3)
+type PartitionExpr struct {
+	PartitionPrune []expression.Expression
+	Locate         []expression.Expression
 }
 
 // MockTableFromMeta only serves for test.
@@ -73,6 +91,11 @@ func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
 	}
 	t := newTable(tableInfo.ID, columns, nil)
 	t.meta = tableInfo
+	partitionExpr, err := generatePartitionExpr(tableInfo)
+	if err != nil {
+		return nil
+	}
+	t.partitionExpr = partitionExpr
 	return t
 }
 
@@ -129,7 +152,12 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	return t, nil
 }
 
-func generatePartitionExpr(tblInfo *model.TableInfo) ([]expression.Expression, error) {
+// PartitionExpr returns the partition expression.
+func (t *Table) PartitionExpr() *PartitionExpr {
+	return t.partitionExpr
+}
+
+func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return nil, nil
@@ -140,26 +168,42 @@ func generatePartitionExpr(tblInfo *model.TableInfo) ([]expression.Expression, e
 		return nil, nil
 	}
 
-	ctx := mock.NewContext()
-	partitionExprs := make([]expression.Expression, 0, len(pi.Definitions))
+	ctx := newCtxForPartitionExpr()
+	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
+	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
-	for _, def := range pi.Definitions {
-		if strings.EqualFold(def.LessThan[0], "MAXVALUE") {
+	for i := 0; i < len(pi.Definitions); i++ {
+		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
 			// Expr less than maxvalue is always true.
-			partitionExprs = append(partitionExprs, expression.One)
+			fmt.Fprintf(&buf, "true")
 		} else {
-			fmt.Fprintf(&buf, "(%s) < (%s)", pi.Expr, def.LessThan[0])
-			expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
-			if err != nil {
-				// If it got an error here, ddl may hang forever, so this error log is important.
-				log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
-				return nil, errors.Trace(err)
-			}
-			partitionExprs = append(partitionExprs, expr)
+			fmt.Fprintf(&buf, "((%s) < (%s))", pi.Expr, pi.Definitions[i].LessThan[0])
 		}
+		expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+		if err != nil {
+			// If it got an error here, ddl may hang forever, so this error log is important.
+			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+			return nil, errors.Trace(err)
+		}
+		locateExprs = append(locateExprs, expr)
+
+		if i > 0 {
+			fmt.Fprintf(&buf, " and ((%s) >= (%s))", pi.Expr, pi.Definitions[i-1].LessThan[0])
+		}
+
+		expr, err = expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+		if err != nil {
+			// If it got an error here, ddl may hang forever, so this error log is important.
+			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
+			return nil, errors.Trace(err)
+		}
+		partitionPruneExprs = append(partitionPruneExprs, expr)
 		buf.Reset()
 	}
-	return partitionExprs, nil
+	return &PartitionExpr{
+		PartitionPrune: partitionPruneExprs,
+		Locate:         locateExprs,
+	}, nil
 }
 
 // newTable constructs a Table instance.
@@ -406,19 +450,11 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 
 // locatePartition returns the partition ID of the input record.
 func (t *Table) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
-	// TODO: Remove this later, when we have better way to TestPartitionAddRecord.
-	if t.partitionExpr == nil {
-		partitionExpr, err := generatePartitionExpr(t.meta)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		t.partitionExpr = partitionExpr
-	}
-
 	var err error
-	idx := sort.Search(len(t.partitionExpr), func(i int) bool {
+	partitionExprs := t.partitionExpr.Locate
+	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		var ret int64
-		ret, _, err = t.partitionExpr[i].EvalInt(ctx, types.DatumRow(r))
+		ret, _, err = partitionExprs[i].EvalInt(ctx, types.DatumRow(r))
 		if err != nil {
 			return true // Break the search.
 		}
@@ -427,7 +463,7 @@ func (t *Table) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo,
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if idx < 0 || idx >= len(t.partitionExpr) {
+	if idx < 0 || idx >= len(partitionExprs) {
 		// The data does not belong to any of the partition?
 		return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
 	}
@@ -1023,4 +1059,119 @@ func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64) er
 func init() {
 	table.TableFromMeta = TableFromMeta
 	table.MockTableFromMeta = MockTableFromMeta
+}
+
+// ctxForPartitionExpr implement sessionctx.Context interfact.
+type ctxForPartitionExpr struct {
+	sessionVars *variable.SessionVars
+}
+
+// newCtxForPartitionExpr creates a new sessionctx.Context.
+func newCtxForPartitionExpr() sessionctx.Context {
+	sctx := &ctxForPartitionExpr{
+		sessionVars: variable.NewSessionVars(),
+	}
+	sctx.sessionVars.MaxChunkSize = 2
+	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
+	return sctx
+}
+
+// NewTxn creates a new transaction for further execution.
+// If old transaction is valid, it is committed first.
+// It's used in BEGIN statement and DDL statements to commit old transaction.
+func (ctx *ctxForPartitionExpr) NewTxn() error {
+	panic("not support")
+}
+
+// Txn returns the current transaction which is created before executing a statement.
+func (ctx *ctxForPartitionExpr) Txn() kv.Transaction {
+	panic("not support")
+}
+
+// GetClient gets a kv.Client.
+func (ctx *ctxForPartitionExpr) GetClient() kv.Client {
+	panic("not support")
+}
+
+// SetValue saves a value associated with this context for key.
+func (ctx *ctxForPartitionExpr) SetValue(key fmt.Stringer, value interface{}) {
+	panic("not support")
+}
+
+// Value returns the value associated with this context for key.
+func (ctx *ctxForPartitionExpr) Value(key fmt.Stringer) interface{} {
+	panic("not support")
+}
+
+// ClearValue clears the value associated with this context for key.
+func (ctx *ctxForPartitionExpr) ClearValue(key fmt.Stringer) {
+	panic("not support")
+}
+
+func (ctx *ctxForPartitionExpr) GetSessionVars() *variable.SessionVars {
+	return ctx.sessionVars
+}
+
+// GetSessionManager implements the sessionctx.Context interface.
+func (ctx *ctxForPartitionExpr) GetSessionManager() util.SessionManager {
+	panic("not support")
+}
+
+// RefreshTxnCtx commits old transaction without retry,
+// and creates a new transaction.
+// now just for load data and batch insert.
+func (ctx *ctxForPartitionExpr) RefreshTxnCtx(context.Context) error {
+	panic("not support")
+}
+
+// ActivePendingTxn receives the pending transaction from the transaction channel.
+// It should be called right before we builds an executor.
+func (ctx *ctxForPartitionExpr) ActivePendingTxn() error {
+	panic("not support")
+}
+
+// InitTxnWithStartTS initializes a transaction with startTS.
+// It should be called right before we builds an executor.
+func (ctx *ctxForPartitionExpr) InitTxnWithStartTS(startTS uint64) error {
+	panic("not support")
+}
+
+// GetStore returns the store of session.
+func (ctx *ctxForPartitionExpr) GetStore() kv.Storage {
+	panic("not support")
+}
+
+// PreparedPlanCache returns the cache of the physical plan
+func (ctx *ctxForPartitionExpr) PreparedPlanCache() *kvcache.SimpleLRUCache {
+	panic("not support")
+}
+
+// StoreQueryFeedback stores the query feedback.
+func (ctx *ctxForPartitionExpr) StoreQueryFeedback(feedback interface{}) {
+	panic("not support")
+}
+
+// StmtCommit flush all changes by the statement to the underlying transaction.
+func (ctx *ctxForPartitionExpr) StmtCommit() {
+	panic("not support")
+}
+
+// StmtRollback provides statement level rollback.
+func (ctx *ctxForPartitionExpr) StmtRollback() {
+	panic("not support")
+}
+
+// StmtGetMutation gets the binlog mutation for current statement.
+func (ctx *ctxForPartitionExpr) StmtGetMutation(int64) *binlog.TableMutation {
+	panic("not support")
+}
+
+// StmtAddDirtyTableOP adds the dirty table operation for current statement.
+func (ctx *ctxForPartitionExpr) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
+	panic("not support")
+}
+
+// DDLOwnerChecker returns owner.DDLOwnerChecker.
+func (ctx *ctxForPartitionExpr) DDLOwnerChecker() owner.DDLOwnerChecker {
+	panic("not support")
 }

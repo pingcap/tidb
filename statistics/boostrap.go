@@ -40,6 +40,8 @@ func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chun
 			TableID:     tableID,
 			Columns:     make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices:     make(map[int64]*Index, len(tableInfo.Indices)),
+			colName2Idx: make(map[string]int64, len(tableInfo.Columns)),
+			colName2ID:  make(map[string]int64, len(tableInfo.Columns)),
 			Count:       row.GetInt64(3),
 			ModifyCount: row.GetInt64(2),
 			Version:     row.GetUint64(0),
@@ -49,8 +51,10 @@ func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chun
 }
 
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	sql := "select version, table_id, modify_count, count from mysql.stats_meta"
-	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
@@ -98,7 +102,7 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter
 				terror.Log(errors.Trace(err))
 			}
 			hist := NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
-			table.Indices[hist.ID] = &Index{Histogram: *hist, CMSketch: cms, Info: idxInfo}
+			table.Indices[hist.ID] = &Index{Histogram: *hist, CMSketch: cms, Info: idxInfo, statsVer: row.GetInt64(8)}
 		} else {
 			var colInfo *model.ColumnInfo
 			for _, col := range tbl.Meta().Columns {
@@ -117,8 +121,10 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter
 }
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
-	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size from mysql.stats_histograms"
-	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver from mysql.stats_histograms"
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
@@ -187,8 +193,10 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables statsCache, iter *chu
 }
 
 func (h *Handle) initStatsBuckets(tables statsCache) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	sql := "select table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
-	rc, err := h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
@@ -205,11 +213,11 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsBuckets4Chunk(h.ctx, tables, iter)
+		initStatsBuckets4Chunk(h.mu.ctx, tables, iter)
 	}
 	for _, table := range tables {
-		if h.LastVersion < table.Version {
-			h.LastVersion = table.Version
+		if h.mu.lastVersion < table.Version {
+			h.mu.lastVersion = table.Version
 		}
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
@@ -223,6 +231,7 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 			}
 			col.PreCalculateScalar()
 		}
+		table.buildColNameMapper()
 	}
 	return nil
 }
