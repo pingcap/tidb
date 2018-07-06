@@ -51,7 +51,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 					// TODO: check that the expression returns an integer.
 				}
 				if _, ok := s.Partition.Expr.(ast.ExprNode); ok {
-					// range partition partitioning key must be of integer types: tinyint, smallint, mediumint, int and bigint.
+					// range type partition key supported types: tinyint, smallint, mediumint, int and bigint.
 					if !checkSupportTypes(col) && fmt.Sprintf("`%s`", name) == pi.Expr {
 						return nil, errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
 					}
