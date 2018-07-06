@@ -135,10 +135,26 @@ func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildCount builds the AggFunc implementation for function "BIT_XOR".
 func buildBitXor(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	switch aggFuncDesc.Args[0].GetType().EvalType() {
+	case types.ETInt:
+		base := baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		}
+		return &bitXorUint64{baseBitAggFunc{base}}
+	}
 	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "BIT_AND".
 func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	switch aggFuncDesc.Args[0].GetType().EvalType() {
+	case types.ETInt:
+		base := baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		}
+		return &bitAndUint64{baseBitAggFunc{base}}
+	}
 	return nil
 }
