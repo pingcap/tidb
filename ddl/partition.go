@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 )
 
-var (
+const (
 	partitionMaxValue = "MAXVALUE"
 )
 
@@ -51,6 +51,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 					// TODO: check that the expression returns an integer.
 				}
 				if _, ok := s.Partition.Expr.(ast.ExprNode); ok {
+					// the partitioning key must be of type integer.
 					if col.Tp != mysql.TypeLong && col.Tp != mysql.TypeLonglong && fmt.Sprintf("`%s`", name) == pi.Expr {
 						return nil, errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
 					}
@@ -80,12 +81,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 				return nil, ErrTooManyValues.GenByArgs("RANGE")
 			}
 			buf := new(bytes.Buffer)
+			// range columns partitions support multi-column partitions.
 			for _, expr := range def.LessThan {
 				expr.Format(buf)
 				piDef.LessThan = append(piDef.LessThan, buf.String())
-				if strings.EqualFold(buf.String(), partitionMaxValue) {
-					piDef.MaxValue = true
-				}
 				buf.Reset()
 			}
 			pi.Definitions = append(pi.Definitions, piDef)
@@ -118,21 +117,29 @@ func checkCreatePartitionValue(part *model.PartitionInfo) error {
 	if len(defs) <= 1 {
 		return nil
 	}
-	if defs[len(defs)-1].MaxValue {
+
+	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
+	if strings.EqualFold(defs[0].LessThan[0], partitionMaxValue) {
+		return errors.Trace(ErrPartitionMaxvalue)
+	}
+
+	prevRangeValue, err := strconv.Atoi(defs[0].LessThan[0])
+	if err != nil {
+		return ErrNotAllowedTypeInPartition.GenByArgs(defs[0].LessThan[0])
+	}
+
 	for i := 1; i < len(defs); i++ {
-		if defs[i-1].MaxValue || defs[i].MaxValue {
+		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
 			return errors.Trace(ErrPartitionMaxvalue)
 		}
-		prevRangeValue, err := strconv.Atoi(defs[i-1].LessThan[0])
-		if err != nil {
-			return errors.Trace(err)
-		}
+
 		currentRangeValue, err := strconv.Atoi(defs[i].LessThan[0])
 		if err != nil {
-			return errors.Trace(err)
+			return ErrNotAllowedTypeInPartition.GenByArgs(defs[i].LessThan[0])
 		}
+
 		if currentRangeValue <= prevRangeValue {
 			return errors.Trace(ErrRangeNotIncreasing)
 		}
