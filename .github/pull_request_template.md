@@ -15,18 +15,6 @@ Please **NOTE** that:
 - Do not assume reviewers understand the original issue
 -->
 
-## Does this PR need to be added to the release notes? (mandatory)
-
-<!--
-If this PR needs to be added to the release notes, please:
-1. add the "**release-note**" label for this PR
-2. write your release note in the below block
-3. include the string "action required" if the PR requires additional action from users switching to the new release
--->
-
-```release-note
-```
-
 ## What is the type of the changes? (mandatory)
 
 <!--
@@ -57,6 +45,18 @@ If there is document change, please file a PR in ([docs](https://github.com/ping
 <!--
 If there is a configuration or metrics change, please file a PR in [tidb-ansible](https://github.com/pingcap/tidb-ansible), and add the PR number here.
 -->
+
+## Does this PR need to be added to the release notes? (mandatory)
+
+<!--
+If this PR needs to be added to the release notes, please:
+1. add the "**release-note**" label for this PR
+2. write your release note in the below block
+3. include the string "action required" if the PR requires additional action from users switching to the new release
+-->
+
+```release-note
+```
 
 ## Refer to a related PR or issue link (optional)
 
