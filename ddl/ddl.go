@@ -157,19 +157,19 @@ var (
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partiton with unsupport expression type.
 	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(codeCantCreateTable, "Field '%s' is of a not allowed type for this type of partitioning")
 	// ErrPartitionsMustBeDefined returns each partition must be defined.
-	ErrPartitionsMustBeDefined = terror.ClassSchema.New(codePartitionsMustBeDefined, "For RANGE partitions each partition must be defined")
+	ErrPartitionsMustBeDefined = terror.ClassDDL.New(codePartitionsMustBeDefined, "For RANGE partitions each partition must be defined")
 	// ErrPartitionMgmtOnNonpartitioned returns it's not a partition table.
-	ErrPartitionMgmtOnNonpartitioned = terror.ClassSchema.New(codePartitionMgmtOnNonpartitioned, "Partition management on a not partitioned table is not possible")
+	ErrPartitionMgmtOnNonpartitioned = terror.ClassDDL.New(codePartitionMgmtOnNonpartitioned, "Partition management on a not partitioned table is not possible")
 	// ErrDropPartitionNonExistent returns error in list of partition.
-	ErrDropPartitionNonExistent = terror.ClassSchema.New(codeDropPartitionNonExistent, " Error in list of partitions to %s")
+	ErrDropPartitionNonExistent = terror.ClassDDL.New(codeDropPartitionNonExistent, " Error in list of partitions to %s")
 	// ErrSameNamePartition returns duplicate partition name.
-	ErrSameNamePartition = terror.ClassSchema.New(codeSameNamePartition, "Duplicate partition name %s")
+	ErrSameNamePartition = terror.ClassDDL.New(codeSameNamePartition, "Duplicate partition name %s")
 	// ErrRangeNotIncreasing returns values less than value must be strictly increasing for each partition.
-	ErrRangeNotIncreasing = terror.ClassSchema.New(codeRangeNotIncreasing, "VALUES LESS THAN value must be strictly increasing for each partition")
+	ErrRangeNotIncreasing = terror.ClassDDL.New(codeRangeNotIncreasing, "VALUES LESS THAN value must be strictly increasing for each partition")
 	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
-	ErrPartitionMaxvalue = terror.ClassSchema.New(codePartitionMaxvalue, "MAXVALUE can only be used in last partition definition")
+	ErrPartitionMaxvalue = terror.ClassDDL.New(codePartitionMaxvalue, "MAXVALUE can only be used in last partition definition")
 	// ErrTooManyValues returns cannot have more than one value for this type of partitioning.
-	ErrTooManyValues = terror.ClassSchema.New(codeErrTooManyValues, mysql.MySQLErrName[mysql.ErrTooManyValues])
+	ErrTooManyValues = terror.ClassDDL.New(codeErrTooManyValues, mysql.MySQLErrName[mysql.ErrTooManyValues])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.

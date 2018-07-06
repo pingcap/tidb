@@ -1554,12 +1554,14 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 }
 
 func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
-	s.tk.MustExec("use test")
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test;")
+	s.tk.MustExec("drop table if exists tp;")
 	s.tk.MustExec(`CREATE TABLE tp (a int) PARTITION BY RANGE(a) (
 	PARTITION p0 VALUES LESS THAN (10),
 	PARTITION p1 VALUES LESS THAN (20),
 	PARTITION p2 VALUES LESS THAN (MAXVALUE)
-);`)
+	);`)
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
@@ -1579,39 +1581,39 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	c.Assert(part.Definitions[2].LessThan[0], Equals, "MAXVALUE")
 	c.Assert(part.Definitions[2].Name, Equals, "p2")
 
-	s.tk.MustExec("drop table if employees")
+	s.tk.MustExec("drop table if exists employees;")
 	sql1 := `create table employees (
 	id int not null,
-	hired date not null
+	hired int not null
 	)
-	partition by range( year(hired) ) (
+	partition by range( hired ) (
 		partition p1 values less than (1991),
 		partition p2 values less than (1996),
 		partition p2 values less than (2001)
 	);`
-	s.testErrorCode(c, sql1, mysql.ErrSameNamePartition)
+	s.testErrorCode(c, sql1, tmysql.ErrSameNamePartition)
 
 	sql2 := `create table employees (
 	id int not null,
-	hired date not null
+	hired int not null
 	)
-	partition by range( year(hired) ) (
+	partition by range( hired ) (
 		partition p1 values less than (1998),
 		partition p2 values less than (1996),
-		partition p2 values less than (2001)
+		partition p3 values less than (2001)
 	);`
-	s.testErrorCode(c, sql2, mysql.ErrRangeNotIncreasing)
+	s.testErrorCode(c, sql2, tmysql.ErrRangeNotIncreasing)
 
 	sql3 := `create table employees (
 	id int not null,
-	hired date not null
+	hired int not null
 	)
-	partition by range( year(hired) ) (
+	partition by range( hired ) (
 		partition p1 values less than (1998),
 		partition p2 values less than maxvalue,
 		partition p3 values less than (2001)
 	);`
-	s.testErrorCode(c, sql3, mysql.ErrPartitionMaxvalue)
+	s.testErrorCode(c, sql3, tmysql.ErrPartitionMaxvalue)
 
 	sql4 := `create table t4 (
 	a int not null,
@@ -1622,16 +1624,16 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
   		partition p2 values less than (1991),
   		partition p3 values less than (1995)
 	);`
-	s.testErrorCode(c, sql4, mysql.ErrPartitionMaxvalue)
+	s.testErrorCode(c, sql4, tmysql.ErrPartitionMaxvalue)
 
 	sql5 := `create table employees (
 	id int not null,
-	hired date not null
+	hired int not null
 	)
-	partition by range( year(hired) ) (
+	partition by range( hired ) (
 		 PARTITION p0 VALUES LESS THAN (6 , 10)
 	);`
-	s.testErrorCode(c, sql5, mysql.ErrTooManyValues)
+	s.testErrorCode(c, sql5, tmysql.ErrTooManyValues)
 
 	sql6 := `create table t6 (
 	a int not null,
@@ -1644,17 +1646,17 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
   		partition p4 values less than (1995),
 		partition p5 values less than maxvalue
 	);`
-	s.testErrorCode(c, sql6, mysql.ErrPartitionMaxvalue)
+	s.testErrorCode(c, sql6, tmysql.ErrPartitionMaxvalue)
 
-	sql7 := `create table t7 (
+	_, err = s.tk.Exec(`create table t7 (
 	a int not null,
-  	b int not null
+	b int not null
 	)
 	partition by range( id ) (
 		partition p1 values less than (19xx91),
 		partition p2 values less than maxvalue
-	);`
-	s.testErrorCode(c, sql7, mysql.ErrCantCreateTable)
+	);`)
+	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
