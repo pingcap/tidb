@@ -839,21 +839,21 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	part, err := buildTablePartitionInfo(ctx, d, s, cols)
+	pi, err := buildTablePartitionInfo(ctx, d, s, cols)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	if part != nil && part.Type == model.PartitionTypeRange {
-		err = checkPartitionNameUnique(tbInfo, part)
+	if pi != nil {
+		err = checkPartitionNameUnique(tbInfo, pi)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = checkCreatePartitionValue(part)
+		err = checkCreatePartitionValue(pi)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbInfo.Partition = part
+		tbInfo.Partition = pi
 	}
 
 	job := &model.Job{

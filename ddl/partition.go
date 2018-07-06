@@ -28,10 +28,10 @@ import (
 )
 
 var (
-	maxValue = "MAXVALUE"
+	partitionMaxValue = "MAXVALUE"
 )
 
-// buildTablePartitionInfo build partition info and checks for some errors.
+// buildTablePartitionInfo builds partition info and checks for some errors.
 func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, cols []*table.Column) (*model.PartitionInfo, error) {
 	if s.Partition == nil {
 		return nil, nil
@@ -83,7 +83,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 			for _, expr := range def.LessThan {
 				expr.Format(buf)
 				piDef.LessThan = append(piDef.LessThan, buf.String())
-				if strings.EqualFold(buf.String(), maxValue) {
+				if strings.EqualFold(buf.String(), partitionMaxValue) {
 					piDef.MaxValue = true
 				}
 				buf.Reset()
