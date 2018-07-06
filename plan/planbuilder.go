@@ -773,8 +773,21 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
-	case *ast.SetPwdStmt, *ast.RevokeStmt, *ast.KillStmt:
+	case *ast.SetPwdStmt, *ast.RevokeStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
+	case *ast.KillStmt:
+		// If you have the SUPER privilege, you can kill all threads and statements.
+		// Otherwise, you can kill only your own threads and statements.
+		sm := b.ctx.GetSessionManager()
+		if sm != nil {
+			processList := sm.ShowProcessList()
+			if pi, ok := processList[raw.ConnectionID]; ok {
+				loginUser := b.ctx.GetSessionVars().User
+				if pi.User != loginUser.Username {
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
+				}
+			}
+		}
 	}
 	return p
 }
