@@ -57,6 +57,14 @@ func (b *planBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mock
 	defer func() { b.rewriterCounter-- }()
 
 	rewriter := b.getExpressionRewriter(mockPlan)
+	// The rewriter maybe is obtained from "b.rewriterPool", "rewriter.err" is
+	// not nil means certain previous procedure has not handled this error.
+	// Here we give us one more chance to make a correct behavior by handling
+	// this missed error.
+	if rewriter.err != nil {
+		return nil, rewriter.err
+	}
+
 	rewriter.insertPlan = insertPlan
 	rewriter.asScalar = true
 
@@ -81,6 +89,14 @@ func (b *planBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan
 	defer func() { b.rewriterCounter-- }()
 
 	rewriter := b.getExpressionRewriter(p)
+	// The rewriter maybe is obtained from "b.rewriterPool", "rewriter.err" is
+	// not nil means certain previous procedure has not handled this error.
+	// Here we give us one more chance to make a correct behavior by handling
+	// this missed error.
+	if rewriter.err != nil {
+		return nil, nil, rewriter.err
+	}
+
 	rewriter.aggrMap = aggMapper
 	rewriter.asScalar = asScalar
 	rewriter.preprocess = preprocess

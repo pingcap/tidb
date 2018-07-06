@@ -1037,9 +1037,10 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 			return nil
 		}
 
-		// If the schema of selectPlan contains any generated column, raises error.
-		effectiveSelectLen := mathutil.MinInt32(int32(selectPlan.Schema().Len()), int32(len(tableInfo.Columns)))
-		for _, col := range tableInfo.Columns[:effectiveSelectLen] {
+		numInsertCols := mathutil.Min(selectPlan.Schema().Len(), len(tableInfo.Columns))
+		// If the column to be inserted in the insert table is a generated
+		// column, raises a "ErrBadGeneratedColumn" error here.
+		for _, col := range tableInfo.Columns[:numInsertCols] {
 			if col.IsGenerated() {
 				b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
 				return nil
