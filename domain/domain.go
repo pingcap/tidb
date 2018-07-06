@@ -420,11 +420,6 @@ func (c *ddlCallback) OnChanged(err error) error {
 	return nil
 }
 
-// OnGetInfoSchema implements BaseCallbakc.OnGetInfoSchema interface.
-func (c *ddlCallback) OnGetInfoSchema(ctx sessionctx.Context, fn ddl.GetInfoSchema) infoschema.InfoSchema {
-	return fn()
-}
-
 // MockFailure mocks reload failed.
 // It's used for fixing data race in tests.
 type MockFailure struct {

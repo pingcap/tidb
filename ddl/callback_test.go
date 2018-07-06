@@ -22,23 +22,28 @@ import (
 	"golang.org/x/net/context"
 )
 
-type TestDDLCallback struct {
-	*BaseCallback
+type TestIntercept struct {
+	*BaseIntercept
 
-	onJobRunBefore          func(*model.Job)
-	OnJobRunBeforeExported  func(*model.Job)
-	onJobUpdated            func(*model.Job)
-	OnJobUpdatedExported    func(*model.Job)
-	onWatched               func(ctx context.Context)
 	OnGetInfoSchemaExported func(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema
 }
 
-func (tc *TestDDLCallback) OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema {
-	if tc.OnGetInfoSchemaExported != nil {
-		return tc.OnGetInfoSchemaExported(ctx, fn)
+func (ti *TestIntercept) OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema {
+	if ti.OnGetInfoSchemaExported != nil {
+		return ti.OnGetInfoSchemaExported(ctx, fn)
 	}
 
-	return tc.BaseCallback.OnGetInfoSchema(ctx, fn)
+	return ti.BaseIntercept.OnGetInfoSchema(ctx, fn)
+}
+
+type TestDDLCallback struct {
+	*BaseCallback
+
+	onJobRunBefore         func(*model.Job)
+	OnJobRunBeforeExported func(*model.Job)
+	onJobUpdated           func(*model.Job)
+	OnJobUpdatedExported   func(*model.Job)
+	onWatched              func(ctx context.Context)
 }
 
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {

@@ -228,8 +228,11 @@ type ddlCtx struct {
 	binlogCli    interface{}   // binlogCli is used for Binlog.
 
 	// hook may be modified.
-	hook   Callback
-	hookMu sync.RWMutex
+	mu struct {
+		sync.RWMutex
+		hook        Callback
+		interceptor Intercept
+	}
 }
 
 func (dc *ddlCtx) isOwner() bool {
@@ -304,8 +307,9 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpClient(),
-		hook:         hook,
 	}
+	ddlCtx.mu.hook = hook
+	ddlCtx.mu.interceptor = &BaseIntercept{}
 	d := &ddl{
 		infoHandle: infoHandle,
 		ddlCtx:     ddlCtx,
@@ -385,9 +389,9 @@ func (d *ddl) GetLease() time.Duration {
 
 // GetInformationSchema gets the infoschema binding to d. It's expoted for testing.
 func (d *ddl) GetInformationSchema(ctx sessionctx.Context) infoschema.InfoSchema {
-	d.hookMu.RLock()
-	defer d.hookMu.RUnlock()
-	return d.hook.OnGetInfoSchema(ctx,
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.mu.interceptor.OnGetInfoSchema(ctx,
 		func() infoschema.InfoSchema {
 			return d.infoHandle.Get()
 		})
@@ -491,10 +495,10 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 }
 
 func (d *ddl) callHookOnChanged(err error) error {
-	d.hookMu.RLock()
-	defer d.hookMu.RUnlock()
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 
-	err = d.hook.OnChanged(err)
+	err = d.mu.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 

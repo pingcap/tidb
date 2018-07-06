@@ -654,13 +654,13 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 	_, err = se1.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 
-	callback := &ddl.TestDDLCallback{}
+	intercept := &ddl.TestIntercept{}
 	var (
 		testSessionCnt        int32
 		testObtainedSchemaCnt int32 // testObtainedSchemaCnt is the number of sessions that have obtained information schema.
 		testFirstConnID       = uint64(math.MaxUint64)
 	)
-	callback.OnGetInfoSchemaExported = func(ctx sessionctx.Context, fn ddl.GetInfoSchema) infoschema.InfoSchema {
+	intercept.OnGetInfoSchemaExported = func(ctx sessionctx.Context, fn ddl.GetInfoSchema) infoschema.InfoSchema {
 		// The following code is for testing.
 		// Make srue the two sessions get the same information schema before executing DDL.
 		// After the first session executes its DDL, then the second session executes its DDL.
@@ -697,7 +697,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		return info
 	}
 	d := s.dom.DDL()
-	d.(ddl.DDLForTest).SetHook(callback)
+	d.(ddl.DDLForTest).SetInterceptor(intercept)
 
 	// Make sure the connection 1 executes a SQL before the connection 2.
 	// And the connection 2 executes a SQL with an outdated information schema.
@@ -725,6 +725,6 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 
 	wg.Wait()
 
-	callback = &ddl.TestDDLCallback{}
-	d.(ddl.DDLForTest).SetHook(callback)
+	intercept = &ddl.TestIntercept{}
+	d.(ddl.DDLForTest).SetInterceptor(intercept)
 }

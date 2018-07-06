@@ -23,6 +23,19 @@ import (
 // GetInfoSchema is used for getting information schema in testing.
 type GetInfoSchema func() infoschema.InfoSchema
 
+type Intercept interface {
+	// OnGetInfoSchema is an intercept which is called in the function ddl.GetInfoSchema(). It is used in the tests.
+	OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema
+}
+
+// BaseIntercept implements Intercept.
+type BaseIntercept struct{}
+
+// OnGetInfoSchema implements Intercept.OnGetInfoSchema interface.
+func (bi *BaseIntercept) OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema {
+	return fn()
+}
+
 // Callback is used for DDL.
 type Callback interface {
 	// OnChanged is called after schema is changed.
@@ -33,8 +46,6 @@ type Callback interface {
 	OnJobUpdated(job *model.Job)
 	// OnWatched is called after watching owner is completed.
 	OnWatched(ctx context.Context)
-	// OnGetInfoSchema is a hook which is called in the function ddl.GetInfoSchema(). It is used in the tests.
-	OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema
 }
 
 // BaseCallback implements Callback.OnChanged interface.
@@ -59,9 +70,4 @@ func (c *BaseCallback) OnJobUpdated(job *model.Job) {
 // OnWatched implements Callback.OnWatched interface.
 func (c *BaseCallback) OnWatched(ctx context.Context) {
 	// Nothing to do.
-}
-
-// OnGetInfoSchema implements Callback.OnGetInfoSchema interface.
-func (c *BaseCallback) OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema {
-	return fn()
 }
