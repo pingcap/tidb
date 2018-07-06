@@ -51,8 +51,8 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 					// TODO: check that the expression returns an integer.
 				}
 				if _, ok := s.Partition.Expr.(ast.ExprNode); ok {
-					// the partitioning key must be of type integer.
-					if col.Tp != mysql.TypeLong && col.Tp != mysql.TypeLonglong && fmt.Sprintf("`%s`", name) == pi.Expr {
+					// range partition partitioning key must be of integer types: tinyint, smallint, mediumint, int and bigint.
+					if !checkSupportTypes(col) && fmt.Sprintf("`%s`", name) == pi.Expr {
 						return nil, errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
 					}
 				}
@@ -146,4 +146,14 @@ func checkCreatePartitionValue(part *model.PartitionInfo) error {
 		prevRangeValue = currentRangeValue
 	}
 	return nil
+}
+
+// checkSupportTypes checks the partitioning key types supported by the range and list partition
+func checkSupportTypes(col *table.Column) bool {
+	switch col.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		return true
+	default:
+		return false
+	}
 }
