@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1768,7 +1769,7 @@ func (b *builtinTruncateDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal
 	}
 
 	result := new(types.MyDecimal)
-	if err := x.Round(result, int(d), types.ModeTruncate); err != nil {
+	if err := x.Round(result, mathutil.Min(int(d), b.getRetTp().Decimal), types.ModeTruncate); err != nil {
 		return nil, true, errors.Trace(err)
 	}
 	return result, false, nil

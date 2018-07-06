@@ -713,9 +713,6 @@ func (d *MyDecimal) doMiniRightShift(shift, beg, end int) {
 // RETURN VALUE
 //  eDecOK/eDecTruncated
 func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err error) {
-	if frac > mysql.MaxDecimalScale {
-		frac = mysql.MaxDecimalScale
-	}
 	// wordsFracTo is the number of fraction words in buffer.
 	wordsFracTo := (frac + 1) / digitsPerWord
 	if frac > 0 {
@@ -1381,6 +1378,16 @@ func (d *MyDecimal) Compare(to *MyDecimal) int {
 		return -1
 	}
 	return 1
+}
+
+// DecimalNeg reverses decimal's sign.
+func DecimalNeg(from *MyDecimal) *MyDecimal {
+	to := *from
+	if from.IsZero() {
+		return &to
+	}
+	to.negative = !from.negative
+	return &to
 }
 
 // DecimalAdd adds two decimals, sets the result to 'to'.

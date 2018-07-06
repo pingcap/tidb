@@ -543,6 +543,25 @@ func (s *testMyDecimalSuite) TestMaxDecimal(c *C) {
 	}
 }
 
+func (s *testMyDecimalSuite) TestNeg(c *C) {
+	type testCase struct {
+		a      string
+		result string
+		err    error
+	}
+	tests := []testCase{
+		{"-0.0000000000000000000000000000000000000000000000000017382578996420603", "0.0000000000000000000000000000000000000000000000000017382578996420603", nil},
+		{"-13890436710184412000000000000000000000000000000000000000000000000000000000000", "13890436710184412000000000000000000000000000000000000000000000000000000000000", nil},
+		{"0", "0", nil},
+	}
+	for _, tt := range tests {
+		a := NewDecFromStringForTest(tt.a)
+		negResult := DecimalNeg(a)
+		result := negResult.ToString()
+		c.Assert(string(result), Equals, tt.result)
+	}
+}
+
 func (s *testMyDecimalSuite) TestAdd(c *C) {
 	type testCase struct {
 		a      string
