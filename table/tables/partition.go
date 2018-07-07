@@ -41,7 +41,7 @@ var _ table.PartitionTable = &PartitionTable{}
 
 // Partition implements the table.Table interface.
 type Partition struct {
-	Table
+	tableCommon
 }
 
 // PartitionTable implements the table.PartitionTable interface.
@@ -143,12 +143,10 @@ func (t *PartitionTable) locatePartition(ctx sessionctx.Context, pi *model.Parti
 func (t *PartitionTable) GetPartition(pid int64) table.Table {
 	var ret Partition
 	// Make a shallow copy, change ID to partition ID.
-	ret.Table = t.Table
-	ret.Table.regionID = pid
-	ret.Table.RegionKeyProvider = &regionKey{
-		recordPrefix: tablecodec.GenTableRecordPrefix(pid),
-		indexPrefix:  tablecodec.GenTableIndexPrefix(pid),
-	}
+	ret.tableCommon = t.tableCommon
+	ret.partitionID = pid
+	ret.recordPrefix = tablecodec.GenTableRecordPrefix(pid)
+	ret.indexPrefix = tablecodec.GenTableIndexPrefix(pid)
 	return &ret
 }
 
