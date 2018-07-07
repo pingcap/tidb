@@ -1760,7 +1760,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 			to.digitsFrac = int8(wordsFracTo * digitsPerWord)
 		}
 		if to.digitsInt > int8(wordsIntTo*digitsPerWord) {
-			to.digitsInt = int8(wordsFracTo * digitsPerWord)
+			to.digitsInt = int8(wordsIntTo * digitsPerWord)
 		}
 		if tmp1 > wordsIntTo {
 			tmp1 -= wordsIntTo
@@ -1769,7 +1769,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 			wordsFrac1 = 0
 			wordsFrac2 = 0
 		} else {
-			tmp2 -= wordsIntTo
+			tmp2 -= wordsFracTo
 			tmp1 = tmp2 >> 1
 			if wordsFrac1 <= wordsFrac2 {
 				wordsFrac1 -= tmp1
@@ -1781,9 +1781,9 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 		}
 	}
 	startTo := wordsIntTo + wordsFracTo - 1
-	start2 := wordsInt2 + wordsFrac2 - 1
-	stop1 := 0
-	stop2 := 0
+	start2 := idx2 + wordsFrac2 - 1
+	stop1 := idx1 - wordsInt1
+	stop2 := idx2 - wordsInt2
 	to.wordBuf = zeroMyDecimal.wordBuf
 
 	for idx1 += wordsFrac1 - 1; idx1 >= stop1; idx1-- {

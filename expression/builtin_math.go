@@ -265,7 +265,6 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		bf.tp.Flag |= mysql.UnsignedFlag
 	}
 
-	// TODO: FLEN is wrong in most of our func.
 	bf.tp.Flen = argFieldTp.Flen
 	bf.tp.Decimal = fixDecimal4RoundAndTruncate(ctx, args, argTp)
 
