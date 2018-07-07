@@ -298,10 +298,10 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 // fixDecimal4RoundAndTruncate fixes tp.decimals of round/truncate func.
 func fixDecimal4RoundAndTruncate(ctx sessionctx.Context, args []Expression, retType types.EvalType) int {
-	if retType == types.ETInt {
+	if retType == types.ETInt || len(args) <= 1 {
 		return 0
 	}
-	secondConst, secondIsConst := roundSecondArg(args)
+	secondConst, secondIsConst := args[1].(*Constant)
 	if !secondIsConst {
 		return args[0].GetType().Decimal
 	}
@@ -313,14 +313,6 @@ func fixDecimal4RoundAndTruncate(ctx sessionctx.Context, args []Expression, retT
 		return mysql.MaxDecimalScale
 	}
 	return int(argDec)
-}
-
-func roundSecondArg(args []Expression) (*Constant, bool) {
-	if len(args) <= 1 {
-		return nil, false
-	}
-	secondConst, secondIsConst := args[1].(*Constant)
-	return secondConst, secondIsConst
 }
 
 type builtinRoundRealSig struct {
