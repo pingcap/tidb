@@ -51,7 +51,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 					// TODO: check that the expression returns an integer.
 				}
 				if _, ok := s.Partition.Expr.(ast.ExprNode); ok {
-					// range type partition key supported types: tinyint, smallint, mediumint, int and bigint.
+					// Range partitioning key supported types: tinyint, smallint, mediumint, int and bigint.
 					if !checkSupportTypes(col) && fmt.Sprintf("`%s`", name) == pi.Expr {
 						return nil, errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
 					}
@@ -65,7 +65,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		}
 	}
 	for _, def := range s.Partition.Definitions {
-		// TODO: generate multiple global ID for paritions.
+		// TODO: generate multiple global ID for paritions, reduce the times of obtaining the global ID from the storage.
 		pid, err := d.genGlobalID()
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -78,10 +78,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 
 		if s.Partition.Tp == model.PartitionTypeRange {
 			if s.Partition.ColumnNames == nil && len(def.LessThan) != 1 {
-				return nil, ErrTooManyValues.GenByArgs("RANGE")
+				return nil, ErrTooManyValues.GenByArgs(s.Partition.Tp.String())
 			}
 			buf := new(bytes.Buffer)
-			// range columns partitions support multi-column partitions.
+			// Range columns partitions support multi-column partitions.
 			for _, expr := range def.LessThan {
 				expr.Format(buf)
 				piDef.LessThan = append(piDef.LessThan, buf.String())
@@ -121,16 +121,8 @@ func checkCreatePartitionValue(part *model.PartitionInfo) error {
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	if strings.EqualFold(defs[0].LessThan[0], partitionMaxValue) {
-		return errors.Trace(ErrPartitionMaxvalue)
-	}
 
-	prevRangeValue, err := strconv.Atoi(defs[0].LessThan[0])
-	if err != nil {
-		return ErrNotAllowedTypeInPartition.GenByArgs(defs[0].LessThan[0])
-	}
-
-	for i := 1; i < len(defs); i++ {
+	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
 			return errors.Trace(ErrPartitionMaxvalue)
 		}
@@ -140,15 +132,22 @@ func checkCreatePartitionValue(part *model.PartitionInfo) error {
 			return ErrNotAllowedTypeInPartition.GenByArgs(defs[i].LessThan[0])
 		}
 
+		if i == 0 {
+			continue
+		}
+		prevRangeValue, err := strconv.Atoi(defs[i-1].LessThan[0])
+		if err != nil {
+			return ErrNotAllowedTypeInPartition.GenByArgs(defs[i-1].LessThan[0])
+		}
+
 		if currentRangeValue <= prevRangeValue {
 			return errors.Trace(ErrRangeNotIncreasing)
 		}
-		prevRangeValue = currentRangeValue
 	}
 	return nil
 }
 
-// checkSupportTypes checks the partitioning key types supported by the range and list partition
+// checkSupportTypes checks the partitioning key types supported by the range and list partition.
 func checkSupportTypes(col *table.Column) bool {
 	switch col.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:

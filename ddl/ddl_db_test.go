@@ -1626,16 +1626,29 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	);`
 	s.testErrorCode(c, sql4, tmysql.ErrPartitionMaxvalue)
 
-	sql5 := `create table employees (
+	_, err = s.tk.Exec(`CREATE TABLE rc (
+    		a INT NOT NULL,
+    		b INT NOT NULL,
+			c INT NOT NULL
+	)
+	partition by range columns(a,b,c) (
+    	partition p0 values less than (10,5,1),
+    	partition p2 values less than (50,maxvalue,10),
+    	partition p3 values less than (65,30,13),
+    	partition p4 values less than (maxvalue,30,40)
+	);`)
+	c.Assert(err, IsNil)
+
+	sql6 := `create table employees (
 	id int not null,
 	hired int not null
 	)
 	partition by range( hired ) (
-		 PARTITION p0 VALUES LESS THAN (6 , 10)
+		 partition p0 values less than (6 , 10)
 	);`
-	s.testErrorCode(c, sql5, tmysql.ErrTooManyValues)
+	s.testErrorCode(c, sql6, tmysql.ErrTooManyValues)
 
-	sql6 := `create table t6 (
+	sql7 := `create table t7 (
 	a int not null,
   	b int not null
 	)
@@ -1646,9 +1659,9 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
   		partition p4 values less than (1995),
 		partition p5 values less than maxvalue
 	);`
-	s.testErrorCode(c, sql6, tmysql.ErrPartitionMaxvalue)
+	s.testErrorCode(c, sql7, tmysql.ErrPartitionMaxvalue)
 
-	_, err = s.tk.Exec(`create table t7 (
+	_, err = s.tk.Exec(`create table t8 (
 	a int not null,
 	b int not null
 	)
