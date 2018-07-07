@@ -116,7 +116,7 @@ func (p *PhysicalIndexReader) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
-	return fmt.Sprintf("index:%s, table:%s", p.indexPlan.ExplainID(), p.tablePlan.ExplainID())
+	return ""
 }
 
 // ExplainInfo implements PhysicalPlan interface.
