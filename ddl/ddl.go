@@ -389,12 +389,11 @@ func (d *ddl) GetLease() time.Duration {
 
 // GetInformationSchema gets the infoschema binding to d. It's expoted for testing.
 func (d *ddl) GetInformationSchema(ctx sessionctx.Context) infoschema.InfoSchema {
+	is := d.infoHandle.Get()
+
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	return d.mu.interceptor.OnGetInfoSchema(ctx,
-		func() infoschema.InfoSchema {
-			return d.infoHandle.Get()
-		})
+	return d.mu.interceptor.OnGetInfoSchema(ctx, is)
 }
 
 func (d *ddl) genGlobalID() (int64, error) {

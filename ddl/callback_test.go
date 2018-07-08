@@ -25,15 +25,15 @@ import (
 type TestIntercept struct {
 	*BaseIntercept
 
-	OnGetInfoSchemaExported func(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema
+	OnGetInfoSchemaExported func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema
 }
 
-func (ti *TestIntercept) OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema {
+func (ti *TestIntercept) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 	if ti.OnGetInfoSchemaExported != nil {
-		return ti.OnGetInfoSchemaExported(ctx, fn)
+		return ti.OnGetInfoSchemaExported(ctx, is)
 	}
 
-	return ti.BaseIntercept.OnGetInfoSchema(ctx, fn)
+	return ti.BaseIntercept.OnGetInfoSchema(ctx, is)
 }
 
 type TestDDLCallback struct {

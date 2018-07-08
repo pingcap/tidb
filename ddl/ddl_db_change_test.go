@@ -660,7 +660,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		testObtainedSchemaCnt int32 // testObtainedSchemaCnt is the number of sessions that have obtained information schema.
 		testFirstConnID       = uint64(math.MaxUint64)
 	)
-	intercept.OnGetInfoSchemaExported = func(ctx sessionctx.Context, fn ddl.GetInfoSchema) infoschema.InfoSchema {
+	intercept.OnGetInfoSchemaExported = func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 		// The following code is for testing.
 		// Make srue the two sessions get the same information schema before executing DDL.
 		// After the first session executes its DDL, then the second session executes its DDL.
@@ -671,7 +671,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 			cnt := atomic.LoadInt32(&testSessionCnt)
 			// Make sure there are two sessions running here.
 			if cnt == 2 {
-				info = fn()
+				info = is
 				atomic.AddInt32(&testObtainedSchemaCnt, 1)
 				break
 			}

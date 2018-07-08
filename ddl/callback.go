@@ -20,21 +20,18 @@ import (
 	"golang.org/x/net/context"
 )
 
-// GetInfoSchema is used for getting information schema in testing.
-type GetInfoSchema func() infoschema.InfoSchema
-
 // Intercept is used for DDL.
 type Intercept interface {
 	// OnGetInfoSchema is an intercept which is called in the function ddl.GetInfoSchema(). It is used in the tests.
-	OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema
+	OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema
 }
 
 // BaseIntercept implements Intercept.
 type BaseIntercept struct{}
 
 // OnGetInfoSchema implements Intercept.OnGetInfoSchema interface.
-func (bi *BaseIntercept) OnGetInfoSchema(ctx sessionctx.Context, fn GetInfoSchema) infoschema.InfoSchema {
-	return fn()
+func (bi *BaseIntercept) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+	return is
 }
 
 // Callback is used for DDL.
