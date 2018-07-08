@@ -401,7 +401,16 @@ func (c *timeDiffFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	arg0FieldTp, arg1FieldTp := args[0].GetType(), args[1].GetType()
 	arg0Tp, arg1Tp := c.getArgEvalTp(arg0FieldTp), c.getArgEvalTp(arg1FieldTp)
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, arg0Tp, arg1Tp)
-	bf.tp.Decimal = mathutil.Max(arg0FieldTp.Decimal, arg1FieldTp.Decimal)
+
+	arg0Dec, err := timePrecision(ctx, args[0])
+	if err != nil {
+		return nil, err
+	}
+	arg1Dec, err := timePrecision(ctx, args[1])
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Decimal = mathutil.Max(arg0Dec, arg1Dec)
 
 	var sig builtinFunc
 	// arg0 and arg1 must be the same time type(compatible), or timediff will return NULL.
@@ -3274,9 +3283,11 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	var argTps []types.EvalType
-	var retTp types.EvalType
-	var retFLen, retDecimal int
+	var (
+		argTps              []types.EvalType
+		retTp               types.EvalType
+		retFLen, retDecimal int
+	)
 
 	if len(args) == 0 {
 		retTp, retDecimal = types.ETInt, 0
@@ -3635,7 +3646,7 @@ func getFsp4TimeAddSub(s string) int {
 
 // getBf4TimeAddSub parses input types, generates baseBuiltinFunc and set related attributes for
 // builtin function 'ADDTIME' and 'SUBTIME'
-func getBf4TimeAddSub(ctx sessionctx.Context, args []Expression) (tp1, tp2 *types.FieldType, bf baseBuiltinFunc) {
+func getBf4TimeAddSub(ctx sessionctx.Context, args []Expression) (tp1, tp2 *types.FieldType, bf baseBuiltinFunc, err error) {
 	tp1, tp2 = args[0].GetType(), args[1].GetType()
 	var argTp1, argTp2, retTp types.EvalType
 	switch tp1.Tp {
@@ -3654,8 +3665,17 @@ func getBf4TimeAddSub(ctx sessionctx.Context, args []Expression) (tp1, tp2 *type
 	default:
 		argTp2 = types.ETString
 	}
+	arg0Dec, err := timePrecision(ctx, args[0])
+	if err != nil {
+		return
+	}
+	arg1Dec, err := timePrecision(ctx, args[1])
+	if err != nil {
+		return
+	}
+
 	bf = newBaseBuiltinFuncWithTp(ctx, args, retTp, argTp1, argTp2)
-	bf.tp.Decimal = tp1.Decimal
+	bf.tp.Decimal = mathutil.Min(mathutil.Max(arg0Dec, arg1Dec), types.MaxFsp)
 	if retTp == types.ETString {
 		bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeString, mysql.MaxDatetimeWidthWithFsp, types.UnspecifiedLength
 	}
@@ -3759,7 +3779,10 @@ func (c *addTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tp1, tp2, bf := getBf4TimeAddSub(ctx, args)
+	tp1, tp2, bf, err := getBf4TimeAddSub(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 	switch tp1.Tp {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		switch tp2.Tp {
@@ -4622,7 +4645,10 @@ func (c *subTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tp1, tp2, bf := getBf4TimeAddSub(ctx, args)
+	tp1, tp2, bf, err := getBf4TimeAddSub(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 	switch tp1.Tp {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		switch tp2.Tp {
@@ -5369,4 +5395,20 @@ func (b *builtinLastDaySig) evalTime(row types.Row) (types.Time, bool, error) {
 		Fsp:  types.DefaultFsp,
 	}
 	return ret, false, nil
+}
+
+func timePrecision(ctx sessionctx.Context, expression Expression) (int, error) {
+	constExp, isConstant := expression.(*Constant)
+	if isConstant && (types.IsNonBinaryStr(expression.GetType()) || types.IsBinaryStr(expression.GetType())) && !isTemporalColumn(expression) {
+		str, isNil, err := constExp.EvalString(ctx, nil)
+		if isNil || err != nil {
+			return 0, errors.Trace(err)
+		}
+		if n := strings.LastIndexByte(str, '.'); n >= 0 {
+			lenStrFsp := len(str[n+1:])
+			return mathutil.Min(lenStrFsp, types.MaxFsp), nil
+		}
+		return types.MinFsp, nil
+	}
+	return mathutil.Min(expression.GetType().Decimal, types.MaxFsp), nil
 }
