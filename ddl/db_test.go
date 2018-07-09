@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -78,7 +77,6 @@ type testDBSuite struct {
 
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
-
 	testleak.BeforeTest()
 
 	s.lease = 200 * time.Millisecond
@@ -92,18 +90,14 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(
+	s.store, err = mockstore.NewMockTikvStore(
 		mockstore.WithCluster(s.cluster),
 		mockstore.WithMVCCStore(s.mvccStore),
 	)
 	c.Assert(err, IsNil)
 
-	s.store = store
-	c.Assert(err, IsNil)
-
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-
 	s.s, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
@@ -2214,49 +2208,6 @@ func (s *testDBSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	maxID, emptyTable = s.getMaxTableRowID(testCtx)
 	c.Assert(emptyTable, IsFalse)
 	c.Assert(maxID, Equals, int64(10000))
-}
-
-func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
-	gofail.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle")
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_handle_failed")
-	defer tk.MustExec("drop database test_handle_failed")
-	tk.MustExec("use test_handle_failed")
-	tk.MustExec("create table t(a int primary key, b int)")
-	tk.MustExec("insert into t values(-1, 1)")
-	tk.MustExec("alter table t add index idx_b(b)")
-	result := tk.MustQuery("select count(*) from t use index(idx_b)")
-	result.Check(testkit.Rows("1"))
-	tk.MustExec("admin check index t idx_b")
-}
-
-func (s *testDBSuite) TestAddIndexFailed(c *C) {
-	gofail.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockAddIndexErr")
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_add_index_failed")
-	defer tk.MustExec("drop database test_add_index_failed")
-	tk.MustExec("use test_add_index_failed")
-
-	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
-	}
-
-	// Get table ID for split.
-	dom := domain.GetDomain(tk.Se)
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tblID := tbl.Meta().ID
-
-	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
-
-	tk.MustExec("alter table t add index idx_b(b)")
-	tk.MustExec("admin check index t idx_b")
-	tk.MustExec("admin check table t")
 }
 
 func (s *testDBSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
