@@ -145,10 +145,10 @@ type Table interface {
 	Type() Type
 }
 
-// PartitionTable is a Table, and it has a GetPartition() method.
+// PartitionedTable is a Table, and it has a GetPartition() method.
 // GetPartition() gets the partition from a partition table by partitionID, its
 // return value is a Table because partition implements the Table interface.
-type PartitionTable interface {
+type PartitionedTable interface {
 	Table
 	GetPartition(partitionID int64) Table
 }

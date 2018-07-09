@@ -69,6 +69,8 @@ type Table struct {
 	tableCommon
 }
 
+var _ table.Table = &Table{}
+
 // MockTableFromMeta only serves for test.
 func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
 	columns := make([]*table.Column, 0, len(tableInfo.Columns))
@@ -87,7 +89,7 @@ func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
 	if err != nil {
 		return nil
 	}
-	return &PartitionTable{
+	return &PartitionedTable{
 		Table:         t,
 		partitionExpr: partitionExpr,
 	}
@@ -147,7 +149,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &PartitionTable{
+	return &PartitionedTable{
 		Table:         t,
 		partitionExpr: partitionExpr,
 	}, nil

@@ -31,13 +31,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Table, Partition, PartitionTable both implements the table.Table interface.
-var _ table.Table = &Table{}
+// Both Partition and PartitionedTable implement the table.Table interface.
 var _ table.Table = &Partition{}
-var _ table.Table = &PartitionTable{}
+var _ table.Table = &PartitionedTable{}
 
-// PartitionTable implements the table.PartitionTable interface.
-var _ table.PartitionTable = &PartitionTable{}
+// PartitionedTable implements the table.PartitionedTable interface.
+var _ table.PartitionedTable = &PartitionedTable{}
 
 // Partition is a feature from MySQL:
 // See https://dev.mysql.com/doc/refman/8.0/en/partitioning.html
@@ -49,9 +48,9 @@ type Partition struct {
 	tableCommon
 }
 
-// PartitionTable implements the table.PartitionTable interface.
-// PartitionTable is a table, it contains many Partitions.
-type PartitionTable struct {
+// PartitionedTable implements the table.PartitionedTable interface.
+// PartitionedTable is a table, it contains many Partitions.
+type PartitionedTable struct {
 	Table
 	partitionExpr *PartitionExpr
 }
@@ -114,7 +113,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 }
 
 // PartitionExpr returns the partition expression.
-func (t *PartitionTable) PartitionExpr() *PartitionExpr {
+func (t *PartitionedTable) PartitionExpr() *PartitionExpr {
 	return t.partitionExpr
 }
 
@@ -124,7 +123,7 @@ func partitionRecordKey(pid int64, handle int64) kv.Key {
 }
 
 // locatePartition returns the partition ID of the input record.
-func (t *PartitionTable) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
+func (t *PartitionedTable) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
 	var err error
 	partitionExprs := t.partitionExpr.UpperBounds
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
@@ -146,7 +145,7 @@ func (t *PartitionTable) locatePartition(ctx sessionctx.Context, pi *model.Parti
 }
 
 // GetPartition returns a Table, which is actually a Partition.
-func (t *PartitionTable) GetPartition(pid int64) table.Table {
+func (t *PartitionedTable) GetPartition(pid int64) table.Table {
 	var ret Partition
 	// Make a shallow copy, change ID to partition ID.
 	ret.tableCommon = t.tableCommon
@@ -156,8 +155,8 @@ func (t *PartitionTable) GetPartition(pid int64) table.Table {
 	return &ret
 }
 
-// AddRecord overrides the AddRecord method for the table.Table interface.
-func (t *PartitionTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+// AddRecord implements the AddRecord method for the table.Table interface.
+func (t *PartitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
