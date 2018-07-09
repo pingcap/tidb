@@ -133,10 +133,6 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
 
 	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 	if columnInfo != nil {
@@ -155,6 +151,10 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Set offset arg to job.
 		if offset != 0 {
 			job.Args = []interface{}{columnInfo, pos, offset}
+		}
+		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
 		}
 	}
 
@@ -415,4 +415,11 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 func allocateColumnID(tblInfo *model.TableInfo) int64 {
 	tblInfo.MaxColumnID++
 	return tblInfo.MaxColumnID
+}
+
+func checkAddColumnTooManyColumns(oldCols int) error {
+	if oldCols > TableColumnCountLimit {
+		return errTooManyFields
+	}
+	return nil
 }

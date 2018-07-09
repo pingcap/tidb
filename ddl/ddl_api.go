@@ -538,13 +538,6 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkAddColumnTooManyColumns(oldCols int) error {
-	if oldCols+1 > TableColumnCountLimit {
-		return errTooManyFields
-	}
-	return nil
-}
-
 // checkPointTypeColumns checks multiple decimal/float/double columns.
 func checkPointTypeColumns(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
@@ -1165,7 +1158,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
-	if err = checkAddColumnTooManyColumns(len(t.Cols())); err != nil {
+	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
 		return errors.Trace(err)
 	}
 	// Check whether added column has existed.
