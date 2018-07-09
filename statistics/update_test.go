@@ -338,6 +338,9 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 		break
 	}
 
+	// Test that even if the table is recently modified, we can still analyze the table.
+	h.Lease = time.Second
+	defer func() { h.Lease = 0 }()
 	_, err = testKit.Exec("insert into t values ('fff')")
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
@@ -363,11 +366,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	_, err = testKit.Exec("insert into t values ('eee')")
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
-	h.Clear()
-	// We set `Lease` here so that `Update` will use load by need strategy.
-	h.Lease = time.Second
 	h.Update(is)
-	h.Lease = 0
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
 	h.Update(is)
