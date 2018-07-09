@@ -330,6 +330,7 @@ var tokenMap = map[string]int{
 	"MASTER":            master,
 	"MAX":               max,
 	"MAX_CONNECTIONS_PER_HOUR": maxConnectionsPerHour,
+	"MAX_EXECUTION_TIME":       maxExecutionTime,
 	"MAX_QUERIES_PER_HOUR":     maxQueriesPerHour,
 	"MAX_ROWS":                 maxRows,
 	"MAX_UPDATES_PER_HOUR":     maxUpdatesPerHour,
