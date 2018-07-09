@@ -121,7 +121,7 @@ func checkCreatePartitionValue(part *model.PartitionInfo) error {
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-
+	var prevRangeValue int
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
 			return errors.Trace(ErrPartitionMaxvalue)
@@ -135,14 +135,16 @@ func checkCreatePartitionValue(part *model.PartitionInfo) error {
 		if i == 0 {
 			continue
 		}
-		prevRangeValue, err := strconv.Atoi(defs[i-1].LessThan[0])
-		if err != nil {
-			return ErrNotAllowedTypeInPartition.GenByArgs(defs[i-1].LessThan[0])
+		if i == 1 {
+			prevRangeValue, err = strconv.Atoi(defs[i-1].LessThan[0])
+			if err != nil {
+				return ErrNotAllowedTypeInPartition.GenByArgs(defs[i-1].LessThan[0])
+			}
 		}
-
 		if currentRangeValue <= prevRangeValue {
 			return errors.Trace(ErrRangeNotIncreasing)
 		}
+		prevRangeValue = currentRangeValue
 	}
 	return nil
 }
