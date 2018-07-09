@@ -2710,9 +2710,9 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("create table t(a date)")
 	result = tk.MustQuery("desc select a = a from t")
 	result.Check(testkit.Rows(
-		"Projection_3 root eq(test.t.a, test.t.a) 10000.00",
-		"└─TableReader_5 root data:TableScan_4 10000.00",
-		"  └─TableScan_4 cop table:t, range:[-inf,+inf], keep order:false 10000.00",
+		"Projection_3 10000.00 root eq(test.t.a, test.t.a)",
+		"└─TableReader_5 10000.00 root data:TableScan_4",
+		"  └─TableScan_4 10000.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 
 	// for interval

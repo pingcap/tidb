@@ -655,7 +655,7 @@ type schemaLeaseChecker interface {
 }
 
 func (c *twoPhaseCommitter) checkSchemaValid() error {
-	checker, ok := c.txn.us.GetOption(kv.SchemaLeaseChecker).(schemaLeaseChecker)
+	checker, ok := c.txn.us.GetOption(kv.SchemaChecker).(schemaLeaseChecker)
 	if ok {
 		err := checker.Check(c.commitTS)
 		if err != nil {
