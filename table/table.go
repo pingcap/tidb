@@ -145,6 +145,14 @@ type Table interface {
 	Type() Type
 }
 
+// PartitionedTable is a Table, and it has a GetPartition() method.
+// GetPartition() gets the partition from a partition table by partitionID, its
+// return value is a Table because partition implements the Table interface.
+type PartitionedTable interface {
+	Table
+	GetPartition(partitionID int64) Table
+}
+
 // TableFromMeta builds a table.Table from *model.TableInfo.
 // Currently, it is assigned to tables.TableFromMeta in tidb package's init function.
 var TableFromMeta func(alloc autoid.Allocator, tblInfo *model.TableInfo) (Table, error)
