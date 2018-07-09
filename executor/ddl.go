@@ -40,7 +40,7 @@ type DDLExec struct {
 
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
 func (e *DDLExec) toErr(err error) error {
-	if e.ctx.GetSessionVars().StmtCtx.IsDDLJobReady {
+	if e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
 		return errors.Trace(err)
 	}
 
@@ -63,7 +63,7 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		return nil
 	}
 	e.done = true
-	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobReady = false }()
+	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	switch x := e.stmt.(type) {
 	case *ast.TruncateTableStmt:

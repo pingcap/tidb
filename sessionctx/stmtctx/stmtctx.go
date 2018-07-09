@@ -42,9 +42,9 @@ type SQLWarn struct {
 type StatementContext struct {
 	// Set the following variables before execution
 
-	// IsDDLJobReady is used to mark whether to enter the function of 'doDDLJob'.
-	// If IsDDLJobReady is true, it means the DDL job is ready to be handled by the DDL worker.
-	IsDDLJobReady          bool
+	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
+	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
+	IsDDLJobInQueue        bool
 	InInsertStmt           bool
 	InUpdateOrDeleteStmt   bool
 	InSelectStmt           bool
