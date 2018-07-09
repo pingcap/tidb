@@ -230,8 +230,11 @@ type ddlCtx struct {
 	binlogCli    interface{}   // binlogCli is used for Binlog.
 
 	// hook may be modified.
-	hook   Callback
-	hookMu sync.RWMutex
+	mu struct {
+		sync.RWMutex
+		hook        Callback
+		interceptor Interceptor
+	}
 }
 
 func (dc *ddlCtx) isOwner() bool {
@@ -306,8 +309,9 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpClient(),
-		hook:         hook,
 	}
+	ddlCtx.mu.hook = hook
+	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
 		infoHandle: infoHandle,
 		ddlCtx:     ddlCtx,
@@ -385,9 +389,13 @@ func (d *ddl) GetLease() time.Duration {
 	return lease
 }
 
-// GetInformationSchema get the infoschema binding to d. It's expoted for testing.
-func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
-	return d.infoHandle.Get()
+// GetInformationSchema gets the infoschema binding to d. It's expoted for testing.
+func (d *ddl) GetInformationSchema(ctx sessionctx.Context) infoschema.InfoSchema {
+	is := d.infoHandle.Get()
+
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.mu.interceptor.OnGetInfoSchema(ctx, is)
 }
 
 func (d *ddl) genGlobalID() (int64, error) {
@@ -440,6 +448,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
 	asyncNotify(d.ddlJobCh)
@@ -487,10 +496,10 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 }
 
 func (d *ddl) callHookOnChanged(err error) error {
-	d.hookMu.Lock()
-	defer d.hookMu.Unlock()
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 
-	err = d.hook.OnChanged(err)
+	err = d.mu.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
