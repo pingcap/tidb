@@ -93,7 +93,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	return pi, nil
 }
 
-func checkPartitionNameUnique(tbInfo *model.TableInfo, part *model.PartitionInfo) error {
+func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) error {
 	partNames := make(map[string]struct{})
 	if tbInfo.Partition != nil {
 		oldPars := tbInfo.Partition.Definitions
@@ -101,7 +101,7 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, part *model.PartitionInfo
 			partNames[strings.ToLower(oldPar.Name)] = struct{}{}
 		}
 	}
-	newPars := part.Definitions
+	newPars := pi.Definitions
 	for _, newPar := range newPars {
 		if _, ok := partNames[strings.ToLower(newPar.Name)]; ok {
 			return ErrSameNamePartition.GenByArgs(newPar.Name)
@@ -112,8 +112,8 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, part *model.PartitionInfo
 }
 
 // checkCreatePartitionValue checks whether `less than value` is strictly increasing for each partition.
-func checkCreatePartitionValue(part *model.PartitionInfo) error {
-	defs := part.Definitions
+func checkCreatePartitionValue(pi *model.PartitionInfo) error {
+	defs := pi.Definitions
 	if len(defs) <= 1 {
 		return nil
 	}
