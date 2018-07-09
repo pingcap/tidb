@@ -133,14 +133,10 @@ func checkCreatePartitionValue(part *model.PartitionInfo) error {
 		}
 
 		if i == 0 {
+			prevRangeValue = currentRangeValue
 			continue
 		}
-		if i == 1 {
-			prevRangeValue, err = strconv.Atoi(defs[i-1].LessThan[0])
-			if err != nil {
-				return ErrNotAllowedTypeInPartition.GenByArgs(defs[i-1].LessThan[0])
-			}
-		}
+
 		if currentRangeValue <= prevRangeValue {
 			return errors.Trace(ErrRangeNotIncreasing)
 		}
