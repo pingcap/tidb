@@ -15,7 +15,6 @@ package ddl_test
 
 import (
 	"fmt"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -655,44 +654,31 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 	c.Assert(err, IsNil)
 
 	intercept := &ddl.TestInterceptor{}
+	firstConnID := uint64(1)
+	finishedCnt := int32(0)
 	interval := 5 * time.Millisecond
-	var (
-		// sessionCnt is the number of sessions that goes into the function of OnGetInfoSchema.
-		sessionCnt int32
-		// obtainedSchemaSessionCnt is the number of sessions that have obtained information schema.
-		obtainedSchemaSessionCnt int32
-		testFirstConnID          = uint64(math.MaxUint64)
-	)
+	var sessionCnt int32 // sessionCnt is the number of sessions that goes into the function of OnGetInfoSchema.
 	intercept.OnGetInfoSchemaExported = func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 		// The following code is for testing.
-		// Make srue the two sessions get the same information schema before executing DDL.
+		// Make sure the two sessions get the same information schema before executing DDL.
 		// After the first session executes its DDL, then the second session executes its DDL.
 		var info infoschema.InfoSchema
 		atomic.AddInt32(&sessionCnt, 1)
 		for {
-			cnt := atomic.LoadInt32(&testSessionCnt)
 			// Make sure there are two sessions running here.
-			if cnt == 2 {
+			if atomic.LoadInt32(&sessionCnt) == 2 {
 				info = is
-				atomic.AddInt32(&obtainedSchemaSessionCnt, 1)
 				break
 			}
 			time.Sleep(interval)
 		}
 
-		//
 		currID := ctx.GetSessionVars().ConnectionID
-		if currID == 1 {
-			atomic.CompareAndSwapUint64(&testFirstConnID, math.MaxUint64, currID)
-			time.Sleep(interval)
-		}
 		for {
-			firstID := atomic.LoadUint64(&testFirstConnID)
 			seCnt := atomic.LoadInt32(&sessionCnt)
-			obtainedSchemaCnt := atomic.LoadInt32(&obtainedSchemaSessionCnt)
 			// Make sure the two session have got the same information schema. And the first session can continue to go on,
-			// or the frist session finished this SQL(seCnt = 0), then other sessions can continue to go on.
-			if obtainedSchemaCnt == 2 && (firstID == currID || seCnt == 0) {
+			// or the frist session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
+			if currID == firstConnID || seCnt == finishedCnt {
 				break
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -710,11 +696,10 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 	go func() {
 		defer wg.Done()
 
-		close(ch)
-		se.SetConnectionID(1)
+		se.SetConnectionID(firstConnID)
 		_, err1 := se.Execute(context.Background(), "alter table test_table drop column c2")
 		c.Assert(err1, IsNil)
-		atomic.StoreInt32(&sessionCnt, 0)
+		atomic.StoreInt32(&sessionCnt, finishedCnt)
 	}()
 	go func() {
 		defer wg.Done()
