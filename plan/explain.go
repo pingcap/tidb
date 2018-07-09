@@ -116,6 +116,7 @@ func (p *PhysicalIndexReader) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
+	// The children can be inferred by the relation symbol.
 	return ""
 }
 
