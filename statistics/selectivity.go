@@ -120,9 +120,9 @@ func pseudoSelectivity(t *Table, exprs []expression.Expression) float64 {
 	return minFactor
 }
 
-// isColEqCorColOrConstant checks if the expression is a eq function that one side is correlated column and another is column.
+// isColEqCorCol checks if the expression is a eq function that one side is correlated column and another is column.
 // If so, it will return the column's reference. Otherwise return nil instead.
-func isColEqCorColOrConstant(filter expression.Expression) *expression.Column {
+func isColEqCorCol(filter expression.Expression) *expression.Column {
 	f, ok := filter.(*expression.ScalarFunction)
 	if !ok || f.FuncName.L != ast.EQ {
 		return nil
@@ -163,7 +163,7 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 
 	// Deal with the correlated column.
 	for _, expr := range exprs {
-		if c := isColEqCorColOrConstant(expr); c != nil && !t.ColumnIsInvalid(sc, c.ID) {
+		if c := isColEqCorCol(expr); c != nil && !t.ColumnIsInvalid(sc, c.ID) {
 			colHist := t.Columns[c.ID]
 			if colHist.NDV > 0 {
 				ret *= 1 / float64(colHist.NDV)

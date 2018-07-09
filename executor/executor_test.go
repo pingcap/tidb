@@ -71,6 +71,7 @@ func TestT(t *testing.T) {
 
 var _ = Suite(&testSuite{})
 var _ = Suite(&testContextOptionSuite{})
+var _ = Suite(&testBypassSuite{})
 
 type testSuite struct {
 	cluster   *mocktikv.Cluster
@@ -258,9 +259,9 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
 	for _, tt := range tests {
 		c.Assert(ctx.NewTxn(), IsNil)
-		ctx.GetSessionVars().StmtCtx.IgnoreErr = true
+		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 		data, reachLimit, err1 := ld.InsertData(tt.data1, tt.data2)
-		ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 		c.Assert(err1, IsNil)
 		c.Assert(reachLimit, IsFalse)
 		if tt.restData == nil {
@@ -822,12 +823,8 @@ func (s *testSuite) TestUnion(c *C) {
 	testSQL = `insert union_test values (1),(2)`
 	tk.MustExec(testSQL)
 
-	testSQL = `select id from union_test union select id from union_test;`
-	r := tk.MustQuery(testSQL)
-	r.Check(testkit.Rows("1", "2"))
-
 	testSQL = `select * from (select id from union_test union select id from union_test) t order by id;`
-	r = tk.MustQuery(testSQL)
+	r := tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1", "2"))
 
 	r = tk.MustQuery("select 1 union all select 1")
@@ -895,7 +892,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustExec("insert into t (c1, c2) values (1, 1)")
 	tk.MustExec("insert into t (c1, c2) values (1, 2)")
 	tk.MustExec("insert into t (c1, c2) values (2, 3)")
-	r = tk.MustQuery("select * from t where t.c1 = 1 union select * from t where t.id = 1")
+	r = tk.MustQuery("select * from (select * from t where t.c1 = 1 union select * from t where t.id = 1) s order by s.id")
 	r.Check(testkit.Rows("1 1 1", "2 1 2"))
 
 	tk.MustExec("drop table if exists t")
@@ -1865,9 +1862,9 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustQuery("select a from t where b > 1 and a < 3").Check(testkit.Rows())
 	tk.MustQuery("select count(*) from t where b > 1 and a < 3").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
-	tk.MustQuery("select count(*), c from t group by c").Check(testkit.Rows("2 1", "1 2", "1 3"))
-	tk.MustQuery("select sum(c) from t group by b").Check(testkit.Rows("4", "3"))
-	tk.MustQuery("select avg(a) from t group by b").Check(testkit.Rows("2.0000", "4.0000"))
+	tk.MustQuery("select count(*), c from t group by c order by c").Check(testkit.Rows("2 1", "1 2", "1 3"))
+	tk.MustQuery("select sum(c) as s from t group by b order by s").Check(testkit.Rows("3", "4"))
+	tk.MustQuery("select avg(a) as s from t group by b order by s").Check(testkit.Rows("2.0000", "4.0000"))
 	tk.MustQuery("select sum(distinct c) from t group by b").Check(testkit.Rows("3", "3"))
 
 	tk.MustExec("create index i on t(c,b)")

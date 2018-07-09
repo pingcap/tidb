@@ -237,10 +237,10 @@ func (t *testTableSuite) TestCastValue(c *C) {
 
 	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col})
 	c.Assert(err, NotNil)
-	ctx.GetSessionVars().StmtCtx.IgnoreErr = true
+	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col})
 	c.Assert(err, IsNil)
-	ctx.GetSessionVars().StmtCtx.IgnoreErr = false
+	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = false
 
 	colInfoS := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeString),
@@ -344,7 +344,7 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 	}
 
 	for _, tt := range tests {
-		ctx.GetSessionVars().StrictSQLMode = tt.strict
+		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
 		val, err := GetColDefaultValue(ctx, tt.colInfo)
 		if err != nil {
 			c.Assert(tt.err, NotNil, Commentf("%v", err))
@@ -354,7 +354,7 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 	}
 
 	for _, tt := range tests {
-		ctx.GetSessionVars().StrictSQLMode = tt.strict
+		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
 		val, err := GetColOriginDefaultValue(ctx, tt.colInfo)
 		if err != nil {
 			c.Assert(tt.err, NotNil, Commentf("%v", err))
