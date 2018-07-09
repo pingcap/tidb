@@ -65,11 +65,11 @@ type PartitionTable struct {
 //      p1 values less than (y1)
 //      p2 values less than (y2)
 //      p3 values less than (y3))
-// PartitionPrune: (x < y1); (y1 <= x < y2); (y2 <= x < y3)
-// Locate: (x < y1); (x < y2); (x < y3)
+// Ranges: (x < y1); (y1 <= x < y2); (y2 <= x < y3)
+// UpperBounds: (x < y1); (x < y2); (x < y3)
 type PartitionExpr struct {
-	PartitionPrune []expression.Expression
-	Locate         []expression.Expression
+	Ranges      []expression.Expression
+	UpperBounds []expression.Expression
 }
 
 func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
@@ -108,8 +108,8 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		buf.Reset()
 	}
 	return &PartitionExpr{
-		PartitionPrune: partitionPruneExprs,
-		Locate:         locateExprs,
+		Ranges:      partitionPruneExprs,
+		UpperBounds: locateExprs,
 	}, nil
 }
 
@@ -126,7 +126,7 @@ func partitionRecordKey(pid int64, handle int64) kv.Key {
 // locatePartition returns the partition ID of the input record.
 func (t *PartitionTable) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
 	var err error
-	partitionExprs := t.partitionExpr.Locate
+	partitionExprs := t.partitionExpr.UpperBounds
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		var ret int64
 		ret, _, err = partitionExprs[i].EvalInt(ctx, types.DatumRow(r))
