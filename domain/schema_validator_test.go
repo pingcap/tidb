@@ -66,6 +66,8 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	c.Assert(valid, Equals, ResultUnknown)
 
 	currVer := reload(validator, leaseGrantCh, 0)
+	valid = validator.Check(ts, item.schemaVer, nil)
+	c.Assert(valid, Equals, ResultFail)
 	valid = validator.Check(ts, item.schemaVer, []int64{0})
 	c.Assert(valid, Equals, ResultFail)
 	// Check the latest schema version must changed.
