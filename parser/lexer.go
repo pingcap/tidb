@@ -452,8 +452,10 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 		}
 		s.r.incAsLongAs(isIdentChar)
 		tok, lit = doubleAtIdentifier, s.r.data(&pos)
-	} else {
+	} else if ch1 == ' ' {
 		tok, lit = singleAtIdentifier, s.r.data(&pos)
+	} else {
+		tok = int('@')
 	}
 	return
 }

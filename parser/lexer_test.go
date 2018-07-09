@@ -68,13 +68,13 @@ func (s *testLexerSuite) TestSingleCharOther(c *C) {
 func (s *testLexerSuite) TestAtLeadingIdentifier(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCaseItem{
-		{"@a_3cbbc", singleAtIdentifier},
-		{"@-3cbbc", int('@')},
-		{"@1", singleAtIdentifier},
-		{"@`a_3cbbc`", singleAtIdentifier},
-		{"@$", singleAtIdentifier},
 		{"@", singleAtIdentifier},
 		{"@''", singleAtIdentifier},
+		{"@1", singleAtIdentifier},
+		{"@$", singleAtIdentifier},
+		{"@a_3cbbc", singleAtIdentifier},
+		{"@`a_3cbbc`", singleAtIdentifier},
+		{"@-3cbbc", int('@')},
 		{"@@global.test", doubleAtIdentifier},
 		{"@@session.test", doubleAtIdentifier},
 		{"@@local.test", doubleAtIdentifier},
