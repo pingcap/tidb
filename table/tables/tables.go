@@ -48,7 +48,8 @@ import (
 // tableCommon is shared by both Table and Partition.
 type tableCommon struct {
 	tableID int64
-	// partitionID equals to tableID if it's not a partition table.
+	// partitionID is a unique int64 to identify a partition, it equals to tableID
+	// if this tableCommon struct is not a Partition.
 	partitionID     int64
 	Columns         []*table.Column
 	publicColumns   []*table.Column

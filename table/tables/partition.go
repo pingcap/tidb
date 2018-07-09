@@ -41,14 +41,16 @@ var _ table.PartitionTable = &PartitionTable{}
 
 // Partition is a feature from MySQL:
 // See https://dev.mysql.com/doc/refman/8.0/en/partitioning.html
-// A partition table may contain many partitions. Each partition has a unique partition
-// id. If a table doesn't have any partition, that table and a partition is basically
-// the same. Partition also implements the table.Table interface.
+// A partition table may contain many partitions, each partition has a unique partition
+// id. The underlying representation of a partition and a normal table (a table with no
+// partitions) is basically the same.
+// Partition also implements the table.Table interface.
 type Partition struct {
 	tableCommon
 }
 
 // PartitionTable implements the table.PartitionTable interface.
+// PartitionTable is a table, it contains many Partitions.
 type PartitionTable struct {
 	Table
 	partitionExpr *PartitionExpr
@@ -154,7 +156,7 @@ func (t *PartitionTable) GetPartition(pid int64) table.Table {
 	return &ret
 }
 
-// AddRecord overloads the AddRecord for the table.Table interface.
+// AddRecord overrides the AddRecord method for the table.Table interface.
 func (t *PartitionTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
