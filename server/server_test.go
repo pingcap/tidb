@@ -584,6 +584,7 @@ func checkErrorCode(c *C, e error, codes ...uint16) {
 	for _, code := range codes {
 		if me.Number == code {
 			isMatchCode = true
+			break
 		}
 	}
 	c.Assert(isMatchCode, IsTrue, Commentf("got err %v, expected err codes %v", me, codes))

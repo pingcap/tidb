@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/schemachecker"
 	"golang.org/x/net/context"
 )
 
@@ -42,7 +41,7 @@ type DDLExec struct {
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
 func (e *DDLExec) toErr(err error) error {
 	if e.ctx.GetSessionVars().StmtCtx.IsDDLJobReady {
-		return err
+		return errors.Trace(err)
 	}
 
 	// Before the DDL job is ready, it encouters an error that may be due to the outdated schema information.
@@ -50,12 +49,12 @@ func (e *DDLExec) toErr(err error) error {
 	// So we needn't to consider this condition.
 	// Here we distinguish the ErrInfoSchemaChanged error from other errors.
 	dom := domain.GetDomain(e.ctx)
-	checker := schemachecker.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
+	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
 	schemaInfoErr := checker.Check(e.ctx.Txn().StartTS())
 	if schemaInfoErr != nil {
 		return errors.Trace(schemaInfoErr)
 	}
-	return err
+	return errors.Trace(err)
 }
 
 // Next implements the Executor Next interface.

@@ -11,19 +11,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package schemachecker
+package domain
 
 import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
 )
 
 // SchemaChecker is used for checking schema-validity.
 type SchemaChecker struct {
-	domain.SchemaValidator
+	SchemaValidator
 	schemaVer       int64
 	relatedTableIDs []int64
 }
@@ -36,7 +35,7 @@ var (
 )
 
 // NewSchemaChecker creates a new schema checker.
-func NewSchemaChecker(do *domain.Domain, schemaVer int64, relatedTableIDs []int64) *SchemaChecker {
+func NewSchemaChecker(do *Domain, schemaVer int64, relatedTableIDs []int64) *SchemaChecker {
 	return &SchemaChecker{
 		SchemaValidator: do.SchemaValidator,
 		schemaVer:       schemaVer,
@@ -51,16 +50,16 @@ func (s *SchemaChecker) Check(txnTS uint64) error {
 	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
 		result := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs)
 		switch result {
-		case domain.ResultSucc:
+		case ResultSucc:
 			return nil
-		case domain.ResultFail:
+		case ResultFail:
 			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
-			return domain.ErrInfoSchemaChanged
-		case domain.ResultUnknown:
+			return ErrInfoSchemaChanged
+		case ResultUnknown:
 			metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
 			time.Sleep(time.Duration(schemaOutOfDateRetryInterval))
 		}
 
 	}
-	return domain.ErrInfoSchemaExpired
+	return ErrInfoSchemaExpired
 }

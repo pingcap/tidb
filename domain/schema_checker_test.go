@@ -11,38 +11,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package schemachecker
+package domain
 
 import (
-	"testing"
+	// "testing"
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/testleak"
+	//	"github.com/pingcap/tidb/util/testleak"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
-
-var _ = Suite(&testSuite{})
-
-type testSuite struct{}
-
-func (s *testSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-}
-
-func (s *testSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
-}
+// var _ = Suite(&testSuite{})
+//
+// type testSuite struct{}
+//
+// func (s *testSuite) SetUpSuite(c *C) {
+// 	testleak.BeforeTest()
+// }
+//
+// func (s *testSuite) TearDownSuite(c *C) {
+// 	testleak.AfterTest(c)()
+// }
 
 func (s *testSuite) TestSchemaCheckerSimple(c *C) {
 	lease := 5 * time.Millisecond
-	validator := domain.NewSchemaValidator(lease)
+	validator := NewSchemaValidator(lease)
 	checker := &SchemaChecker{SchemaValidator: validator}
 
 	// Add some schema versions and delta table IDs.
@@ -65,11 +59,11 @@ func (s *testSuite) TestSchemaCheckerSimple(c *C) {
 	checker.schemaVer = 1
 	checker.relatedTableIDs = []int64{3}
 	err = checker.Check(ts)
-	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrInfoSchemaChanged), IsTrue)
 	// checker's related table ID is in validator's changed table IDs.
 	checker.relatedTableIDs = []int64{2}
 	err = checker.Check(ts)
-	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrInfoSchemaChanged), IsTrue)
 
 	// validator's latest schema version is expired.
 	time.Sleep(lease + time.Microsecond)
@@ -80,5 +74,5 @@ func (s *testSuite) TestSchemaCheckerSimple(c *C) {
 	nowTS := uint64(time.Now().UnixNano())
 	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
 	result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
-	c.Assert(result, Equals, domain.ResultUnknown)
+	c.Assert(result, Equals, ResultUnknown)
 }
