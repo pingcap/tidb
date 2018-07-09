@@ -82,8 +82,11 @@ type Expression interface {
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression
 
-	// ResolveIndices resolves indices by the given schema.
-	ResolveIndices(schema *Schema)
+	// ResolveIndices resolves indices by the given schema. It will copy the original expression and return the copied one.
+	ResolveIndices(schema *Schema) Expression
+
+	// resolveIndices is called inside the `ResolveIndices` It will perform on the expression itself.
+	resolveIndices(schema *Schema)
 
 	// ExplainInfo returns operator information to be explained.
 	ExplainInfo() string
@@ -244,7 +247,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 			return FoldConstant(x)
 		}
 	}
-	return expr.Clone()
+	return expr
 }
 
 // TableInfo2Schema converts table info to schema with empty DBName.

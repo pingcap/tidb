@@ -454,9 +454,7 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 			checkErr = errors.Trace(err)
 		}
 	}
-	originHook := s.dom.DDL().GetHook()
-	s.dom.DDL().SetHook(hook)
-	defer s.dom.DDL().SetHook(originHook)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "create unique index c3_index on t1 (c3)", done)
 
@@ -498,6 +496,8 @@ LOOP:
 
 	s.mustExec(c, "drop table t1")
 	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
+	callback := &ddl.TestDDLCallback{}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
 }
 
 func (s *testDBSuite) TestAddAnonymousIndex(c *C) {
