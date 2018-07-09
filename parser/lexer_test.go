@@ -56,7 +56,6 @@ type testCaseItem struct {
 func (s *testLexerSuite) TestSingleCharOther(c *C) {
 	defer testleak.AfterTest(c)()
 	table := []testCaseItem{
-		{"@", int('@')},
 		{"AT", identifier},
 		{"?", paramMarker},
 		{"PLACEHOLDER", identifier},
@@ -71,6 +70,11 @@ func (s *testLexerSuite) TestAtLeadingIdentifier(c *C) {
 	table := []testCaseItem{
 		{"@a_3cbbc", singleAtIdentifier},
 		{"@-3cbbc", int('@')},
+		{"@1", singleAtIdentifier},
+		{"@`a_3cbbc`", singleAtIdentifier},
+		{"@$", singleAtIdentifier},
+		{"@", singleAtIdentifier},
+		{"@''", singleAtIdentifier},
 		{"@@global.test", doubleAtIdentifier},
 		{"@@session.test", doubleAtIdentifier},
 		{"@@local.test", doubleAtIdentifier},
