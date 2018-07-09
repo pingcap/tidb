@@ -39,7 +39,11 @@ var _ table.Table = &PartitionTable{}
 // PartitionTable implements the table.PartitionTable interface.
 var _ table.PartitionTable = &PartitionTable{}
 
-// Partition implements the table.Table interface.
+// Partition is a feature from MySQL:
+// See https://dev.mysql.com/doc/refman/8.0/en/partitioning.html
+// A partition table may contain many partitions. Each partition has a unique partition
+// id. If a table doesn't have any partition, that table and a partition is basically
+// the same. Partition also implements the table.Table interface.
 type Partition struct {
 	tableCommon
 }
