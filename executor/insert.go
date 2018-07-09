@@ -31,7 +31,8 @@ import (
 type InsertExec struct {
 	*InsertValues
 
-	OnDuplicate []*expression.Assignment
+	batchInsertRowCount uint64
+	OnDuplicate         []*expression.Assignment
 
 	Priority mysql.PriorityEnum
 
@@ -51,7 +52,7 @@ func (e *InsertExec) insertOneRow(row types.DatumRow) (int64, error) {
 	if !e.ctx.GetSessionVars().ImportingData {
 		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 	}
-	e.rowCount++
+	e.batchInsertRowCount++
 	return h, nil
 }
 
@@ -59,9 +60,8 @@ func (e *InsertExec) exec(rows []types.DatumRow) error {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
 	defer sessVars.CleanBuffers()
-	ignoreErr := sessVars.StmtCtx.IgnoreErr
+	ignoreErr := sessVars.StmtCtx.DupKeyAsWarning
 
-	e.rowCount = 0
 	if !sessVars.ImportingData {
 		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
 	}
@@ -102,13 +102,13 @@ func (e *InsertExec) checkBatchLimit() error {
 	sessVars := e.ctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
 	batchSize := sessVars.DMLBatchSize
-	if batchInsert && e.rowCount >= uint64(batchSize) {
+	if batchInsert && e.batchInsertRowCount >= uint64(batchSize) {
 		e.ctx.StmtCommit()
 		if err := e.ctx.NewTxn(); err != nil {
 			// We should return a special error for batch insert.
 			return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
 		}
-		e.rowCount = 0
+		e.batchInsertRowCount = 0
 		if !sessVars.ImportingData {
 			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
 		}
@@ -183,17 +183,10 @@ func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	var rows []types.DatumRow
 	if len(e.children) > 0 && e.children[0] != nil {
-		rows, err = e.getRowsSelectChunk(ctx, cols)
-	} else {
-		rows, err = e.getRows(cols)
+		return errors.Trace(e.insertRowsFromSelect(ctx, cols, e.exec))
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return errors.Trace(e.exec(rows))
+	return errors.Trace(e.insertRows(cols, e.exec))
 }
 
 // Close implements the Executor Close interface.
@@ -240,7 +233,7 @@ func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate 
 
 	// Do update row.
 	updatedRow, handleChanged, newHandle, err := e.doDupRowUpdate(handle, oldRow, row.row, onDuplicate)
-	if e.ctx.GetSessionVars().StmtCtx.IgnoreErr && kv.ErrKeyExists.Equal(err) {
+	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
 	}
@@ -271,7 +264,7 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow types.DatumRow, newRow 
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
 	}
-	e.rowCount++
+	e.batchInsertRowCount++
 	if err := e.checkBatchLimit(); err != nil {
 		return nil, false, 0, errors.Trace(err)
 	}

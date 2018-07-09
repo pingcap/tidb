@@ -43,7 +43,15 @@ func (bf *bitAndFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 		return errors.Trace(err)
 	}
 	if !value.IsNull() {
-		evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() & value.GetUint64())
+		if value.Kind() == types.KindUint64 {
+			evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() & value.GetUint64())
+		} else {
+			int64Value, err := value.ToInt64(sc)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() & uint64(int64Value))
+		}
 	}
 	return nil
 }

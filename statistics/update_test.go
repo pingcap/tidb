@@ -398,6 +398,76 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(hg.Len(), Equals, 3)
 }
 
+func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	h.Lease = 0
+	h.Update(is)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability = 1
+
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
+	h.HandleDDLEvent(<-h.DDLEventCh())
+
+	testKit.MustExec("insert into t values (1, 3)")
+
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	testKit.MustExec("analyze table t")
+
+	testKit.MustExec("insert into t values (2, 3)")
+	testKit.MustExec("insert into t values (5, 3)")
+	testKit.MustExec("insert into t values (8, 3)")
+	testKit.MustExec("insert into t values (12, 3)")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	is = s.do.InfoSchema()
+	h.Update(is)
+
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	tbl := h.GetTableStats(tblInfo)
+	aID := tblInfo.Columns[0].ID
+	bID := tblInfo.Indices[0].ID
+
+	// The statistic table is outdated now.
+	c.Assert(tbl.Columns[aID].IsPseudo(), IsTrue)
+
+	testKit.MustQuery("select * from t where a between 1 and 10")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(is), IsNil)
+	h.UpdateErrorRate(is)
+	h.Update(is)
+	tbl = h.GetTableStats(tblInfo)
+
+	// The error rate of this column is not larger than MaxErrorRate now.
+	c.Assert(tbl.Columns[aID].IsPseudo(), IsFalse)
+
+	c.Assert(tbl.Indices[bID].IsPseudo(), IsTrue)
+	testKit.MustQuery("select * from t where b between 2 and 10")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(is), IsNil)
+	h.UpdateErrorRate(is)
+	h.Update(is)
+	tbl = h.GetTableStats(tblInfo)
+	c.Assert(tbl.Indices[bID].IsPseudo(), IsFalse)
+	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(1))
+
+	testKit.MustExec("analyze table t")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	h.Update(is)
+	tbl = h.GetTableStats(tblInfo)
+	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(0))
+}
+
 func appendBucket(h *statistics.Histogram, l, r int64) {
 	lower, upper := types.NewIntDatum(l), types.NewIntDatum(r)
 	h.AppendBucket(&lower, &upper, 0, 0)

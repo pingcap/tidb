@@ -24,6 +24,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -39,10 +41,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
+	"golang.org/x/net/context"
 )
 
 // Table implements table.Table interface.
@@ -165,7 +168,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		return nil, nil
 	}
 
-	ctx := mock.NewContext()
+	ctx := newCtxForPartitionExpr()
 	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
@@ -447,15 +450,6 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 
 // locatePartition returns the partition ID of the input record.
 func (t *Table) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
-	// TODO: Remove this later, when we have better way to TestPartitionAddRecord.
-	if t.partitionExpr == nil {
-		partitionExpr, err := generatePartitionExpr(t.meta)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		t.partitionExpr = partitionExpr
-	}
-
 	var err error
 	partitionExprs := t.partitionExpr.Locate
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
@@ -1065,4 +1059,119 @@ func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64) er
 func init() {
 	table.TableFromMeta = TableFromMeta
 	table.MockTableFromMeta = MockTableFromMeta
+}
+
+// ctxForPartitionExpr implement sessionctx.Context interfact.
+type ctxForPartitionExpr struct {
+	sessionVars *variable.SessionVars
+}
+
+// newCtxForPartitionExpr creates a new sessionctx.Context.
+func newCtxForPartitionExpr() sessionctx.Context {
+	sctx := &ctxForPartitionExpr{
+		sessionVars: variable.NewSessionVars(),
+	}
+	sctx.sessionVars.MaxChunkSize = 2
+	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
+	return sctx
+}
+
+// NewTxn creates a new transaction for further execution.
+// If old transaction is valid, it is committed first.
+// It's used in BEGIN statement and DDL statements to commit old transaction.
+func (ctx *ctxForPartitionExpr) NewTxn() error {
+	panic("not support")
+}
+
+// Txn returns the current transaction which is created before executing a statement.
+func (ctx *ctxForPartitionExpr) Txn() kv.Transaction {
+	panic("not support")
+}
+
+// GetClient gets a kv.Client.
+func (ctx *ctxForPartitionExpr) GetClient() kv.Client {
+	panic("not support")
+}
+
+// SetValue saves a value associated with this context for key.
+func (ctx *ctxForPartitionExpr) SetValue(key fmt.Stringer, value interface{}) {
+	panic("not support")
+}
+
+// Value returns the value associated with this context for key.
+func (ctx *ctxForPartitionExpr) Value(key fmt.Stringer) interface{} {
+	panic("not support")
+}
+
+// ClearValue clears the value associated with this context for key.
+func (ctx *ctxForPartitionExpr) ClearValue(key fmt.Stringer) {
+	panic("not support")
+}
+
+func (ctx *ctxForPartitionExpr) GetSessionVars() *variable.SessionVars {
+	return ctx.sessionVars
+}
+
+// GetSessionManager implements the sessionctx.Context interface.
+func (ctx *ctxForPartitionExpr) GetSessionManager() util.SessionManager {
+	panic("not support")
+}
+
+// RefreshTxnCtx commits old transaction without retry,
+// and creates a new transaction.
+// now just for load data and batch insert.
+func (ctx *ctxForPartitionExpr) RefreshTxnCtx(context.Context) error {
+	panic("not support")
+}
+
+// ActivePendingTxn receives the pending transaction from the transaction channel.
+// It should be called right before we builds an executor.
+func (ctx *ctxForPartitionExpr) ActivePendingTxn() error {
+	panic("not support")
+}
+
+// InitTxnWithStartTS initializes a transaction with startTS.
+// It should be called right before we builds an executor.
+func (ctx *ctxForPartitionExpr) InitTxnWithStartTS(startTS uint64) error {
+	panic("not support")
+}
+
+// GetStore returns the store of session.
+func (ctx *ctxForPartitionExpr) GetStore() kv.Storage {
+	panic("not support")
+}
+
+// PreparedPlanCache returns the cache of the physical plan
+func (ctx *ctxForPartitionExpr) PreparedPlanCache() *kvcache.SimpleLRUCache {
+	panic("not support")
+}
+
+// StoreQueryFeedback stores the query feedback.
+func (ctx *ctxForPartitionExpr) StoreQueryFeedback(feedback interface{}) {
+	panic("not support")
+}
+
+// StmtCommit flush all changes by the statement to the underlying transaction.
+func (ctx *ctxForPartitionExpr) StmtCommit() {
+	panic("not support")
+}
+
+// StmtRollback provides statement level rollback.
+func (ctx *ctxForPartitionExpr) StmtRollback() {
+	panic("not support")
+}
+
+// StmtGetMutation gets the binlog mutation for current statement.
+func (ctx *ctxForPartitionExpr) StmtGetMutation(int64) *binlog.TableMutation {
+	panic("not support")
+}
+
+// StmtAddDirtyTableOP adds the dirty table operation for current statement.
+func (ctx *ctxForPartitionExpr) StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum) {
+	panic("not support")
+}
+
+// DDLOwnerChecker returns owner.DDLOwnerChecker.
+func (ctx *ctxForPartitionExpr) DDLOwnerChecker() owner.DDLOwnerChecker {
+	panic("not support")
 }

@@ -191,6 +191,38 @@ func (s *testAggFuncSuit) TestBitAnd(c *C) {
 	c.Assert(result.GetUint64(), Equals, uint64(0))
 	partialResult := bitAndFunc.GetPartialResult(evalCtx)
 	c.Assert(partialResult[0].GetUint64(), Equals, uint64(0))
+
+	// test bit_and( decimal )
+	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
+	bitAndFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
+
+	result = bitAndFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(math.MaxUint64))
+
+	var dec types.MyDecimal
+	err = dec.FromString([]byte("1.234"))
+	c.Assert(err, IsNil)
+	row = types.MakeDatums(&dec)
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	c.Assert(err, IsNil)
+	result = bitAndFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(1))
+
+	err = dec.FromString([]byte("3.012"))
+	c.Assert(err, IsNil)
+	row = types.MakeDatums(&dec)
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	c.Assert(err, IsNil)
+	result = bitAndFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(1))
+
+	err = dec.FromString([]byte("2.12345678"))
+	c.Assert(err, IsNil)
+	row = types.MakeDatums(&dec)
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	c.Assert(err, IsNil)
+	result = bitAndFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(0))
 }
 
 func (s *testAggFuncSuit) TestBitOr(c *C) {
@@ -234,6 +266,46 @@ func (s *testAggFuncSuit) TestBitOr(c *C) {
 	c.Assert(result.GetUint64(), Equals, uint64(3))
 	partialResult := bitOrFunc.GetPartialResult(evalCtx)
 	c.Assert(partialResult[0].GetUint64(), Equals, uint64(3))
+
+	// test bit_or( decimal )
+	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
+	bitOrFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
+
+	result = bitOrFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(0))
+
+	var dec types.MyDecimal
+	err = dec.FromString([]byte("12.234"))
+	c.Assert(err, IsNil)
+	row = types.MakeDatums(&dec)
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	c.Assert(err, IsNil)
+	result = bitOrFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(12))
+
+	err = dec.FromString([]byte("1.012"))
+	c.Assert(err, IsNil)
+	row = types.MakeDatums(&dec)
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	c.Assert(err, IsNil)
+	result = bitOrFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(13))
+	err = dec.FromString([]byte("15.12345678"))
+	c.Assert(err, IsNil)
+
+	row = types.MakeDatums(&dec)
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	c.Assert(err, IsNil)
+	result = bitOrFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(15))
+
+	err = dec.FromString([]byte("16.00"))
+	c.Assert(err, IsNil)
+	row = types.MakeDatums(&dec)
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	c.Assert(err, IsNil)
+	result = bitOrFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(31))
 }
 
 func (s *testAggFuncSuit) TestBitXor(c *C) {
@@ -277,6 +349,38 @@ func (s *testAggFuncSuit) TestBitXor(c *C) {
 	c.Assert(result.GetUint64(), Equals, uint64(1))
 	partialResult := bitXorFunc.GetPartialResult(evalCtx)
 	c.Assert(partialResult[0].GetUint64(), Equals, uint64(1))
+
+	// test bit_xor( decimal )
+	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
+	bitXorFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
+
+	result = bitXorFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(0))
+
+	var dec types.MyDecimal
+	err = dec.FromString([]byte("1.234"))
+	c.Assert(err, IsNil)
+	row = types.MakeDatums(&dec)
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	c.Assert(err, IsNil)
+	result = bitXorFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(1))
+
+	err = dec.FromString([]byte("1.012"))
+	c.Assert(err, IsNil)
+	row = types.MakeDatums(&dec)
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	c.Assert(err, IsNil)
+	result = bitXorFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(0))
+
+	err = dec.FromString([]byte("2.12345678"))
+	c.Assert(err, IsNil)
+	row = types.MakeDatums(&dec)
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	c.Assert(err, IsNil)
+	result = bitXorFunc.GetResult(evalCtx)
+	c.Assert(result.GetUint64(), Equals, uint64(2))
 }
 
 func (s *testAggFuncSuit) TestCount(c *C) {
