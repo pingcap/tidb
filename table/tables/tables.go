@@ -235,11 +235,6 @@ func (t *tableCommon) WritableCols() []*table.Column {
 	return writableColumns[0 : maxOffset+1]
 }
 
-// type regionKey struct {
-// 	recordPrefix kv.Key
-// 	indexPrefix  kv.Key
-// }
-
 // RecordPrefix implements table.Table interface.
 func (t *tableCommon) RecordPrefix() kv.Key {
 	return t.recordPrefix
