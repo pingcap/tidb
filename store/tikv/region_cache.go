@@ -199,6 +199,11 @@ func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLoca
 // Specially it also returns the first key's region which may be used as the
 // 'PrimaryLockKey' and should be committed ahead of others.
 func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[RegionVerID][][]byte, RegionVerID, error) {
+	// gofail: var GroupKeysByRegionFail bool
+	// if GroupKeysByRegionFail {
+	//	return nil, RegionVerID{}, errors.Errorf("region not found for key %q", []byte("test key"))
+	// }
+
 	groups := make(map[RegionVerID][][]byte)
 	var first RegionVerID
 	var lastLoc *KeyLocation
