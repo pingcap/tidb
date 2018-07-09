@@ -34,9 +34,6 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		return h.insertTableStats2KV(t.TableInfo)
 	case model.ActionAddColumn:
 		return h.insertColStats2KV(t.TableInfo.ID, t.ColumnInfo)
-	// For drop stats statement.
-	case model.ActionDropTable:
-		return h.DeleteTableStatsFromKV(t.TableInfo.ID)
 	}
 	return nil
 }
@@ -49,23 +46,25 @@ func (h *Handle) DDLEventCh() chan *util.Event {
 // insertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
 // new columns and indices which belong to this table.
 func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
-	exec := h.ctx.(sqlexec.SQLExecutor)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values(%d, %d)", h.ctx.Txn().StartTS(), info.ID))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values(%d, %d)", h.mu.ctx.Txn().StartTS(), info.ID))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for _, col := range info.Columns {
-		_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 0, %d, 0, %d)", info.ID, col.ID, h.ctx.Txn().StartTS()))
+		_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 0, %d, 0, %d)", info.ID, col.ID, h.mu.ctx.Txn().StartTS()))
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range info.Indices {
-		_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 1, %d, 0, %d)", info.ID, idx.ID, h.ctx.Txn().StartTS()))
+		_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%d, 1, %d, 0, %d)", info.ID, idx.ID, h.mu.ctx.Txn().StartTS()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -77,20 +76,21 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) error {
 // insertColStats2KV insert a record to stats_histograms with distinct_count 1 and insert a bucket to stats_buckets with default value.
 // This operation also updates version.
 func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) error {
-	exec := h.ctx.(sqlexec.SQLExecutor)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// First of all, we update the version.
-	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.ctx.Txn().StartTS(), tableID))
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn().StartTS(), tableID))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	ctx := context.TODO()
 	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
-	if h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
-		exec := h.ctx.(sqlexec.SQLExecutor)
+	if h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 		var rs []ast.RecordSet
 		rs, err = exec.Execute(ctx, fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableID))
@@ -107,23 +107,23 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) err
 		}
 		count := chk.GetRow(0).GetInt64(0)
 		value := types.NewDatum(colInfo.OriginDefaultValue)
-		value, err = value.ConvertTo(h.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
+		value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if value.IsNull() {
 			// If the adding column has default value null, all the existing rows have null value on the newly added column.
-			_, err = exec.Execute(ctx, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, 0, %d, 0, %d)", h.ctx.Txn().StartTS(), tableID, colInfo.ID, count))
+			_, err = exec.Execute(ctx, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%d, %d, 0, %d, 0, %d)", h.mu.ctx.Txn().StartTS(), tableID, colInfo.ID, count))
 			if err != nil {
 				return errors.Trace(err)
 			}
 		} else {
 			// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-			_, err = exec.Execute(ctx, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%d, %d, 0, %d, 1, %d)", h.ctx.Txn().StartTS(), tableID, colInfo.ID, int64(len(value.GetBytes()))*count))
+			_, err = exec.Execute(ctx, fmt.Sprintf("insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%d, %d, 0, %d, 1, %d)", h.mu.ctx.Txn().StartTS(), tableID, colInfo.ID, int64(len(value.GetBytes()))*count))
 			if err != nil {
 				return errors.Trace(err)
 			}
-			value, err = value.ConvertTo(h.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
 			if err != nil {
 				return errors.Trace(err)
 			}
