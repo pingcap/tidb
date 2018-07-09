@@ -654,29 +654,33 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 	_, err = se1.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 
-	intercept := &ddl.TestIntercept{}
+	intercept := &ddl.TestInterceptor{}
+	interval := 5 * time.Millisecond
 	var (
-		testSessionCnt        int32
-		testObtainedSchemaCnt int32 // testObtainedSchemaCnt is the number of sessions that have obtained information schema.
-		testFirstConnID       = uint64(math.MaxUint64)
+		// sessionCnt is the number of sessions that goes into the function of OnGetInfoSchema.
+		sessionCnt int32
+		// obtainedSchemaSessionCnt is the number of sessions that have obtained information schema.
+		obtainedSchemaSessionCnt int32
+		testFirstConnID          = uint64(math.MaxUint64)
 	)
 	intercept.OnGetInfoSchemaExported = func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 		// The following code is for testing.
 		// Make srue the two sessions get the same information schema before executing DDL.
 		// After the first session executes its DDL, then the second session executes its DDL.
 		var info infoschema.InfoSchema
-		interval := 5 * time.Millisecond
-		atomic.AddInt32(&testSessionCnt, 1)
+		atomic.AddInt32(&sessionCnt, 1)
 		for {
 			cnt := atomic.LoadInt32(&testSessionCnt)
 			// Make sure there are two sessions running here.
 			if cnt == 2 {
 				info = is
-				atomic.AddInt32(&testObtainedSchemaCnt, 1)
+				atomic.AddInt32(&obtainedSchemaSessionCnt, 1)
 				break
 			}
 			time.Sleep(interval)
 		}
+
+		//
 		currID := ctx.GetSessionVars().ConnectionID
 		if currID == 1 {
 			atomic.CompareAndSwapUint64(&testFirstConnID, math.MaxUint64, currID)
@@ -684,10 +688,10 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		}
 		for {
 			firstID := atomic.LoadUint64(&testFirstConnID)
-			seCnt := atomic.LoadInt32(&testSessionCnt)
-			obtainedSchemaCnt := atomic.LoadInt32(&testObtainedSchemaCnt)
+			seCnt := atomic.LoadInt32(&sessionCnt)
+			obtainedSchemaCnt := atomic.LoadInt32(&obtainedSchemaSessionCnt)
 			// Make sure the two session have got the same information schema. And the first session can continue to go on,
-			// or the frist session finished this SQL, then other sessions can continue to go on.
+			// or the frist session finished this SQL(seCnt = 0), then other sessions can continue to go on.
 			if obtainedSchemaCnt == 2 && (firstID == currID || seCnt == 0) {
 				break
 			}
@@ -697,11 +701,10 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		return info
 	}
 	d := s.dom.DDL()
-	d.(ddl.DDLForTest).SetInterceptor(intercept)
+	d.(ddl.DDLForTest).SetInterceptoror(intercept)
 
 	// Make sure the connection 1 executes a SQL before the connection 2.
 	// And the connection 2 executes a SQL with an outdated information schema.
-	ch := make(chan struct{})
 	wg := sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
@@ -711,12 +714,11 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		se.SetConnectionID(1)
 		_, err1 := se.Execute(context.Background(), "alter table test_table drop column c2")
 		c.Assert(err1, IsNil)
-		atomic.StoreInt32(&testSessionCnt, 0)
+		atomic.StoreInt32(&sessionCnt, 0)
 	}()
 	go func() {
 		defer wg.Done()
 
-		<-ch
 		se1.SetConnectionID(2)
 		_, err2 := se1.Execute(context.Background(), "alter table test_table add column c2 int")
 		c.Assert(err2, NotNil)
@@ -725,6 +727,6 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 
 	wg.Wait()
 
-	intercept = &ddl.TestIntercept{}
-	d.(ddl.DDLForTest).SetInterceptor(intercept)
+	intercept = &ddl.TestInterceptor{}
+	d.(ddl.DDLForTest).SetInterceptoror(intercept)
 }

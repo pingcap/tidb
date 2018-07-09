@@ -20,17 +20,17 @@ import (
 	"golang.org/x/net/context"
 )
 
-// Intercept is used for DDL.
-type Intercept interface {
+// Interceptor is used for DDL.
+type Interceptor interface {
 	// OnGetInfoSchema is an intercept which is called in the function ddl.GetInfoSchema(). It is used in the tests.
 	OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema
 }
 
-// BaseIntercept implements Intercept.
-type BaseIntercept struct{}
+// BaseInterceptor implements Interceptor.
+type BaseInterceptor struct{}
 
-// OnGetInfoSchema implements Intercept.OnGetInfoSchema interface.
-func (bi *BaseIntercept) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+// OnGetInfoSchema implements Interceptor.OnGetInfoSchema interface.
+func (bi *BaseInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 	return is
 }
 

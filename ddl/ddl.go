@@ -231,7 +231,7 @@ type ddlCtx struct {
 	mu struct {
 		sync.RWMutex
 		hook        Callback
-		interceptor Intercept
+		interceptor Interceptor
 	}
 }
 
@@ -309,7 +309,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		binlogCli:    binloginfo.GetPumpClient(),
 	}
 	ddlCtx.mu.hook = hook
-	ddlCtx.mu.interceptor = &BaseIntercept{}
+	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
 		infoHandle: infoHandle,
 		ddlCtx:     ddlCtx,

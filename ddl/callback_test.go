@@ -22,18 +22,18 @@ import (
 	"golang.org/x/net/context"
 )
 
-type TestIntercept struct {
-	*BaseIntercept
+type TestInterceptor struct {
+	*BaseInterceptor
 
 	OnGetInfoSchemaExported func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema
 }
 
-func (ti *TestIntercept) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+func (ti *TestInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 	if ti.OnGetInfoSchemaExported != nil {
 		return ti.OnGetInfoSchemaExported(ctx, is)
 	}
 
-	return ti.BaseIntercept.OnGetInfoSchema(ctx, is)
+	return ti.BaseInterceptor.OnGetInfoSchema(ctx, is)
 }
 
 type TestDDLCallback struct {
