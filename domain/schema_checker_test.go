@@ -14,25 +14,11 @@
 package domain
 
 import (
-	// "testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/terror"
-	//	"github.com/pingcap/tidb/util/testleak"
 )
-
-// var _ = Suite(&testSuite{})
-//
-// type testSuite struct{}
-//
-// func (s *testSuite) SetUpSuite(c *C) {
-// 	testleak.BeforeTest()
-// }
-//
-// func (s *testSuite) TearDownSuite(c *C) {
-// 	testleak.AfterTest(c)()
-// }
 
 func (s *testSuite) TestSchemaCheckerSimple(c *C) {
 	lease := 5 * time.Millisecond

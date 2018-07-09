@@ -681,7 +681,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 			if currID == firstConnID || seCnt == finishedCnt {
 				break
 			}
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(interval)
 		}
 
 		return info
