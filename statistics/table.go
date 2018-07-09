@@ -45,7 +45,6 @@ type Table struct {
 	HistColl
 	ModifyCount int64 // Total modify count in a table.
 	Version     uint64
-	Pseudo      bool
 	PKIsHandle  bool
 }
 
@@ -57,6 +56,7 @@ type HistColl struct {
 	Indices     map[int64]*Index
 	colName2Idx map[string]int64 // map column name to index id
 	colName2ID  map[string]int64 // map column name to column id
+	Pseudo      bool
 	Count       int64
 }
 
@@ -69,6 +69,7 @@ func (t *Table) copy() *Table {
 		Indices:     make(map[int64]*Index),
 		colName2Idx: make(map[string]int64),
 		colName2ID:  make(map[string]int64),
+		Pseudo:      t.Pseudo,
 	}
 	for id, col := range t.Columns {
 		newHistColl.Columns[id] = col
@@ -86,7 +87,6 @@ func (t *Table) copy() *Table {
 		HistColl:    newHistColl,
 		ModifyCount: t.ModifyCount,
 		Version:     t.Version,
-		Pseudo:      t.Pseudo,
 	}
 	return nt
 }
@@ -249,12 +249,6 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, loadAll bool)
 		table = table.copy()
 	}
 	table.Pseudo = false
-	for _, col := range table.Columns {
-		col.Pseudo = false
-	}
-	for _, idx := range table.Indices {
-		idx.Pseudo = false
-	}
 	selSQL := fmt.Sprintf("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag from mysql.stats_histograms where table_id = %d", tableInfo.ID)
 	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, selSQL)
 	if err != nil {
@@ -342,7 +336,7 @@ func (t *Table) IsOutdated() bool {
 // as need histogram.
 func (coll *HistColl) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64) bool {
 	col, ok := coll.Columns[colID]
-	if !ok || col.Pseudo && col.NotAccurate() {
+	if !ok || coll.Pseudo && col.NotAccurate() {
 		return true
 	}
 	if col.NDV > 0 && col.Len() == 0 {
@@ -422,7 +416,8 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
 	idx := coll.Indices[idxID]
-	if idx == nil || idx.Pseudo && idx.NotAccurate() || idx.Len() == 0 {
+	log.Warnf("idx is nil: %v", idx == nil)
+	if idx == nil || coll.Pseudo && idx.NotAccurate() || idx.Len() == 0 {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -519,20 +514,20 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 		HaveTblID: true,
 		Columns:   make(map[int64]*Column, len(tblInfo.Columns)),
 		Indices:   make(map[int64]*Index, len(tblInfo.Indices)),
+		Pseudo:    true,
 	}
 	t := &Table{
 		HistColl:   pseudoHistColl,
-		Pseudo:     true,
 		PKIsHandle: tblInfo.PKIsHandle,
 	}
 	for _, col := range tblInfo.Columns {
 		if col.State == model.StatePublic {
-			t.Columns[col.ID] = newPseudoColumn(col)
+			t.Columns[col.ID] = &Column{Info: col}
 		}
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
-			t.Indices[idx.ID] = newPseudoIndex(idx)
+			t.Indices[idx.ID] = &Index{Info: idx}
 		}
 	}
 	return t

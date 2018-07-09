@@ -1738,12 +1738,6 @@ func (b *planBuilder) getStatsTable(tblInfo *model.TableInfo) *statistics.Table 
 	if statsTbl.IsOutdated() {
 		tbl := *statsTbl
 		tbl.Pseudo = true
-		for _, col := range tbl.Columns {
-			col.Pseudo = true
-		}
-		for _, idx := range tbl.Indices {
-			idx.Pseudo = true
-		}
 		statsTbl = &tbl
 		metrics.PseudoEstimation.Inc()
 	}
