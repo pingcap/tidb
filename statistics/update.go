@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
@@ -299,10 +298,8 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 		return nil
 	}
 	var isIndex int64
-	if fb.hist.tp.Tp == mysql.TypeBlob {
+	if fb.hist.isIndexHist() {
 		isIndex = 1
-	} else {
-		isIndex = 0
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
 		"(%d, %d, %d, X'%X')", fb.tableID, fb.hist.ID, isIndex, vals)
@@ -315,7 +312,10 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	return errors.Trace(err)
 }
 
-// UpdateStatsByLocalFeedback will update statistics by local feedback.
+// UpdateStatsByLocalFeedback will update statistics by the local feedback.
+// Currently, we dump the feedback with the period of 10 minutes, which means
+// it takes 10 minutes for a feedback to take effect. However, we can use the
+// feedback locally on this tidb-server, so it could be used more timely.
 func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) error {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
@@ -329,30 +329,28 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) error {
 			hist    *Histogram
 			isIndex int
 		)
-		if fb.hist.tp.Tp == mysql.TypeBlob {
-			isIndex = 1
-		}
 		table, ok := is.TableByID(fb.tableID)
 		if !ok {
 			continue
 		}
-		tbl := h.GetTableStats(table.Meta())
-		if isIndex == 1 {
-			idx, ok := tbl.Indices[fb.hist.ID]
+		tblStats := h.GetTableStats(table.Meta())
+		if fb.hist.isIndexHist() {
+			isIndex = 1
+			idx, ok := tblStats.Indices[fb.hist.ID]
 			if !ok {
 				continue
 			}
 			hist = &idx.Histogram
 			cms = idx.CMSketch.copy()
 		} else {
-			col, ok := tbl.Columns[fb.hist.ID]
+			col, ok := tblStats.Columns[fb.hist.ID]
 			if !ok {
 				continue
 			}
 			hist = &col.Histogram
 		}
 		hist = UpdateHistogram(hist, fb)
-		err := SaveStatsToStorage(h.ctx, tbl.TableID, -1, isIndex, hist, cms)
+		err := SaveStatsToStorage(h.ctx, tblStats.TableID, -1, isIndex, hist, cms)
 		if err != nil {
 			return errors.Trace(err)
 		}

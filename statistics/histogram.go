@@ -590,6 +590,10 @@ func (hg *Histogram) popFirstBucket() {
 	hg.Bounds = c
 }
 
+func (hg *Histogram) isIndexHist() bool {
+	return hg.tp.Tp == mysql.TypeBlob
+}
+
 // MergeHistograms merges two histograms.
 func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram, bucketSize int) (*Histogram, error) {
 	if lh.Len() == 0 {

@@ -24,7 +24,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -138,7 +137,7 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 		return
 	}
 
-	if q.hist.tp.Tp == mysql.TypeBlob {
+	if q.hist.isIndexHist() {
 		startKey = tablecodec.CutIndexPrefix(startKey)
 	} else {
 		startKey = tablecodec.CutRowKeyPrefix(startKey)
@@ -528,7 +527,7 @@ func encodeIndexFeedback(q *QueryFeedback) *queryFeedback {
 func encodeFeedback(q *QueryFeedback) ([]byte, error) {
 	var pb *queryFeedback
 	var err error
-	if q.hist.tp.Tp == mysql.TypeBlob {
+	if q.hist.isIndexHist() {
 		pb = encodeIndexFeedback(q)
 	} else {
 		pb, err = encodePKFeedback(q)
