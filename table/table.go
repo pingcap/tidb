@@ -75,8 +75,17 @@ var (
 // RecordIterFunc is used for low-level record iteration.
 type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool, err error)
 
-// Common defines some common operations for a table.
-type Common interface {
+// Table is used to retrieve and modify rows in table.
+type Table interface {
+	// IterRecords iterates records in the table and calls fn.
+	IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*Column, fn RecordIterFunc) error
+
+	// RowWithCols returns a row that contains the given cols.
+	RowWithCols(ctx sessionctx.Context, h int64, cols []*Column) ([]types.Datum, error)
+
+	// Row returns a row for all columns.
+	Row(ctx sessionctx.Context, h int64) ([]types.Datum, error)
+
 	// Cols returns the columns of the table which is used in select.
 	Cols() []*Column
 
@@ -93,15 +102,6 @@ type Common interface {
 	// DeletableIndices returns delete-only, write-only and public indices of the table.
 	DeletableIndices() []Index
 
-	// Allocator returns Allocator.
-	Allocator(ctx sessionctx.Context) autoid.Allocator
-
-	// Meta returns TableInfo.
-	Meta() *model.TableInfo
-}
-
-// RegionKeyProvider defines some operations to locate the keys.
-type RegionKeyProvider interface {
 	// RecordPrefix returns the record key prefix.
 	RecordPrefix() kv.Key
 
@@ -113,24 +113,6 @@ type RegionKeyProvider interface {
 
 	// RecordKey returns the key in KV storage for the row.
 	RecordKey(h int64) kv.Key
-}
-
-// Table is used to retrieve and modify rows in table.
-type Table interface {
-	Common
-	RegionKeyProvider
-
-	// All the following methods can be implemented by composing the above interfaces.
-	// They are provided just for convenience.
-
-	// IterRecords iterates records in the table and calls fn.
-	IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*Column, fn RecordIterFunc) error
-
-	// RowWithCols returns a row that contains the given cols.
-	RowWithCols(ctx sessionctx.Context, h int64, cols []*Column) ([]types.Datum, error)
-
-	// Row returns a row for all columns.
-	Row(ctx sessionctx.Context, h int64) ([]types.Datum, error)
 
 	// AddRecord inserts a row which should contain only public columns
 	// skipHandleCheck indicates that recordID in r has been checked as not duplicate already.
@@ -145,10 +127,16 @@ type Table interface {
 	// AllocAutoID allocates an auto_increment ID for a new row.
 	AllocAutoID(ctx sessionctx.Context) (int64, error)
 
+	// Allocator returns Allocator.
+	Allocator(ctx sessionctx.Context) autoid.Allocator
+
 	// RebaseAutoID rebases the auto_increment ID base.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
 	RebaseAutoID(ctx sessionctx.Context, newBase int64, allocIDs bool) error
+
+	// Meta returns TableInfo.
+	Meta() *model.TableInfo
 
 	// Seek returns the handle greater or equal to h.
 	Seek(ctx sessionctx.Context, h int64) (handle int64, found bool, err error)
@@ -157,10 +145,10 @@ type Table interface {
 	Type() Type
 }
 
-// PartitionTable inherits Table and it's a real Table, rather than a partition.
+// PartitionTable is a Table, and it implements GetPartition() method.
 type PartitionTable interface {
 	Table
-	GetPartition(pid int64) Table
+	GetPartition(partitionID int64) Table
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
