@@ -55,7 +55,7 @@ If this PR needs to be added to the release notes, please:
 3. include the string "action required" if the PR requires additional action from users switching to the new release
 -->
 
-```release-note
+```
 ```
 
 ## Refer to a related PR or issue link (optional)
