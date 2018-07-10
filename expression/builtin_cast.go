@@ -193,9 +193,6 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if bf.tp.Decimal < 0 {
-			bf.tp.Decimal = 0
-		}
 		sig = &builtinCastDurationAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsReal)
 	case types.ETJson:
@@ -1401,11 +1398,7 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(row types.Row) (res *types
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	fsp := b.tp.Decimal
-	if fsp < 0 {
-		fsp = 0
-	}
-	res, err = types.ProduceDecWithSpecifiedTp(val.ToNumber(fsp), b.tp, sc)
+	res, err = types.ProduceDecWithSpecifiedTp(val.ToNumber(b.tp.Decimal), b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
