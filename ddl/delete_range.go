@@ -242,11 +242,11 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
 	case model.ActionDropTablePartition:
-		// the job.tableID here stores paritionID.
-		paritionID := job.TableID
-		startKey := tablecodec.EncodeTablePrefix(paritionID)
-		endKey := tablecodec.EncodeTablePrefix(paritionID + 1)
-		return doInsert(s, job.ID, paritionID, startKey, endKey, now)
+		// the `job.TableID` here stores partitionID.
+		partitionID := job.TableID
+		startKey := tablecodec.EncodeTablePrefix(partitionID)
+		endKey := tablecodec.EncodeTablePrefix(partitionID + 1)
+		return doInsert(s, job.ID, partitionID, startKey, endKey, now)
 	// ActionAddIndex needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex:
 		tableID := job.TableID
