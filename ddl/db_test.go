@@ -2589,17 +2589,17 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
     	partition p4 values less than (2010),
     	partition p5 values less than (2015)
    	);`)
-	s.tk.MustExec(` INSERT INTO tr VALUES
-   		(1, 'desk organiser', '2003-10-15'),
-   		(2, 'alarm clock', '1997-11-05'),
-   		(3, 'chair', '2009-03-10'),
-   		(4, 'bookcase', '1989-01-10'),
-    	(5, 'exercise bike', '2014-05-09'),
-    	(6, 'sofa', '1987-06-05'),
-    	(7, 'espresso maker', '2011-11-22'),
-    	(8, 'aquarium', '1992-08-04'),
-    	(9, 'study desk', '2006-09-16'),
-    	(10, 'lava lamp', '1998-12-25');`)
+	s.tk.MustExec(`INSERT INTO tr VALUES
+	(1, 'desk organiser', '2003-10-15'),
+	(2, 'alarm clock', '1997-11-05'),
+	(3, 'chair', '2009-03-10'),
+	(4, 'bookcase', '1989-01-10'),
+	(5, 'exercise bike', '2014-05-09'),
+	(6, 'sofa', '1987-06-05'),
+	(7, 'espresso maker', '2011-11-22'),
+	(8, 'aquarium', '1992-08-04'),
+	(9, 'study desk', '2006-09-16'),
+	(10, 'lava lamp', '1998-12-25');`)
 	result := s.tk.MustQuery("select * from tr where purchased between '1995-01-01' and '1999-12-31';")
 	result.Check(testkit.Rows(`2 alarm clock 1997-11-05`, `10 lava lamp 1998-12-25`))
 	s.tk.MustExec("alter table tr drop partition p2;")
