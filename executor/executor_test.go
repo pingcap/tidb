@@ -188,6 +188,16 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
 	c.Assert(err, IsNil)
 
+	r, err = tk.Exec("admin show ddl jobs 20")
+	c.Assert(err, IsNil)
+	chk = r.NewChunk()
+	err = r.Next(ctx, chk)
+	c.Assert(err, IsNil)
+	row = chk.GetRow(0)
+	c.Assert(row.Len(), Equals, 10)
+	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
+	c.Assert(err, IsNil)
+
 	// show DDL job queries test
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test2")
