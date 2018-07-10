@@ -90,7 +90,6 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.MustNewMVCCStore()
-
 	s.store, err = mockstore.NewMockTikvStore(
 		mockstore.WithCluster(s.cluster),
 		mockstore.WithMVCCStore(s.mvccStore),
@@ -927,7 +926,6 @@ func (s *testDBSuite) TestAddColumnTooMany(c *C) {
 	s.tk.MustExec("use test")
 	count := ddl.TableColumnCountLimit - 1
 	var cols []string
-
 	for i := 0; i < count; i++ {
 		cols = append(cols, fmt.Sprintf("a%d int", i))
 	}
