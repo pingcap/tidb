@@ -2516,7 +2516,6 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 	part := tbl.Meta().Partition
 	c.Assert(part.Type, Equals, model.PartitionTypeRange)
 	c.Assert(part.Expr, Equals, "`hired`")
-
 	c.Assert(part.Definitions, HasLen, 2)
 	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
 	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
@@ -2569,7 +2568,6 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 	part = tbl.Meta().Partition
 	c.Assert(part.Type, Equals, model.PartitionTypeRange)
 	c.Assert(part.Expr, Equals, "`id`")
-
 	c.Assert(part.Definitions, HasLen, 2)
 	c.Assert(part.Definitions[0].LessThan[0], Equals, "10")
 	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))

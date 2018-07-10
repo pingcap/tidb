@@ -186,7 +186,7 @@ func removePartitionInfo(job *model.Job, tblInfo *model.TableInfo, partName stri
 	tblInfo.Partition.Definitions = newDefs
 }
 
-// onDropTablePartition delete old partition meta.
+// onDropTablePartition deletes old partition meta.
 // A background job will be created to delete old partition data.
 func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partName string
@@ -196,7 +196,6 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
