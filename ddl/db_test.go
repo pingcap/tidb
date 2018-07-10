@@ -2392,7 +2392,6 @@ func (s *testDBSuite) TestBackwardCompatibility(c *C) {
 }
 
 func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
-
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
 	s.tk.MustExec("set @@session.tidb_enable_table_partition=1")
