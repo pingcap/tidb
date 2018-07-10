@@ -187,7 +187,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	metrics.StatsInaccuracyRate.Observe(rate)
 	s.Lock()
 	defer s.Unlock()
-	isIndex := q.hist.tp.Tp == mysql.TypeBlob
+	isIndex := q.hist.isIndexHist()
 	s.rateMap.update(q.tableID, q.hist.ID, rate, isIndex)
 	if len(s.feedback) < MaxQueryFeedbackCount {
 		s.feedback = append(s.feedback, q)
@@ -390,7 +390,6 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	return errors.Trace(err)
 }
 
-<<<<<<< HEAD
 // UpdateStatsByLocalFeedback will update statistics by the local feedback.
 // Currently, we dump the feedback with the period of 10 minutes, which means
 // it takes 10 minutes for a feedback to take effect. However, we can use the
@@ -429,13 +428,14 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) error {
 			hist = &col.Histogram
 		}
 		hist = UpdateHistogram(hist, fb)
-		err := SaveStatsToStorage(h.ctx, tblStats.TableID, -1, isIndex, hist, cms)
+		err := h.SaveStatsToStorage(tblStats.TableID, -1, isIndex, hist, cms, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
-=======
+}
+
 // UpdateErrorRate updates the error rate of columns from h.rateMap to cache.
 func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 	h.mu.Lock()
@@ -464,7 +464,6 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 	}
 	h.mu.Unlock()
 	h.UpdateTableStats(tbls, nil)
->>>>>>> 10151e1598c5c91ef5a6d285c8a0ae4489836fc6
 }
 
 // HandleUpdateStats update the stats using feedback.
