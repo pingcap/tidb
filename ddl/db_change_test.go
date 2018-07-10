@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
@@ -533,9 +535,29 @@ func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
+	sql1 := "ALTER TABLE t add index index_b(b);"
+	sql2 := "CREATE INDEX index_b ON t (c);"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1061]index already exist index_b")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
+	sql := "ALTER TABLE t drop COLUMN c ;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1091]column c doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
 func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	sql1 := "create table t_exists(c int);"
 	sql2 := "alter table t rename to t_exists;"
+	defer s.se.Execute(context.Background(), "drop table t_exists")
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_exists' already exists")
@@ -663,4 +685,88 @@ func (s *testStateChangeSuite) TestCreateTableIfNotExists(c *C) {
 func (s *testStateChangeSuite) TestCreateDBIfNotExists(c *C) {
 	defer s.se.Execute(context.Background(), "drop database test_not_exists")
 	s.testParallelExecSQL(c, "create database if not exists test_not_exists;")
+}
+
+// TestParallelDDLBeforeRunDDLJob tests a session to execute DDL with an outdated information schema.
+// This test is used to simulate the following conditions:
+// In a cluster, TiDB "a" executes the DDL.
+// TiDB "b" fails to load schema, then TiDB "b" executes the DDL statement associated with the DDL statement executed by "a".
+func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
+	defer s.se.Execute(context.Background(), "drop table test_table")
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table test_table (c1 int, c2 int default 1, index (c1))")
+	c.Assert(err, IsNil)
+
+	// Create two sessions.
+	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se1.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+
+	intercept := &ddl.TestInterceptor{}
+	firstConnID := uint64(1)
+	finishedCnt := int32(0)
+	interval := 5 * time.Millisecond
+	var sessionCnt int32 // sessionCnt is the number of sessions that goes into the function of OnGetInfoSchema.
+	intercept.OnGetInfoSchemaExported = func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+		// The following code is for testing.
+		// Make sure the two sessions get the same information schema before executing DDL.
+		// After the first session executes its DDL, then the second session executes its DDL.
+		var info infoschema.InfoSchema
+		atomic.AddInt32(&sessionCnt, 1)
+		for {
+			// Make sure there are two sessions running here.
+			if atomic.LoadInt32(&sessionCnt) == 2 {
+				info = is
+				break
+			}
+			time.Sleep(interval)
+		}
+
+		currID := ctx.GetSessionVars().ConnectionID
+		for {
+			seCnt := atomic.LoadInt32(&sessionCnt)
+			// Make sure the two session have got the same information schema. And the first session can continue to go on,
+			// or the frist session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
+			if currID == firstConnID || seCnt == finishedCnt {
+				break
+			}
+			time.Sleep(interval)
+		}
+
+		return info
+	}
+	d := s.dom.DDL()
+	d.(ddl.DDLForTest).SetInterceptoror(intercept)
+
+	// Make sure the connection 1 executes a SQL before the connection 2.
+	// And the connection 2 executes a SQL with an outdated information schema.
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+
+		se.SetConnectionID(firstConnID)
+		_, err1 := se.Execute(context.Background(), "alter table test_table drop column c2")
+		c.Assert(err1, IsNil)
+		atomic.StoreInt32(&sessionCnt, finishedCnt)
+	}()
+	go func() {
+		defer wg.Done()
+
+		se1.SetConnectionID(2)
+		_, err2 := se1.Execute(context.Background(), "alter table test_table add column c2 int")
+		c.Assert(err2, NotNil)
+		c.Assert(strings.Contains(err2.Error(), "Information schema is changed"), IsTrue)
+	}()
+
+	wg.Wait()
+
+	intercept = &ddl.TestInterceptor{}
+	d.(ddl.DDLForTest).SetInterceptoror(intercept)
 }
