@@ -2622,4 +2622,44 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
 	c.Assert(part.Definitions[1].LessThan[0], Equals, "MAXVALUE")
 	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p3"))
+
+	s.tk.MustExec("drop table if exists table4;")
+	s.tk.MustExec(` create table tr(
+		id int, name varchar(50), 
+		purchased date
+	)
+	partition by range( year(purchased) ) (
+    	partition p0 values less than (1990),
+    	partition p1 values less than (1995),
+    	partition p2 values less than (2000),
+    	partition p3 values less than (2005),
+    	partition p4 values less than (2010),
+    	partition p5 values less than (2015)
+   	);`)
+	s.tk.MustExec(` INSERT INTO tr VALUES
+   		(1, 'desk organiser', '2003-10-15'),
+   		(2, 'alarm clock', '1997-11-05'),
+   		(3, 'chair', '2009-03-10'),
+   		(4, 'bookcase', '1989-01-10'),
+    	(5, 'exercise bike', '2014-05-09'),
+    	(6, 'sofa', '1987-06-05'),
+    	(7, 'espresso maker', '2011-11-22'),
+    	(8, 'aquarium', '1992-08-04'),
+    	(9, 'study desk', '2006-09-16'),
+    	(10, 'lava lamp', '1998-12-25');`)
+	result := s.tk.MustQuery("select * from tr where purchased between '1995-01-01' and '1999-12-31';")
+	result.Check(testkit.Rows(`2 alarm clock 1997-11-05`, `10 lava lamp 1998-12-25`))
+	s.tk.MustExec("alter table tr drop partition p2;")
+	result = s.tk.MustQuery("select * from tr where purchased between '1995-01-01' and '1999-12-31';")
+	result.Check(testkit.Rows())
+
+	result = s.tk.MustQuery("select * from tr where purchased between '2010-01-01' and '2014-12-31';")
+	result.Check(testkit.Rows(`5 exercise bike 2014-05-09`, `7 espresso maker 2011-11-22`))
+	s.tk.MustExec("alter table tr drop partition p5;")
+	result = s.tk.MustQuery("select * from tr where purchased between '2010-01-01' and '2014-12-31';")
+	result.Check(testkit.Rows())
+
+	s.tk.MustExec("alter table tr drop partition p4;")
+	result = s.tk.MustQuery("select * from tr where purchased between '2005-01-01' and '2009-12-31';")
+	result.Check(testkit.Rows())
 }
