@@ -2398,9 +2398,9 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 	s.tk.MustExec("drop table if exists employees;")
 	s.tk.MustExec(`create table employees (
 	id int not null,
-	hired int not null
+	hired date not null
 	)
-	partition by range( id ) (
+	partition by range( year(hired) ) (
 		partition p1 values less than (1991),
 		partition p2 values less than (1996),
 		partition p3 values less than (2001)
@@ -2418,7 +2418,7 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 	part := tbl.Meta().Partition
 	c.Assert(part.Type, Equals, model.PartitionTypeRange)
 
-	c.Assert(part.Expr, Equals, "`id`")
+	c.Assert(part.Expr, Equals, "year(`hired`)")
 	c.Assert(part.Definitions, HasLen, 5)
 	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
 	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
