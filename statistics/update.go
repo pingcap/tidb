@@ -536,35 +536,32 @@ var AutoAnalyzeMinCnt int64 = 1000
 // tableAnalyzed checks if the table is analyzed.
 func tableAnalyzed(tbl *Table) bool {
 	for _, col := range tbl.Columns {
-		if col.Count > 0 {
+		if col.Histogram.Len() > 0 {
 			return true
 		}
 	}
 	for _, idx := range tbl.Indices {
-		if idx.Len() > 0 {
+		if idx.Histogram.Len() > 0 {
 			return true
 		}
 	}
 	return false
 }
 
+// needAnalyzeTable checks if we need to analyze the table. If the table is not analyzed,
+// we need to analyze it when it has not been modified for a time. If the table is analyzed,
+// we need to analyze it when the `modify count / count` is greater than autoAnalyzeRatio.
 func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
-	if tbl.ModifyCount == 0 || tbl.Count < AutoAnalyzeMinCnt {
-		return false
-	}
 	analyzed := tableAnalyzed(tbl)
-	t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
-	if !analyzed && time.Since(t) >= limit {
-		return true
+	if !analyzed {
+		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
+		return time.Since(t) >= limit
 	}
 	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
 		return false
 	}
-	if analyzed && float64(tbl.ModifyCount)/float64(tbl.Count) > autoAnalyzeRatio {
-		return true
-	}
-	return false
+	return float64(tbl.ModifyCount)/float64(tbl.Count) > autoAnalyzeRatio
 }
 
 const minAutoAnalyzeRatio = 0.3
@@ -597,7 +594,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			statsTbl := h.GetTableStats(tblInfo)
-			if statsTbl.Pseudo || statsTbl.Count == 0 {
+			if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt || statsTbl.ModifyCount == 0 {
 				continue
 			}
 			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
