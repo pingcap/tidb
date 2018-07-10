@@ -251,8 +251,8 @@ func (b *batchChecker) deleteDupKeys(row toBeCheckedRow) {
 	}
 }
 
-func (b *batchChecker) getOldRow(ctx sessionctx.Context, t table.Table, handle int64) (types.DatumRow, error) {
-	// Get the table record row from storage for update.
+// decodeOldRow decodes the table record row from storage for batch check.
+func (b *batchChecker) decodeOldRow(ctx sessionctx.Context, t table.Table, handle int64) (types.DatumRow, error) {
 	oldValue, ok := b.dupOldRowValues[string(t.RecordKey(handle))]
 	if !ok {
 		return nil, errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", handle)

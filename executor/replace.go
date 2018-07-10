@@ -47,7 +47,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 }
 
 func (e *ReplaceExec) removeRow(handle int64, newRow types.DatumRow) error {
-	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
+	oldRow, err := e.decodeOldRow(e.ctx, e.Table, handle)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -64,18 +64,20 @@ func (e *ReplaceExec) removeRow(handle int64, newRow types.DatumRow) error {
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	}
 
-	// cleanup keys map
-	cleanupRow, err := e.getKeysNeedCheck(e.ctx, e.Table, []types.DatumRow{oldRow})
+	// Cleanup keys map, because the record was removed.
+	cleanupRows, err := e.getKeysNeedCheck(e.ctx, e.Table, []types.DatumRow{oldRow})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if len(cleanupRow) > 0 {
-		e.deleteDupKeys(cleanupRow[0])
+	if len(cleanupRows) > 0 {
+		// The length of need-to-cleanup rows should be at most 1, due to we only input 1 row.
+		e.deleteDupKeys(cleanupRows[0])
 	}
 	return nil
 }
 
 func (e *ReplaceExec) insertRow(row types.DatumRow) (int64, error) {
+	// Set kv.PresumeKeyNotExists is safe here, because we've already removed all duplicated rows.
 	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
 	h, err := e.Table.AddRecord(e.ctx, row, false)
 	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
@@ -106,7 +108,7 @@ func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
 		return errors.Trace(err)
 	}
 
-	// Batch get the to-be-updated rows in storage.
+	// Batch get the to-be-replaced rows in storage.
 	err = e.initDupOldRowValue(e.ctx, e.Table, newRows)
 	if err != nil {
 		return errors.Trace(err)
@@ -146,6 +148,7 @@ func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
 			if foundDupKey {
 				continue
 			}
+			// No duplicated rows now, insert the row and go to the next row.
 			newHandle, err := e.insertRow(newRows[i])
 			if err != nil {
 				return errors.Trace(err)
