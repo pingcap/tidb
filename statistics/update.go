@@ -533,6 +533,7 @@ const (
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
 var AutoAnalyzeMinCnt int64 = 1000
 
+// tableAnalyzed checks if the table is analyzed.
 func tableAnalyzed(tbl *Table) bool {
 	for _, col := range tbl.Columns {
 		if col.Count > 0 {
@@ -556,7 +557,7 @@ func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64)
 	if !analyzed && time.Since(t) >= limit {
 		return true
 	}
-	// Auto analyze is closed.
+	// Auto analyze is disabled.
 	if autoAnalyzeRatio == 0 {
 		return false
 	}
