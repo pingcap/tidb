@@ -435,8 +435,8 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 		} else {
 			tok = int('@')
 		}
-	} else if isIdentChar(ch1) {
-		s.r.incAsLongAs(isIdentChar)
+	} else if isUserVarChar(ch1) {
+		s.r.incAsLongAs(isUserVarChar)
 		tok, lit = singleAtIdentifier, s.r.data(&pos)
 	} else if ch1 == '@' {
 		s.r.inc()
@@ -452,10 +452,8 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 		}
 		s.r.incAsLongAs(isIdentChar)
 		tok, lit = doubleAtIdentifier, s.r.data(&pos)
-	} else if ch1 == ' ' || ch1 == ':' || ch1 == '=' {
-		tok, lit = singleAtIdentifier, s.r.data(&pos)
 	} else {
-		tok = int('@')
+		tok, lit = singleAtIdentifier, s.r.data(&pos)
 	}
 	return
 }

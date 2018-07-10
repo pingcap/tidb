@@ -36,6 +36,10 @@ func isIdentExtend(ch rune) bool {
 	return ch >= 0x80 && ch <= '\uffff'
 }
 
+func isUserVarChar(ch rune) bool {
+	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
+}
+
 type trieNode struct {
 	childs [256]*trieNode
 	token  int
