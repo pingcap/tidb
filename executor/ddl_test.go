@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -135,6 +136,130 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	tk.MustExec("insert into create_auto_increment_test (name) values ('aa')")
 	r = tk.MustQuery("select * from create_auto_increment_test;")
 	r.Check(testkit.Rows("1000 aa"))
+
+	// test create table ... select
+	tk.MustExec("drop table if exists create_source;")
+	tk.MustExec("drop table if exists create_target;")
+	tk.MustExec("create table create_source(a varchar(255), b int);")
+	tk.MustExec("insert into create_source values ('aa', 1);")
+	tk.MustExec("insert into create_source values ('bb', 2);")
+	tk.MustExec("insert into create_source values ('bb', 3);")
+	tk.MustExec("create table create_target select * from create_source;")
+	r = tk.MustQuery("select * from create_target;")
+	r.Check(testkit.Rows("aa 1", "bb 2", "bb 3"))
+
+	tk.MustExec("drop table create_target")
+	tk.MustExec("create table create_target " +
+		"select a, sum(b) as total from create_source group by a union select a, b as total from create_source;")
+	r = tk.MustQuery("select * from create_target order by total;")
+	r.Check(testkit.Rows("aa 1", "bb 2", "bb 3", "bb 5"))
+
+	// test auto-increment with create table ... select
+	tk.MustExec("drop table create_target;")
+	tk.MustExec("create table create_target(idx int key auto_increment) auto_increment=5 select * from create_source;")
+	r = tk.MustQuery("select * from create_target;")
+	r.Check(testkit.Rows("5 aa 1", "6 bb 2", "7 bb 3"))
+
+	// test duplicate keys
+	tk.MustExec("drop table if exists create_source;")
+	tk.MustExec("create table create_source(ord int, a int, b int);")
+	tk.MustExec("insert into create_source values (1, 1, 1);")
+	tk.MustExec("insert into create_source values (2, 1, 2);")
+	tk.MustExec("insert into create_source values (3, 3, 1);")
+
+	tk.MustExec("drop table create_target;")
+	_, err = tk.Exec("create table create_target(a int key, b int unique) select * from create_source order by ord;")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+
+	tk.MustExec("create table create_target(a int key, b int unique) ignore select a, b from create_source order by ord;")
+	r = tk.MustQuery("select * from create_target;")
+	r.Check(testkit.Rows("1 1"))
+
+	tk.MustExec("drop table create_target;")
+	tk.MustExec("create table create_target(a int key, b int unique) replace select a, b from create_source order by ord;")
+	r = tk.MustQuery("select * from create_target;")
+	r.Check(testkit.Rows("1 2", "3 1"))
+
+	// test column attributes for the new table
+	tk.MustExec("drop table create_source;")
+	tk.MustExec("create table create_source(" +
+		"a int key comment 'ThisWasPrimaryKey'," +
+		"b varchar(30) not null unique," +
+		"c varchar(30) default 'CC'," +
+		"d int default 4," +
+		"e float default 2.0," +
+		"f datetime default '2018-01-01'," +
+		"g int," +
+		"h timestamp not null default current_timestamp on update current_timestamp," +
+		"i int as (g + 1) not null);")
+
+	tk.MustExec("drop table create_target;")
+	tk.MustExec("create table create_target(j int as (a * 2), g float)" +
+		" select a, b, c, d, e, f, g, h, i, cast(e as signed) as k from create_source;")
+	is := s.domain.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("create_target"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	colInfos := tblInfo.Cols()
+
+	// retrieve columns by index to test the order of them
+	colj := colInfos[0]
+	c.Assert(colj.Name.L, Equals, "j")
+	c.Assert(colj.IsGenerated(), IsTrue)
+
+	cola := colInfos[1]
+	c.Assert(cola.Name.L, Equals, "a")
+	c.Assert(cola.Comment, Equals, "ThisWasPrimaryKey")
+	c.Assert(mysql.HasPriKeyFlag(cola.Flag), IsFalse)
+
+	colb := colInfos[2]
+	c.Assert(colb.Name.L, Equals, "b")
+	c.Assert(mysql.HasNotNullFlag(colb.Flag), IsTrue)
+	c.Assert(mysql.HasUniKeyFlag(colb.Flag), IsFalse)
+
+	colc := colInfos[3]
+	c.Assert(colc.Name.L, Equals, "c")
+	c.Assert(colc, NotNil)
+	c.Assert(mysql.HasNoDefaultValueFlag(colc.Flag), IsFalse)
+	c.Assert(colc.DefaultValue, Equals, "CC")
+
+	cold := colInfos[4]
+	c.Assert(cold.Name.L, Equals, "d")
+	c.Assert(mysql.HasNoDefaultValueFlag(cold.Flag), IsFalse)
+	c.Assert(cold.DefaultValue, Equals, "4")
+
+	cole := colInfos[5]
+	c.Assert(cole.Name.L, Equals, "e")
+	c.Assert(cole, NotNil)
+	c.Assert(mysql.HasNoDefaultValueFlag(cole.Flag), IsFalse)
+	c.Assert(cole.DefaultValue, Equals, "2.0")
+
+	colf := colInfos[6]
+	c.Assert(colf.Name.L, Equals, "f")
+	c.Assert(colf, NotNil)
+	c.Assert(mysql.HasNoDefaultValueFlag(colf.Flag), IsFalse)
+	c.Assert(colf.DefaultValue, Equals, "2018-01-01 00:00:00")
+
+	colg := colInfos[7]
+	c.Assert(colg.Name.L, Equals, "g")
+	c.Assert(colg, NotNil)
+	c.Assert(colg.Tp, Equals, mysql.TypeFloat)
+
+	colh := colInfos[8]
+	c.Assert(colh.Name.L, Equals, "h")
+	c.Assert(colh, NotNil)
+	c.Assert(mysql.HasNotNullFlag(colh.Flag), IsTrue)
+	c.Assert(colh.DefaultValue, Equals, strings.ToUpper(ast.CurrentTimestamp))
+	c.Assert(mysql.HasOnUpdateNowFlag(colh.Flag), IsTrue)
+
+	coli := colInfos[9]
+	c.Assert(coli.Name.L, Equals, "i")
+	c.Assert(coli, NotNil)
+	c.Assert(mysql.HasNoDefaultValueFlag(coli.Flag), IsTrue)
+	c.Assert(coli.IsGenerated(), IsFalse)
+
+	// test "if not exist" with create table ... select
+	tk.MustExec("create table if not exists create_target select * from create_source;")
 }
 
 func (s *testSuite3) TestCreateView(c *C) {

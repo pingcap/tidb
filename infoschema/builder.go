@@ -170,6 +170,10 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
+	// Only accept public state
+	if tblInfo.State != model.StatePublic {
+		return nil
+	}
 	if alloc == nil {
 		schemaID := dbInfo.ID
 		alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID), tblInfo.IsAutoIncColUnsigned())

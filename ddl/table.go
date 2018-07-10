@@ -35,7 +35,8 @@ import (
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tbInfo := &model.TableInfo{}
-	if err := job.DecodeArgs(tbInfo); err != nil {
+	var withSelect bool
+	if err := job.DecodeArgs(tbInfo, &withSelect); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -48,29 +49,65 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
+	originalState := job.SchemaState
 	switch tbInfo.State {
 	case model.StateNone:
 		// none -> public
-		tbInfo.State = model.StatePublic
+		if withSelect {
+			tbInfo.State = model.StateWriteOnly
+		} else {
+			tbInfo.State = model.StatePublic
+		}
 		tbInfo.UpdateTS = t.StartTS
 		err = t.CreateTableOrView(schemaID, tbInfo)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		if atomic.LoadUint32(&EnableSplitTableRegion) != 0 {
 			// TODO: Add restrictions to this operation.
 			go splitTableRegion(d.store, tbInfo.ID)
 		}
+		ver, err := updateVersionAndTableInfo(t, job, tbInfo, originalState != tbInfo.State)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
 		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		job.FinishTableJob(model.JobStateDone, tbInfo.State, ver, tbInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
 		return ver, nil
 	default:
+		job.State = model.JobStateCancelled
+		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
+	}
+}
+
+func onRevealTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	tbInfo := &model.TableInfo{}
+	if err := job.DecodeArgs(tbInfo); err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	originalState := job.SchemaState
+	switch tbInfo.State {
+	case model.StateWriteOnly:
+		// write_only -> public
+		tbInfo.State = model.StatePublic
+		tbInfo.UpdateTS = t.StartTS
+		// Finish this job.
+		ver, err := updateVersionAndTableInfo(t, job, tbInfo, originalState != tbInfo.State)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionRevealTable, TableInfo: tbInfo})
+		return ver, err
+	default:
+		job.State = model.JobStateCancelled
 		return ver, ErrInvalidTableState.GenWithStack("invalid table state %v", tbInfo.State)
 	}
 }
@@ -629,6 +666,7 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
 }
 
+// onAddTablePartition handle ActionAddTablePartition DDL job
 // TODO: It may have the issue when two clients concurrently add partitions to a table.
 func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	partInfo := &model.PartitionInfo{}

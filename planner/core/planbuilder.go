@@ -1453,6 +1453,8 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 }
 
 func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
+func (b *planBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
+	p := new(DDL)
 	switch v := node.(type) {
 	case *ast.AlterTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
@@ -1488,6 +1490,47 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 				table:     v.ReferTable.Name.L,
 				err:       nil,
 			})
+		}
+		if v.Select != nil {
+			selectPlan, err := b.build(v.Select)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			var plan PhysicalPlan
+			plan, err = doOptimize(b.optFlag, selectPlan.(LogicalPlan))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			var cols []*ast.ColumnDef
+			// calculate column attributes for the resulting table
+			// See https://dev.mysql.com/doc/refman/5.7/en/create-table-select.html for more details
+			for _, col := range v.Cols {
+				find, err := plan.Schema().FindColumn(col.Name)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				if find == nil {
+					// columns named only in 'CREATE TABLE' part come first
+					cols = append(cols, col)
+				}
+			}
+			for _, col := range plan.Schema().Columns {
+				found := findColumn(col, v.Cols)
+				if found == nil {
+					// columns named in 'SELECT' part come after
+					colDef, err := b.colToColumnDef(col, v.Table)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					cols = append(cols, colDef)
+				} else {
+					// columns named in both parts come after
+					cols = append(cols, found)
+				}
+			}
+
+			v.Cols = cols
+			p.SelectPlan = plan
 		}
 	case *ast.CreateViewStmt:
 		plan, err := b.Build(v.Select)
@@ -1558,7 +1601,7 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
 		})
 	}
 
-	p := &DDL{Statement: node}
+	p.Statement = node
 	return p, nil
 }
 
@@ -1623,6 +1666,89 @@ func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 		return nil, err
 	}
 	return p, nil
+}
+
+// colToColumnDef converts expression.Column `c` to ColumnDef:
+// if `c` refers to a column of the source table, we copy some of the column attributes from the referred column.
+// if `c` is an expression(for example, `count(*)`), the original table/column cannot be found.
+func (b *planBuilder) colToColumnDef(c *expression.Column, t *ast.TableName) (*ast.ColumnDef, error) {
+	d := &ast.ColumnDef{}
+	d.Name = &ast.ColumnName{
+		Schema: t.Schema,
+		Table:  t.Name,
+		Name:   c.ColName,
+	}
+	d.Tp = c.GetType().Clone()
+
+	// auto-increment attribute will not be preserved
+	d.Tp.Flag &= ^mysql.AutoIncrementFlag
+	// no index will be preserved
+	d.Tp.Flag &= ^mysql.PriKeyFlag
+	d.Tp.Flag &= ^mysql.UniqueKeyFlag
+	d.Tp.Flag &= ^mysql.MultipleKeyFlag
+
+	table, err := b.is.TableByName(c.DBName, c.OrigTblName)
+	if err != nil {
+		return d, nil
+	}
+	tblInfo := table.Meta()
+
+	isFound := false
+	for _, col := range tblInfo.Columns {
+		if col.Name.L == c.OrigColName.L && tblInfo.Name.L == c.OrigTblName.L {
+			isFound = true
+			// copy column comment
+			if len(col.Comment) > 0 {
+				option := &ast.ColumnOption{
+					Tp:   ast.ColumnOptionComment,
+					Expr: ast.NewValueExpr(col.Comment),
+				}
+				d.Options = append(d.Options, option)
+			}
+
+			// copy column default value
+			switch dv := col.DefaultValue.(type) {
+			case nil:
+				// Do nothing
+			case string:
+				if strings.ToUpper(dv) == strings.ToUpper(ast.CurrentTimestamp) {
+					option := &ast.ColumnOption{
+						Tp:   ast.ColumnOptionDefaultValue,
+						Expr: &ast.FuncCallExpr{FnName: model.NewCIStr(strings.ToUpper(ast.CurrentTimestamp))},
+					}
+					d.Options = append(d.Options, option)
+				} else {
+					option := &ast.ColumnOption{
+						Tp:   ast.ColumnOptionDefaultValue,
+						Expr: ast.NewValueExpr(dv),
+					}
+					d.Options = append(d.Options, option)
+				}
+			case ast.ExprNode:
+				option := &ast.ColumnOption{
+					Tp:   ast.ColumnOptionDefaultValue,
+					Expr: dv,
+				}
+				d.Options = append(d.Options, option)
+			default:
+				return nil, errors.Errorf("Unexpected default value: '%s'", dv)
+			}
+		}
+	}
+	if !isFound {
+		return nil, ErrUnknownColumn.GenWithStackByArgs(c.OrigColName, c.OrigTblName)
+	}
+
+	return d, nil
+}
+
+func findColumn(column *expression.Column, cols []*ast.ColumnDef) *ast.ColumnDef {
+	for _, col := range cols {
+		if col.Name.Name.L == column.ColName.L {
+			return col
+		}
+	}
+	return nil
 }
 
 func buildShowProcedureSchema() *expression.Schema {
