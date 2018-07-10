@@ -86,7 +86,6 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-
 	job := &model.Job{
 		SchemaID:   old.ID,
 		Type:       model.ActionDropSchema,
@@ -534,13 +533,6 @@ func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 
 func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	if len(colDefs) > TableColumnCountLimit {
-		return errTooManyFields
-	}
-	return nil
-}
-
-func checkAddColumnTooManyColumns(oldCols []*model.ColumnInfo) error {
-	if len(oldCols) > TableColumnCountLimit {
 		return errTooManyFields
 	}
 	return nil
@@ -1140,7 +1132,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
-
+	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
+		return errors.Trace(err)
+	}
 	// Check whether added column has existed.
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
