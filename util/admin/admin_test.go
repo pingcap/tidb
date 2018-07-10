@@ -172,7 +172,7 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 		}
 		err = t.AddHistoryDDLJob(jobs[i])
 		c.Assert(err, IsNil)
-		historyJobs, err1 := GetHistoryDDLJobs(txn)
+		historyJobs, err1 := GetHistoryDDLJobs(txn, 10)
 		c.Assert(err1, IsNil)
 		if i+1 > MaxHistoryJobs {
 			c.Assert(historyJobs, HasLen, MaxHistoryJobs)
@@ -182,7 +182,7 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 	}
 
 	delta := cnt - MaxHistoryJobs
-	historyJobs, err := GetHistoryDDLJobs(txn)
+	historyJobs, err := GetHistoryDDLJobs(txn, 10)
 	c.Assert(err, IsNil)
 	c.Assert(historyJobs, HasLen, MaxHistoryJobs)
 	l := len(historyJobs) - 1

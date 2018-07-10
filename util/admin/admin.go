@@ -138,8 +138,8 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 const MaxHistoryJobs = 10
 
 // GetHistoryDDLJobs returns the DDL history jobs and an error.
-// The maximum count of history jobs is MaxHistoryJobs.
-func GetHistoryDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
+// The maximum count of history jobs is num.
+func GetHistoryDDLJobs(txn kv.Transaction, num int) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
 	jobs, err := t.GetAllHistoryDDLJobs()
 	if err != nil {
@@ -147,8 +147,8 @@ func GetHistoryDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	}
 
 	jobsLen := len(jobs)
-	if jobsLen > MaxHistoryJobs {
-		start := jobsLen - MaxHistoryJobs
+	if jobsLen > num {
+		start := jobsLen - num
 		jobs = jobs[start:]
 	}
 	jobsLen = len(jobs)
