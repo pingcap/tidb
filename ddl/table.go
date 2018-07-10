@@ -45,6 +45,14 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
+	if tbInfo.Partition != nil {
+		err = checkCreatePartitionValue(tbInfo.Partition)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -410,7 +418,7 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	err = checkPartitionNotExists(tblInfo, partInfo)
+	err = checkPartitionNameUnique(tblInfo, partInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -433,21 +441,6 @@ func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.Tabl
 	parInfo.Definitions = append(parInfo.Definitions, oldDefs...)
 	parInfo.Definitions = append(parInfo.Definitions, newDefs...)
 	tblInfo.Partition.Definitions = parInfo.Definitions
-}
-
-func checkPartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) error {
-	oldPars, newPars := meta.Partition.Definitions, part.Definitions
-	set := make(map[string]bool)
-	for _, oldPar := range oldPars {
-		set[strings.ToLower(oldPar.Name)] = true
-	}
-	for _, newPar := range newPars {
-		if _, ok := set[strings.ToLower(newPar.Name)]; ok {
-			return ErrSameNamePartition.GenByArgs(newPar.Name)
-		}
-		set[strings.ToLower(newPar.Name)] = true
-	}
-	return nil
 }
 
 // checkAddPartitionValue values less than value must be strictly increasing for each partition.
