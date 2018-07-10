@@ -550,8 +550,17 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"load stats '/tmp/stats.json'", true},
 		// set
 		// user defined
+		{"SET @ = 1", true},
+		{"SET @' ' = 1", true},
+		{"SET @! = 1", false},
+		{"SET @1 = 1", true},
 		{"SET @a = 1", true},
 		{"SET @b := 1", true},
+		{"SET @.c = 1", true},
+		{"SET @_d = 1", true},
+		{"SET @_e._$. = 1", true},
+		{"SET @~f = 1", false},
+		{"SET @`g,` = 1", true},
 		// session system variables
 		{"SET SESSION autocommit = 1", true},
 		{"SET @@session.autocommit = 1", true},
