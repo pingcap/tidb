@@ -215,7 +215,6 @@ func (b *batchChecker) initDupOldRowFromUniqueKey(ctx sessionctx.Context, t tabl
 					return errors.Trace(err)
 				}
 				handles = append(handles, handle)
-				break
 			}
 		}
 	}
