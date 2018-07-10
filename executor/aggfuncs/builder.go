@@ -16,6 +16,8 @@ package aggfuncs
 import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 )
 
 // Build is used to build a specific AggFunc implementation according to the
@@ -58,6 +60,42 @@ func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildCount builds the AggFunc implementation for function "AVG".
 func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	// Build avg functions which consume the original data and remove the
+	// duplicated input of the same group.
+	case aggregation.DedupMode:
+		return nil // not implemented yet.
+
+	// Build avg functions which consume the original data and update their
+	// partial results.
+	case aggregation.CompleteMode, aggregation.Partial1Mode:
+		switch aggFuncDesc.Args[0].GetType().Tp {
+		case mysql.TypeNewDecimal:
+			if aggFuncDesc.HasDistinct {
+				return nil // not implemented yet.
+			}
+			return &avgOriginal4Decimal{baseAvgDecimal{base}}
+		case mysql.TypeFloat, mysql.TypeDouble:
+			if aggFuncDesc.HasDistinct {
+				return nil // not implemented yet.
+			}
+			return &avgOriginal4Float64{baseAvgFloat64{base}}
+		}
+
+	// Build avg functions which consume the partial result of other avg
+	// functions and update their partial results.
+	case aggregation.Partial2Mode, aggregation.FinalMode:
+		switch aggFuncDesc.Args[1].GetType().Tp {
+		case mysql.TypeNewDecimal:
+			return &avgPartial4Decimal{baseAvgDecimal{base}}
+		case mysql.TypeDouble:
+			return &avgPartial4Float64{baseAvgFloat64{base}}
+		}
+	}
 	return nil
 }
 
@@ -83,6 +121,15 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 
 // buildCount builds the AggFunc implementation for function "BIT_OR".
 func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	// BIT_OR doesn't need to handle the distinct property.
+	switch aggFuncDesc.Args[0].GetType().EvalType() {
+	case types.ETInt:
+		base := baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		}
+		return &bitOrUint64{baseBitAggFunc{base}}
+	}
 	return nil
 }
 
