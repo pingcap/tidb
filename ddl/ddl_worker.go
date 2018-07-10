@@ -507,6 +507,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onModifyTableComment(t, job)
 	case model.ActionAddTablePartition:
 		ver, err = onAddTablePartition(t, job)
+	case model.ActionRevealTable:
+		ver, err = onRevealTable(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

@@ -552,6 +552,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	if v.IsReplace {
 		return b.buildReplace(ivs)
 	}
+
 	insert := &InsertExec{
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
@@ -639,10 +640,44 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 }
 
 func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
-	e := &DDLExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		stmt:         v.Statement,
-		is:           b.is,
+	var e Executor
+	if v.SelectPlan != nil {
+		selectExec := b.build(v.SelectPlan)
+
+		stmt := v.Statement.(*ast.CreateTableStmt)
+		var columns []*ast.ColumnName
+		for _, col := range v.SelectPlan.Schema().Columns {
+			cname := &ast.ColumnName{
+				Schema: stmt.Table.Schema,
+				Table:  stmt.Table.Name,
+				Name:   col.ColName,
+			}
+			columns = append(columns, cname)
+		}
+
+		insertVal := &InsertValues{
+			baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID(), selectExec),
+			Columns:      columns,
+			SelectExec:   selectExec,
+		}
+
+		inserter := &CreateTableInsertExec{
+			InsertValues: insertVal,
+			onDuplicate:  stmt.OnDuplicate,
+			finished:     false,
+		}
+		e = &DDLExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), inserter),
+			stmt:         v.Statement,
+			is:           b.is,
+			Inserter:     inserter,
+		}
+	} else {
+		e = &DDLExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+			stmt:         v.Statement,
+			is:           b.is,
+		}
 	}
 	return e
 }
@@ -1272,7 +1307,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 
 // cols2Handle represents an mapper from column index to handle index.
 type cols2Handle struct {
-	// start/end represent the ordinal range [start, end) of the consecutive columns.
+	// start / end represent the ordinal range [start, end) of the consecutive columns.
 	start, end int32
 	// handleOrdinal represents the ordinal of the handle column.
 	handleOrdinal int32

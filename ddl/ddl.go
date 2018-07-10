@@ -196,15 +196,16 @@ var (
 type DDL interface {
 	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
-	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
-	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
-	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
+	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt, withSelect bool) (int64, error)
+	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) (int64, error)
+	DropTable(ctx sessionctx.Context, tableIdent ast.Ident, tableId int64) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr) error
 	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
 	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident) error
+	RevealTable(ctx sessionctx.Context, schemaName model.CIStr, tableInfo *model.TableInfo) error
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration

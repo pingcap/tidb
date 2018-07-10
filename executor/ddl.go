@@ -21,9 +21,12 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -40,6 +43,8 @@ type DDLExec struct {
 	stmt ast.StmtNode
 	is   infoschema.InfoSchema
 	done bool
+
+	Inserter Executor
 }
 
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
@@ -63,6 +68,7 @@ func (e *DDLExec) toErr(err error) error {
 
 // Next implements the Executor Next interface.
 func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+	chk.Reset()
 	if e.done {
 		return nil
 	}
@@ -75,7 +81,16 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	case *ast.CreateDatabaseStmt:
 		err = e.executeCreateDatabase(x)
 	case *ast.CreateTableStmt:
-		err = e.executeCreateTable(x)
+		tableID, err := e.executeCreateTable(x)
+		if err != nil {
+			return errors.Trace(e.toErr(err))
+		}
+		if tableID != 0 {
+			err = e.executeSelectInsert(ctx, chk, x, tableID)
+			if err != nil {
+				return errors.Trace(e.toErr(err))
+			}
+		}
 	case *ast.CreateIndexStmt:
 		err = e.executeCreateIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -94,6 +109,7 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	}
 
 	dom := domain.GetDomain(e.ctx)
+
 	// Update InfoSchema in TxnCtx, so it will pass schema check.
 	is := dom.InfoSchema()
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
@@ -101,6 +117,7 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	txnCtx.SchemaVersion = is.SchemaMetaVersion()
 	// DDL will force commit old transaction, after DDL, in transaction status should be false.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
+
 	return nil
 }
 
@@ -143,9 +160,61 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	return errors.Trace(err)
 }
 
-func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
-	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s)
-	return errors.Trace(err)
+func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) (int64, error) {
+	return domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s, e.Inserter != nil)
+}
+
+func (e *DDLExec) executeSelectInsert(ctx context.Context, chk *chunk.Chunk, s *ast.CreateTableStmt, tableID int64) error {
+	if e.Inserter == nil {
+		return nil
+	}
+	dom := domain.GetDomain(e.ctx)
+	ver, err := dom.Store().CurrentVersion()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	snapshot, err := dom.Store().GetSnapshot(ver)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	m := meta.NewSnapshotMeta(snapshot)
+	dbInfo, ok := dom.InfoSchema().SchemaByName(s.Table.Schema)
+	if !ok {
+		return errors.Trace(err)
+	}
+	tbInfo, err := m.GetTable(dbInfo.ID, tableID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Seems we have to create an allocator here, which is not the one created by InfoSchema, but it should be fine.
+	alloc := autoid.NewAllocator(dom.Store(), tbInfo.GetDBID(dbInfo.ID))
+	tbl, err := tables.TableFromMeta(alloc, tbInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	fullti := ast.Ident{Schema: dbInfo.Name, Name: tbInfo.Name}
+	inserter := e.Inserter.(*CreateTableInsertExec)
+	inserter.Table = tbl
+
+	err = e.Inserter.Next(ctx, chk)
+	if err != nil {
+		dropErr := dom.DDL().DropTable(e.ctx, fullti, tableID)
+		if dropErr != nil {
+			log.Errorf("Error dropping table: %s", dropErr)
+		}
+		return errors.Trace(err)
+	}
+	err = e.executeRevealTable(s.Table.Schema, tbInfo)
+	if err != nil {
+		dropErr := dom.DDL().DropTable(e.ctx, fullti, tableID)
+		if dropErr != nil {
+			log.Errorf("Error dropping table: %s", dropErr)
+		}
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
@@ -238,7 +307,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			}
 		}
 
-		err = domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
+		err = domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti, 0)
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
 		} else if err != nil {
@@ -263,5 +332,10 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 func (e *DDLExec) executeAlterTable(s *ast.AlterTableStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	err := domain.GetDomain(e.ctx).DDL().AlterTable(e.ctx, ti, s.Specs)
+	return errors.Trace(err)
+}
+
+func (e *DDLExec) executeRevealTable(schemaName model.CIStr, tableInfo *model.TableInfo) error {
+	err := domain.GetDomain(e.ctx).DDL().RevealTable(e.ctx, schemaName, tableInfo)
 	return errors.Trace(err)
 }

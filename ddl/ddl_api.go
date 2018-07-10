@@ -237,6 +237,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	return nil
 }
 
+// buildColumnAndConstraint builds table.Column from ast.ColumnDef and ast.Constraint
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
@@ -805,26 +806,26 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 	return
 }
 
-func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error {
+func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) (int64, error) {
 	is := d.GetInformationSchema(ctx)
 	_, ok := is.SchemaByName(referIdent.Schema)
 	if !ok {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
+		return 0, infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 	}
 	referTbl, err := is.TableByName(referIdent.Schema, referIdent.Name)
 	if err != nil {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
+		return 0, infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 	}
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+		return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		if ifNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
-			return nil
+			return 0, nil
 		}
-		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
+		return 0, infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 
 	tblInfo := *referTbl.Meta()
@@ -833,22 +834,22 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	tblInfo.ForeignKeys = nil
 	tblInfo.ID, err = d.genGlobalID()
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo},
+		Args:       []interface{}{tblInfo, false /*withSelect*/},
 	}
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	return tblInfo.ID, errors.Trace(err)
 }
 
-func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
+func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt, withSelect bool) (id int64, err error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if s.ReferTable != nil {
 		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
@@ -858,53 +859,53 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	is := d.GetInformationSchema(ctx)
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+		return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		if s.IfNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
-			return nil
+			return 0, nil
 		}
-		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
+		return 0, infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 	if err = checkTooLongTable(ident.Name); err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	if err = checkDuplicateColumn(colDefs); err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	if err = checkGeneratedColumn(colDefs); err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	if err = checkTooLongColumn(colDefs); err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	if err = checkTooManyColumns(colDefs); err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
 	if err = checkColumnsAttributes(colDefs); err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
 	cols, newConstraints, err := buildColumnsAndConstraints(ctx, colDefs, s.Constraints)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
 	err = checkConstraintNames(newConstraints)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
 	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, newConstraints)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
 	pi, err := buildTablePartitionInfo(ctx, d, s)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
 	if pi != nil && pi.Type == model.PartitionTypeRange {
@@ -912,27 +913,27 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		// Range columns partition only implements the parser, so it will not be checked.
 		if s.Partition.ColumnNames == nil {
 			if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
-				return errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 
 			if err = checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
-				return errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 
 			if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
-				return errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 
 			if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-				return errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 
 			if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
-				return errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 
 			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
-				return errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 		}
 		tbInfo.Partition = pi
@@ -943,16 +944,16 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		TableID:    tbInfo.ID,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo},
+		Args:       []interface{}{tbInfo, withSelect},
 	}
 
 	err = handleTableOptions(s.Options, tbInfo)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	err = d.doDDLJob(ctx, job)
 	if err == nil {
@@ -965,10 +966,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 	// table exists, but if_not_exists flags is true, so we ignore this error.
 	if infoschema.ErrTableExists.Equal(err) && s.IfNotExists {
-		return nil
+		return tbInfo.ID, nil
 	}
 	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	return tbInfo.ID, errors.Trace(err)
 }
 
 func checkCharsetAndCollation(cs string, co string) error {
@@ -1830,21 +1831,24 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 }
 
 // DropTable will proceed even if some table in the list does not exists.
-func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
+func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident, tableId int64) (err error) {
 	is := d.GetInformationSchema(ctx)
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
 	}
 
-	tb, err := is.TableByName(ti.Schema, ti.Name)
-	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	if tableId == 0 {
+		tb, err := is.TableByName(ti.Schema, ti.Name)
+		if err != nil {
+			return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+		}
+		tableId = tb.Meta().ID
 	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
+		TableID:    tableId,
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
@@ -2159,4 +2163,24 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		part.Definitions = append(part.Definitions, piDef)
 	}
 	return part, nil
+}
+
+func (d *ddl) RevealTable(ctx sessionctx.Context, schemaName model.CIStr, tableInfo *model.TableInfo) error {
+	is := d.GetInformationSchema(ctx)
+	schema, ok := is.SchemaByName(schemaName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tableInfo.ID,
+		Type:       model.ActionRevealTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tableInfo},
+	}
+
+	err := d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }

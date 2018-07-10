@@ -280,6 +280,7 @@ func (testModelSuite) TestString(c *C) {
 		{ActionDropIndex, "drop index"},
 		{ActionAddColumn, "add column"},
 		{ActionDropColumn, "drop column"},
+		{ActionRevealTable, "make table public"},
 	}
 
 	for _, v := range acts {

@@ -73,6 +73,18 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	return true
 }
 
+func (ft *FieldType) Clone() *FieldType {
+	return &FieldType{
+		Tp:      ft.Tp,
+		Flag:    ft.Flag,
+		Flen:    ft.Flen,
+		Decimal: ft.Decimal,
+		Charset: ft.Charset,
+		Collate: ft.Collate,
+		Elems:   ft.Elems,
+	}
+}
+
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
 // whose return type is determined by the arguments' FieldTypes.
 // Aggregation is performed by MergeFieldType function.

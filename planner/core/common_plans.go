@@ -412,6 +412,9 @@ type DDL struct {
 	baseSchemaProducer
 
 	Statement ast.DDLNode
+
+	// For Create Table ... Select support, or it is nil otherwise
+	SelectPlan PhysicalPlan
 }
 
 // Explain represents a explain plan.

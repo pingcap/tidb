@@ -55,6 +55,9 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionCreateTable:
 		newTableID = diff.TableID
 		tblIDs = append(tblIDs, newTableID)
+	case model.ActionRevealTable:
+		newTableID = diff.TableID
+		tblIDs = append(tblIDs, newTableID)
 	case model.ActionDropTable:
 		oldTableID = diff.TableID
 		tblIDs = append(tblIDs, oldTableID)
@@ -170,6 +173,10 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Schema ID %d)", dbInfo.ID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
+	}
+	// Only accept public state
+	if tblInfo.State != model.StatePublic {
+		return nil
 	}
 	if alloc == nil {
 		schemaID := dbInfo.ID

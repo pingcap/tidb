@@ -50,6 +50,7 @@ const (
 	ActionRenameIndex        ActionType = 18
 	ActionAddTablePartition  ActionType = 19
 	ActionDropTablePartition ActionType = 20
+	ActionRevealTable        ActionType = 21
 )
 
 // AddIndexStr is a string related to the operation of "add index".
@@ -76,6 +77,7 @@ var actionMap = map[ActionType]string{
 	ActionRenameIndex:        "rename index",
 	ActionAddTablePartition:  "add partition",
 	ActionDropTablePartition: "drop table partition",
+	ActionRevealTable:        "make table public",
 }
 
 // String return current ddl action in string
@@ -333,9 +335,9 @@ type JobState byte
 const (
 	JobStateNone    JobState = 0
 	JobStateRunning JobState = 1
+	// JobStateRollingback is the state to do the rolling back job.
 	// When DDL encountered an unrecoverable error at reorganization state,
 	// some keys has been added already, we need to remove them.
-	// JobStateRollingback is the state to do the rolling back job.
 	JobStateRollingback  JobState = 2
 	JobStateRollbackDone JobState = 3
 	JobStateDone         JobState = 4

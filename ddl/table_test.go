@@ -73,6 +73,42 @@ func testCreateTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tblInfo, false /*withSelect*/},
+	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	tblInfo.State = model.StatePublic
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	tblInfo.State = model.StateNone
+	return job
+}
+
+func testCreateTableWithSelect(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tblInfo, true /*withSelect*/},
+	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+
+	v := getSchemaVer(c, ctx)
+	tblInfo.State = model.StatePublic
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	tblInfo.State = model.StateNone
+	return job
+}
+
+func testRevealTable(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionRevealTable,
+		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tblInfo},
 	}
 	err := d.doDDLJob(ctx, job)
@@ -211,9 +247,18 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
+	// Create a table with select
+	tblInfo = testTableInfo(c, d, "ts", 3)
+	job = testCreateTableWithSelect(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateWriteOnly)
+	tblInfo.State = model.StateWriteOnly
+	job = testRevealTable(c, ctx, d, s.dbInfo, tblInfo)
+	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
+	testCheckJobDone(c, d, job, true)
+
 	// Create an existing table.
 	newTblInfo := testTableInfo(c, d, "t", 3)
-	doDDLJobErr(c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo}, ctx, d)
+	doDDLJobErr(c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo, false /*withSelect*/}, ctx, d)
 
 	count := 2000
 	tbl := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
@@ -253,7 +298,7 @@ func (s *testTableSuite) TestTableResume(c *C) {
 		TableID:    tblInfo.ID,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo},
+		Args:       []interface{}{tblInfo, false /*withSelect*/},
 	}
 	testRunInterruptedJob(c, d, job)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
