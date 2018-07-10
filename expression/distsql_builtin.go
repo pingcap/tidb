@@ -633,6 +633,6 @@ func convertDuration(val []byte) (*Constant, error) {
 	if err != nil {
 		return nil, errors.Errorf("invalid duration %d", i)
 	}
-	d.SetMysqlDuration(types.Duration{Duration: time.Duration(i), Fsp: types.MaxFsp})
+	d.SetMysqlDuration(types.Duration(time.Duration(i)))
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeDuration)}, nil
 }

@@ -192,7 +192,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
 		d, err := types.ParseDuration(s[1:], 0)
 		if err == nil {
-			ofst := int(d.Duration / time.Second)
+			ofst := int(time.Duration(d) / time.Second)
 			if s[0] == '-' {
 				ofst = -ofst
 			}

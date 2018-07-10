@@ -17,6 +17,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -196,7 +197,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 	for _, test := range table {
 		t, err := types.ParseDuration(test.Input, types.MinFsp)
 		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		c.Assert(t.String(types.MinFsp), Equals, test.Expect)
 	}
 
 	table = []struct {
@@ -211,7 +212,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 	for _, test := range table {
 		t, err := types.ParseDuration(test.Input, types.MaxFsp)
 		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		c.Assert(t.String(types.MaxFsp), Equals, test.Expect)
 	}
 
 	errTable := []string{
@@ -236,14 +237,8 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, t := range cmpTable {
-		t1 := types.Duration{
-			Duration: time.Duration(t.lhs),
-			Fsp:      types.DefaultFsp,
-		}
-		t2 := types.Duration{
-			Duration: time.Duration(t.rhs),
-			Fsp:      types.DefaultFsp,
-		}
+		t1 := types.Duration(t.lhs)
+		t2 := types.Duration(t.rhs)
 		ret := t1.Compare(t2)
 		c.Assert(ret, Equals, t.ret)
 	}
@@ -270,16 +265,16 @@ func (s *testTimeSuite) TestDurationAdd(c *C) {
 		c.Assert(err, IsNil)
 		result, err := t.Add(ta)
 		c.Assert(err, IsNil)
-		c.Assert(result.String(), Equals, test.Expect)
+		c.Assert(result.String(mathutil.Max(test.Fsp, test.FspAdd)), Equals, test.Expect)
 	}
 	t, err := types.ParseDuration("00:00:00", 0)
 	c.Assert(err, IsNil)
 	ta := new(types.Duration)
 	result, err := t.Add(*ta)
 	c.Assert(err, IsNil)
-	c.Assert(result.String(), Equals, "00:00:00")
+	c.Assert(result.String(0), Equals, "00:00:00")
 
-	t = types.Duration{Duration: math.MaxInt64, Fsp: 0}
+	t = types.Duration(math.MaxInt64)
 	tatmp, err := types.ParseDuration("00:01:00", 0)
 	c.Assert(err, IsNil)
 	_, err = t.Add(tatmp)
@@ -305,7 +300,7 @@ func (s *testTimeSuite) TestDurationSub(c *C) {
 		c.Assert(err, IsNil)
 		result, err := t.Sub(ta)
 		c.Assert(err, IsNil)
-		c.Assert(result.String(), Equals, test.Expect)
+		c.Assert(result.String(mathutil.Max(test.Fsp, test.FspAdd)), Equals, test.Expect)
 	}
 }
 
@@ -331,7 +326,7 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 	for _, test := range table {
 		t, err := types.ParseDuration(test.Input, test.Fsp)
 		c.Assert(err, IsNil)
-		c.Assert(t.String(), Equals, test.Expect)
+		c.Assert(t.String(test.Fsp), Equals, test.Expect)
 	}
 
 	errTable := []struct {
@@ -614,7 +609,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 		t, err := types.ParseDuration(test.Input, test.Fsp)
 		c.Assert(err, IsNil)
 		// now we can only changetypes.Duration's Fsp to check ToNumber with different Fsp
-		c.Assert(t.ToNumber().String(), Equals, test.Expect)
+		c.Assert(t.ToNumber(test.Fsp).String(), Equals, test.Expect)
 	}
 }
 
@@ -702,7 +697,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 		c.Assert(err, IsNil)
 		nv, err := v.RoundFrac(t.Fsp)
 		c.Assert(err, IsNil)
-		c.Assert(nv.String(), Equals, t.Except)
+		c.Assert(nv.String(t.Fsp), Equals, t.Except)
 	}
 }
 
@@ -719,7 +714,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		{"2012-12-31 11:30:45.999999", 0, "11:30:46"},
 		{"2017-01-05 08:40:59.575601", 0, "08:41:00"},
 		{"2017-01-05 23:59:59.575601", 0, "00:00:00"},
-		{"0000-00-00 00:00:00", 6, "00:00:00"},
+		{"0000-00-00 00:00:00", 6, "00:00:00.000000"},
 	}
 
 	for _, t := range tbl {
@@ -727,7 +722,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		c.Assert(err, IsNil)
 		nv, err := v.ConvertToDuration()
 		c.Assert(err, IsNil)
-		c.Assert(nv.String(), Equals, t.Except)
+		c.Assert(nv.String(t.Fsp), Equals, t.Except)
 	}
 
 	tblDuration := []struct {
@@ -751,7 +746,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 		c.Assert(err, IsNil)
 		// TODO: Consider time_zone variable.
 		t1, _ := t.Time.GoTime(time.UTC)
-		c.Assert(t1.Sub(n), Equals, v.Duration)
+		c.Assert(types.Duration(t1.Sub(n)), Equals, v)
 	}
 }
 

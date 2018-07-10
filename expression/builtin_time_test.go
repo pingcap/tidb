@@ -649,7 +649,7 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(d.GetMysqlDuration().String(), Equals, t.expected)
+				c.Assert(d.GetMysqlDuration().String(f.GetType().Decimal), Equals, t.expected)
 			}
 		}
 	}
@@ -824,7 +824,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 	}{
 		{"01:00:00.999999", "02:00:00.999998", "-00:59:59.999999"},
 		{"110:00:00", "1 02:00:00", "84:00:00"},
-		{"2017-01-01 01:01:01.11", "01:01:01.11111", "2016-12-31 23:59:59.998890"},
+		{"2017-01-01 01:01:01.11", "01:01:01.11111", "2016-12-31 23:59:59.99889"}, // We are more right than MySQL does.
 		{"2007-12-31 23:59:59.999999", "1 1:1:1.000002", "2007-12-30 22:58:58.999997"},
 	}
 	fc := funcs[ast.SubTime]
@@ -1051,24 +1051,24 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlDuration()
-	c.Assert(n.String(), HasLen, 8)
-	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+	c.Assert(n.String(f.getRetTp().Decimal), HasLen, 8)
+	c.Assert(n.String(f.getRetTp().Decimal), GreaterEqual, last.Format(tfStr))
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(3)))
 	c.Assert(err, IsNil)
 	v, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	n = v.GetMysqlDuration()
-	c.Assert(n.String(), HasLen, 12)
-	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+	c.Assert(n.String(f.getRetTp().Decimal), HasLen, 12)
+	c.Assert(n.String(f.getRetTp().Decimal), GreaterEqual, last.Format(tfStr))
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(6)))
 	c.Assert(err, IsNil)
 	v, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	n = v.GetMysqlDuration()
-	c.Assert(n.String(), HasLen, 15)
-	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+	c.Assert(n.String(f.getRetTp().Decimal), HasLen, 15)
+	c.Assert(n.String(f.getRetTp().Decimal), GreaterEqual, last.Format(tfStr))
 
 	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-1)))
 	c.Assert(err, NotNil)
@@ -1096,8 +1096,8 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 		if test.expect > 0 {
 			c.Assert(err, IsNil)
 			n := v.GetMysqlDuration()
-			c.Assert(n.String(), HasLen, test.expect)
-			c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+			c.Assert(n.String(f.getRetTp().Decimal), HasLen, test.expect)
+			c.Assert(n.String(f.getRetTp().Decimal), GreaterEqual, last.Format(tfStr))
 		} else {
 			c.Assert(err, NotNil)
 		}
@@ -1108,8 +1108,8 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlDuration()
-	c.Assert(n.String(), HasLen, 8)
-	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+	c.Assert(n.String(f.getRetTp().Decimal), HasLen, 8)
+	c.Assert(n.String(f.getRetTp().Decimal), GreaterEqual, last.Format(tfStr))
 }
 
 func (s *testEvaluatorSuite) TestUTCDate(c *C) {
@@ -1305,8 +1305,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(d.GetMysqlDuration().String(), Equals, t.expectStr)
-				c.Assert(d.GetMysqlDuration().Fsp, Equals, t.fsp)
+				c.Assert(d.GetMysqlDuration().String(f.GetType().Decimal), Equals, t.expectStr)
 			}
 		}
 	}
@@ -1703,7 +1702,7 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		} else {
 			want, err := t["Want"][0].ToString()
 			c.Assert(err, IsNil)
-			c.Assert(got.GetMysqlDuration().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
+			c.Assert(got.GetMysqlDuration().String(f.getRetTp().Decimal), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
 		}
 	}
 
@@ -1711,8 +1710,8 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		Args []interface{}
 		Want interface{}
 	}{
-		{[]interface{}{"", "", ""}, "00:00:00"},
-		{[]interface{}{"h", "m", "s"}, "00:00:00"},
+		{[]interface{}{"", "", ""}, "00:00:00.000000"},
+		{[]interface{}{"h", "m", "s"}, "00:00:00.000000"},
 	}
 	Dtbl = tblToDtbl(tbl)
 	maketime = funcs[ast.MakeTime]
@@ -1723,7 +1722,7 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		c.Assert(err, NotNil)
 		want, err := t["Want"][0].ToString()
 		c.Assert(err, IsNil)
-		c.Assert(got.GetMysqlDuration().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
+		c.Assert(got.GetMysqlDuration().String(f.getRetTp().Decimal), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
 	}
 }
 

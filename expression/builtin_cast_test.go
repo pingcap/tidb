@@ -197,14 +197,10 @@ var (
 	timeDatum = types.NewDatum(tm)
 	// timeWithFspDatum indicates datetime "curYear-curMonth-curDay 12:59:59.555000".
 	timeWithFspDatum = types.NewDatum(tmWithFsp)
-	duration         = types.Duration{
-		Duration: time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second),
-		Fsp:      types.DefaultFsp}
+	duration         = types.Duration(time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second))
 	// durationDatum indicates duration "12:59:59".
 	durationDatum   = types.NewDatum(duration)
-	durationWithFsp = types.Duration{
-		Duration: time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond),
-		Fsp:      3}
+	durationWithFsp = types.Duration(time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond))
 	// durationWithFspDatum indicates duration "12:59:59.555"
 	durationWithFspDatum = types.NewDatum(durationWithFsp)
 	dt                   = types.Time{
@@ -219,7 +215,7 @@ var (
 	jsonTime = types.NewDatum(json.CreateBinary(tm.String()))
 
 	// jsonDuration indicates
-	jsonDuration = types.NewDatum(json.CreateBinary(duration.String()))
+	jsonDuration = types.NewDatum(json.CreateBinary(duration.String(0)))
 )
 
 func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
@@ -476,7 +472,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		},
 		// cast Duration as real.
 		{
-			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			&Column{RetType: types.NewFieldTypeWithFlenDec(mysql.TypeDuration, types.UnspecifiedLength, 0), Index: 0},
 			125959,
 			[]types.Datum{durationDatum},
 		},
@@ -500,6 +496,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 3:
 			sig = &builtinCastTimeAsRealSig{realFunc}
 		case 4:
+			realFunc.tp.Decimal = t.before.RetType.Decimal
 			sig = &builtinCastDurationAsRealSig{realFunc}
 		case 5:
 			sig = &builtinCastJSONAsRealSig{realFunc}
@@ -902,7 +899,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		res, isNull, err := sig.evalDuration(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
-		c.Assert(res.String(), Equals, t.after.String())
+		c.Assert(res.String(sig.getRetTp().Decimal), Equals, t.after.String(0))
 	}
 
 	castToDurationCases2 := []struct {
@@ -977,14 +974,14 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		res, isNull, err := sig.evalDuration(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
-		resAfter := t.after.String()
+		resAfter := t.after.String(0)
 		if t.fsp > 0 {
 			resAfter += "."
 			for j := 0; j < t.fsp; j++ {
 				resAfter += "0"
 			}
 		}
-		c.Assert(res.String(), Equals, resAfter)
+		c.Assert(res.String(sig.getRetTp().Decimal), Equals, resAfter)
 	}
 
 	// null case
@@ -1065,7 +1062,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 			125959, 125959, types.NewDecFromFloatForTest(125959), "12:59:59",
 		},
 		{
-			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			&Column{RetType: types.NewFieldTypeWithFlenDec(mysql.TypeDuration, types.UnspecifiedLength, 3), Index: 0},
 			[]types.Datum{durationWithFspDatum},
 			130000, 125959.555, types.NewDecFromFloatForTest(125959.555), "12:59:59.555",
 		},
@@ -1103,7 +1100,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		decRes, isNull, err := decExpr.EvalDecimal(ctx, t.row)
 		c.Assert(err, IsNil, Commentf("case[%v]: %#v\n", i, t))
 		c.Assert(isNull, Equals, false)
-		c.Assert(decRes.Compare(t.decRes), Equals, 0, Commentf("case[%v]: %#v\n", i, t))
+		c.Assert(decRes.Compare(t.decRes), Equals, 0, Commentf("case[%v]: %#v %s %s\n", i, t, decRes.String()))
 
 		// Test wrapping with CastAsString.
 		strExpr := WrapWithCastAsString(ctx, t.expr)

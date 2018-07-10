@@ -50,8 +50,8 @@ func CoerceArithmetic(sc *stmtctx.StatementContext, a Datum) (d Datum, err error
 	case KindMysqlDuration:
 		// if duration has no precision, return int64
 		du := a.GetMysqlDuration()
-		de := du.ToNumber()
-		if du.Fsp == 0 {
+		de := du.ToNumber(a.Frac())
+		if a.Frac() == 0 {
 			iVal, err := de.ToInt()
 			if err != nil {
 				return d, errors.Trace(err)

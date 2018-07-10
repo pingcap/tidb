@@ -52,6 +52,16 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
+// NewFieldTypeWithFlenDec returns a FieldType,
+// with a type and other information about field type
+func NewFieldTypeWithFlenDec(tp byte, flen, dec int) *FieldType {
+	return &FieldType{
+		Tp:      tp,
+		Flen:    flen,
+		Decimal: dec,
+	}
+}
+
 // Equal checks whether two FieldType objects are equal.
 func (ft *FieldType) Equal(other *FieldType) bool {
 	// We do not need to compare `ft.Flag == other.Flag` when wrapping cast upon an Expression.
@@ -417,11 +427,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		SetBinChsClnFlag(tp)
 	case Duration:
 		tp.Tp = mysql.TypeDuration
-		tp.Flen = len(x.String())
-		if x.Fsp > DefaultFsp { // consider point('.') and the fractional part.
-			tp.Flen = x.Fsp + 1
-		}
-		tp.Decimal = x.Fsp
+		tp.Flen = len(x.String(tp.Decimal))
+		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case *MyDecimal:
 		tp.Tp = mysql.TypeNewDecimal

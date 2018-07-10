@@ -69,8 +69,8 @@ func (s *testEvalSuite) TestEval(c *C) {
 			types.Datum{},
 		},
 		{
-			datumExpr(types.NewDurationDatum(types.Duration{Duration: time.Hour})),
-			types.NewDurationDatum(types.Duration{Duration: time.Hour}),
+			datumExpr(types.NewDurationDatum(types.Duration(time.Hour))),
+			types.NewDurationDatum(types.Duration(time.Hour)),
 		},
 		{
 			datumExpr(types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))),
@@ -132,7 +132,7 @@ func datumExpr(d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeFloat(nil, d.GetFloat64())
 	case types.KindMysqlDuration:
 		expr.Tp = tipb.ExprType_MysqlDuration
-		expr.Val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
+		expr.Val = codec.EncodeInt(nil, int64(d.GetMysqlDuration()))
 	case types.KindMysqlDecimal:
 		expr.Tp = tipb.ExprType_MysqlDecimal
 		var err error

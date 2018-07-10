@@ -97,7 +97,7 @@ func (col *CorrelatedColumn) EvalTime(ctx sessionctx.Context, row types.Row) (ty
 // EvalDuration returns Duration representation of CorrelatedColumn.
 func (col *CorrelatedColumn) EvalDuration(ctx sessionctx.Context, row types.Row) (types.Duration, bool, error) {
 	if col.Data.IsNull() {
-		return types.Duration{}, true, nil
+		return types.ZeroDuration, true, nil
 	}
 	return col.Data.GetMysqlDuration(), false, nil
 }
@@ -270,7 +270,7 @@ func (col *Column) EvalTime(ctx sessionctx.Context, row types.Row) (types.Time, 
 // EvalDuration returns Duration representation of Column.
 func (col *Column) EvalDuration(ctx sessionctx.Context, row types.Row) (types.Duration, bool, error) {
 	if row.IsNull(col.Index) {
-		return types.Duration{}, true, nil
+		return types.ZeroDuration, true, nil
 	}
 	return row.GetDuration(col.Index), false, nil
 }

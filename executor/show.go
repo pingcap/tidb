@@ -448,7 +448,7 @@ func (e *ShowExec) fetchShowStatus() error {
 		case []interface{}, nil:
 			v.Value = fmt.Sprintf("%v", v.Value)
 		}
-		value, err := types.ToString(v.Value)
+		value, err := types.ToString(v.Value, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}

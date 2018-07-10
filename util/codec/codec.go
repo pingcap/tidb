@@ -85,7 +85,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 		case types.KindMysqlDuration:
 			// duration may have negative value, so we cannot use String to encode directly.
 			b = append(b, durationFlag)
-			b = EncodeInt(b, int64(vals[i].GetMysqlDuration().Duration))
+			b = EncodeInt(b, int64(vals[i].GetMysqlDuration()))
 		case types.KindMysqlDecimal:
 			b = append(b, decimalFlag)
 			if hash {
@@ -232,7 +232,7 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 		case mysql.TypeDuration:
 			// duration may have negative value, so we cannot use String to encode directly.
 			b = append(b, durationFlag)
-			b = EncodeInt(b, int64(row.GetDuration(i).Duration))
+			b = EncodeInt(b, int64(row.GetDuration(i)))
 		case mysql.TypeNewDecimal:
 			b = append(b, decimalFlag)
 			if hash {
@@ -361,7 +361,7 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		b, r, err = DecodeInt(b)
 		if err == nil {
 			// use max fsp, let outer to do round manually.
-			v := types.Duration{Duration: time.Duration(r), Fsp: types.MaxFsp}
+			v := types.Duration(r)
 			d.SetValue(v)
 		}
 	case jsonFlag:
@@ -584,7 +584,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		v := types.Duration{Duration: time.Duration(r), Fsp: ft.Decimal}
+		v := types.Duration(r)
 		chk.AppendDuration(colIdx, v)
 	case jsonFlag:
 		var size int
@@ -608,7 +608,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {
 	switch ft.Tp {
 	case mysql.TypeDuration:
-		v := types.Duration{Duration: time.Duration(val), Fsp: ft.Decimal}
+		v := types.Duration(val)
 		chk.AppendDuration(colIdx, v)
 	default:
 		chk.AppendInt64(colIdx, val)

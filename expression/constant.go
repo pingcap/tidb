@@ -243,23 +243,23 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ types.Row) (val types.
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
-			return types.Duration{}, true, errors.Trace(err)
+			return types.ZeroDuration, true, errors.Trace(err)
 		}
 		if dt.IsNull() {
-			return types.Duration{}, true, nil
+			return types.ZeroDuration, true, nil
 		}
 		val, err := dt.ToString()
 		if err != nil {
-			return types.Duration{}, true, errors.Trace(err)
+			return types.ZeroDuration, true, errors.Trace(err)
 		}
 		dur, err := types.ParseDuration(val, types.MaxFsp)
 		if err != nil {
-			return types.Duration{}, true, errors.Trace(err)
+			return types.ZeroDuration, true, errors.Trace(err)
 		}
 		c.Value.SetMysqlDuration(dur)
 	} else {
 		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
-			return types.Duration{}, true, nil
+			return types.ZeroDuration, true, nil
 		}
 	}
 	return c.Value.GetMysqlDuration(), false, nil

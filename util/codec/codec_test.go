@@ -578,7 +578,6 @@ func (s *testCodecSuite) TestDuration(c *C) {
 		c.Assert(err, IsNil)
 		v, err := Decode(b, 1)
 		c.Assert(err, IsNil)
-		m.Fsp = types.MaxFsp
 		c.Assert(v, DeepEquals, types.MakeDatums(m))
 	}
 
@@ -919,7 +918,7 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 			Time: types.FromGoTime(time.Now()),
 			Type: mysql.TypeTimestamp,
 		}, types.NewFieldType(mysql.TypeTimestamp)},
-		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
+		{types.Duration(time.Second), types.NewFieldType(mysql.TypeDuration)},
 		{types.Enum{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
 		{types.Set{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
 		{types.BinaryLiteral{100}, &types.FieldType{Tp: mysql.TypeBit, Flen: 8}},

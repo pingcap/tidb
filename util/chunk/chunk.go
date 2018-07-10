@@ -87,7 +87,7 @@ func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
 		mysql.TypeDouble, mysql.TypeYear:
 		c.addFixedLenColumn(8, initCap)
 	case mysql.TypeDuration:
-		c.addFixedLenColumn(16, initCap)
+		c.addFixedLenColumn(8, initCap)
 	case mysql.TypeNewDecimal:
 		c.addFixedLenColumn(types.MyDecimalStructSize, initCap)
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:

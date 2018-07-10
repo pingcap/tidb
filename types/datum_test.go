@@ -381,7 +381,9 @@ func mustParseDurationDatum(str string, fsp int) Datum {
 	if err != nil {
 		panic(err)
 	}
-	return NewDurationDatum(dur)
+	datum := NewDurationDatum(dur)
+	datum.SetFrac(fsp)
+	return datum
 }
 
 func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
@@ -406,12 +408,12 @@ func (ts *testDatumSuite) TestCoerceArithmetic(c *C) {
 		{NewFloat64Datum(5.5), NewFloat64Datum(5.5), false},
 	}
 
-	for _, tt := range tests {
+	for num, tt := range tests {
 		got, err := CoerceArithmetic(sc, tt.input)
 		c.Assert(err != nil, Equals, tt.hasErr)
 		v, err := got.CompareDatum(sc, &tt.expect)
 		c.Assert(err, IsNil)
-		c.Assert(v, Equals, 0, Commentf("got:%#v, expect:%#v", got, tt.expect))
+		c.Assert(v, Equals, 0, Commentf("#%#v got:%#v, expect:%#v", num, got, tt.expect))
 	}
 }
 
