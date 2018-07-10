@@ -16,6 +16,8 @@ package executor
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/net/context"
@@ -44,7 +46,49 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *ReplaceExec) exec(rows []types.DatumRow) error {
+func (e *ReplaceExec) removeRow(handle int64, newRow types.DatumRow) error {
+	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rowUnchanged, err := types.EqualDatums(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = e.Table.RemoveRecord(e.ctx, handle, oldRow)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, handle, nil)
+	if !rowUnchanged {
+		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	}
+
+	// cleanup keys map
+	cleanupRow, err := e.getKeysNeedCheck(e.ctx, e.Table, []types.DatumRow{oldRow})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(cleanupRow) > 0 {
+		e.deleteDupKeys(cleanupRow[0])
+	}
+	return nil
+}
+
+func (e *ReplaceExec) insertRow(row types.DatumRow) (int64, error) {
+	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
+	h, err := e.Table.AddRecord(e.ctx, row, false)
+	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if !e.ctx.GetSessionVars().ImportingData {
+		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
+	}
+	return h, nil
+}
+
+func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table
@@ -57,46 +101,59 @@ func (e *ReplaceExec) exec(rows []types.DatumRow) error {
 	 * because in this case, one row was inserted after the duplicate was deleted.
 	 * See http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
 	 */
-	idx := 0
-	rowsLen := len(rows)
-	sc := e.ctx.GetSessionVars().StmtCtx
-	for {
-		if idx >= rowsLen {
-			break
-		}
-		row := rows[idx]
-		h, err1 := e.Table.AddRecord(e.ctx, row, false)
-		if err1 == nil {
-			e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
-			idx++
-			continue
-		}
-		if err1 != nil && !kv.ErrKeyExists.Equal(err1) {
-			return errors.Trace(err1)
-		}
-		oldRow, err1 := e.Table.Row(e.ctx, h)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		rowUnchanged, err1 := types.EqualDatums(sc, oldRow, row)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		if rowUnchanged {
-			// If row unchanged, we do not need to do insert.
-			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-			idx++
-			continue
-		}
-		// Remove current row and try replace again.
-		err1 = e.Table.RemoveRecord(e.ctx, h, oldRow)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, h, nil)
-		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	err := e.batchGetInsertKeys(e.ctx, e.Table, newRows)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
+	// Batch get the to-be-updated rows in storage.
+	err = e.initDupOldRowValue(e.ctx, e.Table, newRows)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for i, r := range e.toBeCheckedRows {
+		for {
+			if r.handleKey != nil {
+				if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
+					handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					err = e.removeRow(handle, newRows[i])
+					if err != nil {
+						return errors.Trace(err)
+					}
+					continue
+				}
+			}
+
+			foundDupKey := false
+			for _, uk := range r.uniqueKeys {
+				if val, found := e.dupKVs[string(uk.newKV.key)]; found {
+					handle, err := tables.DecodeHandle(val)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					err = e.removeRow(handle, newRows[i])
+					if err != nil {
+						return errors.Trace(err)
+					}
+					foundDupKey = true
+					break
+				}
+			}
+			if foundDupKey {
+				continue
+			}
+			newHandle, err := e.insertRow(newRows[i])
+			if err != nil {
+				return errors.Trace(err)
+			}
+			e.fillBackKeys(e.Table, r, newHandle)
+			break
+		}
+	}
 	if e.lastInsertID != 0 {
 		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
