@@ -932,12 +932,13 @@ func (s *testDBSuite) TestAddColumnTooMany(c *C) {
 	s.tk.MustExec("use test")
 	count := ddl.TableColumnCountLimit - 1
 	var cols []string
-	for i := 0; i <= count; i++ {
+	for i := 0; i < count; i++ {
 		cols = append(cols, fmt.Sprintf("a%d int", i))
 	}
 	createSQL := fmt.Sprintf("create table t_column_too_many (%s)", strings.Join(cols, ","))
 	s.tk.MustExec(createSQL)
-	alterSQL := "alter table t_column_too_many add column a_512 int"
+	s.tk.MustExec("alter table t_column_too_many add column a_512 int")
+	alterSQL := "alter table t_column_too_many add column a_513 int"
 	s.testErrorCode(c, alterSQL, tmysql.ErrTooManyFields)
 }
 
