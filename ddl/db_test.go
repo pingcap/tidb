@@ -2623,7 +2623,7 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 	c.Assert(part.Definitions[1].LessThan[0], Equals, "MAXVALUE")
 	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p3"))
 
-	s.tk.MustExec("drop table if exists table4;")
+	s.tk.MustExec("drop table if exists tr;")
 	s.tk.MustExec(` create table tr(
 		id int, name varchar(50), 
 		purchased date
