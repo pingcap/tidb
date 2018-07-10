@@ -156,7 +156,7 @@ func validRangePartitionType(col *table.Column) bool {
 	}
 }
 
-// checkDropTablePartition checks the partition exists and is not the only partition in the table.
+// checkDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
 func checkDropTablePartition(meta *model.TableInfo, partName string) error {
 	oldDefs := meta.Partition.Definitions
 	for _, def := range oldDefs {
@@ -171,16 +171,15 @@ func checkDropTablePartition(meta *model.TableInfo, partName string) error {
 }
 
 func removePartitionInfo(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo, partName string) error {
-	newDefs, oldDefs := []model.PartitionDefinition{}, tblInfo.Partition.Definitions
-	newDefs = make([]model.PartitionDefinition, 0, len(oldDefs)-1)
+	oldDefs := tblInfo.Partition.Definitions
+	newDefs := make([]model.PartitionDefinition, 0, len(oldDefs)-1)
 	var pid int64
 	for i := 0; i < len(oldDefs); i++ {
 		if !strings.EqualFold(oldDefs[i].Name.O, partName) {
 			continue
 		}
 		pid = oldDefs[i].ID
-		j := i + 1
-		newDefs = append(oldDefs[:i], oldDefs[j:]...)
+		newDefs = append(oldDefs[:i], oldDefs[i+1:]...)
 		break
 	}
 	job.TableID = pid
