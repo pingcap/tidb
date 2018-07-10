@@ -946,10 +946,8 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		}
 		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
 		if e.defaultVal != nil {
-			value, existsDefaultValue := aggDesc.CalculateDefaultValue(e.ctx, e.children[0].Schema())
-			if existsDefaultValue {
-				e.defaultVal.AppendDatum(i, &value)
-			}
+			value := aggDesc.GetDefaultValue()
+			e.defaultVal.AppendDatum(i, &value)
 		}
 	}
 
@@ -979,10 +977,8 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	for i, aggDesc := range v.AggFuncs {
 		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
 		if e.defaultVal != nil {
-			value, existsDefaultValue := aggDesc.CalculateDefaultValue(e.ctx, e.children[0].Schema())
-			if existsDefaultValue {
-				e.defaultVal.AppendDatum(i, &value)
-			}
+			value := aggDesc.GetDefaultValue()
+			e.defaultVal.AppendDatum(i, &value)
 		}
 		// For new aggregate evaluation framework.
 		newAggFunc := aggfuncs.Build(aggDesc, i)
