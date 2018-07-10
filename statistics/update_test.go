@@ -380,6 +380,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 		break
 	}
 
+	testKit.MustExec("analyze table t")
 	_, err = testKit.Exec("create index idx on t(a)")
 	c.Assert(err, IsNil)
 	is = do.InfoSchema()

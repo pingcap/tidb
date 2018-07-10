@@ -548,8 +548,8 @@ func tableAnalyzed(tbl *Table) bool {
 	return false
 }
 
-// needAnalyzeTable checks if we need to analyze the table. If the table is not analyzed,
-// we need to analyze it when it has not been modified for a time. If the table is analyzed,
+// needAnalyzeTable checks if we need to analyze the table. If the table has never been analyzed,
+// we need to analyze it when it has not been modified for a time. If the table had been analyzed before,
 // we need to analyze it when the `modify count / count` is greater than autoAnalyzeRatio.
 func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
 	analyzed := tableAnalyzed(tbl)
@@ -594,7 +594,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			statsTbl := h.GetTableStats(tblInfo)
-			if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt || statsTbl.ModifyCount == 0 {
+			if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 				continue
 			}
 			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
