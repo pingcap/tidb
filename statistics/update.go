@@ -548,9 +548,11 @@ func tableAnalyzed(tbl *Table) bool {
 	return false
 }
 
-// needAnalyzeTable checks if we need to analyze the table. If the table has never been analyzed,
-// we need to analyze it when it has not been modified for a time. If the table had been analyzed before,
-// we need to analyze it when the `modify count / count` is greater than autoAnalyzeRatio.
+// needAnalyzeTable checks if we need to analyze the table:
+// 1. If the table has never been analyzed, we need to analyze it when it has
+//    not been modified for a time.
+// 2. If the table had been analyzed before, we need to analyze it when
+//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
 func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
 	analyzed := tableAnalyzed(tbl)
 	if !analyzed {
