@@ -178,7 +178,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			valStr, err = value.ToString()
 			terror.Log(errors.Trace(err))
 		}
-		log.Infof("[con:%d] set system variable %s = %s", sessionVars.ConnectionID, name, valStr)
+		log.Infof("con:%d %s=%s", sessionVars.ConnectionID, name, valStr)
 	}
 
 	if name == variable.TxnIsolation {
