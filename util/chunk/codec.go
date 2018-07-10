@@ -51,7 +51,7 @@ func (c *Codec) encodeFixLenColumn(buffer []byte, col *column) []byte {
 	buffer = c.encodeColumn(buffer, lenBuffer[:], col)
 
 	// supplement the length info of this column in the front
-	numEncodedBytes := len(buffer) - startOffset - 8
+	numEncodedBytes := len(buffer) - startOffset
 	binary.LittleEndian.PutUint64(lenBuffer[:], uint64(numEncodedBytes))
 	copy(buffer[startOffset:], lenBuffer[:8])
 
@@ -75,7 +75,7 @@ func (c *Codec) encodeVarLenColumn(buffer []byte, col *column) []byte {
 	buffer = append(buffer, lenBuffer[:numPaddingBytes]...)
 
 	// supplement the length info of this column in the front
-	numEncodedBytes := len(buffer) - startOffset - 8
+	numEncodedBytes := len(buffer) - startOffset
 	binary.LittleEndian.PutUint64(lenBuffer[:], uint64(numEncodedBytes))
 	copy(buffer[startOffset:], lenBuffer[:8])
 
@@ -100,7 +100,7 @@ func (c *Codec) encodeColumn(buffer, lenBuffer []byte, col *column) []byte {
 
 	// encode data
 	binary.LittleEndian.PutUint64(lenBuffer, uint64(len(col.data)))
-	buffer = append(buffer, lenBuffer[:4]...)
+	buffer = append(buffer, lenBuffer[:8]...)
 	buffer = append(buffer, col.data...)
 	numPaddingBytes = c.calcNumPaddingBytes(len(col.data))
 	buffer = append(buffer, lenBuffer[:numPaddingBytes]...)
@@ -134,6 +134,16 @@ func (c *Codec) Decode(buffer []byte) *Chunk {
 	return chk
 }
 
+func (c *Codec) Decode2Chunk(buffer []byte) *Chunk {
+	chk := &Chunk{}
+	for len(buffer) > 0 {
+		col := &column{}
+		buffer = c.decodeColumn(buffer, col)
+		chk.columns = append(chk.columns, col)
+	}
+	return chk
+}
+
 func (c *Codec) decodeColumn(buffer []byte, col *column) []byte {
 	numEatenBytes := uint64(0)
 
@@ -150,30 +160,36 @@ func (c *Codec) decodeColumn(buffer []byte, col *column) []byte {
 	numEatenBytes += 4
 
 	// decode nullBitmap.
-	numBitmapBytes := uint64(binary.LittleEndian.Uint32(buffer[numEatenBytes:]))
-	numEatenBytes += 4
+	numBitmapBytes := uint64(binary.LittleEndian.Uint64(buffer[numEatenBytes:]))
+	numEatenBytes += 8
 	col.nullBitmap = buffer[numEatenBytes : numEatenBytes+numBitmapBytes]
-	numEatenBytes += numBitmapBytes
+	numEatenBytes += numBitmapBytes + uint64(c.calcNumPaddingBytes(int(numBitmapBytes)))
 
 	// decode data.
-	numDataBytes := uint64(binary.LittleEndian.Uint32(buffer[numEatenBytes:]))
-	numEatenBytes += 4
+	numDataBytes := uint64(binary.LittleEndian.Uint64(buffer[numEatenBytes:]))
+	numEatenBytes += 8
 	col.data = buffer[numEatenBytes : numEatenBytes+numDataBytes]
-	numEatenBytes += numDataBytes
+	numEatenBytes += numDataBytes + uint64(c.calcNumPaddingBytes(int(numDataBytes)))
 
 	if numEatenBytes == numTotalBytes {
-		return buffer[:numTotalBytes]
+		return buffer[numTotalBytes:]
 	}
 
 	// decode offsets.
-	numOffsetBytes := binary.LittleEndian.Uint32(buffer[numEatenBytes:])
-	numEatenBytes += 4
-	col.offsets = make([]int32, 0, numOffsetBytes/4)
-	for numEatenBytes < numTotalBytes {
-		offset := binary.LittleEndian.Uint32(buffer[numEatenBytes:])
-		col.offsets = append(col.offsets, int32(offset))
-		numEatenBytes += 4
-	}
+	numOffsetBytes := binary.LittleEndian.Uint64(buffer[numEatenBytes:])
+	numEatenBytes += 8
+	col.offsets = c.bytesToI32Slice(buffer[numEatenBytes : numEatenBytes+numOffsetBytes])
 
-	return buffer[:numTotalBytes]
+	return buffer[numTotalBytes:]
+}
+
+func (c *Codec) bytesToI32Slice(b []byte) (i32s []int32) {
+	if len(b) == 0 {
+		return nil
+	}
+	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&i32s))
+	hdr.Len = len(b) / 4
+	hdr.Cap = hdr.Len
+	hdr.Data = uintptr(unsafe.Pointer(&b[0]))
+	return i32s
 }
