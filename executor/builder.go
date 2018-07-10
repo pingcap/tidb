@@ -511,6 +511,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 
 	ivs := &InsertValues{
 		baseExecutor:          baseExec,
+		Table:                 v.Table,
 		Columns:               v.Columns,
 		Lists:                 v.Lists,
 		SetList:               v.SetList,
@@ -520,7 +521,6 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 		SelectExec:            selectExec,
 	}
 
-	ivs.Table = v.Table
 	if v.IsReplace {
 		return b.buildReplace(ivs)
 	}

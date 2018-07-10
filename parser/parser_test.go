@@ -1756,6 +1756,14 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 	c.Assert(hints[1].HintName.L, Equals, "tidb_hj")
 	c.Assert(hints[1].Tables[0].L, Equals, "t3")
 	c.Assert(hints[1].Tables[1].L, Equals, "t4")
+
+	stmt, err = parser.Parse("SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM t1 INNER JOIN t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, IsNil)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+	hints = selectStmt.TableHints
+	c.Assert(len(hints), Equals, 1)
+	c.Assert(hints[0].HintName.L, Equals, "max_execution_time")
+	c.Assert(hints[0].MaxExecutionTime, Equals, uint64(1000))
 }
 
 func (s *testParserSuite) TestType(c *C) {

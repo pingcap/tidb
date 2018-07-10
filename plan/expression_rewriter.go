@@ -52,45 +52,84 @@ func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 	return newExpr.Eval(nil)
 }
 
+func (b *planBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+	b.rewriterCounter++
+	defer func() { b.rewriterCounter-- }()
+
+	rewriter := b.getExpressionRewriter(mockPlan)
+	// The rewriter maybe is obtained from "b.rewriterPool", "rewriter.err" is
+	// not nil means certain previous procedure has not handled this error.
+	// Here we give us one more chance to make a correct behavior by handling
+	// this missed error.
+	if rewriter.err != nil {
+		return nil, rewriter.err
+	}
+
+	rewriter.insertPlan = insertPlan
+	rewriter.asScalar = true
+
+	expr, _, err := b.rewriteExprNode(rewriter, exprNode, true)
+	return expr, errors.Trace(err)
+}
+
 // rewrite function rewrites ast expr to expression.Expression.
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
-func (b *planBuilder) rewrite(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (
-	expression.Expression, LogicalPlan, error) {
-	return b.rewriteWithPreprocess(expr, p, aggMapper, asScalar, nil)
+func (b *planBuilder) rewrite(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
+	expr, resultPlan, err := b.rewriteWithPreprocess(exprNode, p, aggMapper, asScalar, nil)
+	return expr, resultPlan, errors.Trace(err)
 }
 
 // rewriteWithPreprocess is for handling the situation that we need to adjust the input ast tree
 // before really using its node in `expressionRewriter.Leave`. In that case, we first call
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
-func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (
-	expression.Expression, LogicalPlan, error) {
+func (b *planBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (expression.Expression, LogicalPlan, error) {
 	b.rewriterCounter++
-	var rewriter *expressionRewriter
-	if len(b.rewriterPool) < b.rewriterCounter {
-		rewriter = &expressionRewriter{
-			p:          p,
-			aggrMap:    aggMapper,
-			b:          b,
-			asScalar:   asScalar,
-			ctx:        b.ctx,
-			preprocess: preprocess,
+	defer func() { b.rewriterCounter-- }()
+
+	rewriter := b.getExpressionRewriter(p)
+	// The rewriter maybe is obtained from "b.rewriterPool", "rewriter.err" is
+	// not nil means certain previous procedure has not handled this error.
+	// Here we give us one more chance to make a correct behavior by handling
+	// this missed error.
+	if rewriter.err != nil {
+		return nil, nil, rewriter.err
+	}
+
+	rewriter.aggrMap = aggMapper
+	rewriter.asScalar = asScalar
+	rewriter.preprocess = preprocess
+
+	expr, resultPlan, err := b.rewriteExprNode(rewriter, exprNode, asScalar)
+	return expr, resultPlan, errors.Trace(err)
+}
+
+func (b *planBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expressionRewriter) {
+	defer func() {
+		if p != nil {
+			rewriter.schema = p.Schema()
 		}
+	}()
+
+	if len(b.rewriterPool) < b.rewriterCounter {
+		rewriter = &expressionRewriter{p: p, b: b, ctx: b.ctx}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
-	} else {
-		// If rewriter.err is not nil, the planner will fail and won't continue. So don't need to reset the rewriter.err's value to nil.
-		rewriter = b.rewriterPool[b.rewriterCounter-1]
-		rewriter.p = p
-		rewriter.aggrMap = aggMapper
-		rewriter.asScalar = asScalar
-		rewriter.preprocess = preprocess
-		rewriter.ctxStack = rewriter.ctxStack[:0]
+		return
 	}
-	if p != nil {
-		rewriter.schema = p.Schema()
-	}
-	expr.Accept(rewriter)
+
+	rewriter = b.rewriterPool[b.rewriterCounter-1]
+	rewriter.p = p
+	rewriter.asScalar = false
+	rewriter.aggrMap = nil
+	rewriter.preprocess = nil
+	rewriter.insertPlan = nil
+	rewriter.ctxStack = rewriter.ctxStack[:0]
+	return
+}
+
+func (b *planBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
+	exprNode.Accept(rewriter)
 	if rewriter.err != nil {
 		return nil, nil, errors.Trace(rewriter.err)
 	}
@@ -104,7 +143,6 @@ func (b *planBuilder) rewriteWithPreprocess(expr ast.ExprNode, p LogicalPlan, ag
 	if rewriter.err != nil {
 		return nil, nil, errors.Trace(rewriter.err)
 	}
-	b.rewriterCounter--
 	return rewriter.ctxStack[0], rewriter.p, nil
 }
 
@@ -116,11 +154,17 @@ type expressionRewriter struct {
 	aggrMap  map[*ast.AggregateFuncExpr]int
 	b        *planBuilder
 	ctx      sessionctx.Context
-	// asScalar means the return value must be a scalar value.
+
+	// asScalar indicates the return value must be a scalar value.
+	// NOTE: This value can be changed during expression rewritten.
 	asScalar bool
 
 	// preprocess is called for every ast.Node in Leave.
 	preprocess func(ast.Node) ast.Node
+
+	// insertPlan is only used to rewrite the expressions inside the assignment
+	// of the "INSERT" statement.
+	insertPlan *Insert
 }
 
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
@@ -243,9 +287,20 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		return er.handleScalarSubquery(v)
 	case *ast.ParenthesesExpr:
 	case *ast.ValuesExpr:
-		col, err := er.schema.FindColumn(v.Column.Name)
+		schema := er.schema
+		// NOTE: "er.insertPlan != nil" means that we are rewriting the
+		// expressions inside the assignment of "INSERT" statement. we have to
+		// use the "tableSchema" of that "insertPlan".
+		if er.insertPlan != nil {
+			schema = er.insertPlan.tableSchema
+		}
+		col, err := schema.FindColumn(v.Column.Name)
 		if err != nil {
 			er.err = errors.Trace(err)
+			return inNode, false
+		}
+		if col == nil {
+			er.err = ErrUnknownColumn.GenByArgs(v.Column.Name.OrigColName(), "field list")
 			return inNode, false
 		}
 		er.ctxStack = append(er.ctxStack, expression.NewValuesFunc(er.ctx, col.Index, col.RetType))
