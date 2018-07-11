@@ -266,7 +266,7 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 
 	bf.tp.Flen = argFieldTp.Flen
-	bf.tp.Decimal = fixDecimal4RoundAndTruncate(ctx, args, argTp)
+	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
 
 	var sig builtinFunc
 	if len(args) > 1 {
@@ -295,8 +295,8 @@ func (c *roundFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	return sig, nil
 }
 
-// fixDecimal4RoundAndTruncate fixes tp.decimals of round/truncate func.
-func fixDecimal4RoundAndTruncate(ctx sessionctx.Context, args []Expression, retType types.EvalType) int {
+// calculateDecimal4RoundAndTruncate calculates tp.decimals of round/truncate func.
+func calculateDecimal4RoundAndTruncate(ctx sessionctx.Context, args []Expression, retType types.EvalType) int {
 	if retType == types.ETInt || len(args) <= 1 {
 		return 0
 	}
@@ -305,7 +305,7 @@ func fixDecimal4RoundAndTruncate(ctx sessionctx.Context, args []Expression, retT
 		return args[0].GetType().Decimal
 	}
 	argDec, isNull, err := secondConst.EvalInt(ctx, nil)
-	if isNull || err != nil || argDec < 0 {
+	if err != nil || isNull || argDec < 0 {
 		return 0
 	}
 	if argDec > mysql.MaxDecimalScale {
@@ -1729,7 +1729,7 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, argTp, types.ETInt)
 
-	bf.tp.Decimal = fixDecimal4RoundAndTruncate(ctx, args, argTp)
+	bf.tp.Decimal = calculateDecimal4RoundAndTruncate(ctx, args, argTp)
 	bf.tp.Flen = args[0].GetType().Flen - args[0].GetType().Decimal + bf.tp.Decimal
 	bf.tp.Flag |= args[0].GetType().Flag
 
