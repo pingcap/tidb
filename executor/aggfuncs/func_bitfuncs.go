@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"math"
 )
 
 type baseBitAggFunc struct {
@@ -84,13 +85,13 @@ type bitAndUint64 struct {
 
 func (e *bitAndUint64) AllocPartialResult() PartialResult {
 	p := new(partialResult4BitFunc)
-	*p = 1
+	*p = math.MaxUint64
 	return PartialResult(p)
 }
 
 func (e *bitAndUint64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4BitFunc)(pr)
-	*p = 1
+	*p = math.MaxUint64
 }
 
 func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
