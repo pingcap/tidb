@@ -2737,6 +2737,10 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	// check daylight saving time in Asia/Shanghai
 	tk.MustExec("set time_zone='Asia/Shanghai'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1991-05-06 13:59:28"))
+	// insert an nonexistent time
+	tk.MustExec("set time_zone = 'America/Los_Angeles'")
+	_, err := tk.Exec("insert into t value('2011-03-13 02:00:00')")
+	c.Assert(err, NotNil)
 	// reset timezone to a +8 offset
 	tk.MustExec("set time_zone = '+08:00'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1991-05-06 12:59:28"))
