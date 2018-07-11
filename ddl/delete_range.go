@@ -242,9 +242,8 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
 	case model.ActionDropTablePartition:
-		var partName interface{}
 		var partitionID int64
-		if err := job.DecodeArgs(&partName, &partitionID); err != nil {
+		if err := job.DecodeArgs(&partitionID); err != nil {
 			return errors.Trace(err)
 		}
 		startKey := tablecodec.EncodeTablePrefix(partitionID)

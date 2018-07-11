@@ -213,6 +213,6 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 	// A background job will be created to delete old partition data.
-	job.Args = append(job.Args, partitionID)
+	job.Args = []interface{}{partitionID}
 	return ver, nil
 }
