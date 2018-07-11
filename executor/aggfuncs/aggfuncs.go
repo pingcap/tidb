@@ -43,6 +43,8 @@ var (
 	// All the AggFunc implementations for "BIT_OR" are listed here.
 	// All the AggFunc implementations for "BIT_XOR" are listed here.
 	// All the AggFunc implementations for "BIT_AND" are listed here.
+	// All the AggFunc implementations for "BIT_OR" are listed here.
+	_ AggFunc = (*bitOrUint64)(nil)
 )
 
 // PartialResult represents data structure to store the partial result for the

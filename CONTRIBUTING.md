@@ -194,6 +194,12 @@ Then you can connect to TiDB with mysql client.
 mysql -h127.0.0.1 -P4000 -uroot test
 ```
 
+If you use MySQL client 8, you may get the `ERROR 1105 (HY000): Unknown charset id 255` error. To solve it, you can add `--default-character-set utf8` in MySQL client 8's arguments.
+
+```sh
+mysql -h127.0.0.1 -P4000 -uroot test --default-character-set utf8
+```
+
 #### Run Test
 
 ```sh

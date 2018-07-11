@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	gofail "github.com/coreos/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
@@ -78,7 +77,6 @@ type testDBSuite struct {
 
 func (s *testDBSuite) SetUpSuite(c *C) {
 	var err error
-
 	testleak.BeforeTest()
 
 	s.lease = 200 * time.Millisecond
@@ -92,18 +90,14 @@ func (s *testDBSuite) SetUpSuite(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	s.mvccStore = mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(
+	s.store, err = mockstore.NewMockTikvStore(
 		mockstore.WithCluster(s.cluster),
 		mockstore.WithMVCCStore(s.mvccStore),
 	)
 	c.Assert(err, IsNil)
 
-	s.store = store
-	c.Assert(err, IsNil)
-
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-
 	s.s, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 
@@ -932,12 +926,13 @@ func (s *testDBSuite) TestAddColumnTooMany(c *C) {
 	s.tk.MustExec("use test")
 	count := ddl.TableColumnCountLimit - 1
 	var cols []string
-	for i := 0; i <= count; i++ {
+	for i := 0; i < count; i++ {
 		cols = append(cols, fmt.Sprintf("a%d int", i))
 	}
 	createSQL := fmt.Sprintf("create table t_column_too_many (%s)", strings.Join(cols, ","))
 	s.tk.MustExec(createSQL)
-	alterSQL := "alter table t_column_too_many add column a_512 int"
+	s.tk.MustExec("alter table t_column_too_many add column a_512 int")
+	alterSQL := "alter table t_column_too_many add column a_513 int"
 	s.testErrorCode(c, alterSQL, tmysql.ErrTooManyFields)
 }
 
@@ -1554,12 +1549,14 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 }
 
 func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
-	s.tk.MustExec("use test")
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test;")
+	s.tk.MustExec("drop table if exists tp;")
 	s.tk.MustExec(`CREATE TABLE tp (a int) PARTITION BY RANGE(a) (
 	PARTITION p0 VALUES LESS THAN (10),
 	PARTITION p1 VALUES LESS THAN (20),
 	PARTITION p2 VALUES LESS THAN (MAXVALUE)
-);`)
+	);`)
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
@@ -1578,6 +1575,96 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	c.Assert(part.Definitions[1].Name, Equals, "p1")
 	c.Assert(part.Definitions[2].LessThan[0], Equals, "MAXVALUE")
 	c.Assert(part.Definitions[2].Name, Equals, "p2")
+
+	s.tk.MustExec("drop table if exists employees;")
+	sql1 := `create table employees (
+	id int not null,
+	hired int not null
+	)
+	partition by range( hired ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p2 values less than (2001)
+	);`
+	s.testErrorCode(c, sql1, tmysql.ErrSameNamePartition)
+
+	sql2 := `create table employees (
+	id int not null,
+	hired int not null
+	)
+	partition by range( hired ) (
+		partition p1 values less than (1998),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001)
+	);`
+	s.testErrorCode(c, sql2, tmysql.ErrRangeNotIncreasing)
+
+	sql3 := `create table employees (
+	id int not null,
+	hired int not null
+	)
+	partition by range( hired ) (
+		partition p1 values less than (1998),
+		partition p2 values less than maxvalue,
+		partition p3 values less than (2001)
+	);`
+	s.testErrorCode(c, sql3, tmysql.ErrPartitionMaxvalue)
+
+	sql4 := `create table t4 (
+	a int not null,
+  	b int not null
+	)
+	partition by range( id ) (
+		partition p1 values less than maxvalue,
+  		partition p2 values less than (1991),
+  		partition p3 values less than (1995)
+	);`
+	s.testErrorCode(c, sql4, tmysql.ErrPartitionMaxvalue)
+
+	_, err = s.tk.Exec(`CREATE TABLE rc (
+    		a INT NOT NULL,
+    		b INT NOT NULL,
+			c INT NOT NULL
+	)
+	partition by range columns(a,b,c) (
+    	partition p0 values less than (10,5,1),
+    	partition p2 values less than (50,maxvalue,10),
+    	partition p3 values less than (65,30,13),
+    	partition p4 values less than (maxvalue,30,40)
+	);`)
+	c.Assert(err, IsNil)
+
+	sql6 := `create table employees (
+	id int not null,
+	hired int not null
+	)
+	partition by range( hired ) (
+		 partition p0 values less than (6 , 10)
+	);`
+	s.testErrorCode(c, sql6, tmysql.ErrTooManyValues)
+
+	sql7 := `create table t7 (
+	a int not null,
+  	b int not null
+	)
+	partition by range( id ) (
+		partition p1 values less than (1991),
+		partition p2 values less than maxvalue,
+  		partition p3 values less than maxvalue,
+  		partition p4 values less than (1995),
+		partition p5 values less than maxvalue
+	);`
+	s.testErrorCode(c, sql7, tmysql.ErrPartitionMaxvalue)
+
+	_, err = s.tk.Exec(`create table t8 (
+	a int not null,
+	b int not null
+	)
+	partition by range( id ) (
+		partition p1 values less than (19xx91),
+		partition p2 values less than maxvalue
+	);`)
+	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
@@ -2214,49 +2301,6 @@ func (s *testDBSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	maxID, emptyTable = s.getMaxTableRowID(testCtx)
 	c.Assert(emptyTable, IsFalse)
 	c.Assert(maxID, Equals, int64(10000))
-}
-
-func (s *testDBSuite) TestUpdateHandleFailed(c *C) {
-	gofail.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle")
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_handle_failed")
-	defer tk.MustExec("drop database test_handle_failed")
-	tk.MustExec("use test_handle_failed")
-	tk.MustExec("create table t(a int primary key, b int)")
-	tk.MustExec("insert into t values(-1, 1)")
-	tk.MustExec("alter table t add index idx_b(b)")
-	result := tk.MustQuery("select count(*) from t use index(idx_b)")
-	result.Check(testkit.Rows("1"))
-	tk.MustExec("admin check index t idx_b")
-}
-
-func (s *testDBSuite) TestAddIndexFailed(c *C) {
-	gofail.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `return(true)`)
-	defer gofail.Disable("github.com/pingcap/tidb/ddl/mockAddIndexErr")
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_add_index_failed")
-	defer tk.MustExec("drop database test_add_index_failed")
-	tk.MustExec("use test_add_index_failed")
-
-	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
-	for i := 0; i < 1000; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
-	}
-
-	// Get table ID for split.
-	dom := domain.GetDomain(tk.Se)
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tblID := tbl.Meta().ID
-
-	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 100)
-
-	tk.MustExec("alter table t add index idx_b(b)")
-	tk.MustExec("admin check index t idx_b")
-	tk.MustExec("admin check table t")
 }
 
 func (s *testDBSuite) getHistoryDDLJob(id int64) (*model.Job, error) {

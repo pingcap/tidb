@@ -16,6 +16,7 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
+	"math"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -54,6 +55,9 @@ type Aggregation interface {
 
 	// Clone deep copy the Aggregation.
 	Clone() Aggregation
+
+	// GetDefaultValue gets the default value when the aggregation function's input is null.
+	GetDefaultValue() types.Datum
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
@@ -222,6 +226,35 @@ func (af *aggFunction) GetArgs() []expression.Expression {
 func (af *aggFunction) Clone() Aggregation {
 	desc := af.AggFuncDesc.Clone()
 	return desc.GetAggFunc()
+}
+
+// GetDefaultValue gets the default value when the aggregation function's input is null.
+// According to MySQL, default values of the aggregation function are listed as follows:
+// e.g.
+// Table t which is empty:
+// +-------+---------+---------+
+// | Table | Field   | Type    |
+// +-------+---------+---------+
+// | t     | a       | int(11) |
+// +-------+---------+---------+
+//
+// Query: `select a, avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a) from t;`
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// | a    | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) |
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// | NULL |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+func (af *aggFunction) GetDefaultValue() (v types.Datum) {
+	switch af.Name {
+	case ast.AggFuncCount, ast.AggFuncBitOr, ast.AggFuncBitXor:
+		v = types.NewIntDatum(0)
+	case ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMax,
+		ast.AggFuncMin, ast.AggFuncGroupConcat:
+		v = types.Datum{}
+	case ast.AggFuncBitAnd:
+		v = types.NewUintDatum(uint64(math.MaxUint64))
+	}
+	return v
 }
 
 // NeedCount indicates whether the aggregate function should record count.
