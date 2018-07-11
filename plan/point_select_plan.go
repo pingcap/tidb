@@ -26,37 +26,26 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// PointSelectPlan is a fast plan for point select.
 type PointSelectPlan struct {
+	basePlan
 	schema      *expression.Schema
 	TblInfo     *model.TableInfo
 	IndexInfo   *model.IndexInfo
 	Handle      int64
 	IndexValues []types.Datum
 	ctx         sessionctx.Context
-	stats       statsInfo
+	stats       *statsInfo
 }
 
-type NameValuePair struct {
-	ColName string
-	Value   types.Datum
+type nameValuePair struct {
+	colName string
+	value   types.Datum
 }
 
+// Schema implements the Plan interface.
 func (fp *PointSelectPlan) Schema() *expression.Schema {
 	return fp.schema
-}
-
-func (fp *PointSelectPlan) ID() int {
-	return 1
-}
-
-func (fp *PointSelectPlan) ExplainID() string {
-	return "Point_Select_1"
-}
-
-func (fp *PointSelectPlan) replaceExprColumns(replace map[string]*expression.Column) {}
-
-func (fp *PointSelectPlan) context() sessionctx.Context {
-	return fp.ctx
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
@@ -82,11 +71,10 @@ func (fp *PointSelectPlan) getChildReqProps(idx int) *requiredProp {
 
 // StatsInfo will return the statsInfo for this plan.
 func (fp *PointSelectPlan) StatsInfo() *statsInfo {
-	fp.stats.count = 1
-	return &fp.stats
+	return fp.stats
 }
 
-// Get all the children.
+// Children gets all the children.
 func (fp *PointSelectPlan) Children() []PhysicalPlan {
 	return nil
 }
@@ -98,6 +86,10 @@ func (fp *PointSelectPlan) SetChildren(...PhysicalPlan) {}
 func (fp *PointSelectPlan) ResolveIndices() {}
 
 func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
+	if PreparedPlanCacheEnabled || ctx.GetSessionVars().PlanCacheEnabled {
+		// plan cache not supported yet.
+		return nil
+	}
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		fp := tryFastSelectPlan(ctx, x)
@@ -138,7 +130,7 @@ func tryFastSelectPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointSe
 			return nil
 		}
 	}
-	pairs := make([]NameValuePair, 0, 4)
+	pairs := make([]nameValuePair, 0, 4)
 	pairs = getNameValuePairs(pairs, selStmt.Where)
 	if pairs == nil {
 		return nil
@@ -149,12 +141,9 @@ func tryFastSelectPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointSe
 		if schema == nil {
 			return nil
 		}
-		return &PointSelectPlan{
-			schema:  schema,
-			ctx:     ctx,
-			TblInfo: tbl,
-			Handle:  handleDatum.GetInt64(),
-		}
+		p := newPointSelectPlan(ctx, schema, tbl)
+		p.Handle = handleDatum.GetInt64()
+		return p
 	}
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique {
@@ -171,15 +160,22 @@ func tryFastSelectPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointSe
 		if schema == nil {
 			return nil
 		}
-		return &PointSelectPlan{
-			schema:      schema,
-			ctx:         ctx,
-			TblInfo:     tbl,
-			IndexInfo:   idxInfo,
-			IndexValues: idxValues,
-		}
+		p := newPointSelectPlan(ctx, schema, tbl)
+		p.IndexInfo = idxInfo
+		p.IndexValues = idxValues
+		return p
 	}
 	return nil
+}
+
+func newPointSelectPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *PointSelectPlan {
+	p := &PointSelectPlan{
+		basePlan: newBasePlan(ctx, "Point_Select"),
+		schema:   schema,
+		TblInfo:  tbl,
+	}
+	p.stats = &statsInfo{count: 1}
+	return p
 }
 
 func checkFastPlanPrivilege(ctx sessionctx.Context, fastPlan *PointSelectPlan, checkTypes ...mysql.PrivilegeType) error {
@@ -256,7 +252,7 @@ func getSingleTableName(tableRefs *ast.TableRefsClause) *ast.TableName {
 	return tblName
 }
 
-func getNameValuePairs(nvPairs []NameValuePair, expr ast.ExprNode) []NameValuePair {
+func getNameValuePairs(nvPairs []nameValuePair, expr ast.ExprNode) []nameValuePair {
 	binOp, ok := expr.(*ast.BinaryOperationExpr)
 	if !ok {
 		return nil
@@ -286,12 +282,12 @@ func getNameValuePairs(nvPairs []NameValuePair, expr ast.ExprNode) []NameValuePa
 		if d.IsNull() {
 			return nil
 		}
-		return append(nvPairs, NameValuePair{ColName: colName.Name.Name.L, Value: d})
+		return append(nvPairs, nameValuePair{colName: colName.Name.Name.L, value: d})
 	}
 	return nil
 }
 
-func findPKHandle(tblInfo *model.TableInfo, pairs []NameValuePair) (d types.Datum) {
+func findPKHandle(tblInfo *model.TableInfo, pairs []nameValuePair) (d types.Datum) {
 	if !tblInfo.PKIsHandle {
 		return d
 	}
@@ -301,13 +297,13 @@ func findPKHandle(tblInfo *model.TableInfo, pairs []NameValuePair) (d types.Datu
 			if i == -1 {
 				return d
 			}
-			return pairs[i].Value
+			return pairs[i].value
 		}
 	}
 	return d
 }
 
-func getIndexValues(idxInfo *model.IndexInfo, pairs []NameValuePair) []types.Datum {
+func getIndexValues(idxInfo *model.IndexInfo, pairs []nameValuePair) []types.Datum {
 	idxValues := make([]types.Datum, 0, 4)
 	if len(idxInfo.Columns) != len(pairs) {
 		return nil
@@ -320,7 +316,7 @@ func getIndexValues(idxInfo *model.IndexInfo, pairs []NameValuePair) []types.Dat
 		if i == -1 {
 			return nil
 		}
-		idxValues = append(idxValues, pairs[i].Value)
+		idxValues = append(idxValues, pairs[i].value)
 	}
 	if len(idxValues) > 0 {
 		return idxValues
@@ -328,9 +324,9 @@ func getIndexValues(idxInfo *model.IndexInfo, pairs []NameValuePair) []types.Dat
 	return nil
 }
 
-func findInPairs(colName string, pairs []NameValuePair) int {
+func findInPairs(colName string, pairs []nameValuePair) int {
 	for i, pair := range pairs {
-		if pair.ColName == colName {
+		if pair.colName == colName {
 			return i
 		}
 	}
@@ -366,6 +362,9 @@ func buildOrderedList(ctx sessionctx.Context, fastSelect *PointSelectPlan, list 
 	for _, assign := range list {
 		col, err := fastSelect.schema.FindColumn(assign.Column)
 		if err != nil {
+			return nil
+		}
+		if col == nil {
 			return nil
 		}
 		newAssign := &expression.Assignment{

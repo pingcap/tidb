@@ -42,6 +42,7 @@ func (b *executorBuilder) buildPointSelect(p *plan.PointSelectPlan) Executor {
 	}
 }
 
+// PointSelectExecutor executes point select query.
 type PointSelectExecutor struct {
 	ctx      sessionctx.Context
 	schema   *expression.Schema
@@ -55,14 +56,17 @@ type PointSelectExecutor struct {
 	done     bool
 }
 
+// Open implements the Executor interface.
 func (e *PointSelectExecutor) Open(context.Context) error {
 	return nil
 }
 
+// Close implements the Executor interface.
 func (e *PointSelectExecutor) Close() error {
 	return nil
 }
 
+// Next implements the Executor interface.
 func (e *PointSelectExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
@@ -162,6 +166,7 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	return nil
 }
 
+// Schema implements the Executor interface.
 func (e *PointSelectExecutor) Schema() *expression.Schema {
 	return e.schema
 }
