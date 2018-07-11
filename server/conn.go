@@ -451,7 +451,7 @@ func (cc *clientConn) Run() {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				errStack := errors.ErrorStack(err)
 				if !strings.Contains(errStack, "use of closed network connection") {
-					log.Errorf("[con:%d] read packet error, close this connection %s",
+					log.Errorf("con:%d read packet error, close this connection %s",
 						cc.connectionID, errStack)
 				}
 			}
@@ -471,11 +471,11 @@ func (cc *clientConn) Run() {
 				cc.addMetrics(data[0], startTime, nil)
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
-				log.Errorf("[con:%d] result undetermined error, close this connection %s",
+				log.Errorf("con:%d result undetermined error, close this connection %s",
 					cc.connectionID, errors.ErrorStack(err))
 				return
 			} else if terror.ErrCritical.Equal(err) {
-				log.Errorf("[con:%d] critical error, stop the server listener %s",
+				log.Errorf("con:%d critical error, stop the server listener %s",
 					cc.connectionID, errors.ErrorStack(err))
 				metrics.CriticalErrorCounter.Add(1)
 				select {
@@ -484,7 +484,7 @@ func (cc *clientConn) Run() {
 				}
 				return
 			}
-			log.Warnf("[con:%d] dispatch error:\n%s\n%q\n%s",
+			log.Warnf("con:%d dispatch error:\n%s\n%q\n%s",
 				cc.connectionID, cc, queryStrForLog(string(data[1:])), errStrForLog(err))
 			err1 := cc.writeError(err)
 			terror.Log(errors.Trace(err1))
