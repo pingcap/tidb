@@ -34,7 +34,7 @@ type partialResult4MaxMinUint struct {
 }
 
 type partialResult4MaxMinDecimal struct {
-	val    *types.MyDecimal
+	val    types.MyDecimal
 	isNull bool
 }
 
@@ -138,14 +138,14 @@ func (e *maxMin4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if isNull {
 			continue
 		}
-		i := uint64(input)
+		uintVal := uint64(input)
 		if p.isNull {
-			p.val = i
+			p.val = uintVal
 			p.isNull = false
 			continue
 		}
-		if e.isMax && i > p.val || !e.isMax && i < p.val {
-			p.val = i
+		if e.isMax && uintVal > p.val || !e.isMax && uintVal < p.val {
+			p.val = uintVal
 		}
 	}
 	return nil
@@ -255,13 +255,14 @@ type maxMin4Decimal struct {
 
 func (e *maxMin4Decimal) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinDecimal)
+	p.val = *new(types.MyDecimal)
 	p.isNull = true
 	return PartialResult(p)
 }
 
 func (e *maxMin4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinDecimal)(pr)
-	p.val = new(types.MyDecimal)
+	p.val = *new(types.MyDecimal)
 	p.isNull = true
 }
 
@@ -271,7 +272,7 @@ func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	chk.AppendMyDecimal(e.ordinal, p.val)
+	chk.AppendMyDecimal(e.ordinal, &p.val)
 	return nil
 }
 
@@ -286,13 +287,13 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 			continue
 		}
 		if p.isNull {
-			p.val = input
+			p.val = *input
 			p.isNull = false
 			continue
 		}
-		cmp := input.Compare(p.val)
+		cmp := input.Compare(&p.val)
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
-			p.val = input
+			p.val = *input
 		}
 	}
 	return nil
