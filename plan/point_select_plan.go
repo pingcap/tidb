@@ -70,7 +70,7 @@ func (fp *PointSelectPlan) getChildReqProps(idx int) *requiredProp {
 }
 
 // StatsInfo will return the statsInfo for this plan.
-func (fp *PointSelectPlan) StatsInfo() *statsInfo {
+func (fp *PointSelectPlan) statsInfo() *statsInfo {
 	return fp.stats
 }
 

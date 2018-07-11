@@ -88,7 +88,7 @@ func (p *requiredProp) enforceProperty(tsk task, ctx sessionctx.Context) task {
 	}
 	tsk = finishCopTask(ctx, tsk)
 	sortReqProp := &requiredProp{taskTp: rootTaskType, cols: p.cols, expectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx, tsk.plan().StatsInfo(), sortReqProp)
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx, tsk.plan().statsInfo(), sortReqProp)
 	for _, col := range p.cols {
 		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
 	}
@@ -227,7 +227,7 @@ type PhysicalPlan interface {
 	getChildReqProps(idx int) *requiredProp
 
 	// StatsInfo will return the statsInfo for this plan.
-	StatsInfo() *statsInfo
+	statsInfo() *statsInfo
 
 	// StatsCount returns the count of statsInfo for this plan.
 	StatsCount() float64

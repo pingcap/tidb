@@ -59,7 +59,7 @@ func (s *statsInfo) scaleByExpectCnt(expectCnt float64) *statsInfo {
 	return s
 }
 
-func (p *basePhysicalPlan) StatsInfo() *statsInfo {
+func (p *basePhysicalPlan) statsInfo() *statsInfo {
 	return p.stats
 }
 
