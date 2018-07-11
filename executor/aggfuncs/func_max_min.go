@@ -22,26 +22,30 @@ import (
 
 type partialResult4MaxMinInt struct {
 	val int64
-	// executed is used to indicates:
+	// isNull is used to indicates:
 	// 1. whether the partial result is the initialization value which should not be compared during evaluation;
 	// 2. whether all the values of arg are all null, if so, we should return null as the default value for MAX/MIN.
-	executed bool
+	isNull bool
 }
+
 type partialResult4MaxMinUint struct {
-	val      uint64
-	executed bool
+	val    uint64
+	isNull bool
 }
+
 type partialResult4MaxMinDecimal struct {
-	val      *types.MyDecimal
-	executed bool
+	val    *types.MyDecimal
+	isNull bool
 }
+
 type partialResult4MaxMinFloat32 struct {
-	val      float32
-	executed bool
+	val    float32
+	isNull bool
 }
+
 type partialResult4MaxMinFloat64 struct {
-	val      float64
-	executed bool
+	val    float64
+	isNull bool
 }
 
 type baseMaxMinAggFunc struct {
@@ -55,18 +59,20 @@ type maxMin4Int struct {
 }
 
 func (e *maxMin4Int) AllocPartialResult() PartialResult {
-	return PartialResult(new(partialResult4MaxMinInt))
+	p := new(partialResult4MaxMinInt)
+	p.isNull = true
+	return PartialResult(p)
 }
 
 func (e *maxMin4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinInt)(pr)
 	p.val = 0
-	p.executed = false
+	p.isNull = true
 }
 
 func (e *maxMin4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinInt)(pr)
-	if !p.executed {
+	if p.isNull {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
@@ -84,9 +90,9 @@ func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 		if isNull {
 			continue
 		}
-		if !p.executed {
+		if p.isNull {
 			p.val = input
-			p.executed = true
+			p.isNull = false
 			continue
 		}
 		if e.isMax && input > p.val || !e.isMax && input < p.val {
@@ -101,18 +107,20 @@ type maxMin4Uint struct {
 }
 
 func (e *maxMin4Uint) AllocPartialResult() PartialResult {
-	return PartialResult(new(partialResult4MaxMinUint))
+	p := new(partialResult4MaxMinUint)
+	p.isNull = true
+	return PartialResult(p)
 }
 
 func (e *maxMin4Uint) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinUint)(pr)
 	p.val = 0
-	p.executed = false
+	p.isNull = true
 }
 
 func (e *maxMin4Uint) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinUint)(pr)
-	if !p.executed {
+	if p.isNull {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
@@ -131,9 +139,9 @@ func (e *maxMin4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			continue
 		}
 		i := uint64(input)
-		if !p.executed {
+		if p.isNull {
 			p.val = i
-			p.executed = true
+			p.isNull = false
 			continue
 		}
 		if e.isMax && i > p.val || !e.isMax && i < p.val {
@@ -149,18 +157,20 @@ type maxMin4Float32 struct {
 }
 
 func (e *maxMin4Float32) AllocPartialResult() PartialResult {
-	return PartialResult(new(partialResult4MaxMinFloat32))
+	p := new(partialResult4MaxMinFloat32)
+	p.isNull = true
+	return PartialResult(p)
 }
 
 func (e *maxMin4Float32) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinFloat32)(pr)
 	p.val = 0
-	p.executed = false
+	p.isNull = true
 }
 
 func (e *maxMin4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinFloat32)(pr)
-	if !p.executed {
+	if p.isNull {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
@@ -179,9 +189,9 @@ func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 			continue
 		}
 		f := float32(input)
-		if !p.executed {
+		if p.isNull {
 			p.val = f
-			p.executed = true
+			p.isNull = false
 			continue
 		}
 		if e.isMax && f > p.val || !e.isMax && f < p.val {
@@ -196,18 +206,20 @@ type maxMin4Float64 struct {
 }
 
 func (e *maxMin4Float64) AllocPartialResult() PartialResult {
-	return PartialResult(new(partialResult4MaxMinFloat64))
+	p := new(partialResult4MaxMinFloat64)
+	p.isNull = true
+	return PartialResult(p)
 }
 
 func (e *maxMin4Float64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinFloat64)(pr)
 	p.val = 0
-	p.executed = false
+	p.isNull = true
 }
 
 func (e *maxMin4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinFloat64)(pr)
-	if !p.executed {
+	if p.isNull {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
@@ -225,9 +237,9 @@ func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		if !p.executed {
+		if p.isNull {
 			p.val = input
-			p.executed = true
+			p.isNull = false
 			continue
 		}
 		if e.isMax && input > p.val || !e.isMax && input < p.val {
@@ -242,18 +254,20 @@ type maxMin4Decimal struct {
 }
 
 func (e *maxMin4Decimal) AllocPartialResult() PartialResult {
-	return PartialResult(new(partialResult4MaxMinDecimal))
+	p := new(partialResult4MaxMinDecimal)
+	p.isNull = true
+	return PartialResult(p)
 }
 
 func (e *maxMin4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinDecimal)(pr)
 	p.val = new(types.MyDecimal)
-	p.executed = false
+	p.isNull = true
 }
 
 func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinDecimal)(pr)
-	if !p.executed {
+	if p.isNull {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
@@ -271,9 +285,9 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		if !p.executed {
+		if p.isNull {
 			p.val = input
-			p.executed = true
+			p.isNull = false
 			continue
 		}
 		cmp := input.Compare(p.val)
