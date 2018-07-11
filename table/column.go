@@ -171,7 +171,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 				continue
 			}
 			err = ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-			log.Errorf("[con:%d] %v", ctx.GetSessionVars().ConnectionID, err)
+			log.Errorf("con:%d %v", ctx.GetSessionVars().ConnectionID, err)
 			// Truncate to valid utf8 string.
 			casted = types.NewStringDatum(str[:i])
 			err = sc.HandleTruncate(err)
