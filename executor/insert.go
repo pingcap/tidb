@@ -250,16 +250,25 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow types.DatumRow, newRow 
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(newRow)
-	newData := make(types.DatumRow, len(oldRow))
-	copy(newData, oldRow)
+
+	// NOTE: In order to execute the expression inside the column assignment,
+	// we have to put the value of "oldRow" before "newRow" in "row4Update" to
+	// be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
+	row4Update := make(types.DatumRow, 0, len(oldRow)+len(newRow))
+	row4Update = append(row4Update, oldRow...)
+	row4Update = append(row4Update, newRow...)
+
+	// Update old row when the key is duplicated.
 	for _, col := range cols {
-		val, err1 := col.Expr.Eval(newData)
+		val, err1 := col.Expr.Eval(row4Update)
 		if err1 != nil {
 			return nil, false, 0, errors.Trace(err1)
 		}
-		newData[col.Col.Index] = val
+		row4Update[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
+
+	newData := row4Update[:len(oldRow)]
 	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
