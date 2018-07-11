@@ -300,9 +300,9 @@ func (s *Server) onConn(c net.Conn) {
 		terror.Log(errors.Trace(err))
 		return
 	}
-	log.Infof("[con:%d] new connection %s", conn.connectionID, c.RemoteAddr().String())
+	log.Infof("con:%d new connection %s", conn.connectionID, c.RemoteAddr().String())
 	defer func() {
-		log.Infof("[con:%d] close connection", conn.connectionID)
+		log.Infof("con:%d close connection", conn.connectionID)
 	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
