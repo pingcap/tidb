@@ -3,7 +3,6 @@ package aggfuncs
 import (
 	"encoding/binary"
 	"unsafe"
-
 	"github.com/juju/errors"
 
 	"github.com/pingcap/tidb/expression"
@@ -239,11 +238,15 @@ func (e *countOriginalWithDistinct) AppendFinalResult2Chunk(sctx sessionctx.Cont
 
 func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4CountWithDistinct)(pr)
-	buf := []byte{}
+
+	hasNull, isNull := false, false
+	encodedBytes := make([]byte, 0)
+	// Decimal struct is the biggest type we will use.
+	buf := make([]byte, types.MyDecimalStructSize)
 
 	for _, row := range rowsInGroup {
-		encodedBytes := make([]byte, 0)
-		hasNull, isNull := false, false
+		hasNull, isNull = false, false
+		encodedBytes = encodedBytes[:0]
 
 		for i := 0; i < len(e.args) && !hasNull; i++ {
 			encodedBytes, isNull, err = e.evalAndEncode(sctx, e.args[i], row, buf, encodedBytes)
@@ -275,65 +278,62 @@ func (e *countOriginalWithDistinct) evalAndEncode(
 		if err != nil || isNull {
 			return encodedBytes, isNull, errors.Trace(err)
 		}
-		encodedBytes = appendInt64(encodedBytes, val)
+		encodedBytes = appendInt64(encodedBytes, buf, val)
 	case types.ETReal:
 		val, isNull, err := arg.EvalReal(sctx, row)
 		if err != nil || isNull {
 			return encodedBytes, isNull, errors.Trace(err)
 		}
-		encodedBytes = appendFloat64(encodedBytes, val)
+		encodedBytes = appendFloat64(encodedBytes, buf, val)
 	case types.ETDecimal:
 		val, isNull, err := arg.EvalDecimal(sctx, row)
 		if err != nil || isNull {
 			return encodedBytes, isNull, errors.Trace(err)
 		}
-		encodedBytes = appendDecimal(encodedBytes, val)
+		encodedBytes = appendDecimal(encodedBytes, buf, val)
 	case types.ETTimestamp, types.ETDatetime:
 		val, isNull, err := arg.EvalTime(sctx, row)
 		if err != nil || isNull {
 			return encodedBytes, isNull, errors.Trace(err)
 		}
-		encodedBytes = appendTime(encodedBytes, val)
+		encodedBytes = appendTime(encodedBytes, buf, val)
 	case types.ETDuration:
 		val, isNull, err := arg.EvalDuration(sctx, row)
 		if err != nil || isNull {
 			return encodedBytes, isNull, errors.Trace(err)
 		}
-		encodedBytes = appendDuration(encodedBytes, val)
+		encodedBytes = appendDuration(encodedBytes, buf, val)
 	case types.ETJson:
 		val, isNull, err := arg.EvalJSON(sctx, row)
 		if err != nil || isNull {
 			return encodedBytes, isNull, errors.Trace(err)
 		}
-		encodedBytes = appendJSON(encodedBytes, val)
+		encodedBytes = appendJSON(encodedBytes, buf, val)
 	case types.ETString:
 		val, isNull, err := arg.EvalString(sctx, row)
 		if err != nil || isNull {
 			return encodedBytes, isNull, errors.Trace(err)
 		}
-		encodedBytes = appendString(encodedBytes, val)
+		encodedBytes = appendString(encodedBytes, buf, val)
 	default:
 		return nil, false, errors.Errorf("unsupported column type for encode %d", tp)
 	}
 	return encodedBytes, false, nil
 }
 
-func appendInt64(encodedBytes []byte, val int64) (_ []byte) {
-	buf := make([]byte, 8)
+func appendInt64(encodedBytes, buf []byte, val int64) []byte {
 	*(*int64)(unsafe.Pointer(&buf[0])) = val
 	encodedBytes = append(encodedBytes, buf...)
 	return encodedBytes
 }
 
-func appendFloat64(encodedBytes []byte, val float64) (_ []byte) {
-	buf := make([]byte, 4)
+func appendFloat64(encodedBytes, buf []byte, val float64) []byte {
 	*(*float64)(unsafe.Pointer(&buf[0])) = val
 	encodedBytes = append(encodedBytes, buf...)
 	return encodedBytes
 }
 
-func appendDecimal(encodedBytes []byte, val *types.MyDecimal) (_ []byte) {
-	buf := make([]byte, types.MyDecimalStructSize)
+func appendDecimal(encodedBytes, buf []byte, val *types.MyDecimal) []byte {
 	*(*types.MyDecimal)(unsafe.Pointer(&buf[0])) = *val
 	encodedBytes = append(encodedBytes, buf...)
 	return encodedBytes
@@ -351,27 +351,25 @@ func writeTime(buf []byte, t types.Time) {
 	buf[13] = uint8(t.Fsp)
 }
 
-func appendTime(encodedBytes []byte, val types.Time) (_ []byte) {
-	buf := make([]byte, 16)
+func appendTime(encodedBytes, buf []byte, val types.Time) []byte {
 	writeTime(buf, val)
 	encodedBytes = append(encodedBytes, buf...)
 	return encodedBytes
 }
 
-func appendDuration(encodedBytes []byte, val types.Duration) (_ []byte) {
-	buf := make([]byte, 16)
+func appendDuration(encodedBytes, buf []byte, val types.Duration) []byte {
 	*(*types.Duration)(unsafe.Pointer(&buf[0])) = val
 	encodedBytes = append(encodedBytes, buf...)
 	return encodedBytes
 }
 
-func appendJSON(encodedBytes []byte, val json.BinaryJSON) (_ []byte) {
+func appendJSON(encodedBytes, _ []byte, val json.BinaryJSON) []byte {
 	encodedBytes = append(encodedBytes, val.TypeCode)
 	encodedBytes = append(encodedBytes, val.Value...)
 	return encodedBytes
 }
 
-func appendString(encodedBytes []byte, val string) (_ []byte) {
+func appendString(encodedBytes, _ []byte, val string) []byte {
 	encodedBytes = append(encodedBytes, val...)
 	return encodedBytes
 }
