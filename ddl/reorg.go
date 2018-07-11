@@ -262,7 +262,7 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo
 	return result, nil
 }
 
-// GetTableMaxRowID gets the last row id of the table.
+// GetTableMaxRowID gets the last row id of the table partition.
 func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo, partitionID int64) (maxRowID int64, emptyTable bool, err error) {
 	maxRowID = int64(math.MaxInt64)
 	var columns []*model.ColumnInfo
@@ -302,8 +302,8 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo, part
 
 var gofailOnceGuard bool
 
-// getPartitionRange gets the start and end handle of a partition (or table).
-func getPartitionRange(d *ddlCtx, tblInfo *model.TableInfo, partitionID int64, snapshotVer uint64) (StartHandle, EndHandle int64, err error) {
+// getTableRange gets the start and end handle of a table (or partition).
+func getTableRange(d *ddlCtx, tblInfo *model.TableInfo, partitionID int64, snapshotVer uint64) (StartHandle, EndHandle int64, err error) {
 	// Get the start handle of this partition.
 	err = iterateSnapshotRows(d.store, partitionID, snapshotVer, math.MinInt64,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
@@ -348,11 +348,11 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 
 		tblInfo := tbl.Meta()
 		pid := tblInfo.ID
-		if pi := tbl.Meta().GetPartitionInfo(); pi != nil {
+		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			pid = pi.Definitions[0].ID
 		}
 
-		start, end, err1 := getPartitionRange(d, tblInfo, pid, ver.Ver)
+		start, end, err1 := getTableRange(d, tblInfo, pid, ver.Ver)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
@@ -363,7 +363,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		job.ReorgMeta = reorgMeta
 		info.StartHandle = start
 
-		log.Infof("[ddl] job %v get table startHandle:%v, endHandle:%v", job.ID, info.StartHandle, reorgMeta.EndHandle)
+		log.Infof("[ddl-reorg] job %v get partition %d range [%d %d]", job.ID, pid, info.StartHandle, reorgMeta.EndHandle)
 
 		// gofail: var errorUpdateReorgHandle bool
 		// if errorUpdateReorgHandle && !gofailOnceGuard {

@@ -723,7 +723,7 @@ func splitTableRanges(t table.Table, reorgInfo *reorgInfo) ([]kv.KeyRange, error
 	startRecordKey := tablecodec.EncodeRowKeyWithHandle(partitionID, startHandle)
 	endRecordKey := tablecodec.EncodeRowKeyWithHandle(partitionID, reorgMeta.EndHandle).Next()
 
-	log.Infof("[ddl-reorg] split handle ranges %v [%v, %v] from PD", partitionID, startHandle, reorgMeta.EndHandle)
+	log.Infof("[ddl-reorg] split partition %v range [%v, %v] from PD", partitionID, startHandle, reorgMeta.EndHandle)
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	s, ok := reorgInfo.d.store.(tikv.Storage)
 	if !ok {
@@ -917,11 +917,12 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) 
 		// Fatal error, should not run here.
 		return false, errors.Errorf("wrong reorgInfo, partition id %d not found", reorg.PartitionID())
 	}
-	if pid == -1 {
+	if pid == 0 {
+		// Next partition does not exist, all the job done.
 		return true, nil
 	}
 
-	start, end, err := getPartitionRange(reorg.d, t.Meta(), pid, reorg.Job.SnapshotVer)
+	start, end, err := getTableRange(reorg.d, t.Meta(), pid, reorg.Job.SnapshotVer)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -932,33 +933,30 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) 
 	reorg.Job.ReorgMeta = reorgMeta
 	reorg.StartHandle = start
 
-	log.Infof("[ddl] job %v update reorgInfo partitionID:%v, startHandle:%v, endHandle:%v", reorg.Job.ID, pid, start, end)
+	log.Infof("[ddl] job %v update reorgInfo partition %d range [%d %d]", reorg.Job.ID, pid, start, end)
 
+	// TODO: Uncomment it.
 	// Actually, it just need to update the job.ReorgMeta.
-	err = kv.RunInNewTxn(reorg.d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		return errors.Trace(w.updateDDLJob(t, reorg.Job, false))
-	})
+	// err = kv.RunInNewTxn(reorg.d.store, false, func(txn kv.Transaction) error {
+	// 	t := meta.NewMeta(txn)
+	// 	return errors.Trace(w.updateDDLJob(t, reorg.Job, false))
+	// })
 	return false, errors.Trace(err)
 }
 
 // findNextPartitionID finds the next partition ID in the PartitionDefinition.
-// Returns -1 if this partitionID is the last one.
+// Returns 0 if current partitionID is already the last one.
 func findNextPartitionID(partitionID int64, defs []model.PartitionDefinition) (int64, error) {
-	idx := -1
 	for i, def := range defs {
 		if partitionID == def.ID {
-			idx = i
-			break
+			if i == len(defs)-1 {
+				return 0, nil
+			} else {
+				return defs[i+1].ID, nil
+			}
 		}
 	}
-	if idx == -1 {
-		return 0, errors.New("partition id not found")
-	}
-	if idx == len(defs)-1 {
-		return -1, nil
-	}
-	return defs[idx+1].ID, nil
+	return 0, errors.New("partition id not found")
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
