@@ -170,7 +170,7 @@ func checkDropTablePartition(meta *model.TableInfo, partName string) error {
 	return errors.Trace(ErrDropPartitionNonExistent.GenByArgs(partName))
 }
 
-func removePartitionInfo(job *model.Job, tblInfo *model.TableInfo, partName string) {
+func removePartitionInfo(job *model.Job, tblInfo *model.TableInfo, partName string) int64 {
 	oldDefs := tblInfo.Partition.Definitions
 	newDefs := make([]model.PartitionDefinition, 0, len(oldDefs)-1)
 	var pid int64
@@ -182,12 +182,11 @@ func removePartitionInfo(job *model.Job, tblInfo *model.TableInfo, partName stri
 		newDefs = append(oldDefs[:i], oldDefs[i+1:]...)
 		break
 	}
-	job.TableID = pid
 	tblInfo.Partition.Definitions = newDefs
+	return pid
 }
 
 // onDropTablePartition deletes old partition meta.
-// A background job will be created to delete old partition data.
 func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partName string
 	if err := job.DecodeArgs(&partName); err != nil {
@@ -204,8 +203,7 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	removePartitionInfo(job, tblInfo, partName)
-
+	pid := removePartitionInfo(job, tblInfo, partName)
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -213,6 +211,7 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-
+	// A background job will be created to delete old partition data.
+	job.TableID = pid
 	return ver, nil
 }
