@@ -160,7 +160,7 @@ func validRangePartitionType(col *table.Column) bool {
 func checkDropTablePartition(meta *model.TableInfo, partName string) error {
 	oldDefs := meta.Partition.Definitions
 	for _, def := range oldDefs {
-		if strings.EqualFold(def.Name.O, partName) {
+		if strings.EqualFold(def.Name.L, strings.ToLower(partName)) {
 			if len(oldDefs) == 1 {
 				return errors.Trace(ErrDropLastPartition)
 			}
@@ -204,7 +204,7 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	pid := removePartitionInfo(tblInfo, partName)
+	partitionID := removePartitionInfo(tblInfo, partName)
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -213,6 +213,6 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 	// A background job will be created to delete old partition data.
-	job.TableID = pid
+	job.Args = append(job.Args, partitionID)
 	return ver, nil
 }
