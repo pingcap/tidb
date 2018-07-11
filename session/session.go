@@ -986,7 +986,7 @@ func (s *session) NewTxn() error {
 			return errors.Trace(err)
 		}
 		vars := s.GetSessionVars()
-		log.Infof("con:%d[schema ver:%d] NewTxn() inside a transaction auto commit: %d", vars.ConnectionID, vars.TxnCtx.SchemaVersion, txnID)
+		log.Infof("con:%d schema_ver:%d NewTxn() inside a transaction auto commit: %d", vars.ConnectionID, vars.TxnCtx.SchemaVersion, txnID)
 	}
 
 	txn, err := s.store.Begin()
