@@ -36,9 +36,9 @@ type baseMaxMinAggFunc struct {
 	baseAggFunc
 
 	isMax bool
-	// executed is used to indicates whether the partial result
-	// is the initialization value which should not be compared
-	// during evaluation.
+	// executed is used to indicates:
+	// 1. whether the partial result is the initialization value which should not be compared during evaluation;
+	// 2. whether all the values of arg are all null, if so, we should return null as the default value for MAX/MIN.
 	executed bool
 }
 
@@ -55,6 +55,10 @@ func (e *maxMin4Int) ResetPartialResult(pr PartialResult) {
 }
 
 func (e *maxMin4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	if !e.executed {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
 	chk.AppendInt64(e.ordinal, *(*partialResult4MaxMinInt)(pr))
 	return nil
 }
@@ -94,6 +98,10 @@ func (e *maxMin4Uint) ResetPartialResult(pr PartialResult) {
 }
 
 func (e *maxMin4Uint) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	if !e.executed {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
 	chk.AppendUint64(e.ordinal, *(*partialResult4MaxMinUint)(pr))
 	return nil
 }
@@ -135,6 +143,10 @@ func (e *maxMin4Float32) ResetPartialResult(pr PartialResult) {
 }
 
 func (e *maxMin4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	if !e.executed {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
 	chk.AppendFloat32(e.ordinal, *(*partialResult4MaxMinFloat32)(pr))
 	return nil
 }
@@ -175,6 +187,10 @@ func (e *maxMin4Float64) ResetPartialResult(pr PartialResult) {
 }
 
 func (e *maxMin4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	if !e.executed {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
 	chk.AppendFloat64(e.ordinal, *(*partialResult4MaxMinFloat64)(pr))
 	return nil
 }
@@ -214,6 +230,10 @@ func (e *maxMin4Decimal) ResetPartialResult(pr PartialResult) {
 }
 
 func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	if !e.executed {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
 	chk.AppendMyDecimal(e.ordinal, *(*partialResult4MaxMinDecimal)(pr))
 	return nil
 }
