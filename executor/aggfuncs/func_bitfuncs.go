@@ -14,10 +14,11 @@
 package aggfuncs
 
 import (
+	"math"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"math"
 )
 
 type baseBitAggFunc struct {
