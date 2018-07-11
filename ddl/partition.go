@@ -176,7 +176,7 @@ func removePartitionInfo(tblInfo *model.TableInfo, partName string) int64 {
 	newDefs := make([]model.PartitionDefinition, 0, len(oldDefs)-1)
 	var pid int64
 	for i := 0; i < len(oldDefs); i++ {
-		if !strings.EqualFold(oldDefs[i].Name.O, partName) {
+		if !strings.EqualFold(oldDefs[i].Name.L, strings.ToLower(partName)) {
 			continue
 		}
 		pid = oldDefs[i].ID

@@ -2613,4 +2613,19 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 	s.tk.MustExec("alter table tr drop partition p4;")
 	result = s.tk.MustQuery("select * from tr where purchased between '2005-01-01' and '2009-12-31';")
 	result.Check(testkit.Rows())
+
+	s.tk.MustExec("drop table if exists table4;")
+	s.tk.MustExec(`create table table4 (
+		id int not null
+	)
+	partition by range( id ) (
+		partition Par1 values less than (1991),
+		partition pAR2 values less than (1992),
+		partition Par3 values less than (1995),
+		partition PaR5 values less than (1996)
+	);`)
+	s.tk.MustExec("alter table table4 drop partition Par2;")
+	s.tk.MustExec("alter table table4 drop partition PAR5;")
+	sql4 := "alter table table4 drop partition PAR0;"
+	s.testErrorCode(c, sql4, tmysql.ErrDropPartitionNonExistent)
 }
