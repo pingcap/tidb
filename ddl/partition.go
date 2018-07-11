@@ -170,7 +170,8 @@ func checkDropTablePartition(meta *model.TableInfo, partName string) error {
 	return errors.Trace(ErrDropPartitionNonExistent.GenByArgs(partName))
 }
 
-func removePartitionInfo(job *model.Job, tblInfo *model.TableInfo, partName string) int64 {
+//  removePartitionInfo each ddl job deletes a partition.
+func removePartitionInfo(tblInfo *model.TableInfo, partName string) int64 {
 	oldDefs := tblInfo.Partition.Definitions
 	newDefs := make([]model.PartitionDefinition, 0, len(oldDefs)-1)
 	var pid int64
@@ -203,7 +204,7 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	pid := removePartitionInfo(job, tblInfo, partName)
+	pid := removePartitionInfo(tblInfo, partName)
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
