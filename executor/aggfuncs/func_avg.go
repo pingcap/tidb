@@ -123,7 +123,7 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 
 type partialResult4AvgDistinctDecimal struct {
 	partialResult4AvgDecimal
-	exists map[types.MyDecimal]bool
+	valSet decimalSet
 }
 
 type avgOriginal4DistinctDecimal struct {
@@ -132,7 +132,7 @@ type avgOriginal4DistinctDecimal struct {
 
 func (e *avgOriginal4DistinctDecimal) AllocPartialResult() PartialResult {
 	p := &partialResult4AvgDistinctDecimal{
-		exists: make(map[types.MyDecimal]bool),
+		valSet: newDecimalSet(),
 	}
 	return PartialResult(p)
 }
@@ -141,7 +141,7 @@ func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	p.sum = *types.NewDecFromInt(0)
 	p.count = int64(0)
-	p.exists = make(map[types.MyDecimal]bool)
+	p.valSet = newDecimalSet()
 }
 
 func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
@@ -152,7 +152,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isNull || p.exists[*input] {
+		if isNull || p.valSet.exist(input) {
 			continue
 		}
 
@@ -162,7 +162,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		}
 		p.sum = *newSum
 		p.count++
-		p.exists[*input] = true
+		p.valSet.insert(input)
 	}
 	return nil
 }
@@ -270,7 +270,7 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 
 type partialResult4AvgDistinctFloat64 struct {
 	partialResult4AvgFloat64
-	exists map[float64]bool
+	valSet float64Set
 }
 
 type avgOriginal4DistinctFloat64 struct {
@@ -279,7 +279,7 @@ type avgOriginal4DistinctFloat64 struct {
 
 func (e *avgOriginal4DistinctFloat64) AllocPartialResult() PartialResult {
 	p := &partialResult4AvgDistinctFloat64{
-		exists: make(map[float64]bool),
+		valSet: newFloat64Set(),
 	}
 	return PartialResult(p)
 }
@@ -288,7 +288,7 @@ func (e *avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	p.sum = float64(0)
 	p.count = int64(0)
-	p.exists = make(map[float64]bool)
+	p.valSet = newFloat64Set()
 }
 
 func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
@@ -298,13 +298,13 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Contex
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isNull || p.exists[input] {
+		if isNull || p.valSet.exist(input) {
 			continue
 		}
 
 		p.sum += input
 		p.count++
-		p.exists[input] = true
+		p.valSet.insert(input)
 	}
 	return nil
 }
