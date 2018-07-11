@@ -80,7 +80,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 		if topN != nil {
 			newTopN = LogicalTopN{Count: topN.Count + topN.Offset}.init(p.ctx)
 			for _, by := range topN.ByItems {
-				newTopN.ByItems = append(newTopN.ByItems, &ByItems{by.Expr.Clone(), by.Desc})
+				newTopN.ByItems = append(newTopN.ByItems, &ByItems{by.Expr, by.Desc})
 			}
 		}
 		p.children[i] = child.pushDownTopN(newTopN)
@@ -109,8 +109,10 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPla
 
 	for _, by := range topN.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
-		if len(p.children[1-idx].Schema().ColumnsIndices(cols)) != 0 {
-			return p.children[idx].pushDownTopN(nil)
+		for _, col := range cols {
+			if p.children[1-idx].Schema().Contains(col) {
+				return p.children[idx].pushDownTopN(nil)
+			}
 		}
 	}
 

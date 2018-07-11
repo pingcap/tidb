@@ -451,7 +451,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select 1 from dual limit 1", true},
 		{"select 1 where exists (select 2)", false},
 		{"select 1 from dual where not exists (select 2)", true},
-
+		{"select 1 as a from dual order by a", true},
+		{"select 1 as a from dual where 1 < any (select 2) order by a", true},
 		{"select 1 order by 1", true},
 
 		// for https://github.com/pingcap/tidb/issues/320
@@ -549,8 +550,17 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"load stats '/tmp/stats.json'", true},
 		// set
 		// user defined
+		{"SET @ = 1", true},
+		{"SET @' ' = 1", true},
+		{"SET @! = 1", false},
+		{"SET @1 = 1", true},
 		{"SET @a = 1", true},
 		{"SET @b := 1", true},
+		{"SET @.c = 1", true},
+		{"SET @_d = 1", true},
+		{"SET @_e._$. = 1", true},
+		{"SET @~f = 1", false},
+		{"SET @`g,` = 1", true},
 		// session system variables
 		{"SET SESSION autocommit = 1", true},
 		{"SET @@session.autocommit = 1", true},
@@ -1603,6 +1613,13 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
+		{"ALTER TABLE employees ADD PARTITION", true},
+		{"ALTER TABLE employees ADD PARTITION ( PARTITION P1 VALUES LESS THAN (2010))", true},
+		{"ALTER TABLE employees ADD PARTITION ( PARTITION P2 VALUES LESS THAN MAXVALUE)", true},
+		{`ALTER TABLE employees ADD PARTITION (
+				PARTITION P1 VALUES LESS THAN (2010),
+				PARTITION P2 VALUES LESS THAN (2015),
+				PARTITION P3 VALUES LESS THAN MAXVALUE)`, true},
 		{"ALTER TABLE t DISABLE KEYS", true},
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
@@ -1748,6 +1765,14 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 	c.Assert(hints[1].HintName.L, Equals, "tidb_hj")
 	c.Assert(hints[1].Tables[0].L, Equals, "t3")
 	c.Assert(hints[1].Tables[1].L, Equals, "t4")
+
+	stmt, err = parser.Parse("SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM t1 INNER JOIN t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, IsNil)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+	hints = selectStmt.TableHints
+	c.Assert(len(hints), Equals, 1)
+	c.Assert(hints[0].HintName.L, Equals, "max_execution_time")
+	c.Assert(hints[0].MaxExecutionTime, Equals, uint64(1000))
 }
 
 func (s *testParserSuite) TestType(c *C) {

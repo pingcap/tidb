@@ -196,7 +196,7 @@ func (s *testIntegrationSuite) TestMiscellaneousBuiltin(c *C) {
 );`)
 	tk.MustExec("insert into t1 (a,b) values(1,10),(1,20),(2,30),(2,40);")
 	tk.MustQuery("select any_value(a), sum(b) from t1;").Check(testkit.Rows("1 100"))
-	tk.MustQuery("select a,any_value(b),sum(c) from t1 group by a;").Check(testkit.Rows("1 10 0", "2 30 0"))
+	tk.MustQuery("select a,any_value(b),sum(c) from t1 group by a order by a;").Check(testkit.Rows("1 10 0", "2 30 0"))
 
 	// for locks
 	result := tk.MustQuery(`SELECT GET_LOCK('test_lock1', 10);`)
@@ -1581,6 +1581,8 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	// TODO: MySQL returns "<nil> <nil>".
 	result.Check(testkit.Rows("0000-00-01 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'"))
+	result = tk.MustQuery("select str_to_date('2018-6-1', '%Y-%m-%d'), str_to_date('2018-6-1', '%Y-%c-%d'), str_to_date('59:20:1', '%s:%i:%k'), str_to_date('59:20:1', '%s:%i:%l')")
+	result.Check(testkit.Rows("2018-06-01 2018-06-01 01:20:59 01:20:59"))
 
 	// for maketime
 	tk.MustExec(`drop table if exists t`)
@@ -2688,9 +2690,11 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a date)")
 	result = tk.MustQuery("desc select a = a from t")
-	result.Check(testkit.Rows("TableScan_4   cop table:t, range:[-inf,+inf], keep order:false 10000.00",
-		"TableReader_5 Projection_3  root data:TableScan_4 10000.00",
-		"Projection_3  TableReader_5 root eq(test.t.a, test.t.a) 10000.00"))
+	result.Check(testkit.Rows(
+		"Projection_3 10000.00 root eq(test.t.a, test.t.a)",
+		"└─TableReader_5 10000.00 root data:TableScan_4",
+		"  └─TableScan_4 10000.00 cop table:t, range:[-inf,+inf], keep order:false",
+	))
 
 	// for interval
 	result = tk.MustQuery(`select interval(null, 1, 2), interval(1, 2, 3), interval(2, 1, 3)`)
@@ -2751,6 +2755,26 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	tk.MustExec("insert into t values(1.123456), (1.123456)")
 	result := tk.MustQuery("select avg(a) from t")
 	result.Check(testkit.Rows("1.1234560000"))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE `t` (	`a` int, KEY `idx_a` (`a`))")
+	result = tk.MustQuery("select avg(a) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select max(a), min(a) from t")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery("select distinct a from t")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select sum(a) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select count(a) from t")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select bit_xor(a) from t")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select bit_and(a) from t")
+	result.Check(testkit.Rows("18446744073709551615"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltinBitOr(c *C) {

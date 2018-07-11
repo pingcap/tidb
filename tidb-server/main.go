@@ -137,10 +137,10 @@ func main() {
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
+	setupMetrics()
 	createStoreAndDomain()
 	createServer()
 	setupSignalHandler()
-	setupMetrics()
 	runServer()
 	cleanup()
 	os.Exit(0)
@@ -374,7 +374,7 @@ func setGlobalVars() {
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability = cfg.Performance.FeedbackProbability
 	statistics.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
-	plan.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
+	statistics.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
@@ -417,7 +417,8 @@ func createServer() {
 	driver = server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)
-	terror.MustNil(err)
+	// Both domain and storage have started, so we have to clean them before exiting.
+	terror.MustNil(err, closeDomainAndStorage)
 	if cfg.XProtocol.XServer {
 		xcfg := &xserver.Config{
 			Addr:       fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
@@ -425,7 +426,7 @@ func createServer() {
 			TokenLimit: cfg.TokenLimit,
 		}
 		xsvr, err = xserver.NewServer(xcfg)
-		terror.MustNil(err)
+		terror.MustNil(err, closeDomainAndStorage)
 	}
 }
 
@@ -487,11 +488,15 @@ func runServer() {
 	}
 }
 
+func closeDomainAndStorage() {
+	dom.Close()
+	err := storage.Close()
+	terror.Log(errors.Trace(err))
+}
+
 func cleanup() {
 	if graceful {
 		svr.GracefulDown()
 	}
-	dom.Close()
-	err := storage.Close()
-	terror.Log(errors.Trace(err))
+	closeDomainAndStorage()
 }

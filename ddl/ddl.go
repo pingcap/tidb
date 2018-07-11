@@ -156,6 +156,20 @@ var (
 
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partiton with unsupport expression type.
 	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(codeCantCreateTable, "Field '%s' is of a not allowed type for this type of partitioning")
+	// ErrPartitionsMustBeDefined returns each partition must be defined.
+	ErrPartitionsMustBeDefined = terror.ClassDDL.New(codePartitionsMustBeDefined, "For RANGE partitions each partition must be defined")
+	// ErrPartitionMgmtOnNonpartitioned returns it's not a partition table.
+	ErrPartitionMgmtOnNonpartitioned = terror.ClassDDL.New(codePartitionMgmtOnNonpartitioned, "Partition management on a not partitioned table is not possible")
+	// ErrDropPartitionNonExistent returns error in list of partition.
+	ErrDropPartitionNonExistent = terror.ClassDDL.New(codeDropPartitionNonExistent, " Error in list of partitions to %s")
+	// ErrSameNamePartition returns duplicate partition name.
+	ErrSameNamePartition = terror.ClassDDL.New(codeSameNamePartition, "Duplicate partition name %s")
+	// ErrRangeNotIncreasing returns values less than value must be strictly increasing for each partition.
+	ErrRangeNotIncreasing = terror.ClassDDL.New(codeRangeNotIncreasing, "VALUES LESS THAN value must be strictly increasing for each partition")
+	// ErrPartitionMaxvalue returns maxvalue can only be used in last partition definition.
+	ErrPartitionMaxvalue = terror.ClassDDL.New(codePartitionMaxvalue, "MAXVALUE can only be used in last partition definition")
+	// ErrTooManyValues returns cannot have more than one value for this type of partitioning.
+	ErrTooManyValues = terror.ClassDDL.New(codeErrTooManyValues, mysql.MySQLErrName[mysql.ErrTooManyValues])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -163,7 +177,7 @@ type DDL interface {
 	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
-	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident) error
+	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
 	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
@@ -184,21 +198,16 @@ type DDL interface {
 	RegisterEventCh(chan<- *util.Event)
 	// SchemaSyncer gets the schema syncer.
 	SchemaSyncer() SchemaSyncer
-	// OwnerManager gets the owner manager, and it's used for testing.
+	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
-
-	// WorkerVars gets the session variables for DDL worker. It's exported for testing.
-	WorkerVars() *variable.SessionVars
-	// SetHook sets the hook. It's exported for testing.
-	SetHook(h Callback)
-	// GetHook gets the hook. It's exported for testing.
-	GetHook() Callback
-
-	// GetTableMaxRowID gets table max row ID. It's exported for testing.
+	// GetTableMaxRowID gets table max row ID.
 	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (int64, bool, error)
+
+	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
+	SetBinlogClient(interface{})
 }
 
-// ddl represents the statements which are used to define the database structure or schema.
+// ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
 	m          sync.RWMutex
 	infoHandle *infoschema.Handle
@@ -218,12 +227,14 @@ type ddlCtx struct {
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration // lease is schema lease.
+	binlogCli    interface{}   // binlogCli is used for Binlog.
 
 	// hook may be modified.
-	hook   Callback
-	hookMu sync.RWMutex
-
-	workerVars *variable.SessionVars // workerVars is used for Binlog.
+	mu struct {
+		sync.RWMutex
+		hook        Callback
+		interceptor Interceptor
+	}
 }
 
 func (dc *ddlCtx) isOwner() bool {
@@ -297,14 +308,14 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ddlJobDoneCh: make(chan struct{}, 1),
 		ownerManager: manager,
 		schemaSyncer: syncer,
-		workerVars:   variable.NewSessionVars(),
-		hook:         hook,
+		binlogCli:    binloginfo.GetPumpClient(),
 	}
+	ddlCtx.mu.hook = hook
+	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
 		infoHandle: infoHandle,
 		ddlCtx:     ddlCtx,
 	}
-	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
 
 	d.start(ctx, ctxPool)
 	variable.RegisterStatistics(d)
@@ -378,9 +389,13 @@ func (d *ddl) GetLease() time.Duration {
 	return lease
 }
 
-// GetInformationSchema get the infoschema binding to d. It's expoted for testing.
-func (d *ddl) GetInformationSchema() infoschema.InfoSchema {
-	return d.infoHandle.Get()
+// GetInformationSchema gets the infoschema binding to d. It's expoted for testing.
+func (d *ddl) GetInformationSchema(ctx sessionctx.Context) infoschema.InfoSchema {
+	is := d.infoHandle.Get()
+
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.mu.interceptor.OnGetInfoSchema(ctx, is)
 }
 
 func (d *ddl) genGlobalID() (int64, error) {
@@ -433,6 +448,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
 	asyncNotify(d.ddlJobCh)
@@ -480,32 +496,16 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 }
 
 func (d *ddl) callHookOnChanged(err error) error {
-	d.hookMu.Lock()
-	defer d.hookMu.Unlock()
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 
-	err = d.hook.OnChanged(err)
+	err = d.mu.hook.OnChanged(err)
 	return errors.Trace(err)
 }
 
-// SetHook implements DDL.SetHook interface.
-func (d *ddl) SetHook(h Callback) {
-	d.hookMu.Lock()
-	defer d.hookMu.Unlock()
-
-	d.hook = h
-}
-
-// GetHook implements DDL.GetHook interface.
-func (d *ddl) GetHook() Callback {
-	d.hookMu.RLock()
-	defer d.hookMu.RUnlock()
-
-	return d.hook
-}
-
-// WorkerVars implements DDL.WorkerVars interface.
-func (d *ddl) WorkerVars() *variable.SessionVars {
-	return d.workerVars
+// SetBinlogClient implements DDL.SetBinlogClient interface.
+func (d *ddl) SetBinlogClient(binlogCli interface{}) {
+	d.binlogCli = binlogCli
 }
 
 // DDL error codes.
@@ -538,67 +538,81 @@ const (
 	codeUnsupportedModifyPrimaryKey = 206
 	codeUnsupportedShardRowIDBits   = 207
 
-	codeFileNotFound                 = 1017
-	codeErrorOnRename                = 1025
-	codeBadNull                      = 1048
-	codeBadField                     = 1054
-	codeTooLongIdent                 = 1059
-	codeDupKeyName                   = 1061
-	codeTooLongKey                   = 1071
-	codeKeyColumnDoesNotExits        = 1072
-	codeIncorrectPrefixKey           = 1089
-	codeCantRemoveAllFields          = 1090
-	codeCantDropFieldOrKey           = 1091
-	codeBlobCantHaveDefault          = 1101
-	codeWrongDBName                  = 1102
-	codeWrongTableName               = 1103
-	codeTooManyFields                = 1117
-	codeInvalidUseOfNull             = 1138
-	codeWrongColumnName              = 1166
-	codeWrongKeyColumn               = 1167
-	codeBlobKeyWithoutLength         = 1170
-	codeInvalidOnUpdate              = 1294
-	codeUnsupportedOnGeneratedColumn = 3106
-	codeGeneratedColumnNonPrior      = 3107
-	codeDependentByGeneratedColumn   = 3108
-	codeJSONUsedAsKey                = 3152
-	codeWrongNameForIndex            = terror.ErrCode(mysql.ErrWrongNameForIndex)
-	codeErrTooLongIndexComment       = terror.ErrCode(mysql.ErrTooLongIndexComment)
-	codeUnknownCharacterSet          = terror.ErrCode(mysql.ErrUnknownCharacterSet)
-	codeCantCreateTable              = terror.ErrCode(mysql.ErrCantCreateTable)
-	codeTableMustHaveColumns         = terror.ErrCode(mysql.ErrTableMustHaveColumns)
+	codeFileNotFound                  = 1017
+	codeErrorOnRename                 = 1025
+	codeBadNull                       = mysql.ErrBadNull
+	codeBadField                      = 1054
+	codeTooLongIdent                  = 1059
+	codeDupKeyName                    = 1061
+	codeTooLongKey                    = 1071
+	codeKeyColumnDoesNotExits         = 1072
+	codeIncorrectPrefixKey            = 1089
+	codeCantRemoveAllFields           = 1090
+	codeCantDropFieldOrKey            = 1091
+	codeBlobCantHaveDefault           = 1101
+	codeWrongDBName                   = 1102
+	codeWrongTableName                = 1103
+	codeTooManyFields                 = 1117
+	codeInvalidUseOfNull              = 1138
+	codeWrongColumnName               = 1166
+	codeWrongKeyColumn                = 1167
+	codeBlobKeyWithoutLength          = 1170
+	codeInvalidOnUpdate               = 1294
+	codeUnsupportedOnGeneratedColumn  = 3106
+	codeGeneratedColumnNonPrior       = 3107
+	codeDependentByGeneratedColumn    = 3108
+	codeJSONUsedAsKey                 = 3152
+	codeWrongNameForIndex             = terror.ErrCode(mysql.ErrWrongNameForIndex)
+	codeErrTooLongIndexComment        = terror.ErrCode(mysql.ErrTooLongIndexComment)
+	codeUnknownCharacterSet           = terror.ErrCode(mysql.ErrUnknownCharacterSet)
+	codeCantCreateTable               = terror.ErrCode(mysql.ErrCantCreateTable)
+	codeTableMustHaveColumns          = terror.ErrCode(mysql.ErrTableMustHaveColumns)
+	codePartitionsMustBeDefined       = terror.ErrCode(mysql.ErrPartitionsMustBeDefined)
+	codePartitionMgmtOnNonpartitioned = terror.ErrCode(mysql.ErrPartitionMgmtOnNonpartitioned)
+	codeDropPartitionNonExistent      = terror.ErrCode(mysql.ErrDropPartitionNonExistent)
+	codeSameNamePartition             = terror.ErrCode(mysql.ErrSameNamePartition)
+	codeRangeNotIncreasing            = terror.ErrCode(mysql.ErrRangeNotIncreasing)
+	codePartitionMaxvalue             = terror.ErrCode(mysql.ErrPartitionMaxvalue)
+	codeErrTooManyValues              = terror.ErrCode(mysql.ErrTooManyValues)
 )
 
 func init() {
 	ddlMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeBadNull:                      mysql.ErrBadNull,
-		codeCantRemoveAllFields:          mysql.ErrCantRemoveAllFields,
-		codeCantDropFieldOrKey:           mysql.ErrCantDropFieldOrKey,
-		codeInvalidOnUpdate:              mysql.ErrInvalidOnUpdate,
-		codeBlobKeyWithoutLength:         mysql.ErrBlobKeyWithoutLength,
-		codeIncorrectPrefixKey:           mysql.ErrWrongSubKey,
-		codeTooLongIdent:                 mysql.ErrTooLongIdent,
-		codeTooLongKey:                   mysql.ErrTooLongKey,
-		codeKeyColumnDoesNotExits:        mysql.ErrKeyColumnDoesNotExits,
-		codeDupKeyName:                   mysql.ErrDupKeyName,
-		codeWrongDBName:                  mysql.ErrWrongDBName,
-		codeWrongTableName:               mysql.ErrWrongTableName,
-		codeFileNotFound:                 mysql.ErrFileNotFound,
-		codeErrorOnRename:                mysql.ErrErrorOnRename,
-		codeBadField:                     mysql.ErrBadField,
-		codeInvalidUseOfNull:             mysql.ErrInvalidUseOfNull,
-		codeUnsupportedOnGeneratedColumn: mysql.ErrUnsupportedOnGeneratedColumn,
-		codeGeneratedColumnNonPrior:      mysql.ErrGeneratedColumnNonPrior,
-		codeDependentByGeneratedColumn:   mysql.ErrDependentByGeneratedColumn,
-		codeJSONUsedAsKey:                mysql.ErrJSONUsedAsKey,
-		codeBlobCantHaveDefault:          mysql.ErrBlobCantHaveDefault,
-		codeWrongColumnName:              mysql.ErrWrongColumnName,
-		codeWrongKeyColumn:               mysql.ErrWrongKeyColumn,
-		codeWrongNameForIndex:            mysql.ErrWrongNameForIndex,
-		codeTableMustHaveColumns:         mysql.ErrTableMustHaveColumns,
-		codeTooManyFields:                mysql.ErrTooManyFields,
-		codeErrTooLongIndexComment:       mysql.ErrTooLongIndexComment,
-		codeUnknownCharacterSet:          mysql.ErrUnknownCharacterSet,
+		codeBadNull:                       mysql.ErrBadNull,
+		codeCantRemoveAllFields:           mysql.ErrCantRemoveAllFields,
+		codeCantDropFieldOrKey:            mysql.ErrCantDropFieldOrKey,
+		codeInvalidOnUpdate:               mysql.ErrInvalidOnUpdate,
+		codeBlobKeyWithoutLength:          mysql.ErrBlobKeyWithoutLength,
+		codeIncorrectPrefixKey:            mysql.ErrWrongSubKey,
+		codeTooLongIdent:                  mysql.ErrTooLongIdent,
+		codeTooLongKey:                    mysql.ErrTooLongKey,
+		codeKeyColumnDoesNotExits:         mysql.ErrKeyColumnDoesNotExits,
+		codeDupKeyName:                    mysql.ErrDupKeyName,
+		codeWrongDBName:                   mysql.ErrWrongDBName,
+		codeWrongTableName:                mysql.ErrWrongTableName,
+		codeFileNotFound:                  mysql.ErrFileNotFound,
+		codeErrorOnRename:                 mysql.ErrErrorOnRename,
+		codeBadField:                      mysql.ErrBadField,
+		codeInvalidUseOfNull:              mysql.ErrInvalidUseOfNull,
+		codeUnsupportedOnGeneratedColumn:  mysql.ErrUnsupportedOnGeneratedColumn,
+		codeGeneratedColumnNonPrior:       mysql.ErrGeneratedColumnNonPrior,
+		codeDependentByGeneratedColumn:    mysql.ErrDependentByGeneratedColumn,
+		codeJSONUsedAsKey:                 mysql.ErrJSONUsedAsKey,
+		codeBlobCantHaveDefault:           mysql.ErrBlobCantHaveDefault,
+		codeWrongColumnName:               mysql.ErrWrongColumnName,
+		codeWrongKeyColumn:                mysql.ErrWrongKeyColumn,
+		codeWrongNameForIndex:             mysql.ErrWrongNameForIndex,
+		codeTableMustHaveColumns:          mysql.ErrTableMustHaveColumns,
+		codeTooManyFields:                 mysql.ErrTooManyFields,
+		codeErrTooLongIndexComment:        mysql.ErrTooLongIndexComment,
+		codeUnknownCharacterSet:           mysql.ErrUnknownCharacterSet,
+		codePartitionsMustBeDefined:       mysql.ErrPartitionsMustBeDefined,
+		codePartitionMgmtOnNonpartitioned: mysql.ErrPartitionMgmtOnNonpartitioned,
+		codeDropPartitionNonExistent:      mysql.ErrDropPartitionNonExistent,
+		codeSameNamePartition:             mysql.ErrSameNamePartition,
+		codeRangeNotIncreasing:            mysql.ErrRangeNotIncreasing,
+		codePartitionMaxvalue:             mysql.ErrPartitionMaxvalue,
+		codeErrTooManyValues:              mysql.ErrTooManyValues,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

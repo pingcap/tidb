@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -73,17 +74,30 @@ func newWorker(tp workerType, id int, store kv.Storage, ctxPool *pools.ResourceP
 	return worker
 }
 
+func (w *worker) String() string {
+	var str string
+	switch w.tp {
+	case generalWorker:
+		str = "general"
+	case addIdxWorker:
+		str = "add index"
+	default:
+		str = "unknow"
+	}
+	return fmt.Sprintf("%d, tp %s", w.id, str)
+}
+
 func (w *worker) close() {
 	close(w.quitCh)
 	w.delRangeManager.clear()
 	w.wg.Wait()
-	log.Infof("[ddl] close DDL worker %v", w.tp)
+	log.Infof("[ddl] close DDL worker %s", w)
 }
 
 // start is used for async online schema changing, it will try to become the owner firstly,
 // then wait or pull the job queue to handle a schema change job.
 func (w *worker) start(d *ddlCtx) {
-	log.Infof("[ddl] start DDL worker %v", w.tp)
+	log.Infof("[ddl] start DDL worker %s", w)
 	defer w.wg.Done()
 
 	w.delRangeManager.start()
@@ -99,7 +113,7 @@ func (w *worker) start(d *ddlCtx) {
 		r := recover()
 		if r != nil {
 			buf := util.GetStack()
-			log.Errorf("[ddl] worker %v %s", r, buf)
+			log.Errorf("[ddl] ddl %s, worker %s, %v %s", d.uuid, w, r, buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
 		}
 	}()
@@ -109,7 +123,7 @@ func (w *worker) start(d *ddlCtx) {
 	for {
 		select {
 		case <-ticker.C:
-			log.Debugf("[ddl] wait %s to check DDL status again", checkTime)
+			log.Debugf("[ddl] worker %s waits %s to check DDL status again", w, checkTime)
 		case <-d.ddlJobCh:
 		case <-w.quitCh:
 			return
@@ -117,9 +131,9 @@ func (w *worker) start(d *ddlCtx) {
 
 		err := w.handleDDLJobQueue(d, shouldCleanJobs)
 		if err != nil {
-			log.Errorf("[ddl] handle ddl job err %v", errors.ErrorStack(err))
+			log.Errorf("[ddl] worker %s handles DDL job err %v", w, errors.ErrorStack(err))
 		} else if shouldCleanJobs {
-			log.Info("[ddl] cleaning jobs in the adding index queue finished.")
+			log.Infof("[ddl] worker %s cleans jobs in the adding index queue finished.", w)
 			shouldCleanJobs = false
 		}
 	}
@@ -311,7 +325,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
 			}
 
 			if job.IsDone() || job.IsRollbackDone() {
-				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
+				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
 				if !job.IsRollbackDone() {
 					job.State = model.JobStateSynced
 				}
@@ -319,9 +333,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
 				return errors.Trace(err)
 			}
 
-			d.hookMu.Lock()
-			d.hook.OnJobRunBefore(job)
-			d.hookMu.Unlock()
+			d.mu.RLock()
+			d.mu.hook.OnJobRunBefore(job)
+			d.mu.RUnlock()
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
@@ -337,7 +351,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
 		if runJobErr != nil {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
-			log.Infof("[ddl] run DDL job error, sleep a while:%v then retry it.", WaitTimeWhenErrorOccured)
+			log.Infof("[ddl] worker %s runs DDL job error, sleeps a while:%v then retries it.", w, WaitTimeWhenErrorOccured)
 			metrics.DDLJobErrCounter.Inc()
 			time.Sleep(WaitTimeWhenErrorOccured)
 		}
@@ -349,9 +363,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
 			return nil
 		}
 
-		d.hookMu.Lock()
-		d.hook.OnJobUpdated(job)
-		d.hookMu.Unlock()
+		d.mu.RLock()
+		d.mu.hook.OnJobUpdated(job)
+		d.mu.RUnlock()
 
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
@@ -433,6 +447,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onShardRowID(t, job)
 	case model.ActionModifyTableComment:
 		ver, err = onModifyTableComment(t, job)
+	case model.ActionAddTablePartition:
+		ver, err = onAddTablePartition(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -592,7 +608,7 @@ func (w *worker) cleanAddIndexQueueJobs(d *ddlCtx, txn kv.Transaction) error {
 			if job.SchemaState == model.StateNone {
 				job.State = model.JobStateCancelled
 			} else {
-				binloginfo.SetDDLBinlog(d.workerVars.BinlogClient, txn, job.ID, job.Query)
+				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
 				job.State = model.JobStateSynced
 			}
 			err = w.finishDDLJob(m, job)

@@ -15,6 +15,8 @@ package ddl
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl/util"
@@ -43,6 +45,14 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
+	if tbInfo.Partition != nil {
+		err = checkCreatePartitionValue(tbInfo.Partition)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -58,11 +68,8 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 			return ver, errors.Trace(err)
 		}
 		if EnableSplitTableRegion {
-			err = splitTableRegion(d.store, tbInfo.ID)
-			// It will be automatically splitting by TiKV later.
-			if err != nil {
-				log.Warnf("[ddl] split table region failed %v", err)
-			}
+			// TODO: Add restrictions to this operation.
+			go splitTableRegion(d.store, tbInfo.ID)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -130,19 +137,20 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func splitTableRegion(store kv.Storage, tableID int64) error {
-	type splitableStore interface {
-		SplitRegion(splitKey kv.Key) error
-	}
+type splitableStore interface {
+	SplitRegion(splitKey kv.Key) error
+}
+
+func splitTableRegion(store kv.Storage, tableID int64) {
 	s, ok := store.(splitableStore)
 	if !ok {
-		return nil
+		return
 	}
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
 	if err := s.SplitRegion(tableStartKey); err != nil {
-		return errors.Trace(err)
+		// It will be automatically split by TiKV later.
+		log.Warnf("[ddl] splitting table region failed %v", errors.ErrorStack(err))
 	}
-	return nil
 }
 
 func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
@@ -394,4 +402,78 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 		tblInfo.UpdateTS = t.StartTS
 	}
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
+}
+
+// TODO: It may have the issue when two clients concurrently add partitions to a table.
+func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	partInfo := &model.PartitionInfo{}
+	err := job.DecodeArgs(&partInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	err = checkPartitionNameUnique(tblInfo, partInfo)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	updatePartitionInfo(partInfo, tblInfo)
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// Finish this job.
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, errors.Trace(err)
+}
+
+func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.TableInfo) {
+	parInfo := &model.PartitionInfo{}
+	oldDefs, newDefs := tblInfo.Partition.Definitions, partitionInfo.Definitions
+	parInfo.Definitions = make([]model.PartitionDefinition, 0, len(newDefs)+len(oldDefs))
+	parInfo.Definitions = append(parInfo.Definitions, oldDefs...)
+	parInfo.Definitions = append(parInfo.Definitions, newDefs...)
+	tblInfo.Partition.Definitions = parInfo.Definitions
+}
+
+// checkAddPartitionValue values less than value must be strictly increasing for each partition.
+func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) error {
+	if meta.Partition.Type == model.PartitionTypeRange {
+		newDefs, oldDefs := part.Definitions, meta.Partition.Definitions
+		rangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
+		if strings.EqualFold(rangeValue, "MAXVALUE") {
+			return errors.Trace(ErrPartitionMaxvalue)
+		}
+
+		currentRangeValue, err := strconv.Atoi(rangeValue)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		for i := 0; i < len(newDefs); i++ {
+			ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
+			if ifMaxvalue && i == len(newDefs)-1 {
+				return nil
+			} else if ifMaxvalue && i != len(newDefs)-1 {
+				return errors.Trace(ErrPartitionMaxvalue)
+			}
+
+			nextRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if nextRangeValue <= currentRangeValue {
+				return errors.Trace(ErrRangeNotIncreasing)
+			}
+			currentRangeValue = nextRangeValue
+		}
+	}
+	return nil
 }

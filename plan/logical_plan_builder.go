@@ -112,9 +112,9 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		}
 	}
 	for _, col := range p.Schema().Columns {
-		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col.Clone()}, false)
+		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
-		schema4Agg.Append(col.Clone().(*expression.Column))
+		schema4Agg.Append(col)
 	}
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
@@ -635,8 +635,9 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 				resultTp = joinFieldType(resultTp, childTp)
 			}
 		}
-		col.RetType = resultTp
-		col.DBName = model.NewCIStr("")
+		unionSchema.Columns[i] = col.Clone().(*expression.Column)
+		unionSchema.Columns[i].RetType = resultTp
+		unionSchema.Columns[i].DBName = model.NewCIStr("")
 	}
 	// If the types of some child don't match the types of union, we add a projection with cast function.
 	for childID, child := range u.children {
@@ -646,10 +647,10 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			dstType := unionSchema.Columns[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
-				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol.Clone(), dstType)
+				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol, dstType)
 				needProjection = true
 			} else {
-				exprs[i] = srcCol.Clone()
+				exprs[i] = srcCol
 			}
 		}
 		if _, isProj := child.(*LogicalProjection); needProjection || !isProj {
@@ -1338,6 +1339,14 @@ func checkExprInGroupBy(p LogicalPlan, expr ast.ExprNode, offset int, loc string
 }
 
 func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectField, orderBy *ast.OrderByClause, gby *ast.GroupByClause, from ast.ResultSetNode, where ast.ExprNode) {
+	if gby != nil {
+		b.checkOnlyFullGroupByWithGroupClause(p, fields, orderBy, gby, from, where)
+		return
+	}
+	b.checkOnlyFullGroupByWithOutGroupClause(p, fields)
+}
+
+func (b *planBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, fields []*ast.SelectField, orderBy *ast.OrderByClause, gby *ast.GroupByClause, from ast.ResultSetNode, where ast.ExprNode) {
 	gbyCols := make(map[*expression.Column]struct{}, len(fields))
 	gbyExprs := make([]ast.ExprNode, 0, len(fields))
 	schema := p.Schema()
@@ -1392,6 +1401,52 @@ func (b *planBuilder) checkOnlyFullGroupBy(p LogicalPlan, fields []*ast.SelectFi
 		}
 		return
 	}
+}
+
+func (b *planBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fields []*ast.SelectField) {
+	resolver := colResolverForOnlyFullGroupBy{}
+	for idx, field := range fields {
+		resolver.exprIdx = idx
+		field.Accept(&resolver)
+		if err := resolver.Check(); err != nil {
+			b.err = errors.Trace(err)
+			return
+		}
+	}
+}
+
+// colResolverForOnlyFullGroupBy visits Expr tree to find out if an Expr tree is an aggregation function.
+// If so, find out the first column name that not in an aggregation function.
+type colResolverForOnlyFullGroupBy struct {
+	firstNonAggCol    *ast.ColumnName
+	exprIdx           int
+	firstNonAggColIdx int
+	hasAggFunc        bool
+}
+
+func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
+	switch t := node.(type) {
+	case *ast.AggregateFuncExpr:
+		c.hasAggFunc = true
+		return node, true
+	case *ast.ColumnNameExpr:
+		if c.firstNonAggCol == nil {
+			c.firstNonAggCol, c.firstNonAggColIdx = t.Name, c.exprIdx
+		}
+		return node, true
+	}
+	return node, false
+}
+
+func (c *colResolverForOnlyFullGroupBy) Leave(node ast.Node) (ast.Node, bool) {
+	return node, true
+}
+
+func (c *colResolverForOnlyFullGroupBy) Check() error {
+	if c.hasAggFunc && c.firstNonAggCol != nil {
+		return ErrMixOfGroupFuncAndFields.GenByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
+	}
+	return nil
 }
 
 type colResolver struct {
@@ -1564,10 +1619,11 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.err != nil {
 			return nil
 		}
-		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
-			b.checkOnlyFullGroupBy(p, sel.Fields.Fields, sel.OrderBy, sel.GroupBy, sel.From.TableRefs, sel.Where)
-		}
 	}
+	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil {
+		b.checkOnlyFullGroupBy(p, sel.Fields.Fields, sel.OrderBy, sel.GroupBy, sel.From.TableRefs, sel.Where)
+	}
+
 	// We must resolve having and order by clause before build projection,
 	// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
 	// which only can be done before building projection and extracting Agg functions.
@@ -1658,10 +1714,6 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
-// RatioOfPseudoEstimate means if modifyCount / statsTblCount is greater than this ratio, we think the stats is invalid
-// and use pseudo estimation.
-var RatioOfPseudoEstimate = 0.7
-
 // getStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
 // 1. tidb-server started and statistics handle has not been initialized.
@@ -1683,12 +1735,10 @@ func (b *planBuilder) getStatsTable(tblInfo *model.TableInfo) *statistics.Table 
 	}
 
 	// 3. statistics is outdated.
-	if float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
-		countFromStats := statsTbl.Count
-		statsTbl = statistics.PseudoTable(tblInfo)
-		// Table row count from statistics is more meaningful than the
-		// pseudo row count in most cases.
-		statsTbl.Count = countFromStats
+	if statsTbl.IsOutdated() {
+		tbl := *statsTbl
+		tbl.Pseudo = true
+		statsTbl = &tbl
 		metrics.PseudoEstimation.Inc()
 	}
 	return statsTbl
@@ -1827,7 +1877,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 			}
 		}
 		if !exprIsGen {
-			expr = colExpr.Clone()
+			expr = colExpr
 		}
 		proj.Exprs = append(proj.Exprs, expr)
 	}
@@ -2082,7 +2132,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		}
 		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())
 		p = np
-		newList = append(newList, &expression.Assignment{Col: col.Clone().(*expression.Column), Expr: newExpr})
+		newList = append(newList, &expression.Assignment{Col: col, Expr: newExpr})
 	}
 	return newList, p
 }

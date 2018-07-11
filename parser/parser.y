@@ -398,34 +398,36 @@ import (
 	variables	"VARIABLES"
 	view		"VIEW"
 	warnings	"WARNINGS"
+	identSQLErrors	"ERRORS"
 	week		"WEEK"
 	yearType	"YEAR"
 
 	/* The following tokens belong to NotKeywordToken. */
-	addDate		"ADDDATE"
-	bitAnd		"BIT_AND"
-	bitOr		"BIT_OR"
-	bitXor		"BIT_XOR"
-	cast		"CAST"
-	copyKwd		"COPY"
-	count		"COUNT"
-	curTime		"CURTIME"
-	dateAdd		"DATE_ADD"
-	dateSub		"DATE_SUB"
-	extract		"EXTRACT"
-	getFormat	"GET_FORMAT"
-	groupConcat	"GROUP_CONCAT"
-	inplace 	"INPLACE"
-	min		"MIN"
-	max		"MAX"
-	now		"NOW"
-	position	"POSITION"
-	subDate		"SUBDATE"
-	sum		"SUM"
-	substring	"SUBSTRING"
-	timestampAdd	"TIMESTAMPADD"
-	timestampDiff	"TIMESTAMPDIFF"
-	trim		"TRIM"
+	addDate			"ADDDATE"
+	bitAnd			"BIT_AND"
+	bitOr			"BIT_OR"
+	bitXor			"BIT_XOR"
+	cast			"CAST"
+	copyKwd			"COPY"
+	count			"COUNT"
+	curTime			"CURTIME"
+	dateAdd			"DATE_ADD"
+	dateSub			"DATE_SUB"
+	extract			"EXTRACT"
+	getFormat		"GET_FORMAT"
+	groupConcat		"GROUP_CONCAT"
+	inplace 		"INPLACE"
+	min			"MIN"
+	max			"MAX"
+	maxExecutionTime	"MAX_EXECUTION_TIME"
+	now			"NOW"
+	position		"POSITION"
+	subDate			"SUBDATE"
+	sum			"SUM"
+	substring		"SUBSTRING"
+	timestampAdd		"TIMESTAMPADD"
+	timestampDiff		"TIMESTAMPDIFF"
+	trim			"TRIM"
 
 	/* The following tokens belong to TiDBKeyword. */
 	admin		"ADMIN"
@@ -953,6 +955,17 @@ AlterTableSpec:
 		$$ = &ast.AlterTableSpec{
 			Tp: ast.AlterTableAddConstraint,
 			Constraint: constraint,
+		}
+	}
+|	"ADD" "PARTITION" PartitionDefinitionListOpt
+	{
+		var defs []*ast.PartitionDefinition
+		if $3 != nil {
+			defs = $3.([]*ast.PartitionDefinition)
+		}
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableAddPartitions,
+			PartDefinitions: defs,
 		}
 	}
 |	"DROP" ColumnKeywordOpt ColumnName RestrictOrCascadeOpt
@@ -2729,7 +2742,7 @@ identifier | UnReservedKeyword | NotKeywordToken | TiDBKeyword
 UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CLEANUP" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
-| "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FORMAT" | "FULL" |"GLOBAL"
+| "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ERRORS" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
 | "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken | "TIMESTAMP" %prec lowerThanStringLitToken
 | "TRACE" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
@@ -2748,7 +2761,7 @@ TiDBKeyword:
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
-| "INPLACE" |"MIN" | "MAX" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
+| "INPLACE" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
 
 /************************************************************************************
  *
@@ -4150,16 +4163,20 @@ SelectStmtBasic:
 	}
 
 SelectStmtFromDual:
-	SelectStmtBasic FromDual WhereClauseOptional
+	SelectStmtBasic FromDual WhereClauseOptional OrderByOptional
 	{
 		st := $1.(*ast.SelectStmt)
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
-			lastEnd := yyS[yypt-1].offset-1
+			lastEnd := yyS[yypt-2].offset-1	
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
+		}
+
+		if $4 != nil {
+			st.OrderBy = $4.(*ast.OrderByClause)
 		}
 	}
 
@@ -4582,6 +4599,10 @@ TableOptimizerHintOpt:
 	{
 		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), Tables: $3.([]model.CIStr)}
 	}
+|	maxExecutionTime '(' NUM ')'
+	{
+		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), MaxExecutionTime: getUint64FromNUM($3)}
+	}
 
 SelectStmtCalcFoundRows:
 	{
@@ -4992,6 +5013,7 @@ SystemVariable:
 	{
 		v := strings.ToLower($1)
 		var isGlobal bool
+		explicitScope := true
 		if strings.HasPrefix(v, "@@global.") {
 			isGlobal = true
 			v = strings.TrimPrefix(v, "@@global.")
@@ -5000,9 +5022,9 @@ SystemVariable:
 		} else if strings.HasPrefix(v, "@@local.") {
 			v = strings.TrimPrefix(v, "@@local.")
 		} else if strings.HasPrefix(v, "@@") {
-			v = strings.TrimPrefix(v, "@@")
+			v, explicitScope = strings.TrimPrefix(v, "@@"), false
 		}
-		$$ = &ast.VariableExpr{Name: v, IsGlobal: isGlobal, IsSystem: true}
+		$$ = &ast.VariableExpr{Name: v, IsGlobal: isGlobal, IsSystem: true, ExplicitScope: explicitScope}
 	}
 
 UserVariable:
@@ -5353,6 +5375,10 @@ ShowTargetFilterable:
 |	"WARNINGS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings}
+	}
+|	"ERRORS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowErrors}
 	}
 |	GlobalScope "VARIABLES"
 	{

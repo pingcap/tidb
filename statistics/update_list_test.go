@@ -23,7 +23,7 @@ type testUpdateListSuite struct {
 }
 
 func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
-	h := NewHandle(nil, 0)
+	h := Handle{listHead: &SessionStatsCollector{mapper: make(tableDeltaMap)}}
 	var items []*SessionStatsCollector
 	for i := 0; i < 5; i++ {
 		items = append(items, h.NewSessionStatsCollector())
@@ -31,7 +31,7 @@ func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
 	items[0].Delete() // delete tail
 	items[2].Delete() // delete middle
 	items[4].Delete() // delete head
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(DumpAll)
 
 	c.Assert(h.listHead.next, Equals, items[3])
 	c.Assert(items[3].next, Equals, items[1])
@@ -42,6 +42,6 @@ func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
 	// delete rest
 	items[1].Delete()
 	items[3].Delete()
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(DumpAll)
 	c.Assert(h.listHead.next, IsNil)
 }
