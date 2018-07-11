@@ -73,9 +73,9 @@ func (e *PointSelectExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		return nil
 	}
 	e.done = true
-	snapshot, err := e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
-	if err != nil {
-		return errors.Trace(err)
+	snapshot, err1 := e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
+	if err1 != nil {
+		return errors.Trace(err1)
 	}
 	e.snapshot = snapshot
 	if e.idxInfo != nil {
