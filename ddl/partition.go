@@ -21,6 +21,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -98,15 +99,15 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) 
 	if tbInfo.Partition != nil {
 		oldPars := tbInfo.Partition.Definitions
 		for _, oldPar := range oldPars {
-			partNames[strings.ToLower(oldPar.Name)] = struct{}{}
+			partNames[oldPar.Name.L] = struct{}{}
 		}
 	}
 	newPars := pi.Definitions
 	for _, newPar := range newPars {
-		if _, ok := partNames[strings.ToLower(newPar.Name)]; ok {
+		if _, ok := partNames[newPar.Name.L]; ok {
 			return ErrSameNamePartition.GenByArgs(newPar.Name)
 		}
-		partNames[strings.ToLower(newPar.Name)] = struct{}{}
+		partNames[newPar.Name.L] = struct{}{}
 	}
 	return nil
 }
@@ -153,4 +154,65 @@ func validRangePartitionType(col *table.Column) bool {
 	default:
 		return false
 	}
+}
+
+// checkDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
+func checkDropTablePartition(meta *model.TableInfo, partName string) error {
+	oldDefs := meta.Partition.Definitions
+	for _, def := range oldDefs {
+		if strings.EqualFold(def.Name.L, strings.ToLower(partName)) {
+			if len(oldDefs) == 1 {
+				return errors.Trace(ErrDropLastPartition)
+			}
+			return nil
+		}
+	}
+	return errors.Trace(ErrDropPartitionNonExistent.GenByArgs(partName))
+}
+
+// removePartitionInfo each ddl job deletes a partition.
+func removePartitionInfo(tblInfo *model.TableInfo, partName string) int64 {
+	oldDefs := tblInfo.Partition.Definitions
+	newDefs := make([]model.PartitionDefinition, 0, len(oldDefs)-1)
+	var pid int64
+	for i := 0; i < len(oldDefs); i++ {
+		if !strings.EqualFold(oldDefs[i].Name.L, strings.ToLower(partName)) {
+			continue
+		}
+		pid = oldDefs[i].ID
+		newDefs = append(oldDefs[:i], oldDefs[i+1:]...)
+		break
+	}
+	tblInfo.Partition.Definitions = newDefs
+	return pid
+}
+
+// onDropTablePartition deletes old partition meta.
+func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var partName string
+	if err := job.DecodeArgs(&partName); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
+	err = checkDropTablePartition(tblInfo, partName)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	partitionID := removePartitionInfo(tblInfo, partName)
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	// Finish this job.
+	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+	// A background job will be created to delete old partition data.
+	job.Args = []interface{}{partitionID}
+	return ver, nil
 }

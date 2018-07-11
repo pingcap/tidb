@@ -2744,6 +2744,26 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	tk.MustExec("insert into t values(1.123456), (1.123456)")
 	result := tk.MustQuery("select avg(a) from t")
 	result.Check(testkit.Rows("1.1234560000"))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE `t` (	`a` int, KEY `idx_a` (`a`))")
+	result = tk.MustQuery("select avg(a) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select max(a), min(a) from t")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery("select distinct a from t")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select sum(a) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select count(a) from t")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select bit_xor(a) from t")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select bit_and(a) from t")
+	result.Check(testkit.Rows("18446744073709551615"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltinBitOr(c *C) {
