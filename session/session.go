@@ -269,39 +269,6 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	return fields, nil
 }
 
-type schemaLeaseChecker struct {
-	domain.SchemaValidator
-	schemaVer       int64
-	relatedTableIDs []int64
-}
-
-var (
-	// SchemaOutOfDateRetryInterval is the sleeping time when we fail to try.
-	SchemaOutOfDateRetryInterval = int64(500 * time.Millisecond)
-	// SchemaOutOfDateRetryTimes is upper bound of retry times when the schema is out of date.
-	SchemaOutOfDateRetryTimes = int32(10)
-)
-
-func (s *schemaLeaseChecker) Check(txnTS uint64) error {
-	schemaOutOfDateRetryInterval := atomic.LoadInt64(&SchemaOutOfDateRetryInterval)
-	schemaOutOfDateRetryTimes := int(atomic.LoadInt32(&SchemaOutOfDateRetryTimes))
-	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
-		result := s.SchemaValidator.Check(txnTS, s.schemaVer, s.relatedTableIDs)
-		switch result {
-		case domain.ResultSucc:
-			return nil
-		case domain.ResultFail:
-			metrics.SchemaLeaseErrorCounter.WithLabelValues("changed").Inc()
-			return domain.ErrInfoSchemaChanged
-		case domain.ResultUnknown:
-			metrics.SchemaLeaseErrorCounter.WithLabelValues("outdated").Inc()
-			time.Sleep(time.Duration(schemaOutOfDateRetryInterval))
-		}
-
-	}
-	return domain.ErrInfoSchemaExpired
-}
-
 func (s *session) doCommit(ctx context.Context) error {
 	if !s.txn.Valid() {
 		return nil
@@ -335,11 +302,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		tableIDs = append(tableIDs, id)
 	}
 	// Set this option for 2 phase commit to validate schema lease.
-	s.txn.SetOption(kv.SchemaLeaseChecker, &schemaLeaseChecker{
-		SchemaValidator: domain.GetDomain(s).SchemaValidator,
-		schemaVer:       s.sessionVars.TxnCtx.SchemaVersion,
-		relatedTableIDs: tableIDs,
-	})
+	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
 	if s.sessionVars.TxnCtx.ForUpdate {
 		s.txn.SetOption(kv.BypassLatch, true)
 	}
@@ -371,7 +334,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 		// BatchInsert already commit the first batch 1000 rows, then it commit 1000-2000 and retry the statement,
 		// Finally t1 will have more data than t2, with no errors return to user!
 		if s.isRetryableError(err) && !s.sessionVars.BatchInsert && commitRetryLimit > 0 {
-			log.Warnf("[con:%d] retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
+			log.Warnf("con:%d retryable error: %v, txn: %v", s.sessionVars.ConnectionID, err, s.txn)
 			// Transactions will retry 2 ~ commitRetryLimit times.
 			// We make larger transactions retry less times to prevent cluster resource outage.
 			txnSizeRate := float64(txnSize) / float64(kv.TxnTotalSizeLimit)
@@ -396,7 +359,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	}
 
 	if err != nil {
-		log.Warnf("[con:%d] finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
+		log.Warnf("con:%d finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
 		return errors.Trace(err)
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
@@ -545,17 +508,17 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			}
 		}
 		if !s.isRetryableError(err) {
-			log.Warnf("[con:%d] session:%v, err:%v in retry", connID, s, err)
+			log.Warnf("con:%d session:%v, err:%v in retry", connID, s, err)
 			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblUnretryable)
 			return errors.Trace(err)
 		}
 		retryCnt++
 		if retryCnt >= maxCnt {
-			log.Warnf("[con:%d] Retry reached max count %d", connID, retryCnt)
+			log.Warnf("con:%d Retry reached max count %d", connID, retryCnt)
 			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblReachMax)
 			return errors.Trace(err)
 		}
-		log.Warnf("[con:%d] retryable error: %v, txn: %v", connID, err, s.txn)
+		log.Warnf("con:%d retryable error: %v, txn: %v", connID, err, s.txn)
 		kv.BackOff(retryCnt)
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
@@ -776,7 +739,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
-			log.Warnf("[con:%d][schema ver:%d] session error:\n%v\n%s",
+			log.Warnf("con:%d schema_ver:%d session error:\n%v\n%s",
 				connID, s.sessionVars.TxnCtx.SchemaVersion, errors.ErrorStack(err), s)
 		}
 		return nil, errors.Trace(err)
@@ -852,7 +815,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			log.Warnf("[con:%d] parse error:\n%v\n%s", connID, err, sql)
+			log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
 		metrics.SessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
@@ -870,7 +833,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 			stmt, err := compiler.Compile(ctx, stmtNode)
 			if err != nil {
 				s.rollbackOnError(ctx)
-				log.Warnf("[con:%d] compile error:\n%v\n%s", connID, err, sql)
+				log.Warnf("con:%d compile error:\n%v\n%s", connID, err, sql)
 				return nil, errors.Trace(err)
 			}
 			metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
@@ -1023,7 +986,7 @@ func (s *session) NewTxn() error {
 			return errors.Trace(err)
 		}
 		vars := s.GetSessionVars()
-		log.Infof("[con:%d][schema ver:%d] NewTxn() inside a transaction auto commit: %d", vars.ConnectionID, vars.TxnCtx.SchemaVersion, txnID)
+		log.Infof("con:%d schema_ver:%d NewTxn() inside a transaction auto commit: %d", vars.ConnectionID, vars.TxnCtx.SchemaVersion, txnID)
 	}
 
 	txn, err := s.store.Begin()

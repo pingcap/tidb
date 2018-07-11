@@ -1353,9 +1353,12 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE test_gc_read(a int primary key, b int, c int as (a+b), d int as (a*b) stored)`)
 
+	result := tk.MustQuery(`SELECT generation_expression FROM information_schema.columns WHERE table_name = 'test_gc_read' AND column_name = 'd'`)
+	result.Check(testkit.Rows("`a` * `b`"))
+
 	// Insert only column a and b, leave c and d be calculated from them.
 	tk.MustExec(`INSERT INTO test_gc_read (a, b) VALUES (0,null),(1,2),(3,4)`)
-	result := tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
 	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`))
 
 	tk.MustExec(`INSERT INTO test_gc_read SET a = 5, b = 10`)
