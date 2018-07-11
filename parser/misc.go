@@ -36,8 +36,8 @@ func isIdentExtend(ch rune) bool {
 	return ch >= 0x80 && ch <= '\uffff'
 }
 
-func isIdentFirstChar(ch rune) bool {
-	return isLetter(ch) || ch == '_'
+func isUserVarChar(ch rune) bool {
+	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
 }
 
 type trieNode struct {
@@ -330,6 +330,7 @@ var tokenMap = map[string]int{
 	"MASTER":            master,
 	"MAX":               max,
 	"MAX_CONNECTIONS_PER_HOUR": maxConnectionsPerHour,
+	"MAX_EXECUTION_TIME":       maxExecutionTime,
 	"MAX_QUERIES_PER_HOUR":     maxQueriesPerHour,
 	"MAX_ROWS":                 maxRows,
 	"MAX_UPDATES_PER_HOUR":     maxUpdatesPerHour,
