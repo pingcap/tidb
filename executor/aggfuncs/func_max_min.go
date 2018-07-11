@@ -255,14 +255,12 @@ type maxMin4Decimal struct {
 
 func (e *maxMin4Decimal) AllocPartialResult() PartialResult {
 	p := new(partialResult4MaxMinDecimal)
-	p.val = *new(types.MyDecimal)
 	p.isNull = true
 	return PartialResult(p)
 }
 
 func (e *maxMin4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinDecimal)(pr)
-	p.val = *new(types.MyDecimal)
 	p.isNull = true
 }
 
