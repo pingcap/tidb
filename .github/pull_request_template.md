@@ -52,11 +52,19 @@ If there is a configuration or metrics change, please file a PR in [tidb-ansible
 If this PR needs to be added to the release notes, please:
 1. add the "**release-note**" label for this PR
 2. write your release note in the below block
-3. include the string "action required" if the PR requires additional action from users switching to the new release
+3. if the PR requires additional action from users switching to the new
+   release, describe the concrete action that users need to take in detail.
+
+An example:
+```
+release note:
+// put your release notes for this PR here.
+
+action required:
+// put your required action in detail here.
+```
 -->
 
-```
-```
 
 ## Refer to a related PR or issue link (optional)
 
