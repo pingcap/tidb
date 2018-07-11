@@ -115,14 +115,29 @@ func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) {
 // If there is no matching row for the inner table of an outer join,
 // an aggregation function only involves constant and/or columns belongs to the inner table
 // will be set to the null value.
-// The input stands for the schema of Aggregation's child. If the function can't produce a default value, the second
+// The input stands for the schema of Aggregation's child. If the function can't produce a null value, the second
 // return value will be false.
 // e.g.
-// mysql> create table t(a int);
-// mysql> insert into t value(1);
-// mysql> create table s(a int);
-// mysql> select t.a as `t.a`,  count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), s.a as `s.a`, avg(95) from t left join s on t.a = s.a;
-// mysql>
+// Table t with only one row:
+// +-------+---------+---------+
+// | Table | Field   | Type    |
+// +-------+---------+---------+
+// | t     | a       | int(11) |
+// +-------+---------+---------+
+// +------+
+// | a    |
+// +------+
+// |    1 |
+// +------+
+//
+// Table s which is empty:
+// +-------+---------+---------+
+// | Table | Field   | Type    |
+// +-------+---------+---------+
+// | s     | a       | int(11) |
+// +-------+---------+---------+
+//
+// Query: `select t.a as `t.a`,  count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), s.a as `s.a`, avg(95) from t left join s on t.a = s.a;`
 // +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
 // | t.a  | count(95) | sum(95) | avg(95) | bit_or(95) | bit_and(95) | bit_or(95) | max(95) | min(95) | s.a  | avg(s.a) |
 // +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
@@ -148,10 +163,15 @@ func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx sessionctx.Context, schema *e
 
 // GetDefaultValue gets the default value when the aggregation function's input is null.
 // According to MySQL, default values of the aggregation function are listed as follows:
-// mysql> CREATE TABLE `t` (
-// ->   `a` int(11) DEFAULT NULL,
-// -> );
-// mysql>
+// e.g.
+// Table t which is empty:
+// +-------+---------+---------+
+// | Table | Field   | Type    |
+// +-------+---------+---------+
+// | t     | a       | int(11) |
+// +-------+---------+---------+
+//
+// Query: `select a, avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a) from t;`
 // +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
 // | a    | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) |
 // +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
