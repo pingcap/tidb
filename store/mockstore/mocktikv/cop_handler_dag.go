@@ -141,6 +141,11 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		if sc.TimeZone, err = LocCache.getLoc(dagReq.TimeZoneName); err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
+		dagReq.TimeZoneName = sc.TimeZone.String()
+		if dagReq.TimeZoneName == "Local" {
+			dagReq.TimeZoneName = "System"
+		}
+
 	} else {
 		sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
 	}
