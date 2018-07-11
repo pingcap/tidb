@@ -257,6 +257,7 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ types.Row) (val types.
 			return types.ZeroDuration, true, errors.Trace(err)
 		}
 		c.Value.SetMysqlDuration(dur)
+		c.Value.SetFrac(types.MaxFsp)
 	} else {
 		if c.GetType().Tp == mysql.TypeNull || c.Value.IsNull() {
 			return types.ZeroDuration, true, nil

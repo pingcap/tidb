@@ -361,8 +361,8 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		b, r, err = DecodeInt(b)
 		if err == nil {
 			// use max fsp, let outer to do round manually.
-			v := types.Duration(r)
-			d.SetValue(v)
+			d.SetValue(types.Duration(r))
+			d.SetFrac(types.MaxFsp)
 		}
 	case jsonFlag:
 		var size int

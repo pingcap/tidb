@@ -215,7 +215,7 @@ var (
 	jsonTime = types.NewDatum(json.CreateBinary(tm.String()))
 
 	// jsonDuration indicates
-	jsonDuration = types.NewDatum(json.CreateBinary(duration.String(0)))
+	jsonDuration = types.NewDatum(json.CreateBinary(duration.String(types.DefaultFsp)))
 )
 
 func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
@@ -472,7 +472,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		},
 		// cast Duration as real.
 		{
-			&Column{RetType: types.NewFieldTypeWithFlenDec(mysql.TypeDuration, types.UnspecifiedLength, 0), Index: 0},
+			&Column{RetType: types.NewFieldTypeWithFlenDec(mysql.TypeDuration, types.UnspecifiedLength, types.DefaultFsp), Index: 0},
 			125959,
 			[]types.Datum{durationDatum},
 		},
@@ -899,7 +899,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		res, isNull, err := sig.evalDuration(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
-		c.Assert(res.String(sig.getRetTp().Decimal), Equals, t.after.String(0))
+		c.Assert(res.String(sig.getRetTp().Decimal), Equals, t.after.String(sig.getRetTp().Decimal))
 	}
 
 	castToDurationCases2 := []struct {
@@ -974,7 +974,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		res, isNull, err := sig.evalDuration(t.row)
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
-		resAfter := t.after.String(0)
+		resAfter := t.after.String(types.DefaultFsp)
 		if t.fsp > 0 {
 			resAfter += "."
 			for j := 0; j < t.fsp; j++ {
@@ -1100,7 +1100,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		decRes, isNull, err := decExpr.EvalDecimal(ctx, t.row)
 		c.Assert(err, IsNil, Commentf("case[%v]: %#v\n", i, t))
 		c.Assert(isNull, Equals, false)
-		c.Assert(decRes.Compare(t.decRes), Equals, 0, Commentf("case[%v]: %#v %s %s\n", i, t, decRes.String()))
+		c.Assert(decRes.Compare(t.decRes), Equals, 0, Commentf("case[%v]: %#v\n", i, t))
 
 		// Test wrapping with CastAsString.
 		strExpr := WrapWithCastAsString(ctx, t.expr)

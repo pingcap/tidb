@@ -383,6 +383,7 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetBytes([]byte{})
 	case mysql.TypeDuration:
 		d.SetMysqlDuration(types.ZeroDuration)
+		d.SetFrac(types.DefaultFsp)
 	case mysql.TypeDate:
 		d.SetMysqlTime(types.ZeroDate)
 	case mysql.TypeTimestamp:

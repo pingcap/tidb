@@ -772,7 +772,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	chk := rs.NewChunk()
 	err = rs.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(chk.GetRow(0).GetDuration(0).String(0), Equals, "-46:09:02")
+	c.Assert(chk.GetRow(0).GetDuration(0).String(types.DefaultFsp), Equals, "-46:09:02")
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345

@@ -1359,7 +1359,7 @@ func (b *builtinCastDurationAsIntSig) evalInt(row types.Row) (res int64, isNull 
 	if err != nil {
 		return res, false, errors.Trace(err)
 	}
-	res, err = dur.ToNumber(0).ToInt()
+	res, err = dur.ToNumber(types.DefaultFsp).ToInt()
 	return res, false, errors.Trace(err)
 }
 
