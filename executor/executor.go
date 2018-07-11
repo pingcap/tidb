@@ -248,7 +248,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	// TODO: need to return the job that the user needs.
-	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(), 10)
+	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(), admin.DefHistoryJobs)
 	if err != nil {
 		return errors.Trace(err)
 	}
