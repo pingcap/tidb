@@ -3,8 +3,8 @@ package aggfuncs
 import (
 	"encoding/binary"
 	"unsafe"
-	"github.com/juju/errors"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -323,18 +323,21 @@ func (e *countOriginalWithDistinct) evalAndEncode(
 
 func appendInt64(encodedBytes, buf []byte, val int64) []byte {
 	*(*int64)(unsafe.Pointer(&buf[0])) = val
+	buf = buf[:8]
 	encodedBytes = append(encodedBytes, buf...)
 	return encodedBytes
 }
 
 func appendFloat64(encodedBytes, buf []byte, val float64) []byte {
 	*(*float64)(unsafe.Pointer(&buf[0])) = val
+	buf = buf[:4]
 	encodedBytes = append(encodedBytes, buf...)
 	return encodedBytes
 }
 
 func appendDecimal(encodedBytes, buf []byte, val *types.MyDecimal) []byte {
 	*(*types.MyDecimal)(unsafe.Pointer(&buf[0])) = *val
+	buf = buf[:types.MyDecimalStructSize]
 	encodedBytes = append(encodedBytes, buf...)
 	return encodedBytes
 }
@@ -353,12 +356,14 @@ func writeTime(buf []byte, t types.Time) {
 
 func appendTime(encodedBytes, buf []byte, val types.Time) []byte {
 	writeTime(buf, val)
+	buf = buf[:16]
 	encodedBytes = append(encodedBytes, buf...)
 	return encodedBytes
 }
 
 func appendDuration(encodedBytes, buf []byte, val types.Duration) []byte {
 	*(*types.Duration)(unsafe.Pointer(&buf[0])) = val
+	buf = buf[:16]
 	encodedBytes = append(encodedBytes, buf...)
 	return encodedBytes
 }
