@@ -229,6 +229,9 @@ type PhysicalPlan interface {
 	// StatsInfo will return the statsInfo for this plan.
 	StatsInfo() *statsInfo
 
+	// StatsCount returns the count of statsInfo for this plan.
+	StatsCount() float64
+
 	// Get all the children.
 	Children() []PhysicalPlan
 

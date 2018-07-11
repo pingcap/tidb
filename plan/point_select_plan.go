@@ -74,6 +74,11 @@ func (fp *PointSelectPlan) StatsInfo() *statsInfo {
 	return fp.stats
 }
 
+// StatsCount will return the the count of statsInfo for this plan.
+func (fp *PointSelectPlan) StatsCount() float64 {
+	return fp.stats.count
+}
+
 // Children gets all the children.
 func (fp *PointSelectPlan) Children() []PhysicalPlan {
 	return nil

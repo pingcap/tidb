@@ -63,6 +63,10 @@ func (p *basePhysicalPlan) StatsInfo() *statsInfo {
 	return p.stats
 }
 
+func (p *basePhysicalPlan) StatsCount() float64 {
+	return p.stats.count
+}
+
 func (p *LogicalTableDual) deriveStats() (*statsInfo, error) {
 	profile := &statsInfo{
 		count:       float64(p.RowCount),
