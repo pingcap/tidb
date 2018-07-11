@@ -976,6 +976,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
+		case ast.AlterTableDropPartition:
+			err = d.DropTablePartition(ctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
@@ -1211,7 +1213,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	meta := t.Meta()
-	if meta.GetPartitionInfo() == nil && meta.Partition == nil {
+	if meta.GetPartitionInfo() == nil {
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 	partInfo, err := buildPartitionInfo(meta, d, spec)
@@ -1238,6 +1240,41 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(schema))
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+	meta := t.Meta()
+	if meta.GetPartitionInfo() == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+	err = checkDropTablePartition(meta, spec.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		Type:       model.ActionDropTablePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{spec.Name},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
