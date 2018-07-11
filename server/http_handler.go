@@ -427,7 +427,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	v := vals[int64(colID)]
-	val, err := v.ToString()
+	val, err := v.ToString(types.MaxFsp)
 	if err != nil {
 		writeError(w, err)
 		return

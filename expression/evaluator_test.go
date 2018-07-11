@@ -431,10 +431,10 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		default:
 			// we use float64 as the result type check for all.
 			sc := s.ctx.GetSessionVars().StmtCtx
-			f, err := v.ToFloat64(sc)
+			f, err := v.ToFloat64(sc, 0)
 			c.Assert(err, IsNil)
 			d := types.NewDatum(t.ret)
-			r, err := d.ToFloat64(sc)
+			r, err := d.ToFloat64(sc, 0)
 			c.Assert(err, IsNil)
 			c.Assert(r, Equals, f)
 		}

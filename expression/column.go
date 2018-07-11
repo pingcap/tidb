@@ -70,7 +70,7 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row types.Row) (
 	if col.Data.IsNull() {
 		return "", true, nil
 	}
-	res, err := col.Data.ToString()
+	res, err := col.Data.ToString(col.RetType.Decimal)
 	resLen := len([]rune(res))
 	if resLen < col.RetType.Flen && ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
 		res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
@@ -234,7 +234,7 @@ func (col *Column) EvalString(ctx sessionctx.Context, row types.Row) (string, bo
 		if val.IsNull() {
 			return "", true, nil
 		}
-		res, err := val.ToString()
+		res, err := val.ToString(col.RetType.Decimal)
 		resLen := len([]rune(res))
 		if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString && resLen < col.RetType.Flen {
 			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)

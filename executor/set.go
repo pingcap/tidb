@@ -80,7 +80,7 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 			if value.IsNull() {
 				delete(sessionVars.Users, name)
 			} else {
-				svalue, err1 := value.ToString()
+				svalue, err1 := value.ToString(v.Expr.GetType().Decimal)
 				if err1 != nil {
 					return errors.Trace(err1)
 				}
@@ -125,14 +125,14 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if sysVar.Scope&variable.ScopeGlobal == 0 {
 			return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
 		}
-		value, err := e.getVarValue(v, sysVar)
+		value, fsp, err := e.getVarValue(v, sysVar)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if value.IsNull() {
 			value.SetString("")
 		}
-		svalue, err := value.ToString()
+		svalue, err := value.ToString(fsp)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -145,7 +145,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if sysVar.Scope&variable.ScopeSession == 0 {
 			return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
 		}
-		value, err := e.getVarValue(v, nil)
+		value, fsp, err := e.getVarValue(v, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -153,7 +153,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
-		err = variable.SetSessionSystemVar(sessionVars, name, value)
+		err = variable.SetSessionSystemVar(sessionVars, name, value, fsp)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -175,7 +175,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			valStr = "NULL"
 		} else {
 			var err error
-			valStr, err = value.ToString()
+			valStr, err = value.ToString(fsp)
 			terror.Log(errors.Trace(err))
 		}
 		log.Infof("con:%d %s=%s", sessionVars.ConnectionID, name, valStr)
@@ -230,7 +230,7 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 	return nil
 }
 
-func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value types.Datum, err error) {
+func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.SysVar) (value types.Datum, fsp int, err error) {
 	if v.IsDefault {
 		// To set a SESSION variable to the GLOBAL value or a GLOBAL value
 		// to the compiled-in MySQL default value, use the DEFAULT keyword.
@@ -240,14 +240,14 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		} else {
 			s, err1 := variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 			if err1 != nil {
-				return value, errors.Trace(err1)
+				return value, types.DefaultFsp, errors.Trace(err1)
 			}
 			value = types.NewStringDatum(s)
 		}
 		return
 	}
 	value, err = v.Expr.Eval(nil)
-	return value, errors.Trace(err)
+	return value, v.Expr.GetType().Decimal, errors.Trace(err)
 }
 
 func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {

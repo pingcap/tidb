@@ -639,76 +639,78 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 
 	tblCmp := []struct {
 		Arg1 interface{}
+		Fsp1 int
 		Arg2 interface{}
+		Fsp2 int
 		Ret  int
 	}{
 		// Test for float type decimal.
-		{"1234", "123400", -1},
-		{"12340", "123400", -1},
-		{"1234", "1234.5", -1},
-		{"1234", "1234.0000", 0},
-		{"1234", "12.34", 1},
-		{"12.34", "12.35", -1},
-		{"0.12", "0.1234", -1},
-		{"0.1234", "12.3400", -1},
-		{"0.1234", "0.1235", -1},
-		{"0.123400", "12.34", -1},
-		{"12.34000", "12.34", 0},
-		{"0.01234", "0.01235", -1},
-		{"0.1234", "0", 1},
-		{"0.0000", "0", 0},
-		{"0.0001", "0", 1},
-		{"0.0001", "0.0000", 1},
-		{"0", "-0.0000", 0},
-		{"-0.0001", "0", -1},
-		{"-0.1234", "0", -1},
-		{"-0.1234", "-0.12", -1},
-		{"-0.12", "-0.1234", 1},
-		{"-0.12", "-0.1200", 0},
-		{"-0.1234", "0.1234", -1},
-		{"-1.234", "-12.34", 1},
-		{"-0.1234", "-12.34", 1},
-		{"-12.34", "1234", -1},
-		{"-12.34", "-12.35", 1},
-		{"-0.01234", "-0.01235", 1},
-		{"-1234", "-123400", 1},
-		{"-12340", "-123400", 1},
+		{"1234", 0, "123400", 0, -1},
+		{"12340", 0, "123400", 0, -1},
+		{"1234", 0, "1234.5", 1, -1},
+		{"1234", 0, "1234.0000", 4, 0},
+		{"1234", 0, "12.34", 2, 1},
+		{"12.34", 2, "12.35", 2, -1},
+		{"0.12", 2, "0.1234", 4, -1},
+		{"0.1234", 4, "12.3400", 4, -1},
+		{"0.1234", 4, "0.1235", 4, -1},
+		{"0.123400", 6, "12.34", 2, -1},
+		{"12.34000", 5, "12.34", 2, 0},
+		{"0.01234", 5, "0.01235", 5, -1},
+		{"0.1234", 4, "0", 0, 1},
+		{"0.0000", 4, "0", 0, 0},
+		{"0.0001", 4, "0", 0, 1},
+		{"0.0001", 4, "0.0000", 4, 1},
+		{"0", 0, "-0.0000", 4, 0},
+		{"-0.0001", 4, "0", 0, -1},
+		{"-0.1234", 4, "0", 0, -1},
+		{"-0.1234", 4, "-0.12", 2, -1},
+		{"-0.12", 2, "-0.1234", 4, 1},
+		{"-0.12", 2, "-0.1200", 4, 0},
+		{"-0.1234", 4, "0.1234", 4, -1},
+		{"-1.234", 3, "-12.34", 2, 1},
+		{"-0.1234", 4, "-12.34", 2, 1},
+		{"-12.34", 2, "1234", 0, -1},
+		{"-12.34", 2, "-12.35", 2, 1},
+		{"-0.01234", 5, "-0.01235", 5, 1},
+		{"-1234", 0, "-123400", 0, 1},
+		{"-12340", 0, "-123400", 0, 1},
 
 		// Test for int type decimal.
-		{int64(-1), int64(1), -1},
-		{int64(math.MaxInt64), int64(math.MinInt64), 1},
-		{int64(math.MaxInt64), int64(math.MaxInt32), 1},
-		{int64(math.MinInt32), int64(math.MaxInt16), -1},
-		{int64(math.MinInt64), int64(math.MaxInt8), -1},
-		{int64(0), int64(math.MaxInt8), -1},
-		{int64(math.MinInt8), int64(0), -1},
-		{int64(math.MinInt16), int64(math.MaxInt16), -1},
-		{int64(1), int64(-1), 1},
-		{int64(1), int64(0), 1},
-		{int64(-1), int64(0), -1},
-		{int64(0), int64(0), 0},
-		{int64(math.MaxInt16), int64(math.MaxInt16), 0},
+		{int64(-1), 0, int64(1), 0, -1},
+		{int64(math.MaxInt64), 0, int64(math.MinInt64), 0, 1},
+		{int64(math.MaxInt64), 0, int64(math.MaxInt32), 0, 1},
+		{int64(math.MinInt32), 0, int64(math.MaxInt16), 0, -1},
+		{int64(math.MinInt64), 0, int64(math.MaxInt8), 0, -1},
+		{int64(0), 0, int64(math.MaxInt8), 0, -1},
+		{int64(math.MinInt8), 0, int64(0), 0, -1},
+		{int64(math.MinInt16), 0, int64(math.MaxInt16), 0, -1},
+		{int64(1), 0, int64(-1), 0, 1},
+		{int64(1), 0, int64(0), 0, 1},
+		{int64(-1), 0, int64(0), 0, -1},
+		{int64(0), 0, int64(0), 0, 0},
+		{int64(math.MaxInt16), 0, int64(math.MaxInt16), 0, 0},
 
 		// Test for uint type decimal.
-		{uint64(0), uint64(0), 0},
-		{uint64(1), uint64(0), 1},
-		{uint64(0), uint64(1), -1},
-		{uint64(math.MaxInt8), uint64(math.MaxInt16), -1},
-		{uint64(math.MaxUint32), uint64(math.MaxInt32), 1},
-		{uint64(math.MaxUint8), uint64(math.MaxInt8), 1},
-		{uint64(math.MaxUint16), uint64(math.MaxInt32), -1},
-		{uint64(math.MaxUint64), uint64(math.MaxInt64), 1},
-		{uint64(math.MaxInt64), uint64(math.MaxUint32), 1},
-		{uint64(math.MaxUint64), uint64(0), 1},
-		{uint64(0), uint64(math.MaxUint64), -1},
+		{uint64(0), 0, uint64(0), 0, 0},
+		{uint64(1), 0, uint64(0), 0, 1},
+		{uint64(0), 0, uint64(1), 0, -1},
+		{uint64(math.MaxInt8), 0, uint64(math.MaxInt16), 0, -1},
+		{uint64(math.MaxUint32), 0, uint64(math.MaxInt32), 0, 1},
+		{uint64(math.MaxUint8), 0, uint64(math.MaxInt8), 0, 1},
+		{uint64(math.MaxUint16), 0, uint64(math.MaxInt32), 0, -1},
+		{uint64(math.MaxUint64), 0, uint64(math.MaxInt64), 0, 1},
+		{uint64(math.MaxInt64), 0, uint64(math.MaxUint32), 0, 1},
+		{uint64(math.MaxUint64), 0, uint64(0), 0, 1},
+		{uint64(0), 0, uint64(math.MaxUint64), 0, -1},
 	}
 	for _, t := range tblCmp {
 		d1 := types.NewDatum(t.Arg1)
-		dec1, err := d1.ToDecimal(sc)
+		dec1, err := d1.ToDecimal(sc, t.Fsp1)
 		c.Assert(err, IsNil)
 		d1.SetMysqlDecimal(dec1)
 		d2 := types.NewDatum(t.Arg2)
-		dec2, err := d2.ToDecimal(sc)
+		dec2, err := d2.ToDecimal(sc, t.Fsp2)
 		c.Assert(err, IsNil)
 		d2.SetMysqlDecimal(dec2)
 

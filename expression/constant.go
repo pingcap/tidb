@@ -150,7 +150,7 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ types.Row) (float64, bool,
 		if dt.IsNull() {
 			return 0, true, nil
 		}
-		val, err := dt.ToFloat64(ctx.GetSessionVars().StmtCtx)
+		val, err := dt.ToFloat64(ctx.GetSessionVars().StmtCtx, c.RetType.Decimal)
 		if err != nil {
 			return 0, true, errors.Trace(err)
 		}
@@ -161,7 +161,7 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ types.Row) (float64, bool,
 		}
 	}
 	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
-		res, err := c.Value.ToFloat64(ctx.GetSessionVars().StmtCtx)
+		res, err := c.Value.ToFloat64(ctx.GetSessionVars().StmtCtx, c.RetType.Decimal)
 		return res, err != nil, errors.Trace(err)
 	}
 	return c.Value.GetFloat64(), false, nil
@@ -177,7 +177,7 @@ func (c *Constant) EvalString(ctx sessionctx.Context, _ types.Row) (string, bool
 		if dt.IsNull() {
 			return "", true, nil
 		}
-		val, err := dt.ToString()
+		val, err := dt.ToString(c.RetType.Decimal)
 		if err != nil {
 			return "", true, errors.Trace(err)
 		}
@@ -187,7 +187,7 @@ func (c *Constant) EvalString(ctx sessionctx.Context, _ types.Row) (string, bool
 			return "", true, nil
 		}
 	}
-	res, err := c.Value.ToString()
+	res, err := c.Value.ToString(c.RetType.Decimal)
 	return res, err != nil, errors.Trace(err)
 }
 
@@ -207,7 +207,7 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ types.Row) (*types.MyDe
 			return nil, true, nil
 		}
 	}
-	res, err := c.Value.ToDecimal(ctx.GetSessionVars().StmtCtx)
+	res, err := c.Value.ToDecimal(ctx.GetSessionVars().StmtCtx, c.RetType.Decimal)
 	return res, err != nil, errors.Trace(err)
 }
 
@@ -221,7 +221,7 @@ func (c *Constant) EvalTime(ctx sessionctx.Context, _ types.Row) (val types.Time
 		if dt.IsNull() {
 			return types.Time{}, true, nil
 		}
-		val, err := dt.ToString()
+		val, err := dt.ToString(c.RetType.Decimal)
 		if err != nil {
 			return types.Time{}, true, errors.Trace(err)
 		}
@@ -248,7 +248,7 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ types.Row) (val types.
 		if dt.IsNull() {
 			return types.ZeroDuration, true, nil
 		}
-		val, err := dt.ToString()
+		val, err := dt.ToString(c.RetType.Decimal)
 		if err != nil {
 			return types.ZeroDuration, true, errors.Trace(err)
 		}

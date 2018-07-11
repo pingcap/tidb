@@ -130,7 +130,8 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 		if e != nil {
 			return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q %v", k, e)
 		}
-		str, e1 := d.ToString()
+		// use max fsp, let outer to do round manually.
+		str, e1 := d.ToString(types.MaxFsp)
 		if e1 != nil {
 			return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q %v", k, e1)
 		}

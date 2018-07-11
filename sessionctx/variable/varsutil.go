@@ -121,7 +121,7 @@ func GetScopeNoneSystemVar(key string) (string, bool, error) {
 const epochShiftBits = 18
 
 // SetSessionSystemVar sets system variable and updates SessionVars states.
-func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) error {
+func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum, fsp int) error {
 	name = strings.ToLower(name)
 	sysVar := SysVars[name]
 	if sysVar == nil {
@@ -130,7 +130,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if value.IsNull() {
 		return vars.deleteSystemVar(name)
 	}
-	sVal, err := value.ToString()
+	sVal, err := value.ToString(fsp)
 	if err != nil {
 		return errors.Trace(err)
 	}

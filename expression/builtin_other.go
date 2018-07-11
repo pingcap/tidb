@@ -777,7 +777,7 @@ func (b *builtinGetParamStringSig) evalString(row types.Row) (string, bool, erro
 	v := sessionVars.PreparedParams[idx]
 
 	dt := v.(types.Datum)
-	str, err := (&dt).ToString()
+	str, err := (&dt).ToString(b.tp.Decimal)
 	if err != nil {
 		return "", true, nil
 	}

@@ -48,7 +48,7 @@ func (expr *Constant) ExplainInfo() string {
 		}
 		return "not recognized const vanue"
 	}
-	valStr, err := dt.ToString()
+	valStr, err := dt.ToString(expr.RetType.Decimal)
 	if err != nil {
 		if expr.Value.Kind() == types.KindNull {
 			return "null"

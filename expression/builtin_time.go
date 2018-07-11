@@ -3589,7 +3589,7 @@ func (c *timestampLiteralFunctionClass) getFunction(ctx sessionctx.Context, args
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	str, err := dt.ToString()
+	str, err := dt.ToString(con.RetType.Decimal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

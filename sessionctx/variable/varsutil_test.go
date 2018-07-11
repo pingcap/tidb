@@ -95,27 +95,27 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	v := NewSessionVars()
 	v.GlobalVarsAccessor = newMockGlobalAccessor()
 
-	SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"))
+	SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"), types.DefaultFsp)
 	val, err := GetSessionSystemVar(v, "autocommit")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
-	c.Assert(SetSessionSystemVar(v, "autocommit", types.Datum{}), NotNil)
+	c.Assert(SetSessionSystemVar(v, "autocommit", types.Datum{}, types.DefaultFsp), NotNil)
 
-	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("strict_trans_tables"))
+	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("strict_trans_tables"), types.DefaultFsp)
 	val, err = GetSessionSystemVar(v, "sql_mode")
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "STRICT_TRANS_TABLES")
 	c.Assert(v.StrictSQLMode, IsTrue)
-	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(""))
+	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(""), types.DefaultFsp)
 	c.Assert(v.StrictSQLMode, IsFalse)
 
-	SetSessionSystemVar(v, "character_set_connection", types.NewStringDatum("utf8"))
-	SetSessionSystemVar(v, "collation_connection", types.NewStringDatum("utf8_general_ci"))
+	SetSessionSystemVar(v, "character_set_connection", types.NewStringDatum("utf8"), types.DefaultFsp)
+	SetSessionSystemVar(v, "collation_connection", types.NewStringDatum("utf8_general_ci"), types.DefaultFsp)
 	charset, collation := v.GetCharsetInfo()
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_general_ci")
 
-	c.Assert(SetSessionSystemVar(v, "character_set_results", types.Datum{}), IsNil)
+	c.Assert(SetSessionSystemVar(v, "character_set_results", types.Datum{}, types.DefaultFsp), IsNil)
 
 	// Test case for get TiDBImportingData session variable.
 	val, err = GetSessionSystemVar(v, TiDBImportingData)
@@ -124,15 +124,15 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 
 	// Test case for tidb_import_data
 	c.Assert(v.ImportingData, IsFalse)
-	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("0"))
+	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("0"), types.DefaultFsp)
 	c.Assert(v.ImportingData, IsFalse)
-	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("1"))
+	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("1"), types.DefaultFsp)
 	c.Assert(v.ImportingData, IsTrue)
-	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("0"))
+	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("0"), types.DefaultFsp)
 	c.Assert(v.ImportingData, IsFalse)
 
 	// Test case for change TiDBImportingData session variable.
-	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("1"))
+	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("1"), types.DefaultFsp)
 	val, err = GetSessionSystemVar(v, TiDBImportingData)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
@@ -152,23 +152,23 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		{"-6:00", "UTC", true, 6 * time.Hour},
 	}
 	for _, tt := range tests {
-		err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
+		err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input), types.DefaultFsp)
 		c.Assert(err, IsNil)
 		c.Assert(v.TimeZone.String(), Equals, tt.expect)
 		if tt.compareValue {
-			SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
+			SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input), types.DefaultFsp)
 			t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
 			t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
 			c.Assert(t2.Sub(t1), Equals, tt.diff)
 		}
 	}
-	err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum("6:00"))
+	err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum("6:00"), types.DefaultFsp)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, ErrUnknownTimeZone), IsTrue)
 
 	// Test case for sql mode.
 	for str, mode := range mysql.Str2SQLMode {
-		SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(str))
+		SetSessionSystemVar(v, "sql_mode", types.NewStringDatum(str), types.DefaultFsp)
 		if modeParts, exists := mysql.CombinationSQLMode[str]; exists {
 			for _, part := range modeParts {
 				mode |= mysql.Str2SQLMode[part]
@@ -178,25 +178,25 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	}
 
 	// Combined sql_mode
-	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("REAL_AS_FLOAT,ANSI_QUOTES"))
+	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("REAL_AS_FLOAT,ANSI_QUOTES"), types.DefaultFsp)
 	c.Assert(v.SQLMode, Equals, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes)
 
 	// Test case for tidb_index_serial_scan_concurrency.
 	c.Assert(v.IndexSerialScanConcurrency, Equals, 1)
-	SetSessionSystemVar(v, TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"))
+	SetSessionSystemVar(v, TiDBIndexSerialScanConcurrency, types.NewStringDatum("4"), types.DefaultFsp)
 	c.Assert(v.IndexSerialScanConcurrency, Equals, 4)
 
 	// Test case for tidb_batch_insert.
 	c.Assert(v.BatchInsert, IsFalse)
-	SetSessionSystemVar(v, TiDBBatchInsert, types.NewStringDatum("1"))
+	SetSessionSystemVar(v, TiDBBatchInsert, types.NewStringDatum("1"), types.DefaultFsp)
 	c.Assert(v.BatchInsert, IsTrue)
 
 	c.Assert(v.MaxChunkSize, Equals, 1024)
-	SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
+	SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"), types.DefaultFsp)
 	c.Assert(v.MaxChunkSize, Equals, 2)
 
 	// Test case for TiDBConfig session variable.
-	err = SetSessionSystemVar(v, TiDBConfig, types.NewStringDatum("abc"))
+	err = SetSessionSystemVar(v, TiDBConfig, types.NewStringDatum("abc"), types.DefaultFsp)
 	c.Assert(terror.ErrorEqual(err, ErrReadOnly), IsTrue)
 	val, err = GetSessionSystemVar(v, TiDBConfig)
 	c.Assert(err, IsNil)
@@ -204,32 +204,32 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, string(bVal))
 
-	SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("1"))
+	SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("1"), types.DefaultFsp)
 	val, err = GetSessionSystemVar(v, TiDBEnableStreaming)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 	c.Assert(v.EnableStreaming, Equals, true)
-	SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("0"))
+	SetSessionSystemVar(v, TiDBEnableStreaming, types.NewStringDatum("0"), types.DefaultFsp)
 	val, err = GetSessionSystemVar(v, TiDBEnableStreaming)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 	c.Assert(v.EnableStreaming, Equals, false)
 
 	c.Assert(v.OptimizerSelectivityLevel, Equals, DefTiDBOptimizerSelectivityLevel)
-	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
+	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1), types.DefaultFsp)
 	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
 
 	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
-	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1))
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1), types.DefaultFsp)
 	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(1))
 
-	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1), types.DefaultFsp)
 	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
 
-	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(int64(maxDDLReorgWorkerCount)+1))
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(int64(maxDDLReorgWorkerCount)+1), types.DefaultFsp)
 	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(maxDDLReorgWorkerCount))
 
-	err = SetSessionSystemVar(v, TiDBRetryLimit, types.NewStringDatum("3"))
+	err = SetSessionSystemVar(v, TiDBRetryLimit, types.NewStringDatum("3"), types.DefaultFsp)
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBRetryLimit)
 	c.Assert(err, IsNil)
@@ -237,7 +237,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(v.RetryLimit, Equals, int64(3))
 
 	c.Assert(v.EnableTablePartition, IsFalse)
-	err = SetSessionSystemVar(v, TiDBEnableTablePartition, types.NewStringDatum("1"))
+	err = SetSessionSystemVar(v, TiDBEnableTablePartition, types.NewStringDatum("1"), types.DefaultFsp)
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBEnableTablePartition)
 	c.Assert(err, IsNil)

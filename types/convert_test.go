@@ -250,11 +250,11 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
 	sc := new(stmtctx.StatementContext)
-	v, err = d.ToDecimal(sc)
+	v, err = d.ToDecimal(sc, DefaultFsp)
 	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue)
 
 	sc.IgnoreTruncate = true
-	v, err = d.ToDecimal(sc)
+	v, err = d.ToDecimal(sc, DefaultFsp)
 	c.Assert(err, IsNil)
 	c.Assert(v.(*MyDecimal).String(), Equals, "0")
 
