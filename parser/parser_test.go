@@ -1622,6 +1622,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 				PARTITION P1 VALUES LESS THAN (2010),
 				PARTITION P2 VALUES LESS THAN (2015),
 				PARTITION P3 VALUES LESS THAN MAXVALUE)`, true},
+		// For drop table partition statement.
+		{"alter table t drop partition p1;", true},
+		{"alter table t drop partition p2;", true},
 		{"ALTER TABLE t DISABLE KEYS", true},
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
