@@ -1370,7 +1370,7 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		c.Assert(f, NotNil)
 		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		res, err := r.ToString()
+		res, err := r.ToString(f.getRetTp().Decimal)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, tt.ret, Commentf("select oct(%v);", tt.origin))
 	}
@@ -1648,7 +1648,7 @@ func (s *testEvaluatorSuite) TestExportSet(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		exportSetRes, err := evalBuiltinFunc(f, nil)
-		res, err := exportSetRes.ToString()
+		res, err := exportSetRes.ToString(f.getRetTp().Decimal)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, t.res)
 	}
@@ -1814,7 +1814,7 @@ func (s *testEvaluatorSuite) TestStringRight(c *C) {
 			c.Assert(test.expect, IsNil)
 			continue
 		}
-		res, err := result.ToString()
+		res, err := result.ToString(f.getRetTp().Decimal)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, test.expect)
 	}

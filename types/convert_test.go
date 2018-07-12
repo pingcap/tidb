@@ -485,7 +485,7 @@ func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	if casted.IsNull() {
 		c.Assert(expected, Equals, "<nil>")
 	} else {
-		str, err := casted.ToString()
+		str, err := casted.ToString(ft.Decimal)
 		c.Assert(err, IsNil)
 		c.Assert(str, Equals, expected)
 	}
@@ -511,7 +511,7 @@ func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	if casted.IsNull() {
 		c.Assert(expected, Equals, "<nil>")
 	} else {
-		str, err := casted.ToString()
+		str, err := casted.ToString(ft.Decimal)
 		c.Assert(err, IsNil)
 		c.Assert(str, Equals, expected)
 	}

@@ -70,7 +70,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	}
 	var expectIndexValues []string
 	for _, v := range indexValues {
-		str, err := v.ToString()
+		str, err := v.ToString(types.DefaultFsp)
 		if err != nil {
 			str = fmt.Sprintf("%d-%v", v.Kind(), v.GetValue())
 		}

@@ -61,7 +61,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
+	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"), types.DefaultFsp)
 
 	tbl := []struct {
 		Expr interface{}

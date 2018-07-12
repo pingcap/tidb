@@ -170,7 +170,7 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 			return nil
 		}
 	}
-	evalCtx.Value, err = calculateSum(sc, evalCtx.Value, value, af.RetTp.Decimal)
+	evalCtx.Value, err = calculateSum(sc, evalCtx.Value, value, a.GetType().Decimal)
 	if err != nil {
 		return errors.Trace(err)
 	}
