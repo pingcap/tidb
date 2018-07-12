@@ -2691,9 +2691,9 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec("create table t(a date)")
 	result = tk.MustQuery("desc select a = a from t")
 	result.Check(testkit.Rows(
-		"Projection_3 root eq(test.t.a, test.t.a) 10000.00",
-		"└─TableReader_5 root data:TableScan_4 10000.00",
-		"  └─TableScan_4 cop table:t, range:[-inf,+inf], keep order:false 10000.00",
+		"Projection_3 10000.00 root eq(test.t.a, test.t.a)",
+		"└─TableReader_5 10000.00 root data:TableScan_4",
+		"  └─TableScan_4 10000.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 
 	// for interval
@@ -2744,6 +2744,26 @@ func (s *testIntegrationSuite) TestAggregationBuiltin(c *C) {
 	tk.MustExec("insert into t values(1.123456), (1.123456)")
 	result := tk.MustQuery("select avg(a) from t")
 	result.Check(testkit.Rows("1.1234560000"))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE `t` (	`a` int, KEY `idx_a` (`a`))")
+	result = tk.MustQuery("select avg(a) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select max(a), min(a) from t")
+	result.Check(testkit.Rows("<nil> <nil>"))
+	result = tk.MustQuery("select distinct a from t")
+	result.Check(testkit.Rows())
+	result = tk.MustQuery("select sum(a) from t")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select count(a) from t")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select bit_or(a) from t")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select bit_xor(a) from t")
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery("select bit_and(a) from t")
+	result.Check(testkit.Rows("18446744073709551615"))
 }
 
 func (s *testIntegrationSuite) TestAggregationBuiltinBitOr(c *C) {
@@ -3352,7 +3372,7 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	return store, dom, errors.Trace(err)
 }
 
-func (s *testIntegrationSuite) TestTwoDecimalAssignTruncate(c *C) {
+func (s *testIntegrationSuite) TestTwoDecimalTruncate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
 	tk.MustExec("use test")
@@ -3363,4 +3383,6 @@ func (s *testIntegrationSuite) TestTwoDecimalAssignTruncate(c *C) {
 	tk.MustExec("update t1 set b = a")
 	res := tk.MustQuery("select a, b from t1")
 	res.Check(testkit.Rows("123.12345 123.1"))
+	res = tk.MustQuery("select 2.00000000000000000000000000000001 * 1.000000000000000000000000000000000000000000002")
+	res.Check(testkit.Rows("2.000000000000000000000000000000"))
 }

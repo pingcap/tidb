@@ -27,10 +27,12 @@ var (
 	// All the AggFunc implementations for "SUM" are listed here.
 	// All the AggFunc implementations for "AVG" are listed here.
 	_ AggFunc = (*avgOriginal4Decimal)(nil)
+	_ AggFunc = (*avgOriginal4DistinctDecimal)(nil)
 	_ AggFunc = (*avgPartial4Decimal)(nil)
 
 	_ AggFunc = (*avgOriginal4Float64)(nil)
 	_ AggFunc = (*avgPartial4Float64)(nil)
+	_ AggFunc = (*avgOriginal4DistinctFloat64)(nil)
 
 	// All the AggFunc implementations for "FIRSTROW" are listed here.
 	// All the AggFunc implementations for "MAX" are listed here.

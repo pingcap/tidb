@@ -187,7 +187,7 @@ func (p *Insert) ResolveIndices() {
 	p.baseSchemaProducer.ResolveIndices()
 	for _, asgn := range p.OnDuplicate {
 		asgn.Col = asgn.Col.ResolveIndices(p.tableSchema).(*expression.Column)
-		asgn.Expr = asgn.Expr.ResolveIndices(p.tableSchema)
+		asgn.Expr = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
 	}
 	for _, set := range p.SetList {
 		set.Col = set.Col.ResolveIndices(p.tableSchema).(*expression.Column)
@@ -198,7 +198,7 @@ func (p *Insert) ResolveIndices() {
 	}
 	for _, asgn := range p.GenCols.OnDuplicates {
 		asgn.Col = asgn.Col.ResolveIndices(p.tableSchema).(*expression.Column)
-		asgn.Expr = asgn.Expr.ResolveIndices(p.tableSchema)
+		asgn.Expr = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
 	}
 }
 

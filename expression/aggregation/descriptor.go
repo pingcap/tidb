@@ -110,34 +110,52 @@ func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) {
 	}
 }
 
-// CalculateDefaultValue gets the default value when the aggregation function's input is null.
-// The input stands for the schema of Aggregation's child. If the function can't produce a default value, the second
+// EvalNullValueInOuterJoin gets the null value when the aggregation is upon an outer join,
+// and the aggregation function's input is null.
+// If there is no matching row for the inner table of an outer join,
+// an aggregation function only involves constant and/or columns belongs to the inner table
+// will be set to the null value.
+// The input stands for the schema of Aggregation's child. If the function can't produce a null value, the second
 // return value will be false.
+// e.g.
+// Table t with only one row:
+// +-------+---------+---------+
+// | Table | Field   | Type    |
+// +-------+---------+---------+
+// | t     | a       | int(11) |
+// +-------+---------+---------+
+// +------+
+// | a    |
+// +------+
+// |    1 |
+// +------+
 //
-// According to MySQL, DefaultValue of the aggregation function can be tested as the following sql:
+// Table s which is empty:
+// +-------+---------+---------+
+// | Table | Field   | Type    |
+// +-------+---------+---------+
+// | s     | a       | int(11) |
+// +-------+---------+---------+
 //
-// mysql> CREATE TABLE `t` (
-// ->   `a` int(11) DEFAULT NULL,
-// ->   `b` int(11) DEFAULT NULL
-// -> );
-// mysql>
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
-// | a    | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) |
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
-// | NULL |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
-// 1 row in set (0.01 sec)
-func (a *AggFuncDesc) CalculateDefaultValue(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
+// Query: `select t.a as `t.a`,  count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), s.a as `s.a`, avg(95) from t left join s on t.a = s.a;`
+// +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
+// | t.a  | count(95) | sum(95) | avg(95) | bit_or(95) | bit_and(95) | bit_or(95) | max(95) | min(95) | s.a  | avg(s.a) |
+// +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
+// |    1 |         1 |      95 | 95.0000 |         95 |          95 |         95 |      95 |      95 | NULL |     NULL |
+// +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
+func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
 	switch a.Name {
 	case ast.AggFuncCount:
-		return a.calculateDefaultValue4Count(ctx, schema)
+		return a.evalNullValueInOuterJoin4Count(ctx, schema)
 	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin,
-		ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncGroupConcat:
-		return a.calculateDefaultValue4Sum(ctx, schema)
+		ast.AggFuncFirstRow:
+		return a.evalNullValueInOuterJoin4Sum(ctx, schema)
+	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
+		return types.Datum{}, false
 	case ast.AggFuncBitAnd:
-		return a.calculateDefaultValue4BitAnd(ctx, schema)
+		return a.evalNullValueInOuterJoin4BitAnd(ctx, schema)
 	case ast.AggFuncBitOr, ast.AggFuncBitXor:
-		return a.calculateDefaultValue4BitOr(ctx, schema)
+		return a.evalNullValueInOuterJoin4BitOr(ctx, schema)
 	default:
 		panic("unsupported agg function")
 	}
@@ -246,11 +264,18 @@ func (a *AggFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
 }
 
-func (a *AggFuncDesc) calculateDefaultValue4Count(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
-	return types.NewDatum(0), true
+func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
+	for _, arg := range a.Args {
+		result := expression.EvaluateExprWithNull(ctx, schema, arg)
+		con, ok := result.(*expression.Constant)
+		if !ok || con.Value.IsNull() {
+			return types.Datum{}, ok
+		}
+	}
+	return types.NewDatum(1), true
 }
 
-func (a *AggFuncDesc) calculateDefaultValue4Sum(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
+func (a *AggFuncDesc) evalNullValueInOuterJoin4Sum(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
 	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
 	con, ok := result.(*expression.Constant)
 	if !ok || con.Value.IsNull() {
@@ -259,7 +284,7 @@ func (a *AggFuncDesc) calculateDefaultValue4Sum(ctx sessionctx.Context, schema *
 	return con.Value, true
 }
 
-func (a *AggFuncDesc) calculateDefaultValue4BitAnd(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
+func (a *AggFuncDesc) evalNullValueInOuterJoin4BitAnd(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
 	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
 	con, ok := result.(*expression.Constant)
 	if !ok || con.Value.IsNull() {
@@ -268,7 +293,7 @@ func (a *AggFuncDesc) calculateDefaultValue4BitAnd(ctx sessionctx.Context, schem
 	return con.Value, true
 }
 
-func (a *AggFuncDesc) calculateDefaultValue4BitOr(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
+func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
 	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
 	con, ok := result.(*expression.Constant)
 	if !ok || con.Value.IsNull() {
