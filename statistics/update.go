@@ -394,7 +394,7 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 // Currently, we dump the feedback with the period of 10 minutes, which means
 // it takes 10 minutes for a feedback to take effect. However, we can use the
 // feedback locally on this tidb-server, so it could be used more timely.
-func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) error {
+func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 	h.listHead.Lock()
 	for collector := h.listHead.next; collector != nil; collector = collector.next {
 		collector.tryToRemoveFromList()
@@ -425,7 +425,6 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) error {
 		}
 		h.UpdateTableStats([]*Table{&newTblStats}, nil)
 	}
-	return nil
 }
 
 // UpdateErrorRate updates the error rate of columns from h.rateMap to cache.
