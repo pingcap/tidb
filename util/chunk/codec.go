@@ -24,7 +24,7 @@ import (
 
 // Codec is used to:
 // 1. encode a Chunk to a byte slice.
-// 2. decode a CHunk from a byte slice.
+// 2. decode a Chunk from a byte slice.
 type Codec struct {
 	// colTypes is used to check whether a column is fixed sized and what the
 	// fixed size for every element.
@@ -129,14 +129,14 @@ func (c *Codec) i32SliceToBytes(i32s []int32) (b []byte) {
 }
 
 // Decode decodes a Chunk from a byte slice, return the remained unused bytes.
-func (c *Codec) Decode(buffer []byte) *Chunk {
+func (c *Codec) Decode(buffer []byte) (*Chunk, []byte) {
 	chk := &Chunk{}
 	for ordinal := 0; len(buffer) > 0; ordinal++ {
 		col := &column{}
 		buffer = c.decodeColumn(buffer, col, ordinal)
 		chk.columns = append(chk.columns, col)
 	}
-	return chk
+	return chk, buffer
 }
 
 // DecodeToChunk decodes a Chunk from a byte slice, return the remained unused bytes.

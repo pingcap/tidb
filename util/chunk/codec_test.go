@@ -122,7 +122,7 @@ func BenchmarkDecode(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = codec.Decode(buffer)
+		codec.Decode(buffer)
 	}
 }
 
@@ -151,6 +151,6 @@ func BenchmarkDecodeToChunk(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = codec.DecodeToChunk(buffer, chk)
+		codec.DecodeToChunk(buffer, chk)
 	}
 }
