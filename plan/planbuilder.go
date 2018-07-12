@@ -469,7 +469,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p.SetSchema(buildShowDDLFields())
 		ret = p
 	case ast.AdminShowDDLJobs:
-		p := &ShowDDLJobs{}
+		p := &ShowDDLJobs{JobNumber: as.JobNumber}
 		p.SetSchema(buildShowDDLJobsFields())
 		ret = p
 	case ast.AdminCancelDDLJobs:
@@ -1232,7 +1232,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	p := &Explain{StmtPlan: pp}
 	switch strings.ToLower(explain.Format) {
 	case ast.ExplainFormatROW:
-		retFields := []string{"id", "task", "operator info", "count"}
+		retFields := []string{"id", "count", "task", "operator info"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		for _, fieldName := range retFields {
 			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
