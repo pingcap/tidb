@@ -630,10 +630,11 @@ type HandleRange struct {
 type AdminStmt struct {
 	stmtNode
 
-	Tp     AdminStmtType
-	Index  string
-	Tables []*TableName
-	JobIDs []int64
+	Tp        AdminStmtType
+	Index     string
+	Tables    []*TableName
+	JobIDs    []int64
+	JobNumber int64
 
 	HandleRanges []HandleRange
 }
