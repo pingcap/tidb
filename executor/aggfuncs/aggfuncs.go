@@ -24,6 +24,16 @@ import (
 // All the AggFunc implementations are listed here for navigation.
 var (
 	// All the AggFunc implementations for "COUNT" are listed here.
+	_ AggFunc = (*countPartial)(nil)
+	_ AggFunc = (*countOriginal4Int)(nil)
+	_ AggFunc = (*countOriginal4Real)(nil)
+	_ AggFunc = (*countOriginal4Decimal)(nil)
+	_ AggFunc = (*countOriginal4Time)(nil)
+	_ AggFunc = (*countOriginal4Duration)(nil)
+	_ AggFunc = (*countOriginal4JSON)(nil)
+	_ AggFunc = (*countOriginal4String)(nil)
+	_ AggFunc = (*countOriginalWithDistinct)(nil)
+
 	// All the AggFunc implementations for "SUM" are listed here.
 	// All the AggFunc implementations for "FIRSTROW" are listed here.
 	// All the AggFunc implementations for "MAX"/"MIN" are listed here.
