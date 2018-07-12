@@ -145,7 +145,6 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 
 // buildBitOr builds the AggFunc implementation for function "BIT_OR".
 func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	// BIT_OR doesn't need to handle the distinct property.
 	switch aggFuncDesc.Args[0].GetType().EvalType() {
 	case types.ETInt:
 		base := baseAggFunc{
@@ -159,10 +158,26 @@ func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildBitXor builds the AggFunc implementation for function "BIT_XOR".
 func buildBitXor(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	switch aggFuncDesc.Args[0].GetType().EvalType() {
+	case types.ETInt:
+		base := baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		}
+		return &bitXorUint64{baseBitAggFunc{base}}
+	}
 	return nil
 }
 
 // buildBitAnd builds the AggFunc implementation for function "BIT_AND".
 func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	switch aggFuncDesc.Args[0].GetType().EvalType() {
+	case types.ETInt:
+		base := baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		}
+		return &bitAndUint64{baseBitAggFunc{base}}
+	}
 	return nil
 }
