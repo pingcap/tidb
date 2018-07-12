@@ -979,6 +979,13 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{Tp: ast.AlterTableDropPrimaryKey}
 	}
+|	"DROP" "PARTITION" Identifier
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableDropPartition,
+			Name: $3,
+		}
+	}	
 |	"DROP" KeyOrIndex Identifier
 	{
 		$$ = &ast.AlterTableSpec{
@@ -1841,8 +1848,8 @@ PartitionDefinition:
 	"PARTITION" Identifier PartDefValuesOpt PartDefCommentOpt PartDefStorageOpt
 	{
 		partDef := &ast.PartitionDefinition{
-			Name:		$2,
-			Comment:	$4.(string),
+			Name: model.NewCIStr($2),
+			Comment: $4.(string),
 		}
 		switch $3.(type) {
 		case []ast.ExprNode:
@@ -5088,6 +5095,13 @@ AdminStmt:
 |	"ADMIN" "SHOW" "DDL" "JOBS"
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
+	}
+|	"ADMIN" "SHOW" "DDL" "JOBS" NUM
+	{
+		$$ = &ast.AdminStmt{
+		    Tp: ast.AdminShowDDLJobs,
+		    JobNumber: $5.(int64),
+		}
 	}
 |	"ADMIN" "CHECK" "TABLE" TableNameList
 	{

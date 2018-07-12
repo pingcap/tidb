@@ -33,9 +33,9 @@ func Build(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	case ast.AggFuncFirstRow:
 		return buildFirstRow(aggFuncDesc, ordinal)
 	case ast.AggFuncMax:
-		return buildMax(aggFuncDesc, ordinal)
+		return buildMaxMin(aggFuncDesc, ordinal, true)
 	case ast.AggFuncMin:
-		return buildMin(aggFuncDesc, ordinal)
+		return buildMaxMin(aggFuncDesc, ordinal, false)
 	case ast.AggFuncGroupConcat:
 		return buildGroupConcat(aggFuncDesc, ordinal)
 	case ast.AggFuncBitOr:
@@ -53,12 +53,12 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "SUM".
+// buildSum builds the AggFunc implementation for function "SUM".
 func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "AVG".
+// buildAvg builds the AggFunc implementation for function "AVG".
 func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
@@ -76,12 +76,12 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		switch aggFuncDesc.Args[0].GetType().Tp {
 		case mysql.TypeNewDecimal:
 			if aggFuncDesc.HasDistinct {
-				return nil // not implemented yet.
+				return &avgOriginal4DistinctDecimal{base}
 			}
 			return &avgOriginal4Decimal{baseAvgDecimal{base}}
 		case mysql.TypeFloat, mysql.TypeDouble:
 			if aggFuncDesc.HasDistinct {
-				return nil // not implemented yet.
+				return &avgOriginal4DistinctFloat64{base}
 			}
 			return &avgOriginal4Float64{baseAvgFloat64{base}}
 		}
@@ -99,27 +99,51 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "FIRST_ROW".
+// buildFirstRow builds the AggFunc implementation for function "FIRST_ROW".
 func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "MAX".
-func buildMax(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+// buildMaxMin builds the AggFunc implementation for function "MAX" and "MIN".
+func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
+	base := baseMaxMinAggFunc{
+		baseAggFunc: baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+		isMax: isMax,
+	}
+
+	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+	default:
+		switch evalType {
+		case types.ETInt:
+			if mysql.HasUnsignedFlag(fieldType.Flag) {
+				return &maxMin4Uint{base}
+			}
+			return &maxMin4Int{base}
+		case types.ETReal:
+			switch fieldType.Tp {
+			case mysql.TypeFloat:
+				return &maxMin4Float32{base}
+			case mysql.TypeDouble:
+				return &maxMin4Float64{base}
+			}
+		case types.ETDecimal:
+			return &maxMin4Decimal{base}
+		}
+	}
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "MIN".
-func buildMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return nil
-}
-
-// buildCount builds the AggFunc implementation for function "GROUP_CONCAT".
+// buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
 func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "BIT_OR".
+// buildBitOr builds the AggFunc implementation for function "BIT_OR".
 func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// BIT_OR doesn't need to handle the distinct property.
 	switch aggFuncDesc.Args[0].GetType().EvalType() {
@@ -133,12 +157,12 @@ func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "BIT_XOR".
+// buildBitXor builds the AggFunc implementation for function "BIT_XOR".
 func buildBitXor(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "BIT_AND".
+// buildBitAnd builds the AggFunc implementation for function "BIT_AND".
 func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
