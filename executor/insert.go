@@ -206,7 +206,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 
 // updateDupRow updates a duplicate row to a new row.
 func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
-	oldRow, err := e.decodeOldRow(e.ctx, e.Table, handle)
+	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
 	if err != nil {
 		return errors.Trace(err)
 	}

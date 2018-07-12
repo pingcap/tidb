@@ -46,37 +46,42 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *ReplaceExec) removeRow(handle int64, newRow types.DatumRow) error {
-	oldRow, err := e.decodeOldRow(e.ctx, e.Table, handle)
+// removeRow removes the duplicate row and cleanup its keys in the key-value map,
+// but if the to-be-removed row equals to the to-be-added row, no remove or add things to do.
+func (e *ReplaceExec) removeRow(handle int64, newRow types.DatumRow) (bool, error) {
+	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	rowUnchanged, err := types.EqualDatums(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
+	}
+	if rowUnchanged {
+		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		return true, nil
 	}
 	err = e.Table.RemoveRecord(e.ctx, handle, oldRow)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, handle, nil)
-	if !rowUnchanged {
-		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-	}
+	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 
 	// Cleanup keys map, because the record was removed.
 	cleanupRows, err := e.getKeysNeedCheck(e.ctx, e.Table, []types.DatumRow{oldRow})
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	if len(cleanupRows) > 0 {
 		// The length of need-to-cleanup rows should be at most 1, due to we only input 1 row.
 		e.deleteDupKeys(cleanupRows[0])
 	}
-	return nil
+	return false, nil
 }
 
-func (e *ReplaceExec) insertRow(row types.DatumRow) (int64, error) {
+// addRow adds a row when all the duplicate key were checked.
+func (e *ReplaceExec) addRow(row types.DatumRow) (int64, error) {
 	// Set kv.PresumeKeyNotExists is safe here, because we've already removed all duplicated rows.
 	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
 	h, err := e.Table.AddRecord(e.ctx, row, false)
@@ -116,15 +121,19 @@ func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
 
 	for i, r := range e.toBeCheckedRows {
 		for {
+			rowUnchanged := false
 			if r.handleKey != nil {
 				if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
 					handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					err = e.removeRow(handle, newRows[i])
+					rowUnchanged, err = e.removeRow(handle, newRows[i])
 					if err != nil {
 						return errors.Trace(err)
+					}
+					if rowUnchanged {
+						break
 					}
 					continue
 				}
@@ -137,7 +146,7 @@ func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
 					if err != nil {
 						return errors.Trace(err)
 					}
-					err = e.removeRow(handle, newRows[i])
+					rowUnchanged, err = e.removeRow(handle, newRows[i])
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -145,11 +154,14 @@ func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
 					break
 				}
 			}
+			if rowUnchanged {
+				break
+			}
 			if foundDupKey {
 				continue
 			}
 			// No duplicated rows now, insert the row and go to the next row.
-			newHandle, err := e.insertRow(newRows[i])
+			newHandle, err := e.addRow(newRows[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
