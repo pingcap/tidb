@@ -38,6 +38,9 @@ var (
 	// All the AggFunc implementations for "MAX" are listed here.
 	// All the AggFunc implementations for "MIN" are listed here.
 	// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
+	_ AggFunc = (*groupConcat4DistinctString)(nil)
+	_ AggFunc = (*groupConcat4String)(nil)
+
 	// All the AggFunc implementations for "BIT_OR" are listed here.
 	_ AggFunc = (*bitOrUint64)(nil)
 
