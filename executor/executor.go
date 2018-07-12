@@ -290,7 +290,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	if e.jobNumber == 0 {
-		e.jobNumber = 10
+		e.jobNumber = admin.DefHistoryJobs
 	}
 	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(), int(e.jobNumber))
 	if err != nil {

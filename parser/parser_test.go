@@ -414,6 +414,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin show ddl;", true},
 		{"admin show ddl jobs;", true},
 		{"admin show ddl jobs 20;", true},
+		{"admin show ddl jobs -1;", false},
 		{"admin show ddl job queries 1", true},
 		{"admin show ddl job queries 1, 2, 3, 4", true},
 		{"admin check table t1, t2;", true},
