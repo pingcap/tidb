@@ -330,7 +330,7 @@ func appendInt64(encodedBytes, buf []byte, val int64) []byte {
 
 func appendFloat64(encodedBytes, buf []byte, val float64) []byte {
 	*(*float64)(unsafe.Pointer(&buf[0])) = val
-	buf = buf[:4]
+	buf = buf[:8]
 	encodedBytes = append(encodedBytes, buf...)
 	return encodedBytes
 }
