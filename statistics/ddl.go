@@ -145,7 +145,7 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) (er
 // Commit when error is nil, otherwise rollback.
 func doneTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error) error {
 	if err == nil {
-		_, err = exec.Execute(context.Background(), "commit")
+		_, err = exec.Execute(ctx, "commit")
 	} else {
 		_, err1 := exec.Execute(ctx, "rollback")
 		terror.Log(errors.Trace(err1))
