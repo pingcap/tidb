@@ -407,7 +407,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			continue
 		}
 		tblStats := h.GetTableStats(table.Meta())
-		newTblStats := *tblStats
+		newTblStats := tblStats.copy()
 		if fb.hist.isIndexHist() {
 			idx, ok := tblStats.Indices[fb.hist.ID]
 			if !ok {
@@ -423,7 +423,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			hist := &col.Histogram
 			newTblStats.Columns[fb.hist.ID].Histogram = *UpdateHistogram(hist, fb)
 		}
-		h.UpdateTableStats([]*Table{&newTblStats}, nil)
+		h.UpdateTableStats([]*Table{newTblStats}, nil)
 	}
 }
 

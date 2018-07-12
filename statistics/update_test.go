@@ -689,31 +689,18 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 
 	tblInfo := table.Meta()
 	tbl := h.GetTableStats(tblInfo)
-	test := []string{
-		"column:1 ndv:2 totColSize:0\n" +
-			"num: 2\tlower_bound: \x03\x80\x00\x00\x00\x00\x00\x00\x02\tupper_bound: \x03\x80\x00\x00\x00\x00\x00\x00\x02\trepeats: 2\n" +
-			"num: 3\tlower_bound: \x03\x80\x00\x00\x00\x00\x00\x00\x05\tupper_bound: \x03\x80\x00\x00\x00\x00\x00\x00\x05\trepeats: 1",
-
-		"index:1 ndv:2\n" +
-			"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 2\n" +
-			"num: 3\tlower_bound: 5\tupper_bound: 5\trepeats: 1",
-
-		"column:1 ndv:2 totColSize:0\n" +
-			"num: 2\tlower_bound: \x00\tupper_bound: \x03\x80\x00\x00\x00\x00\x00\x00\x02\trepeats: 0\n" +
-			"num: 4\tlower_bound: \x03\x80\x00\x00\x00\x00\x00\x00\x03\tupper_bound: \xfb\trepeats: 0",
-
-		"index:1 ndv:2\n" +
-			"num: 2\tlower_bound: NULL\tupper_bound: 2\trepeats: 0\n" +
-			"num: 4\tlower_bound: 3\tupper_bound: \trepeats: 0",
-	}
-	c.Assert(tbl.Indices[tblInfo.Columns[0].ID].ToString(0), Equals, test[0])
-	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, test[1])
 
 	testKit.MustQuery("select * from t use index(idx) where b <= 5")
 	testKit.MustQuery("select * from t use index(idx) where a > 1")
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 	tbl = h.GetTableStats(tblInfo)
 
-	c.Assert(tbl.Indices[tblInfo.Columns[0].ID].ToString(0), Equals, test[2])
-	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, test[3])
+	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n" +
+     "num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n" +
+     "num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n" +
+     "num: 3\tlower_bound: 4\tupper_bound: 4\trepeats: 1")
+
+	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n" +
+		"num: 2\tlower_bound: NULL\tupper_bound: 2\trepeats: 0\n" +
+		"num: 4\tlower_bound: 3\tupper_bound: \trepeats: 0")
 }
