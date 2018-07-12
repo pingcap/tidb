@@ -497,7 +497,7 @@ func (t *tableCommon) genIndexKeyStr(colVals []types.Datum) (string, error) {
 		cvs := "NULL"
 		var err error
 		if !cv.IsNull() {
-			cvs, err = types.ToString(cv.GetValue(), cv.Frac())
+			cvs, err = types.ToString(cv.GetValue(), types.MaxFsp)
 			if err != nil {
 				return "", errors.Trace(err)
 			}

@@ -142,7 +142,6 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	duration, err := types.ParseDuration("11:30:45", 0)
 	c.Assert(err, IsNil)
 	d.SetMysqlDuration(duration)
-	d.SetFrac(0)
 	columns[0].Type = mysql.TypeDuration
 	columns[0].Decimal = 0
 	bs, err = dumpTextRow(nil, columns, types.DatumRow{d})

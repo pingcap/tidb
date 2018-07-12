@@ -176,7 +176,6 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	case mysql.TypeDuration:
 		if !r.IsNull(colIdx) {
 			d.SetMysqlDuration(r.GetDuration(colIdx))
-			d.SetFrac(tp.Decimal)
 		}
 	case mysql.TypeNewDecimal:
 		if !r.IsNull(colIdx) {

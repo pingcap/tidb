@@ -48,7 +48,6 @@ func evalBuiltinFunc(f builtinFunc, row types.Row) (d types.Datum, err error) {
 	case types.ETDatetime, types.ETTimestamp:
 		res, isNull, err = f.evalTime(row)
 	case types.ETDuration:
-		d.SetFrac(f.getRetTp().Decimal)
 		res, isNull, err = f.evalDuration(row)
 	case types.ETJson:
 		res, isNull, err = f.evalJSON(row)
