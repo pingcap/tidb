@@ -14,6 +14,7 @@
 package aggregation
 
 import (
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -84,7 +85,7 @@ func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 		if frac == -1 {
 			frac = mysql.MaxDecimalScale
 		}
-		err = to.Round(to, frac, types.ModeHalfEven)
+		err = to.Round(to, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfEven)
 		terror.Log(errors.Trace(err))
 		d.SetMysqlDecimal(to)
 	}
