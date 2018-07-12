@@ -319,7 +319,11 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, e
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetTime(i).String()))
 		case mysql.TypeDuration:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetDuration(i).String()))
+			dur := row.GetDuration(i)
+			if dur.Fsp == types.WaitFillFsp {
+				dur.Fsp = int(col.Decimal)
+			}
+			buffer = dumpLengthEncodedString(buffer, hack.Slice(dur.String()))
 		case mysql.TypeEnum:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetEnum(i).String()))
 		case mysql.TypeSet:

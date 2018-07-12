@@ -22,6 +22,8 @@ import (
 )
 
 const (
+	// WaitFillFsp is fsp need fill by caller if they want to use fsp.
+	WaitFillFsp = -2
 	// UnspecifiedFsp is the unspecified fractional seconds part.
 	UnspecifiedFsp = -1
 	// MaxFsp is the maximum digit of fractional seconds part.
