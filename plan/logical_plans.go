@@ -395,7 +395,6 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	ds.statisticTable.ColumnIsInvalid(sc, pkCol.ID)
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
 	// Check whether the primary key is covered by point query.
 	noIntervalRange := true
