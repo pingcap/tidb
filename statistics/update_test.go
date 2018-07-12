@@ -711,8 +711,7 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 
 	testKit.MustQuery("select * from t use index(idx) where b <= 5")
 	testKit.MustQuery("select * from t use index(idx) where a > 1")
-	c.Assert(h.UpdateStatsByLocalFeedback(s.do.InfoSchema()), IsNil)
-	h.Update(is)
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 	tbl = h.GetTableStats(tblInfo)
 
 	c.Assert(tbl.Indices[tblInfo.Columns[0].ID].ToString(0), Equals, test[2])

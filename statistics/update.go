@@ -402,36 +402,28 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) error {
 	}
 	h.listHead.Unlock()
 	for _, fb := range h.feedback {
-		var (
-			cms     *CMSketch
-			hist    *Histogram
-			isIndex int
-		)
 		table, ok := is.TableByID(fb.tableID)
 		if !ok {
 			continue
 		}
 		tblStats := h.GetTableStats(table.Meta())
+		newTblStats := *tblStats
 		if fb.hist.isIndexHist() {
-			isIndex = 1
 			idx, ok := tblStats.Indices[fb.hist.ID]
 			if !ok {
 				continue
 			}
-			hist = &idx.Histogram
-			cms = idx.CMSketch.copy()
+			hist := &idx.Histogram
+			newTblStats.Indices[fb.hist.ID].Histogram = *UpdateHistogram(hist, fb)
 		} else {
 			col, ok := tblStats.Columns[fb.hist.ID]
 			if !ok {
 				continue
 			}
-			hist = &col.Histogram
+			hist := &col.Histogram
+			newTblStats.Columns[fb.hist.ID].Histogram = *UpdateHistogram(hist, fb)
 		}
-		hist = UpdateHistogram(hist, fb)
-		err := h.SaveStatsToStorage(tblStats.TableID, -1, isIndex, hist, cms, 0)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		h.UpdateTableStats([]*Table{&newTblStats}, nil)
 	}
 	return nil
 }

@@ -684,10 +684,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if !owner.IsOwner() {
 				continue
 			}
-			err = statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
-			if err != nil {
-				log.Debug("[stats] update stats using local feedback fail: ", errors.ErrorStack(err))
-			}
+			statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
 			err = statsHandle.HandleUpdateStats(do.InfoSchema())
 			if err != nil {
 				log.Debug("[stats] update stats using feedback fail: ", errors.ErrorStack(err))
