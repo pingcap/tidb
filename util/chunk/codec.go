@@ -23,18 +23,27 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// Codec is used to:
+// 1. encode a Chunk to a byte slice.
+// 2. decode a CHunk from a byte slice.
 type Codec struct {
-	// colTypes is only used when decoding a Chunk.
+	// colTypes is used to check whether a column is fixed sized and what the
+	// fixed size for every element.
+	// NOTE: It's only used for decoding.
 	colTypes []*types.FieldType
 
-	// notNullBitmap is only used when decoding a Chunk.
+	// notNullBitmap is used to populate the nullBitmap for every decoded
+	// column, which has zero null values.
+	// NOTE: It's only used for decoding.
 	notNullBitmap []byte
 }
 
+// NewCodec creates a new Codec object for encode or decode a Chunk.
 func NewCodec(colTypes []*types.FieldType) *Codec {
 	return &Codec{colTypes, nil}
 }
 
+// Encode encodes a Chunk to a byte slice.
 func (c *Codec) Encode(chk *Chunk) []byte {
 	buffer := make([]byte, 0, chk.MemoryUsage())
 	for _, col := range chk.columns {
@@ -122,6 +131,7 @@ func (c *Codec) i32SliceToBytes(i32s []int32) (b []byte) {
 	return b
 }
 
+// Decode decodes a Chunk from a byte slice, return the remained unused bytes.
 func (c *Codec) Decode(buffer []byte) *Chunk {
 	chk := &Chunk{}
 	for ordinal := 0; len(buffer) > 0; ordinal++ {
@@ -132,6 +142,7 @@ func (c *Codec) Decode(buffer []byte) *Chunk {
 	return chk
 }
 
+// DecodeToChunk decodes a Chunk from a byte slice, return the remained unused bytes.
 func (c *Codec) DecodeToChunk(buffer []byte, chk *Chunk) (remained []byte) {
 	for i := 0; i < len(chk.columns); i++ {
 		buffer = c.decodeColumn(buffer, chk.columns[i], i)
