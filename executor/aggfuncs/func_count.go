@@ -258,16 +258,18 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 				break
 			}
 		}
-		if hasNull || p.valSet.exist(string(encodedBytes)) {
+		encodedString := string(encodedBytes)
+		if hasNull || p.valSet.exist(encodedString) {
 			continue
 		}
-		p.valSet.insert(string(encodedBytes))
+		p.valSet.insert(encodedString)
 		p.count++
 	}
 
 	return nil
 }
 
+// evalAndEncode eval one row with an expression and encode value to bytes.
 func (e *countOriginalWithDistinct) evalAndEncode(
 	sctx sessionctx.Context, arg expression.Expression,
 	row chunk.Row, buf, encodedBytes []byte,
