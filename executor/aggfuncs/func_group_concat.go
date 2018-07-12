@@ -61,10 +61,9 @@ func (e *groupConcat4String) ResetPartialResult(pr PartialResult) {
 
 func (e *groupConcat4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4ConcatString)(pr)
-	validArgsLen := len(e.args) - 1
-	v, isNull, valsBuf := "", false, make([]string, validArgsLen)
+	v, isNull, valsBuf := "", false, make([]string, len(e.args))
 	for _, row := range rowsInGroup {
-		for i, l := 0, validArgsLen; i < l; i++ {
+		for i, l := 0, len(e.args); i < l; i++ {
 			v, isNull, err = e.args[i].EvalString(sctx, row)
 			if err != nil {
 				return errors.Trace(err)
@@ -112,10 +111,9 @@ func (e *groupConcat4DistinctString) ResetPartialResult(pr PartialResult) {
 
 func (e *groupConcat4DistinctString) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4ConcatDistinctString)(pr)
-	validArgsLen := len(e.args) - 1
-	v, isNull, valsBuf, joinedVals := "", false, make([]string, validArgsLen), ""
+	v, isNull, valsBuf, joinedVals := "", false, make([]string, len(e.args)), ""
 	for _, row := range rowsInGroup {
-		for i, l := 0, validArgsLen; i < l; i++ {
+		for i, l := 0, len(e.args); i < l; i++ {
 			v, isNull, err = e.args[i].EvalString(sctx, row)
 			if err != nil {
 				return errors.Trace(err)
