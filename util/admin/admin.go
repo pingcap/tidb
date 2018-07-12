@@ -137,12 +137,12 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 // MaxHistoryJobs is exported for testing.
 const MaxHistoryJobs = 10
 
-// DefHistoryJobsNum is default value of the default number of history job
-const DefHistoryJobsNum = 10
+// DefNumHistoryJobs is default value of the default number of history job
+const DefNumHistoryJobs = 10
 
 // GetHistoryDDLJobs returns the DDL history jobs and an error.
 // The maximum count of history jobs is num.
-func GetHistoryDDLJobs(txn kv.Transaction, num int) ([]*model.Job, error) {
+func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
 	jobs, err := t.GetAllHistoryDDLJobs()
 	if err != nil {
@@ -150,8 +150,8 @@ func GetHistoryDDLJobs(txn kv.Transaction, num int) ([]*model.Job, error) {
 	}
 
 	jobsLen := len(jobs)
-	if jobsLen > num {
-		start := jobsLen - num
+	if jobsLen > maxNumJobs {
+		start := jobsLen - maxNumJobs
 		jobs = jobs[start:]
 	}
 	jobsLen = len(jobs)
