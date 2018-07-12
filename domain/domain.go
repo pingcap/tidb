@@ -663,23 +663,11 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			statsHandle.FlushStats()
 			do.wg.Done()
 			return
-			// This channel is sent only by ddl owner or the drop stats executor.
+			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():
 			err = statsHandle.HandleDDLEvent(t)
 			if err != nil {
 				log.Debug("[stats] handle ddl event fail: ", errors.ErrorStack(err))
-			}
-		case t := <-statsHandle.AnalyzeResultCh():
-			for i, hg := range t.Hist {
-				err = statistics.SaveStatsToStorage(ctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i], 1)
-				if err != nil {
-					log.Debug("[stats] save histogram to storage fail: ", errors.ErrorStack(err))
-				}
-			}
-		case t := <-statsHandle.LoadMetaCh():
-			err = statistics.SaveMetaToStorage(ctx, t.TableID, t.Count, t.ModifyCount)
-			if err != nil {
-				log.Debug("[stats] save meta to storage fail: ", errors.ErrorStack(err))
 			}
 		case <-deltaUpdateTicker.C:
 			err = statsHandle.DumpStatsDeltaToKV(statistics.DumpDelta)
