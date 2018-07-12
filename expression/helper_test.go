@@ -37,7 +37,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue := v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 	sessionVars := ctx.GetSessionVars()
-	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum(""))
+	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum(""), types.DefaultFsp)
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -45,7 +45,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("0"))
+	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("0"), types.DefaultFsp)
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -53,7 +53,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	variable.SetSessionSystemVar(sessionVars, "timestamp", types.Datum{})
+	variable.SetSessionSystemVar(sessionVars, "timestamp", types.Datum{}, types.DefaultFsp)
 	v, err = GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 
@@ -61,7 +61,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 	timeValue = v.GetMysqlTime()
 	c.Assert(timeValue.String(), Equals, "2012-12-12 00:00:00")
 
-	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
+	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"), types.DefaultFsp)
 
 	tbl := []struct {
 		Expr interface{}
@@ -120,8 +120,8 @@ func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 
-	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"))
-	variable.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+00:00"))
+	variable.SetSessionSystemVar(sessionVars, "timestamp", types.NewStringDatum("1234"), types.DefaultFsp)
+	variable.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+00:00"), types.DefaultFsp)
 	v, err := GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
@@ -130,7 +130,7 @@ func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
 
 	// CurrentTimestamp from "timestamp" session variable is based on UTC, so change timezone
 	// would get different value.
-	variable.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+08:00"))
+	variable.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+08:00"), types.DefaultFsp)
 	v, err = GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
 	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{

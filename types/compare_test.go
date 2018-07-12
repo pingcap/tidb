@@ -96,10 +96,10 @@ func (s *testCompareSuite) TestCompare(c *C) {
 		{Time{Time: ZeroTime}, Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 3}, -1},
 		{Time{Time: FromGoTime(time.Now()), Type: mysql.TypeDatetime, Fsp: 3}, "0000-00-00 00:00:00", 1},
 
-		{Duration{Duration: time.Duration(34), Fsp: 2}, nil, 1},
-		{Duration{Duration: time.Duration(34), Fsp: 2}, Duration{Duration: time.Duration(29034), Fsp: 2}, -1},
-		{Duration{Duration: time.Duration(3340), Fsp: 2}, Duration{Duration: time.Duration(34), Fsp: 2}, 1},
-		{Duration{Duration: time.Duration(34), Fsp: 2}, Duration{Duration: time.Duration(34), Fsp: 2}, 0},
+		{Duration(34), nil, 1},
+		{Duration(34), Duration(29034), -1},
+		{Duration(3340), Duration(34), 1},
+		{Duration(34), Duration(34), 0},
 
 		{[]byte{}, []byte{}, 0},
 		{[]byte("abc"), []byte("ab"), 1},

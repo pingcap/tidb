@@ -338,14 +338,15 @@ func (h *Handle) columnCountFromStorage(tableID, colID int64) (int64, error) {
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
 func ValueToString(value *types.Datum, idxCols int) (string, error) {
+	fsp := types.MaxFsp
 	if idxCols == 0 {
-		return value.ToString()
+		return value.ToString(fsp)
 	}
 	decodedVals, err := codec.Decode(value.GetBytes(), idxCols)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	str, err := types.DatumsToString(decodedVals, true)
+	str, err := types.DatumsToString(decodedVals, true, fsp)
 	if err != nil {
 		return "", errors.Trace(err)
 	}

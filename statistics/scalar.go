@@ -69,7 +69,7 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 			minTime = types.MinTimestamp
 		}
 		sc := &stmtctx.StatementContext{TimeZone: types.BoundTimezone}
-		return float64(valueTime.Sub(sc, &minTime).Duration)
+		return float64(valueTime.Sub(sc, &minTime))
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
 		if len(bytes) <= commonPfxLen {
@@ -126,7 +126,7 @@ func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 	case types.KindUint64:
 		return calcFraction(float64(lower.GetUint64(0)), float64(upper.GetUint64(0)), float64(value.GetUint64()))
 	case types.KindMysqlDuration:
-		return calcFraction(float64(lower.GetDuration(0).Duration), float64(upper.GetDuration(0).Duration), float64(value.GetMysqlDuration().Duration))
+		return calcFraction(float64(lower.GetDuration(0)), float64(upper.GetDuration(0)), float64(value.GetMysqlDuration()))
 	case types.KindMysqlDecimal, types.KindMysqlTime:
 		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, 0))
 	case types.KindBytes, types.KindString:

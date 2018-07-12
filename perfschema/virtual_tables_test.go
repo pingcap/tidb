@@ -60,7 +60,7 @@ func (*testSuite) TestSessionStatus(c *C) {
 func findSpecialStatus(rows [][]types.Datum, name string) error {
 	err := errors.New("cant find the status " + name)
 	for _, row := range rows {
-		statusNames, _ := row[0].ToString()
+		statusNames, _ := row[0].ToString(types.DefaultFsp)
 		if statusNames == name {
 			err = nil
 			break

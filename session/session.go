@@ -589,7 +589,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"), types.DefaultFsp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -605,7 +605,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"), types.DefaultFsp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -641,7 +641,7 @@ func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error)
 		return "", executor.ErrResultIsEmpty
 	}
 	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
-	value, err := d.ToString()
+	value, err := d.ToString(fields[0].Column.FieldType.Decimal)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -933,7 +933,7 @@ func checkArgs(args ...interface{}) error {
 		case string:
 		case []byte:
 		case time.Duration:
-			args[i] = types.Duration{Duration: x}
+			args[i] = types.Duration(x)
 		case time.Time:
 			args[i] = types.Time{Time: types.FromGoTime(x), Type: mysql.TypeDatetime}
 		case nil:
@@ -1327,7 +1327,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		varName := row.GetString(0)
 		varVal := row.GetDatum(1, &fields[1].Column.FieldType)
 		if _, ok := vars.GetSystemVar(varName); !ok {
-			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
+			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal, types.DefaultFsp)
 			if err != nil {
 				return errors.Trace(err)
 			}

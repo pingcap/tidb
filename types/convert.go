@@ -208,7 +208,7 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 	} else if number < -TimeMaxValue {
 		dur, err1 := MaxMySQLTime(fsp).ConvertToDuration()
 		terror.Log(err1)
-		dur.Duration = -dur.Duration
+		dur = -dur
 		return dur, ErrOverflow.GenByArgs("Duration", strconv.Itoa(int(number)))
 	}
 	var neg bool
@@ -225,7 +225,7 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 		return ZeroDuration, errors.Trace(err)
 	}
 	if neg {
-		dur.Duration = -dur.Duration
+		dur = -dur
 	}
 	return dur, nil
 }
@@ -424,7 +424,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, 
 }
 
 // ToString converts an interface to a string.
-func ToString(value interface{}) (string, error) {
+func ToString(value interface{}, fsp int) (string, error) {
 	switch v := value.(type) {
 	case bool:
 		if v {
@@ -448,7 +448,7 @@ func ToString(value interface{}) (string, error) {
 	case Time:
 		return v.String(), nil
 	case Duration:
-		return v.String(), nil
+		return v.String(fsp), nil
 	case *MyDecimal:
 		return v.String(), nil
 	case BinaryLiteral:

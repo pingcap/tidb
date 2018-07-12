@@ -86,7 +86,7 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 	chk.AppendFloat64(1, f64Val)
 	tVal := types.TimeFromDays(1)
 	chk.AppendTime(2, tVal)
-	durVal := types.Duration{Duration: time.Hour, Fsp: 6}
+	durVal := types.Duration(time.Hour)
 	chk.AppendDuration(3, durVal)
 	enumVal := types.Enum{Name: "abc", Value: 100}
 	chk.AppendEnum(4, enumVal)
@@ -350,7 +350,7 @@ func (s *testChunkSuite) TestCompare(c *check.C) {
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			chunk.AppendTime(i, types.TimeFromDays(2001*365))
 		case mysql.TypeDuration:
-			chunk.AppendDuration(i, types.Duration{Duration: time.Second})
+			chunk.AppendDuration(i, types.Duration(time.Second))
 		case mysql.TypeNewDecimal:
 			chunk.AppendMyDecimal(i, types.NewDecFromInt(1))
 		case mysql.TypeSet:
@@ -412,7 +412,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	colUsage[1] = initCap>>3 + (initCap+1)*4 + initCap*4 + 0
 	colUsage[2] = initCap>>3 + (initCap+1)*4 + initCap*4 + 0
 	colUsage[3] = initCap>>3 + 0 + initCap*16 + 16
-	colUsage[4] = initCap>>3 + 0 + initCap*16 + 16
+	colUsage[4] = initCap>>3 + 0 + initCap*8 + 8
 
 	expectedUsage := 0
 	for i := range colUsage {
@@ -424,7 +424,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	jsonObj, err := json.ParseBinaryFromString("1")
 	c.Assert(err, check.IsNil)
 	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
-	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
+	durationObj := types.Duration(math.MaxInt64)
 
 	chk.AppendFloat32(0, 12.4)
 	chk.AppendString(1, "123")
@@ -622,7 +622,7 @@ func BenchmarkChunkMemoryUsage(b *testing.B) {
 	initCap := 10
 	chk := NewChunkWithCapacity(fieldTypes, initCap)
 	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
-	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
+	durationObj := types.Duration(math.MaxInt64)
 
 	for i := 0; i < initCap; i++ {
 		chk.AppendFloat64(0, 123.123)

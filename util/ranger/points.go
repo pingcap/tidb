@@ -340,12 +340,13 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
-	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(nil)
+	constExp := expr.GetArgs()[1].(*expression.Constant)
+	pdt, err := constExp.Eval(nil)
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange
 	}
-	pattern, err := pdt.ToString()
+	pattern, err := pdt.ToString(constExp.RetType.Decimal)
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange

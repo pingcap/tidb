@@ -70,7 +70,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	}
 	var expectIndexValues []string
 	for _, v := range indexValues {
-		str, err := v.ToString()
+		str, err := v.ToString(types.DefaultFsp)
 		if err != nil {
 			str = fmt.Sprintf("%d-%v", v.Kind(), v.GetValue())
 		}
@@ -421,7 +421,7 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 		var data interface{}
 		err = decoder.Decode(&data)
 		c.Assert(err, IsNil, Commentf("url:%v\ndata%v", url, data))
-		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]}, false)
+		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]}, false, types.DefaultFsp)
 		c.Assert(err, IsNil)
 		c.Assert(data, Equals, colVal, Commentf("url:%v", url))
 	}

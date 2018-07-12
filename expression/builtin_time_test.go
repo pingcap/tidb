@@ -649,7 +649,7 @@ func (s *testEvaluatorSuite) TestTime(c *C) {
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(d.GetMysqlDuration().String(), Equals, t.expected)
+				c.Assert(d.GetMysqlDuration().String(f.GetType().Decimal), Equals, t.expected)
 			}
 		}
 	}
@@ -706,18 +706,18 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 	}
 
 	// Test that "timestamp" and "time_zone" variable may affect the result of Now() builtin function.
-	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("+00:00"))
-	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(1234))
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("+00:00"), types.DefaultFsp)
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(1234), types.DefaultFsp)
 	fc := funcs[ast.Now]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(nil))
 	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
-	result, err := v.ToString()
+	result, err := v.ToString(f.getRetTp().Decimal)
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, "1970-01-01 00:20:34")
-	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(0))
-	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("system"))
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "timestamp", types.NewDatum(0), types.DefaultFsp)
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), "time_zone", types.NewDatum("system"), types.DefaultFsp)
 }
 
 func (s *testEvaluatorSuite) TestIsDuration(c *C) {
@@ -766,7 +766,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		result, _ := d.ToString()
+		result, _ := d.ToString(f.getRetTp().Decimal)
 		c.Assert(result, Equals, t.expect)
 	}
 
@@ -790,7 +790,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		result, _ := d.ToString()
+		result, _ := d.ToString(f.getRetTp().Decimal)
 		c.Assert(result, Equals, t.expect)
 	}
 
@@ -809,7 +809,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		result, _ := d.ToString()
+		result, _ := d.ToString(f.getRetTp().Decimal)
 		c.Assert(result, Equals, t.expect)
 	}
 
@@ -824,7 +824,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 	}{
 		{"01:00:00.999999", "02:00:00.999998", "-00:59:59.999999"},
 		{"110:00:00", "1 02:00:00", "84:00:00"},
-		{"2017-01-01 01:01:01.11", "01:01:01.11111", "2016-12-31 23:59:59.998890"},
+		{"2017-01-01 01:01:01.11", "01:01:01.11111", "2016-12-31 23:59:59.99889"}, // We are more right than MySQL does.
 		{"2007-12-31 23:59:59.999999", "1 1:1:1.000002", "2007-12-30 22:58:58.999997"},
 	}
 	fc := funcs[ast.SubTime]
@@ -835,7 +835,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		result, _ := d.ToString()
+		result, _ := d.ToString(f.getRetTp().Decimal)
 		c.Assert(result, Equals, t.expect)
 	}
 
@@ -857,7 +857,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		result, _ := d.ToString()
+		result, _ := d.ToString(f.getRetTp().Decimal)
 		c.Assert(result, Equals, t.expect)
 	}
 	tbll := []struct {
@@ -875,7 +875,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		result, _ := d.ToString()
+		result, _ := d.ToString(f.getRetTp().Decimal)
 		c.Assert(result, Equals, t.expect)
 	}
 }
@@ -889,7 +889,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	timezones := []types.Datum{types.NewDatum(1234), types.NewDatum(0)}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
-		variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", timezone)
+		variable.SetSessionSystemVar(ctx.GetSessionVars(), "timestamp", timezone, types.DefaultFsp)
 		f, err := fc.getFunction(ctx, s.datumsToConstants(nil))
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, nil)
@@ -1051,24 +1051,24 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlDuration()
-	c.Assert(n.String(), HasLen, 8)
-	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+	c.Assert(n.String(f.getRetTp().Decimal), HasLen, 8)
+	c.Assert(n.String(f.getRetTp().Decimal), GreaterEqual, last.Format(tfStr))
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(3)))
 	c.Assert(err, IsNil)
 	v, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	n = v.GetMysqlDuration()
-	c.Assert(n.String(), HasLen, 12)
-	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+	c.Assert(n.String(f.getRetTp().Decimal), HasLen, 12)
+	c.Assert(n.String(f.getRetTp().Decimal), GreaterEqual, last.Format(tfStr))
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(6)))
 	c.Assert(err, IsNil)
 	v, err = evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	n = v.GetMysqlDuration()
-	c.Assert(n.String(), HasLen, 15)
-	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+	c.Assert(n.String(f.getRetTp().Decimal), HasLen, 15)
+	c.Assert(n.String(f.getRetTp().Decimal), GreaterEqual, last.Format(tfStr))
 
 	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(-1)))
 	c.Assert(err, NotNil)
@@ -1096,8 +1096,8 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 		if test.expect > 0 {
 			c.Assert(err, IsNil)
 			n := v.GetMysqlDuration()
-			c.Assert(n.String(), HasLen, test.expect)
-			c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+			c.Assert(n.String(f.getRetTp().Decimal), HasLen, test.expect)
+			c.Assert(n.String(f.getRetTp().Decimal), GreaterEqual, last.Format(tfStr))
 		} else {
 			c.Assert(err, NotNil)
 		}
@@ -1108,8 +1108,8 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	v, err := evalBuiltinFunc(f, nil)
 	c.Assert(err, IsNil)
 	n := v.GetMysqlDuration()
-	c.Assert(n.String(), HasLen, 8)
-	c.Assert(n.String(), GreaterEqual, last.Format(tfStr))
+	c.Assert(n.String(f.getRetTp().Decimal), HasLen, 8)
+	c.Assert(n.String(f.getRetTp().Decimal), GreaterEqual, last.Format(tfStr))
 }
 
 func (s *testEvaluatorSuite) TestUTCDate(c *C) {
@@ -1305,8 +1305,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 			if t.isNil {
 				c.Assert(d.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(d.GetMysqlDuration().String(), Equals, t.expectStr)
-				c.Assert(d.GetMysqlDuration().Fsp, Equals, t.fsp)
+				c.Assert(d.GetMysqlDuration().String(f.GetType().Decimal), Equals, t.expectStr)
 			}
 		}
 	}
@@ -1489,7 +1488,7 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil, Commentf("%+v", test))
 		c.Assert(d.Kind(), Equals, test.expectKind, Commentf("%+v", test))
-		str, err := d.ToString()
+		str, err := d.ToString(f.getRetTp().Decimal)
 		c.Assert(err, IsNil, Commentf("%+v", test))
 		c.Assert(str, Equals, test.expect, Commentf("%+v", test))
 	}
@@ -1571,7 +1570,7 @@ func (s *testEvaluatorSuite) TestTimestamp(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		result, _ := d.ToString()
+		result, _ := d.ToString(f.getRetTp().Decimal)
 		c.Assert(result, Equals, test.expect)
 	}
 
@@ -1701,9 +1700,9 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		if t["Want"][0].Kind() == types.KindNull {
 			c.Assert(got.Kind(), Equals, types.KindNull, Commentf("[%v] - args:%v", idx, t["Args"]))
 		} else {
-			want, err := t["Want"][0].ToString()
+			want, err := t["Want"][0].ToString(f.getRetTp().Decimal)
 			c.Assert(err, IsNil)
-			c.Assert(got.GetMysqlDuration().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
+			c.Assert(got.GetMysqlDuration().String(f.getRetTp().Decimal), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
 		}
 	}
 
@@ -1711,8 +1710,8 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		Args []interface{}
 		Want interface{}
 	}{
-		{[]interface{}{"", "", ""}, "00:00:00"},
-		{[]interface{}{"h", "m", "s"}, "00:00:00"},
+		{[]interface{}{"", "", ""}, "00:00:00.000000"},
+		{[]interface{}{"h", "m", "s"}, "00:00:00.000000"},
 	}
 	Dtbl = tblToDtbl(tbl)
 	maketime = funcs[ast.MakeTime]
@@ -1721,9 +1720,9 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		c.Assert(err, IsNil)
 		got, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, NotNil)
-		want, err := t["Want"][0].ToString()
+		want, err := t["Want"][0].ToString(f.getRetTp().Decimal)
 		c.Assert(err, IsNil)
-		c.Assert(got.GetMysqlDuration().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
+		c.Assert(got.GetMysqlDuration().String(f.getRetTp().Decimal), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))
 	}
 }
 
@@ -1799,7 +1798,7 @@ func (s *testEvaluatorSuite) TestGetFormat(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		result, _ := d.ToString()
+		result, _ := d.ToString(f.getRetTp().Decimal)
 		c.Assert(result, Equals, test.expect)
 	}
 }
@@ -1904,7 +1903,7 @@ func (s *testEvaluatorSuite) TestTimestampAdd(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		result, _ := d.ToString()
+		result, _ := d.ToString(f.getRetTp().Decimal)
 		c.Assert(result, Equals, test.expect)
 	}
 }
@@ -2070,7 +2069,7 @@ func (s *testEvaluatorSuite) TestSecToTime(c *C) {
 		c.Assert(err, IsNil, Commentf("%+v", test))
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil, Commentf("%+v", test))
-		result, _ := d.ToString()
+		result, _ := d.ToString(f.getRetTp().Decimal)
 		c.Assert(result, Equals, test.expect, Commentf("%+v", test))
 	}
 }
@@ -2112,7 +2111,7 @@ func (s *testEvaluatorSuite) TestConvertTz(c *C) {
 		} else {
 			c.Assert(err, NotNil)
 		}
-		result, _ := d.ToString()
+		result, _ := d.ToString(f.getRetTp().Decimal)
 		c.Assert(result, Equals, test.expect, Commentf("convert_tz(\"%v\", \"%s\", \"%s\")", test.t, test.fromTz, test.toTz))
 	}
 }
@@ -2190,7 +2189,7 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		result, _ := d.ToString()
+		result, _ := d.ToString(f.getRetTp().Decimal)
 		c.Assert(result, Equals, test.expect)
 	}
 

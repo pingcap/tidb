@@ -547,7 +547,7 @@ func (s *testEvaluatorSuite) TestArithmeticMod(c *C) {
 			expect: float64(7),
 		},
 		{
-			args:   []interface{}{types.Duration{Duration: 45296 * time.Second}, 122},
+			args:   []interface{}{types.Duration(45296 * time.Second), 122},
 			expect: 114,
 		},
 		{

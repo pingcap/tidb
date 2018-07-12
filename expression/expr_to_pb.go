@@ -145,7 +145,7 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 		val = codec.EncodeFloat(nil, d.GetFloat64())
 	case types.KindMysqlDuration:
 		tp = tipb.ExprType_MysqlDuration
-		val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
+		val = codec.EncodeInt(nil, int64(d.GetMysqlDuration()))
 	case types.KindMysqlDecimal:
 		tp = tipb.ExprType_MysqlDecimal
 		var err error

@@ -46,7 +46,7 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, 26, false, false},
 		{types.NewBinaryLiteralFromUint(0x01, -1), 1, false, false},
 		{types.Set{Value: 1, Name: "abc"}, 3, false, false},
-		{types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second), Fsp: types.DefaultFsp}, 8, false, false},
+		{types.Duration(time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second)), 8, false, false},
 		{nil, 0, true, false},
 		{errors.New("must error"), 0, false, true},
 	}
@@ -132,9 +132,7 @@ func (s *testEvaluatorSuite) TestConcat(c *C) {
 					Time: types.FromDate(2000, 1, 1, 12, 01, 01, 0),
 					Type: mysql.TypeDatetime,
 					Fsp:  types.DefaultFsp},
-				types.Duration{
-					Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second),
-					Fsp:      types.DefaultFsp},
+				types.Duration(time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second)),
 			},
 			false, false, "ab121.11.21.12000-01-01 12:01:0112:01:01",
 			&types.FieldType{Tp: mysql.TypeVarString, Flen: 40, Decimal: types.UnspecifiedLength, Charset: charset.CharsetBin, Collate: charset.CollationBin, Flag: mysql.BinaryFlag},
@@ -210,9 +208,7 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 					Time: types.FromDate(2000, 1, 1, 12, 01, 01, 0),
 					Type: mysql.TypeDatetime,
 					Fsp:  types.DefaultFsp},
-				types.Duration{
-					Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second),
-					Fsp:      types.DefaultFsp},
+				types.Duration(time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second)),
 			},
 			false, false, "a,b,1,2,1.1,0.11,1.1,2000-01-01 12:01:01,12:01:01",
 		},
@@ -1374,7 +1370,7 @@ func (s *testEvaluatorSuite) TestOct(c *C) {
 		c.Assert(f, NotNil)
 		r, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		res, err := r.ToString()
+		res, err := r.ToString(f.getRetTp().Decimal)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, tt.ret, Commentf("select oct(%v);", tt.origin))
 	}
@@ -1652,7 +1648,7 @@ func (s *testEvaluatorSuite) TestExportSet(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
 		exportSetRes, err := evalBuiltinFunc(f, nil)
-		res, err := exportSetRes.ToString()
+		res, err := exportSetRes.ToString(f.getRetTp().Decimal)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, t.res)
 	}
@@ -1818,7 +1814,7 @@ func (s *testEvaluatorSuite) TestStringRight(c *C) {
 			c.Assert(test.expect, IsNil)
 			continue
 		}
-		res, err := result.ToString()
+		res, err := result.ToString(f.getRetTp().Decimal)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, test.expect)
 	}

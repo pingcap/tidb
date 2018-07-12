@@ -45,7 +45,7 @@ func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row types.
 	if sepDatum.IsNull() {
 		return errors.Errorf("Invalid separator argument.")
 	}
-	cf.separator, err = sepDatum.ToString()
+	cf.separator, err = sepDatum.ToString(sepArg.GetType().Decimal)
 	return errors.Trace(err)
 }
 

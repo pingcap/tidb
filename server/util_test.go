@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
+	"time"
 )
 
 var _ = Suite(&testUtilSuite{})
@@ -77,7 +78,7 @@ func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 
 	myDuration, err := types.ParseDuration("0000-00-00 00:00:00.0000000", 6)
 	c.Assert(err, IsNil)
-	d = dumpBinaryTime(myDuration.Duration)
+	d = dumpBinaryTime(time.Duration(myDuration))
 	c.Assert(d, DeepEquals, []byte{0})
 }
 
@@ -142,6 +143,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration
+	columns[0].Decimal = 0
 	bs, err = dumpTextRow(nil, columns, types.DatumRow{d})
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11:30:45")

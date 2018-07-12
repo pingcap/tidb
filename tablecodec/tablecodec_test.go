@@ -342,7 +342,7 @@ func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
 	}
 	var valueStrs []string
 	for _, v := range values {
-		str, err := v.ToString()
+		str, err := v.ToString(types.DefaultFsp)
 		if err != nil {
 			str = fmt.Sprintf("%d-%v", v.Kind(), v.GetValue())
 		}

@@ -47,7 +47,7 @@ func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, key}))
 		crypt, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
+		c.Assert(toHex(crypt, f.getRetTp().Decimal), DeepEquals, types.NewDatum(tt.crypt))
 	}
 	s.testNullInput(c, ast.AesDecrypt)
 }
@@ -81,11 +81,11 @@ func (s *testEvaluatorSuite) testNullInput(c *C, fnName string) {
 	c.Assert(crypt.IsNull(), IsTrue)
 }
 
-func toHex(d types.Datum) (h types.Datum) {
+func toHex(d types.Datum, fsp int) (h types.Datum) {
 	if d.IsNull() {
 		return
 	}
-	x, _ := d.ToString()
+	x, _ := d.ToString(fsp)
 	h.SetString(strings.ToUpper(hex.EncodeToString(hack.Slice(x))))
 	return
 }
@@ -121,7 +121,7 @@ func (s *testEvaluatorSuite) TestSha1Hash(c *C) {
 		f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
 		crypt, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		res, err := crypt.ToString()
+		res, err := crypt.ToString(f.getRetTp().Decimal)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, tt.crypt)
 	}
@@ -164,7 +164,7 @@ func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
 		crypt, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
 		if tt.validCase {
-			res, err := crypt.ToString()
+			res, err := crypt.ToString(f.getRetTp().Decimal)
 			c.Assert(err, IsNil)
 			c.Assert(res, Equals, tt.crypt)
 		} else {

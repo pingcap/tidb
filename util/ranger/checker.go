@@ -97,7 +97,7 @@ func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool
 	if pattern.Value.IsNull() {
 		return false
 	}
-	patternStr, err := pattern.Value.ToString()
+	patternStr, err := pattern.Value.ToString(pattern.RetType.Decimal)
 	if err != nil {
 		return false
 	}

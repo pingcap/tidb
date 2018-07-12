@@ -150,25 +150,25 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Decimal = 3
 	v, err = Convert("10:11:12.123456", ft)
 	c.Assert(err, IsNil)
-	c.Assert(v.(Duration).String(), Equals, "10:11:12.123")
+	c.Assert(v.(Duration).String(3), Equals, "10:11:12.123")
 	ft.Decimal = 1
 	vv, err := Convert(v, ft)
 	c.Assert(err, IsNil)
-	c.Assert(vv.(Duration).String(), Equals, "10:11:12.1")
+	c.Assert(vv.(Duration).String(1), Equals, "10:11:12.1")
 
 	vd, err := ParseTime(nil, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2)
 	c.Assert(vd.String(), Equals, "2010-10-10 10:11:11.12")
 	c.Assert(err, IsNil)
 	v, err = Convert(vd, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v.(Duration).String(), Equals, "10:11:11.1")
+	c.Assert(v.(Duration).String(1), Equals, "10:11:11.1")
 
 	vt, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
 	c.Assert(vt.String(), Equals, "2010-10-10 10:11:11.12")
 	c.Assert(err, IsNil)
 	v, err = Convert(vt, ft)
 	c.Assert(err, IsNil)
-	c.Assert(v.(Duration).String(), Equals, "10:11:11.1")
+	c.Assert(v.(Duration).String(1), Equals, "10:11:11.1")
 
 	// For mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate
 	ft = NewFieldType(mysql.TypeTimestamp)
@@ -197,7 +197,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v, Equals, uint64(100))
 	// issue 3470
 	ft = NewFieldType(mysql.TypeLonglong)
-	v, err = Convert(Duration{Duration: time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond), Fsp: 3}, ft)
+	v, err = Convert(Duration(12*time.Hour+59*time.Minute+59*time.Second+555*time.Millisecond), ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(130000))
 	v, err = Convert(Time{
@@ -250,11 +250,11 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
 	sc := new(stmtctx.StatementContext)
-	v, err = d.ToDecimal(sc)
+	v, err = d.ToDecimal(sc, DefaultFsp)
 	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue)
 
 	sc.IgnoreTruncate = true
-	v, err = d.ToDecimal(sc)
+	v, err = d.ToDecimal(sc, DefaultFsp)
 	c.Assert(err, IsNil)
 	c.Assert(v.(*MyDecimal).String(), Equals, "0")
 
@@ -308,45 +308,45 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func testToString(c *C, val interface{}, expect string) {
-	b, err := ToString(val)
+func testToString(c *C, val interface{}, fsp int, expect string) {
+	b, err := ToString(val, fsp)
 	c.Assert(err, IsNil)
 	c.Assert(b, Equals, expect)
 }
 
 func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	defer testleak.AfterTest(c)()
-	testToString(c, "0", "0")
-	testToString(c, true, "1")
-	testToString(c, "false", "false")
-	testToString(c, int(0), "0")
-	testToString(c, int64(0), "0")
-	testToString(c, uint64(0), "0")
-	testToString(c, float32(1.6), "1.6")
-	testToString(c, float64(-0.6), "-0.6")
-	testToString(c, []byte{1}, "\x01")
-	testToString(c, NewBinaryLiteralFromUint(0x4D7953514C, -1), "MySQL")
-	testToString(c, NewBinaryLiteralFromUint(0x41, -1), "A")
-	testToString(c, Enum{Name: "a", Value: 1}, "a")
-	testToString(c, Set{Name: "a", Value: 1}, "a")
+	testToString(c, "0", 0, "0")
+	testToString(c, true, 0, "1")
+	testToString(c, "false", 0, "false")
+	testToString(c, int(0), 0, "0")
+	testToString(c, int64(0), 0, "0")
+	testToString(c, uint64(0), 0, "0")
+	testToString(c, float32(1.6), 0, "1.6")
+	testToString(c, float64(-0.6), 0, "-0.6")
+	testToString(c, []byte{1}, 0, "\x01")
+	testToString(c, NewBinaryLiteralFromUint(0x4D7953514C, -1), 0, "MySQL")
+	testToString(c, NewBinaryLiteralFromUint(0x41, -1), 0, "A")
+	testToString(c, Enum{Name: "a", Value: 1}, 0, "a")
+	testToString(c, Set{Name: "a", Value: 1}, 0, "a")
 
 	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC},
 		"2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
-	testToString(c, t, "2011-11-10 11:11:11.999999")
+	testToString(c, t, 6, "2011-11-10 11:11:11.999999")
 
 	td, err := ParseDuration("11:11:11.999999", 6)
 	c.Assert(err, IsNil)
-	testToString(c, td, "11:11:11.999999")
+	testToString(c, td, 6, "11:11:11.999999")
 
 	ft := NewFieldType(mysql.TypeNewDecimal)
 	ft.Flen = 10
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
 	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
-	testToString(c, v, "3.14159")
+	testToString(c, v, 0, "3.14159")
 
-	_, err = ToString(&invalidMockType{})
+	_, err = ToString(&invalidMockType{}, 0)
 	c.Assert(err, NotNil)
 
 	// test truncate
@@ -485,7 +485,7 @@ func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	if casted.IsNull() {
 		c.Assert(expected, Equals, "<nil>")
 	} else {
-		str, err := casted.ToString()
+		str, err := casted.ToString(ft.Decimal)
 		c.Assert(err, IsNil)
 		c.Assert(str, Equals, expected)
 	}
@@ -511,7 +511,7 @@ func deny(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	if casted.IsNull() {
 		c.Assert(expected, Equals, "<nil>")
 	} else {
-		str, err := casted.ToString()
+		str, err := casted.ToString(ft.Decimal)
 		c.Assert(err, IsNil)
 		c.Assert(str, Equals, expected)
 	}
@@ -846,6 +846,6 @@ func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
 	for _, tc := range testCases1 {
 		dur, err := NumberToDuration(tc.number, 0)
 		c.Assert(err, IsNil)
-		c.Assert(dur.Duration, Equals, tc.dur)
+		c.Assert(int64(dur), Equals, int64(tc.dur))
 	}
 }

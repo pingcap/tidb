@@ -77,7 +77,7 @@ const (
 // Zero values for different types.
 var (
 	// ZeroDuration is the zero value for Duration type.
-	ZeroDuration = Duration{Duration: gotime.Duration(0), Fsp: DefaultFsp}
+	ZeroDuration = Duration(0)
 
 	// ZeroTime is the zero value for TimeInternal type.
 	ZeroTime = MysqlTime{}
@@ -299,7 +299,7 @@ func (t Time) ConvertToDuration() (Duration, error) {
 
 	d := gotime.Duration(hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)
 	// TODO: check convert validation
-	return Duration{Duration: d, Fsp: t.Fsp}, nil
+	return Duration(d), nil
 }
 
 // Compare returns an integer comparing the time instant t to o.
@@ -514,15 +514,12 @@ func (t *Time) Sub(sc *stmtctx.StatementContext, t1 *Time) Duration {
 	if fsp < t1.Fsp {
 		fsp = t1.Fsp
 	}
-	return Duration{
-		Duration: duration,
-		Fsp:      fsp,
-	}
+	return Duration(duration)
 }
 
 // Add adds d to t, returns the result time value.
 func (t *Time) Add(sc *stmtctx.StatementContext, d Duration) (Time, error) {
-	sign, hh, mm, ss, micro := splitDuration(d.Duration)
+	sign, hh, mm, ss, micro := splitDuration(gotime.Duration(d))
 	seconds, microseconds, _ := calcTimeDiff(t.Time, FromDate(0, 0, 0, hh, mm, ss, micro), -sign)
 	days := seconds / secondsIn24Hour
 	year, month, day := getDateFromDaynr(uint(days))
@@ -536,9 +533,6 @@ func (t *Time) Add(sc *stmtctx.StatementContext, d Duration) (Time, error) {
 		tm.microsecond = 0
 	}
 	fsp := t.Fsp
-	if d.Fsp > fsp {
-		fsp = d.Fsp
-	}
 	ret := Time{
 		Time: tm,
 		Type: t.Type,
@@ -765,56 +759,39 @@ func AdjustYear(y int64) (int64, error) {
 }
 
 // Duration is the type for MySQL time type.
-type Duration struct {
-	gotime.Duration
-	// Fsp is short for Fractional Seconds Precision.
-	// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-	Fsp int
-}
+type Duration gotime.Duration
 
 //Add adds d to d, returns a duration value.
 func (d Duration) Add(v Duration) (Duration, error) {
-	if &v == nil {
-		return d, nil
-	}
-	dsum, err := AddInt64(int64(d.Duration), int64(v.Duration))
+	dsum, err := AddInt64(int64(d), int64(v))
 	if err != nil {
-		return Duration{}, errors.Trace(err)
+		return ZeroDuration, errors.Trace(err)
 	}
-	if d.Fsp >= v.Fsp {
-		return Duration{Duration: gotime.Duration(dsum), Fsp: d.Fsp}, nil
-	}
-	return Duration{Duration: gotime.Duration(dsum), Fsp: v.Fsp}, nil
+	return Duration(dsum), nil
 }
 
 // Sub subtracts d to d, returns a duration value.
 func (d Duration) Sub(v Duration) (Duration, error) {
-	if &v == nil {
-		return d, nil
-	}
-	dsum, err := SubInt64(int64(d.Duration), int64(v.Duration))
+	dsum, err := SubInt64(int64(d), int64(v))
 	if err != nil {
-		return Duration{}, errors.Trace(err)
+		return ZeroDuration, errors.Trace(err)
 	}
-	if d.Fsp >= v.Fsp {
-		return Duration{Duration: gotime.Duration(dsum), Fsp: d.Fsp}, nil
-	}
-	return Duration{Duration: gotime.Duration(dsum), Fsp: v.Fsp}, nil
+	return Duration(dsum), nil
 }
 
 // String returns the time formatted using default TimeFormat and fsp.
-func (d Duration) String() string {
+func (d Duration) String(fsp int) string {
 	var buf bytes.Buffer
 
-	sign, hours, minutes, seconds, fraction := splitDuration(d.Duration)
+	sign, hours, minutes, seconds, fraction := splitDuration(gotime.Duration(d))
 	if sign < 0 {
 		buf.WriteByte('-')
 	}
 
 	fmt.Fprintf(&buf, "%02d:%02d:%02d", hours, minutes, seconds)
-	if d.Fsp > 0 {
+	if fsp > 0 {
 		buf.WriteString(".")
-		buf.WriteString(d.formatFrac(fraction))
+		buf.WriteString(d.formatFrac(fraction, fsp))
 	}
 
 	p := buf.String()
@@ -822,16 +799,15 @@ func (d Duration) String() string {
 	return p
 }
 
-func (d Duration) formatFrac(frac int) string {
-	s := fmt.Sprintf("%06d", frac)
-	return s[0:d.Fsp]
+func (d Duration) formatFrac(frac int, fsp int) string {
+	return fmt.Sprintf("%06d", frac)[0:fsp]
 }
 
 // ToNumber changes duration to number format.
 // e.g,
 // 10:10:10 -> 101010
-func (d Duration) ToNumber() *MyDecimal {
-	sign, hours, minutes, seconds, fraction := splitDuration(d.Duration)
+func (d Duration) ToNumber(fsp int) *MyDecimal {
+	sign, hours, minutes, seconds, fraction := splitDuration(gotime.Duration(d))
 	var (
 		s       string
 		signStr string
@@ -841,10 +817,10 @@ func (d Duration) ToNumber() *MyDecimal {
 		signStr = "-"
 	}
 
-	if d.Fsp == 0 {
+	if fsp <= 0 {
 		s = fmt.Sprintf("%s%02d%02d%02d", signStr, hours, minutes, seconds)
 	} else {
-		s = fmt.Sprintf("%s%02d%02d%02d.%s", signStr, hours, minutes, seconds, d.formatFrac(fraction))
+		s = fmt.Sprintf("%s%02d%02d%02d.%s", signStr, hours, minutes, seconds, d.formatFrac(fraction, fsp))
 	}
 
 	// We skip checking error here because time formatted string can be parsed certainly.
@@ -858,7 +834,7 @@ func (d Duration) ToNumber() *MyDecimal {
 // Tp is TypeDatetime, TypeTimestamp and TypeDate.
 func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, error) {
 	year, month, day := gotime.Now().In(sc.TimeZone).Date()
-	sign, hour, minute, second, frac := splitDuration(d.Duration)
+	sign, hour, minute, second, frac := splitDuration(gotime.Duration(d))
 	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
 	timePart := FromDate(0, 0, 0, hour, minute, second, frac)
 	mixDateAndTime(&datePart, &timePart, sign < 0)
@@ -866,7 +842,7 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 	t := Time{
 		Time: datePart,
 		Type: mysql.TypeDatetime,
-		Fsp:  d.Fsp,
+		Fsp:  0,
 	}
 	return t.Convert(sc, tp)
 }
@@ -880,22 +856,17 @@ func (d Duration) RoundFrac(fsp int) (Duration, error) {
 	if err != nil {
 		return d, errors.Trace(err)
 	}
-
-	if fsp == d.Fsp {
-		return d, nil
-	}
-
 	n := gotime.Date(0, 0, 0, 0, 0, 0, 0, gotime.Local)
-	nd := n.Add(d.Duration).Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond).Sub(n)
-	return Duration{Duration: nd, Fsp: fsp}, nil
+	nd := n.Add(gotime.Duration(d)).Round(gotime.Duration(math.Pow10(9-fsp)) * gotime.Nanosecond).Sub(n)
+	return Duration(nd), nil
 }
 
 // Compare returns an integer comparing the Duration instant t to o.
 // If d is after o, return 1, equal o, return 0, before o, return -1.
 func (d Duration) Compare(o Duration) int {
-	if d.Duration > o.Duration {
+	if d > o {
 		return 1
-	} else if d.Duration == o.Duration {
+	} else if d == o {
 		return 0
 	} else {
 		return -1
@@ -917,28 +888,28 @@ func (d Duration) CompareString(sc *stmtctx.StatementContext, str string) (int, 
 // Hour returns current hour.
 // e.g, hour("11:11:11") -> 11
 func (d Duration) Hour() int {
-	_, hour, _, _, _ := splitDuration(d.Duration)
+	_, hour, _, _, _ := splitDuration(gotime.Duration(d))
 	return hour
 }
 
 // Minute returns current minute.
 // e.g, hour("11:11:11") -> 11
 func (d Duration) Minute() int {
-	_, _, minute, _, _ := splitDuration(d.Duration)
+	_, _, minute, _, _ := splitDuration(gotime.Duration(d))
 	return minute
 }
 
 // Second returns current second.
 // e.g, hour("11:11:11") -> 11
 func (d Duration) Second() int {
-	_, _, _, second, _ := splitDuration(d.Duration)
+	_, _, _, second, _ := splitDuration(gotime.Duration(d))
 	return second
 }
 
 // MicroSecond returns current microsecond.
 // e.g, hour("11:11:11.11") -> 110000
 func (d Duration) MicroSecond() int {
-	_, _, _, _, frac := splitDuration(d.Duration)
+	_, _, _, _, frac := splitDuration(gotime.Duration(d))
 	return frac
 }
 
@@ -1060,7 +1031,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 	}
 
 	d, err = TruncateOverflowMySQLTime(d)
-	return Duration{Duration: d, Fsp: fsp}, errors.Trace(err)
+	return Duration(d), errors.Trace(err)
 }
 
 // TruncateOverflowMySQLTime truncates d when it overflows, and return ErrTruncatedWrongVal.

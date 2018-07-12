@@ -658,16 +658,16 @@ func (b *builtinValuesDurationSig) Clone() builtinFunc {
 func (b *builtinValuesDurationSig) evalDuration(_ types.Row) (types.Duration, bool, error) {
 	values := b.ctx.GetSessionVars().CurrInsertValues
 	if values == nil {
-		return types.Duration{}, true, errors.New("Session current insert values is nil")
+		return types.ZeroDuration, true, errors.New("Session current insert values is nil")
 	}
 	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
-			return types.Duration{}, true, nil
+			return types.ZeroDuration, true, nil
 		}
 		return row.GetDuration(b.offset), false, nil
 	}
-	return types.Duration{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+	return types.ZeroDuration, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
 type builtinValuesJSONSig struct {
@@ -777,7 +777,7 @@ func (b *builtinGetParamStringSig) evalString(row types.Row) (string, bool, erro
 	v := sessionVars.PreparedParams[idx]
 
 	dt := v.(types.Datum)
-	str, err := (&dt).ToString()
+	str, err := (&dt).ToString(b.tp.Decimal)
 	if err != nil {
 		return "", true, nil
 	}

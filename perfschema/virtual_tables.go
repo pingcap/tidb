@@ -52,7 +52,7 @@ func (ds *statusDataSource) GetRows(ctx sessionctx.Context) (fullRows [][]types.
 		case []interface{}, nil:
 			v.Value = fmt.Sprintf("%v", v.Value)
 		}
-		value, err := types.ToString(v.Value)
+		value, err := types.ToString(v.Value, types.MaxFsp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

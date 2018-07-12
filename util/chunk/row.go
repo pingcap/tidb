@@ -88,7 +88,7 @@ func (r Row) GetTime(colIdx int) types.Time {
 // GetDuration returns the Duration value with the colIdx.
 func (r Row) GetDuration(colIdx int) types.Duration {
 	col := r.c.columns[colIdx]
-	return *(*types.Duration)(unsafe.Pointer(&col.data[r.idx*16]))
+	return *(*types.Duration)(unsafe.Pointer(&col.data[r.idx*8]))
 }
 
 func (r Row) getNameValue(colIdx int) (string, uint64) {

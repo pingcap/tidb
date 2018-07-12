@@ -265,7 +265,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte,
 				return buffer, errors.Trace(err)
 			}
 		case mysql.TypeDuration:
-			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i).Duration)...)
+			buffer = append(buffer, dumpBinaryTime(time.Duration(row.GetDuration(i)))...)
 		case mysql.TypeEnum:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetEnum(i).String()))
 		case mysql.TypeSet:
@@ -319,7 +319,7 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, e
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetTime(i).String()))
 		case mysql.TypeDuration:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetDuration(i).String()))
+			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetDuration(i).String(int(col.Decimal))))
 		case mysql.TypeEnum:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetEnum(i).String()))
 		case mysql.TypeSet:

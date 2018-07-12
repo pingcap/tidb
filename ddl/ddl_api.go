@@ -423,7 +423,7 @@ func getDefaultValue(ctx sessionctx.Context, c *ast.ColumnOption, tp byte, fsp i
 		}
 	}
 
-	return v.ToString()
+	return v.ToString(fsp)
 }
 
 func removeOnUpdateNowFlag(c *table.Column) {
@@ -1172,7 +1172,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	col.OriginDefaultValue = col.DefaultValue
 	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
 		zeroVal := table.GetZeroValue(col.ToInfo())
-		col.OriginDefaultValue, err = zeroVal.ToString()
+		col.OriginDefaultValue, err = zeroVal.ToString(col.Decimal)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1384,7 +1384,7 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	if err != nil {
 		return errors.Trace(err)
 	}
-	col.Comment, err = value.ToString()
+	col.Comment, err = value.ToString(col.Decimal)
 	return errors.Trace(err)
 }
 

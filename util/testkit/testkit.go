@@ -189,7 +189,7 @@ func (tk *TestKit) ResultSetToResult(rs ast.RecordSet, comment check.CommentInte
 				iRow[j] = "<nil>"
 			} else {
 				d := row.GetDatum(j, &rs.Fields()[j].Column.FieldType)
-				iRow[j], err = d.ToString()
+				iRow[j], err = d.ToString(rs.Fields()[j].Column.Decimal)
 				tk.c.Assert(err, check.IsNil)
 			}
 		}

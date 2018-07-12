@@ -73,7 +73,7 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 		{"1abc", 1, 2, 1},
 		{tm, 1, 2, 1},
 		{duration, 1, 2, 1},
-		{types.Duration{Duration: time.Duration(0)}, 1, 2, 2},
+		{types.Duration(time.Duration(0)), 1, 2, 2},
 		{types.NewDecFromStringForTest("1.2"), 1, 2, 1},
 		{jsonInt.GetMysqlJSON(), 1, 2, 1},
 	}

@@ -74,7 +74,7 @@ func (s *testEvaluatorSuite) TestConstant2Pb(c *C) {
 	constExprs = append(constExprs, constValue)
 
 	constValue = new(Constant)
-	constValue.Value = types.NewDatum(types.Duration{})
+	constValue.Value = types.NewDatum(types.ZeroDuration)
 	c.Assert(constValue.Value.Kind(), Equals, types.KindMysqlDuration)
 	constExprs = append(constExprs, constValue)
 

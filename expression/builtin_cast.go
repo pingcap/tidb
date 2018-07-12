@@ -159,7 +159,7 @@ type castAsRealFunctionClass struct {
 }
 
 func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
@@ -189,6 +189,10 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		sig = &builtinCastTimeAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsReal)
 	case types.ETDuration:
+		bf.tp.Decimal, err = timePrecision(ctx, args[0])
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		sig = &builtinCastDurationAsRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsReal)
 	case types.ETJson:
@@ -261,7 +265,7 @@ type castAsStringFunctionClass struct {
 }
 
 func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
-	if err := c.verifyArgs(args); err != nil {
+	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFunc(ctx, args)
@@ -286,6 +290,10 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		sig = &builtinCastTimeAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastTimeAsString)
 	case types.ETDuration:
+		bf.tp.Decimal, err = timePrecision(ctx, args[0])
+		if err != nil {
+			return nil, err
+		}
 		sig = &builtinCastDurationAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastDurationAsString)
 	case types.ETJson:
@@ -674,8 +682,7 @@ func (b *builtinCastDurationAsJSONSig) evalJSON(row types.Row) (res json.BinaryJ
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	val.Fsp = types.MaxFsp
-	return json.CreateBinary(val.String()), false, nil
+	return json.CreateBinary(val.String(b.getRetTp().Decimal)), false, nil
 }
 
 type builtinCastTimeAsJSONSig struct {
@@ -1352,7 +1359,7 @@ func (b *builtinCastDurationAsIntSig) evalInt(row types.Row) (res int64, isNull 
 	if err != nil {
 		return res, false, errors.Trace(err)
 	}
-	res, err = dur.ToNumber().ToInt()
+	res, err = dur.ToNumber(types.DefaultFsp).ToInt()
 	return res, false, errors.Trace(err)
 }
 
@@ -1371,7 +1378,7 @@ func (b *builtinCastDurationAsRealSig) evalReal(row types.Row) (res float64, isN
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = val.ToNumber().ToFloat64()
+	res, err = val.ToNumber(b.tp.Decimal).ToFloat64()
 	return res, false, errors.Trace(err)
 }
 
@@ -1391,7 +1398,7 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(row types.Row) (res *types
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceDecWithSpecifiedTp(val.ToNumber(), b.tp, sc)
+	res, err = types.ProduceDecWithSpecifiedTp(val.ToNumber(b.tp.Decimal), b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -1411,7 +1418,7 @@ func (b *builtinCastDurationAsStringSig) evalString(row types.Row) (res string, 
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(b.tp.Decimal), b.tp, sc)
 	return res, false, errors.Trace(err)
 }
 
@@ -1662,7 +1669,7 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 		return expr
 	}
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
-	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
+	tp.Flen, tp.Decimal = expr.GetType().Flen, expr.GetType().Decimal
 	types.SetBinChsClnFlag(tp)
 	return BuildCastFunction(ctx, expr, tp)
 }

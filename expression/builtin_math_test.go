@@ -183,7 +183,7 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 			time.Duration(m)*time.Minute +
 			time.Duration(s)*time.Second
 
-		return types.Duration{Duration: duration, Fsp: types.DefaultFsp}
+		return types.Duration(duration)
 	}
 
 	genTime := func(y, m, d int) types.Time {
