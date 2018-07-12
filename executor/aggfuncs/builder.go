@@ -116,7 +116,27 @@ func buildMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildCount builds the AggFunc implementation for function "GROUP_CONCAT".
 func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return nil
+	// TODO: There might be different kind of types of the args,
+	// we should add CastAsString upon every arg after cast can be pushed down to coprocessor.
+	// And this check can be removed at that time.
+	for _, arg := range aggFuncDesc.Args {
+		if arg.GetType().EvalType() != types.ETString {
+			return nil
+		}
+	}
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &groupConcat4DistinctString{baseGroupConcat4String{base}}
+		}
+		return &groupConcat4String{baseGroupConcat4String{base}}
+	}
 }
 
 // buildCount builds the AggFunc implementation for function "BIT_OR".
