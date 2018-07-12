@@ -15,14 +15,18 @@ package aggfuncs
 
 import (
 	"bytes"
+	"strings"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"strings"
 )
 
 type baseGroupConcat4String struct {
 	baseAggFunc
+
+	sep       string
+	sepInited bool
 }
 
 func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -36,9 +40,7 @@ func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context
 }
 
 type basePartialResult4GroupConcat struct {
-	sep       string
-	sepInited bool
-	buffer    *bytes.Buffer
+	buffer *bytes.Buffer
 }
 
 type partialResult4ConcatString struct {
@@ -55,14 +57,14 @@ func (e *groupConcat4String) AllocPartialResult() PartialResult {
 
 func (e *groupConcat4String) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4ConcatString)(pr)
-	p.sep, p.sepInited, p.buffer = "", false, nil
+	p.buffer = nil
 }
 
 func (e *groupConcat4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4ConcatString)(pr)
-	if !p.sepInited {
+	if !e.sepInited {
 		// Separator can only be a string constant value, so it would never be null.
-		p.sep, _, err = e.args[len(e.args)-1].EvalString(sctx, nil)
+		e.sep, _, err = e.args[len(e.args)-1].EvalString(sctx, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -83,7 +85,7 @@ func (e *groupConcat4String) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
 		} else {
-			p.buffer.WriteString(p.sep)
+			p.buffer.WriteString(e.sep)
 		}
 		// write values
 		for _, s := range valsBuf {
@@ -91,6 +93,7 @@ func (e *groupConcat4String) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		}
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
+	// issue: #7034
 	return nil
 }
 
@@ -111,14 +114,14 @@ func (e *groupConcat4DistinctString) AllocPartialResult() PartialResult {
 
 func (e *groupConcat4DistinctString) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4ConcatDistinctString)(pr)
-	p.sep, p.sepInited, p.buffer, p.valSet = "", false, nil, newStringSet()
+	p.buffer, p.valSet = nil, newStringSet()
 }
 
 func (e *groupConcat4DistinctString) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4ConcatDistinctString)(pr)
-	if !p.sepInited {
+	if !e.sepInited {
 		// Separator can only be a string constant value, so it would never be null.
-		p.sep, _, err = e.args[len(e.args)-1].EvalString(sctx, nil)
+		e.sep, _, err = e.args[len(e.args)-1].EvalString(sctx, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -144,7 +147,7 @@ func (e *groupConcat4DistinctString) UpdatePartialResult(sctx sessionctx.Context
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
 		} else {
-			p.buffer.WriteString(p.sep)
+			p.buffer.WriteString(e.sep)
 		}
 		// write values
 		for _, s := range valsBuf {
@@ -152,5 +155,6 @@ func (e *groupConcat4DistinctString) UpdatePartialResult(sctx sessionctx.Context
 		}
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
+	// issue: #7034
 	return nil
 }

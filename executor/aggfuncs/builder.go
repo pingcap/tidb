@@ -133,9 +133,9 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 		return nil
 	default:
 		if aggFuncDesc.HasDistinct {
-			return &groupConcat4DistinctString{baseGroupConcat4String{base}}
+			return &groupConcat4DistinctString{baseGroupConcat4String{baseAggFunc: base}}
 		}
-		return &groupConcat4String{baseGroupConcat4String{base}}
+		return &groupConcat4String{baseGroupConcat4String{baseAggFunc: base}}
 	}
 }
 
