@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -398,4 +399,32 @@ func (s *testSuite) TestMaxHandleAddIndex(c *C) {
 	tk.MustExec(fmt.Sprintf("insert into t1 values(%v, 1)", 0))
 	tk.MustExec("alter table t1 add index idx_b(b)")
 	tk.MustExec("admin check table t1")
+}
+
+func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 1")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(1))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = invalid_val")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = -1")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
+
+	res := tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
+	res.Check(testkit.Rows("-1"))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	res = tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
+	res.Check(testkit.Rows("100"))
+
+	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
+	res.Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBDDLReorgWorkerCount)))
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
+	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
+	res.Check(testkit.Rows("100"))
 }

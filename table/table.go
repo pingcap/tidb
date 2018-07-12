@@ -40,7 +40,8 @@ const (
 )
 
 var (
-	errColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, "column can not be null")
+	// ErrColumnCantNull is used for inserting null to a not null column.
+	ErrColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, mysql.MySQLErrName[mysql.ErrBadNull])
 	errUnknownColumn   = terror.ClassTable.New(codeUnknownColumn, "unknown column")
 	errDuplicateColumn = terror.ClassTable.New(codeDuplicateColumn, "duplicate column")
 
@@ -144,6 +145,14 @@ type Table interface {
 	Type() Type
 }
 
+// PartitionedTable is a Table, and it has a GetPartition() method.
+// GetPartition() gets the partition from a partition table by partitionID, its
+// return value is a Table because partition implements the Table interface.
+type PartitionedTable interface {
+	Table
+	GetPartition(partitionID int64) Table
+}
+
 // TableFromMeta builds a table.Table from *model.TableInfo.
 // Currently, it is assigned to tables.TableFromMeta in tidb package's init function.
 var TableFromMeta func(alloc autoid.Allocator, tblInfo *model.TableInfo) (Table, error)
@@ -163,7 +172,7 @@ const (
 	codeIndexStateCantNone   = 8
 	codeInvalidRecordKey     = 9
 
-	codeColumnCantNull     = 1048
+	codeColumnCantNull     = mysql.ErrBadNull
 	codeUnknownColumn      = 1054
 	codeDuplicateColumn    = 1110
 	codeNoDefaultValue     = 1364

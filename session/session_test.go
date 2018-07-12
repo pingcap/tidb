@@ -371,6 +371,33 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	tk.MustExec("set @@global.autocommit=1")
 }
 
+func (s *testSessionSuite) TestGetSysVariables(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// Test ScopeSession
+	tk.MustExec("select @@warning_count")
+	tk.MustExec("select @@session.warning_count")
+	tk.MustExec("select @@local.warning_count")
+	_, err := tk.Exec("select @@global.warning_count")
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+
+	// Test ScopeGlobal
+	tk.MustExec("select @@max_connections")
+	tk.MustExec("select @@global.max_connections")
+	_, err = tk.Exec("select @@session.max_connections")
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+	_, err = tk.Exec("select @@local.max_connections")
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+
+	// Test ScopeNone
+	tk.MustExec("select @@performance_schema_max_mutex_classes")
+	tk.MustExec("select @@global.performance_schema_max_mutex_classes")
+	_, err = tk.Exec("select @@session.performance_schema_max_mutex_classes")
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+	_, err = tk.Exec("select @@local.performance_schema_max_mutex_classes")
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+}
+
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table retrytxn (a int unique, b int)")
@@ -1445,11 +1472,11 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
-	atomic.StoreInt32(&session.SchemaOutOfDateRetryTimes, int32(3))
-	atomic.StoreInt64(&session.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
+	atomic.StoreInt32(&domain.SchemaOutOfDateRetryTimes, int32(3))
+	atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
 	defer func() {
-		atomic.StoreInt32(&session.SchemaOutOfDateRetryTimes, 10)
-		atomic.StoreInt64(&session.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
+		atomic.StoreInt32(&domain.SchemaOutOfDateRetryTimes, 10)
+		atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)

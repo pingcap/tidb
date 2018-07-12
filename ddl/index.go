@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -452,7 +453,6 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 const (
 	defaultTaskHandleCnt = 128
-	defaultIndexWorkers  = 16
 )
 
 // indexRecord is the record information of an index.
@@ -596,9 +596,9 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
 func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, addedCount, scanCount int, errInTxn error) {
-	addedCount = 0
-	scanCount = 0
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
+		addedCount = 0
+		scanCount = 0
 		txn.SetOption(kv.Priority, kv.PriorityLow)
 		idxRecords, handleOutOfRange, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
@@ -882,10 +882,10 @@ func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgI
 	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
 	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
 
-	// TODO: make workerCnt can be modified by system variable.
-	workerCnt := defaultIndexWorkers
+	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
+	workerCnt := variable.GetDDLReorgWorkerCounter()
 	idxWorkers := make([]*addIndexWorker, workerCnt)
-	for i := 0; i < workerCnt; i++ {
+	for i := 0; i < int(workerCnt); i++ {
 		sessCtx := newContext(reorgInfo.d.store)
 		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, colFieldMap)
 		go idxWorkers[i].run(reorgInfo.d)

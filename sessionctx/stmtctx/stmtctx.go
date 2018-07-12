@@ -23,6 +23,8 @@ import (
 )
 
 const (
+	// WarnLevelError represents level "Error" for 'SHOW WARNINGS' syntax.
+	WarnLevelError = "Error"
 	// WarnLevelWarning represents level "Warning" for 'SHOW WARNINGS' syntax.
 	WarnLevelWarning = "Warning"
 	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax.
@@ -40,19 +42,16 @@ type SQLWarn struct {
 type StatementContext struct {
 	// Set the following variables before execution
 
-	InInsertStmt         bool
-	InUpdateOrDeleteStmt bool
-	InSelectStmt         bool
-	IgnoreTruncate       bool
-	IgnoreZeroInDate     bool
-	// IgnoreErr is used for the following statements to avoid return an
-	// error, `insert`, `update`, and `delete`.
-	// If IgnoreErr is true and the statements meet some errors,
-	// e.g. duplicate keys, insert null to a not null column...,
-	// the errors will be appended as warnings.
-	// For the `load data` statement, IgnoreErr should be always true,
-	// because it is the same behavior as `insert ignore` statement.
-	IgnoreErr              bool
+	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
+	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
+	IsDDLJobInQueue        bool
+	InInsertStmt           bool
+	InUpdateOrDeleteStmt   bool
+	InSelectStmt           bool
+	IgnoreTruncate         bool
+	IgnoreZeroInDate       bool
+	DupKeyAsWarning        bool
+	BadNullAsWarning       bool
 	DividedByZeroAsWarning bool
 	TruncateAsWarning      bool
 	OverflowAsWarning      bool
@@ -129,6 +128,27 @@ func (sc *StatementContext) WarningCount() uint16 {
 	return wc
 }
 
+// NumWarnings gets warning count. It's different from `WarningCount` in that
+// `WarningCount` return the warning count of the last executed command, so if
+// the last command is a SHOW statement, `WarningCount` return 0. On the other
+// hand, `NumWarnings` always return number of warnings(or errors if `errOnly`
+// is set).
+func (sc *StatementContext) NumWarnings(errOnly bool) uint16 {
+	var wc uint16
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if errOnly {
+		for _, warn := range sc.mu.warnings {
+			if warn.Level == WarnLevelError {
+				wc++
+			}
+		}
+	} else {
+		wc = uint16(len(sc.mu.warnings))
+	}
+	return wc
+}
+
 // SetWarnings sets warnings.
 func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Lock()
@@ -150,6 +170,15 @@ func (sc *StatementContext) AppendNote(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
 		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelNote, warn})
+	}
+	sc.mu.Unlock()
+}
+
+// AppendError appends a warning with level 'Error'.
+func (sc *StatementContext) AppendError(warn error) {
+	sc.mu.Lock()
+	if len(sc.mu.warnings) < math.MaxUint16 {
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
 	}
 	sc.mu.Unlock()
 }

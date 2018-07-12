@@ -121,7 +121,7 @@ func (s *Server) shouldStopListener() bool {
 func (s *Server) onConn(c net.Conn) {
 	conn := s.newConn(c)
 	defer func() {
-		log.Infof("[con:%d] close x protocol connection", conn.connectionID)
+		log.Infof("con:%d close x protocol connection", conn.connectionID)
 	}()
 	if err := conn.handshake(); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
@@ -144,7 +144,7 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 	}
-	log.Infof("[con:%d] new x protocol connection %s", cc.connectionID, conn.RemoteAddr().String())
+	log.Infof("con:%d new x protocol connection %s", cc.connectionID, conn.RemoteAddr().String())
 	cc.salt = util.RandomBuf(20)
 	return cc
 }

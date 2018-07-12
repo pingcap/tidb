@@ -185,21 +185,12 @@ func (a *aggregationOptimizer) decompose(aggFunc *aggregation.AggFuncDesc, schem
 	return result, schema
 }
 
-func (a *aggregationOptimizer) allFirstRow(aggFuncs []*aggregation.AggFuncDesc) bool {
-	for _, fun := range aggFuncs {
-		if fun.Name != ast.AggFuncFirstRow {
-			return false
-		}
-	}
-	return true
-}
-
 // tryToPushDownAgg tries to push down an aggregate function into a join path. If all aggFuncs are first row, we won't
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
 func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column, join *LogicalJoin, childIdx int) LogicalPlan {
 	child := join.children[childIdx]
-	if a.allFirstRow(aggFuncs) {
+	if aggregation.IsAllFirstRow(aggFuncs) {
 		return child
 	}
 	// If the join is multiway-join, we forbid pushing down.
@@ -234,7 +225,7 @@ func (a *aggregationOptimizer) tryToPushDownAgg(aggFuncs []*aggregation.AggFuncD
 func (a *aggregationOptimizer) getDefaultValues(agg *LogicalAggregation) ([]types.Datum, bool) {
 	defaultValues := make([]types.Datum, 0, agg.Schema().Len())
 	for _, aggFunc := range agg.AggFuncs {
-		value, existsDefaultValue := aggFunc.CalculateDefaultValue(agg.ctx, agg.children[0].Schema())
+		value, existsDefaultValue := aggFunc.EvalNullValueInOuterJoin(agg.ctx, agg.children[0].Schema())
 		if !existsDefaultValue {
 			return nil, false
 		}
@@ -266,9 +257,9 @@ func (a *aggregationOptimizer) makeNewAgg(ctx sessionctx.Context, aggFuncs []*ag
 		newAggFuncDescs = append(newAggFuncDescs, newFuncs...)
 	}
 	for _, gbyCol := range gbyCols {
-		firstRow := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol.Clone()}, false)
+		firstRow := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
 		newAggFuncDescs = append(newAggFuncDescs, firstRow)
-		schema.Append(gbyCol.Clone().(*expression.Column))
+		schema.Append(gbyCol)
 	}
 	agg.AggFuncs = newAggFuncDescs
 	agg.SetSchema(schema)
@@ -433,7 +424,7 @@ func (a *aggregationOptimizer) rewriteCount(ctx sessionctx.Context, exprs []expr
 	// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
-		isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr.Clone())
+		isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
 		isNullExprs = append(isNullExprs, isNullExpr)
 	}
 	innerExpr := expression.ComposeDNFCondition(ctx, isNullExprs...)
@@ -446,7 +437,7 @@ func (a *aggregationOptimizer) rewriteCount(ctx sessionctx.Context, exprs []expr
 // and a DOUBLE value for approximate-value arguments (FLOAT or DOUBLE).
 func (a *aggregationOptimizer) rewriteSumOrAvg(ctx sessionctx.Context, exprs []expression.Expression) expression.Expression {
 	// FIXME: Consider the case that avg is final mode.
-	expr := exprs[0].Clone()
+	expr := exprs[0]
 	switch expr.GetType().Tp {
 	// Integer type should be cast to decimal.
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
@@ -472,6 +463,6 @@ func (a *aggregationOptimizer) rewriteExpr(ctx sessionctx.Context, aggFunc *aggr
 		return a.rewriteSumOrAvg(ctx, aggFunc.Args)
 	default:
 		// Default we do nothing about expr.
-		return aggFunc.Args[0].Clone()
+		return aggFunc.Args[0]
 	}
 }

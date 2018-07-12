@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -189,17 +188,26 @@ const (
 	// constants for stats version
 	curStatsVersion = version1
 	version1        = 1
+
+	// constants for column flag
+	analyzeFlag = 1
 )
 
+func isAnalyzed(flag int64) bool {
+	return (flag & analyzeFlag) > 0
+}
+
 // SaveStatsToStorage saves the stats to storage.
-func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch) error {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch, isAnalyzed int64) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	ctx := context.TODO()
-	exec := sctx.(sqlexec.SQLExecutor)
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	txn := sctx.Txn()
+	txn := h.mu.ctx.Txn()
 	version := txn.StartTS()
 	var sql string
 	// If the count is less than 0, then we do not want to update the modify count and count.
@@ -216,8 +224,12 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d)",
-		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, curStatsVersion)
+	flag := 0
+	if isAnalyzed == 1 {
+		flag = analyzeFlag
+	}
+	replaceSQL := fmt.Sprintf("replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag) values (%d, %d, %d, %d, %d, %d, X'%X', %d, %d, %d)",
+		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, curStatsVersion, flag)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
 		return errors.Trace(err)
@@ -227,7 +239,7 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sc := sctx.GetSessionVars().StmtCtx
+	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	for i := range hg.Buckets {
 		count := hg.Buckets[i].Count
 		if i > 0 {
@@ -254,15 +266,17 @@ func SaveStatsToStorage(sctx sessionctx.Context, tableID int64, count int64, isI
 }
 
 // SaveMetaToStorage will save stats_meta to storage.
-func SaveMetaToStorage(sctx sessionctx.Context, tableID, count, modifyCount int64) error {
+func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	ctx := context.TODO()
-	exec := sctx.(sqlexec.SQLExecutor)
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err := exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	var sql string
-	version := sctx.Txn().StartTS()
+	version := h.mu.ctx.Txn().StartTS()
 	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
 	if _, err = exec.Execute(ctx, sql); err != nil {
 		_, err1 := exec.Execute(ctx, "rollback")
@@ -273,9 +287,9 @@ func SaveMetaToStorage(sctx sessionctx.Context, tableID, count, modifyCount int6
 	return errors.Trace(err)
 }
 
-func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64) (*Histogram, error) {
+func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64) (*Histogram, error) {
 	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
-	rows, fields, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	rows, fields, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -290,13 +304,14 @@ func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp
 			lowerBound = rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			upperBound = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 		} else {
+			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
-			lowerBound, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+			lowerBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
-			upperBound, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
+			upperBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -308,9 +323,9 @@ func histogramFromStorage(ctx sessionctx.Context, tableID int64, colID int64, tp
 	return hg, nil
 }
 
-func columnCountFromStorage(ctx sessionctx.Context, tableID, colID int64) (int64, error) {
+func (h *Handle) columnCountFromStorage(tableID, colID int64) (int64, error) {
 	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, 0, colID)
-	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, selSQL)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -464,12 +479,12 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 
 // getIncreaseFactor will return a factor of data increasing after the last analysis.
 func (hg *Histogram) getIncreaseFactor(totalCount int64) float64 {
-	columnCount := int64(hg.totalRowCount())
+	columnCount := hg.totalRowCount()
 	if columnCount == 0 {
 		// avoid dividing by 0
 		return 1.0
 	}
-	return float64(totalCount) / float64(columnCount)
+	return float64(totalCount) / columnCount
 }
 
 // validRange checks if the range is valid, it is used by `SplitRange` to remove the invalid range,
@@ -641,12 +656,52 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	return lh, nil
 }
 
+// AvgCountPerValue gets the average row count per value by the data of histogram.
+func (hg *Histogram) AvgCountPerValue(totalCount int64) float64 {
+	curNDV := float64(hg.NDV) * hg.getIncreaseFactor(totalCount)
+	if curNDV == 0 {
+		curNDV = 1
+	}
+	return float64(totalCount) / curNDV
+}
+
+// ErrorRate is the error rate of estimate row count by bucket and cm sketch.
+type ErrorRate struct {
+	ErrorTotal float64
+	QueryTotal int64
+}
+
+// MaxErrorRate is the max error rate of estimate row count of a not pseudo column.
+// If the table is pseudo, but the average error rate is less than MaxErrorRate,
+// then the column is not pseudo.
+const MaxErrorRate = 0.25
+
+// IsPseudo is true when the total of query is zero or the average error
+// rate is greater than MaxErrorRate.
+func (e *ErrorRate) IsPseudo() bool {
+	if e.QueryTotal == 0 {
+		return true
+	}
+	return e.ErrorTotal/float64(e.QueryTotal) > MaxErrorRate
+}
+
+func (e *ErrorRate) update(rate float64) {
+	e.QueryTotal++
+	e.ErrorTotal += rate
+}
+
+func (e *ErrorRate) merge(rate *ErrorRate) {
+	e.QueryTotal += rate.QueryTotal
+	e.ErrorTotal += rate.ErrorTotal
+}
+
 // Column represents a column histogram.
 type Column struct {
 	Histogram
 	*CMSketch
 	Count int64
 	Info  *model.ColumnInfo
+	ErrorRate
 }
 
 func (c *Column) String() string {
@@ -718,6 +773,7 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 type Index struct {
 	Histogram
 	*CMSketch
+	ErrorRate
 	statsVer int64 // statsVer is the version of the current stats, used to maintain compatibility
 	Info     *model.IndexInfo
 }
