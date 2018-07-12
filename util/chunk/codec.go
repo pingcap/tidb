@@ -15,7 +15,6 @@ package chunk
 
 import (
 	"encoding/binary"
-	"fmt"
 	"reflect"
 	"unsafe"
 
@@ -103,8 +102,6 @@ func (c *Codec) encodeColumn(buffer, lenBuffer []byte, col *column) []byte {
 	binary.LittleEndian.PutUint32(lenBuffer, uint32(col.nullCount))
 	buffer = append(buffer, lenBuffer[:4]...)
 
-	fmt.Printf("encodeColumn: col.nullCount=%v, col.length=%v\n", col.nullCount, col.length)
-
 	// encode nullBitmap
 	if col.nullCount > 0 {
 		binary.LittleEndian.PutUint32(lenBuffer, uint32(len(col.nullBitmap)))
@@ -166,7 +163,6 @@ func (c *Codec) decodeColumn(buffer []byte, col *column, ordinal int) (remained 
 	numEatenBytes += 4
 
 	// decode nullBitmap.
-	fmt.Printf("decodeColumn: col.nullCount=%v, col.length=%v\n", col.nullCount, col.length)
 	if col.nullCount > 0 {
 		numBitmapBytes := uint32(binary.LittleEndian.Uint32(buffer[numEatenBytes:]))
 		numEatenBytes += 4
