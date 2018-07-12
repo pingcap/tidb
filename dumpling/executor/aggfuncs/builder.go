@@ -50,6 +50,45 @@ func Build(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildCount builds the AggFunc implementation for function "COUNT".
 func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	// If mode is DedupMode, we return nil for not implemented.
+	if aggFuncDesc.Mode == aggregation.DedupMode {
+		return nil // not implemented yet.
+	}
+
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+
+	// If HasDistinct and mode is CompleteMode or Partial1Mode, we should
+	// use countOriginalWithDistinct.
+	if aggFuncDesc.HasDistinct &&
+		(aggFuncDesc.Mode == aggregation.CompleteMode || aggFuncDesc.Mode == aggregation.Partial1Mode) {
+		return &countOriginalWithDistinct{baseCount{base}}
+	}
+
+	switch aggFuncDesc.Mode {
+	case aggregation.CompleteMode, aggregation.Partial1Mode:
+		switch aggFuncDesc.Args[0].GetType().EvalType() {
+		case types.ETInt:
+			return &countOriginal4Int{baseCount{base}}
+		case types.ETReal:
+			return &countOriginal4Real{baseCount{base}}
+		case types.ETDecimal:
+			return &countOriginal4Decimal{baseCount{base}}
+		case types.ETTimestamp, types.ETDatetime:
+			return &countOriginal4Time{baseCount{base}}
+		case types.ETDuration:
+			return &countOriginal4Duration{baseCount{base}}
+		case types.ETJson:
+			return &countOriginal4JSON{baseCount{base}}
+		case types.ETString:
+			return &countOriginal4String{baseCount{base}}
+		}
+	case aggregation.Partial2Mode, aggregation.FinalMode:
+		return &countPartial{baseCount{base}}
+	}
+
 	return nil
 }
 
