@@ -15,6 +15,7 @@ package aggfuncs
 
 import (
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -132,10 +133,13 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 	case aggregation.DedupMode:
 		return nil
 	default:
+		// The last arg is promised to be a not-null string constant, so the error can be ignored.
+		c, _ := aggFuncDesc.Args[len(aggFuncDesc.Args)-1].(*expression.Constant)
+		sep, _, _ := c.EvalString(nil, nil)
 		if aggFuncDesc.HasDistinct {
-			return &groupConcat4DistinctString{baseGroupConcat4String{baseAggFunc: base}}
+			return &groupConcat4DistinctString{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
 		}
-		return &groupConcat4String{baseGroupConcat4String{baseAggFunc: base}}
+		return &groupConcat4String{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
 	}
 }
 

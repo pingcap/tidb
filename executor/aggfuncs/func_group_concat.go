@@ -25,8 +25,7 @@ import (
 type baseGroupConcat4String struct {
 	baseAggFunc
 
-	sep       string
-	sepInited bool
+	sep string
 }
 
 func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -62,16 +61,10 @@ func (e *groupConcat4String) ResetPartialResult(pr PartialResult) {
 
 func (e *groupConcat4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4ConcatString)(pr)
-	if !e.sepInited {
-		// Separator can only be a string constant value, so it would never be null.
-		e.sep, _, err = e.args[len(e.args)-1].EvalString(sctx, nil)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	v, isNull, valsBuf := "", false, make([]string, len(e.args)-1)
+	validArgsLen := len(e.args) - 1
+	v, isNull, valsBuf := "", false, make([]string, validArgsLen)
 	for _, row := range rowsInGroup {
-		for i, l := 0, len(e.args)-1; i < l; i++ {
+		for i, l := 0, validArgsLen; i < l; i++ {
 			v, isNull, err = e.args[i].EvalString(sctx, row)
 			if err != nil {
 				return errors.Trace(err)
@@ -119,16 +112,10 @@ func (e *groupConcat4DistinctString) ResetPartialResult(pr PartialResult) {
 
 func (e *groupConcat4DistinctString) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4ConcatDistinctString)(pr)
-	if !e.sepInited {
-		// Separator can only be a string constant value, so it would never be null.
-		e.sep, _, err = e.args[len(e.args)-1].EvalString(sctx, nil)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	v, isNull, valsBuf, joinedVals := "", false, make([]string, len(e.args)-1), ""
+	validArgsLen := len(e.args) - 1
+	v, isNull, valsBuf, joinedVals := "", false, make([]string, validArgsLen), ""
 	for _, row := range rowsInGroup {
-		for i, l := 0, len(e.args)-1; i < l; i++ {
+		for i, l := 0, validArgsLen; i < l; i++ {
 			v, isNull, err = e.args[i].EvalString(sctx, row)
 			if err != nil {
 				return errors.Trace(err)
