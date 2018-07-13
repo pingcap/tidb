@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"strings"
+	"fmt"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
@@ -60,9 +60,11 @@ func init() {
 // LocCache is a simple cache policy to improve the performance of 'time.LoadLocation'.
 var LocCache *locCache
 
+// getLoc first trying to load location from a cache map. If nothing found in such map, then call
+// `time.LocadLocation` to get a timezone location. After trying both way, an error wil be returned
+//  if valid Location is not found.
 func (lm *locCache) getLoc(name string) (*time.Location, error) {
-	name = strings.ToLower(name)
-	if name == "system" {
+	if name == "System" {
 		name = "Local"
 	}
 	lm.RLock()
@@ -80,7 +82,7 @@ func (lm *locCache) getLoc(name string) (*time.Location, error) {
 	}
 
 	lm.RUnlock()
-	return nil, errors.New("invalid name for timezone")
+	return nil, errors.New(fmt.Sprintf("invalid name for timezone %s", name))
 }
 
 type dagContext struct {
