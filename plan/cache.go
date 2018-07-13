@@ -80,8 +80,8 @@ func (key *sqlCacheKey) Hash() []byte {
 // NewSQLCacheKey creates a new sqlCacheKey object.
 func NewSQLCacheKey(sessionVars *variable.SessionVars, sql string, schemaVersion int64, readOnly bool) kvcache.Key {
 	timezoneOffset, user, host := 0, "", ""
-	if sessionVars.TimeZone != nil {
-		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
+	if sessionVars.Loc != nil {
+		_, timezoneOffset = time.Now().In(sessionVars.Loc).Zone()
 	}
 	if sessionVars.User != nil {
 		user = sessionVars.User.Username
@@ -135,8 +135,8 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 // NewPSTMTPlanCacheKey creates a new pstmtPlanCacheKey object.
 func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
 	timezoneOffset := 0
-	if sessionVars.TimeZone != nil {
-		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
+	if sessionVars.Loc != nil {
+		_, timezoneOffset = time.Now().In(sessionVars.Loc).Zone()
 	}
 	return &pstmtPlanCacheKey{
 		database:       sessionVars.CurrentDB,

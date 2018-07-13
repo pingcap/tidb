@@ -1447,7 +1447,7 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	c.Assert(d.IsNull(), Equals, true)
 
 	// Set the time_zone variable, because UnixTimestamp() result depends on it.
-	s.ctx.GetSessionVars().TimeZone = time.UTC
+	s.ctx.GetSessionVars().Loc = time.UTC
 	tests := []struct {
 		inputDecimal int
 		input        types.Datum
@@ -2213,9 +2213,9 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 	sv := s.ctx.GetSessionVars()
 	originTZ := sv.Location()
-	sv.TimeZone, _ = time.LoadLocation("Asia/Tokyo")
+	sv.Loc, _ = time.LoadLocation("Asia/Tokyo")
 	defer func() {
-		sv.TimeZone = originTZ
+		sv.Loc = originTZ
 	}()
 
 	timeToGoTime := func(d types.Datum, loc *time.Location) time.Time {
@@ -2224,7 +2224,7 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 	}
 	durationToGoTime := func(d types.Datum, loc *time.Location) time.Time {
 		t, _ := d.GetMysqlDuration().ConvertToTime(sv.StmtCtx, mysql.TypeDatetime)
-		result, _ := t.Time.GoTime(sv.TimeZone)
+		result, _ := t.Time.GoTime(sv.Loc)
 		return result
 	}
 
@@ -2242,11 +2242,11 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 	}
 
 	for _, t := range tests {
-		now := time.Now().In(sv.TimeZone)
+		now := time.Now().In(sv.Loc)
 		f, err := funcs[t.method].getFunction(s.ctx, s.datumsToConstants(t.Input))
 		d, err := evalBuiltinFunc(f, nil)
 		c.Assert(err, IsNil)
-		result := t.convertToTime(d, sv.TimeZone)
+		result := t.convertToTime(d, sv.Loc)
 		c.Assert(result.Sub(now), LessEqual, 2*time.Second)
 	}
 }

@@ -760,7 +760,6 @@ func (w *GCWorker) checkLeader() (bool, error) {
 			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
-		fmt.Println("fuck" + time.Now().String())
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
 		if err != nil {
 			_, err1 := se.Execute(ctx, "ROLLBACK")

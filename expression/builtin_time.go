@@ -1889,8 +1889,8 @@ func (b *builtinSysDateWithFspSig) evalTime(row types.Row) (d types.Time, isNull
 		return types.Time{}, isNull, errors.Trace(err)
 	}
 
-	tz := b.ctx.GetSessionVars().Location()
-	now := time.Now().In(tz)
+	loc := b.ctx.GetSessionVars().Location()
+	now := time.Now().In(loc)
 	result, err := convertTimeToMysqlTime(now, int(fsp))
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
@@ -3663,7 +3663,7 @@ func getBf4TimeAddSub(ctx sessionctx.Context, args []Expression) (tp1, tp2 *type
 }
 
 func getTimeZone(ctx sessionctx.Context) *time.Location {
-	ret := ctx.GetSessionVars().TimeZone
+	ret := ctx.GetSessionVars().Loc
 	if ret == nil {
 		ret = time.Local
 	}

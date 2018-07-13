@@ -154,11 +154,11 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	for _, tt := range tests {
 		err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
 		c.Assert(err, IsNil)
-		c.Assert(v.TimeZone.String(), Equals, tt.expect)
+		c.Assert(v.Loc.String(), Equals, tt.expect)
 		if tt.compareValue {
 			SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
 			t1 := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-			t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.TimeZone)
+			t2 := time.Date(2000, 1, 1, 0, 0, 0, 0, v.Loc)
 			c.Assert(t2.Sub(t1), Equals, tt.diff)
 		}
 	}

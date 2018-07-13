@@ -255,7 +255,7 @@ type SessionVars struct {
 
 	// Per-connection time zones. Each client that connects has its own time zone setting, given by the session time_zone variable.
 	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
-	TimeZone *time.Location
+	Loc *time.Location
 
 	SQLMode mysql.SQLMode
 
@@ -413,7 +413,7 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 
 // Location returns the value of time_zone session variable. If it is nil, then return time.Local.
 func (s *SessionVars) Location() *time.Location {
-	loc := s.TimeZone
+	loc := s.Loc
 	if loc == nil {
 		loc = time.Local
 	}
@@ -458,7 +458,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		s.TimeZone = tz
+		s.Loc = tz
 	case SQLModeVar:
 		val = mysql.FormatSQLModeStr(val)
 		// Modes is a list of different modes separated by commas.
