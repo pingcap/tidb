@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -402,7 +401,6 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
 	is.stats = newSimpleStats(rowCount)
-	logrus.Warnf("coutn: %v", is.stats.count)
 	cop.cst = rowCount * scanFactor
 	task = cop
 	if matchProperty {
