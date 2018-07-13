@@ -35,7 +35,7 @@ type Codec struct {
 
 // NewCodec creates a new Codec object for encode or decode a Chunk.
 func NewCodec(colTypes []*types.FieldType) *Codec {
-	return &Codec{colTypes, nil}
+	return &Codec{colTypes}
 }
 
 // Encode encodes a Chunk to a byte slice.

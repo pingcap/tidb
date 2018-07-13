@@ -117,7 +117,7 @@ func BenchmarkDecode(b *testing.B) {
 			Tp: mysql.TypeLonglong,
 		}
 	}
-	codec := &Codec{colTypes, nil}
+	codec := &Codec{colTypes}
 	buffer := codec.Encode(chk)
 
 	b.ResetTimer()
@@ -146,7 +146,7 @@ func BenchmarkDecodeToChunk(b *testing.B) {
 			Tp: mysql.TypeLonglong,
 		}
 	}
-	codec := &Codec{colTypes, nil}
+	codec := &Codec{colTypes}
 	buffer := codec.Encode(chk)
 
 	b.ResetTimer()
