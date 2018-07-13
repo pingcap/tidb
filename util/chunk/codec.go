@@ -18,6 +18,7 @@ import (
 	"reflect"
 	"unsafe"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 )
@@ -30,11 +31,6 @@ type Codec struct {
 	// fixed size for every element.
 	// NOTE: It's only used for decoding.
 	colTypes []*types.FieldType
-
-	// notNullBitmap is used to populate the nullBitmap for every decoded
-	// column, which has zero null values.
-	// NOTE: It's only used for decoding.
-	notNullBitmap []byte
 }
 
 // NewCodec creates a new Codec object for encode or decode a Chunk.
@@ -124,7 +120,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *column, ordinal int) (remained 
 		col.nullBitmap = append(col.nullBitmap[:0], buffer[:numNullBitmapBytes]...)
 		buffer = buffer[numNullBitmapBytes:]
 	} else {
-		col.nullBitmap = append(col.nullBitmap[:0], c.allNotNull(col.length)...)
+		c.setAllNotNull(col)
 	}
 
 	// decode offsets.
@@ -144,17 +140,16 @@ func (c *Codec) decodeColumn(buffer []byte, col *column, ordinal int) (remained 
 	return buffer[numDataBytes:]
 }
 
-func (c *Codec) allNotNull(numElements int) []byte {
-	numBytes := (numElements + 7) >> 3
-	if len(c.notNullBitmap) < numBytes {
-		newNotNullBitmap := make([]byte, numBytes)
-		copy(newNotNullBitmap, c.notNullBitmap)
-		for i := len(c.notNullBitmap); i < numBytes; i++ {
-			newNotNullBitmap[i] = byte(0xFF)
-		}
-		c.notNullBitmap = newNotNullBitmap
+var allNotNullBitmap [128]byte
+
+func (c *Codec) setAllNotNull(col *column) {
+	numNullBitmapBytes := (col.length + 7) / 8
+	col.nullBitmap = col.nullBitmap[:0]
+	for i := 0; i < numNullBitmapBytes; {
+		numAppendBytes := mathutil.Min(numNullBitmapBytes-i, cap(allNotNullBitmap))
+		col.nullBitmap = append(col.nullBitmap, allNotNullBitmap[:numAppendBytes]...)
+		i += numAppendBytes
 	}
-	return c.notNullBitmap[:numBytes]
 }
 
 func (c *Codec) bytesToI32Slice(b []byte) (i32s []int32) {
@@ -181,5 +176,11 @@ func getFixedLen(colType *types.FieldType) int {
 		return types.MyDecimalStructSize
 	default:
 		return -1
+	}
+}
+
+func init() {
+	for i := 0; i < 128; i++ {
+		allNotNullBitmap[i] = 0xFF
 	}
 }
