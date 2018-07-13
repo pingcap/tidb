@@ -240,7 +240,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory columns in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "748"
+	columnCountOfAllInformationSchemaTables := "749"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
@@ -262,6 +262,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t values(1, 2, 3), (1, 2, 4)")
 	result = tk.MustQuery("select count(distinct c), count(distinct a,b) from t")
 	result.Check(testkit.Rows("2 1"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a float)")
+	tk.MustExec("insert into t values(966.36), (363.97), (569.99), (453.33), (376.45), (321.93), (12.12), (45.77), (9.66), (612.17)")
+	result = tk.MustQuery("select distinct count(distinct a) from t")
+	result.Check(testkit.Rows("10"))
 
 	tk.MustExec("create table idx_agg (a int, b int, index (b))")
 	tk.MustExec("insert idx_agg values (1, 1), (1, 2), (2, 2)")
@@ -294,6 +299,16 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec(`insert into t values (7, '{"i": -1, "n": "n7"}')`)
 	tk.MustQuery("select sum(tags->'$.i') from t").Check(testkit.Rows("14"))
 
+	// test agg with empty input
+	result = tk.MustQuery("select id, count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), group_concat(95) from t where null")
+	result.Check(testkit.Rows("<nil> 0 <nil> <nil> 0 18446744073709551615 0 <nil> <nil> <nil>"))
+	tk.MustExec("truncate table t")
+	tk.MustExec("create table s(id int)")
+	result = tk.MustQuery("select t.id, count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), group_concat(95) from t left join s on t.id = s.id")
+	result.Check(testkit.Rows("<nil> 0 <nil> <nil> 0 18446744073709551615 0 <nil> <nil> <nil>"))
+	tk.MustExec(`insert into t values (1, '{"i": 1, "n": "n1"}')`)
+	result = tk.MustQuery("select t.id, count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), group_concat(95) from t left join s on t.id = s.id")
+	result.Check(testkit.Rows("1 1 95 95.0000 95 95 95 95 95 95"))
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
 
@@ -527,7 +542,7 @@ func (s *testSuite) TestAggEliminator(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table t(a int primary key, b int)")
-	tk.MustQuery("select min(a) from t").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select min(a), min(a) from t").Check(testkit.Rows("<nil> <nil>"))
 	tk.MustExec("insert into t values(1, -1), (2, -2), (3, 1), (4, NULL)")
 	tk.MustQuery("select max(a) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))

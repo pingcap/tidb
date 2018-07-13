@@ -100,57 +100,19 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 		return errors.Trace(err)
 	}
 
-	if h.Lease > 0 {
-		hists := make([]*Histogram, 0, len(tbl.Columns))
-		cms := make([]*CMSketch, 0, len(tbl.Columns))
-		for _, col := range tbl.Columns {
-			hists = append(hists, &col.Histogram)
-			cms = append(cms, col.CMSketch)
-		}
-		h.AnalyzeResultCh() <- &AnalyzeResult{
-			TableID: tbl.TableID,
-			Hist:    hists,
-			Cms:     cms,
-			Count:   tbl.Count,
-			IsIndex: 0,
-			Err:     nil,
-		}
-
-		hists = make([]*Histogram, 0, len(tbl.Indices))
-		cms = make([]*CMSketch, 0, len(tbl.Indices))
-		for _, idx := range tbl.Indices {
-			hists = append(hists, &idx.Histogram)
-			cms = append(cms, idx.CMSketch)
-		}
-		h.AnalyzeResultCh() <- &AnalyzeResult{
-			TableID: tbl.TableID,
-			Hist:    hists,
-			Cms:     cms,
-			Count:   tbl.Count,
-			IsIndex: 1,
-			Err:     nil,
-		}
-
-		h.LoadMetaCh() <- &LoadMeta{
-			TableID:     tbl.TableID,
-			Count:       tbl.Count,
-			ModifyCount: tbl.ModifyCount,
-		}
-		return errors.Trace(err)
-	}
 	for _, col := range tbl.Columns {
-		err = SaveStatsToStorage(h.ctx, tbl.TableID, tbl.Count, 0, &col.Histogram, col.CMSketch, 1)
+		err = h.SaveStatsToStorage(tbl.TableID, tbl.Count, 0, &col.Histogram, col.CMSketch, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range tbl.Indices {
-		err = SaveStatsToStorage(h.ctx, tbl.TableID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, 1)
+		err = h.SaveStatsToStorage(tbl.TableID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	err = SaveMetaToStorage(h.ctx, tbl.TableID, tbl.Count, tbl.ModifyCount)
+	err = h.SaveMetaToStorage(tbl.TableID, tbl.Count, tbl.ModifyCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -209,11 +171,4 @@ func (h *Handle) LoadStatsFromJSONToTable(tableInfo *model.TableInfo, jsonTbl *J
 		}
 	}
 	return tbl, nil
-}
-
-// LoadMeta is the statistic meta loaded from json file.
-type LoadMeta struct {
-	TableID     int64
-	Count       int64
-	ModifyCount int64
 }

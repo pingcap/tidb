@@ -19,12 +19,14 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -689,7 +691,7 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 		return nil
 	}
 
-	sc := h.ctx.GetSessionVars().StmtCtx
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	ranges, err := q.DecodeToRanges(isIndex)
 	if err != nil {
 		return errors.Trace(err)

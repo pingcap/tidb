@@ -32,8 +32,8 @@ const (
 	BinlogInfo
 	// Skip existing check when "prewrite".
 	SkipCheckForWrite
-	// SchemaLeaseChecker is used for schema lease check.
-	SchemaLeaseChecker
+	// SchemaChecker is used for checking schema-validity.
+	SchemaChecker
 	// IsolationLevel sets isolation level for current transaction. The default level is SI.
 	IsolationLevel
 	// Priority marks the priority of this transaction.
