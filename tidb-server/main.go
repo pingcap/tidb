@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -379,10 +378,6 @@ func setGlobalVars() {
 	ddl.EnableSplitTableRegion = cfg.SplitTable
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
-
-	if cfg.PlanCache.Enabled {
-		plan.GlobalPlanCache = kvcache.NewShardedLRUCache(cfg.PlanCache.Capacity, cfg.PlanCache.Shards)
-	}
 
 	plan.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled
 	if plan.PreparedPlanCacheEnabled {
