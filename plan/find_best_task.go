@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -314,7 +315,7 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 		KeepOrder:        false,
 	}.init(ds.ctx)
 	is.filterCondition = remainedConds
-	is.stats = ds.stats
+	is.stats = newSimpleStats(float64(ds.statisticTable.Count))
 	cop := &copTask{
 		indexPlan: is,
 	}
@@ -401,6 +402,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
 	is.stats = newSimpleStats(rowCount)
+	logrus.Warnf("coutn: %v", is.stats.count)
 	cop.cst = rowCount * scanFactor
 	task = cop
 	if matchProperty {
@@ -544,7 +546,7 @@ func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
 		Ranges:      ranges,
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
-	ts.stats = ds.stats
+	ts.stats = newSimpleStats(float64(ds.statisticTable.Count))
 	ts.filterCondition = ds.pushedDownConds
 	copTask := &copTask{
 		tablePlan:         ts,
