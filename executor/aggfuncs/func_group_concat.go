@@ -61,8 +61,9 @@ func (e *groupConcat4String) ResetPartialResult(pr PartialResult) {
 
 func (e *groupConcat4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4ConcatString)(pr)
-	v, isNull, valsBuf := "", false, make([]string, len(e.args))
+	v, isNull := "", false
 	for _, row := range rowsInGroup {
+		isWriteSep := false
 		for i, l := 0, len(e.args); i < l; i++ {
 			v, isNull, err = e.args[i].EvalString(sctx, row)
 			if err != nil {
@@ -71,19 +72,17 @@ func (e *groupConcat4String) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 			if isNull {
 				continue
 			}
-			valsBuf[i] = v
+			isWriteSep = true
+			if p.buffer == nil {
+				p.buffer = &bytes.Buffer{}
+			}
+			p.buffer.WriteString(v)
 		}
-		// write separator
-		if p.buffer == nil {
-			p.buffer = &bytes.Buffer{}
-		} else {
+		if isWriteSep {
 			p.buffer.WriteString(e.sep)
 		}
-		// write values
-		for _, s := range valsBuf {
-			p.buffer.WriteString(s)
-		}
 	}
+	p.buffer.Truncate(p.buffer.Len() - 1)
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	// issue: #7034
 	return nil
