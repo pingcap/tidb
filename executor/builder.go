@@ -1339,6 +1339,9 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (dagReq *ti
 	dagReq = &tipb.DAGRequest{}
 	dagReq.StartTs = b.getStartTS()
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = zone(b.ctx)
+	if dagReq.TimeZoneName == "Local" {
+		dagReq.TimeZoneName = "System"
+	}
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)

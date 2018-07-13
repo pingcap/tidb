@@ -125,13 +125,7 @@ func closeAll(objs ...Closeable) error {
 func zone(ctx sessionctx.Context) (string, int64) {
 	loc := ctx.GetSessionVars().Location()
 	_, offset := time.Now().In(loc).Zone()
-	var name string
-	name = loc.String()
-	if name == "Local" {
-		name = "System"
-	}
-
-	return name, int64(offset)
+	return loc.String(), int64(offset)
 }
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
