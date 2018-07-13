@@ -47,7 +47,8 @@ import (
 var dummySlice = make([]byte, 0)
 
 // locCache is a simple map with lock. It stores all used timezone during the lifetime of tidb instance.
-// Talked with Golang team about whether they can have some forms of cache policy available for programmer, they suggests that only programmers knows which one is best for their use case.
+// Talked with Golang team about whether they can have some forms of cache policy available for programmer,
+// they suggests that only programmers knows which one is best for their use case.
 // For detail, please refer to: https://github.com/golang/go/issues/26106
 type locCache struct {
 	sync.RWMutex

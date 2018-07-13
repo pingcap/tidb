@@ -118,7 +118,7 @@ func closeAll(objs ...Closeable) error {
 	return errors.Trace(err)
 }
 
-// zone returns the local timezone name and timezone offset in seconds.
+// zone returns the current timezone name and timezone offset in seconds.
 // In compatible with MySQL, we change `Local` to `System`.
 // TODO: Golang team plan to return system timezone name intead of
 // returning `Local` when `loc` is `time.Local`. We need keep an eye on this.
