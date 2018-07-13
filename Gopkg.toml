@@ -19,7 +19,6 @@ required = ["github.com/golang/protobuf/jsonpb"]
   name = "github.com/coreos/etcd"
   version = "=3.2.18"
 
-# lock grpc version at 1.7.5 because etcd depdens on this version
 [[constraint]]
   name = "google.golang.org/grpc"
   source = "https://github.com/grpc/grpc-go.git"
