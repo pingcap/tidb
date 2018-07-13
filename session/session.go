@@ -803,7 +803,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		}
 		metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
-		// Step4: Execute the physical plan.
+		// Step3: Execute the physical plan.
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
 			return nil, errors.Trace(err)
 		}
