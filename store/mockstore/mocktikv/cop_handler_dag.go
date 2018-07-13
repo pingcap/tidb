@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"strings"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -59,6 +61,10 @@ func init() {
 var LocCache *locCache
 
 func (lm *locCache) getLoc(name string) (*time.Location, error) {
+	name = strings.ToLower(name)
+	if name == "system" {
+		name = "Local"
+	}
 	lm.RLock()
 	if v, ok := lm.locMap[name]; ok {
 		lm.RUnlock()
@@ -142,9 +148,6 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 			return nil, nil, nil, errors.Trace(err)
 		}
 		dagReq.TimeZoneName = sc.TimeZone.String()
-		if dagReq.TimeZoneName == "Local" {
-			dagReq.TimeZoneName = "System"
-		}
 	} else {
 		sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
 	}
