@@ -122,8 +122,8 @@ func closeAll(objs ...Closeable) error {
 // In compatible with MySQL, we change `Local` to `System`.
 // TODO: Golang team plan to return system timezone name intead of
 // returning `Local` when `loc` is `time.Local`. We need keep an eye on this.
-func zone(ctx sessionctx.Context) (string, int64) {
-	loc := ctx.GetSessionVars().Location()
+func zone(sctx sessionctx.Context) (string, int64) {
+	loc := sctx.GetSessionVars().Location()
 	_, offset := time.Now().In(loc).Zone()
 	var name string
 	name = loc.String()
