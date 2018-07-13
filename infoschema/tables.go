@@ -656,6 +656,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 	for _, col := range tblInfo.Cols() {
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			hasAutoIncID = true
+			break
 		}
 	}
 	autoIncID := tblInfo.AutoIncID
