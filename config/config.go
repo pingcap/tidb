@@ -62,7 +62,6 @@ type Config struct {
 	Status            Status            `toml:"status" json:"status"`
 	Performance       Performance       `toml:"performance" json:"performance"`
 	XProtocol         XProtocol         `toml:"xprotocol" json:"xprotocol"`
-	PlanCache         PlanCache         `toml:"plan-cache" json:"plan-cache"`
 	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
 	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
 	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
@@ -286,11 +285,6 @@ var defaultConf = Config{
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
-	},
-	PlanCache: PlanCache{
-		Enabled:  false,
-		Capacity: 2560,
-		Shards:   256,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:  false,
