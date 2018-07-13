@@ -148,11 +148,6 @@ networks = ""
 # PROXY protocol header read timeout, unit is second
 header-timeout = 5
 
-[plan-cache]
-enabled = false
-capacity = 2560
-shards = 256
-
 [prepared-plan-cache]
 enabled = false
 capacity = 100

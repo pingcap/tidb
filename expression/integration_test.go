@@ -3387,7 +3387,7 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	return store, dom, errors.Trace(err)
 }
 
-func (s *testIntegrationSuite) TestTwoDecimalAssignTruncate(c *C) {
+func (s *testIntegrationSuite) TestTwoDecimalTruncate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
 	tk.MustExec("use test")
@@ -3398,4 +3398,6 @@ func (s *testIntegrationSuite) TestTwoDecimalAssignTruncate(c *C) {
 	tk.MustExec("update t1 set b = a")
 	res := tk.MustQuery("select a, b from t1")
 	res.Check(testkit.Rows("123.12345 123.1"))
+	res = tk.MustQuery("select 2.00000000000000000000000000000001 * 1.000000000000000000000000000000000000000000002")
+	res.Check(testkit.Rows("2.000000000000000000000000000000"))
 }
