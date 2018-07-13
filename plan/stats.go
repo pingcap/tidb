@@ -28,10 +28,6 @@ type statsInfo struct {
 	cardinality []float64
 }
 
-func simpleStatsInfo(count float64) *statsInfo {
-	return &statsInfo{count: count}
-}
-
 func (s *statsInfo) String() string {
 	return fmt.Sprintf("count %v, cardinality %v", s.count, s.cardinality)
 }
@@ -97,6 +93,12 @@ func (p *baseLogicalPlan) deriveStats() (*statsInfo, error) {
 	return profile, nil
 }
 
+// StatsInfo implements the Plan interface.
+// TODO: merge `ds.statsAfterSelect`, just use `ds.stats`.
+func (ds *DataSource) StatsInfo() *statsInfo {
+	return ds.statsAfterSelect
+}
+
 func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
 	profile := &statsInfo{
 		count:       float64(ds.statisticTable.Count),
@@ -125,7 +127,7 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
-	ds.stats = ds.getStatsByFilter(ds.pushedDownConds)
+	ds.statsAfterSelect = ds.getStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path)
@@ -151,7 +153,7 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 			break
 		}
 	}
-	return ds.stats, nil
+	return ds.statsAfterSelect, nil
 }
 
 func (p *LogicalSelection) deriveStats() (*statsInfo, error) {

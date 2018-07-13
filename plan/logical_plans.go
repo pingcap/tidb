@@ -301,6 +301,9 @@ type DataSource struct {
 	// relevantIndices means the indices match the push down conditions
 	relevantIndices []bool
 
+	// statsAfterSelect is the statsInfo for dataSource and selection.
+	statsAfterSelect *statsInfo
+
 	statisticTable *statistics.Table
 
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
@@ -449,7 +452,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 			selectivity = selectionFactor
 		}
-		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.count)
+		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.statsAfterSelect.count)
 	}
 	// Check whether there's only point query.
 	noIntervalRanges := true
