@@ -59,10 +59,6 @@ func (s *statsInfo) scaleByExpectCnt(expectCnt float64) *statsInfo {
 	return s
 }
 
-func (p *basePhysicalPlan) StatsInfo() *statsInfo {
-	return p.stats
-}
-
 func (p *LogicalTableDual) deriveStats() (*statsInfo, error) {
 	profile := &statsInfo{
 		count:       float64(p.RowCount),
@@ -95,6 +91,12 @@ func (p *baseLogicalPlan) deriveStats() (*statsInfo, error) {
 	}
 	p.stats = profile
 	return profile, nil
+}
+
+// StatsInfo implements the Plan interface.
+// TODO: merge `ds.statsAfterSelect`, just use `ds.stats`.
+func (ds *DataSource) StatsInfo() *statsInfo {
+	return ds.statsAfterSelect
 }
 
 func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
