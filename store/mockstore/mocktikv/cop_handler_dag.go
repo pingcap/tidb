@@ -49,7 +49,7 @@ type dagContext struct {
 	evalCtx   *evalContext
 }
 
-func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.Response {
+func (h *mockRpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	if err := h.checkRequestContext(req.GetContext()); err != nil {
 		resp.RegionError = err
@@ -86,7 +86,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	return buildResp(chunks, e.Counts(), err, warnings)
 }
 
-func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
+func (h *mockRpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
 	if len(req.Ranges) == 0 {
 		return nil, nil, nil, errors.New("request range is null")
 	}
@@ -113,7 +113,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	return ctx, e, dagReq, err
 }
 
-func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
+func (h *mockRpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
 	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -127,7 +127,7 @@ func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Reque
 	}, nil
 }
 
-func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
+func (h *mockRpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
 	var currExec executor
 	var err error
 	switch curr.GetTp() {
@@ -153,7 +153,7 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 	return currExec, errors.Trace(err)
 }
 
-func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
+func (h *mockRpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
 	var src executor
 	for i := 0; i < len(executors); i++ {
 		curr, err := h.buildExec(ctx, executors[i])
@@ -166,7 +166,7 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 	return src, nil
 }
 
-func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*tableScanExec, error) {
+func (h *mockRpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*tableScanExec, error) {
 	columns := executor.TblScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.TblScan.Desc)
@@ -188,7 +188,7 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 	return e, nil
 }
 
-func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*indexScanExec, error) {
+func (h *mockRpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*indexScanExec, error) {
 	var err error
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
@@ -226,7 +226,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 	return e, nil
 }
 
-func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*selectionExec, error) {
+func (h *mockRpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*selectionExec, error) {
 	var err error
 	var relatedColOffsets []int
 	pbConds := executor.Selection.Conditions
@@ -249,7 +249,7 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 	}, nil
 }
 
-func (h *rpcHandler) getAggInfo(ctx *dagContext, executor *tipb.Executor) ([]aggregation.Aggregation, []expression.Expression, []int, error) {
+func (h *mockRpcHandler) getAggInfo(ctx *dagContext, executor *tipb.Executor) ([]aggregation.Aggregation, []expression.Expression, []int, error) {
 	length := len(executor.Aggregation.AggFunc)
 	aggs := make([]aggregation.Aggregation, 0, length)
 	var err error
@@ -280,7 +280,7 @@ func (h *rpcHandler) getAggInfo(ctx *dagContext, executor *tipb.Executor) ([]agg
 	return aggs, groupBys, relatedColOffsets, nil
 }
 
-func (h *rpcHandler) buildHashAgg(ctx *dagContext, executor *tipb.Executor) (*hashAggExec, error) {
+func (h *mockRpcHandler) buildHashAgg(ctx *dagContext, executor *tipb.Executor) (*hashAggExec, error) {
 	aggs, groupBys, relatedColOffsets, err := h.getAggInfo(ctx, executor)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -297,7 +297,7 @@ func (h *rpcHandler) buildHashAgg(ctx *dagContext, executor *tipb.Executor) (*ha
 	}, nil
 }
 
-func (h *rpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*streamAggExec, error) {
+func (h *mockRpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*streamAggExec, error) {
 	aggs, groupBys, relatedColOffsets, err := h.getAggInfo(ctx, executor)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -318,7 +318,7 @@ func (h *rpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*
 	}, nil
 }
 
-func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNExec, error) {
+func (h *mockRpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNExec, error) {
 	topN := executor.TopN
 	var err error
 	var relatedColOffsets []int
@@ -582,7 +582,7 @@ func toPBError(err error) *tipb.Error {
 }
 
 // extractKVRanges extracts kv.KeyRanges slice from a SelectRequest.
-func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan bool) (kvRanges []kv.KeyRange, err error) {
+func (h *mockRpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan bool) (kvRanges []kv.KeyRange, err error) {
 	for _, kran := range keyRanges {
 		if bytes.Compare(kran.GetStart(), kran.GetEnd()) >= 0 {
 			err = errors.Errorf("invalid range, start should be smaller than end: %v %v", kran.GetStart(), kran.GetEnd())

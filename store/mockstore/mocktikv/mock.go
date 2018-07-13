@@ -19,7 +19,7 @@ import (
 )
 
 // NewTestClient creates a TiKV client and PD client from options.
-func NewTestClient(cluster *Cluster, mvccStore MVCCStore, path string) (*RPCClient, pd.Client, error) {
+func NewTestClient(cluster *Cluster, mvccStore MVCCStore, path string) (*mockRPCClient, pd.Client, error) {
 	if cluster == nil {
 		cluster = NewCluster()
 		BootstrapWithSingleStore(cluster)
