@@ -31,7 +31,7 @@ func (s *testCacheSuite) SetUpSuite(c *C) {
 	ctx := mockContext()
 	ctx.GetSessionVars().SnapshotTS = 0
 	ctx.GetSessionVars().SQLMode = mysql.ModeNone
-	ctx.GetSessionVars().Loc = time.UTC
+	ctx.GetSessionVars().TimeZone = time.UTC
 	ctx.GetSessionVars().ConnectionID = 0
 	s.ctx = ctx
 }
