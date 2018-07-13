@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -233,6 +234,9 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 			}
 		}
 		log.Warn(errMsg)
+		if strings.Contains(errMsg, ErrMismatchClusterID.Error()) {
+			log.Fatalf("critical error %v", err)
+		}
 		// Use the first backoff type to generate a MySQL error.
 		return b.types[0].TError()
 	}
