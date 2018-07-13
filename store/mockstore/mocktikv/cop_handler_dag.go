@@ -15,11 +15,10 @@ package mocktikv
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"sync"
 	"time"
-
-	"fmt"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
