@@ -126,7 +126,7 @@ func zone(sctx sessionctx.Context) (string, int64) {
 	loc := sctx.GetSessionVars().Location()
 	_, offset := time.Now().In(loc).Zone()
 	var name string
-	name = loc.String()
+	name = locctx.String()
 	if name == "Local" {
 		name = "System"
 	}
