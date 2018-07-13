@@ -1307,13 +1307,13 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 
 	// test time
 	result = tk.MustQuery("select time('2003-12-31 01:02:03')")
-	result.Check(testkit.Rows("01:02:03.000000"))
+	result.Check(testkit.Rows("01:02:03"))
 	result = tk.MustQuery("select time('2003-12-31 01:02:03.000123')")
 	result.Check(testkit.Rows("01:02:03.000123"))
 	result = tk.MustQuery("select time('01:02:03.000123')")
 	result.Check(testkit.Rows("01:02:03.000123"))
 	result = tk.MustQuery("select time('01:02:03')")
-	result.Check(testkit.Rows("01:02:03.000000"))
+	result.Check(testkit.Rows("01:02:03"))
 	result = tk.MustQuery("select time('-838:59:59.000000')")
 	result.Check(testkit.Rows("-838:59:59.000000"))
 	result = tk.MustQuery("select time('-838:59:59.000001')")

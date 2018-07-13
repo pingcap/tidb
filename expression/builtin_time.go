@@ -2049,10 +2049,15 @@ type timeFunctionClass struct {
 }
 
 func (c *timeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	err := c.verifyArgs(args)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, types.ETString)
+	bf.tp.Decimal, err = timePrecision(ctx, args[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinTimeSig{bf}
 	return sig, nil
 }
@@ -5399,7 +5404,7 @@ func (b *builtinLastDaySig) evalTime(row types.Row) (types.Time, bool, error) {
 
 func timePrecision(ctx sessionctx.Context, expression Expression) (int, error) {
 	constExp, isConstant := expression.(*Constant)
-	if isConstant && (types.IsNonBinaryStr(expression.GetType()) || types.IsBinaryStr(expression.GetType())) && !isTemporalColumn(expression) {
+	if isConstant && types.IsStr(expression.GetType()) && !isTemporalColumn(expression) {
 		str, isNil, err := constExp.EvalString(ctx, nil)
 		if isNil || err != nil {
 			return 0, errors.Trace(err)
