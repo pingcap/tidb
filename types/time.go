@@ -812,7 +812,7 @@ func (d Duration) String() string {
 	}
 
 	fmt.Fprintf(&buf, "%02d:%02d:%02d", hours, minutes, seconds)
-	if d.Fsp > 0 && fraction > 0 {
+	if d.Fsp > 0 && fraction >= 0 {
 		buf.WriteString(".")
 		buf.WriteString(d.formatFrac(fraction))
 	}
