@@ -437,9 +437,9 @@ func (h *mockRPCHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvr
 	return &kvrpcpb.SplitRegionResponse{}
 }
 
-// mockRPCClient sends kv RPC calls to mock cluster. mockRPCClient mocks the behavior of
+// MockRPCClient sends kv RPC calls to mock cluster. MockRPCClient mocks the behavior of
 // a rpc client at tikv's side.
-type mockRPCClient struct {
+type MockRPCClient struct {
 	Cluster       *Cluster
 	MvccStore     MVCCStore
 	streamTimeout chan *tikvrpc.Lease
@@ -447,17 +447,17 @@ type mockRPCClient struct {
 
 // NewRPCClient creates an RPCClient.
 // Note that close the RPCClient may close the underlying MvccStore.
-func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *mockRPCClient {
+func NewRPCClient(cluster *Cluster, mvccStore MVCCStore) *MockRPCClient {
 	ch := make(chan *tikvrpc.Lease)
 	go tikvrpc.CheckStreamTimeoutLoop(ch)
-	return &mockRPCClient{
+	return &MockRPCClient{
 		Cluster:       cluster,
 		MvccStore:     mvccStore,
 		streamTimeout: ch,
 	}
 }
 
-func (c *mockRPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
+func (c *MockRPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, error) {
 	store, err := c.Cluster.GetAndCheckStoreByAddr(addr)
 	if err != nil {
 		return nil, err
@@ -472,7 +472,7 @@ func (c *mockRPCClient) getAndCheckStoreByAddr(addr string) (*metapb.Store, erro
 	return store, nil
 }
 
-func (c *mockRPCClient) checkArgs(ctx context.Context, addr string) (*mockRPCHandler, error) {
+func (c *MockRPCClient) checkArgs(ctx context.Context, addr string) (*mockRPCHandler, error) {
 	if err := checkGoContext(ctx); err != nil {
 		return nil, err
 	}
@@ -491,7 +491,7 @@ func (c *mockRPCClient) checkArgs(ctx context.Context, addr string) (*mockRPCHan
 }
 
 // SendRequest sends a request to mock cluster.
-func (c *mockRPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *MockRPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	// gofail: var rpcServerBusy bool
 	// if rpcServerBusy {
 	//	return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}})
@@ -716,7 +716,7 @@ func (c *mockRPCClient) SendRequest(ctx context.Context, addr string, req *tikvr
 }
 
 // Close closes the client.
-func (c *mockRPCClient) Close() error {
+func (c *MockRPCClient) Close() error {
 	close(c.streamTimeout)
 	if raw, ok := c.MvccStore.(io.Closer); ok {
 		return raw.Close()
