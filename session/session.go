@@ -767,86 +767,45 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 	}
 
 	s.PrepareTxnCtx(ctx)
-	var (
-		cacheKey         kvcache.Key
-		cacheValue       kvcache.Value
-		hitCache         = false
-		connID           = s.sessionVars.ConnectionID
-		planCacheEnabled = s.sessionVars.PlanCacheEnabled // Its value is read from the global configuration, and it will be only updated in tests.
-	)
-
-	if planCacheEnabled {
-		schemaVersion := domain.GetDomain(s).InfoSchema().SchemaMetaVersion()
-		readOnly := s.Txn() == nil || s.Txn().IsReadOnly()
-
-		cacheKey = plan.NewSQLCacheKey(s.sessionVars, sql, schemaVersion, readOnly)
-		cacheValue, hitCache = plan.GlobalPlanCache.Get(cacheKey)
+	connID := s.sessionVars.ConnectionID
+	err = s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	if hitCache {
-		metrics.PlanCacheCounter.WithLabelValues("select").Inc()
-		stmtNode := cacheValue.(*plan.SQLCacheValue).StmtNode
-		stmt := &executor.ExecStmt{
-			InfoSchema: executor.GetInfoSchema(s),
-			Plan:       cacheValue.(*plan.SQLCacheValue).Plan,
-			Expensive:  cacheValue.(*plan.SQLCacheValue).Expensive,
-			Text:       stmtNode.Text(),
-			StmtNode:   stmtNode,
-			Ctx:        s,
-		}
+	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
+	// Step1: Compile query string to abstract syntax trees(ASTs).
+	startTS := time.Now()
+	stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	if err != nil {
+		s.rollbackOnError(ctx)
+		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
+		return nil, errors.Trace(err)
+	}
+	metrics.SessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
+
+	compiler := executor.Compiler{Ctx: s}
+	for _, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
-		if err = executor.ResetStmtCtx(s, stmtNode); err != nil {
-			return nil, errors.Trace(err)
-		}
-		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		err = s.loadCommonGlobalVariablesIfNeeded()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 
-		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
-
-		// Step1: Compile query string to abstract syntax trees(ASTs).
-		startTS := time.Now()
-		stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
+		startTS = time.Now()
+		// Some executions are done in compile stage, so we reset them before compile.
+		if err := executor.ResetStmtCtx(s, stmtNode); err != nil {
+			return nil, errors.Trace(err)
+		}
+		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
+			log.Warnf("con:%d compile error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
-		metrics.SessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
+		metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
-		compiler := executor.Compiler{Ctx: s}
-		for _, stmtNode := range stmtNodes {
-			s.PrepareTxnCtx(ctx)
-
-			// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
-			startTS = time.Now()
-			// Some executions are done in compile stage, so we reset them before compile.
-			if err := executor.ResetStmtCtx(s, stmtNode); err != nil {
-				return nil, errors.Trace(err)
-			}
-			stmt, err := compiler.Compile(ctx, stmtNode)
-			if err != nil {
-				s.rollbackOnError(ctx)
-				log.Warnf("con:%d compile error:\n%v\n%s", connID, err, sql)
-				return nil, errors.Trace(err)
-			}
-			metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
-
-			// Step3: Cache the physical plan if possible.
-			if planCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 && !s.GetSessionVars().StmtCtx.HistogramsNotLoad() {
-				plan.GlobalPlanCache.Put(cacheKey, plan.NewSQLCacheValue(stmtNode, stmt.Plan, stmt.Expensive))
-			}
-
-			// Step4: Execute the physical plan.
-			if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
-				return nil, errors.Trace(err)
-			}
+		// Step3: Execute the physical plan.
+		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 
