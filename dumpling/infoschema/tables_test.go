@@ -65,6 +65,15 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2"))
 
+	// Test for auto increment ID.
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (c int auto_increment primary key, d int)")
+	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("1"))
+	tk.MustExec("insert into t(c, d) values(1, 1)")
+	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("30002"))
+
 	tk.MustExec("create user xxx")
 	tk.MustExec("flush privileges")
 
