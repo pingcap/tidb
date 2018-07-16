@@ -140,6 +140,40 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildFirstRow builds the AggFunc implementation for function "FIRST_ROW".
 func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+
+	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+	default:
+		switch evalType {
+		case types.ETInt:
+			if mysql.HasUnsignedFlag(fieldType.Flag) {
+				return &firstRow4Int{base}
+			}
+			return &firstRow4Uint{base}
+		case types.ETReal:
+			switch fieldType.Tp {
+			case mysql.TypeFloat:
+				return &firstRow4Float32{base}
+			case mysql.TypeDouble:
+				return &firstRow4Float64{base}
+			}
+		case types.ETDecimal:
+			return &firstRow4Decimal{base}
+		case types.ETDatetime, types.ETTimestamp:
+			return &firstRow4Time{base}
+		case types.ETDuration:
+			return &firstRow4Duration{base}
+		case types.ETString:
+			return &firstRow4String{base}
+		case types.ETJson:
+			return &firstRow4JSON{base}
+		}
+	}
 	return nil
 }
 
