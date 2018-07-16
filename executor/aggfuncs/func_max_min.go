@@ -355,7 +355,12 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			continue
 		}
 		if p.isNull {
-			// We need to copy the value of input to avoid the original value be covered.
+			// Chunk continuously stores strings in a byte slice internally, when e.args[0] is type `*expression.Column`,
+			// `Column.EvalString` will return the address of the original value in the byte slice,
+			// but not a copy of the origin value.
+			// Besides, a chunk will be reused multiply times during evaluation, which means that the value of `input`
+			// would change when the chunk be reset or new data re-fill the chunk.
+			// So we need to deep copy the value of input here.
 			p.val = stringutil.Copy(input)
 			p.isNull = false
 			continue
