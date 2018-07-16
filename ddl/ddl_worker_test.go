@@ -695,9 +695,9 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 					}
 					// check jobs' state.
 					if job.ID == lastJob.ID {
-						c.Assert(job.State, Equals, model.JobStateCancelled)
+						c.Assert(job.State, Equals, model.JobStateCancelled, Commentf("job: %v", job))
 					} else {
-						c.Assert(job.State, Equals, model.JobStateSynced)
+						c.Assert(job.State, Equals, model.JobStateSynced, Commentf("job: %v", job))
 					}
 				}
 
