@@ -84,8 +84,6 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 		r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 	}
 
-	// TODO: Check stream.GetEncodeType() here if we support tipb.EncodeType_TypeArrow some day.
-
 	err = result.Unmarshal(stream.Data)
 	if err != nil {
 		return false, errors.Trace(err)
