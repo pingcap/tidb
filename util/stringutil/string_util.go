@@ -236,7 +236,7 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 	return sIdx == len(str)
 }
 
-// CopyString deep copies a string.
-func CopyString(src string) string {
+// Copy deep copies a string.
+func Copy(src string) string {
 	return string(hack.Slice(src))
 }

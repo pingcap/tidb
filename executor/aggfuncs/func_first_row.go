@@ -239,7 +239,7 @@ func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 			break
 		}
 		// We should copy the input value here to avoid the origin value be covered.
-		p.val = stringutil.CopyString(input)
+		p.val = stringutil.Copy(input)
 		break
 	}
 	return nil
