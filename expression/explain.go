@@ -43,19 +43,20 @@ func (expr *Column) ExplainInfo() string {
 func (expr *Constant) ExplainInfo() string {
 	dt, err := expr.Eval(nil)
 	if err != nil {
-		if expr.Value.Kind() == types.KindNull {
-			return "null"
-		}
 		return "not recognized const vanue"
 	}
-	valStr, err := dt.ToString()
-	if err != nil {
-		if expr.Value.Kind() == types.KindNull {
-			return "null"
-		}
-		return "not recognized const vanue"
+	return expr.format(dt)
+}
+
+func (expr *Constant) format(dt types.Datum) string {
+	switch dt.Kind() {
+	case types.KindNull:
+		return "NULL"
+	case types.KindString, types.KindBytes, types.KindMysqlEnum, types.KindMysqlSet,
+		types.KindMysqlJSON, types.KindBinaryLiteral, types.KindMysqlBit:
+		return fmt.Sprintf("\"%v\"", dt.GetValue())
 	}
-	return valStr
+	return fmt.Sprintf("%v", dt.GetValue())
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.

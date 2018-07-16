@@ -113,6 +113,8 @@ type PhysicalIndexScan struct {
 	// Hist is the histogram when the query was issued.
 	// It is used for query feedback.
 	Hist *statistics.Histogram
+
+	rangeDecidedBy []*expression.Column
 }
 
 // PhysicalMemTable reads memory table.
@@ -152,6 +154,8 @@ type PhysicalTableScan struct {
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool
 	partitionID int64
+
+	rangeDecidedBy []*expression.Column
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
