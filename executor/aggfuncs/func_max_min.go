@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"fmt"
 )
 
 type partialResult4MaxMinInt struct {
