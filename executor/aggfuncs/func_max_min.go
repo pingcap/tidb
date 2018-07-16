@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type partialResult4MaxMinInt struct {
@@ -355,13 +356,13 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		}
 		if p.isNull {
 			// We need to copy the value of input to avoid the original value be covered.
-			p.val = "" + input
+			p.val = stringutil.CopyString(input)
 			p.isNull = false
 			continue
 		}
 		cmp := types.CompareString(input, p.val)
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
-			p.val = "" + input
+			p.val = stringutil.CopyString(input)
 		}
 	}
 	return nil
