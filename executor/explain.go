@@ -15,6 +15,7 @@ package executor
 
 import (
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/net/context"
 )
@@ -25,6 +26,19 @@ type ExplainExec struct {
 
 	rows   [][]string
 	cursor int
+}
+
+// buildExplain builds a explain executor. `e.rows` collects final result and
+// displays it in sql-shell.
+func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
+	e := &ExplainExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+	}
+	e.rows = make([][]string, 0, len(v.Rows))
+	for _, row := range v.Rows {
+		e.rows = append(e.rows, row)
+	}
+	return e
 }
 
 // Close implements the Executor Close interface.
