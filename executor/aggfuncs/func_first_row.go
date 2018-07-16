@@ -129,50 +129,6 @@ func (e *firstRow4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Parti
 	return nil
 }
 
-type firstRow4Uint struct {
-	baseAggFunc
-}
-
-func (e *firstRow4Uint) AllocPartialResult() PartialResult {
-	return PartialResult(new(partialResult4FirstRowUint))
-}
-
-func (e *firstRow4Uint) ResetPartialResult(pr PartialResult) {
-	p := (*partialResult4FirstRowUint)(pr)
-	p.val, p.isNull, p.gotFirstRow = 0, false, false
-}
-
-func (e *firstRow4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
-	p := (*partialResult4FirstRowUint)(pr)
-	if p.gotFirstRow {
-		return nil
-	}
-	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		p.gotFirstRow = true
-		if isNull {
-			p.isNull = true
-			break
-		}
-		p.val = uint64(input)
-		break
-	}
-	return nil
-}
-
-func (e *firstRow4Uint) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
-	p := (*partialResult4FirstRowUint)(pr)
-	if p.isNull || !p.gotFirstRow {
-		chk.AppendNull(e.ordinal)
-		return nil
-	}
-	chk.AppendUint64(e.ordinal, p.val)
-	return nil
-}
-
 type firstRow4Float32 struct {
 	baseAggFunc
 }
@@ -290,7 +246,7 @@ func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 			break
 		}
 		// We should copy the input value here to avoid the origin value be covered.
-		p.val = fmt.Sprintf("%s", input)
+		p.val = "" + input
 		break
 	}
 	return nil
