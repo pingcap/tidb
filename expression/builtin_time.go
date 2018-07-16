@@ -5404,16 +5404,12 @@ func (b *builtinLastDaySig) evalTime(row types.Row) (types.Time, bool, error) {
 
 func timePrecision(ctx sessionctx.Context, expression Expression) (int, error) {
 	constExp, isConstant := expression.(*Constant)
-	if isConstant && types.IsStr(expression.GetType()) && !isTemporalColumn(expression) {
+	if isConstant && types.IsString(expression.GetType()) && !isTemporalColumn(expression) {
 		str, isNil, err := constExp.EvalString(ctx, nil)
 		if isNil || err != nil {
 			return 0, errors.Trace(err)
 		}
-		if n := strings.LastIndexByte(str, '.'); n >= 0 {
-			lenStrFsp := len(str[n+1:])
-			return mathutil.Min(lenStrFsp, types.MaxFsp), nil
-		}
-		return types.MinFsp, nil
+		return types.GetFsp(str), nil
 	}
 	return mathutil.Min(expression.GetType().Decimal, types.MaxFsp), nil
 }

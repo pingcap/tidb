@@ -87,7 +87,7 @@ func IsTemporalWithDate(tp byte) bool {
 // IsBinaryStr returns a boolean indicating
 // whether the field type is a binary string type.
 func IsBinaryStr(ft *FieldType) bool {
-	if ft.Collate == charset.CollationBin && IsStr(ft) {
+	if ft.Collate == charset.CollationBin && IsString(ft) {
 		return true
 	}
 	return false
@@ -96,15 +96,15 @@ func IsBinaryStr(ft *FieldType) bool {
 // IsNonBinaryStr returns a boolean indicating
 // whether the field type is a non-binary string type.
 func IsNonBinaryStr(ft *FieldType) bool {
-	if ft.Collate != charset.CollationBin && IsStr(ft) {
+	if ft.Collate != charset.CollationBin && IsString(ft) {
 		return true
 	}
 	return false
 }
 
-// IsStr returns a boolean indicating
+// IsString returns a boolean indicating
 // whether the field type is a string type.
-func IsStr(ft *FieldType) bool {
+func IsString(ft *FieldType) bool {
 	return IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeUnspecified(ft.Tp)
 }
 
