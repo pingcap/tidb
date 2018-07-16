@@ -338,6 +338,9 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 		break
 	}
 
+	// Test that even if the table is recently modified, we can still analyze the table.
+	h.Lease = time.Second
+	defer func() { h.Lease = 0 }()
 	_, err = testKit.Exec("insert into t values ('fff')")
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
@@ -363,11 +366,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	_, err = testKit.Exec("insert into t values ('eee')")
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
-	h.Clear()
-	// We set `Lease` here so that `Update` will use load by need strategy.
-	h.Lease = time.Second
 	h.Update(is)
-	h.Lease = 0
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
 	h.Update(is)
@@ -381,6 +380,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 		break
 	}
 
+	testKit.MustExec("analyze table t")
 	_, err = testKit.Exec("create index idx on t(a)")
 	c.Assert(err, IsNil)
 	is = do.InfoSchema()
@@ -437,7 +437,7 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	bID := tblInfo.Indices[0].ID
 
 	// The statistic table is outdated now.
-	c.Assert(tbl.Columns[aID].IsPseudo(), IsTrue)
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsTrue)
 
 	testKit.MustQuery("select * from t where a between 1 and 10")
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
@@ -448,9 +448,9 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	tbl = h.GetTableStats(tblInfo)
 
 	// The error rate of this column is not larger than MaxErrorRate now.
-	c.Assert(tbl.Columns[aID].IsPseudo(), IsFalse)
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsFalse)
 
-	c.Assert(tbl.Indices[bID].IsPseudo(), IsTrue)
+	c.Assert(tbl.Indices[bID].NotAccurate(), IsTrue)
 	testKit.MustQuery("select * from t where b between 2 and 10")
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
@@ -458,7 +458,7 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	h.UpdateErrorRate(is)
 	h.Update(is)
 	tbl = h.GetTableStats(tblInfo)
-	c.Assert(tbl.Indices[bID].IsPseudo(), IsFalse)
+	c.Assert(tbl.Indices[bID].NotAccurate(), IsFalse)
 	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(1))
 
 	testKit.MustExec("analyze table t")

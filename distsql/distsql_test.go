@@ -15,10 +15,14 @@ package distsql
 
 import (
 	"sync"
+	"testing"
+	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -149,7 +153,7 @@ func (s *testSuite) TestAnalyze(c *C) {
 
 	bytes, err := response.NextRaw(context.TODO())
 	c.Assert(err, IsNil)
-	c.Assert(len(bytes), Equals, 14)
+	c.Assert(len(bytes), Equals, 16)
 
 	err = response.Close()
 	c.Assert(err, IsNil)
@@ -205,3 +209,79 @@ func (r *mockResultSubset) GetData() []byte { return r.data }
 
 // GetStartKey implements kv.Response interface.
 func (r *mockResultSubset) GetStartKey() kv.Key { return nil }
+
+func populateBuffer() []byte {
+	numCols := 4
+	numRows := 1024
+	buffer := make([]byte, 0, 1024)
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+
+	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
+		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
+			buffer, _ = codec.EncodeValue(sc, buffer, types.NewIntDatum(123))
+		}
+	}
+
+	return buffer
+}
+
+func mockReadRowsData(buffer []byte, colTypes []*types.FieldType, chk *chunk.Chunk) (err error) {
+	chk.Reset()
+	numCols := 4
+	numRows := 1024
+
+	decoder := codec.NewDecoder(chk, time.Local)
+	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
+		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
+			buffer, err = decoder.DecodeOne(buffer, colOrdinal, colTypes[colOrdinal])
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func BenchmarkReadRowsData(b *testing.B) {
+	numCols := 4
+	numRows := 1024
+
+	colTypes := make([]*types.FieldType, numCols)
+	for i := 0; i < numCols; i++ {
+		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
+	}
+	chk := chunk.NewChunkWithCapacity(colTypes, numRows)
+
+	buffer := populateBuffer()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mockReadRowsData(buffer, colTypes, chk)
+	}
+}
+
+func BenchmarkDecodeToChunk(b *testing.B) {
+	numCols := 4
+	numRows := 1024
+
+	colTypes := make([]*types.FieldType, numCols)
+	for i := 0; i < numCols; i++ {
+		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
+	}
+	chk := chunk.NewChunkWithCapacity(colTypes, numRows)
+
+	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
+		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {
+			chk.AppendInt64(colOrdinal, 123)
+		}
+	}
+
+	codec := chunk.NewCodec(colTypes)
+	buffer := codec.Encode(chk)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		codec.DecodeToChunk(buffer, chk)
+	}
+}

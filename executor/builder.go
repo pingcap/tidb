@@ -210,6 +210,7 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 
 func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	e := &ShowDDLJobsExec{
+		jobNumber:    v.JobNumber,
 		is:           b.is,
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}
@@ -946,12 +947,11 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 				aggDesc.Mode = aggregation.Partial2Mode
 			}
 		}
-		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+		aggFunc := aggDesc.GetAggFunc()
+		e.AggFuncs = append(e.AggFuncs, aggFunc)
 		if e.defaultVal != nil {
-			value, existsDefaultValue := aggDesc.CalculateDefaultValue(e.ctx, e.children[0].Schema())
-			if existsDefaultValue {
-				e.defaultVal.AppendDatum(i, &value)
-			}
+			value := aggFunc.GetDefaultValue()
+			e.defaultVal.AppendDatum(i, &value)
 		}
 	}
 
@@ -972,9 +972,20 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
+	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
+		e.defaultVal = nil
+	} else {
+		e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)
+	}
 	newAggFuncs := make([]aggfuncs.AggFunc, 0, len(v.AggFuncs))
 	for i, aggDesc := range v.AggFuncs {
-		e.AggFuncs = append(e.AggFuncs, aggDesc.GetAggFunc())
+		aggFunc := aggDesc.GetAggFunc()
+		e.AggFuncs = append(e.AggFuncs, aggFunc)
+		if e.defaultVal != nil {
+			value := aggFunc.GetDefaultValue()
+			e.defaultVal.AppendDatum(i, &value)
+		}
+		// For new aggregate evaluation framework.
 		newAggFunc := aggfuncs.Build(aggDesc, i)
 		if newAggFunc != nil {
 			newAggFuncs = append(newAggFuncs, newAggFunc)

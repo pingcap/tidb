@@ -91,7 +91,7 @@ func (fp *PointSelectPlan) SetChildren(...PhysicalPlan) {}
 func (fp *PointSelectPlan) ResolveIndices() {}
 
 func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
-	if PreparedPlanCacheEnabled || ctx.GetSessionVars().PlanCacheEnabled {
+	if PreparedPlanCacheEnabled {
 		// plan cache not supported yet.
 		return nil
 	}

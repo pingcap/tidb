@@ -49,6 +49,7 @@ func (s *statsInfo) scale(factor float64) *statsInfo {
 }
 
 // We try to scale statsInfo to an expectCnt which must be smaller than the derived cnt.
+// TODO: try to use a better way to do this.
 func (s *statsInfo) scaleByExpectCnt(expectCnt float64) *statsInfo {
 	if expectCnt > s.count {
 		return s
@@ -57,6 +58,10 @@ func (s *statsInfo) scaleByExpectCnt(expectCnt float64) *statsInfo {
 		return s.scale(expectCnt / s.count)
 	}
 	return s
+}
+
+func newSimpleStats(rowCount float64) *statsInfo {
+	return &statsInfo{count: rowCount}
 }
 
 func (p *basePhysicalPlan) statsInfo() *statsInfo {
@@ -129,7 +134,7 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
-	ds.statsAfterSelect = ds.getStatsByFilter(ds.pushedDownConds)
+	ds.stats = ds.getStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path)
@@ -155,7 +160,7 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 			break
 		}
 	}
-	return ds.statsAfterSelect, nil
+	return ds.stats, nil
 }
 
 func (p *LogicalSelection) deriveStats() (*statsInfo, error) {
