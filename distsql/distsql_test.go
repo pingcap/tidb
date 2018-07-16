@@ -226,6 +226,7 @@ func populateBuffer() []byte {
 }
 
 func mockReadRowsData(buffer []byte, colTypes []*types.FieldType, chk *chunk.Chunk) (err error) {
+	chk.Reset()
 	numCols := 4
 	numRows := 1024
 

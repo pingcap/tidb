@@ -32,6 +32,7 @@ import (
 
 var (
 	_ SelectResult = (*selectResult)(nil)
+	_ SelectResult = (*streamResult)(nil)
 )
 
 var (
