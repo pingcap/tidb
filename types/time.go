@@ -765,7 +765,7 @@ func AdjustYear(y int64) (int64, error) {
 	return y, nil
 }
 
-// Duration is the type for MySQL time type.
+// Duration is the type for MySQL TIME type.
 type Duration struct {
 	gotime.Duration
 	// Fsp is short for Fractional Seconds Precision.

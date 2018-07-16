@@ -128,7 +128,7 @@ func cmpDuration(l Row, lCol int, r Row, rCol int) int {
 	if lNull || rNull {
 		return cmpNull(lNull, rNull)
 	}
-	lDur, rDur := l.GetDuration(lCol).Duration, r.GetDuration(rCol).Duration
+	lDur, rDur := l.GetDuration(lCol, 0).Duration, r.GetDuration(rCol, 0).Duration
 	return types.CompareInt64(int64(lDur), int64(rDur))
 }
 
@@ -190,7 +190,7 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 		l, r := row.GetMyDecimal(colIdx), ad.GetMysqlDecimal()
 		return l.Compare(r)
 	case types.KindMysqlDuration:
-		l, r := row.GetDuration(colIdx).Duration, ad.GetMysqlDuration().Duration
+		l, r := row.GetDuration(colIdx, 0).Duration, ad.GetMysqlDuration().Duration
 		return types.CompareInt64(int64(l), int64(r))
 	case types.KindMysqlEnum:
 		l, r := row.GetEnum(colIdx).Value, ad.GetMysqlEnum().Value

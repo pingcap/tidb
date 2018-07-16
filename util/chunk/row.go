@@ -87,10 +87,10 @@ func (r Row) GetTime(colIdx int) types.Time {
 }
 
 // GetDuration returns the Duration value with the colIdx.
-func (r Row) GetDuration(colIdx int) types.Duration {
+func (r Row) GetDuration(colIdx int, fillFsp int) types.Duration {
 	col := r.c.columns[colIdx]
 	dur := *(*int64)(unsafe.Pointer(&col.data[r.idx*8]))
-	return types.Duration{Duration: time.Duration(dur), Fsp: types.WaitFillFsp}
+	return types.Duration{Duration: time.Duration(dur), Fsp: fillFsp}
 }
 
 func (r Row) getNameValue(colIdx int) (string, uint64) {
@@ -177,10 +177,7 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		}
 	case mysql.TypeDuration:
 		if !r.IsNull(colIdx) {
-			duration := r.GetDuration(colIdx)
-			if duration.Fsp == types.WaitFillFsp {
-				duration.Fsp = tp.Decimal
-			}
+			duration := r.GetDuration(colIdx, tp.Decimal)
 			d.SetMysqlDuration(duration)
 		}
 	case mysql.TypeNewDecimal:

@@ -272,10 +272,7 @@ func (col *Column) EvalDuration(ctx sessionctx.Context, row types.Row) (types.Du
 	if row.IsNull(col.Index) {
 		return types.Duration{}, true, nil
 	}
-	duration := row.GetDuration(col.Index)
-	if duration.Fsp == types.WaitFillFsp {
-		duration.Fsp = col.RetType.Decimal
-	}
+	duration := row.GetDuration(col.Index, col.RetType.Decimal)
 	return duration, false, nil
 }
 

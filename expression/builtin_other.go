@@ -665,10 +665,7 @@ func (b *builtinValuesDurationSig) evalDuration(_ types.Row) (types.Duration, bo
 		if row.IsNull(b.offset) {
 			return types.Duration{}, true, nil
 		}
-		duration := row.GetDuration(b.offset)
-		if duration.Fsp == types.WaitFillFsp {
-			duration.Fsp = b.getRetTp().Decimal
-		}
+		duration := row.GetDuration(b.offset, b.getRetTp().Decimal)
 		return duration, false, nil
 	}
 	return types.Duration{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
