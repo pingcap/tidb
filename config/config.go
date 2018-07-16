@@ -84,6 +84,9 @@ type Log struct {
 	SlowThreshold      uint   `toml:"slow-threshold" json:"slow-threshold"`
 	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
 	QueryLogMaxLen     uint   `toml:"query-log-max-len" json:"query-log-max-len"`
+
+	// DDLSlowOprThreshold is the threshold of ddl slow operations.
+	DDLSlowOprThreshold uint `toml:"ddl-slow-opr-threshold" json:"ddl-slow-opr-threshold"`
 }
 
 // Security is the security section of the config.
@@ -259,9 +262,10 @@ var defaultConf = Config{
 			LogRotate: true,
 			MaxSize:   logutil.DefaultLogMaxSize,
 		},
-		SlowThreshold:      300,
-		ExpensiveThreshold: 10000,
-		QueryLogMaxLen:     2048,
+		SlowThreshold:       300,
+		ExpensiveThreshold:  10000,
+		QueryLogMaxLen:      2048,
+		DDLSlowOprThreshold: 300,
 	},
 	Status: Status{
 		ReportStatus:    true,

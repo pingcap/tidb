@@ -15,10 +15,12 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -552,8 +554,13 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 	handleOutOfRange := false
+	oprStartTime := time.Now()
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
+			oprEndTime := time.Now()
+			w.logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in fetchRowColVals is slow", 0)
+			oprStartTime = oprEndTime
+
 			if !taskRange.endIncluded {
 				handleOutOfRange = handle >= taskRange.endHandle
 			} else {
@@ -582,11 +589,23 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	return w.idxRecords, handleOutOfRange, errors.Trace(err)
 }
 
+func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint) {
+	if threshold == 0 {
+		cfg := config.GetGlobalConfig()
+		threshold = cfg.Log.DDLSlowOprThreshold
+	}
+
+	if elapsed >= time.Duration(threshold)*time.Millisecond {
+		log.Infof("[ddl-reorg][SLOW-OPERATIONS] elapsed time: %v, message: %v", elapsed, slowMsg)
+	}
+}
+
 // backfillIndexInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
 func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, addedCount, scanCount int, errInTxn error) {
+	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		addedCount = 0
 		scanCount = 0
@@ -624,6 +643,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 		}
 		return nil
 	})
+	w.logSlowOperations(time.Since(oprStartTime), "backfillIndexInTxn is slow", 3000)
 
 	return
 }
