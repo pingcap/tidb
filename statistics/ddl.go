@@ -54,7 +54,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) (err error) {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = doneTransaction(context.Background(), exec, err)
+		err = finishTransaction(context.Background(), exec, err)
 	}()
 	_, err = exec.Execute(context.Background(), fmt.Sprintf("insert into mysql.stats_meta (version, table_id) values(%d, %d)", h.mu.ctx.Txn().StartTS(), info.ID))
 	if err != nil {
@@ -86,7 +86,7 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) (er
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = doneTransaction(context.Background(), exec, err)
+		err = finishTransaction(context.Background(), exec, err)
 	}()
 	// First of all, we update the version.
 	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn().StartTS(), tableID))
@@ -142,8 +142,8 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) (er
 	return
 }
 
-// Commit when error is nil, otherwise rollback.
-func doneTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error) error {
+// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
+func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error) error {
 	if err == nil {
 		_, err = exec.Execute(ctx, "commit")
 	} else {

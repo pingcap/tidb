@@ -312,7 +312,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		return false, errors.Trace(err)
 	}
 	defer func() {
-		err = doneTransaction(context.Background(), exec, err)
+		err = finishTransaction(context.Background(), exec, err)
 	}()
 	var sql string
 	if delta.Delta < 0 {
@@ -341,7 +341,7 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = doneTransaction(ctx, exec, err)
+		err = finishTransaction(ctx, exec, err)
 	}()
 	version := h.mu.ctx.Txn().StartTS()
 

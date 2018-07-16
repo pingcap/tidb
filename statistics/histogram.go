@@ -208,7 +208,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = doneTransaction(context.Background(), exec, err)
+		err = finishTransaction(context.Background(), exec, err)
 	}()
 	txn := h.mu.ctx.Txn()
 	version := txn.StartTS()
@@ -278,7 +278,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = doneTransaction(ctx, exec, err)
+		err = finishTransaction(ctx, exec, err)
 	}()
 	var sql string
 	version := h.mu.ctx.Txn().StartTS()
