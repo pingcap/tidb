@@ -19,6 +19,7 @@ import (
 
 type decimalSet map[types.MyDecimal]struct{}
 type float64Set map[float64]struct{}
+type stringSet map[string]struct{}
 
 func newDecimalSet() decimalSet {
 	return make(map[types.MyDecimal]struct{})
@@ -43,5 +44,18 @@ func (s float64Set) exist(val float64) bool {
 }
 
 func (s float64Set) insert(val float64) {
+	s[val] = struct{}{}
+}
+
+func newStringSet() stringSet {
+	return make(map[string]struct{})
+}
+
+func (s stringSet) exist(val string) bool {
+	_, ok := s[val]
+	return ok
+}
+
+func (s stringSet) insert(val string) {
 	s[val] = struct{}{}
 }

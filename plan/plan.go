@@ -39,6 +39,9 @@ type Plan interface {
 	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() sessionctx.Context
+
+	// StatsInfo will return the statsInfo for this plan.
+	StatsInfo() *statsInfo
 }
 
 // taskType is the type of execution task.
@@ -226,9 +229,6 @@ type PhysicalPlan interface {
 	// getChildReqProps gets the required property by child index.
 	getChildReqProps(idx int) *requiredProp
 
-	// StatsInfo will return the statsInfo for this plan.
-	StatsInfo() *statsInfo
-
 	// Get all the children.
 	Children() []PhysicalPlan
 
@@ -347,6 +347,11 @@ func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
 // ID implements Plan ID interface.
 func (p *basePlan) ID() int {
 	return p.id
+}
+
+// StatsInfo implements the Plan interface.
+func (p *basePlan) StatsInfo() *statsInfo {
+	return p.stats
 }
 
 func (p *basePlan) ExplainID() string {
