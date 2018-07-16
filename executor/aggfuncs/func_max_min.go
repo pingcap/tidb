@@ -355,13 +355,14 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			continue
 		}
 		if p.isNull {
-			p.val = fmt.Sprintf("%s", input)
+			// We need to copy the value of input to avoid the original value be covered.
+			p.val = "" + input
 			p.isNull = false
 			continue
 		}
 		cmp := types.CompareString(input, p.val)
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
-			p.val = fmt.Sprintf("%s", input)
+			p.val = "" + input
 		}
 	}
 	return nil
