@@ -460,6 +460,7 @@ var (
 )
 
 // SetJobListKey sets the job list key.
+// TODO: rename SetJobListKey to ChangeJobQueue.
 func (m *Meta) SetJobListKey(key []byte) {
 	m.jobListKey = key
 }
@@ -536,8 +537,8 @@ func (m *Meta) DDLJobQueueLen() (int64, error) {
 	return m.txn.LLen(m.jobListKey)
 }
 
-// GetAllDDLJobs gets all DDL Jobs.
-func (m *Meta) GetAllDDLJobs() ([]*model.Job, error) {
+// GetAllDDLJobsInQueue gets all DDL Jobs in the current queue.
+func (m *Meta) GetAllDDLJobsInQueue() ([]*model.Job, error) {
 	values, err := m.txn.LGetAll(mDDLJobListKey)
 	if err != nil || values == nil {
 		return nil, errors.Trace(err)

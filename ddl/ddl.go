@@ -340,7 +340,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 
 		d.workers = make(map[workerType]*worker, 2)
 		d.workers[generalWorker] = newWorker(generalWorker, 0, d.store, ctxPool)
-		d.workers[addIdxWorker] = newWorker(addIdxWorker, 0, d.store, ctxPool)
+		d.workers[addIdxWorker] = newWorker(addIdxWorker, 1, d.store, ctxPool)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			go worker.start(d.ddlCtx)
@@ -424,7 +424,7 @@ func checkJobMaxInterval(job *model.Job) time.Duration {
 }
 
 func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
-	// If the workers don't run, we needn't to notice workers.
+	// If the workers don't run, we needn't to notify workers.
 	if !RunWorker {
 		return
 	}

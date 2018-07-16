@@ -165,7 +165,7 @@ func testDropIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, t
 	return job
 }
 
-func buildRebaseAutoID(dbInfo *model.DBInfo, tblInfo *model.TableInfo, newBaseID int64) *model.Job {
+func buildRebaseAutoIDJobJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, newBaseID int64) *model.Job {
 	return &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,

@@ -42,6 +42,8 @@ const (
 	generalWorker workerType = 0
 	// addIdxWorker is the worker who handles the operation of adding indexes.
 	addIdxWorker workerType = 1
+	// waitDependencyJobInterval is the interval when the dependency job doesn't be done.
+	waitDependencyJobInterval = 200 * time.Millisecond
 )
 
 // worker is used for handling DDL jobs.
@@ -122,9 +124,8 @@ func (w *worker) start(d *ddlCtx) {
 	for {
 		select {
 		case <-ticker.C:
-			log.Debugf("[ddl] wait %s to check DDL status again", checkTime)
-		case <-w.ddlJobCh:
 			log.Debugf("[ddl] worker %s waits %s to check DDL status again", w, checkTime)
+		case <-w.ddlJobCh:
 		case <-w.quitCh:
 			return
 		}
@@ -146,6 +147,10 @@ func asyncNotify(ch chan struct{}) {
 // buildJobDependence sets the curjob's dependency-ID.
 // The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
+	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
+	// it from another queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
+	// And after looking for dependency-job, we need to change the queue to the queue corresponding to the current job.
+	// TODO: rename SetJobListKey to ChangeJobQueue.
 	switch curJob.Type {
 	case model.ActionAddIndex:
 		t.SetJobListKey(meta.DefaultJobListKey)
@@ -155,7 +160,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 		defer t.SetJobListKey(meta.DefaultJobListKey)
 	}
 
-	jobs, err := t.GetAllDDLJobs()
+	jobs, err := t.GetAllDDLJobsInQueue()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -168,7 +173,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 			return errors.Trace(err)
 		}
 		if isDependent {
-			log.Infof("[ddl] current DDL job %v is dependent job %v", curJob, job)
+			log.Infof("[ddl] current DDL job %v depends on job %v", curJob, job)
 			curJob.DependencyID = job.ID
 			break
 		}
@@ -374,8 +379,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			return errors.Trace(w.handleUpdateJobError(t, job, err))
 		})
 
-		waitDependencyJob := job != nil && job.DependencyID != 0
-		if runJobErr != nil || waitDependencyJob {
+		if runJobErr != nil {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
 			log.Infof("[ddl] worker %s runs DDL job error, sleeps a while:%v then retries it.", w, WaitTimeWhenErrorOccured)
@@ -388,6 +392,11 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		} else if job == nil {
 			// No job now, return and retry getting later.
 			return nil
+		}
+		if job.DependencyID != 0 {
+			// If the dependency job doesn't be done, we'd better wait a moment.
+			log.Infof("[ddl] worker %s needs to wait dependency job %d, sleeps a while:%v then retries it.", w, job.DependencyID, waitDependencyJobInterval)
+			time.Sleep(waitDependencyJobInterval)
 		}
 
 		d.hookMu.Lock()

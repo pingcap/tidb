@@ -106,6 +106,8 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 			}
 			if job.Type == model.ActionAddIndex {
 				t.SetJobListKey(meta.AddIndexJobListKey)
+			} else {
+				t.SetJobListKey(meta.DefaultJobListKey)
 			}
 			err = t.UpdateDDLJob(int64(j), job, true)
 			if err != nil {

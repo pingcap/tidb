@@ -589,7 +589,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	once := sync.Once{}
 	var checkErr error
 	tc.onJobRunBefore = func(job *model.Job) {
-		// TODO: extract a unified function for use by other tests.
+		// TODO: extract a unified function for other tests.
 		once.Do(func() {
 			qLen1 := int64(0)
 			qLen2 := int64(0)
@@ -652,7 +652,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 	d.addDDLJob(ctx, job6)
 	job7 := buildDropColumnJob(dbInfo2, tblInfo3, "c4")
 	d.addDDLJob(ctx, job7)
-	job8 := buildRebaseAutoID(dbInfo2, tblInfo3, 1024)
+	job8 := buildRebaseAutoIDJobJob(dbInfo2, tblInfo3, 1024)
 	d.addDDLJob(ctx, job8)
 	job9 := buildCreateIdxJob(dbInfo1, tblInfo1, false, "db1_idx3", "c2")
 	d.addDDLJob(ctx, job9)
@@ -673,7 +673,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 			if lastJob != nil {
 				finishedJobs, err := m.GetAllHistoryDDLJobs()
 				c.Assert(err, IsNil)
-				// get the last 11 jobs completed。
+				// get the last 11 jobs completed.
 				finishedJobs = finishedJobs[len(finishedJobs)-11:]
 				// check some jobs are ordered because of the dependence.
 				c.Assert(finishedJobs[0].ID, Equals, job1.ID)
