@@ -467,27 +467,27 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
-			Name:     "p1",
+			Name:     model.NewCIStr("p1"),
 			LessThan: []string{"16"},
 		},
 		{
 			ID:       42,
-			Name:     "p2",
+			Name:     model.NewCIStr("p2"),
 			LessThan: []string{"32"},
 		},
 		{
 			ID:       43,
-			Name:     "p3",
+			Name:     model.NewCIStr("p3"),
 			LessThan: []string{"64"},
 		},
 		{
 			ID:       44,
-			Name:     "p4",
+			Name:     model.NewCIStr("p4"),
 			LessThan: []string{"128"},
 		},
 		{
 			ID:       45,
-			Name:     "p5",
+			Name:     model.NewCIStr("p5"),
 			LessThan: []string{"maxvalue"},
 		},
 	}
@@ -618,6 +618,10 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		{
 			sql:  "select t1.b from t t1 where t1.b = (select max(t2.a) from t t2 where t1.b=t2.b)",
 			best: "Join{DataScan(t1)->DataScan(t2)->Aggr(max(t2.a),firstrow(t2.b))}(t1.b,t2.b)->Projection->Sel([eq(t1.b, max(t2.a))])->Projection",
+		},
+		{
+			sql:  "select t1.b from t t1 where t1.b = (select avg(t2.a) from t t2 where t1.g=t2.g and (t1.b = 4 or t2.b = 2))",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(t1.g, t2.g) or(eq(t1.b, 4), eq(t2.b, 2))])->Aggr(avg(t2.a))}->Projection->Sel([eq(cast(t1.b), avg(t2.a))])->Projection",
 		},
 	}
 
