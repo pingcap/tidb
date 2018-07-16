@@ -14,13 +14,12 @@
 package aggfuncs
 
 import (
-	"fmt"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type basePartialResult4FirstRow struct {
@@ -35,12 +34,6 @@ type partialResult4FirstRowInt struct {
 	basePartialResult4FirstRow
 
 	val int64
-}
-
-type partialResult4FirstRowUint struct {
-	basePartialResult4FirstRow
-
-	val uint64
 }
 
 type partialResult4FirstRowFloat32 struct {
@@ -246,7 +239,7 @@ func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 			break
 		}
 		// We should copy the input value here to avoid the origin value be covered.
-		p.val = "" + input
+		p.val = stringutil.CopyString(input)
 		break
 	}
 	return nil

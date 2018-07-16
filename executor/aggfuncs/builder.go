@@ -151,10 +151,7 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	default:
 		switch evalType {
 		case types.ETInt:
-			if mysql.HasUnsignedFlag(fieldType.Flag) {
-				return &firstRow4Int{base}
-			}
-			return &firstRow4Uint{base}
+			return &firstRow4Int{base}
 		case types.ETReal:
 			switch fieldType.Tp {
 			case mysql.TypeFloat:
