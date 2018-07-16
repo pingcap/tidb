@@ -312,7 +312,7 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 			continue
 		}
 		cmp := input.Compare(&p.val)
-		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
+		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 			p.val = *input
 		}
 	}
@@ -355,7 +355,7 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			continue
 		}
 		if p.isNull {
-			p.val = input
+			p.val = fmt.Sprintf("%s", input)
 			p.isNull = false
 			continue
 		}
@@ -504,7 +504,7 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			continue
 		}
 		cmp := json.CompareBinary(input, p.val)
-		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
+		if e.isMax && cmp > 1 || !e.isMax && cmp < -1 {
 			p.val = input
 		}
 	}
