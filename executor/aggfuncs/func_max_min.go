@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"fmt"
 )
 
 type partialResult4MaxMinInt struct {
@@ -360,7 +361,7 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		}
 		cmp := types.CompareString(input, p.val)
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
-			p.val = input
+			p.val = fmt.Sprintf("%s", input)
 		}
 	}
 	return nil
