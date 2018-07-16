@@ -15,11 +15,11 @@ package ddl
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -557,7 +557,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
-			w.logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in fetchRowColVals is slow", 0)
+			w.logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
 			if !taskRange.endIncluded {
@@ -588,10 +588,9 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	return w.idxRecords, handleOutOfRange, errors.Trace(err)
 }
 
-func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint) {
+func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
 	if threshold == 0 {
-		cfg := config.GetGlobalConfig()
-		threshold = cfg.Log.DDLSlowOprThreshold
+		threshold = atomic.LoadUint32(&variable.DDLSlowOprThreshold)
 	}
 
 	if elapsed >= time.Duration(threshold)*time.Millisecond {
@@ -642,7 +641,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 		}
 		return nil
 	})
-	w.logSlowOperations(time.Since(oprStartTime), "backfillIndexInTxn is slow", 3000)
+	w.logSlowOperations(time.Since(oprStartTime), "backfillIndexInTxn", 3000)
 
 	return
 }

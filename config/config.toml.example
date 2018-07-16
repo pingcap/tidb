@@ -63,8 +63,6 @@ expensive-threshold = 10000
 # Maximum query length recorded in log.
 query-log-max-len = 2048
 
-ddl-slow-opr-threshold = 300
-
 # File logging.
 [log.file]
 # Log file name.
