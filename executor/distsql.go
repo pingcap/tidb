@@ -117,11 +117,20 @@ func closeAll(objs ...Closeable) error {
 	return errors.Trace(err)
 }
 
-// timeZoneOffset returns the local time zone offset in seconds.
-func timeZoneOffset(ctx sessionctx.Context) int64 {
-	loc := ctx.GetSessionVars().GetTimeZone()
+// zone returns the current timezone name and timezone offset in seconds.
+// In compatible with MySQL, we change `Local` to `System`.
+// TODO: Golang team plan to return system timezone name intead of
+// returning `Local` when `loc` is `time.Local`. We need keep an eye on this.
+func zone(sctx sessionctx.Context) (string, int64) {
+	loc := sctx.GetSessionVars().Location()
 	_, offset := time.Now().In(loc).Zone()
-	return int64(offset)
+	var name string
+	name = loc.String()
+	if name == "Local" {
+		name = "System"
+	}
+
+	return name, int64(offset)
 }
 
 // Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.

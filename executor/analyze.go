@@ -373,7 +373,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 			collectors[i].MergeSampleCollector(sc, statistics.SampleCollectorFromProto(rc))
 		}
 	}
-	timeZone := e.ctx.GetSessionVars().GetTimeZone()
+	timeZone := e.ctx.GetSessionVars().Location()
 	if e.pkInfo != nil {
 		pkHist.ID = e.pkInfo.ID
 		err = pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)

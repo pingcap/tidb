@@ -1924,6 +1924,7 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	r.Check(testkit.Rows("123381351 1734 2014-03-31 08:57:10 127.0.0.1")) // Cover IndexLookupExec
 
 	// For issue https://github.com/pingcap/tidb/issues/3485
+	tk.MustExec("set time_zone = 'Asia/Shanghai'")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`CREATE TABLE t1 (
 	    id bigint(20) NOT NULL AUTO_INCREMENT,

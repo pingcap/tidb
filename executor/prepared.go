@@ -269,7 +269,7 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(stmtctx.StatementContext)
-	sc.TimeZone = sessVars.GetTimeZone()
+	sc.TimeZone = sessVars.Location()
 	sc.MemTracker = memory.NewTracker(s.Text(), sessVars.MemQuotaQuery)
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
