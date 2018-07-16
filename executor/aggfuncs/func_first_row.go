@@ -108,13 +108,14 @@ func (e *firstRow4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 		if err != nil {
 			return errors.Trace(err)
 		}
+		p.gotFirstRow = true
 		if isNull {
 			p.isNull = true
 			break
 		}
 		p.val = input
+		break
 	}
-	p.gotFirstRow = true
 	return nil
 }
 
@@ -151,13 +152,14 @@ func (e *firstRow4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		if err != nil {
 			return errors.Trace(err)
 		}
+		p.gotFirstRow = true
 		if isNull {
 			p.isNull = true
 			break
 		}
 		p.val = uint64(input)
+		break
 	}
-	p.gotFirstRow = true
 	return nil
 }
 
@@ -194,13 +196,14 @@ func (e *firstRow4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		if err != nil {
 			return errors.Trace(err)
 		}
+		p.gotFirstRow = true
 		if isNull {
 			p.isNull = true
 			break
 		}
 		p.val = float32(input)
+		break
 	}
-	p.gotFirstRow = true
 	return nil
 }
 
@@ -237,13 +240,14 @@ func (e *firstRow4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		if err != nil {
 			return errors.Trace(err)
 		}
+		p.gotFirstRow = true
 		if isNull {
 			p.isNull = true
 			break
 		}
 		p.val = input
+		break
 	}
-	p.gotFirstRow = true
 	return nil
 }
 
@@ -280,14 +284,15 @@ func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 		if err != nil {
 			return errors.Trace(err)
 		}
+		p.gotFirstRow = true
 		if isNull {
 			p.isNull = true
 			break
 		}
 		// We should copy the input value here to avoid the origin value be covered.
 		p.val = fmt.Sprintf("%s", input)
+		break
 	}
-	p.gotFirstRow = true
 	return nil
 }
 
@@ -324,13 +329,14 @@ func (e *firstRow4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		if err != nil {
 			return errors.Trace(err)
 		}
+		p.gotFirstRow = true
 		if isNull {
 			p.isNull = true
 			break
 		}
 		p.val = input
+		break
 	}
-	p.gotFirstRow = true
 	return nil
 }
 
@@ -367,13 +373,14 @@ func (e *firstRow4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		if err != nil {
 			return errors.Trace(err)
 		}
+		p.gotFirstRow = true
 		if isNull {
 			p.isNull = true
 			break
 		}
 		p.val = input
+		break
 	}
-	p.gotFirstRow = true
 	return nil
 }
 
@@ -410,13 +417,14 @@ func (e *firstRow4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		if err != nil {
 			return errors.Trace(err)
 		}
+		p.gotFirstRow = true
 		if isNull {
 			p.isNull = true
 			break
 		}
 		p.val = input
+		break
 	}
-	p.gotFirstRow = true
 	return nil
 }
 
@@ -453,13 +461,14 @@ func (e *firstRow4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		if err != nil {
 			return errors.Trace(err)
 		}
+		p.gotFirstRow = true
 		if isNull {
 			p.isNull = true
 			break
 		}
 		p.val = *input
+		break
 	}
-	p.gotFirstRow = true
 	return nil
 }
 
