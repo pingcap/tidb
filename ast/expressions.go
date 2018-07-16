@@ -269,7 +269,9 @@ type CaseExpr struct {
 // Format the ExprNode into a Writer.
 func (n *CaseExpr) Format(w io.Writer) {
 	fmt.Fprint(w, "CASE ")
-	n.Value.Format(w)
+	if n.Value != nil {
+		n.Value.Format(w)
+	}
 	fmt.Fprint(w, " ")
 	for _, clause := range n.WhenClauses {
 		fmt.Fprint(w, "WHEN ")
