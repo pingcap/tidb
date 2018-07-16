@@ -514,7 +514,7 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 		_, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
 	}
-	s.testControlParallelExecSQL(c, sql, sql, f)
+	s.testControlParallelExecSQL(c, sql, sql, f, 0)
 }
 
 func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
@@ -532,7 +532,7 @@ func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 		}
 		c.Assert(oneErr.Error(), Equals, "[schema:1060]Duplicate column name 'aa'")
 	}
-	s.testControlParallelExecSQL(c, sql1, sql2, f)
+	s.testControlParallelExecSQL(c, sql1, sql2, f, 0)
 }
 
 func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
@@ -542,7 +542,7 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[ddl:1061]index already exist index_b")
 	}
-	s.testControlParallelExecSQL(c, sql1, sql2, f)
+	s.testControlParallelExecSQL(c, sql1, sql2, f, 2)
 }
 
 func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
@@ -551,7 +551,7 @@ func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[ddl:1091]column c doesn't exist")
 	}
-	s.testControlParallelExecSQL(c, sql, sql, f)
+	s.testControlParallelExecSQL(c, sql, sql, f, 0)
 }
 
 func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
@@ -562,12 +562,12 @@ func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_exists' already exists")
 	}
-	s.testControlParallelExecSQL(c, sql1, sql2, f)
+	s.testControlParallelExecSQL(c, sql1, sql2, f, 0)
 }
 
 type checkRet func(c *C, err1, err2 error)
 
-func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 string, f checkRet) {
+func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 string, f checkRet, addIdxJobCnt int) {
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
@@ -585,10 +585,22 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 		for {
 			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
 				m := meta.NewMeta(txn)
+				addIdxLen := int64(0)
+				if addIdxJobCnt != 0 {
+					// Get the number of jobs from the adding index queue.
+					m.SetJobListKey(meta.AddIndexJobListKey)
+					addIdxLen, err1 = m.DDLJobQueueLen()
+					if err1 != nil {
+						return err1
+					}
+					m.SetJobListKey(meta.DefaultJobListKey)
+				}
+
 				qLen, err1 = m.DDLJobQueueLen()
 				if err1 != nil {
 					return err1
 				}
+				qLen += addIdxLen
 				return nil
 			})
 			if qLen == 2 {
