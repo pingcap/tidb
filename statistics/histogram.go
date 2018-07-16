@@ -680,9 +680,9 @@ type ErrorRate struct {
 // then the column is not pseudo.
 const MaxErrorRate = 0.25
 
-// IsPseudo is true when the total of query is zero or the average error
+// NotAccurate is true when the total of query is zero or the average error
 // rate is greater than MaxErrorRate.
-func (e *ErrorRate) IsPseudo() bool {
+func (e *ErrorRate) NotAccurate() bool {
 	if e.QueryTotal == 0 {
 		return true
 	}
