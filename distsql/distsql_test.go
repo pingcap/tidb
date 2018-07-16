@@ -149,7 +149,7 @@ func (s *testSuite) TestAnalyze(c *C) {
 
 	bytes, err := response.NextRaw(context.TODO())
 	c.Assert(err, IsNil)
-	c.Assert(len(bytes), Equals, 14)
+	c.Assert(len(bytes), Equals, 16)
 
 	err = response.Close()
 	c.Assert(err, IsNil)
