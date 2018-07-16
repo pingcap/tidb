@@ -82,7 +82,7 @@ func (e *groupConcat4String) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 			p.buffer.WriteString(e.sep)
 		}
 	}
-	p.buffer.Truncate(p.buffer.Len() - 1)
+	p.buffer.Truncate(p.buffer.Len() - len(e.sep))
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	// issue: #7034
 	return nil
