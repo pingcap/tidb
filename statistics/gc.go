@@ -94,56 +94,54 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, tableID int64) error {
 }
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
-func (h *Handle) deleteHistStatsFromKV(tableID int64, histID int64, isIndex int) error {
+func (h *Handle) deleteHistStatsFromKV(tableID int64, histID int64, isIndex int) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(context.Background(), "begin")
+	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		err = finishTransaction(context.Background(), exec, err)
+	}()
 	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
 	_, err = exec.Execute(context.Background(), fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn().StartTS(), tableID))
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	// delete histogram meta
 	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	// delete all buckets
 	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = exec.Execute(context.Background(), "commit")
-	return errors.Trace(err)
+	return
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
-func (h *Handle) DeleteTableStatsFromKV(id int64) error {
+func (h *Handle) DeleteTableStatsFromKV(id int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(context.Background(), "begin")
+	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		err = finishTransaction(context.Background(), exec, err)
+	}()
 	// We only update the version so that other tidb will know that this table is deleted.
 	sql := fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", h.mu.ctx.Txn().StartTS(), id)
 	_, err = exec.Execute(context.Background(), sql)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", id))
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", id))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, err = exec.Execute(context.Background(), "commit")
-	return errors.Trace(err)
+	return
 }
