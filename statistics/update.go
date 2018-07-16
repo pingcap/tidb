@@ -444,17 +444,13 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		}
 		tbl := h.GetTableStats(table.Meta()).copy()
 		if item.PkErrorRate != nil && tbl.Columns[item.PkID] != nil {
-			col := *tbl.Columns[item.PkID]
-			col.ErrorRate.merge(item.PkErrorRate)
-			tbl.Columns[item.PkID] = &col
+			tbl.Columns[item.PkID].ErrorRate.merge(item.PkErrorRate)
 		}
 		for key, val := range item.IdxErrorRate {
 			if tbl.Indices[key] == nil {
 				continue
 			}
-			idx := *tbl.Indices[key]
-			idx.ErrorRate.merge(val)
-			tbl.Indices[key] = &idx
+			tbl.Indices[key].ErrorRate.merge(val)
 		}
 		tbls = append(tbls, tbl)
 		delete(h.mu.rateMap, id)
