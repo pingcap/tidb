@@ -1527,6 +1527,9 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		colLens:        is.IdxColLens,
 		plans:          v.IndexPlans,
 	}
+	if isPartition, partitionID := is.IsPartition(); isPartition {
+		e.tableID = partitionID
+	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {

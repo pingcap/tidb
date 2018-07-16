@@ -79,20 +79,18 @@ func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
 		columns = append(columns, col)
 	}
 	var t Table
-	initTableCommon(&t.tableCommon, tableInfo.ID, tableInfo.ID, columns, nil)
-	t.meta = tableInfo
+	if err := initTableCommon(&t.tableCommon, tableInfo, tableInfo.ID, columns, nil); err != nil {
+		return nil
+	}
 	if tableInfo.GetPartitionInfo() == nil {
 		return &t
 	}
 
-	partitionExpr, err := generatePartitionExpr(tableInfo)
+	ret, err := newPartitionedTable(&t, tableInfo)
 	if err != nil {
 		return nil
 	}
-	return &PartitionedTable{
-		Table:         t,
-		partitionExpr: partitionExpr,
-	}
+	return ret
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
@@ -129,44 +127,39 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	}
 
 	var t Table
-	initTableCommon(&t.tableCommon, tblInfo.ID, tblInfo.ID, columns, alloc)
-
-	for _, idxInfo := range tblInfo.Indices {
-		if idxInfo.State == model.StateNone {
-			return nil, table.ErrIndexStateCantNone.Gen("index %s can't be in none state", idxInfo.Name)
-		}
-
-		idx := NewIndex(tblInfo, idxInfo)
-		t.indices = append(t.indices, idx)
+	if err := initTableCommon(&t.tableCommon, tblInfo, tblInfo.ID, columns, alloc); err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	t.meta = tblInfo
 	if tblInfo.GetPartitionInfo() == nil {
 		return &t, nil
 	}
-
-	partitionExpr, err := generatePartitionExpr(tblInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &PartitionedTable{
-		Table:         t,
-		partitionExpr: partitionExpr,
-	}, nil
+	return newPartitionedTable(&t, tblInfo)
 }
 
 // initTableCommon initializes a tableCommon struct.
-func initTableCommon(t *tableCommon, tableID, partitionID int64, cols []*table.Column, alloc autoid.Allocator) {
-	t.tableID = tableID
+func initTableCommon(t *tableCommon, tblInfo *model.TableInfo, partitionID int64, cols []*table.Column, alloc autoid.Allocator) error {
+	t.tableID = tblInfo.ID
 	t.partitionID = partitionID
 	t.alloc = alloc
+	t.meta = tblInfo
 	t.Columns = cols
 	t.publicColumns = t.Cols()
 	t.writableColumns = t.WritableCols()
 	t.writableIndices = t.WritableIndices()
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(partitionID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(partitionID)
-	return
+
+	for _, idxInfo := range tblInfo.Indices {
+		if idxInfo.State == model.StateNone {
+			return table.ErrIndexStateCantNone.Gen("index %s can't be in none state", idxInfo.Name)
+		}
+
+		// Use partition ID for index, because tableCommon may be table or partition.
+		idx := NewIndex(partitionID, idxInfo)
+		t.indices = append(t.indices, idx)
+	}
+	return nil
 }
 
 // Indices implements table.Table Indices interface.
