@@ -202,6 +202,9 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	if strings.Contains(err.Error(), mismatchClusterID) {
+		log.Fatalf("critical error %v", err)
+	}
 	select {
 	case <-b.ctx.Done():
 		return errors.Trace(err)
@@ -234,9 +237,6 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 			}
 		}
 		log.Warn(errMsg)
-		if strings.Contains(errMsg, ErrMismatchClusterID.Error()) {
-			log.Fatalf("critical error %v", err)
-		}
 		// Use the first backoff type to generate a MySQL error.
 		return b.types[0].TError()
 	}

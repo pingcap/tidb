@@ -22,9 +22,10 @@ import (
 var (
 	// ErrBodyMissing response body is missing error
 	ErrBodyMissing = errors.New("response body is missing")
-	// ErrMismatchClusterID returns the error that the cluster ID of the PD client does not match the PD.
-	ErrMismatchClusterID = errors.New("mismatch cluster id")
 )
+
+// mismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
+const mismatchClusterID = "mismatch cluster id"
 
 // TiDB decides whether to retry transaction by checking if error message contains
 // string "try again later" literally.
