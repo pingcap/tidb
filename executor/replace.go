@@ -95,6 +95,49 @@ func (e *ReplaceExec) addRow(row types.DatumRow) (int64, error) {
 	return h, nil
 }
 
+// replaceRow remove all duplicate rows for one row, then insert it.
+func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
+	// Keep on removing duplicated rows.
+	for {
+		if r.handleKey != nil {
+			if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
+				handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				rowUnchanged, err := e.removeRow(handle, r.row)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if rowUnchanged {
+					return nil
+				}
+				continue
+			}
+		}
+
+		rowUnchanged, foundDupKey, err := e.removeIndexRow(r)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if rowUnchanged {
+			return nil
+		}
+		if foundDupKey {
+			continue
+		}
+		break
+	}
+
+	// No duplicated rows now, insert the row.
+	newHandle, err := e.addRow(r.row)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.fillBackKeys(e.Table, r, newHandle)
+	return nil
+}
+
 // removeIndexRow removes the row which has a duplicated key.
 // the return values:
 //     1. bool: true when the row is unchanged. This means no need to remove, and then add the row.
@@ -143,41 +186,9 @@ func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
 	}
 
 	for _, r := range e.toBeCheckedRows {
-		for {
-			if r.handleKey != nil {
-				if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
-					handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					rowUnchanged, err := e.removeRow(handle, r.row)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					if rowUnchanged {
-						break
-					}
-					continue
-				}
-			}
-
-			rowUnchanged, foundDupKey, err := e.removeIndexRow(r)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if rowUnchanged {
-				break
-			}
-			if foundDupKey {
-				continue
-			}
-			// No duplicated rows now, insert the row and go to the next row.
-			newHandle, err := e.addRow(r.row)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			e.fillBackKeys(e.Table, r, newHandle)
-			break
+		err = e.replaceRow(r)
+		if err != nil {
+			return errors.Trace(err)
 		}
 	}
 	if e.lastInsertID != 0 {
