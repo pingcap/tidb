@@ -312,6 +312,8 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 		dataSourceSchema: ds.schema,
 		Ranges:           ranger.FullRange(),
 		KeepOrder:        false,
+		isPartition:      ds.isPartition,
+		partitionID:      ds.partitionID,
 	}.init(ds.ctx)
 	is.filterCondition = remainedConds
 	is.stats = newSimpleStats(float64(ds.statisticTable.Count))
@@ -359,6 +361,8 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		Ranges:           path.ranges,
 		filterCondition:  path.indexFilters,
 		dataSourceSchema: ds.schema,
+		isPartition:      ds.isPartition,
+		partitionID:      ds.partitionID,
 	}.init(ds.ctx)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
