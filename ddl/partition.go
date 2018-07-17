@@ -217,4 +217,9 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, nil
 }
 
-//checkAddPartitionTooManyPartitions
+func checkAddPartitionTooManyPartitions(piDefs int) error {
+	if piDefs > PartitionCountLimit {
+		return ErrTooManyPartitions
+	}
+	return nil
+}
