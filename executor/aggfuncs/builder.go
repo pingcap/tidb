@@ -198,14 +198,14 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 			return nil
 		}
 	}
-	base := baseAggFunc{
-		args:    aggFuncDesc.Args[:len(aggFuncDesc.Args)-1],
-		ordinal: ordinal,
-	}
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
 	default:
+		base := baseAggFunc{
+			args:    aggFuncDesc.Args[:len(aggFuncDesc.Args)-1],
+			ordinal: ordinal,
+		}
 		// The last arg is promised to be a not-null string constant, so the error can be ignored.
 		c, _ := aggFuncDesc.Args[len(aggFuncDesc.Args)-1].(*expression.Constant)
 		sep, _, err := c.EvalString(nil, nil)
