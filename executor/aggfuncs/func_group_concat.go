@@ -60,9 +60,9 @@ func (e *groupConcat) ResetPartialResult(pr PartialResult) {
 
 func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4GroupConcat)(pr)
-	v, isNull := "", false
+	v, isNull, isWriteSep := "", false, false
 	for _, row := range rowsInGroup {
-		isWriteSep := false
+		isWriteSep = false
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
