@@ -509,7 +509,8 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 }
 
 // GetDDLJob returns the DDL job with index.
-// If the length of jobListKeys isn't zero, we need to replace m.jobListKey with jobListKeys[0].
+// The length of jobListKeys can only be 1 or 0.
+// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
 // Otherwise, we use m.jobListKey directly.
 func (m *Meta) GetDDLJob(index int64, jobListKeys ...JobListKeyType) (*model.Job, error) {
 	listKey := m.jobListKey
@@ -535,7 +536,8 @@ func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte, updateRawAr
 
 // UpdateDDLJob updates the DDL job with index.
 // updateRawArgs is used to determine whether to update the raw args when encode the job.
-// If the length of jobListKeys isn't zero, we need to replace m.jobListKey with jobListKeys[0].
+// The length of jobListKeys can only be 1 or 0.
+// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
 // Otherwise, we use m.jobListKey directly.
 func (m *Meta) UpdateDDLJob(index int64, job *model.Job, updateRawArgs bool, jobListKeys ...JobListKeyType) error {
 	listKey := m.jobListKey
@@ -550,7 +552,8 @@ func (m *Meta) UpdateDDLJob(index int64, job *model.Job, updateRawArgs bool, job
 }
 
 // DDLJobQueueLen returns the DDL job queue length.
-// If the length of jobListKeys isn't zero, we need to replace m.jobListKey with jobListKeys[0].
+// The length of jobListKeys can only be 1 or 0.
+// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
 // Otherwise, we use m.jobListKey directly.
 func (m *Meta) DDLJobQueueLen(jobListKeys ...JobListKeyType) (int64, error) {
 	listKey := m.jobListKey
@@ -561,7 +564,8 @@ func (m *Meta) DDLJobQueueLen(jobListKeys ...JobListKeyType) (int64, error) {
 }
 
 // GetAllDDLJobsInQueue gets all DDL Jobs in the current queue.
-// If the length of jobListKeys isn't zero, we need to replace m.jobListKey with jobListKeys[0].
+// The length of jobListKeys can only be 1 or 0.
+// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
 // Otherwise, we use m.jobListKey directly.
 func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job, error) {
 	listKey := m.jobListKey
