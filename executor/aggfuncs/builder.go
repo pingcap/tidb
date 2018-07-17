@@ -14,6 +14,7 @@
 package aggfuncs
 
 import (
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -138,9 +139,9 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 		// The last arg is promised to be a not-null string constant, so the error can be ignored.
 		c, _ := aggFuncDesc.Args[len(aggFuncDesc.Args)-1].(*expression.Constant)
 		sep, _, err := c.EvalString(nil, nil)
-		// This err will never happen, we check it here for passing the errcheck.
+		// This err should never happen.
 		if err != nil {
-			log.Warning("Error happened when buildGroupConcat:", errors.Trace(err).Error())
+			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))
 		}
 		if aggFuncDesc.HasDistinct {
 			return &groupConcat4DistinctString{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
