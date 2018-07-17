@@ -195,6 +195,10 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		sig = &builtinCoalesceTimeSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceTime)
 	case types.ETDuration:
+		bf.tp.Decimal, err = getExpressionFsp(ctx, args[0])
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		sig = &builtinCoalesceDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDuration)
 	}
