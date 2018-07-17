@@ -52,6 +52,7 @@ const (
 	ActionDropTablePartition ActionType = 20
 )
 
+// AddIndexStr is a string related to the operation of "add index".
 const AddIndexStr = "add index"
 
 var actionMap = map[ActionType]string{
