@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -358,4 +359,18 @@ func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
 	c.Assert(decodeTableID, Equals, tableID)
 	c.Assert(decodeIndexID, Equals, indexID)
 	c.Assert(decodeValues, DeepEquals, valueStrs)
+}
+
+func BenchmarkHasTablePrefix(b *testing.B) {
+	k := kv.Key("foobar")
+	for i := 0; i < b.N; i++ {
+		hasTablePrefix(k)
+	}
+}
+
+func BenchmarkHasTablePrefixBuiltin(b *testing.B) {
+	k := kv.Key("foobar")
+	for i := 0; i < b.N; i++ {
+		k.HasPrefix(tablePrefix)
+	}
 }

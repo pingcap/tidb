@@ -14,7 +14,10 @@
 package aggfuncs
 
 import (
+	"fmt"
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -218,7 +221,34 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 
 // buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
 func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return nil
+	// TODO: There might be different kind of types of the args,
+	// we should add CastAsString upon every arg after cast can be pushed down to coprocessor.
+	// And this check can be removed at that time.
+	for _, arg := range aggFuncDesc.Args {
+		if arg.GetType().EvalType() != types.ETString {
+			return nil
+		}
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		base := baseAggFunc{
+			args:    aggFuncDesc.Args[:len(aggFuncDesc.Args)-1],
+			ordinal: ordinal,
+		}
+		// The last arg is promised to be a not-null string constant, so the error can be ignored.
+		c, _ := aggFuncDesc.Args[len(aggFuncDesc.Args)-1].(*expression.Constant)
+		sep, _, err := c.EvalString(nil, nil)
+		// This err should never happen.
+		if err != nil {
+			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))
+		}
+		if aggFuncDesc.HasDistinct {
+			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
+		}
+		return &groupConcat{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
+	}
 }
 
 // buildBitOr builds the AggFunc implementation for function "BIT_OR".

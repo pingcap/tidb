@@ -56,6 +56,9 @@ var (
 	_ AggFunc = (*avgOriginal4DistinctFloat64)(nil)
 
 	// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
+	_ AggFunc = (*groupConcatDistinct)(nil)
+	_ AggFunc = (*groupConcat)(nil)
+
 	// All the AggFunc implementations for "BIT_OR" are listed here.
 	_ AggFunc = (*bitOrUint64)(nil)
 
