@@ -746,9 +746,7 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if !reachLimit {
-			break
-		}
+
 		loadDataInfo.Ctx.StmtCommit()
 		// Load data should not use latches, because:
 		// 1. latches may result in false positive transaction conflicts.
@@ -761,6 +759,10 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		}
 		curData = prevData
 		prevData = nil
+
+		if !reachLimit {
+			break
+		}
 	}
 	return prevData, nil
 }
