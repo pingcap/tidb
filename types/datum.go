@@ -1024,7 +1024,7 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
-		// For For huge numbers(>'0001-00-00 00-00-00') try full DATETIME in ParseDuration.
+		// For huge numbers(>'0001-00-00 00-00-00') try full DATETIME in ParseDuration.
 		if timeNum > MaxDuration && timeNum < 10000000000 {
 			// mysql return max in no strict sql mode.
 			ret.SetValue(Duration{Duration: MaxTime, Fsp: 0})
