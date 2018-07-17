@@ -956,9 +956,8 @@ func findNextPartitionID(partitionID int64, defs []model.PartitionDefinition) (i
 		if partitionID == def.ID {
 			if i == len(defs)-1 {
 				return 0, nil
-			} else {
-				return defs[i+1].ID, nil
 			}
+			return defs[i+1].ID, nil
 		}
 	}
 	return 0, errors.New("partition id not found")
