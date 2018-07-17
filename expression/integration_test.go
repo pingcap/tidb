@@ -2693,7 +2693,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows(
 		"Projection_3 10000.00 root eq(test.t.a, test.t.a)",
 		"└─TableReader_5 10000.00 root data:TableScan_4",
-		"  └─TableScan_4 10000.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"  └─TableScan_4 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	// for interval
