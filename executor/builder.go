@@ -618,6 +618,19 @@ func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 	return e
 }
 
+// buildExplain builds a explain executor. `e.rows` collects final result and
+// displays it in sql-shell.
+func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
+	e := &ExplainExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+	}
+	e.rows = make([][]string, 0, len(v.Rows))
+	for _, row := range v.Rows {
+		e.rows = append(e.rows, row)
+	}
+	return e
+}
+
 func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {

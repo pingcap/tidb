@@ -26,7 +26,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-// TableReaderExecutor sends dag request and reads table data from kv layer.
+// TableReaderExecutor sends DAG request and reads table data from kv layer.
 type TableReaderExecutor struct {
 	baseExecutor
 
@@ -50,23 +50,6 @@ type TableReaderExecutor struct {
 	// corColInAccess tells whether there's correlated column in access conditions.
 	corColInAccess bool
 	plans          []plan.PhysicalPlan
-}
-
-// Close implements the Executor Close interface.
-func (e *TableReaderExecutor) Close() error {
-	e.ctx.StoreQueryFeedback(e.feedback)
-	err := e.resultHandler.Close()
-	return errors.Trace(err)
-}
-
-// Next fills data into the chunk passed by its caller.
-// The task was actually done by tableReaderHandler.
-func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
-	err := e.resultHandler.nextChunk(ctx, chk)
-	if err != nil {
-		e.feedback.Invalidate()
-	}
-	return errors.Trace(err)
 }
 
 // Open initialzes necessary variables for using this executor.
@@ -110,6 +93,23 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	}
 	e.resultHandler.open(firstResult, secondResult)
 	return nil
+}
+
+// Next fills data into the chunk passed by its caller.
+// The task was actually done by tableReaderHandler.
+func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	err := e.resultHandler.nextChunk(ctx, chk)
+	if err != nil {
+		e.feedback.Invalidate()
+	}
+	return errors.Trace(err)
+}
+
+// Close implements the Executor Close interface.
+func (e *TableReaderExecutor) Close() error {
+	e.ctx.StoreQueryFeedback(e.feedback)
+	err := e.resultHandler.Close()
+	return errors.Trace(err)
 }
 
 // buildResp first build request and send it to tikv using distsql.Select. It uses SelectResut returned by the callee
