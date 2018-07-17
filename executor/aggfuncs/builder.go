@@ -214,9 +214,9 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))
 		}
 		if aggFuncDesc.HasDistinct {
-			return &groupConcat4DistinctString{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
+			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
 		}
-		return &groupConcat4String{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
+		return &groupConcat{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
 	}
 }
 

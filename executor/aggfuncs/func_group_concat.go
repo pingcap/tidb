@@ -15,7 +15,6 @@ package aggfuncs
 
 import (
 	"bytes"
-	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,7 +28,7 @@ type baseGroupConcat4String struct {
 }
 
 func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
-	p := (*partialResult4ConcatString)(pr)
+	p := (*partialResult4GroupConcat)(pr)
 	if p.buffer == nil {
 		chk.AppendNull(e.ordinal)
 		return nil
@@ -42,30 +41,30 @@ type basePartialResult4GroupConcat struct {
 	buffer *bytes.Buffer
 }
 
-type partialResult4ConcatString struct {
+type partialResult4GroupConcat struct {
 	basePartialResult4GroupConcat
 }
 
-type groupConcat4String struct {
+type groupConcat struct {
 	baseGroupConcat4String
 }
 
-func (e *groupConcat4String) AllocPartialResult() PartialResult {
-	return PartialResult(new(partialResult4ConcatString))
+func (e *groupConcat) AllocPartialResult() PartialResult {
+	return PartialResult(new(partialResult4GroupConcat))
 }
 
-func (e *groupConcat4String) ResetPartialResult(pr PartialResult) {
-	p := (*partialResult4ConcatString)(pr)
+func (e *groupConcat) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4GroupConcat)(pr)
 	p.buffer = nil
 }
 
-func (e *groupConcat4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
-	p := (*partialResult4ConcatString)(pr)
+func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
+	p := (*partialResult4GroupConcat)(pr)
 	v, isNull := "", false
 	for _, row := range rowsInGroup {
 		isWriteSep := false
-		for i, l := 0, len(e.args); i < l; i++ {
-			v, isNull, err = e.args[i].EvalString(sctx, row)
+		for _, arg := range e.args {
+			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -88,41 +87,44 @@ func (e *groupConcat4String) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	return nil
 }
 
-type partialResult4ConcatDistinctString struct {
+type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
-	valSet stringSet
+	valsBuf *bytes.Buffer
+	valSet  stringSet
 }
 
-type groupConcat4DistinctString struct {
+type groupConcatDistinct struct {
 	baseGroupConcat4String
 }
 
-func (e *groupConcat4DistinctString) AllocPartialResult() PartialResult {
-	p := new(partialResult4ConcatDistinctString)
+func (e *groupConcatDistinct) AllocPartialResult() PartialResult {
+	p := new(partialResult4GroupConcatDistinct)
+	p.valsBuf = &bytes.Buffer{}
 	p.valSet = newStringSet()
 	return PartialResult(p)
 }
 
-func (e *groupConcat4DistinctString) ResetPartialResult(pr PartialResult) {
-	p := (*partialResult4ConcatDistinctString)(pr)
+func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4GroupConcatDistinct)(pr)
 	p.buffer, p.valSet = nil, newStringSet()
 }
 
-func (e *groupConcat4DistinctString) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
-	p := (*partialResult4ConcatDistinctString)(pr)
-	v, isNull, valsBuf, joinedVals := "", false, make([]string, len(e.args)), ""
+func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
+	p := (*partialResult4GroupConcatDistinct)(pr)
+	v, isNull := "", false
 	for _, row := range rowsInGroup {
-		for i, l := 0, len(e.args); i < l; i++ {
-			v, isNull, err = e.args[i].EvalString(sctx, row)
+		p.valsBuf.Reset()
+		for _, arg := range e.args {
+			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if isNull {
 				continue
 			}
-			valsBuf[i] = v
+			p.valsBuf.WriteString(v)
 		}
-		joinedVals = strings.Join(valsBuf, "")
+		joinedVals := p.valsBuf.String()
 		if p.valSet.exist(joinedVals) {
 			continue
 		}
@@ -134,9 +136,7 @@ func (e *groupConcat4DistinctString) UpdatePartialResult(sctx sessionctx.Context
 			p.buffer.WriteString(e.sep)
 		}
 		// write values
-		for _, s := range valsBuf {
-			p.buffer.WriteString(s)
-		}
+		p.buffer.WriteString(joinedVals)
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	// issue: #7034
