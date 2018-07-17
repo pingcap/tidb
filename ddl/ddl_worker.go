@@ -152,7 +152,7 @@ func asyncNotify(ch chan struct{}) {
 // The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
-	// it from another queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
+	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
 	// TODO: rename SetJobListKey to ChangeJobQueue.
 	var jobs []*model.Job
 	var err error
