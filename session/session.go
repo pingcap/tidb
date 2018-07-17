@@ -1322,6 +1322,8 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
+	s.GetSessionVars().TxnCtx.Binlog = nil
+
 	return errors.Trace(s.NewTxn())
 }
 
