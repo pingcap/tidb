@@ -96,6 +96,10 @@ func hasRecordPrefixSep(key kv.Key) bool {
 
 // DecodeRecordKey decodes the key and gets the tableID, handle.
 func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
+	if len(key) <= prefixLen {
+		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", key)
+	}
+
 	k := key
 	if !hasTablePrefix(key) {
 		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
