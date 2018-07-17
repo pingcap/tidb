@@ -95,6 +95,29 @@ func (e *ReplaceExec) addRow(row types.DatumRow) (int64, error) {
 	return h, nil
 }
 
+// removeIndexRow removes the row which has a duplicated key.
+// the return values:
+//     1. bool: true when the row is unchanged. This means no need to remove, and then add the row.
+//     2. bool: true when found the duplicated key. This only means that duplicated key was found,
+//              and the row was removed.
+//     3. error: the error.
+func (e *ReplaceExec) removeIndexRow(r toBeCheckedRow) (bool, bool, error) {
+	for _, uk := range r.uniqueKeys {
+		if val, found := e.dupKVs[string(uk.newKV.key)]; found {
+			handle, err := tables.DecodeHandle(val)
+			if err != nil {
+				return false, found, errors.Trace(err)
+			}
+			rowUnchanged, err := e.removeRow(handle, r.row)
+			if err != nil {
+				return false, found, errors.Trace(err)
+			}
+			return rowUnchanged, found, nil
+		}
+	}
+	return false, false, nil
+}
+
 func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
@@ -119,16 +142,15 @@ func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
 		return errors.Trace(err)
 	}
 
-	for i, r := range e.toBeCheckedRows {
+	for _, r := range e.toBeCheckedRows {
 		for {
-			rowUnchanged := false
 			if r.handleKey != nil {
 				if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
 					handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
 					if err != nil {
 						return errors.Trace(err)
 					}
-					rowUnchanged, err = e.removeRow(handle, newRows[i])
+					rowUnchanged, err := e.removeRow(handle, r.row)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -139,20 +161,9 @@ func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
 				}
 			}
 
-			foundDupKey := false
-			for _, uk := range r.uniqueKeys {
-				if val, found := e.dupKVs[string(uk.newKV.key)]; found {
-					handle, err := tables.DecodeHandle(val)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					rowUnchanged, err = e.removeRow(handle, newRows[i])
-					if err != nil {
-						return errors.Trace(err)
-					}
-					foundDupKey = true
-					break
-				}
+			rowUnchanged, foundDupKey, err := e.removeIndexRow(r)
+			if err != nil {
+				return errors.Trace(err)
 			}
 			if rowUnchanged {
 				break
@@ -161,7 +172,7 @@ func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
 				continue
 			}
 			// No duplicated rows now, insert the row and go to the next row.
-			newHandle, err := e.addRow(newRows[i])
+			newHandle, err := e.addRow(r.row)
 			if err != nil {
 				return errors.Trace(err)
 			}
