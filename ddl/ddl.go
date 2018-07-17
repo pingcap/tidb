@@ -26,6 +26,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -207,6 +208,11 @@ type DDL interface {
 
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(interface{})
+
+	GetServerInfo() *util.DDLServerInfo
+	StoreServerInfoToPD() error
+	GetOwnerServerInfo() (*util.DDLServerInfo, error)
+	GetAllServerInfo() (map[string]*util.DDLServerInfo, error)
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -376,6 +382,10 @@ func (d *ddl) close() {
 	if err != nil {
 		log.Errorf("[ddl] remove self version path failed %v", err)
 	}
+	err = d.schemaSyncer.RemoveSelfServerInfo()
+	if err != nil {
+		log.Errorf("[ddl] remove self server info path failed %v", err)
+	}
 
 	for _, worker := range d.workers {
 		worker.close()
@@ -508,6 +518,53 @@ func (d *ddl) callHookOnChanged(err error) error {
 // SetBinlogClient implements DDL.SetBinlogClient interface.
 func (d *ddl) SetBinlogClient(binlogCli interface{}) {
 	d.binlogCli = binlogCli
+}
+
+func (d *ddl) GetServerInfo() *util.DDLServerInfo {
+	info := &util.DDLServerInfo{}
+	cfg := config.GetGlobalConfig()
+	info.IP = cfg.Host
+	info.StatusPort = cfg.Status.StatusPort
+	info.ID = d.uuid
+	info.IsOwner = d.isOwner()
+	return info
+}
+
+func (d *ddl) GetOwnerServerInfo() (*util.DDLServerInfo, error) {
+	ctx := context.Background()
+	ddlOwnerID, err := d.ownerManager.GetOwnerID(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ownerInfo, err := d.schemaSyncer.GetDDLServerInfoFromPD(ctx, ddlOwnerID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return ownerInfo, nil
+}
+
+func (d *ddl) GetAllServerInfo() (map[string]*util.DDLServerInfo, error) {
+	ctx := context.Background()
+	ddlOwnerID, err := d.ownerManager.GetOwnerID(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	AllDDLServerInfo, err := d.schemaSyncer.GetAllDDLServerInfoFromPD(ctx, ddlOwnerID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if _, ok := AllDDLServerInfo[ddlOwnerID]; ok {
+		AllDDLServerInfo[ddlOwnerID].IsOwner = true
+	}
+	return AllDDLServerInfo, nil
+}
+
+func (d *ddl) StoreServerInfoToPD() error {
+	info := d.GetServerInfo()
+	ctx := context.Background()
+	// Owner will change , we will check ownerID to confirm which server is owner
+	info.IsOwner = false
+	return d.schemaSyncer.UpdateSelfServerInfo(ctx, info)
 }
 
 // DDL error codes.

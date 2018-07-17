@@ -109,3 +109,10 @@ func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, old
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
+
+type DDLServerInfo struct {
+	ID         string `json:"ddl_id"`
+	IP         string `json:"ip"`
+	StatusPort uint   `json:"status_port"`
+	IsOwner    bool   `json:"is_owner,omitempty"`
+}

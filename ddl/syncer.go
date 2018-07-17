@@ -20,11 +20,14 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/util/hack"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -33,6 +36,8 @@ const (
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	// It's exported for testing.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
+	//DDLServerInformation store DDL server information such as IP,port and so on
+	DDLServerInformation = "/tidb/ddl/info"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	// It's exported for testing.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
@@ -83,13 +88,22 @@ type SchemaSyncer interface {
 	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
 	// It returns until all servers' versions are equal to the latest version or the ctx is done.
 	OwnerCheckAllVersions(ctx context.Context, latestVer int64) error
+
+	GetDDLServerInfoFromPD(ctx context.Context, ddlID string) (*util.DDLServerInfo, error)
+
+	GetAllDDLServerInfoFromPD(ctx context.Context, ddlID string) (map[string]*util.DDLServerInfo, error)
+
+	UpdateSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error
+
+	RemoveSelfServerInfo() error
 }
 
 type schemaVersionSyncer struct {
-	selfSchemaVerPath string
-	etcdCli           *clientv3.Client
-	session           *concurrency.Session
-	mu                struct {
+	selfSchemaVerPath  string
+	selfServerInfoPath string
+	etcdCli            *clientv3.Client
+	session            *concurrency.Session
+	mu                 struct {
 		sync.RWMutex
 		globalVerCh clientv3.WatchChan
 	}
@@ -98,8 +112,9 @@ type schemaVersionSyncer struct {
 // NewSchemaSyncer creates a new SchemaSyncer.
 func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
 	return &schemaVersionSyncer{
-		etcdCli:           etcdCli,
-		selfSchemaVerPath: fmt.Sprintf("%s/%s", DDLAllSchemaVersions, id),
+		etcdCli:            etcdCli,
+		selfSchemaVerPath:  fmt.Sprintf("%s/%s", DDLAllSchemaVersions, id),
+		selfServerInfoPath: fmt.Sprintf("%s/%s", DDLServerInformation, id),
 	}
 }
 
@@ -150,6 +165,86 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 
 	err = s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.session.Lease()))
+	return errors.Trace(err)
+}
+
+func (s *schemaVersionSyncer) GetDDLServerInfoFromPD(ctx context.Context, ddlID string) (*util.DDLServerInfo, error) {
+	var err error
+	var resp *clientv3.GetResponse
+	ddlPath := fmt.Sprintf("%s/%s", DDLServerInformation, ddlID)
+	for {
+		if isContextDone(ctx) {
+			err = errors.Trace(ctx.Err())
+			return nil, err
+		}
+
+		resp, err = s.etcdCli.Get(ctx, ddlPath)
+		if err != nil {
+			continue
+		}
+		if err == nil && len(resp.Kvs) > 0 {
+			info := &util.DDLServerInfo{}
+			err := json.Unmarshal(resp.Kvs[0].Value, info)
+			if err != nil {
+				return nil, err
+			}
+			return info, nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func (s *schemaVersionSyncer) GetAllDDLServerInfoFromPD(ctx context.Context, ddlID string) (map[string]*util.DDLServerInfo, error) {
+	var err error
+	allDDLInfo := make(map[string]*util.DDLServerInfo)
+	for {
+		if isContextDone(ctx) {
+			// ctx is canceled or timeout.
+			err = errors.Trace(ctx.Err())
+			return nil, err
+		}
+
+		resp, err := s.etcdCli.Get(ctx, DDLServerInformation, clientv3.WithPrefix())
+		if err != nil {
+			log.Infof("[syncer] get all ddl server info failed %v, continue checking.", err)
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+
+		for _, kv := range resp.Kvs {
+			info := &util.DDLServerInfo{}
+			err := json.Unmarshal(kv.Value, info)
+			if err != nil {
+				log.Infof("[syncer] get all ddl server info, ddl %s json.Unmarshal %v failed %v, continue checking.", kv.Key, kv.Value, err)
+				return nil, err
+			}
+			allDDLInfo[info.ID] = info
+		}
+		return allDDLInfo, nil
+	}
+}
+
+func (s *schemaVersionSyncer) UpdateSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error {
+	infoBuf, err := json.Marshal(info)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = s.putKV(ctx, keyOpDefaultRetryCnt, s.selfServerInfoPath, hack.String(infoBuf))
+	return errors.Trace(err)
+}
+
+func (s *schemaVersionSyncer) RemoveSelfServerInfo() error {
+	var err error
+	ctx := context.Background()
+	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
+		_, err = s.etcdCli.Delete(childCtx, s.selfServerInfoPath)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		log.Warnf("[syncer] remove server info path %s failed %v no.%d", s.selfServerInfoPath, err, i)
+	}
 	return errors.Trace(err)
 }
 

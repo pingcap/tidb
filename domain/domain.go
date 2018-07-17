@@ -500,6 +500,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = do.ddl.StoreServerInfoToPD()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = do.Reload()
 	if err != nil {
 		return errors.Trace(err)

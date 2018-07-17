@@ -20,6 +20,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"golang.org/x/net/context"
@@ -32,6 +33,7 @@ const mockCheckVersInterval = 2 * time.Millisecond
 type mockSchemaSyncer struct {
 	selfSchemaVersion int64
 	globalVerCh       chan clientv3.WatchResponse
+	selfServerInfo    *util.DDLServerInfo
 }
 
 // NewMockSchemaSyncer creates a new mock SchemaSyncer.
@@ -100,6 +102,24 @@ func (s *mockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 			}
 		}
 	}
+}
+
+func (s *mockSchemaSyncer) GetDDLServerInfoFromPD(ctx context.Context, ddlID string) (*util.DDLServerInfo, error) {
+	return s.selfServerInfo, nil
+}
+
+func (s *mockSchemaSyncer) GetAllDDLServerInfoFromPD(ctx context.Context, ddlID string) (map[string]*util.DDLServerInfo, error) {
+	allDDLInfo := make(map[string]*util.DDLServerInfo)
+	allDDLInfo[s.selfServerInfo.ID] = s.selfServerInfo
+	return allDDLInfo, nil
+}
+
+func (s *mockSchemaSyncer) UpdateSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error {
+	s.selfServerInfo = info
+	return nil
+}
+func (s *mockSchemaSyncer) RemoveSelfServerInfo() error {
+	return nil
 }
 
 type mockDelRange struct {

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -331,6 +332,14 @@ type tableHandler struct {
 
 // ddlHistoryJobHandler is the handler for list job history.
 type ddlHistoryJobHandler struct {
+	*tikvHandlerTool
+}
+
+type ddlServerInfoHandler struct {
+	*tikvHandlerTool
+}
+
+type ddlAllServerInfoHandler struct {
 	*tikvHandlerTool
 }
 
@@ -1248,4 +1257,44 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 		endKey = tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
 	}
 	return h.getMvccByStartTs(uint64(startTS), startKey, endKey)
+}
+
+// ServeHTTP handles request of ddl server info.
+func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	session, err := session.CreateSession(h.store.(kv.Storage))
+	if err != nil {
+		writeError(w, errors.New("create session error"))
+		return
+	}
+	ddl := domain.GetDomain(session.(sessionctx.Context)).DDL()
+	clusterInfo := make(map[string]*util.DDLServerInfo)
+	selfInfo := ddl.GetServerInfo()
+	if !selfInfo.IsOwner {
+		ownerInfo, err := ddl.GetOwnerServerInfo()
+		if err != nil {
+			writeError(w, errors.New("ddl server information not found"))
+			return
+		}
+		// ownerInfo.IsOwner is false because the server may no the owner when store the info to PD,
+		ownerInfo.IsOwner = true
+		clusterInfo[ownerInfo.ID] = ownerInfo
+	}
+	clusterInfo[selfInfo.ID] = selfInfo
+	writeData(w, clusterInfo)
+}
+
+// ServeHTTP handles request of all ddl servers info.
+func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	session, err := session.CreateSession(h.store.(kv.Storage))
+	if err != nil {
+		writeError(w, errors.New("create session error"))
+		return
+	}
+	ddl := domain.GetDomain(session.(sessionctx.Context)).DDL()
+	clusterInfo, err := ddl.GetAllServerInfo()
+	if err != nil {
+		writeError(w, errors.New("ddl server information not found"))
+		return
+	}
+	writeData(w, clusterInfo)
 }
