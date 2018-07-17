@@ -97,17 +97,16 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 
 // index is the data structure for index data in the KV store.
 type index struct {
-	tblInfo *model.TableInfo
 	idxInfo *model.IndexInfo
 	prefix  kv.Key
 }
 
 // NewIndex builds a new Index object.
-func NewIndex(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+// id may be partition or table ID, depends on whether the table is a PartitionedTable.
+func NewIndex(id int64, indexInfo *model.IndexInfo) table.Index {
 	index := &index{
-		tblInfo: tableInfo,
 		idxInfo: indexInfo,
-		prefix:  tablecodec.EncodeTableIndexPrefix(tableInfo.ID, indexInfo.ID),
+		prefix:  tablecodec.EncodeTableIndexPrefix(id, indexInfo.ID),
 	}
 	return index
 }
@@ -242,6 +241,7 @@ func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
+
 	it, err := r.Seek(key)
 	if err != nil {
 		return nil, false, errors.Trace(err)
