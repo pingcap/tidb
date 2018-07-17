@@ -1312,7 +1312,7 @@ func (s *testSuite) TestMultiUpdate(c *C) {
 func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key, b int, c int as (a+8) virtual)`)
+	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (a+8) virtual)`)
 	tk.MustExec(`CREATE TABLE test_gc_write_1 (a int primary key, b int, c int)`)
 
 	tests := []struct {
@@ -1336,6 +1336,7 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 		// Can insert without generated columns.
 		{`insert into test_gc_write (a, b) values (1, 1)`, 0},
 		{`insert into test_gc_write set a = 2, b = 2`, 0},
+		{`insert into test_gc_write (b) select c from test_gc_write`, 0},
 		// Can update without generated columns.
 		{`update test_gc_write set b = 2 where a = 2`, 0},
 		{`update test_gc_write t1, test_gc_write_1 t2 set t1.b = 3, t2.b = 4`, 0},
@@ -1343,13 +1344,15 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 		// But now we can't do this, just as same with MySQL 5.7:
 		{`insert into test_gc_write values (1, 1)`, mysql.ErrWrongValueCountOnRow},
 		{`insert into test_gc_write select 1, 1`, mysql.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write (c) select a, b from test_gc_write`, mysql.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write (b, c) select a, b from test_gc_write`, mysql.ErrBadGeneratedColumn},
 	}
 	for _, tt := range tests {
 		_, err := tk.Exec(tt.stmt)
 		if tt.err != 0 {
-			c.Assert(err, NotNil)
+			c.Assert(err, NotNil, Commentf("sql is `%v`", tt.stmt))
 			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
+			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err), Commentf("sql is %v", tt.stmt))
 		} else {
 			c.Assert(err, IsNil)
 		}

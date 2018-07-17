@@ -100,6 +100,12 @@ func (s *testSuite) TestInsert(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("rollback")
 
+	errInsertSelectSQL = `insert insert_test_1 values(default, default, default, default, default)`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errInsertSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
 	// Updating column is PK handle.
 	// Make sure the record is "1, 1, nil, 1".
 	r := tk.MustQuery("select * from insert_test where id = 1;")
@@ -240,6 +246,21 @@ func (s *testSuite) TestInsert(c *C) {
 		Check(testkit.Rows("Warning 1690 constant -1.1 overflows float", "Warning 1690 constant -1.1 overflows double",
 			"Warning 1690 constant -2.1 overflows float", "Warning 1690 constant -2.1 overflows double"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("0 0", "0 0", "0 0", "1.1 1.1"))
+
+	// issue 7061
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default 1, b int default 2)")
+	tk.MustExec("insert into t values(default, default)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(default(b), default(a))")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1"))
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t (b) values(default)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t (b) values(default(a))")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {

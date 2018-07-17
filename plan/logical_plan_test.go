@@ -1332,7 +1332,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		ans []visitInfo
 	}{
 		{
-			sql: "insert into t values (1)",
+			sql: "insert into t (a) values (1)",
 			ans: []visitInfo{
 				{mysql.InsertPriv, "test", "t", ""},
 			},
