@@ -61,6 +61,9 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = false
+
+	// PartitionCountLimit is limit of the number of partitions in a table.
+	PartitionCountLimit = 1024
 )
 
 var (
@@ -172,6 +175,8 @@ var (
 	ErrTooManyValues = terror.ClassDDL.New(codeErrTooManyValues, mysql.MySQLErrName[mysql.ErrTooManyValues])
 	//ErrDropLastPartition returns cannot remove all partitions, use drop table instead.
 	ErrDropLastPartition = terror.ClassDDL.New(codeDropLastPartition, mysql.MySQLErrName[mysql.ErrDropLastPartition])
+	//ErrTooManyPartitions returns too many partitions (including subpartitions) were defined.
+	ErrTooManyPartitions = terror.ClassDDL.New(codeTooManyPartitions, mysql.MySQLErrName[mysql.ErrTooManyPartitions])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -577,6 +582,7 @@ const (
 	codePartitionMaxvalue             = terror.ErrCode(mysql.ErrPartitionMaxvalue)
 	codeErrTooManyValues              = terror.ErrCode(mysql.ErrTooManyValues)
 	codeDropLastPartition             = terror.ErrCode(mysql.ErrDropLastPartition)
+	codeTooManyPartitions             = terror.ErrCode(mysql.ErrTooManyPartitions)
 )
 
 func init() {
@@ -617,6 +623,7 @@ func init() {
 		codePartitionMaxvalue:             mysql.ErrPartitionMaxvalue,
 		codeErrTooManyValues:              mysql.ErrTooManyValues,
 		codeDropLastPartition:             mysql.ErrDropLastPartition,
+		codeTooManyPartitions:             mysql.ErrTooManyPartitions,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
