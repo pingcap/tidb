@@ -746,6 +746,9 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if !reachLimit {
+			break
+		}
 
 		loadDataInfo.Ctx.StmtCommit()
 		// Load data should not use latches, because:
@@ -759,10 +762,6 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		}
 		curData = prevData
 		prevData = nil
-
-		if !reachLimit {
-			break
-		}
 	}
 	return prevData, nil
 }
@@ -815,6 +814,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	}
 
 	txn := loadDataInfo.Ctx.Txn()
+	txn.SetOption(kv.BypassLatch, true)
+	loadDataInfo.Ctx.StmtCommit()
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {
@@ -824,7 +825,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		return errors.Trace(err)
 	}
 
-	return nil
+	return errors.Trace(loadDataInfo.Ctx.RefreshTxnCtx(ctx))
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
