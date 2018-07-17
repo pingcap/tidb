@@ -565,7 +565,7 @@ func (m *Meta) jobIDKey(id int64) []byte {
 }
 
 func (m *Meta) reorgJobStartHandle(id int64) []byte {
-	// There is no "_start", because it have to compatible with the older versions.
+	// There is no "_start", to make it compatible with the older TiDB versions.
 	return m.jobIDKey(id)
 }
 

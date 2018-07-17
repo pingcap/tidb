@@ -181,13 +181,12 @@ type reorgInfo struct {
 	// StartHandle is the first handle of the adding indices table.
 	StartHandle int64
 	// EndHandle is the last handle of the adding indices table.
-	// We should only backfill indices in the range [startHandle, EndHandle].
 	EndHandle int64
 	d         *ddlCtx
 	first     bool
 	// DDL reorganize for a partitioned table will handle partitions one by one,
 	// PartitionID is used to trace the partition been handled currently.
-	// If the table is not partitioned, PartitionID would be 0 or TableID.
+	// If the table is not partitioned, PartitionID would be TableID.
 	PartitionID int64
 }
 
