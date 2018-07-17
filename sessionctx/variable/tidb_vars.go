@@ -190,4 +190,6 @@ const (
 // Process global variables.
 var (
 	ProcessGeneralLog uint32
+	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
+	DDLSlowOprThreshold uint32 = 300
 )
