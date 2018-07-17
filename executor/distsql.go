@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"math"
 	"runtime"
 	"sort"
 	"sync"
@@ -170,44 +169,6 @@ func handleIsExtra(col *expression.Column) bool {
 		return true
 	}
 	return false
-}
-
-func splitRanges(ranges []*ranger.Range, keepOrder bool) ([]*ranger.Range, []*ranger.Range) {
-	if len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
-		return ranges, nil
-	}
-	idx := sort.Search(len(ranges), func(i int) bool { return ranges[i].HighVal[0].GetUint64() > math.MaxInt64 })
-	if idx == len(ranges) {
-		return ranges, nil
-	}
-	if ranges[idx].LowVal[0].GetUint64() > math.MaxInt64 {
-		signedRanges := ranges[0:idx]
-		unsignedRanges := ranges[idx:]
-		if !keepOrder {
-			return append(unsignedRanges, signedRanges...), nil
-		}
-		return signedRanges, unsignedRanges
-	}
-	signedRanges := make([]*ranger.Range, 0, idx+1)
-	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
-	signedRanges = append(signedRanges, ranges[0:idx]...)
-	signedRanges = append(signedRanges, &ranger.Range{
-		LowVal:     ranges[idx].LowVal,
-		LowExclude: ranges[idx].LowExclude,
-		HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
-	})
-	unsignedRanges = append(unsignedRanges, &ranger.Range{
-		LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
-		HighVal:     ranges[idx].HighVal,
-		HighExclude: ranges[idx].HighExclude,
-	})
-	if idx < len(ranges) {
-		unsignedRanges = append(unsignedRanges, ranges[idx+1:]...)
-	}
-	if !keepOrder {
-		return append(unsignedRanges, signedRanges...), nil
-	}
-	return signedRanges, unsignedRanges
 }
 
 // startSpanFollowContext is similar to opentracing.StartSpanFromContext, but the span reference use FollowsFrom option.
@@ -813,64 +774,4 @@ func GetLackHandles(expectedHandles []int64, obtainedHandlesMap map[int64]struct
 	}
 
 	return diffHandles
-}
-
-type tableResultHandler struct {
-	// If the pk is unsigned and we have KeepOrder=true.
-	// optionalResult handles the request whose range is in signed int range.
-	// result handles the request whose range is exceed signed int range.
-	// Otherwise, we just set optionalFinished true and the result handles the whole ranges.
-	optionalResult distsql.SelectResult
-	result         distsql.SelectResult
-
-	optionalFinished bool
-}
-
-func (tr *tableResultHandler) open(optionalResult, result distsql.SelectResult) {
-	if optionalResult == nil {
-		tr.optionalFinished = true
-		tr.result = result
-		return
-	}
-	tr.optionalResult = optionalResult
-	tr.result = result
-	tr.optionalFinished = false
-}
-
-func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	if !tr.optionalFinished {
-		err := tr.optionalResult.Next(ctx, chk)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if chk.NumRows() > 0 {
-			return nil
-		}
-		tr.optionalFinished = true
-	}
-	return tr.result.Next(ctx, chk)
-}
-
-func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err error) {
-	if !tr.optionalFinished {
-		data, err = tr.optionalResult.NextRaw(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if data != nil {
-			return data, nil
-		}
-		tr.optionalFinished = true
-	}
-	data, err = tr.result.NextRaw(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return data, nil
-}
-
-func (tr *tableResultHandler) Close() error {
-	err := closeAll(tr.optionalResult, tr.result)
-	tr.optionalResult, tr.result = nil, nil
-	return errors.Trace(err)
 }
