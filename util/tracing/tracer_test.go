@@ -16,9 +16,8 @@ package tracing_test
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-
 	"github.com/opentracing/opentracing-go"
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/tracing"
 	"golang.org/x/net/context"
 )

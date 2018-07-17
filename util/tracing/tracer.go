@@ -31,7 +31,7 @@ func (cr CallbackRecorder) RecordSpan(sp basictracer.RawSpan) {
 	cr(sp)
 }
 
-// NewSnowball returns a Span which records directly via the specified
+// NewSnowball returns a span which records directly via the specified
 // callback. If the given WireSpan is the zero value, a new trace is created;
 // otherwise, the created Span is a child.
 func NewSnowball(opName string, callback func(sp basictracer.RawSpan)) opentracing.Span {
@@ -42,7 +42,7 @@ func NewSnowball(opName string, callback func(sp basictracer.RawSpan)) opentraci
 	return sp
 }
 
-// NoopSpan returns a Span which discards all operations.
+// NoopSpan returns a span which discards all operations.
 func NoopSpan() opentracing.Span {
 	return (opentracing.NoopTracer{}).StartSpan("DefaultSpan")
 }
@@ -55,7 +55,7 @@ func SpanFromContext(ctx context.Context) (sp opentracing.Span) {
 	return sp
 }
 
-// ChildSpanFromContxt return a non-nil span. If span can be got from ctx, then returned span is
+// ChildSpanFromContxt returns a non-nil span. If span can be got from ctx, then returned span is
 // a child of such span. Otherwise, returned span is a noop span.
 func ChildSpanFromContxt(ctx context.Context, opName string) (sp opentracing.Span) {
 	if sp := opentracing.SpanFromContext(ctx); sp != nil {
