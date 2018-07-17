@@ -328,6 +328,8 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		Ranges:           path.ranges,
 		filterCondition:  path.indexFilters,
 		dataSourceSchema: ds.schema,
+		isPartition:      ds.isPartition,
+		partitionID:      ds.partitionID,
 	}.init(ds.ctx)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
