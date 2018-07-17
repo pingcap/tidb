@@ -52,7 +52,8 @@ const (
 	MinYear int16 = 1901
 	// MaxYear is the maximum for mysql year type.
 	MaxYear int16 = 2155
-
+	// MaxDuration is the maximum for duration.
+	MaxDuration int64 = 838*10000 + 59*100 + 59
 	// MinTime is the minimum for mysql time type.
 	MinTime = -gotime.Duration(838*3600+59*60+59) * gotime.Second
 	// MaxTime is the maximum for mysql time type.
@@ -764,7 +765,7 @@ func AdjustYear(y int64) (int64, error) {
 	return y, nil
 }
 
-// Duration is the type for MySQL time type.
+// Duration is the type for MySQL TIME type.
 type Duration struct {
 	gotime.Duration
 	// Fsp is short for Fractional Seconds Precision.
