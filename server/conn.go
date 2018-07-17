@@ -814,8 +814,6 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		}
 	}
 
-	txn := loadDataInfo.Ctx.Txn()
-	loadDataInfo.Ctx.StmtCommit()
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {
@@ -824,7 +822,8 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		}
 		return errors.Trace(err)
 	}
-	return errors.Trace(txn.Commit(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
+	
+	return nil
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
