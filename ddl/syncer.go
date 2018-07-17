@@ -89,12 +89,13 @@ type SchemaSyncer interface {
 	// It returns until all servers' versions are equal to the latest version or the ctx is done.
 	OwnerCheckAllVersions(ctx context.Context, latestVer int64) error
 
-	GetDDLServerInfoFromPD(ctx context.Context, ddlID string) (*util.DDLServerInfo, error)
-
-	GetAllDDLServerInfoFromPD(ctx context.Context, ddlID string) (map[string]*util.DDLServerInfo, error)
-
+	// GetServerInfoFromPD get the DDL_id server information from PD.
+	GetServerInfoFromPD(ctx context.Context, id string) (*util.DDLServerInfo, error)
+	// GetAllServerInfoFromPD get all DDL servers information from PD.
+	GetAllServerInfoFromPD(ctx context.Context, id string) (map[string]*util.DDLServerInfo, error)
+	// UpdateSelfServerInfo store DDL server information to PD.
 	UpdateSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error
-
+	// RemoveSelfServerInfo remove DDL server information from PD.
 	RemoveSelfServerInfo() error
 }
 
@@ -168,10 +169,11 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-func (s *schemaVersionSyncer) GetDDLServerInfoFromPD(ctx context.Context, ddlID string) (*util.DDLServerInfo, error) {
+// GetServerInfoFromPD implements SchemaSyncer.GetServerInfoFromPD interface.
+func (s *schemaVersionSyncer) GetServerInfoFromPD(ctx context.Context, id string) (*util.DDLServerInfo, error) {
 	var err error
 	var resp *clientv3.GetResponse
-	ddlPath := fmt.Sprintf("%s/%s", DDLServerInformation, ddlID)
+	ddlPath := fmt.Sprintf("%s/%s", DDLServerInformation, id)
 	for {
 		if isContextDone(ctx) {
 			err = errors.Trace(ctx.Err())
@@ -194,7 +196,8 @@ func (s *schemaVersionSyncer) GetDDLServerInfoFromPD(ctx context.Context, ddlID 
 	}
 }
 
-func (s *schemaVersionSyncer) GetAllDDLServerInfoFromPD(ctx context.Context, ddlID string) (map[string]*util.DDLServerInfo, error) {
+// GetAllServerInfoFromPD implements SchemaSyncer.GetAllServerInfoFromPD interface.
+func (s *schemaVersionSyncer) GetAllServerInfoFromPD(ctx context.Context, id string) (map[string]*util.DDLServerInfo, error) {
 	var err error
 	allDDLInfo := make(map[string]*util.DDLServerInfo)
 	for {
@@ -224,6 +227,7 @@ func (s *schemaVersionSyncer) GetAllDDLServerInfoFromPD(ctx context.Context, ddl
 	}
 }
 
+// UpdateSelfServerInfo implements SchemaSyncer.UpdateSelfServerInfo interface.
 func (s *schemaVersionSyncer) UpdateSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error {
 	infoBuf, err := json.Marshal(info)
 	if err != nil {
@@ -233,6 +237,7 @@ func (s *schemaVersionSyncer) UpdateSelfServerInfo(ctx context.Context, info *ut
 	return errors.Trace(err)
 }
 
+// RemoveSelfServerInfo implements SchemaSyncer.RemoveSelfServerInfo interface.
 func (s *schemaVersionSyncer) RemoveSelfServerInfo() error {
 	var err error
 	ctx := context.Background()

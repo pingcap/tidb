@@ -1276,7 +1276,6 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 			return
 		}
 		// ownerInfo.IsOwner is false because the server may no the owner when store the info to PD,
-		ownerInfo.IsOwner = true
 		clusterInfo[ownerInfo.ID] = ownerInfo
 	}
 	clusterInfo[selfInfo.ID] = selfInfo

@@ -33,7 +33,8 @@ const mockCheckVersInterval = 2 * time.Millisecond
 type mockSchemaSyncer struct {
 	selfSchemaVersion int64
 	globalVerCh       chan clientv3.WatchResponse
-	selfServerInfo    *util.DDLServerInfo
+	// selfServerInfo used to save self DDL server information.
+	selfServerInfo *util.DDLServerInfo
 }
 
 // NewMockSchemaSyncer creates a new mock SchemaSyncer.
@@ -104,20 +105,25 @@ func (s *mockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 	}
 }
 
-func (s *mockSchemaSyncer) GetDDLServerInfoFromPD(ctx context.Context, ddlID string) (*util.DDLServerInfo, error) {
+// GetServerInfoFromPD implements SchemaSyncer.GetServerInfoFromPD interface.
+func (s *mockSchemaSyncer) GetServerInfoFromPD(ctx context.Context, _ string) (*util.DDLServerInfo, error) {
 	return s.selfServerInfo, nil
 }
 
-func (s *mockSchemaSyncer) GetAllDDLServerInfoFromPD(ctx context.Context, ddlID string) (map[string]*util.DDLServerInfo, error) {
+// GetAllServerInfoFromPD implements SchemaSyncer.GetAllServerInfoFromPD interface.
+func (s *mockSchemaSyncer) GetAllServerInfoFromPD(ctx context.Context, _ string) (map[string]*util.DDLServerInfo, error) {
 	allDDLInfo := make(map[string]*util.DDLServerInfo)
 	allDDLInfo[s.selfServerInfo.ID] = s.selfServerInfo
 	return allDDLInfo, nil
 }
 
+// UpdateSelfServerInfo implements SchemaSyncer.UpdateSelfServerInfo interface.
 func (s *mockSchemaSyncer) UpdateSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error {
 	s.selfServerInfo = info
 	return nil
 }
+
+// RemoveSelfServerInfo implements SchemaSyncer.RemoveSelfServerInfo interface.
 func (s *mockSchemaSyncer) RemoveSelfServerInfo() error {
 	return nil
 }

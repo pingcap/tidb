@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/printer"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
 	"golang.org/x/net/context"
@@ -209,9 +210,13 @@ type DDL interface {
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(interface{})
 
+	// GetServerInfo get self DDL Server static information and isOwner information.
 	GetServerInfo() *util.DDLServerInfo
+	// StoreServerInfoToPD store self DDL server static information to PD when DDL server Started.
 	StoreServerInfoToPD() error
+	// GetOwnerServerInfo get owner DDL Server static information from PD.
 	GetOwnerServerInfo() (*util.DDLServerInfo, error)
+	// GetAllServerInfo get all DDL Server static information from PD.
 	GetAllServerInfo() (map[string]*util.DDLServerInfo, error)
 }
 
@@ -525,6 +530,8 @@ func (d *ddl) GetServerInfo() *util.DDLServerInfo {
 	cfg := config.GetGlobalConfig()
 	info.IP = cfg.Host
 	info.StatusPort = cfg.Status.StatusPort
+	info.Version = mysql.ServerVersion
+	info.GitHash = printer.TiDBGitHash
 	info.ID = d.uuid
 	info.IsOwner = d.isOwner()
 	return info
@@ -536,10 +543,11 @@ func (d *ddl) GetOwnerServerInfo() (*util.DDLServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ownerInfo, err := d.schemaSyncer.GetDDLServerInfoFromPD(ctx, ddlOwnerID)
+	ownerInfo, err := d.schemaSyncer.GetServerInfoFromPD(ctx, ddlOwnerID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	ownerInfo.IsOwner = true
 	return ownerInfo, nil
 }
 
@@ -549,7 +557,7 @@ func (d *ddl) GetAllServerInfo() (map[string]*util.DDLServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	AllDDLServerInfo, err := d.schemaSyncer.GetAllDDLServerInfoFromPD(ctx, ddlOwnerID)
+	AllDDLServerInfo, err := d.schemaSyncer.GetAllServerInfoFromPD(ctx, ddlOwnerID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -562,7 +570,7 @@ func (d *ddl) GetAllServerInfo() (map[string]*util.DDLServerInfo, error) {
 func (d *ddl) StoreServerInfoToPD() error {
 	info := d.GetServerInfo()
 	ctx := context.Background()
-	// Owner will change , we will check ownerID to confirm which server is owner
+	// Owner will change , we will check ownerID to confirm which server is owner.
 	info.IsOwner = false
 	return d.schemaSyncer.UpdateSelfServerInfo(ctx, info)
 }
