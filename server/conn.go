@@ -814,6 +814,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		}
 	}
 
+	txn := loadDataInfo.Ctx.Txn()
 	if err != nil {
 		if txn != nil && txn.Valid() {
 			if err1 := txn.Rollback(); err1 != nil {
@@ -822,7 +823,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		}
 		return errors.Trace(err)
 	}
-	
+
 	return nil
 }
 
