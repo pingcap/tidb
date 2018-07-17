@@ -181,10 +181,20 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(row.Len(), Equals, 10)
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	historyJobs, err := admin.GetHistoryDDLJobs(txn)
+	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
 	c.Assert(len(historyJobs), Greater, 1)
 	c.Assert(len(row.GetString(1)), Greater, 0)
 	c.Assert(err, IsNil)
+	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
+	c.Assert(err, IsNil)
+
+	r, err = tk.Exec("admin show ddl jobs 20")
+	c.Assert(err, IsNil)
+	chk = r.NewChunk()
+	err = r.Next(ctx, chk)
+	c.Assert(err, IsNil)
+	row = chk.GetRow(0)
+	c.Assert(row.Len(), Equals, 10)
 	c.Assert(row.GetInt64(0), Equals, historyJobs[0].ID)
 	c.Assert(err, IsNil)
 
@@ -196,7 +206,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	result.Check(testkit.Rows())
 	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
 	result.Check(testkit.Rows())
-	historyJob, err := admin.GetHistoryDDLJobs(txn)
+	historyJob, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
 	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJob[0].ID))
 	result.Check(testkit.Rows(historyJob[0].Query))
 	c.Assert(err, IsNil)
@@ -1928,6 +1938,7 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	r.Check(testkit.Rows("123381351 1734 2014-03-31 08:57:10 127.0.0.1")) // Cover IndexLookupExec
 
 	// For issue https://github.com/pingcap/tidb/issues/3485
+	tk.MustExec("set time_zone = 'Asia/Shanghai'")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`CREATE TABLE t1 (
 	    id bigint(20) NOT NULL AUTO_INCREMENT,

@@ -17,7 +17,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -262,6 +261,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t values(1, 2, 3), (1, 2, 4)")
 	result = tk.MustQuery("select count(distinct c), count(distinct a,b) from t")
 	result.Check(testkit.Rows("2 1"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a float)")
+	tk.MustExec("insert into t values(966.36), (363.97), (569.99), (453.33), (376.45), (321.93), (12.12), (45.77), (9.66), (612.17)")
+	result = tk.MustQuery("select distinct count(distinct a) from t")
+	result.Check(testkit.Rows("10"))
 
 	tk.MustExec("create table idx_agg (a int, b int, index (b))")
 	tk.MustExec("insert idx_agg values (1, 1), (1, 2), (2, 2)")
@@ -540,28 +544,12 @@ func (s *testSuite) TestAggEliminator(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table t(a int primary key, b int)")
-	tk.MustQuery("select min(a) from t").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select min(a), min(a) from t").Check(testkit.Rows("<nil> <nil>"))
 	tk.MustExec("insert into t values(1, -1), (2, -2), (3, 1), (4, NULL)")
 	tk.MustQuery("select max(a) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
 	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
-}
-
-func (s *testSuite) TestIssue5663(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
-	planCahche := tk.Se.GetSessionVars().PlanCacheEnabled
-	defer func() {
-		tk.Se.GetSessionVars().PlanCacheEnabled = planCahche
-	}()
-
-	tk.Se.GetSessionVars().PlanCacheEnabled = true
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1 (i int unsigned, primary key(i));")
-	tk.MustExec("insert into t1 values (1),(2),(3);")
-	tk.MustQuery("select group_concat(i) from t1 where i > 1;").Check(testkit.Rows("2,3"))
-	tk.MustQuery("select group_concat(i) from t1 where i > 1;").Check(testkit.Rows("2,3"))
 }
 
 func (s *testSuite) TestMaxMinFloatScalaFunc(c *C) {
