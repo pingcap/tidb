@@ -2163,17 +2163,12 @@ func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTable
 	}
 }
 
-type tableMaxRowID interface {
-	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo, partitionID int64) (maxRowID int64, emptyTable bool, err error)
-}
-
 func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bool) {
 	c := ctx.c
-	d := ctx.d.(tableMaxRowID)
 	tbl := ctx.tbl
 	curVer, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.Meta(), tbl.Meta().ID)
+	maxID, emptyTable, err := ctx.d.GetTableMaxRowID(curVer.Ver, tbl.Meta(), tbl.Meta().ID)
 	c.Assert(err, IsNil)
 	return maxID, emptyTable
 }
