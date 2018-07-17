@@ -1889,8 +1889,8 @@ func (b *builtinSysDateWithFspSig) evalTime(row types.Row) (d types.Time, isNull
 		return types.Time{}, isNull, errors.Trace(err)
 	}
 
-	tz := b.ctx.GetSessionVars().GetTimeZone()
-	now := time.Now().In(tz)
+	loc := b.ctx.GetSessionVars().Location()
+	now := time.Now().In(loc)
 	result, err := convertTimeToMysqlTime(now, int(fsp))
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
@@ -1911,7 +1911,7 @@ func (b *builtinSysDateWithoutFspSig) Clone() builtinFunc {
 // evalTime evals SYSDATE().
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sysdate
 func (b *builtinSysDateWithoutFspSig) evalTime(row types.Row) (d types.Time, isNull bool, err error) {
-	tz := b.ctx.GetSessionVars().GetTimeZone()
+	tz := b.ctx.GetSessionVars().Location()
 	now := time.Now().In(tz)
 	result, err := convertTimeToMysqlTime(now, 0)
 	if err != nil {
@@ -1947,7 +1947,7 @@ func (b *builtinCurrentDateSig) Clone() builtinFunc {
 // evalTime evals CURDATE().
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curdate
 func (b *builtinCurrentDateSig) evalTime(row types.Row) (d types.Time, isNull bool, err error) {
-	tz := b.ctx.GetSessionVars().GetTimeZone()
+	tz := b.ctx.GetSessionVars().Location()
 	year, month, day := time.Now().In(tz).Date()
 	result := types.Time{
 		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
@@ -2002,7 +2002,7 @@ func (b *builtinCurrentTime0ArgSig) Clone() builtinFunc {
 }
 
 func (b *builtinCurrentTime0ArgSig) evalDuration(row types.Row) (types.Duration, bool, error) {
-	tz := b.ctx.GetSessionVars().GetTimeZone()
+	tz := b.ctx.GetSessionVars().Location()
 	dur := time.Now().In(tz).Format(types.TimeFormat)
 	res, err := types.ParseDuration(dur, types.MinFsp)
 	if err != nil {
@@ -2026,7 +2026,7 @@ func (b *builtinCurrentTime1ArgSig) evalDuration(row types.Row) (types.Duration,
 	if err != nil {
 		return types.Duration{}, true, errors.Trace(err)
 	}
-	tz := b.ctx.GetSessionVars().GetTimeZone()
+	tz := b.ctx.GetSessionVars().Location()
 	dur := time.Now().In(tz).Format(types.TimeFSPFormat)
 	res, err := types.ParseDuration(dur, int(fsp))
 	if err != nil {
@@ -2310,7 +2310,7 @@ func evalNowWithFsp(ctx sessionctx.Context, fsp int) (types.Time, bool, error) {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	err = result.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
+	err = result.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
