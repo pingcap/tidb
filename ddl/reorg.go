@@ -149,7 +149,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		// Update a reorgInfo's handle.
-		err := t.UpdateDDLReorgHandle(job, doneHandle)
+		err := t.UpdateDDLReorgStartHandle(job, doneHandle)
 		log.Infof("[ddl] run reorg job wait timeout %v, handled %d rows, current done handle %d, err %v", waitTimeout, rowCount, doneHandle, err)
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
@@ -180,17 +180,15 @@ type reorgInfo struct {
 
 	// StartHandle is the first handle of the adding indices table.
 	StartHandle int64
-	d           *ddlCtx
-	first       bool
-}
-
-// PartitionID returns the partition ID of the reorgInfo, or table ID if it's not a partition.
-func (r *reorgInfo) PartitionID() int64 {
-	ret := r.Job.TableID
-	if r.Job.ReorgMeta != nil && r.Job.ReorgMeta.PartitionID != 0 {
-		ret = r.Job.ReorgMeta.PartitionID
-	}
-	return ret
+	// EndHandle is the last handle of the adding indices table.
+	// We should only backfill indices in the range [startHandle, EndHandle].
+	EndHandle int64
+	d         *ddlCtx
+	first     bool
+	// DDL reorganize for a partitioned table will handle partitions one by one,
+	// PartitionID is used to trace the partition been handled currently.
+	// If the table is not partitioned, PartitionID would be 0 or TableID.
+	PartitionID int64
 }
 
 func constructDescTableScanPB(partitionID int64, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
@@ -333,7 +331,9 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		d:   d,
 		// init start handle is math.MinInt64
 		StartHandle: math.MinInt64,
-		first:       job.SnapshotVer == 0,
+		// init end handle is math.MaxInt64
+		EndHandle: math.MaxInt64,
+		first:     job.SnapshotVer == 0,
 	}
 
 	if info.first {
@@ -351,19 +351,11 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			pid = pi.Definitions[0].ID
 		}
-
 		start, end, err1 := getTableRange(d, tblInfo, pid, ver.Ver)
 		if err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-
-		reorgMeta := model.NewDDLReorgMeta()
-		reorgMeta.EndHandle = end
-		reorgMeta.PartitionID = pid
-		job.ReorgMeta = reorgMeta
-		info.StartHandle = start
-
-		log.Infof("[ddl-reorg] job %v get partition %d range [%d %d]", job.ID, pid, info.StartHandle, reorgMeta.EndHandle)
+		log.Infof("[ddl-reorg] job %v get partition %d range [%d %d]", job.ID, pid, info.StartHandle, info.EndHandle)
 
 		// gofail: var errorUpdateReorgHandle bool
 		// if errorUpdateReorgHandle && !gofailOnceGuard {
@@ -371,17 +363,24 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		//	gofailOnceGuard = true
 		// 	return info, errors.New("occur an error when update reorg handle.")
 		// }
-		err = t.UpdateDDLReorgHandle(job, info.StartHandle)
+		err = t.UpdateDDLReorgHandle(job, start, end, pid)
 		if err != nil {
 			return info, errors.Trace(err)
 		}
+		// Update info should after data persistent.
+		info.StartHandle = start
+		info.EndHandle = end
+		info.PartitionID = pid
 
 		job.SnapshotVer = ver.Ver
 	} else {
-		info.StartHandle, err = t.GetDDLReorgHandle(job)
+		start, end, pid, err := t.GetDDLReorgHandle(job)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		info.StartHandle = start
+		info.EndHandle = end
+		info.PartitionID = pid
 	}
 	// tbl set to nil is only in the tests.
 	if tbl == nil {
@@ -390,7 +389,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	return info, errors.Trace(err)
 }
 
-func (r *reorgInfo) UpdateHandle(txn kv.Transaction, handle int64) error {
+func (r *reorgInfo) UpdateHandle(txn kv.Transaction, startHandle, endHandle, partitionID int64) error {
 	t := meta.NewMeta(txn)
-	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, handle))
+	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, partitionID))
 }

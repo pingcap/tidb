@@ -121,6 +121,68 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	return nil
 }
 
+type partialResult4AvgDistinctDecimal struct {
+	partialResult4AvgDecimal
+	valSet decimalSet
+}
+
+type avgOriginal4DistinctDecimal struct {
+	baseAggFunc
+}
+
+func (e *avgOriginal4DistinctDecimal) AllocPartialResult() PartialResult {
+	p := &partialResult4AvgDistinctDecimal{
+		valSet: newDecimalSet(),
+	}
+	return PartialResult(p)
+}
+
+func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4AvgDistinctDecimal)(pr)
+	p.sum = *types.NewDecFromInt(0)
+	p.count = int64(0)
+	p.valSet = newDecimalSet()
+}
+
+func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	p := (*partialResult4AvgDistinctDecimal)(pr)
+	newSum := new(types.MyDecimal)
+	for _, row := range rowsInGroup {
+		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull || p.valSet.exist(input) {
+			continue
+		}
+
+		err = types.DecimalAdd(&p.sum, input, newSum)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		p.sum = *newSum
+		p.count++
+		p.valSet.insert(input)
+	}
+	return nil
+}
+
+func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4AvgDistinctDecimal)(pr)
+	if p.count == 0 {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	decimalCount := types.NewDecFromInt(p.count)
+	finalResult := new(types.MyDecimal)
+	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, types.DivFracIncr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	chk.AppendMyDecimal(e.ordinal, finalResult)
+	return nil
+}
+
 // All the following avg function implementations return the float64 result,
 // which store the partial results in "partialResult4AvgFloat64".
 //
@@ -203,5 +265,56 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		p.sum += inputSum
 		p.count += inputCount
 	}
+	return nil
+}
+
+type partialResult4AvgDistinctFloat64 struct {
+	partialResult4AvgFloat64
+	valSet float64Set
+}
+
+type avgOriginal4DistinctFloat64 struct {
+	baseAggFunc
+}
+
+func (e *avgOriginal4DistinctFloat64) AllocPartialResult() PartialResult {
+	p := &partialResult4AvgDistinctFloat64{
+		valSet: newFloat64Set(),
+	}
+	return PartialResult(p)
+}
+
+func (e *avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4AvgDistinctFloat64)(pr)
+	p.sum = float64(0)
+	p.count = int64(0)
+	p.valSet = newFloat64Set()
+}
+
+func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	p := (*partialResult4AvgDistinctFloat64)(pr)
+	for _, row := range rowsInGroup {
+		input, isNull, err := e.args[0].EvalReal(sctx, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull || p.valSet.exist(input) {
+			continue
+		}
+
+		p.sum += input
+		p.count++
+		p.valSet.insert(input)
+	}
+	return nil
+}
+
+func (e *avgOriginal4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4AvgDistinctFloat64)(pr)
+	if p.count == 0 {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
 	return nil
 }

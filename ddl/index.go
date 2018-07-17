@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -487,7 +488,7 @@ type addIndexResult struct {
 }
 
 func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.Table, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
-	index := tables.NewIndex(t.Meta(), indexInfo)
+	index := tables.NewIndex(t.Meta().ID, indexInfo)
 	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
@@ -552,9 +553,14 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
+	oprStartTime := startTime
 	handleOutOfRange := false
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), taskRange.partitionID, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
+			oprEndTime := time.Now()
+			w.logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in fetchRowColVals", 0)
+			oprStartTime = oprEndTime
+
 			if !taskRange.endIncluded {
 				handleOutOfRange = handle >= taskRange.endHandle
 			} else {
@@ -583,11 +589,22 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	return w.idxRecords, handleOutOfRange, errors.Trace(err)
 }
 
+func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
+	if threshold == 0 {
+		threshold = atomic.LoadUint32(&variable.DDLSlowOprThreshold)
+	}
+
+	if elapsed >= time.Duration(threshold)*time.Millisecond {
+		log.Infof("[ddl-reorg][SLOW-OPERATIONS] elapsed time: %v, message: %v", elapsed, slowMsg)
+	}
+}
+
 // backfillIndexInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
 func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, addedCount, scanCount int, errInTxn error) {
+	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		addedCount = 0
 		scanCount = 0
@@ -625,6 +642,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 		}
 		return nil
 	})
+	w.logSlowOperations(time.Since(oprStartTime), "backfillIndexInTxn", 3000)
 
 	return
 }
@@ -717,13 +735,13 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up adding index in table with disperse handle.
 func splitTableRanges(t table.Table, reorgInfo *reorgInfo) ([]kv.KeyRange, error) {
-	partitionID := reorgInfo.PartitionID()
+	partitionID := reorgInfo.PartitionID
 	startHandle := reorgInfo.StartHandle
-	reorgMeta := reorgInfo.Job.ReorgMeta
+	endHandle := reorgInfo.EndHandle
 	startRecordKey := tablecodec.EncodeRowKeyWithHandle(partitionID, startHandle)
-	endRecordKey := tablecodec.EncodeRowKeyWithHandle(partitionID, reorgMeta.EndHandle).Next()
+	endRecordKey := tablecodec.EncodeRowKeyWithHandle(partitionID, endHandle).Next()
 
-	log.Infof("[ddl-reorg] split partition %v range [%v, %v] from PD", partitionID, startHandle, reorgMeta.EndHandle)
+	log.Infof("[ddl-reorg] split partition %v range [%v, %v] from PD", partitionID, startHandle, endHandle)
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	s, ok := reorgInfo.d.store.(tikv.Storage)
 	if !ok {
@@ -810,7 +828,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	if err != nil {
 		// update the reorg handle that has been processed.
 		err1 := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
-			return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
+			return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PartitionID))
 		})
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime)
 		log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
@@ -829,7 +847,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, kvRanges []kv.KeyRange, job *model.Job, reorgInfo *reorgInfo) error {
 	totalAddedCount := job.GetRowCount()
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
-	partitionID := reorgInfo.PartitionID()
+	partitionID := reorgInfo.PartitionID
 
 	log.Infof("[ddl-reorg] start to reorg index of %v region ranges.", len(kvRanges))
 	for i, keyRange := range kvRanges {
@@ -912,10 +930,10 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) 
 		return true, nil
 	}
 
-	pid, err := findNextPartitionID(reorg.PartitionID(), pi.Definitions)
+	pid, err := findNextPartitionID(reorg.PartitionID, pi.Definitions)
 	if err != nil {
 		// Fatal error, should not run here.
-		return false, errors.Errorf("wrong reorgInfo, partition id %d not found", reorg.PartitionID())
+		return false, errors.Errorf("wrong reorgInfo, partition id %d not found", reorg.PartitionID)
 	}
 	if pid == 0 {
 		// Next partition does not exist, all the job done.
@@ -926,21 +944,8 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) 
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-
-	reorgMeta := model.NewDDLReorgMeta()
-	reorgMeta.PartitionID = pid
-	reorgMeta.EndHandle = end
-	reorg.Job.ReorgMeta = reorgMeta
-	reorg.StartHandle = start
-
 	log.Infof("[ddl] job %v update reorgInfo partition %d range [%d %d]", reorg.Job.ID, pid, start, end)
-
-	// TODO: Uncomment it.
-	// Actually, it just need to update the job.ReorgMeta.
-	// err = kv.RunInNewTxn(reorg.d.store, false, func(txn kv.Transaction) error {
-	// 	t := meta.NewMeta(txn)
-	// 	return errors.Trace(w.updateDDLJob(t, reorg.Job, false))
-	// })
+	reorg.StartHandle, reorg.EndHandle, reorg.PartitionID = start, end, pid
 	return false, errors.Trace(err)
 }
 

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
@@ -330,7 +331,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 }
 
 func (ts *testSuite) TestPartitionAddRecord(c *C) {
-	createTable1 := `CREATE TABLE test.t1 (id int(11))
+	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p1 VALUES LESS THAN (11),
@@ -345,8 +346,7 @@ PARTITION BY RANGE ( id ) (
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
-	c.Assert(p0.Name, Equals, "p0")
-
+	c.Assert(p0.Name, Equals, model.NewCIStr("p0"))
 	c.Assert(ts.se.NewTxn(), IsNil)
 	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1), false)
 	c.Assert(err, IsNil)
@@ -366,6 +366,16 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(err, IsNil)
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(16), false)
 	c.Assert(err, IsNil)
+
+	// Make the changes visible.
+	_, err = ts.se.Execute(context.Background(), "commit")
+	c.Assert(err, IsNil)
+
+	// Check index count equals to data count.
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from t1 use index(id)").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from t1 use index(id) where id > 6").Check(testkit.Rows("3"))
 
 	// Value must locates in one partition.
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)

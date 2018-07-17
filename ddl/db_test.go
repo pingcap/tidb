@@ -485,7 +485,7 @@ LOOP:
 	}
 
 	ctx := s.s.(sessionctx.Context)
-	idx := tables.NewIndex(t.Meta(), c3IdxInfo)
+	idx := tables.NewIndex(t.Meta().ID, c3IdxInfo)
 	checkDelRangeDone(c, ctx, idx)
 
 	s.mustExec(c, "drop table t1")
@@ -795,7 +795,7 @@ LOOP:
 	}
 	c.Assert(nidx, IsNil)
 
-	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
+	idx := tables.NewIndex(t.Meta().ID, c3idx.Meta())
 	checkDelRangeDone(c, ctx, idx)
 	s.tk.MustExec("drop table test_drop_index")
 }
@@ -1570,11 +1570,11 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	}
 	c.Assert(part.Definitions, HasLen, 3)
 	c.Assert(part.Definitions[0].LessThan[0], Equals, "10")
-	c.Assert(part.Definitions[0].Name, Equals, "p0")
+	c.Assert(part.Definitions[0].Name.L, Equals, "p0")
 	c.Assert(part.Definitions[1].LessThan[0], Equals, "20")
-	c.Assert(part.Definitions[1].Name, Equals, "p1")
+	c.Assert(part.Definitions[1].Name.L, Equals, "p1")
 	c.Assert(part.Definitions[2].LessThan[0], Equals, "MAXVALUE")
-	c.Assert(part.Definitions[2].Name, Equals, "p2")
+	c.Assert(part.Definitions[2].Name.L, Equals, "p2")
 
 	s.tk.MustExec("drop table if exists employees;")
 	sql1 := `create table employees (
@@ -1665,6 +1665,16 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 		partition p2 values less than maxvalue
 	);`)
 	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
+
+	// TODO: This SQL should return ErrPartitionFunctionIsNotAllowed: ERROR 1564 (HY000): This partition function is not allowed
+	_, err = s.tk.Exec(`create TABLE t9 (
+	col1 int
+	)
+	partition by range( case when col1 > 0 then 10 else 20 end ) (
+		partition p0 values less than (2),
+		partition p1 values less than (6)
+	);`)
+	c.Assert(err, IsNil)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
@@ -2165,10 +2175,11 @@ func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTable
 
 func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bool) {
 	c := ctx.c
+	d := ctx.d
 	tbl := ctx.tbl
 	curVer, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	maxID, emptyTable, err := ctx.d.GetTableMaxRowID(curVer.Ver, tbl.Meta(), tbl.Meta().ID)
+	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.Meta(), tbl.Meta().ID)
 	c.Assert(err, IsNil)
 	return maxID, emptyTable
 }
@@ -2391,8 +2402,10 @@ func (s *testDBSuite) TestBackwardCompatibility(c *C) {
 }
 
 func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
-	s.tk.MustExec("use test")
-	s.tk.MustExec("drop table if employees")
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test;")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	s.tk.MustExec("drop table if exists employees;")
 	s.tk.MustExec(`create table employees (
 	id int not null,
 	hired date not null
@@ -2404,43 +2417,44 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 	);`)
 	s.tk.MustExec(`alter table employees add partition (
     partition p4 values less than (2010),
-    partition p5 values less than maxvalue
+    partition p5 values less than MAXVALUE
 	);`)
 
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().Partition, NotNil)
 	part := tbl.Meta().Partition
 	c.Assert(part.Type, Equals, model.PartitionTypeRange)
-	c.Assert(part.Expr, Equals, "`hired`")
 
+	c.Assert(part.Expr, Equals, "year(`hired`)")
 	c.Assert(part.Definitions, HasLen, 5)
 	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
-	c.Assert(part.Definitions[0].Name, Equals, "p1")
+	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
 	c.Assert(part.Definitions[1].LessThan[0], Equals, "1996")
-	c.Assert(part.Definitions[1].Name, Equals, "p2")
+	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p2"))
 	c.Assert(part.Definitions[2].LessThan[0], Equals, "2001")
-	c.Assert(part.Definitions[2].Name, Equals, "p3")
+	c.Assert(part.Definitions[2].Name, Equals, model.NewCIStr("p3"))
 	c.Assert(part.Definitions[3].LessThan[0], Equals, "2010")
-	c.Assert(part.Definitions[3].Name, Equals, "p4")
-	c.Assert(part.Definitions[4].LessThan[0], Equals, "maxvalue")
-	c.Assert(part.Definitions[4].Name, Equals, "p5")
+	c.Assert(part.Definitions[3].Name, Equals, model.NewCIStr("p4"))
+	c.Assert(part.Definitions[4].LessThan[0], Equals, "MAXVALUE")
+	c.Assert(part.Definitions[4].Name, Equals, model.NewCIStr("p5"))
 
-	s.tk.MustExec("drop table if t1")
-	s.tk.MustExec("create table t1(a int)")
-	sql1 := `alter table t1 add partition (
+	s.tk.MustExec("drop table if exists table1;")
+	s.tk.MustExec("create table table1(a int)")
+	sql1 := `alter table table1 add partition (
 		partition p1 values less than (2010),
 		partition p2 values less than maxvalue
 	);`
-	s.testErrorCode(c, sql1, mysql.ErrPartitionMgmtOnNonpartitioned)
+	s.testErrorCode(c, sql1, tmysql.ErrPartitionMgmtOnNonpartitioned)
 
-	sql2 := "alter table t1 add partition"
-	s.testErrorCode(c, sql2, mysql.ErrPartitionsMustBeDefined)
+	sql2 := "alter table table1 add partition"
+	s.testErrorCode(c, sql2, tmysql.ErrPartitionsMustBeDefined)
 
-	s.tk.MustExec("drop table if t2")
-	s.tk.MustExec(`create table t2 (
+	s.tk.MustExec("drop table if exists table2;")
+	s.tk.MustExec(`create table table2 (
+
 	id int not null,
 	hired date not null
 	)
@@ -2449,43 +2463,181 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 	partition p2 values less than maxvalue
 	);`)
 
-	sql3 := `alter table t2 add partition (
+	sql3 := `alter table table2 add partition (
 		partition p3 values less than (2010)
 	);`
-	s.testErrorCode(c, sql3, mysql.ErrPartitionMaxvalue)
+	s.testErrorCode(c, sql3, tmysql.ErrPartitionMaxvalue)
 
-	s.tk.MustExec("drop table if t3")
-	s.tk.MustExec(`create table t3 (
+	s.tk.MustExec("drop table if exists table3;")
+	s.tk.MustExec(`create table table3 (
 	id int not null,
 	hired date not null
 	)
 	partition by range( year(hired) ) (
 	partition p1 values less than (1991),
-	partition p3 values less than (2001)
+	partition p2 values less than (2001)
 	);`)
 
-	sql4 := `alter table t3 add partition (
+	sql4 := `alter table table3 add partition (
 		partition p3 values less than (1993)
 	);`
-	s.testErrorCode(c, sql4, mysql.ErrRangeNotIncreasing)
+	s.testErrorCode(c, sql4, tmysql.ErrRangeNotIncreasing)
 
-	sql5 := `alter table t3 add partition (
+	sql5 := `alter table table3 add partition (
 		partition p1 values less than (1993)
 	);`
-	s.testErrorCode(c, sql5, mysql.ErrSameNamePartition)
+	s.testErrorCode(c, sql5, tmysql.ErrSameNamePartition)
 
-	sql6 := `alter table t3 add partition (
+	sql6 := `alter table table3 add partition (
 		partition p1 values less than (1993),
 		partition p1 values less than (1995)
 	);`
-	s.testErrorCode(c, sql6, mysql.ErrSameNamePartition)
+	s.testErrorCode(c, sql6, tmysql.ErrSameNamePartition)
 
-	sql7 := `alter table t3 add partition (
+	sql7 := `alter table table3 add partition (
 		partition p4 values less than (1993),
-		partition p1 values less than (1995)，
-		partition p5 values less than maxvalue,
+		partition p1 values less than (1995),
+		partition p5 values less than maxvalue
 	);`
-	s.testErrorCode(c, sql7, mysql.ErrSameNamePartition)
+	s.testErrorCode(c, sql7, tmysql.ErrSameNamePartition)
+}
+
+func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	s.tk.MustExec("drop table if exists employees")
+	s.tk.MustExec(`create table employees (
+	id int not null,
+	hired int not null
+	)
+	partition by range( hired ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001)
+	);`)
+
+	s.tk.MustExec("alter table employees drop partition p3;")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().GetPartitionInfo(), NotNil)
+	part := tbl.Meta().Partition
+	c.Assert(part.Type, Equals, model.PartitionTypeRange)
+	c.Assert(part.Expr, Equals, "`hired`")
+	c.Assert(part.Definitions, HasLen, 2)
+	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
+	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
+	c.Assert(part.Definitions[1].LessThan[0], Equals, "1996")
+	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p2"))
+
+	s.tk.MustExec("drop table if exists table1;")
+	s.tk.MustExec("create table table1 (a int);")
+	sql1 := "alter table table1 drop partition p10;"
+	s.testErrorCode(c, sql1, tmysql.ErrPartitionMgmtOnNonpartitioned)
+
+	s.tk.MustExec("drop table if exists table2;")
+	s.tk.MustExec(`create table table2 (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001)
+	);`)
+	sql2 := "alter table table2 drop partition p10;"
+	s.testErrorCode(c, sql2, tmysql.ErrDropPartitionNonExistent)
+
+	s.tk.MustExec("drop table if exists table3;")
+	s.tk.MustExec(`create table table3 (
+	id int not null
+	)
+	partition by range( id ) (
+		partition p1 values less than (1991)
+	);`)
+	sql3 := "alter table table3 drop partition p1;"
+	s.testErrorCode(c, sql3, tmysql.ErrDropLastPartition)
+
+	s.tk.MustExec("drop table if exists table4;")
+	s.tk.MustExec(`create table table4 (
+	id int not null
+	)
+	partition by range( id ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than MAXVALUE
+	);`)
+
+	s.tk.MustExec("alter table table4 drop partition p2;")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("table4"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().GetPartitionInfo(), NotNil)
+	part = tbl.Meta().Partition
+	c.Assert(part.Type, Equals, model.PartitionTypeRange)
+	c.Assert(part.Expr, Equals, "`id`")
+	c.Assert(part.Definitions, HasLen, 2)
+	c.Assert(part.Definitions[0].LessThan[0], Equals, "10")
+	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
+	c.Assert(part.Definitions[1].LessThan[0], Equals, "MAXVALUE")
+	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p3"))
+
+	s.tk.MustExec("drop table if exists tr;")
+	s.tk.MustExec(` create table tr(
+		id int, name varchar(50), 
+		purchased date
+	)
+	partition by range( year(purchased) ) (
+    	partition p0 values less than (1990),
+    	partition p1 values less than (1995),
+    	partition p2 values less than (2000),
+    	partition p3 values less than (2005),
+    	partition p4 values less than (2010),
+    	partition p5 values less than (2015)
+   	);`)
+	s.tk.MustExec(`INSERT INTO tr VALUES
+	(1, 'desk organiser', '2003-10-15'),
+	(2, 'alarm clock', '1997-11-05'),
+	(3, 'chair', '2009-03-10'),
+	(4, 'bookcase', '1989-01-10'),
+	(5, 'exercise bike', '2014-05-09'),
+	(6, 'sofa', '1987-06-05'),
+	(7, 'espresso maker', '2011-11-22'),
+	(8, 'aquarium', '1992-08-04'),
+	(9, 'study desk', '2006-09-16'),
+	(10, 'lava lamp', '1998-12-25');`)
+	result := s.tk.MustQuery("select * from tr where purchased between '1995-01-01' and '1999-12-31';")
+	result.Check(testkit.Rows(`2 alarm clock 1997-11-05`, `10 lava lamp 1998-12-25`))
+	s.tk.MustExec("alter table tr drop partition p2;")
+	result = s.tk.MustQuery("select * from tr where purchased between '1995-01-01' and '1999-12-31';")
+	result.Check(testkit.Rows())
+
+	result = s.tk.MustQuery("select * from tr where purchased between '2010-01-01' and '2014-12-31';")
+	result.Check(testkit.Rows(`5 exercise bike 2014-05-09`, `7 espresso maker 2011-11-22`))
+	s.tk.MustExec("alter table tr drop partition p5;")
+	result = s.tk.MustQuery("select * from tr where purchased between '2010-01-01' and '2014-12-31';")
+	result.Check(testkit.Rows())
+
+	s.tk.MustExec("alter table tr drop partition p4;")
+	result = s.tk.MustQuery("select * from tr where purchased between '2005-01-01' and '2009-12-31';")
+	result.Check(testkit.Rows())
+
+	s.tk.MustExec("drop table if exists table4;")
+	s.tk.MustExec(`create table table4 (
+		id int not null
+	)
+	partition by range( id ) (
+		partition Par1 values less than (1991),
+		partition pAR2 values less than (1992),
+		partition Par3 values less than (1995),
+		partition PaR5 values less than (1996)
+	);`)
+	s.tk.MustExec("alter table table4 drop partition Par2;")
+	s.tk.MustExec("alter table table4 drop partition PAR5;")
+	sql4 := "alter table table4 drop partition PAR0;"
+	s.testErrorCode(c, sql4, tmysql.ErrDropPartitionNonExistent)
 }
 
 func (s *testDBSuite) TestPartitionAddIndex(c *C) {
@@ -2510,9 +2662,9 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	s.tk.MustExec("alter table partition_add_idx add index idx1 (hired)")
 	s.tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
 
-	// TODO: Fix the panic.
-	// s.tk.MustQuery("select count(hired) from partition_add_idx use index(idx1)").Check(testkit.Rows("500"))
+	s.tk.MustQuery("select count(hired) from partition_add_idx use index(idx1)").Check(testkit.Rows("500"))
 	s.tk.MustQuery("select count(id) from partition_add_idx").Check(testkit.Rows("500"))
+
 	// TODO: Make admin check table work for partition.
 	// s.tk.MustExec("admin check table partition_add_idx")
 	s.tk.MustExec("drop table partition_add_idx")

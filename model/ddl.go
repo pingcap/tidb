@@ -49,6 +49,7 @@ const (
 	ActionModifyTableComment ActionType = 17
 	ActionRenameIndex        ActionType = 18
 	ActionAddTablePartition  ActionType = 19
+	ActionDropTablePartition ActionType = 20
 )
 
 var actionMap = map[ActionType]string{
@@ -71,6 +72,7 @@ var actionMap = map[ActionType]string{
 	ActionModifyTableComment: "modify table comment",
 	ActionRenameIndex:        "rename index",
 	ActionAddTablePartition:  "add partition",
+	ActionDropTablePartition: "drop table partition",
 }
 
 // String return current ddl action in string
@@ -115,10 +117,6 @@ type DDLReorgMeta struct {
 	// EndHandle is the last handle of the adding indices table.
 	// We should only backfill indices in the range [startHandle, EndHandle].
 	EndHandle int64 `json:"end_handle"`
-	// DDL reorganize for a partitioned table will handle partitions one by one,
-	// PartitionID is used to trace the partition been handled currently.
-	// If the table is not partitioned, PartitionID would be 0 or TableID.
-	PartitionID int64 `json:"partition_id"`
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.
@@ -160,6 +158,7 @@ type Job struct {
 	Version int64 `json:"version"`
 
 	// ReorgMeta is meta info of ddl reorganization.
+	// This field is depreciated.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
 }
 

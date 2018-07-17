@@ -312,9 +312,11 @@ func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []exp
 		dataSourceSchema: ds.schema,
 		Ranges:           ranger.FullRange(),
 		KeepOrder:        false,
+		isPartition:      ds.isPartition,
+		partitionID:      ds.partitionID,
 	}.init(ds.ctx)
 	is.filterCondition = remainedConds
-	is.stats = ds.stats
+	is.stats = newSimpleStats(float64(ds.statisticTable.Count))
 	cop := &copTask{
 		indexPlan: is,
 	}
@@ -359,6 +361,8 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		Ranges:           path.ranges,
 		filterCondition:  path.indexFilters,
 		dataSourceSchema: ds.schema,
+		isPartition:      ds.isPartition,
+		partitionID:      ds.partitionID,
 	}.init(ds.ctx)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
@@ -394,13 +398,13 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		}
 	}
 	// Only use expectedCnt when it's smaller than the count we calculated.
-	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
-		selectivity := ds.statsAfterSelect.count / path.countAfterAccess
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.stats.count {
+		selectivity := ds.stats.count / path.countAfterAccess
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
-	is.stats = ds.stats.scaleByExpectCnt(rowCount)
+	is.stats = newSimpleStats(rowCount)
 	cop.cst = rowCount * scanFactor
 	task = cop
 	if matchProperty {
@@ -470,7 +474,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	if tableConds != nil {
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * cpuFactor
-		tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.statsAfterSelect.scaleByExpectCnt(expectedCnt))
+		tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.stats.scaleByExpectCnt(expectedCnt))
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
@@ -544,7 +548,7 @@ func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
 		Ranges:      ranges,
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
-	ts.stats = ds.stats
+	ts.stats = newSimpleStats(float64(ds.statisticTable.Count))
 	ts.filterCondition = ds.pushedDownConds
 	copTask := &copTask{
 		tablePlan:         ts,
@@ -590,13 +594,13 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 	task = copTask
 	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(nil, pkCol)
 	// Only use expectedCnt when it's smaller than the count we calculated.
-	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
-		selectivity := ds.statsAfterSelect.count / rowCount
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.stats.count {
+		selectivity := ds.stats.count / rowCount
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
-	ts.stats = ds.stats.scaleByExpectCnt(rowCount)
+	ts.stats = newSimpleStats(rowCount)
 	copTask.cst = rowCount * scanFactor
 	if matchProperty {
 		if prop.desc {
@@ -605,7 +609,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
-		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(prop.expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.stats.scaleByExpectCnt(prop.expectedCnt))
 	} else {
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
@@ -613,7 +617,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 		} else {
 			return invalidTask, nil
 		}
-		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.stats.scaleByExpectCnt(expectedCnt))
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(ds.ctx, task)
