@@ -402,13 +402,13 @@ func (c *timeDiffFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	arg0Tp, arg1Tp := c.getArgEvalTp(arg0FieldTp), c.getArgEvalTp(arg1FieldTp)
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, arg0Tp, arg1Tp)
 
-	arg0Dec, err := expressionFsp(ctx, args[0])
+	arg0Dec, err := getExpressionFsp(ctx, args[0])
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-	arg1Dec, err := expressionFsp(ctx, args[1])
+	arg1Dec, err := getExpressionFsp(ctx, args[1])
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	bf.tp.Decimal = mathutil.Max(arg0Dec, arg1Dec)
 
@@ -2054,7 +2054,7 @@ func (c *timeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, types.ETString)
-	bf.tp.Decimal, err = expressionFsp(ctx, args[0])
+	bf.tp.Decimal, err = getExpressionFsp(ctx, args[0])
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3670,11 +3670,11 @@ func getBf4TimeAddSub(ctx sessionctx.Context, args []Expression) (tp1, tp2 *type
 	default:
 		argTp2 = types.ETString
 	}
-	arg0Dec, err := expressionFsp(ctx, args[0])
+	arg0Dec, err := getExpressionFsp(ctx, args[0])
 	if err != nil {
 		return
 	}
-	arg1Dec, err := expressionFsp(ctx, args[1])
+	arg1Dec, err := getExpressionFsp(ctx, args[1])
 	if err != nil {
 		return
 	}
@@ -5402,8 +5402,8 @@ func (b *builtinLastDaySig) evalTime(row types.Row) (types.Time, bool, error) {
 	return ret, false, nil
 }
 
-// expressionFsp calculates the fsp from given expression.
-func expressionFsp(ctx sessionctx.Context, expression Expression) (int, error) {
+// getExpressionFsp calculates the fsp from given expression.
+func getExpressionFsp(ctx sessionctx.Context, expression Expression) (int, error) {
 	constExp, isConstant := expression.(*Constant)
 	if isConstant && types.IsString(expression.GetType()) && !isTemporalColumn(expression) {
 		str, isNil, err := constExp.EvalString(ctx, nil)

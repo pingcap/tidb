@@ -43,7 +43,7 @@ type Row interface {
 
 	// GetDuration returns the Duration value with the colIdx.
 	// fillFsp is needed for refill fsp info if duration came from chunk.Row which is no longer store fsp info.
-	// if caller make sure that data from Datum or only use Duration.Duration properties can pass 0 as fillFsp
+	// If caller make sure that data from Datum or only use Duration.Duration properties can pass 0 as fillFsp.
 	GetDuration(colIdx int, fillFsp int) Duration
 
 	// GetEnum returns the Enum value with the colIdx.
