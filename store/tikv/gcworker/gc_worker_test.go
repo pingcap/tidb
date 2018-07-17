@@ -86,10 +86,10 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	close(s.gcWorker.done)
 	ok, _, err := s.gcWorker.prepare()
 	c.Assert(err, IsNil)
-	lastRun, err := s.gcWorker.loadTime(gcLastRunTimeKey, s.gcWorker.session)
+	lastRun, err := s.gcWorker.loadTime(gcLastRunTimeKey)
 	c.Assert(err, IsNil)
 	c.Assert(lastRun, NotNil)
-	safePoint, err := s.gcWorker.loadTime(gcSafePointKey, s.gcWorker.session)
+	safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
 	c.Assert(err, IsNil)
 	s.timeEqual(c, safePoint.Add(gcDefaultLifeTime), now, 2*time.Second)
 
@@ -118,7 +118,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	ok, _, err = s.gcWorker.prepare()
 	c.Assert(err, IsNil)
 	c.Assert(ok, IsTrue)
-	safePoint, err = s.gcWorker.loadTime(gcSafePointKey, s.gcWorker.session)
+	safePoint, err = s.gcWorker.loadTime(gcSafePointKey)
 	c.Assert(err, IsNil)
 	s.timeEqual(c, safePoint.Add(time.Minute*30), now, 2*time.Second)
 
@@ -127,19 +127,19 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcDefaultConcurrency)
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency), s.gcWorker.session)
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency))
 	c.Assert(err, IsNil)
 	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcMinConcurrency)
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(-1), s.gcWorker.session)
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(-1))
 	c.Assert(err, IsNil)
 	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
 	c.Assert(concurrency, Equals, gcMinConcurrency)
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(1000000), s.gcWorker.session)
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(1000000))
 	c.Assert(err, IsNil)
 	concurrency, err = s.gcWorker.loadGCConcurrencyWithDefault()
 	c.Assert(err, IsNil)
@@ -185,17 +185,17 @@ func (s *testGCWorkerSuite) TestDoGC(c *C) {
 
 	gcSafePointCacheInterval = 1
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency), s.gcWorker.session)
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency))
 	c.Assert(err, IsNil)
 	err = s.gcWorker.doGC(ctx, 20)
 	c.Assert(err, IsNil)
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency), s.gcWorker.session)
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMinConcurrency))
 	c.Assert(err, IsNil)
 	err = s.gcWorker.doGC(ctx, 20)
 	c.Assert(err, IsNil)
 
-	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency), s.gcWorker.session)
+	err = s.gcWorker.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcMaxConcurrency))
 	c.Assert(err, IsNil)
 	err = s.gcWorker.doGC(ctx, 20)
 	c.Assert(err, IsNil)

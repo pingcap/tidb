@@ -485,7 +485,7 @@ LOOP:
 	}
 
 	ctx := s.s.(sessionctx.Context)
-	idx := tables.NewIndex(t.Meta(), c3IdxInfo)
+	idx := tables.NewIndex(t.Meta().ID, c3IdxInfo)
 	checkDelRangeDone(c, ctx, idx)
 
 	s.mustExec(c, "drop table t1")
@@ -795,7 +795,7 @@ LOOP:
 	}
 	c.Assert(nidx, IsNil)
 
-	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
+	idx := tables.NewIndex(t.Meta().ID, c3idx.Meta())
 	checkDelRangeDone(c, ctx, idx)
 	s.tk.MustExec("drop table test_drop_index")
 }
@@ -1665,6 +1665,16 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 		partition p2 values less than maxvalue
 	);`)
 	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
+
+	// TODO: This SQL should return ErrPartitionFunctionIsNotAllowed: ERROR 1564 (HY000): This partition function is not allowed
+	_, err = s.tk.Exec(`create TABLE t9 (
+	col1 int
+	)
+	partition by range( case when col1 > 0 then 10 else 20 end ) (
+		partition p0 values less than (2),
+		partition p1 values less than (6)
+	);`)
+	c.Assert(err, IsNil)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
