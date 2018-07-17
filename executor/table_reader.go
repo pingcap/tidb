@@ -171,17 +171,3 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 
 	return e, nil
 }
-
-func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableReaderExecutor {
-	ret, err := buildNoRangeTableReader(b, v)
-	if err != nil {
-		b.err = errors.Trace(err)
-		return nil
-	}
-
-	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
-	ret.ranges = ts.Ranges
-	sctx := b.ctx.GetSessionVars().StmtCtx
-	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
-	return ret
-}
