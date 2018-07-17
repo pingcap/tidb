@@ -407,8 +407,8 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
-// GetTimeZone returns the value of time_zone session variable.
-func (s *SessionVars) GetTimeZone() *time.Location {
+// Location returns the value of time_zone session variable. If it is nil, then return time.Local.
+func (s *SessionVars) Location() *time.Location {
 	loc := s.TimeZone
 	if loc == nil {
 		loc = time.Local

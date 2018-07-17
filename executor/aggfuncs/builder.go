@@ -172,6 +172,14 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 			}
 		case types.ETDecimal:
 			return &maxMin4Decimal{base}
+		case types.ETString:
+			return &maxMin4String{base}
+		case types.ETDatetime, types.ETTimestamp:
+			return &maxMin4Time{base}
+		case types.ETDuration:
+			return &maxMin4Duration{base}
+		case types.ETJson:
+			return &maxMin4JSON{base}
 		}
 	}
 	return nil

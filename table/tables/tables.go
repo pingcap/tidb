@@ -588,7 +588,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().GetTimeZone())
+	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().Location())
 	if err != nil {
 		return nil, rowMap, errors.Trace(err)
 	}
@@ -770,7 +770,7 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, ctx.GetSessionVars().GetTimeZone())
+		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, ctx.GetSessionVars().Location())
 		if err != nil {
 			return errors.Trace(err)
 		}

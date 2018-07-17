@@ -1665,6 +1665,16 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 		partition p2 values less than maxvalue
 	);`)
 	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
+
+	// TODO: This SQL should return ErrPartitionFunctionIsNotAllowed: ERROR 1564 (HY000): This partition function is not allowed
+	_, err = s.tk.Exec(`create TABLE t9 (
+	col1 int
+	)
+	partition by range( case when col1 > 0 then 10 else 20 end ) (
+		partition p0 values less than (2),
+		partition p1 values less than (6)
+	);`)
+	c.Assert(err, IsNil)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
