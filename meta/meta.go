@@ -86,11 +86,20 @@ type Meta struct {
 }
 
 // NewMeta creates a Meta in transaction txn.
-func NewMeta(txn kv.Transaction) *Meta {
+// If the current Meta needs to handle a job, jobListKey is the type of the job's list.
+// We don't change the value of the jobListKey in a Meta.
+func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	txn.SetOption(kv.SyncLog, true)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
-	return &Meta{txn: t, StartTS: txn.StartTS(), jobListKey: DefaultJobListKey}
+	listKey := DefaultJobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+	return &Meta{txn: t,
+		StartTS:    txn.StartTS(),
+		jobListKey: listKey,
+	}
 }
 
 // NewSnapshotMeta creates a Meta with snapshot.
@@ -459,12 +468,6 @@ var (
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
 )
 
-// SetJobListKey sets the job list key.
-// TODO: rename SetJobListKey to ChangeJobQueue.
-func (m *Meta) SetJobListKey(key []byte) {
-	m.jobListKey = key
-}
-
 func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
 	b, err := job.Encode(true)
 	if err != nil {
@@ -506,9 +509,16 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 }
 
 // GetDDLJob returns the DDL job with index.
-func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
+// If the length of jobListKeys isn't zero, we need to replace m.jobListKey with jobListKeys[0].
+// Otherwise, we use m.jobListKey directly.
+func (m *Meta) GetDDLJob(index int64, jobListKeys ...JobListKeyType) (*model.Job, error) {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+
 	startTime := time.Now()
-	job, err := m.getDDLJob(m.jobListKey, index)
+	job, err := m.getDDLJob(listKey, index)
 	metrics.MetaHistogram.WithLabelValues(metrics.GetDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return job, errors.Trace(err)
 }
@@ -525,21 +535,41 @@ func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte, updateRawAr
 
 // UpdateDDLJob updates the DDL job with index.
 // updateRawArgs is used to determine whether to update the raw args when encode the job.
-func (m *Meta) UpdateDDLJob(index int64, job *model.Job, updateRawArgs bool) error {
+// If the length of jobListKeys isn't zero, we need to replace m.jobListKey with jobListKeys[0].
+// Otherwise, we use m.jobListKey directly.
+func (m *Meta) UpdateDDLJob(index int64, job *model.Job, updateRawArgs bool, jobListKeys ...JobListKeyType) error {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+
 	startTime := time.Now()
-	err := m.updateDDLJob(index, job, m.jobListKey, updateRawArgs)
+	err := m.updateDDLJob(index, job, listKey, updateRawArgs)
 	metrics.MetaHistogram.WithLabelValues(metrics.UpdateDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
 
 // DDLJobQueueLen returns the DDL job queue length.
-func (m *Meta) DDLJobQueueLen() (int64, error) {
-	return m.txn.LLen(m.jobListKey)
+// If the length of jobListKeys isn't zero, we need to replace m.jobListKey with jobListKeys[0].
+// Otherwise, we use m.jobListKey directly.
+func (m *Meta) DDLJobQueueLen(jobListKeys ...JobListKeyType) (int64, error) {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+	return m.txn.LLen(listKey)
 }
 
 // GetAllDDLJobsInQueue gets all DDL Jobs in the current queue.
-func (m *Meta) GetAllDDLJobsInQueue() ([]*model.Job, error) {
-	values, err := m.txn.LGetAll(mDDLJobListKey)
+// If the length of jobListKeys isn't zero, we need to replace m.jobListKey with jobListKeys[0].
+// Otherwise, we use m.jobListKey directly.
+func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job, error) {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+
+	values, err := m.txn.LGetAll(listKey)
 	if err != nil || values == nil {
 		return nil, errors.Trace(err)
 	}

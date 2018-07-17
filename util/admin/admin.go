@@ -105,11 +105,10 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				continue
 			}
 			if job.Type == model.ActionAddIndex {
-				t.SetJobListKey(meta.AddIndexJobListKey)
+				err = t.UpdateDDLJob(int64(j), job, true, meta.AddIndexJobListKey)
 			} else {
-				t.SetJobListKey(meta.DefaultJobListKey)
+				err = t.UpdateDDLJob(int64(j), job, true)
 			}
-			err = t.UpdateDDLJob(int64(j), job, true)
 			if err != nil {
 				errs[i] = errors.Trace(err)
 			}
@@ -121,14 +120,14 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	return errs, nil
 }
 
-func getDDLJobsInQueue(t *meta.Meta) ([]*model.Job, error) {
-	cnt, err := t.DDLJobQueueLen()
+func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.Job, error) {
+	cnt, err := t.DDLJobQueueLen(jobListKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	jobs := make([]*model.Job, cnt)
 	for i := range jobs {
-		jobs[i], err = t.GetDDLJob(int64(i))
+		jobs[i], err = t.GetDDLJob(int64(i), jobListKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -140,12 +139,11 @@ func getDDLJobsInQueue(t *meta.Meta) ([]*model.Job, error) {
 // TODO: Sort jobs.
 func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
-	generalJobs, err := getDDLJobsInQueue(t)
+	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	t.SetJobListKey(meta.AddIndexJobListKey)
-	addIdxJobs, err := getDDLJobsInQueue(t)
+	addIdxJobs, err := getDDLJobsInQueue(t, meta.AddIndexJobListKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

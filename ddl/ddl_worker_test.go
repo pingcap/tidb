@@ -600,8 +600,7 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 					if err != nil {
 						return err
 					}
-					m.SetJobListKey(meta.AddIndexJobListKey)
-					qLen2, err = m.DDLJobQueueLen()
+					qLen2, err = m.DDLJobQueueLen(meta.AddIndexJobListKey)
 					if err != nil {
 						return err
 					}

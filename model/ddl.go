@@ -52,6 +52,8 @@ const (
 	ActionDropTablePartition ActionType = 20
 )
 
+const AddIndexStr = "add index"
+
 var actionMap = map[ActionType]string{
 	ActionCreateSchema:       "create schema",
 	ActionDropSchema:         "drop schema",
@@ -59,7 +61,7 @@ var actionMap = map[ActionType]string{
 	ActionDropTable:          "drop table",
 	ActionAddColumn:          "add column",
 	ActionDropColumn:         "drop column",
-	ActionAddIndex:           "add index",
+	ActionAddIndex:           AddIndexStr,
 	ActionDropIndex:          "drop index",
 	ActionAddForeignKey:      "add foreign key",
 	ActionDropForeignKey:     "drop foreign key",

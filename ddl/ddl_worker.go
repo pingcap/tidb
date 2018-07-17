@@ -77,17 +77,21 @@ func newWorker(tp workerType, id int, store kv.Storage, ctxPool *pools.ResourceP
 	return worker
 }
 
-func (w *worker) String() string {
+func (w *worker) typeStr() string {
 	var str string
 	switch w.tp {
 	case generalWorker:
 		str = "general"
 	case addIdxWorker:
-		str = "add index"
+		str = model.AddIndexStr
 	default:
 		str = "unknow"
 	}
-	return fmt.Sprintf("%d, tp %s", w.id, str)
+	return str
+}
+
+func (w *worker) String() string {
+	return fmt.Sprintf("%d, tp %s", w.id, w.typeStr())
 }
 
 func (w *worker) close() {
@@ -149,21 +153,19 @@ func asyncNotify(ch chan struct{}) {
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
 	// it from another queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
-	// And after looking for dependency-job, we need to change the queue to the queue corresponding to the current job.
 	// TODO: rename SetJobListKey to ChangeJobQueue.
+	var jobs []*model.Job
+	var err error
 	switch curJob.Type {
 	case model.ActionAddIndex:
-		t.SetJobListKey(meta.DefaultJobListKey)
-		defer t.SetJobListKey(meta.AddIndexJobListKey)
+		jobs, err = t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
 	default:
-		t.SetJobListKey(meta.AddIndexJobListKey)
-		defer t.SetJobListKey(meta.DefaultJobListKey)
+		jobs, err = t.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
 	}
-
-	jobs, err := t.GetAllDDLJobsInQueue()
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	for _, job := range jobs {
 		if curJob.ID < job.ID {
 			continue
@@ -187,7 +189,7 @@ func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	job.Version = currentVersion
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := newMetaWithQueueTp(txn, job.Type.String())
 		var err error
 		job.ID, err = t.GenGlobalID()
 		if err != nil {
@@ -315,9 +317,17 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 	return true, nil
 }
 
+func newMetaWithQueueTp(txn kv.Transaction, tp string) *meta.Meta {
+	if tp == model.AddIndexStr {
+		return meta.NewMeta(txn, meta.AddIndexJobListKey)
+	}
+	return meta.NewMeta(txn)
+}
+
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
 func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
+	waitDependencyJobCnt := 0
 	for {
 		if isChanClosed(w.quitCh) {
 			return nil
@@ -336,10 +346,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			var err error
-			t := meta.NewMeta(txn)
-			if w.tp == addIdxWorker {
-				t.SetJobListKey(meta.AddIndexJobListKey)
-			}
+			t := newMetaWithQueueTp(txn, w.typeStr())
 			// We become the owner. Get the first job and run it.
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
@@ -393,11 +400,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// No job now, return and retry getting later.
 			return nil
 		}
-		if job.DependencyID != 0 {
-			// If the dependency job doesn't be done, we'd better wait a moment.
-			log.Infof("[ddl] worker %s needs to wait dependency job %d, sleeps a while:%v then retries it.", w, job.DependencyID, waitDependencyJobInterval)
-			time.Sleep(waitDependencyJobInterval)
-		}
+		w.waitDependencyJobFinished(job, &waitDependencyJobCnt)
 
 		d.mu.RLock()
 		d.mu.hook.OnJobUpdated(job)
@@ -412,6 +415,21 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		if job.IsSynced() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
+	}
+}
+
+// waitDependencyJobFinished waits for the dependency-job to be finished.
+// If the dependency job isn't finished yet, we'd better wait a moment.
+func (w *worker) waitDependencyJobFinished(job *model.Job, cnt *int) {
+	if job.DependencyID != 0 {
+		intervalCnt := int(3 * time.Second / waitDependencyJobInterval)
+		if *cnt%intervalCnt == 0 {
+			log.Infof("[ddl] worker %s job %d needs to wait dependency job %d, sleeps a while:%v then retries it.", w, job.ID, job.DependencyID, waitDependencyJobInterval)
+		}
+		time.Sleep(waitDependencyJobInterval)
+		*cnt++
+	} else {
+		*cnt = 0
 	}
 }
 
