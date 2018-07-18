@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -136,44 +136,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	}
 	result.Fetch(ctx)
 	return result, nil
-}
-
-func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableReaderExecutor, error) {
-	dagReq, streaming, err := b.constructDAGReq(v.TablePlans)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
-	table, _ := b.is.TableByID(ts.Table.ID)
-	e := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		dagPB:          dagReq,
-		tableID:        ts.Table.ID,
-		table:          table,
-		keepOrder:      ts.KeepOrder,
-		desc:           ts.Desc,
-		columns:        ts.Columns,
-		streaming:      streaming,
-		corColInFilter: b.corColInDistPlan(v.TablePlans),
-		corColInAccess: b.corColInAccess(v.TablePlans[0]),
-		plans:          v.TablePlans,
-	}
-	if isPartition, partitionID := ts.IsPartition(); isPartition {
-		e.tableID = partitionID
-	}
-	if containsLimit(dagReq.Executors) {
-		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
-	} else {
-		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, ts.Hist, ts.StatsInfo().Count(), ts.Desc)
-	}
-	collect := e.feedback.CollectFeedback(len(ts.Ranges))
-	e.dagPB.CollectRangeCounts = &collect
-
-	for i := range v.Schema().Columns {
-		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
-	}
-
-	return e, nil
 }
 
 func splitRanges(ranges []*ranger.Range, keepOrder bool) ([]*ranger.Range, []*ranger.Range) {
