@@ -814,7 +814,6 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	}
 
 	txn := loadDataInfo.Ctx.Txn()
-	txn.SetOption(kv.BypassLatch, true)
 	loadDataInfo.Ctx.StmtCommit()
 	if err != nil {
 		if txn != nil && txn.Valid() {
@@ -825,6 +824,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		return errors.Trace(err)
 	}
 
+	txn.SetOption(kv.BypassLatch, true)
 	return errors.Trace(loadDataInfo.Ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
 }
 
