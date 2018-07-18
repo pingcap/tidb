@@ -36,6 +36,7 @@ var (
 
 	// All the AggFunc implementations for "SUM" are listed here.
 	// All the AggFunc implementations for "FIRSTROW" are listed here.
+
 	// All the AggFunc implementations for "MAX"/"MIN" are listed here.
 	_ AggFunc = (*maxMin4Int)(nil)
 	_ AggFunc = (*maxMin4Float32)(nil)
@@ -55,6 +56,9 @@ var (
 	_ AggFunc = (*avgOriginal4DistinctFloat64)(nil)
 
 	// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
+	_ AggFunc = (*groupConcatDistinct)(nil)
+	_ AggFunc = (*groupConcat)(nil)
+
 	// All the AggFunc implementations for "BIT_OR" are listed here.
 	_ AggFunc = (*bitOrUint64)(nil)
 
