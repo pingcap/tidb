@@ -95,7 +95,7 @@ func (e *ReplaceExec) addRow(row types.DatumRow) (int64, error) {
 	return h, nil
 }
 
-// replaceRow remove all duplicate rows for one row, then insert it.
+// replaceRow removes all duplicate rows for one row, then inserts it.
 func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
 	// Keep on removing duplicated rows.
 	for {
