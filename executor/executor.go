@@ -572,8 +572,8 @@ func (e *LimitExec) Open(ctx context.Context) error {
 // Close implements the Executor Close interface.
 func (e *LimitExec) Close() error {
 	e.childResult = nil
-	if err := e.baseExecutor.Close(); err != nil {
-		return errors.Trace(err)
+	if err := errors.Trace(e.baseExecutor.Close()); err != nil {
+		return err
 	}
 	return nil
 }
@@ -677,8 +677,8 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 
 // Close implements plan.Plan Close interface.
 func (e *SelectionExec) Close() error {
-	if err := e.baseExecutor.Close(); err != nil {
-		return errors.Trace(err)
+	if err := errors.Trace(e.baseExecutor.Close()); err != nil {
+		return err
 	}
 	e.childResult = nil
 	e.selected = nil
@@ -882,8 +882,8 @@ func (e *ExistsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 // Close implements the Executor Close interface.
 func (e *ExistsExec) Close() error {
 	e.childResult = nil
-	if err := e.baseExecutor.Close(); err != nil {
-		return errors.Trace(err)
+	if err := errors.Trace(e.baseExecutor.Close()); err != nil {
+		return err
 	}
 	return nil
 }
