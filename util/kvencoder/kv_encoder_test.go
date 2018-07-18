@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 	"strconv"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -678,28 +677,28 @@ func (s *testKvEncoderSuite) TestRefCount(c *C) {
 		c.Assert(err, IsNil)
 	}
 	dom1 := domGlobal
-	c.Assert(atomic.LoadInt64(&refCount), Equals, int64(10))
+	c.Assert(refCount, Equals, int64(10))
 	a[0].Close()
 	a[1].Close()
 	dom2 := domGlobal
-	c.Assert(atomic.LoadInt64(&refCount), Equals, int64(8))
+	c.Assert(refCount, Equals, int64(8))
 	c.Assert(dom1, Equals, dom2)
 
 	for i := 2; i < 9; i++ {
 		a[i].Close()
 	}
 	dom3 := domGlobal
-	c.Assert(atomic.LoadInt64(&refCount), Equals, int64(1))
+	c.Assert(refCount, Equals, int64(1))
 	c.Assert(dom3, Equals, dom2)
 
 	a[9].Close()
-	c.Assert(atomic.LoadInt64(&refCount), Equals, int64(0))
+	c.Assert(refCount, Equals, int64(0))
 
 	tmp, err := New("test", nil)
 	c.Assert(err, IsNil)
 	dom4 := domGlobal
 	c.Assert(dom4 == dom3, IsFalse)
-	c.Assert(atomic.LoadInt64(&refCount), Equals, int64(1))
+	c.Assert(refCount, Equals, int64(1))
 	tmp.Close()
-	c.Assert(atomic.LoadInt64(&refCount), Equals, int64(0))
+	c.Assert(refCount, Equals, int64(0))
 }

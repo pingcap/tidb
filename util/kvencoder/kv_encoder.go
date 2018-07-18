@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/juju/errors"
@@ -80,6 +81,7 @@ type KvEncoder interface {
 var (
 	// refCount is used to ensure that there is only one domain.Domain instance.
 	refCount    int64
+	mu          sync.Mutex
 	storeGlobal kv.Storage
 	domGlobal   *domain.Domain
 )
@@ -93,7 +95,9 @@ type kvEncoder struct {
 // New new a KvEncoder
 func New(dbName string, idAlloc autoid.Allocator) (KvEncoder, error) {
 	kvEnc := &kvEncoder{}
-	if atomic.LoadInt64(&refCount) == 0 {
+	mu.Lock()
+	defer mu.Unlock()
+	if refCount == 0 {
 		if err := initGlobal(); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -102,14 +106,16 @@ func New(dbName string, idAlloc autoid.Allocator) (KvEncoder, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	atomic.AddInt64(&refCount, 1)
+	refCount++
 	return kvEnc, nil
 }
 
 func (e *kvEncoder) Close() error {
 	e.se.Close()
-	count := atomic.AddInt64(&refCount, -1)
-	if count == 0 {
+	mu.Lock()
+	defer mu.Unlock()
+	refCount--
+	if refCount == 0 {
 		e.dom.Close()
 		if err := e.store.Close(); err != nil {
 			return errors.Trace(err)
@@ -263,5 +269,5 @@ func initGlobal() error {
 	if domGlobal != nil {
 		domGlobal.Close()
 	}
-	return nil
+	return errors.Trace(err)
 }
