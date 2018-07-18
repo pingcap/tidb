@@ -218,7 +218,7 @@ func (s *schemaVersionSyncer) GetAllServerInfoFromPD(ctx context.Context) (map[s
 			info := &util.DDLServerInfo{}
 			err := json.Unmarshal(kv.Value, info)
 			if err != nil {
-				log.Infof("[syncer] get all ddl server info, ddl %s json.Unmarshal %v failed %v, continue checking.", kv.Key, kv.Value, err)
+				log.Infof("[syncer] get all ddl server info, ddl %s json.Unmarshal %v failed %v.", kv.Key, kv.Value, err)
 				return nil, err
 			}
 			allDDLInfo[info.ID] = info

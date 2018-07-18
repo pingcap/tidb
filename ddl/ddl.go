@@ -210,13 +210,13 @@ type DDL interface {
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(interface{})
 
-	// GetServerInfo get self DDL Server static information.
+	// GetServerInfo get self DDL server static information.
 	GetServerInfo() *util.DDLServerInfo
 	// StoreServerInfoToPD store self DDL server static information to PD when DDL server Started.
 	StoreServerInfoToPD() error
-	// GetOwnerServerInfo get owner DDL Server static information from PD.
+	// GetOwnerServerInfo get owner DDL server static information from PD.
 	GetOwnerServerInfo() (*util.DDLServerInfo, error)
-	// GetAllServerInfo get all DDL Server static information from PD.
+	// GetAllServerInfo get all DDL servers static information from PD.
 	GetAllServerInfo() (map[string]*util.DDLServerInfo, error)
 }
 
@@ -528,8 +528,9 @@ func (d *ddl) SetBinlogClient(binlogCli interface{}) {
 func (d *ddl) GetServerInfo() *util.DDLServerInfo {
 	info := &util.DDLServerInfo{}
 	cfg := config.GetGlobalConfig()
-	info.IP = cfg.Host
+	info.IP = cfg.AdvertiseAddress
 	info.StatusPort = cfg.Status.StatusPort
+	info.Lease = cfg.Lease
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash
 	info.ID = d.uuid

@@ -96,6 +96,18 @@ timezone.*
     curl http://{TiDBIP}:10080/settings
     ```
 
+1. Get TiDB server information and owner server infomation.
+
+    ```shell
+    curl http://{TiDBIP}:10080/ddl/info
+    ```
+
+1. Get TiDB cluster all servers information.
+
+    ```shell
+    curl http://{TiDBIP}:10080/ddl/info/all
+    ```
+
 1. Enable/Disable TiDB server general log
 
     ```shell
