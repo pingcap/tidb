@@ -32,7 +32,7 @@ A precise statement of the proposed change:
 - The new named concepts and a set of metrics to be collected in this proposal (if applicable)
 - The overview of the design.
 - How it works?
-- What needs to be changed to implement this design.
+- What needs to be changed to implement this design?
 - What may be positively influenced by the proposed change?
 - What may be negatively impacted by the proposed change?
 -->
