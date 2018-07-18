@@ -572,10 +572,7 @@ func (e *LimitExec) Open(ctx context.Context) error {
 // Close implements the Executor Close interface.
 func (e *LimitExec) Close() error {
 	e.childResult = nil
-	if err := errors.Trace(e.baseExecutor.Close()); err != nil {
-		return err
-	}
-	return nil
+	return errors.Trace(e.baseExecutor.Close())
 }
 
 func init() {
@@ -677,12 +674,9 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 
 // Close implements plan.Plan Close interface.
 func (e *SelectionExec) Close() error {
-	if err := errors.Trace(e.baseExecutor.Close()); err != nil {
-		return err
-	}
 	e.childResult = nil
 	e.selected = nil
-	return nil
+	return errors.Trace(e.baseExecutor.Close())
 }
 
 // Next implements the Executor Next interface.
@@ -882,10 +876,7 @@ func (e *ExistsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 // Close implements the Executor Close interface.
 func (e *ExistsExec) Close() error {
 	e.childResult = nil
-	if err := errors.Trace(e.baseExecutor.Close()); err != nil {
-		return err
-	}
-	return nil
+	return errors.Trace(e.baseExecutor.Close())
 }
 
 // MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
