@@ -26,7 +26,7 @@ type concatFunction struct {
 	aggFunction
 	separator string
 	sepInited bool
-	maxLen int
+	maxLen    int
 }
 
 func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datum) {
