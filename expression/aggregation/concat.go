@@ -26,6 +26,7 @@ type concatFunction struct {
 	aggFunction
 	separator string
 	sepInited bool
+	maxLen int
 }
 
 func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datum) {
@@ -89,6 +90,9 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 		cf.writeValue(evalCtx, val)
 	}
 	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
+	if cf.maxLen > 0 && evalCtx.Buffer.Len() > cf.maxLen {
+		evalCtx.Buffer.Truncate(cf.maxLen)
+	}
 	return nil
 }
 

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"strconv"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
@@ -39,6 +40,8 @@ type AggFuncDesc struct {
 	Mode AggFunctionMode
 	// HasDistinct represents whether the aggregation function contains distinct attribute.
 	HasDistinct bool
+	// SessionCtx tracks the session context of the AggFunc.
+	SessionCtx sessionctx.Context
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
@@ -47,6 +50,7 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 		Name:        strings.ToLower(name),
 		Args:        args,
 		HasDistinct: hasDistinct,
+		SessionCtx: ctx,
 	}
 	a.typeInfer(ctx)
 	return a
@@ -172,7 +176,12 @@ func (a *AggFuncDesc) GetAggFunc() Aggregation {
 	case ast.AggFuncAvg:
 		return &avgFunction{aggFunction: aggFunc}
 	case ast.AggFuncGroupConcat:
-		return &concatFunction{aggFunction: aggFunc}
+		maxGroupConcatLen := math.MaxInt64
+		if a.SessionCtx != nil {
+			s, _ := a.SessionCtx.GetSessionVars().GetSystemVar("group_concat_max_len")
+			maxGroupConcatLen, _ = strconv.Atoi(s)
+		}
+		return &concatFunction{aggFunction: aggFunc, maxLen: maxGroupConcatLen}
 	case ast.AggFuncMax:
 		return &maxMinFunction{aggFunction: aggFunc, isMax: true}
 	case ast.AggFuncMin:
