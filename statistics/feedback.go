@@ -539,6 +539,18 @@ func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
 	return buildNewHistogram(h, buckets)
 }
 
+// UpdateCMSketch updates the CMSketch by feedback.
+func UpdateCMSketch(c *CMSketch, feedback *QueryFeedback) *CMSketch {
+	newCMSketch := c.copy()
+	for _, fb := range feedback.feedback {
+		if bytes.Equal(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) {
+			h1, h2 := murmur3.Sum128(fb.lower.GetBytes())
+			newCMSketch.setValue(h1, h2, uint32(fb.count))
+		}
+	}
+	return newCMSketch
+}
+
 func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.tp, len(buckets), h.TotColSize)
 	preCount := int64(0)

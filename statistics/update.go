@@ -419,15 +419,14 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			if !ok {
 				continue
 			}
-			hist := &idx.Histogram
-			newTblStats.Indices[fb.hist.ID].Histogram = *UpdateHistogram(hist, fb)
+			newTblStats.Indices[fb.hist.ID].Histogram = *UpdateHistogram(&idx.Histogram, fb)
+			newTblStats.Indices[fb.hist.ID].CMSketch = UpdateCMSketch(idx.CMSketch, fb)
 		} else {
 			col, ok := tblStats.Columns[fb.hist.ID]
 			if !ok {
 				continue
 			}
-			hist := &col.Histogram
-			newTblStats.Columns[fb.hist.ID].Histogram = *UpdateHistogram(hist, fb)
+			newTblStats.Columns[fb.hist.ID].Histogram = *UpdateHistogram(&col.Histogram, fb)
 		}
 		h.UpdateTableStats([]*Table{newTblStats}, nil)
 	}

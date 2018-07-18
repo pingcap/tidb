@@ -788,7 +788,7 @@ func (idx *Index) String() string {
 
 func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 {
 	if idx.CMSketch != nil {
-		return float64(idx.CMSketch.queryBytes(b))
+		return float64(idx.CMSketch.QueryBytes(b))
 	}
 	return idx.Histogram.equalRowCount(types.NewBytesDatum(b))
 }

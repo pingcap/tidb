@@ -681,10 +681,10 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				log.Debug("[stats] load histograms fail: ", errors.ErrorStack(err))
 			}
 		case <-loadFeedbackTicker.C:
+			statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
 			if !owner.IsOwner() {
 				continue
 			}
-			statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
 			err = statsHandle.HandleUpdateStats(do.InfoSchema())
 			if err != nil {
 				log.Debug("[stats] update stats using feedback fail: ", errors.ErrorStack(err))

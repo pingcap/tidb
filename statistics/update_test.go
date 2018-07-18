@@ -23,8 +23,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -672,7 +674,7 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
 	testKit.MustExec("analyze table t")
-	testKit.MustExec("insert into t values (3,4)")
+	testKit.MustExec("insert into t values (3,5)")
 	h := s.do.StatsHandle()
 
 	oriProbability := statistics.FeedbackProbability
@@ -692,6 +694,8 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 
 	testKit.MustQuery("select * from t use index(idx) where b <= 5")
 	testKit.MustQuery("select * from t use index(idx) where a > 1")
+	testKit.MustQuery("select * from t use index(idx) where b = 5")
+
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 	tbl = h.GetTableStats(tblInfo)
 
@@ -699,6 +703,12 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 		"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n"+
 		"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n"+
 		"num: 3\tlower_bound: 4\tupper_bound: 4\trepeats: 1")
+
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	low, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
+	c.Assert(err, IsNil)
+
+	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint32(2))
 
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
 		"num: 2\tlower_bound: NULL\tupper_bound: 2\trepeats: 0\n"+
