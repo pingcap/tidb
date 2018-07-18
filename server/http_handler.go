@@ -1259,13 +1259,11 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 	return h.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }
 
-// ClusterServerInfo is only used to report cluster servers info when do http request
-type ClusterServerInfo struct {
-	ServersNum                   int                            `json:"servers_num,omitempty"`
-	OwnerID                      string                         `json:"owner_id"`
-	IsAllServerVersionConsistent bool                           `json:"is_all_server_version_consistent,omitempty"`
-	AllServersDiffVersions       []util.ServerVersionInfo       `json:"all_servers_diff_versions,omitempty"`
-	AllServersInfo               map[string]*util.DDLServerInfo `json:"all_servers_info,omitempty"`
+// ReportServerInfo is only used to report the servers info when do http request
+type ReportServerInfo struct {
+	IsOwner         bool                `json:"is_owner"`
+	SelfServerInfo  *util.DDLServerInfo `json:"self_server_info"`
+	OwnerServerInfo *util.DDLServerInfo `json:"owner_server_info,omitempty"`
 }
 
 // ServeHTTP handles request of ddl server info.
@@ -1276,28 +1274,34 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	ddl := domain.GetDomain(session.(sessionctx.Context)).DDL()
-	allServersInfo := make(map[string]*util.DDLServerInfo)
 	ownerID, err := ddl.OwnerManager().GetOwnerID(context.Background())
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		return
 	}
 	selfInfo := ddl.GetServerInfo()
-	if selfInfo.ID != ownerID {
+	reportServerInfo := ReportServerInfo{
+		IsOwner:        selfInfo.ID == ownerID,
+		SelfServerInfo: selfInfo,
+	}
+	if !reportServerInfo.IsOwner {
 		ownerInfo, err := ddl.GetOwnerServerInfo()
 		if err != nil {
 			writeError(w, errors.New("ddl server information not found"))
 			return
 		}
-		// ownerInfo.IsOwner is false because the server may no the owner when store the info to PD,
-		allServersInfo[ownerInfo.ID] = ownerInfo
+		reportServerInfo.OwnerServerInfo = ownerInfo
 	}
-	allServersInfo[selfInfo.ID] = selfInfo
-	clusterServerInfo := ClusterServerInfo{
-		OwnerID:        ownerID,
-		AllServersInfo: allServersInfo,
-	}
-	writeData(w, clusterServerInfo)
+	writeData(w, reportServerInfo)
+}
+
+// ClusterServerInfo is only used to report cluster servers info when do http request
+type ClusterServerInfo struct {
+	ServersNum                   int                            `json:"servers_num,omitempty"`
+	OwnerID                      string                         `json:"owner_id"`
+	IsAllServerVersionConsistent bool                           `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []util.ServerVersionInfo       `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*util.DDLServerInfo `json:"all_servers_info,omitempty"`
 }
 
 // ServeHTTP handles request of all ddl servers info.
