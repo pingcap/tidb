@@ -803,10 +803,10 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *StreamAggExec) Close() error {
+	e.childResult = nil
 	if err := e.baseExecutor.Close(); err != nil {
 		return err
 	}
-	e.childResult = nil
 	return nil
 }
 

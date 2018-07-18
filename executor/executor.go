@@ -571,10 +571,10 @@ func (e *LimitExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *LimitExec) Close() error {
+	e.childResult = nil
 	if err := e.baseExecutor.Close(); err != nil {
 		return errors.Trace(err)
 	}
-	e.childResult = nil
 	return nil
 }
 
@@ -881,10 +881,10 @@ func (e *ExistsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close implements the Executor Close interface.
 func (e *ExistsExec) Close() error {
+	e.childResult = nil
 	if err := e.baseExecutor.Close(); err != nil {
 		return errors.Trace(err)
 	}
-	e.childResult = nil
 	return nil
 }
 
