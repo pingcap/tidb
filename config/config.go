@@ -40,19 +40,20 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host            string          `toml:"host" json:"host"`
-	Port            uint            `toml:"port" json:"port"`
-	Store           string          `toml:"store" json:"store"`
-	Path            string          `toml:"path" json:"path"`
-	Socket          string          `toml:"socket" json:"socket"`
-	Lease           string          `toml:"lease" json:"lease"`
-	RunDDL          bool            `toml:"run-ddl" json:"run-ddl"`
-	SplitTable      bool            `toml:"split-table" json:"split-table"`
-	TokenLimit      uint            `toml:"token-limit" json:"token-limit"`
-	OOMAction       string          `toml:"oom-action" json:"oom-action"`
-	MemQuotaQuery   int64           `toml:"mem-quota-query" json:"mem-quota-query"`
-	EnableStreaming bool            `toml:"enable-streaming" json:"enable-streaming"`
-	TxnLocalLatches TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
+	Host             string          `toml:"host" json:"host"`
+	AdvertiseAddress string          `toml:"advertise-address" json:"advertise-address"`
+	Port             uint            `toml:"port" json:"port"`
+	Store            string          `toml:"store" json:"store"`
+	Path             string          `toml:"path" json:"path"`
+	Socket           string          `toml:"socket" json:"socket"`
+	Lease            string          `toml:"lease" json:"lease"`
+	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
+	SplitTable       bool            `toml:"split-table" json:"split-table"`
+	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
+	OOMAction        string          `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
+	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
+	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
 	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
@@ -236,17 +237,18 @@ type Binlog struct {
 }
 
 var defaultConf = Config{
-	Host:            "0.0.0.0",
-	Port:            4000,
-	Store:           "mocktikv",
-	Path:            "/tmp/tidb",
-	RunDDL:          true,
-	SplitTable:      true,
-	Lease:           "45s",
-	TokenLimit:      1000,
-	OOMAction:       "log",
-	MemQuotaQuery:   32 << 30,
-	EnableStreaming: false,
+	Host:             "0.0.0.0",
+	AdvertiseAddress: "",
+	Port:             4000,
+	Store:            "mocktikv",
+	Path:             "/tmp/tidb",
+	RunDDL:           true,
+	SplitTable:       true,
+	Lease:            "45s",
+	TokenLimit:       1000,
+	OOMAction:        "log",
+	MemQuotaQuery:    32 << 30,
+	EnableStreaming:  false,
 	TxnLocalLatches: TxnLocalLatches{
 		Enabled:  false,
 		Capacity: 10240000,
