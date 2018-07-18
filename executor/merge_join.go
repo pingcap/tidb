@@ -45,6 +45,8 @@ type MergeJoinExec struct {
 	innerRows     []chunk.Row
 	innerIter4Row chunk.Iterator
 
+	childrenResults []*chunk.Chunk
+
 	memTracker *memory.Tracker
 }
 
@@ -177,6 +179,7 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
 	e.memTracker.Detach()
+	e.childrenResults = nil
 	e.memTracker = nil
 
 	return errors.Trace(e.baseExecutor.Close())
@@ -191,6 +194,11 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 	e.prepared = false
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaMergeJoin)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
+	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
+	for _, child := range e.children {
+		e.childrenResults = append(e.childrenResults, child.newChunk())
+	}
 
 	e.innerTable.memTracker = memory.NewTracker("innerTable", -1)
 	e.innerTable.memTracker.AttachTo(e.memTracker)
