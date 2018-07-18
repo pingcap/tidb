@@ -1036,11 +1036,6 @@ func (ctx *ctxForPartitionExpr) RefreshTxnCtx(context.Context) error {
 	panic("not support")
 }
 
-// CommitTxn commits transaction without retry.
-func (ctx *ctxForPartitionExpr) CommitTxn(context.Context) error {
-	panic("not support")
-}
-
 // ActivePendingTxn receives the pending transaction from the transaction channel.
 // It should be called right before we builds an executor.
 func (ctx *ctxForPartitionExpr) ActivePendingTxn() error {

@@ -68,6 +68,7 @@ type Session interface {
 	AffectedRows() uint64                                     // Affected rows by latest executed stmt.
 	Execute(context.Context, string) ([]ast.RecordSet, error) // Execute a sql statement.
 	String() string                                           // String is used to debug.
+	CommitTxn(context.Context) error
 	RollbackTxn(context.Context) error
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)

@@ -57,9 +57,6 @@ type Context interface {
 	// now just for load data and batch insert.
 	RefreshTxnCtx(context.Context) error
 
-	// CommitTxn commits transaction.
-	CommitTxn(context.Context) error
-
 	// ActivePendingTxn receives the pending transaction from the transaction channel.
 	// It should be called right before we builds an executor.
 	ActivePendingTxn() error
