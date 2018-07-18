@@ -92,7 +92,7 @@ type SchemaSyncer interface {
 	// GetServerInfoFromPD get the DDL_id server information from PD.
 	GetServerInfoFromPD(ctx context.Context, id string) (*util.DDLServerInfo, error)
 	// GetAllServerInfoFromPD get all DDL servers information from PD.
-	GetAllServerInfoFromPD(ctx context.Context, id string) (map[string]*util.DDLServerInfo, error)
+	GetAllServerInfoFromPD(ctx context.Context) (map[string]*util.DDLServerInfo, error)
 	// UpdateSelfServerInfo store DDL server information to PD.
 	UpdateSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error
 	// RemoveSelfServerInfo remove DDL server information from PD.
@@ -197,7 +197,7 @@ func (s *schemaVersionSyncer) GetServerInfoFromPD(ctx context.Context, id string
 }
 
 // GetAllServerInfoFromPD implements SchemaSyncer.GetAllServerInfoFromPD interface.
-func (s *schemaVersionSyncer) GetAllServerInfoFromPD(ctx context.Context, id string) (map[string]*util.DDLServerInfo, error) {
+func (s *schemaVersionSyncer) GetAllServerInfoFromPD(ctx context.Context) (map[string]*util.DDLServerInfo, error) {
 	var err error
 	allDDLInfo := make(map[string]*util.DDLServerInfo)
 	for {

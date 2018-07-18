@@ -118,9 +118,6 @@ type DDLServerInfo struct {
 	ServerVersionInfo
 	IP         string `json:"ip"`
 	StatusPort uint   `json:"status_port"`
-	// IsOwner will set false and will omit when json marshal and then store to PD.
-	// IsOwner is used when do http-api request ddl/info to indicate which server is Owner.
-	IsOwner bool `json:"is_owner,omitempty"`
 }
 
 // ServerVersionInfo is the server version and git_hash

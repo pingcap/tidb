@@ -533,7 +533,6 @@ func (d *ddl) GetServerInfo() *util.DDLServerInfo {
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash
 	info.ID = d.uuid
-	info.IsOwner = d.isOwner()
 	return info
 }
 
@@ -547,22 +546,14 @@ func (d *ddl) GetOwnerServerInfo() (*util.DDLServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ownerInfo.IsOwner = true
 	return ownerInfo, nil
 }
 
 func (d *ddl) GetAllServerInfo() (map[string]*util.DDLServerInfo, error) {
 	ctx := context.Background()
-	ddlOwnerID, err := d.ownerManager.GetOwnerID(ctx)
+	AllDDLServerInfo, err := d.schemaSyncer.GetAllServerInfoFromPD(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	AllDDLServerInfo, err := d.schemaSyncer.GetAllServerInfoFromPD(ctx, ddlOwnerID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if _, ok := AllDDLServerInfo[ddlOwnerID]; ok {
-		AllDDLServerInfo[ddlOwnerID].IsOwner = true
 	}
 	return AllDDLServerInfo, nil
 }
@@ -570,8 +561,6 @@ func (d *ddl) GetAllServerInfo() (map[string]*util.DDLServerInfo, error) {
 func (d *ddl) StoreServerInfoToPD() error {
 	info := d.GetServerInfo()
 	ctx := context.Background()
-	// Owner will change , we will check ownerID to confirm which server is owner.
-	info.IsOwner = false
 	return d.schemaSyncer.UpdateSelfServerInfo(ctx, info)
 }
 

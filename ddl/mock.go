@@ -111,7 +111,7 @@ func (s *mockSchemaSyncer) GetServerInfoFromPD(ctx context.Context, _ string) (*
 }
 
 // GetAllServerInfoFromPD implements SchemaSyncer.GetAllServerInfoFromPD interface.
-func (s *mockSchemaSyncer) GetAllServerInfoFromPD(ctx context.Context, _ string) (map[string]*util.DDLServerInfo, error) {
+func (s *mockSchemaSyncer) GetAllServerInfoFromPD(ctx context.Context) (map[string]*util.DDLServerInfo, error) {
 	allDDLInfo := make(map[string]*util.DDLServerInfo)
 	allDDLInfo[s.selfServerInfo.ID] = s.selfServerInfo
 	return allDDLInfo, nil
