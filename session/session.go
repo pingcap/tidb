@@ -992,7 +992,13 @@ func (s *session) NewTxn() error {
 	}
 	txn.SetCap(s.getMembufCap())
 	s.txn.changeInvalidToValid(txn)
-	s.sessionVars.TxnCtx.StartTS = txn.StartTS()
+	is := domain.GetDomain(s).InfoSchema()
+	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		InfoSchema:    is,
+		SchemaVersion: is.SchemaMetaVersion(),
+		CreateTime:    time.Now(),
+		StartTS:       txn.StartTS(),
+	}
 	return nil
 }
 
