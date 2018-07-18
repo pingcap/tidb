@@ -825,7 +825,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		return errors.Trace(err)
 	}
 
-	return errors.Trace(loadDataInfo.Ctx.RefreshTxnCtx(ctx))
+	return errors.Trace(loadDataInfo.Ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.

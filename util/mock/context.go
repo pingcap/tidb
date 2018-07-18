@@ -114,11 +114,9 @@ func (c *Context) NewTxn() error {
 	if c.Store == nil {
 		return errors.New("store is not set")
 	}
-	if c.txn != nil && c.txn.Valid() {
-		err := c.txn.Commit(c.ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	err := c.CommitTxn(c.ctx)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	txn, err := c.Store.Begin()
@@ -132,6 +130,18 @@ func (c *Context) NewTxn() error {
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn())
+}
+
+// CommitTxn implements the sessionctx.Context interface.
+func (c *Context) CommitTxn(context.Context) error {
+	if c.txn != nil && c.txn.Valid() {
+		err := c.txn.Commit(c.ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
 }
 
 // ActivePendingTxn implements the sessionctx.Context interface.

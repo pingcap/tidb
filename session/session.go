@@ -68,7 +68,6 @@ type Session interface {
 	AffectedRows() uint64                                     // Affected rows by latest executed stmt.
 	Execute(context.Context, string) ([]ast.RecordSet, error) // Execute a sql statement.
 	String() string                                           // String is used to debug.
-	CommitTxn(context.Context) error
 	RollbackTxn(context.Context) error
 	// PrepareStmt executes prepare statement in binary protocol.
 	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
@@ -1321,8 +1320,6 @@ func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	if err := s.doCommit(ctx); err != nil {
 		return errors.Trace(err)
 	}
-
-	s.GetSessionVars().TxnCtx.Binlog = nil
 
 	return errors.Trace(s.NewTxn())
 }
