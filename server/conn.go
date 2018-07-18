@@ -749,7 +749,6 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 		if !reachLimit {
 			break
 		}
-
 		loadDataInfo.Ctx.StmtCommit()
 		// Load data should not use latches, because:
 		// 1. latches may result in false positive transaction conflicts.
@@ -825,7 +824,6 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	}
 
 	txn.SetOption(kv.BypassLatch, true)
-	//return errors.Trace(loadDataInfo.Ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
 	return errors.Trace(cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
 }
 
