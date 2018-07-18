@@ -210,7 +210,7 @@ type DDL interface {
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(interface{})
 
-	// GetServerInfo get self DDL Server static information and isOwner information.
+	// GetServerInfo get self DDL Server static information.
 	GetServerInfo() *util.DDLServerInfo
 	// StoreServerInfoToPD store self DDL server static information to PD when DDL server Started.
 	StoreServerInfoToPD() error
