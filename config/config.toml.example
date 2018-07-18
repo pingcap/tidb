@@ -3,6 +3,9 @@
 # TiDB server host.
 host = "0.0.0.0"
 
+# tidb server advertise IP.
+advertise-address = ""
+
 # TiDB server port.
 port = 4000
 
@@ -147,11 +150,6 @@ networks = ""
 
 # PROXY protocol header read timeout, unit is second
 header-timeout = 5
-
-[plan-cache]
-enabled = false
-capacity = 2560
-shards = 256
 
 [prepared-plan-cache]
 enabled = false

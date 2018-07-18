@@ -113,6 +113,12 @@ type PhysicalIndexScan struct {
 	// Hist is the histogram when the query was issued.
 	// It is used for query feedback.
 	Hist *statistics.Histogram
+
+	rangeDecidedBy []*expression.Column
+
+	// The index scan may be on a partition.
+	isPartition bool
+	partitionID int64
 }
 
 // PhysicalMemTable reads memory table.
@@ -152,6 +158,8 @@ type PhysicalTableScan struct {
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool
 	partitionID int64
+
+	rangeDecidedBy []*expression.Column
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
@@ -332,6 +340,11 @@ type PhysicalUnionScan struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
+}
+
+// IsPartition returns true and partition ID if it works on a partition.
+func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
+	return p.isPartition, p.partitionID
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
