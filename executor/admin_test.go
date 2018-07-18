@@ -441,16 +441,16 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`drop table if exists test`)
 	tk.MustExec(`set @@tidb_enable_table_partition = 1`)
 	tk.MustExec(`create table test (
-                          a int not null,
-                          c int not null,
-                          primary key (a, c),
-                          key idx_a (a)) partition by range (c) (
-                    partition p1 values less than (1),
-                    partition p2 values less than (4),
-                    partition p3 values less than (7),
-                    partition p4 values less than (11))`)
+		      a int not null,
+		      c int not null,
+		      primary key (a, c),
+		      key idx_a (a)) partition by range (c) (
+		      partition p1 values less than (1),
+		      partition p2 values less than (4),
+		      partition p3 values less than (7),
+		      partition p4 values less than (11))`)
 	for i := 1; i <= 10; i++ {
-		fmt.Sprintf("insert into test values (%d, %d);", i, i)
+		tk.MustExec(fmt.Sprintf("insert into test values (%d, %d);", i, i))
 	}
 	tk.MustExec(`admin check table test;`)
 }
