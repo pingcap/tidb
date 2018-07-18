@@ -182,17 +182,19 @@ func (s *schemaVersionSyncer) GetServerInfoFromPD(ctx context.Context, id string
 
 		resp, err = s.etcdCli.Get(ctx, ddlPath)
 		if err != nil {
+			log.Infof("[syncer] get ddl server info,  ddl %s failed %v, continue checking.", ddlPath, err)
+			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 		if err == nil && len(resp.Kvs) > 0 {
 			info := &util.DDLServerInfo{}
 			err := json.Unmarshal(resp.Kvs[0].Value, info)
 			if err != nil {
+				log.Infof("[syncer] get ddl server info, ddl %s json.Unmarshal %v failed %v.", resp.Kvs[0].Key, resp.Kvs[0].Value, err)
 				return nil, err
 			}
 			return info, nil
 		}
-		time.Sleep(200 * time.Millisecond)
 	}
 }
 
