@@ -20,7 +20,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 )
 
-// Snowball is set as Baggage on traces which are used for snowball tracing.
+// Snowball is an abbreviation of `snowball`. It is set as Baggage on traces.
 const Snowball = "sb"
 
 // A CallbackRecorder immediately invokes itself on received trace spans.
@@ -32,8 +32,7 @@ func (cr CallbackRecorder) RecordSpan(sp basictracer.RawSpan) {
 }
 
 // NewSnowball returns a span which records directly via the specified
-// callback. If the given WireSpan is the zero value, a new trace is created;
-// otherwise, the created Span is a child.
+// callback.
 func NewSnowball(opName string, callback func(sp basictracer.RawSpan)) opentracing.Span {
 	tr := basictracer.New(CallbackRecorder(callback))
 	opentracing.SetGlobalTracer(tr)
