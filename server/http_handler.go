@@ -1282,6 +1282,14 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	writeData(w, clusterInfo)
 }
 
+// ClusterServerInfo is only used to report cluster servers info when do http request
+type ClusterServerInfo struct {
+	ServersNum                   int                            `json:"servers_num"`
+	IsAllServerVersionConsistent bool                           `json:"is_all_server_version_consistent"`
+	AllServersVersion            []util.ServerVersionInfo       `json:"all_servers_version"`
+	AllServersInfo               map[string]*util.DDLServerInfo `json:"all_servers_info"`
+}
+
 // ServeHTTP handles request of all ddl servers info.
 func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	session, err := session.CreateSession(h.store.(kv.Storage))
@@ -1290,10 +1298,26 @@ func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 		return
 	}
 	ddl := domain.GetDomain(session.(sessionctx.Context)).DDL()
-	clusterInfo, err := ddl.GetAllServerInfo()
+
+	allServersInfo, err := ddl.GetAllServerInfo()
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		return
 	}
-	writeData(w, clusterInfo)
+	allVersionsMap := map[util.ServerVersionInfo]struct{}{}
+	allVersions := []util.ServerVersionInfo{}
+	for _, v := range allServersInfo {
+		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
+			continue
+		}
+		allVersionsMap[v.ServerVersionInfo] = struct{}{}
+		allVersions = append(allVersions, v.ServerVersionInfo)
+	}
+	clusterServerInfo := ClusterServerInfo{
+		ServersNum:                   len(allServersInfo),
+		IsAllServerVersionConsistent: len(allVersions) == 1,
+		AllServersVersion:            allVersions,
+		AllServersInfo:               allServersInfo,
+	}
+	writeData(w, clusterServerInfo)
 }

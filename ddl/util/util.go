@@ -114,12 +114,17 @@ func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, old
 // DDLServerInfo will store into PD when server start up and delete when DDL closed.
 // It will not update when DDL server running. So please only put static information in DDLServerInfo struct.
 type DDLServerInfo struct {
-	ID         string `json:"ddl_id"`
-	Version    string `json:"version"`
-	GitHash    string `json:"git_hash"`
+	ID string `json:"ddl_id"`
+	ServerVersionInfo
 	IP         string `json:"ip"`
 	StatusPort uint   `json:"status_port"`
 	// IsOwner will set false and will omit when json marshal and then store to PD.
 	// IsOwner is used when do http-api request ddl/info to indicate which server is Owner.
 	IsOwner bool `json:"is_owner,omitempty"`
+}
+
+// ServerVersionInfo is the server version and git_hash
+type ServerVersionInfo struct {
+	Version string `json:"version"`
+	GitHash string `json:"git_hash"`
 }
