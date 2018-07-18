@@ -2665,7 +2665,6 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	s.tk.MustQuery("select count(hired) from partition_add_idx use index(idx1)").Check(testkit.Rows("500"))
 	s.tk.MustQuery("select count(id) from partition_add_idx use index(idx2)").Check(testkit.Rows("500"))
 
-	// TODO: Make admin check table work for partition.
-	// s.tk.MustExec("admin check table partition_add_idx")
+	s.tk.MustExec("admin check table partition_add_idx")
 	s.tk.MustExec("drop table partition_add_idx")
 }
