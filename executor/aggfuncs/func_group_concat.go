@@ -24,7 +24,8 @@ import (
 type baseGroupConcat4String struct {
 	baseAggFunc
 
-	sep string
+	sep    string
+	maxLen int
 }
 
 func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -82,8 +83,9 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		}
 	}
 	p.buffer.Truncate(p.buffer.Len() - len(e.sep))
-	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
-	// issue: #7034
+	if e.maxLen > 0 && p.buffer.Len() > e.maxLen {
+		p.buffer.Truncate(e.maxLen)
+	}
 	return nil
 }
 
@@ -138,7 +140,8 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		// write values
 		p.buffer.WriteString(joinedVals)
 	}
-	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
-	// issue: #7034
+	if e.maxLen > 0 && p.buffer.Len() > e.maxLen {
+		p.buffer.Truncate(e.maxLen)
+	}
 	return nil
 }

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"strconv"
 )
 
 // Build is used to build a specific AggFunc implementation according to the
@@ -244,10 +245,12 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))
 		}
+		varMaxLen, _ := aggFuncDesc.SessionCtx.GetSessionVars().GetSystemVar("group_concat_max_len")
+		maxLen, _ := strconv.Atoi(varMaxLen)
 		if aggFuncDesc.HasDistinct {
-			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
+			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen}}
 		}
-		return &groupConcat{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
+		return &groupConcat{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen}}
 	}
 }
 

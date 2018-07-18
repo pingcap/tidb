@@ -89,7 +89,6 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	for _, val := range datumBuf {
 		cf.writeValue(evalCtx, val)
 	}
-	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
 	if cf.maxLen > 0 && evalCtx.Buffer.Len() > cf.maxLen {
 		evalCtx.Buffer.Truncate(cf.maxLen)
 	}
