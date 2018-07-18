@@ -373,7 +373,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 
-		if info := tb.Meta().GetPartitionInfo(); info != nil {
+		if tb.Meta().GetPartitionInfo() != nil {
 			err = e.doCheckPartitionedTable(tb.(table.PartitionedTable))
 		} else {
 			err = e.doCheckTable(tb)
