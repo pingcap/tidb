@@ -613,6 +613,11 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 // joinFieldType finds the type which can carry the given types.
 func joinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
+	if a.Tp == mysql.TypeNewDecimal {
+		resultTp.Flag &= a.Flag & mysql.UnsignedFlag
+	} else {
+		resultTp.Flag |= a.Flag & mysql.UnsignedFlag
+	}
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
 	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
