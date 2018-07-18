@@ -374,7 +374,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 
 		if info := tb.Meta().GetPartitionInfo(); info != nil {
-			err = e.doCheckPartitionedTable(info, tb.(table.PartitionedTable))
+			err = e.doCheckPartitionedTable(tb.(table.PartitionedTable))
 		} else {
 			err = e.doCheckTable(tb)
 		}
@@ -386,7 +386,8 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-func (e *CheckTableExec) doCheckPartitionedTable(info *model.PartitionInfo, tbl table.PartitionedTable) error {
+func (e *CheckTableExec) doCheckPartitionedTable(tbl table.PartitionedTable) error {
+	info := tbl.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.GetPartition(pid)
