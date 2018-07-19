@@ -1580,6 +1580,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 
+	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
+
 	e := &IndexLookUpExecutor{
 		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:             indexReq,
@@ -1589,7 +1591,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		keepOrder:         is.KeepOrder,
 		desc:              is.Desc,
 		tableRequest:      tableReq,
-		columns:           is.Columns,
+		columns:           ts.Columns,
 		indexStreaming:    indexStreaming,
 		tableStreaming:    tableStreaming,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
