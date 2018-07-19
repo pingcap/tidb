@@ -613,9 +613,12 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 // joinFieldType finds the type which can carry the given types.
 func joinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
+	// This logic need be combined with buildProjection4Union.
 	if a.Tp == mysql.TypeNewDecimal {
-		resultTp.Flag &= a.Flag & mysql.UnsignedFlag
+		// For Decimal result be unsigned when all union children be unsigned.
+		resultTp.Flag &= b.Flag & mysql.UnsignedFlag
 	} else {
+		// Other types result will be unsigned only if first child be unsigned.
 		resultTp.Flag |= a.Flag & mysql.UnsignedFlag
 	}
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)

@@ -2934,4 +2934,6 @@ func (s *testSuite) TestUnionAutoSignedCast(c *C) {
 		Check(testkit.Rows("1 0 0 0 -1", "2 1 1 1.1 1"))
 	tk.MustQuery("select id, i from t2 union select id, cast(i as unsigned int) from t1 order by id").
 		Check(testkit.Rows("1 18446744073709551615", "2 1"))
+	tk.MustQuery("select dd from t2 union all select dd from t2").
+		Check(testkit.Rows("1", "1"))
 }
