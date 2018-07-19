@@ -154,3 +154,36 @@ func BenchmarkDecodeToChunk(b *testing.B) {
 		codec.DecodeToChunk(buffer, chk)
 	}
 }
+
+func BenchmarkDecodeToChunkWithVariableType(b *testing.B) {
+	numCols := 6
+	numRows := 1024
+
+	colTypes := make([]*types.FieldType, 0, numCols)
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeNewDecimal})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeJSON})
+
+	chk := NewChunkWithCapacity(colTypes, numRows)
+	for i := 0; i < numRows; i++ {
+		str := fmt.Sprintf("%d.12345", i)
+		chk.AppendNull(0)
+		chk.AppendInt64(1, int64(i))
+		chk.AppendString(2, str)
+		chk.AppendString(3, str)
+		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
+		chk.AppendJSON(5, json.CreateBinary(str))
+	}
+	codec := &Codec{colTypes}
+	buffer := codec.Encode(chk)
+
+	chk.Reset()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		codec.DecodeToChunk(buffer, chk)
+	}
+}
