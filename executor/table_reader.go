@@ -14,16 +14,12 @@
 package executor
 
 import (
-	"math"
-	"sort"
-
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	tipb "github.com/pingcap/tipb/go-tipb"
@@ -136,44 +132,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	}
 	result.Fetch(ctx)
 	return result, nil
-}
-
-func splitRanges(ranges []*ranger.Range, keepOrder bool) ([]*ranger.Range, []*ranger.Range) {
-	if len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
-		return ranges, nil
-	}
-	idx := sort.Search(len(ranges), func(i int) bool { return ranges[i].HighVal[0].GetUint64() > math.MaxInt64 })
-	if idx == len(ranges) {
-		return ranges, nil
-	}
-	if ranges[idx].LowVal[0].GetUint64() > math.MaxInt64 {
-		signedRanges := ranges[0:idx]
-		unsignedRanges := ranges[idx:]
-		if !keepOrder {
-			return append(unsignedRanges, signedRanges...), nil
-		}
-		return signedRanges, unsignedRanges
-	}
-	signedRanges := make([]*ranger.Range, 0, idx+1)
-	unsignedRanges := make([]*ranger.Range, 0, len(ranges)-idx)
-	signedRanges = append(signedRanges, ranges[0:idx]...)
-	signedRanges = append(signedRanges, &ranger.Range{
-		LowVal:     ranges[idx].LowVal,
-		LowExclude: ranges[idx].LowExclude,
-		HighVal:    []types.Datum{types.NewUintDatum(math.MaxInt64)},
-	})
-	unsignedRanges = append(unsignedRanges, &ranger.Range{
-		LowVal:      []types.Datum{types.NewUintDatum(math.MaxInt64 + 1)},
-		HighVal:     ranges[idx].HighVal,
-		HighExclude: ranges[idx].HighExclude,
-	})
-	if idx < len(ranges) {
-		unsignedRanges = append(unsignedRanges, ranges[idx+1:]...)
-	}
-	if !keepOrder {
-		return append(unsignedRanges, signedRanges...), nil
-	}
-	return signedRanges, unsignedRanges
 }
 
 type tableResultHandler struct {
