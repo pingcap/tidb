@@ -2728,6 +2728,7 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	result = s.tk.MustQuery("select * from t3;")
 	c.Assert(len(result.Rows()), Equals, 10)
 	s.tk.MustExec("truncate table t3;")
+	time.Sleep(waitForCleanDataInterval)
 	result = s.tk.MustQuery("select * from t3;")
 	c.Assert(len(result.Rows()), Equals, 0)
 
