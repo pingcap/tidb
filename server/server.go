@@ -102,7 +102,10 @@ func (s *Server) ConnectionCount() int {
 }
 
 func (s *Server) getToken() *Token {
-	return s.concurrentLimiter.Get()
+	start := time.Now()
+	tok := s.concurrentLimiter.Get()
+	metrics.GetTokenDurationHistogram.Observe(time.Since(start).Seconds())
+	return tok
 }
 
 func (s *Server) releaseToken(token *Token) {

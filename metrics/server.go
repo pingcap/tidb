@@ -111,6 +111,15 @@ var (
 			Help:      "Counter of hand shake error.",
 		},
 	)
+
+	GetTokenDurationHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "get_token_duration_seconds",
+			Help:      "Duration (s) for getting token, it should be small until concurrency limit is reached",
+			Buckets:   prometheus.ExponentialBuckets(0.0000005, 2, 22), // 500ns - 2s
+		})
 )
 
 func init() {
@@ -124,6 +133,7 @@ func init() {
 	prometheus.MustRegister(KeepAliveCounter)
 	prometheus.MustRegister(PlanCacheCounter)
 	prometheus.MustRegister(HandShakeErrorCounter)
+	prometheus.MustRegister(GetTokenDurationHistogram)
 }
 
 // ExecuteErrorToLabel converts an execute error to label.
