@@ -16,6 +16,8 @@ In the current row format, each column is encoded with the column ID followed by
 
 The new format is defined as follows:
 
+![row-format](./row-format.jpeg)
+
 * 1 byte codec version
 
     Its value starts from 128, so we can upgrade TiDB in a compatible way.
