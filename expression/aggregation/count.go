@@ -34,7 +34,7 @@ func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stateme
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if value.GetValue() == nil {
+		if value.IsNull() {
 			return nil
 		}
 		if cf.Mode == FinalMode || cf.Mode == Partial2Mode {
