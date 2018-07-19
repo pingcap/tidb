@@ -285,6 +285,8 @@ type IndexColumn struct {
 	// for indexing;
 	// UnspecifedLength if not using prefix indexing
 	Length int `json:"length"`
+	// Tp is the index column field type.
+	Tp *types.FieldType
 }
 
 // Clone clones IndexColumn.
