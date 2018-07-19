@@ -17,6 +17,7 @@ import (
 	"math"
 	"sort"
 
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
@@ -206,7 +207,9 @@ func (e *ExecuteExec) Build() error {
 		return errors.Trace(b.err)
 	}
 	e.stmtExec = stmtExec
-	ResetStmtCtx(e.ctx, e.stmt)
+	if err = ResetStmtCtx(e.ctx, e.stmt); err != nil {
+		return err
+	}
 	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
 	logExpensiveQuery(e.stmt, e.plan)
 	return nil
@@ -258,10 +261,10 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 
 // ResetStmtCtx resets the StmtContext.
 // Before every execution, we must clear statement context.
-func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
+func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sessVars := ctx.GetSessionVars()
 	sc := new(stmtctx.StatementContext)
-	sc.TimeZone = sessVars.GetTimeZone()
+	sc.TimeZone = sessVars.Location()
 	sc.MemTracker = memory.NewTracker(s.Text(), sessVars.MemQuotaQuery)
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
@@ -272,42 +275,40 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
 	}
 
+	// TODO: Many same bool variables here.
+	// We should set only two variables (
+	// IgnoreErr and StrictSQLMode) to avoid setting the same bool variables and
+	// pushing them down to TiKV as flags.
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
-		sc.IgnoreErr = stmt.IgnoreErr
-		sc.IgnoreTruncate = false
-		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
-		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+		sc.DupKeyAsWarning = stmt.IgnoreErr
+		sc.BadNullAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority
 	case *ast.DeleteStmt:
-		sc.IgnoreErr = stmt.IgnoreErr
-		sc.IgnoreTruncate = false
-		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InUpdateOrDeleteStmt = true
-		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+		sc.DupKeyAsWarning = stmt.IgnoreErr
+		sc.BadNullAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
-		sc.IgnoreErr = stmt.IgnoreErr
-		sc.IgnoreTruncate = false
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.InInsertStmt = true
-		sc.DividedByZeroAsWarning = stmt.IgnoreErr
+		sc.DupKeyAsWarning = stmt.IgnoreErr
+		sc.BadNullAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
-		sc.IgnoreTruncate = false
-		sc.OverflowAsWarning = false
-		sc.TruncateAsWarning = false
 	case *ast.LoadDataStmt:
-		sc.IgnoreErr = true
-		sc.IgnoreTruncate = false
-		sc.OverflowAsWarning = false
+		sc.DupKeyAsWarning = true
+		sc.BadNullAsWarning = true
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
@@ -319,7 +320,6 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.OverflowAsWarning = true
 
 		// Return warning for truncate error in selection.
-		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = true
 		sc.IgnoreZeroInDate = true
 		if opts := stmt.SelectStmtOpts; opts != nil {
@@ -327,15 +327,15 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
+	case *ast.ShowStmt:
+		sc.IgnoreTruncate = true
+		sc.IgnoreZeroInDate = true
+		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors {
+			sc.InShowWarning = true
+			sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
+		}
 	default:
 		sc.IgnoreTruncate = true
-		sc.OverflowAsWarning = false
-		if show, ok := s.(*ast.ShowStmt); ok {
-			if show.Tp == ast.ShowWarnings {
-				sc.InShowWarning = true
-				sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
-			}
-		}
 		sc.IgnoreZeroInDate = true
 	}
 	if sessVars.LastInsertID > 0 {
@@ -343,6 +343,15 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sessVars.LastInsertID = 0
 	}
 	sessVars.ResetPrevAffectedRows()
+	err = sessVars.SetSystemVar("warning_count", fmt.Sprintf("%d", sessVars.StmtCtx.NumWarnings(false)))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = sessVars.SetSystemVar("error_count", fmt.Sprintf("%d", sessVars.StmtCtx.NumWarnings(true)))
+	if err != nil {
+		return errors.Trace(err)
+	}
 	sessVars.InsertID = 0
 	sessVars.StmtCtx = sc
+	return
 }

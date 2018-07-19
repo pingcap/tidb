@@ -177,25 +177,25 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCoun
 	return nil
 }
 
-func (e *InsertValues) getRows(cols []*table.Column) (rows []types.DatumRow, err error) {
+func (e *InsertValues) insertRows(cols []*table.Column, exec func(rows []types.DatumRow) error) (err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	rows = make([]types.DatumRow, len(e.Lists))
+	rows := make([]types.DatumRow, len(e.Lists))
 	length := len(e.Lists[0])
 	for i, list := range e.Lists {
 		if err = e.checkValueCount(length, len(list), len(e.GenColumns), i, cols); err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		e.rowCount = uint64(i)
 		rows[i], err = e.getRow(cols, list, i)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 	}
-	return
+	return errors.Trace(exec(rows))
 }
 
 func (e *InsertValues) handleErr(col *table.Column, rowIdx int, err error) error {
@@ -265,7 +265,7 @@ func (e *InsertValues) fillDefaultValues(row types.DatumRow, hasValue []bool) er
 			if table.ErrNoDefaultValue.Equal(err) {
 				row[i] = table.GetZeroValue(c.ToInfo())
 				hasValue[c.Offset] = false
-			} else if err = e.filterErr(err); err != nil {
+			} else if e.filterErr(err) != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -274,21 +274,20 @@ func (e *InsertValues) fillDefaultValues(row types.DatumRow, hasValue []bool) er
 	return nil
 }
 
-func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Column) ([]types.DatumRow, error) {
+func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.Column, exec func(rows []types.DatumRow) error) error {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	if selectExec.Schema().Len() != len(cols) {
-		return nil, ErrWrongValueCountOnRow.GenByArgs(1)
+		return ErrWrongValueCountOnRow.GenByArgs(1)
 	}
-	var rows []types.DatumRow
 	fields := selectExec.retTypes()
+	chk := selectExec.newChunk()
+	iter := chunk.NewIterator4Chunk(chk)
+	rows := make([]types.DatumRow, 0, e.ctx.GetSessionVars().MaxChunkSize)
 	for {
-		chk := selectExec.newChunk()
-		iter := chunk.NewIterator4Chunk(chk)
-
 		err := selectExec.Next(ctx, chk)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -296,15 +295,19 @@ func (e *InsertValues) getRowsSelectChunk(ctx context.Context, cols []*table.Col
 
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
-			e.rowCount = uint64(len(rows))
+			e.rowCount++
 			row, err := e.fillRowData(cols, innerRow)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			rows = append(rows, row)
 		}
+		if err := exec(rows); err != nil {
+			return errors.Trace(err)
+		}
+		rows = rows[:0]
 	}
-	return rows, nil
+	return nil
 }
 
 func (e *InsertValues) fillRowData(cols []*table.Column, vals types.DatumRow) (types.DatumRow, error) {
@@ -312,7 +315,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals types.DatumRow) (t
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
 		casted, err := table.CastValue(e.ctx, v, cols[i].ToInfo())
-		if err = e.filterErr(err); err != nil {
+		if e.filterErr(err) != nil {
 			return nil, errors.Trace(err)
 		}
 
@@ -332,7 +335,7 @@ func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue
 	for i, expr := range e.GenExprs {
 		var val types.Datum
 		val, err = expr.Eval(row)
-		if err = e.filterErr(err); err != nil {
+		if e.filterErr(err) != nil {
 			return nil, errors.Trace(err)
 		}
 		val, err = table.CastValue(e.ctx, val, cols[valLen+i].ToInfo())
@@ -353,12 +356,11 @@ func (e *InsertValues) filterErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if !e.ctx.GetSessionVars().StmtCtx.IgnoreErr {
-		return errors.Trace(err)
+	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
+		return err
 	}
-
-	warnLog := fmt.Sprintf("ignore err:%v", errors.ErrorStack(err))
-	e.handleLoadDataWarnings(err, warnLog)
+	// TODO: should not filter all types of errors here.
+	e.handleWarning(err, fmt.Sprintf("ignore err:%v", errors.ErrorStack(err)))
 	return nil
 }
 
@@ -382,35 +384,27 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 // initDefaultValues fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
 func (e *InsertValues) initDefaultValues(row types.DatumRow, hasValue []bool) error {
-	strictSQL := e.ctx.GetSessionVars().StrictSQLMode
 	for i, c := range e.Table.Cols() {
-		var needDefaultValue bool
-		if !hasValue[i] {
-			needDefaultValue = true
-		} else if mysql.HasNotNullFlag(c.Flag) && row[i].IsNull() && !strictSQL {
-			needDefaultValue = true
-			// TODO: Append Warning ErrColumnCantNull.
-		}
 		if mysql.HasAutoIncrementFlag(c.Flag) || c.IsGenerated() {
 			// Just leave generated column as null. It will be calculated later
 			// but before we check whether the column can be null or not.
-			needDefaultValue = false
 			if !hasValue[i] {
 				row[i].SetNull()
 			}
-		}
-		if needDefaultValue {
-			var err error
-			row[i], err = e.getColDefaultValue(i, c)
-			if e.filterErr(err) != nil {
-				return errors.Trace(err)
+			// Adjust the value if this column has auto increment flag.
+			if mysql.HasAutoIncrementFlag(c.Flag) {
+				if err := e.adjustAutoIncrementDatum(row, i, c); err != nil {
+					return errors.Trace(err)
+				}
 			}
-		}
-
-		// Adjust the value if this column has auto increment flag.
-		if mysql.HasAutoIncrementFlag(c.Flag) {
-			if err := e.adjustAutoIncrementDatum(row, i, c); err != nil {
-				return errors.Trace(err)
+		} else {
+			if !hasValue[i] || (mysql.HasNotNullFlag(c.Flag) && row[i].
+				IsNull() && e.ctx.GetSessionVars().StmtCtx.BadNullAsWarning) {
+				var err error
+				row[i], err = e.getColDefaultValue(i, c)
+				if e.filterErr(err) != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 	}
@@ -436,7 +430,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *ta
 	var recordID int64
 	if !row[i].IsNull() {
 		recordID, err = row[i].ToInt64(e.ctx.GetSessionVars().StmtCtx)
-		if e.filterErr(errors.Trace(err)) != nil {
+		if e.filterErr(err) != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -460,7 +454,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *ta
 	// Change value 0 to auto id, if NoAutoValueOnZero SQL mode is not set.
 	if row[i].IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
 		recordID, err = e.Table.AllocAutoID(e.ctx)
-		if e.filterErr(errors.Trace(err)) != nil {
+		if e.filterErr(err) != nil {
 			return errors.Trace(err)
 		}
 		// It's compatible with mysql. So it sets last insert id to the first row.
@@ -485,7 +479,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *ta
 	return nil
 }
 
-func (e *InsertValues) handleLoadDataWarnings(err error, logInfo string) {
+func (e *InsertValues) handleWarning(err error, logInfo string) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	sc.AppendWarning(err)
 	log.Warn(logInfo)

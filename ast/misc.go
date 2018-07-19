@@ -630,10 +630,11 @@ type HandleRange struct {
 type AdminStmt struct {
 	stmtNode
 
-	Tp     AdminStmtType
-	Index  string
-	Tables []*TableName
-	JobIDs []int64
+	Tp        AdminStmtType
+	Index     string
+	Tables    []*TableName
+	JobIDs    []int64
+	JobNumber int64
 
 	HandleRanges []HandleRange
 }
@@ -822,6 +823,9 @@ type TableOptimizerHint struct {
 	// It allows only table name or alias (if table has an alias)
 	HintName model.CIStr
 	Tables   []model.CIStr
+	// Statement Execution Time Optimizer Hints
+	// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html#optimizer-hints-execution-time
+	MaxExecutionTime uint64
 }
 
 // Accept implements Node Accept interface.

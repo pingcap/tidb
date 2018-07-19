@@ -193,11 +193,16 @@ func (r *builder) buildFromColumn(expr *expression.Column) []point {
 func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
-	var value types.Datum
-	var op string
-	var err error
-	if v, ok := expr.GetArgs()[0].(*expression.Constant); ok {
-		value, err = v.Eval(nil)
+	var (
+		op    string
+		value types.Datum
+		err   error
+	)
+	if _, ok := expr.GetArgs()[0].(*expression.Column); ok {
+		value, err = expr.GetArgs()[1].Eval(nil)
+		op = expr.FuncName.L
+	} else {
+		value, err = expr.GetArgs()[0].Eval(nil)
 		switch expr.FuncName.L {
 		case ast.GE:
 			op = ast.LE
@@ -210,9 +215,6 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		default:
 			op = expr.FuncName.L
 		}
-	} else {
-		value, err = expr.GetArgs()[1].(*expression.Constant).Eval(nil)
-		op = expr.FuncName.L
 	}
 	if err != nil {
 		return nil

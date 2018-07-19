@@ -16,6 +16,7 @@ package infoschema_test
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
@@ -28,6 +29,7 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
+	session.SetStatsLease(0)
 	do, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer do.Close()
@@ -39,28 +41,38 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
+	h.HandleDDLEvent(<-h.DDLEventCh())
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("0"))
 	tk.MustExec("insert into t(c, d) values(1, 2), (2, 3), (3, 4)")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3"))
 	tk.MustExec("insert into t(c, d) values(4, 5)")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("4"))
 	tk.MustExec("delete from t where c >= 3")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2"))
 	tk.MustExec("delete from t where c=3")
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2"))
+
+	// Test for auto increment ID.
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (c int auto_increment primary key, d int)")
+	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("1"))
+	tk.MustExec("insert into t(c, d) values(1, 1)")
+	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("30002"))
 
 	tk.MustExec("create user xxx")
 	tk.MustExec("flush privileges")
