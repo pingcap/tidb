@@ -471,10 +471,11 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	return nil
 }
 
+// genExprs use to calculate generated column value.
 func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, genExprs map[string]expression.Expression) ([]types.Datum, error) {
 	key := t.RecordKey(h)
 	value, err := txn.Get(key)
-	genFlag := false
+	genColFlag := false
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -495,30 +496,29 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 			}
 			continue
 		}
-		// if have virtual generate column , we need to decode all columns (maybe just need to decode the dependent columns),
-		// to calculate the virtual generate column.
+		// if have virtual generate column , decode all columns.
 		if col.IsGenerated() && col.GeneratedStored == false {
-			genFlag = true
-			break
+			genColFlag = true
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	// if have virtual generate column, need to decode all columns
-	if genFlag {
+	// if have virtual generate column, decode all columns
+	if genColFlag {
 		for _, c := range t.Cols() {
-			// Whether I need to check the column.State is public?
+			if c.State != model.StatePublic {
+				continue
+			}
 			colTps[c.ID] = &c.FieldType
 		}
 	}
 
 	rowMap, err := tablecodec.DecodeRow(value, colTps, sessCtx.GetSessionVars().Location())
-
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if genFlag && genExprs != nil {
-		err = fillGenColumn(sessCtx, rowMap, t, cols, genExprs)
+	if genColFlag && genExprs != nil {
+		err = fillGenColData(sessCtx, rowMap, t, cols, genExprs)
 		if err != nil {
 			return v, errors.Trace(err)
 		}
@@ -553,6 +553,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 	return v, nil
 }
 
+// genExprs use to calculate generated column value.
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc, genExprs map[string]expression.Expression) error {
 	it, err := retriever.Seek(startKey)
@@ -598,7 +599,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		}
 
 		if genColFlag && genExprs != nil {
-			err = fillGenColumn(sessCtx, rowMap, t, cols, genExprs)
+			err = fillGenColData(sessCtx, rowMap, t, cols, genExprs)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -627,13 +628,14 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	return nil
 }
 
-func fillGenColumn(sessCtx sessionctx.Context, rowMap map[int64]types.Datum, t table.Table, cols []*table.Column, genExprs map[string]expression.Expression) error {
+// genExprs use to calculate generated column value.
+func fillGenColData(sessCtx sessionctx.Context, rowMap map[int64]types.Datum, t table.Table, cols []*table.Column, genExprs map[string]expression.Expression) error {
 	tableInfo := t.Meta()
-	rows := make(types.DatumRow, len(t.Cols()))
+	row := make(types.DatumRow, len(t.Cols()))
 	for _, col := range t.Cols() {
 		ri, ok := rowMap[col.ID]
 		if ok {
-			rows[col.Offset] = ri
+			row[col.Offset] = ri
 		}
 	}
 
@@ -645,7 +647,7 @@ func fillGenColumn(sessCtx sessionctx.Context, rowMap map[int64]types.Datum, t t
 		genColumnName := model.GetTableColumnID(tableInfo, col.ColumnInfo)
 		if expr, ok := genExprs[genColumnName]; ok {
 			var val types.Datum
-			val, err = expr.Eval(rows)
+			val, err = expr.Eval(row)
 			if err != nil {
 				return errors.Trace(err)
 			}
