@@ -35,18 +35,18 @@ type partialResult4SumDecimal struct {
 	count int64
 }
 
-func (e *baseSumDecimal) AllocPartialResult() PartialResult{
+func (e *baseSumDecimal) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4SumDecimal{})
 
 }
 
-func (e *baseSumDecimal) ResetPartialResult(pr PartialResult){
+func (e *baseSumDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDecimal)(pr)
 	p.sum = *types.NewDecFromInt(0)
 	p.count = int64(0)
 }
 
-func (e *baseSumDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error{
+func (e *baseSumDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumDecimal)(pr)
 	if p.count == 0 {
 		chk.AppendNull(e.ordinal)
@@ -84,7 +84,6 @@ func (e *sumOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	return nil
 }
 
-
 type sumPartial4Decimal struct {
 	baseSumDecimal
 }
@@ -118,10 +117,3 @@ func (e *sumPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	}
 	return nil
 }
-
-
-
-
-
-
-
