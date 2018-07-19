@@ -5,6 +5,7 @@
 ![GitHub release](https://img.shields.io/github/release/pingcap/tidb.svg)
 [![CircleCI Status](https://circleci.com/gh/pingcap/tidb.svg?style=shield)](https://circleci.com/gh/pingcap/tidb)
 [![Coverage Status](https://coveralls.io/repos/github/pingcap/tidb/badge.svg?branch=master)](https://coveralls.io/github/pingcap/tidb?branch=master)
+[![Discord](https://img.shields.io/badge/chat-on%20discord-7289da.svg)](https://discord.gg/6NN7rgr)
 
 ## What is TiDB?
 
@@ -68,6 +69,7 @@ for details on submitting patches and the contribution workflow.
 - **Reddit**: https://www.reddit.com/r/TiDB/
 - **Stack Overflow**: https://stackoverflow.com/questions/tagged/tidb
 - **Mailing list**: [Google Group](https://groups.google.com/forum/#!forum/tidb-user)
+- **Discord**: [TiDB Discord Link](https://discord.gg/6NN7rgr)
 
 ## License
 TiDB is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
