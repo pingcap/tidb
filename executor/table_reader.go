@@ -26,6 +26,9 @@ import (
 	"golang.org/x/net/context"
 )
 
+// make sure `TableReaderExecutor` implements `Executor`.
+var _ Executor = &TableReaderExecutor{}
+
 // TableReaderExecutor sends DAG request and reads table data from kv layer.
 type TableReaderExecutor struct {
 	baseExecutor
