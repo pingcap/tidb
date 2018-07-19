@@ -223,3 +223,14 @@ func checkAddPartitionTooManyPartitions(piDefs int) error {
 	}
 	return nil
 }
+
+func getPartitionIDs(table *model.TableInfo) []int64 {
+	if table.GetPartitionInfo() == nil {
+		return []int64{}
+	}
+	partitionIDs := make([]int64, 0, len(table.Partition.Definitions))
+	for _, def := range table.Partition.Definitions {
+		partitionIDs = append(partitionIDs, def.ID)
+	}
+	return partitionIDs
+}

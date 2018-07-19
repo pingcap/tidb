@@ -2672,3 +2672,93 @@ func (s *testDBSuite) TestAddPartitionTooManyPartitions(c *C) {
 	);`
 	s.testErrorCode(c, sql3, tmysql.ErrTooManyPartitions)
 }
+
+func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test;")
+	// Test truncate common table.
+	s.tk.MustExec("drop table if exists t1;")
+	s.tk.MustExec("create table t1 (id int(11));")
+	for i := 0; i < 100; i++ {
+		s.mustExec(c, "insert into t1 values (?)", i)
+	}
+	result := s.tk.MustQuery("select * from t1;")
+	c.Assert(len(result.Rows()), Equals, 100)
+	s.tk.MustExec("truncate table t1;")
+	result = s.tk.MustQuery("select * from t1")
+	c.Assert(len(result.Rows()), Equals, 0)
+
+	// Test drop common table.
+	s.tk.MustExec("drop table if exists t2;")
+	s.tk.MustExec("create table t2 (id int(11));")
+	for i := 0; i < 100; i++ {
+		s.mustExec(c, "insert into t2 values (?)", i)
+	}
+	result = s.tk.MustQuery("select * from t2;")
+	c.Assert(len(result.Rows()), Equals, 100)
+	s.tk.MustExec("drop table t2;")
+	s.testErrorCode(c, "select * from t2;", tmysql.ErrNoSuchTable)
+
+	// Test truncate table partition.
+	s.tk.MustExec("drop table if exists t3;")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
+	s.tk.MustExec(` create table t3(
+		id int, name varchar(50), 
+		purchased date
+	)
+	partition by range( year(purchased) ) (
+    	partition p0 values less than (1990),
+    	partition p1 values less than (1995),
+    	partition p2 values less than (2000),
+    	partition p3 values less than (2005),
+    	partition p4 values less than (2010),
+    	partition p5 values less than (2015)
+   	);`)
+	s.tk.MustExec(`insert into t3 values
+	(1, 'desk organiser', '2003-10-15'),
+	(2, 'alarm clock', '1997-11-05'),
+	(3, 'chair', '2009-03-10'),
+	(4, 'bookcase', '1989-01-10'),
+	(5, 'exercise bike', '2014-05-09'),
+	(6, 'sofa', '1987-06-05'),
+	(7, 'espresso maker', '2011-11-22'),
+	(8, 'aquarium', '1992-08-04'),
+	(9, 'study desk', '2006-09-16'),
+	(10, 'lava lamp', '1998-12-25');`)
+	result = s.tk.MustQuery("select * from t3;")
+	c.Assert(len(result.Rows()), Equals, 10)
+	s.tk.MustExec("truncate table t3;")
+	result = s.tk.MustQuery("select * from t3;")
+	c.Assert(len(result.Rows()), Equals, 0)
+
+	// Test drop table partition.
+	s.tk.MustExec("drop table if exists t4;")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
+	s.tk.MustExec(` create table t4(
+		id int, name varchar(50), 
+		purchased date
+	)
+	partition by range( year(purchased) ) (
+    	partition p0 values less than (1990),
+    	partition p1 values less than (1995),
+    	partition p2 values less than (2000),
+    	partition p3 values less than (2005),
+    	partition p4 values less than (2010),
+    	partition p5 values less than (2015)
+   	);`)
+	s.tk.MustExec(`insert into t4 values
+	(1, 'desk organiser', '2003-10-15'),
+	(2, 'alarm clock', '1997-11-05'),
+	(3, 'chair', '2009-03-10'),
+	(4, 'bookcase', '1989-01-10'),
+	(5, 'exercise bike', '2014-05-09'),
+	(6, 'sofa', '1987-06-05'),
+	(7, 'espresso maker', '2011-11-22'),
+	(8, 'aquarium', '1992-08-04'),
+	(9, 'study desk', '2006-09-16'),
+	(10, 'lava lamp', '1998-12-25');`)
+	result = s.tk.MustQuery("select * from t4;")
+	c.Assert(len(result.Rows()), Equals, 10)
+	s.tk.MustExec("drop table t4;")
+	s.testErrorCode(c, "select * from t4;", tmysql.ErrNoSuchTable)
+}
