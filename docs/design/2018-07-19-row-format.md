@@ -2,7 +2,7 @@
 # Proposal: A new storage row format for efficient decoding
 
 - Author(s):     Yuxing ZHOU
-- Last updated:  2018-07-17
+- Last updated:  2018-07-19
 
 ## Abstract
 
@@ -16,35 +16,44 @@ In the current row format, each column is encoded with the column ID followed by
 
 The new format is defined as follows:
 
-* 1 byte codec version. Its value starts from 128, so we can upgrade TiDB in a compatible way.
+* 1 byte codec version
+
+    Its value starts from 128, so we can upgrade TiDB in a compatible way.
 
 * 1 byte row type flag containing the following attribute:
 
 	- 1 bit IsBig
-	A row is big if the max column ID is greater than 255 or the total size of the values is greater than 65535. We can add more types in this byte later if needed, for example storing 2 bytes column ID.
 
+        A row is big if the max column ID is greater than 255 or the total size of the values is greater than 65535. We can add more types in this byte later if needed, for example storing 2 bytes column ID.
 
-* 2 bytes number of not-null columns
+* 2-byte number of not-null columns
 
-* 2 bytes number of null columns
+* 2-byte number of null columns
 
-We can store 65536 columns in a row and this number is much larger than the upper limit in TiDB.
+    We can store 65536 columns in a row and this number is much larger than the upper limit in TiDB.
 
-* not null column ID array
-If there are too many columns, each column ID takes 4 bytes, otherwise the column ID takes 1 byte. The IDs array is sorted in an ascending order.
+* not-null column ID array
+
+    If there are too many columns, each column ID takes 4 bytes, otherwise the column ID takes 1 byte. The IDs array is sorted in an ascending order.
 
 * null column ID array
 
-This array lists the IDs of all the columns with value `null`. The IDs array is sorted in an ascending order.
+    This array lists the IDs of all the columns with value `null`. The IDs array is sorted in an ascending order.
 
 * offset array
-Specifies the end offset of each not-null column value, relative to the start of the first column value. If the row is big, one offset takes 4 bytes, otherwise it takes 2 bytes.
+
+     Specifies the end offset of each not-null column value, relative to the start of the first column value. If the row is big, one offset takes 4 bytes, otherwise it takes 2 bytes.
 
 * column values
-For integer values, we store {byte, uint16, uint32, uint64} instead of varint for fast decoding. The type can be inferred by the column value size.
+
+    For integer values, we store {byte, uint16, uint32, uint64} instead of varint for fast decoding. The type can be inferred by the column value size.
 The string value is stored as it is. Other types are encoded in the old way without the first type flag byte.
 
-To find a column in a row, we can perform a binary search on the not-null column ID array. If it’s not found, then we perform a binary search on the null column ID array. The complexity is O(logN).
+
+To find a column in a row, we can perform a binary search on the not-null column ID array. If it’s not found, then we perform a binary search on the null column ID array.
+The complexity is O(logN).
+
+If the column ID can not be found in the row, we use the column default value in the schema.
 
 ## Rationale
 
@@ -59,7 +68,6 @@ But for the decoding performance, I choose the dynamic size of 1, 2, 4, 8 to sto
 The null column IDs array is separated from not-null column IDs, so we don’t need to store offsets to null columns. It saves a lot of space when most of the columns are `null`.
 
 And we can not omit the null column ID because if the column ID is not found in the row, we will use the default value in the schema which may not be `null`.
-
 
 ## Compatibility
 
