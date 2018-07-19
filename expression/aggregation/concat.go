@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -92,8 +93,11 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 		cf.writeValue(evalCtx, val)
 	}
 	if cf.maxLen > 0 && uint64(evalCtx.Buffer.Len()) > cf.maxLen {
-		//TODO: Deal with condition that cf.maxLen overflow int
-		evalCtx.Buffer.Truncate(int(cf.maxLen))
+		i := mathutil.MaxInt
+		if uint64(i) > cf.maxLen {
+			i = int(cf.maxLen)
+		}
+		evalCtx.Buffer.Truncate(i)
 		if !cf.truncated {
 			sc.AppendWarning(expression.ErrCutValueGroupConcat)
 		}

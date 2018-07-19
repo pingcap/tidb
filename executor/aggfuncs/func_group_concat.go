@@ -16,6 +16,7 @@ package aggfuncs
 import (
 	"bytes"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -26,7 +27,7 @@ type baseGroupConcat4String struct {
 	baseAggFunc
 
 	sep       string
-	maxLen    int
+	maxLen    uint64
 	truncated bool
 }
 
@@ -85,8 +86,12 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		}
 	}
 	p.buffer.Truncate(p.buffer.Len() - len(e.sep))
-	if e.maxLen > 0 && p.buffer.Len() > e.maxLen {
-		p.buffer.Truncate(e.maxLen)
+	if e.maxLen > 0 && uint64(p.buffer.Len()) > e.maxLen {
+		i := mathutil.MaxInt
+		if uint64(i) > e.maxLen {
+			i = int(e.maxLen)
+		}
+		p.buffer.Truncate(i)
 		if !e.truncated {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat)
 		}
@@ -146,8 +151,12 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		// write values
 		p.buffer.WriteString(joinedVals)
 	}
-	if e.maxLen > 0 && p.buffer.Len() > e.maxLen {
-		p.buffer.Truncate(e.maxLen)
+	if e.maxLen > 0 && uint64(p.buffer.Len()) > e.maxLen {
+		i := mathutil.MaxInt
+		if uint64(i) > e.maxLen {
+			i = int(e.maxLen)
+		}
+		p.buffer.Truncate(i)
 		if !e.truncated {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat)
 		}

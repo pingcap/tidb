@@ -256,7 +256,7 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 				panic(fmt.Sprintf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
 			}
 		}
-		maxLen, err := strconv.Atoi(s)
+		maxLen, err := strconv.ParseUint(s, 10, 64)
 		// Should never happen
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))

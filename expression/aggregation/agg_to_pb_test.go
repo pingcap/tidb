@@ -70,7 +70,6 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 			Name:        funcName,
 			Args:        []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
 			HasDistinct: true,
-			SessionCtx:  s.ctx,
 		}
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)
@@ -92,7 +91,6 @@ func (s *testEvaluatorSuite) TestAggFunc2Pb(c *C) {
 			Name:        funcName,
 			Args:        []expression.Expression{dg.genColumn(mysql.TypeDouble, 1)},
 			HasDistinct: false,
-			SessionCtx:  s.ctx,
 		}
 		pbExpr := AggFuncToPBExpr(sc, client, aggFunc)
 		js, err := json.Marshal(pbExpr)

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 )
@@ -45,6 +46,7 @@ func generateRowData() []types.DatumRow {
 
 func (s *testAggFuncSuit) SetUpSuite(c *C) {
 	s.ctx = mock.NewContext()
+	s.ctx.GetSessionVars().GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	s.rows = generateRowData()
 	s.nullRow = []types.Datum{{}}
 }
