@@ -528,10 +528,10 @@ func (d *ddl) SetBinlogClient(binlogCli interface{}) {
 func (d *ddl) GetServerInfo() *util.DDLServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &util.DDLServerInfo{
+		ID:         d.uuid,
 		IP:         cfg.AdvertiseAddress,
 		StatusPort: cfg.Status.StatusPort,
 		Lease:      cfg.Lease,
-		ID:         d.uuid,
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = printer.TiDBGitHash

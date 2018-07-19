@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table/tables"
@@ -433,5 +435,22 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`drop table if exists test`)
 	tk.MustExec(`create table test ( a  TIMESTAMP, primary key(a) );`)
 	tk.MustExec(`insert into test set a='2015-08-10 04:18:49';`)
+	tk.MustExec(`admin check table test;`)
+
+	// Test partitioned table.
+	tk.MustExec(`drop table if exists test`)
+	tk.MustExec(`set @@tidb_enable_table_partition = 1`)
+	tk.MustExec(`create table test (
+		      a int not null,
+		      c int not null,
+		      primary key (a, c),
+		      key idx_a (a)) partition by range (c) (
+		      partition p1 values less than (1),
+		      partition p2 values less than (4),
+		      partition p3 values less than (7),
+		      partition p4 values less than (11))`)
+	for i := 1; i <= 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into test values (%d, %d);", i, i))
+	}
 	tk.MustExec(`admin check table test;`)
 }
