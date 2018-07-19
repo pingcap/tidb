@@ -17,9 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -207,30 +205,11 @@ func (e *InsertExec) Open(ctx context.Context) error {
 }
 
 // updateDupRow updates a duplicate row to a new row.
-func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) (err error) {
-	// Get the table record row from storage for update.
-	oldValue, ok := e.dupOldRowValues[string(e.Table.RecordKey(handle))]
-	if !ok {
-		return errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", handle)
-	}
-	cols := e.Table.WritableCols()
-	oldRow, oldRowMap, err := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), handle, cols, oldValue)
+func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
+	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
-	for _, col := range cols {
-		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
-			_, found := oldRowMap[col.ID]
-			if !found {
-				oldRow[col.Offset], err = table.GetColOriginDefaultValue(e.ctx, col.ToInfo())
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-	}
-
 	// Do update row.
 	updatedRow, handleChanged, newHandle, err := e.doDupRowUpdate(handle, oldRow, row.row, onDuplicate)
 	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {

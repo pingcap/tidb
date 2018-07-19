@@ -2212,7 +2212,7 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 
 func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 	sv := s.ctx.GetSessionVars()
-	originTZ := sv.GetTimeZone()
+	originTZ := sv.Location()
 	sv.TimeZone, _ = time.LoadLocation("Asia/Tokyo")
 	defer func() {
 		sv.TimeZone = originTZ
