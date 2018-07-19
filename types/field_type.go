@@ -53,8 +53,8 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
-// NeedCast checks whether two FieldType objects are equal.
-func (ft *FieldType) NeedCast(other *FieldType) bool {
+// Equal checks whether two FieldType objects are equal.
+func (ft *FieldType) Equal(other *FieldType) bool {
 	// We do not need to compare whole `ft.Flag == other.Flag` when wrapping cast upon an Expression.
 	// but need compare unsigned_flag of ft.Flag.
 	partialEqual := ft.Tp == other.Tp &&
@@ -64,14 +64,14 @@ func (ft *FieldType) NeedCast(other *FieldType) bool {
 		ft.Collate == other.Collate &&
 		mysql.HasUnsignedFlag(ft.Flag) == mysql.HasUnsignedFlag(other.Flag)
 	if !partialEqual || len(ft.Elems) != len(other.Elems) {
-		return true
+		return false
 	}
 	for i := range ft.Elems {
 		if ft.Elems[i] != other.Elems[i] {
-			return true
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`

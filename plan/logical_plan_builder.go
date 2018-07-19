@@ -653,7 +653,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		for i, srcCol := range child.Schema().Columns {
 			dstType := unionSchema.Columns[i].RetType
 			srcType := srcCol.RetType
-			if srcType.NeedCast(dstType) {
+			if !srcType.Equal(dstType) {
 				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol, dstType)
 				needProjection = true
 			} else {
