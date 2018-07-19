@@ -417,8 +417,9 @@ type mockSessionManager struct {
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager) ShowProcessList() []util.ProcessInfo {
-	return []util.ProcessInfo{msm.ShowProcess()}
+func (msm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
+	ps := msm.ShowProcess()
+	return map[uint64]util.ProcessInfo{ps.ID: ps}
 }
 
 // Kill implements the SessionManager.Kill interface.
@@ -469,6 +470,34 @@ func (s *testSuite) TestShowWarnings(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data Truncated"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+
+	// Test Warning level 'Error'
+	testSQL = `create table show_warnings (a int)`
+	tk.Exec(testSQL)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_warnings' already exists"))
+	tk.MustQuery("select @@error_count").Check(testutil.RowsWithSep("|", "1"))
+
+	// Test Warning level 'Note'
+	testSQL = `create table show_warnings_2 (a int)`
+	tk.MustExec(testSQL)
+	testSQL = `create table if not exists show_warnings_2 like show_warnings`
+	tk.Exec(testSQL)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1050|Table 'test.show_warnings_2' already exists"))
+	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "1"))
+	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "0"))
+}
+
+func (s *testSuite) TestShowErrors(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testSQL := `create table if not exists show_errors (a int)`
+	tk.MustExec(testSQL)
+	testSQL = `create table show_errors (a int)`
+	tk.Exec(testSQL)
+
+	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
 }
 
 func (s *testSuite) TestIssue3641(c *C) {

@@ -413,6 +413,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// for admin
 		{"admin show ddl;", true},
 		{"admin show ddl jobs;", true},
+		{"admin show ddl jobs 20;", true},
+		{"admin show ddl jobs -1;", false},
 		{"admin show ddl job queries 1", true},
 		{"admin show ddl job queries 1, 2, 3, 4", true},
 		{"admin check table t1, t2;", true},
@@ -451,7 +453,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"select 1 from dual limit 1", true},
 		{"select 1 where exists (select 2)", false},
 		{"select 1 from dual where not exists (select 2)", true},
-
+		{"select 1 as a from dual order by a", true},
+		{"select 1 as a from dual where 1 < any (select 2) order by a", true},
 		{"select 1 order by 1", true},
 
 		// for https://github.com/pingcap/tidb/issues/320
@@ -549,8 +552,17 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"load stats '/tmp/stats.json'", true},
 		// set
 		// user defined
+		{"SET @ = 1", true},
+		{"SET @' ' = 1", true},
+		{"SET @! = 1", false},
+		{"SET @1 = 1", true},
 		{"SET @a = 1", true},
 		{"SET @b := 1", true},
+		{"SET @.c = 1", true},
+		{"SET @_d = 1", true},
+		{"SET @_e._$. = 1", true},
+		{"SET @~f = 1", false},
+		{"SET @`g,` = 1", true},
 		// session system variables
 		{"SET SESSION autocommit = 1", true},
 		{"SET @@session.autocommit = 1", true},
@@ -1566,7 +1578,24 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table if not exists `t` (`id` int not null auto_increment comment '消息ID', primary key `pk_id` (`id`) );", true},
 		// Create table with like.
 		{"create table a like b", true},
+		{"create table a (like b)", true},
 		{"create table if not exists a like b", true},
+		{"create table if not exists a (like b)", true},
+		{"create table if not exists a like (b)", false},
+		{"create table a (t int) like b", false},
+		{"create table a (t int) like (b)", false},
+		// Create table with select statement
+		{"create table a select * from b", true},
+		{"create table a as select * from b", true},
+		{"create table a (m int, n datetime) as select * from b", true},
+		{"create table a (unique(n)) as select n from b", true},
+		{"create table a ignore as select n from b", true},
+		{"create table a replace as select n from b", true},
+		{"create table a (m int) replace as (select n as m from b union select n+1 as m from c group by 1 limit 2)", true},
+
+		// Create table with no option is valid for parser
+		{"create table a", true},
+
 		{"create table t (a timestamp default now)", false},
 		{"create table t (a timestamp default now())", true},
 		{"create table t (a timestamp default now() on update now)", false},
@@ -1586,6 +1615,16 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED FIRST", true},
 		{"ALTER TABLE t ADD COLUMN a SMALLINT UNSIGNED AFTER b", true},
+		{"ALTER TABLE employees ADD PARTITION", true},
+		{"ALTER TABLE employees ADD PARTITION ( PARTITION P1 VALUES LESS THAN (2010))", true},
+		{"ALTER TABLE employees ADD PARTITION ( PARTITION P2 VALUES LESS THAN MAXVALUE)", true},
+		{`ALTER TABLE employees ADD PARTITION (
+				PARTITION P1 VALUES LESS THAN (2010),
+				PARTITION P2 VALUES LESS THAN (2015),
+				PARTITION P3 VALUES LESS THAN MAXVALUE)`, true},
+		// For drop table partition statement.
+		{"alter table t drop partition p1;", true},
+		{"alter table t drop partition p2;", true},
 		{"ALTER TABLE t DISABLE KEYS", true},
 		{"ALTER TABLE t ENABLE KEYS", true},
 		{"ALTER TABLE t MODIFY COLUMN a varchar(255)", true},
@@ -1731,6 +1770,14 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 	c.Assert(hints[1].HintName.L, Equals, "tidb_hj")
 	c.Assert(hints[1].Tables[0].L, Equals, "t3")
 	c.Assert(hints[1].Tables[1].L, Equals, "t4")
+
+	stmt, err = parser.Parse("SELECT /*+ MAX_EXECUTION_TIME(1000) */ * FROM t1 INNER JOIN t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, IsNil)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+	hints = selectStmt.TableHints
+	c.Assert(len(hints), Equals, 1)
+	c.Assert(hints[0].HintName.L, Equals, "max_execution_time")
+	c.Assert(hints[0].MaxExecutionTime, Equals, uint64(1000))
 }
 
 func (s *testParserSuite) TestType(c *C) {

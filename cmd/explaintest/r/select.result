@@ -1,0 +1,307 @@
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (
+c1 int,
+c2 int,
+c3 int,
+PRIMARY KEY (c1)
+);
+INSERT INTO t VALUES (1,2,3);
+SELECT * from t;
+c1	c2	c3
+1	2	3
+SELECT c1, c2, c3 from t;
+c1	c2	c3
+1	2	3
+SELECT c1, c1 from t;
+c1	c1
+1	1
+SELECT c1 as a, c2 as a from t;
+a	a
+1	2
+SELECT 1;
+1
+1
+SELECT 1, 1;
+1	1
+1	1
+SET @@autocommit = 1;
+SELECT @@autocommit;
+@@autocommit
+1
+SELECT @@autocommit, @@autocommit;
+@@autocommit	@@autocommit
+1	1
+SET @a = 10;
+SET @b = 11;
+SELECT @a, @@autocommit;
+@a	@@autocommit
+10	1
+SELECT @a, @b;
+@a	@b
+10	11
+SELECT 1, @a;
+1	@a
+1	10
+SELECT 1, @a as a;
+1	a
+1	10
+SELECT 1, @a, @@autocommit as a, c1 from t;
+1	@a	a	c1
+1	10	1	1
+SET @b = "123";
+SELECT @b + "123";
+@b + "123"
+246
+SELECT 1 + 1;
+1 + 1
+2
+SELECT 1 a, 1 as a, 1 + 1 a;
+a	a	a
+1	1	2
+SELECT c1 a, c1 as a from t;
+a	a
+1	1
+SELECT * from t LIMIT 0,1;
+c1	c2	c3
+1	2	3
+SELECT * from t LIMIT 1;
+c1	c2	c3
+1	2	3
+SELECT * from t LIMIT 1,1;
+c1	c2	c3
+SELECT * from t LIMIT 1 OFFSET 0;
+c1	c2	c3
+1	2	3
+DROP TABLE IF EXISTS t2;
+CREATE TABLE t2 (
+c1 int,
+c2 int,
+PRIMARY KEY (c1)
+);
+INSERT INTO t2 VALUES (1,2);
+SELECT * from t a;
+c1	c2	c3
+1	2	3
+SELECT * from t a, t2 b;
+c1	c2	c3	c1	c2
+1	2	3	1	2
+SELECT * from t as a, t2 as b;
+c1	c2	c3	c1	c2
+1	2	3	1	2
+SELECT * from t a left join t2 b on a.c1 = b.c1;
+c1	c2	c3	c1	c2
+1	2	3	1	2
+SELECT * from (SELECT 1, 1) as a;
+Error 1060: Duplicate column name '1'
+SELECT * from (SELECT * FROM t, t2) as a;
+Error 1060: Duplicate column name 'c1'
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (c1 INT, c2 INT);
+INSERT INTO t VALUES (1, 2), (1, 1), (1, 3);
+SELECT c1=c2 FROM t;
+c1=c2
+0
+1
+0
+SELECT 1=1;
+1=1
+1
+SELECT t.c1 + t.c2 from t limit 1;
+t.c1 + t.c2
+3
+SELECT t.c1 from t limit 1;
+c1
+1
+SELECT t.c1 + c2 from t limit 1;
+t.c1 + c2
+3
+SELECT c1 + 10 from t limit 1;
+c1 + 10
+11
+SELECT t.c1 + 10 from t limit 1;
+t.c1 + 10
+11
+SELECT all c1, c2 from t limit 1;
+c1	c2
+1	2
+SELECT distinct c1, c2 from t order by c1, c2 limit 1;
+c1	c2
+1	1
+SELECT c2 from t where not (c2 > 2);
+c2
+2
+1
+select c2 from t where not null is null;
+c2
+select !(1 + 2);
+!(1 + 2)
+0
+select + - 1, --1, +-+-+1, + "123";
++ - 1	--1	+-+-+1	+ "123"
+-1	1	1	123
+select --------------------1, ++++++++++++++++++++1;
+--------------------1	++++++++++++++++++++1
+1	1
+select --+(1 + 1), +-+-(1 * 1);
+--+(1 + 1)	+-+-(1 * 1)
+2	1
+select * from t where null;
+c1	c2
+select * from t where 1;
+c1	c2
+1	2
+1	1
+1	3
+select * from t where 0;
+c1	c2
+select * from t where 0 * 10;
+c1	c2
+select * from t where null is not null;
+c1	c2
+select * from t where !1;
+c1	c2
+select * from t where 1 && 0 || 3 && null;
+c1	c2
+select * from t as a, t2 as b;
+c1	c2	c1	c2
+1	2	1	2
+1	1	1	2
+1	3	1	2
+select * from t as a cross join t2 as b;
+c1	c2	c1	c2
+1	2	1	2
+1	1	1	2
+1	3	1	2
+select * from t as a join t2 as b;
+c1	c2	c1	c2
+1	2	1	2
+1	1	1	2
+1	3	1	2
+select * from t as a join t2 as b on a.c2 = b.c2;
+c1	c2	c1	c2
+1	2	1	2
+select * from (t);
+c1	c2
+1	2
+1	1
+1	3
+select * from (t as a, t2 as b);
+c1	c2	c1	c2
+1	2	1	2
+1	1	1	2
+1	3	1	2
+select * from (t as a cross join t2 as b);
+c1	c2	c1	c2
+1	2	1	2
+1	1	1	2
+1	3	1	2
+select 1 as a from t;
+a
+1
+1
+1
+select count(*), 1 from t;
+count(*)	1
+3	1
+select *, 1 from t;
+c1	c2	1
+1	2	1
+1	1	1
+1	3	1
+select 1, count(1), sum(1);
+1	count(1)	sum(1)
+1	1	1
+drop table if exists t1;
+create table t1(a int primary key, b int, c int, index idx(b, c));
+insert into t1 values(1, 2, 3);
+insert into t1 values(2, 3, 4);
+insert into t1 values(3 ,4, 5);
+insert into t1 values(4, 5, 6);
+insert into t1 values(5, 6, 7);
+insert into t1 values(6, 7, 8);
+insert into t1 values(7, 8, 9);
+insert into t1 values(9, 10, 11);
+explain select a, c from t1 use index(idx) order by a limit 5;
+id	count	task	operator info
+TopN_7	5.00	root	test.t1.a:asc, offset:0, count:5
+└─IndexReader_15	5.00	root	index:TopN_14
+  └─TopN_14	5.00	cop	test.t1.a:asc, offset:0, count:5
+    └─IndexScan_13	10000.00	cop	table:t1, index:b, c, range:[NULL,+inf], keep order:false, stats:pseudo
+select c, a from t1 use index(idx) order by a limit 5;
+c	a
+3	1
+4	2
+5	3
+6	4
+7	5
+drop table if exists t;
+create table t (a int, b int, c int, key idx(a, b, c));
+explain select count(a) from t;
+id	count	task	operator info
+StreamAgg_16	1.00	root	funcs:count(col_0)
+└─TableReader_17	1.00	root	data:StreamAgg_8
+  └─StreamAgg_8	1.00	cop	funcs:count(test.t.a)
+    └─TableScan_15	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+select count(a) from t;
+count(a)
+0
+insert t values(0,0,0);
+explain select distinct b from t group by a;
+id	count	task	operator info
+HashAgg_7	8000.00	root	group by:test.t.b, funcs:firstrow(test.t.b)
+└─StreamAgg_20	8000.00	root	group by:col_1, funcs:firstrow(col_0)
+  └─IndexReader_21	8000.00	root	index:StreamAgg_11
+    └─StreamAgg_11	8000.00	cop	group by:test.t.a, funcs:firstrow(test.t.b)
+      └─IndexScan_19	10000.00	cop	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
+select distinct b from t group by a;
+b
+0
+explain select count(b) from t group by a;
+id	count	task	operator info
+StreamAgg_17	8000.00	root	group by:col_1, funcs:count(col_0)
+└─IndexReader_18	8000.00	root	index:StreamAgg_8
+  └─StreamAgg_8	8000.00	cop	group by:test.t.a, funcs:count(test.t.b)
+    └─IndexScan_16	10000.00	cop	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
+select count(b) from t group by a;
+count(b)
+1
+insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);
+explain select count(a) from t where b>0 group by a, b;
+id	count	task	operator info
+StreamAgg_21	2666.67	root	group by:col_1, col_2, funcs:count(col_0)
+└─IndexReader_22	2666.67	root	index:StreamAgg_9
+  └─StreamAgg_9	2666.67	cop	group by:test.t.a, test.t.b, funcs:count(test.t.a)
+    └─Selection_20	3333.33	cop	gt(test.t.b, 0)
+      └─IndexScan_19	10000.00	cop	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
+select count(a) from t where b>0 group by a, b;
+count(a)
+3
+1
+1
+1
+explain select count(a) from t where b>0 group by a, b order by a;
+id	count	task	operator info
+Projection_7	2666.67	root	count(a)
+└─StreamAgg_33	2666.67	root	group by:col_2, col_3, funcs:count(col_0), firstrow(col_1)
+  └─IndexReader_34	2666.67	root	index:StreamAgg_31
+    └─StreamAgg_31	2666.67	cop	group by:test.t.a, test.t.b, funcs:count(test.t.a), firstrow(test.t.a)
+      └─Selection_24	3333.33	cop	gt(test.t.b, 0)
+        └─IndexScan_23	10000.00	cop	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
+select count(a) from t where b>0 group by a, b order by a;
+count(a)
+3
+1
+1
+1
+explain select count(a) from t where b>0 group by a, b order by a limit 1;
+id	count	task	operator info
+Projection_9	1.00	root	count(a)
+└─Limit_15	1.00	root	offset:0, count:1
+  └─StreamAgg_42	1.00	root	group by:col_2, col_3, funcs:count(col_0), firstrow(col_1)
+    └─IndexReader_43	1.00	root	index:StreamAgg_37
+      └─StreamAgg_37	1.00	cop	group by:test.t.a, test.t.b, funcs:count(test.t.a), firstrow(test.t.a)
+        └─Selection_41	1.25	cop	gt(test.t.b, 0)
+          └─IndexScan_40	3.75	cop	table:t, index:a, b, c, range:[NULL,+inf], keep order:true, stats:pseudo
+select count(a) from t where b>0 group by a, b order by a limit 1;
+count(a)
+3

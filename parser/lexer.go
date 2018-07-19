@@ -417,8 +417,26 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
 	ch1 := s.r.peek()
-	if isIdentFirstChar(ch1) {
-		s.r.incAsLongAs(isIdentChar)
+	if ch1 == '\'' || ch1 == '"' {
+		nTok, nPos, nLit := startString(s)
+		if nTok == stringLit {
+			tok = singleAtIdentifier
+			pos = nPos
+			lit = nLit
+		} else {
+			tok = int('@')
+		}
+	} else if ch1 == '`' {
+		nTok, nPos, nLit := scanQuotedIdent(s)
+		if nTok == quotedIdentifier {
+			tok = singleAtIdentifier
+			pos = nPos
+			lit = nLit
+		} else {
+			tok = int('@')
+		}
+	} else if isUserVarChar(ch1) {
+		s.r.incAsLongAs(isUserVarChar)
 		tok, lit = singleAtIdentifier, s.r.data(&pos)
 	} else if ch1 == '@' {
 		s.r.inc()
@@ -435,7 +453,7 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 		s.r.incAsLongAs(isIdentChar)
 		tok, lit = doubleAtIdentifier, s.r.data(&pos)
 	} else {
-		tok = int('@')
+		tok, lit = singleAtIdentifier, s.r.data(&pos)
 	}
 	return
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
@@ -56,6 +57,7 @@ type TiDBStatement struct {
 	boundParams [][]byte
 	paramsType  []byte
 	ctx         *TiDBContext
+	rs          ResultSet
 }
 
 // ID implements PreparedStatement ID method.
@@ -107,10 +109,33 @@ func (ts *TiDBStatement) GetParamsType() []byte {
 	return ts.paramsType
 }
 
+// StoreResultSet stores ResultSet for stmt fetching
+func (ts *TiDBStatement) StoreResultSet(rs ResultSet) {
+	// refer to https://dev.mysql.com/doc/refman/5.7/en/cursor-restrictions.html
+	// You can have open only a single cursor per prepared statement.
+	// closing previous ResultSet before associating a new ResultSet with this statement
+	// if it exists
+	if ts.rs != nil {
+		terror.Call(ts.rs.Close)
+	}
+	ts.rs = rs
+}
+
+// GetResultSet gets ResultSet associated this statement
+func (ts *TiDBStatement) GetResultSet() ResultSet {
+	return ts.rs
+}
+
 // Reset implements PreparedStatement Reset method.
 func (ts *TiDBStatement) Reset() {
 	for i := range ts.boundParams {
 		ts.boundParams[i] = nil
+	}
+
+	// closing previous ResultSet if it exists
+	if ts.rs != nil {
+		terror.Call(ts.rs.Close)
+		ts.rs = nil
 	}
 }
 
@@ -122,6 +147,11 @@ func (ts *TiDBStatement) Close() error {
 		return errors.Trace(err)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
+
+	// close ResultSet associated with this statement
+	if ts.rs != nil {
+		terror.Call(ts.rs.Close)
+	}
 	return nil
 }
 
@@ -221,6 +251,11 @@ func (tc *TiDBContext) SetClientCapability(flags uint32) {
 
 // Close implements QueryCtx Close method.
 func (tc *TiDBContext) Close() error {
+	// close PreparedStatement associated with this connection
+	for _, v := range tc.stmts {
+		terror.Call(v.Close)
+	}
+
 	tc.session.Close()
 	return nil
 }
@@ -287,6 +322,8 @@ func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
 type tidbResultSet struct {
 	recordSet ast.RecordSet
 	columns   []*ColumnInfo
+	rows      []chunk.Row
+	closed    bool
 }
 
 func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
@@ -297,7 +334,22 @@ func (trs *tidbResultSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return trs.recordSet.Next(ctx, chk)
 }
 
+func (trs *tidbResultSet) StoreFetchedRows(rows []chunk.Row) {
+	trs.rows = rows
+}
+
+func (trs *tidbResultSet) GetFetchedRows() []chunk.Row {
+	if trs.rows == nil {
+		trs.rows = make([]chunk.Row, 0, 1024)
+	}
+	return trs.rows
+}
+
 func (trs *tidbResultSet) Close() error {
+	if trs.closed {
+		return nil
+	}
+	trs.closed = true
 	return trs.recordSet.Close()
 }
 
@@ -350,7 +402,11 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	}
 
 	if fld.Column.Decimal == types.UnspecifiedLength {
-		ci.Decimal = mysql.NotFixedDec
+		if fld.Column.Tp == mysql.TypeDuration {
+			ci.Decimal = types.DefaultFsp
+		} else {
+			ci.Decimal = mysql.NotFixedDec
+		}
 	} else {
 		ci.Decimal = uint8(fld.Column.Decimal)
 	}

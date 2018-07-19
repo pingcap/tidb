@@ -269,8 +269,11 @@ type CaseExpr struct {
 // Format the ExprNode into a Writer.
 func (n *CaseExpr) Format(w io.Writer) {
 	fmt.Fprint(w, "CASE ")
-	n.Value.Format(w)
-	fmt.Fprint(w, " ")
+	// Because the presence of `case when` syntax, `Value` could be nil and we need check this.
+	if n.Value != nil {
+		n.Value.Format(w)
+		fmt.Fprint(w, " ")
+	}
 	for _, clause := range n.WhenClauses {
 		fmt.Fprint(w, "WHEN ")
 		clause.Expr.Format(w)
@@ -944,6 +947,8 @@ type VariableExpr struct {
 	IsGlobal bool
 	// IsSystem indicates whether this variable is a system variable in current session.
 	IsSystem bool
+	// ExplicitScope indicates whether this variable scope is set explicitly.
+	ExplicitScope bool
 	// Value is the variable value.
 	Value ExprNode
 }

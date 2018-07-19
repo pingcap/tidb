@@ -14,6 +14,7 @@
 package aggregation
 
 import (
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -69,34 +70,25 @@ func (af *avgFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statement
 
 // GetResult implements Aggregation interface.
 func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
-	var x *types.MyDecimal
 	switch evalCtx.Value.Kind() {
 	case types.KindFloat64:
-		x = new(types.MyDecimal)
-		err := x.FromFloat64(evalCtx.Value.GetFloat64())
-		terror.Log(errors.Trace(err))
+		sum := evalCtx.Value.GetFloat64()
+		d.SetFloat64(sum / float64(evalCtx.Count))
+		return
 	case types.KindMysqlDecimal:
-		x = evalCtx.Value.GetMysqlDecimal()
-	default:
-		return
-	}
-	y := types.NewDecFromInt(evalCtx.Count)
-	to := new(types.MyDecimal)
-	err := types.DecimalDiv(x, y, to, types.DivFracIncr)
-	terror.Log(errors.Trace(err))
-	frac := af.RetTp.Decimal
-	if frac == -1 {
-		frac = mysql.MaxDecimalScale
-	}
-	err = to.Round(to, frac, types.ModeHalfEven)
-	terror.Log(errors.Trace(err))
-	if evalCtx.Value.Kind() == types.KindFloat64 {
-		f, err := to.ToFloat64()
+		x := evalCtx.Value.GetMysqlDecimal()
+		y := types.NewDecFromInt(evalCtx.Count)
+		to := new(types.MyDecimal)
+		err := types.DecimalDiv(x, y, to, types.DivFracIncr)
 		terror.Log(errors.Trace(err))
-		d.SetFloat64(f)
-		return
+		frac := af.RetTp.Decimal
+		if frac == -1 {
+			frac = mysql.MaxDecimalScale
+		}
+		err = to.Round(to, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfEven)
+		terror.Log(errors.Trace(err))
+		d.SetMysqlDecimal(to)
 	}
-	d.SetMysqlDecimal(to)
 	return
 }
 

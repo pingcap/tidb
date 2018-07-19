@@ -748,9 +748,14 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.Flen != UnspecifiedLength && target.Decimal != UnspecifiedLength {
 		f, err = TruncateFloat(f, target.Flen, target.Decimal)
-		err = sc.HandleOverflow(err, err)
+		if err = sc.HandleOverflow(err, err); err != nil {
+			return f, errors.Trace(err)
+		}
 	}
-	return f, errors.Trace(err)
+	if mysql.HasUnsignedFlag(target.Flag) && f < 0 {
+		return 0, overflow(f, target.Tp)
+	}
+	return f, nil
 }
 
 func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
@@ -1014,8 +1019,19 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 		timeStr, err := d.ToString()
 		if err != nil {
 			return ret, errors.Trace(err)
-		} else if timeStr[0] == '-' {
-			return ret, ErrInvalidTimeFormat.Gen("Incorrect time value '%s'", timeStr)
+		}
+		timeNum, err := d.ToInt64(sc)
+		if err != nil {
+			return ret, errors.Trace(err)
+		}
+		// For huge numbers(>'0001-00-00 00-00-00') try full DATETIME in ParseDuration.
+		if timeNum > MaxDuration && timeNum < 10000000000 {
+			// mysql return max in no strict sql mode.
+			ret.SetValue(Duration{Duration: MaxTime, Fsp: 0})
+			return ret, ErrInvalidTimeFormat.Gen("Incorrect time value: '%s'", timeStr)
+		}
+		if timeNum < -MaxDuration {
+			return ret, ErrInvalidTimeFormat.Gen("Incorrect time value: '%s'", timeStr)
 		}
 		t, err := ParseDuration(timeStr, fsp)
 		ret.SetValue(t)

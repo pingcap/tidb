@@ -138,9 +138,12 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 // MaxHistoryJobs is exported for testing.
 const MaxHistoryJobs = 10
 
+// DefNumHistoryJobs is default value of the default number of history job
+const DefNumHistoryJobs = 10
+
 // GetHistoryDDLJobs returns the DDL history jobs and an error.
-// The maximum count of history jobs is MaxHistoryJobs.
-func GetHistoryDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
+// The maximum count of history jobs is num.
+func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
 	jobs, err := t.GetAllHistoryDDLJobs()
 	if err != nil {
@@ -148,8 +151,8 @@ func GetHistoryDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	}
 
 	jobsLen := len(jobs)
-	if jobsLen > MaxHistoryJobs {
-		start := jobsLen - MaxHistoryJobs
+	if jobsLen > maxNumJobs {
+		start := jobsLen - maxNumJobs
 		jobs = jobs[start:]
 	}
 	jobsLen = len(jobs)
@@ -294,7 +297,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			return errors.Trace(err)
 		}
 
-		vals1, err = tablecodec.UnflattenDatums(vals1, fieldTypes, sessCtx.GetSessionVars().GetTimeZone())
+		vals1, err = tablecodec.UnflattenDatums(vals1, fieldTypes, sessCtx.GetSessionVars().Location())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -508,7 +511,8 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		}
 	}
 
-	rowMap, err := tablecodec.DecodeRow(value, colTps, sessCtx.GetSessionVars().GetTimeZone())
+	rowMap, err := tablecodec.DecodeRow(value, colTps, sessCtx.GetSessionVars().Location())
+
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -588,7 +592,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, sessCtx.GetSessionVars().GetTimeZone())
+		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, sessCtx.GetSessionVars().Location())
 		if err != nil {
 			return errors.Trace(err)
 		}

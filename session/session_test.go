@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -38,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -110,18 +108,11 @@ func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogR
 }
 
 func (s *testSessionSuite) TestForCoverage(c *C) {
-	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
-
 	// Just for test coverage.
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	planCache := tk.Se.GetSessionVars().PlanCacheEnabled
-	defer func() {
-		tk.Se.GetSessionVars().PlanCacheEnabled = planCache
-	}()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
 	tk.MustExec("insert t values ()")
-	tk.Se.GetSessionVars().PlanCacheEnabled = true
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values ()")
 
@@ -369,6 +360,33 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	result = tk.MustQuery("select @@autocommit;")
 	result.Check(testkit.Rows("ON"))
 	tk.MustExec("set @@global.autocommit=1")
+}
+
+func (s *testSessionSuite) TestGetSysVariables(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// Test ScopeSession
+	tk.MustExec("select @@warning_count")
+	tk.MustExec("select @@session.warning_count")
+	tk.MustExec("select @@local.warning_count")
+	_, err := tk.Exec("select @@global.warning_count")
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+
+	// Test ScopeGlobal
+	tk.MustExec("select @@max_connections")
+	tk.MustExec("select @@global.max_connections")
+	_, err = tk.Exec("select @@session.max_connections")
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+	_, err = tk.Exec("select @@local.max_connections")
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+
+	// Test ScopeNone
+	tk.MustExec("select @@performance_schema_max_mutex_classes")
+	tk.MustExec("select @@global.performance_schema_max_mutex_classes")
+	_, err = tk.Exec("select @@session.performance_schema_max_mutex_classes")
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+	_, err = tk.Exec("select @@local.performance_schema_max_mutex_classes")
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
@@ -1445,11 +1463,11 @@ func (s *testSchemaSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSchemaSuite) TestLoadSchemaFailed(c *C) {
-	atomic.StoreInt32(&session.SchemaOutOfDateRetryTimes, int32(3))
-	atomic.StoreInt64(&session.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
+	atomic.StoreInt32(&domain.SchemaOutOfDateRetryTimes, int32(3))
+	atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(20*time.Millisecond))
 	defer func() {
-		atomic.StoreInt32(&session.SchemaOutOfDateRetryTimes, 10)
-		atomic.StoreInt64(&session.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
+		atomic.StoreInt32(&domain.SchemaOutOfDateRetryTimes, 10)
+		atomic.StoreInt64(&domain.SchemaOutOfDateRetryInterval, int64(500*time.Millisecond))
 	}()
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -2055,4 +2073,41 @@ func (s *testSessionSuite) TestCommitRetryCount(c *C) {
 	// No auto retry because retry limit is set to 0.
 	_, err := tk1.Se.Execute(context.Background(), "commit")
 	c.Assert(err, NotNil)
+}
+
+func (s *testSessionSuite) TestDisableTxnAutoRetry(c *C) {
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.MustExec("create table no_retry (id int)")
+	tk1.MustExec("insert into no_retry values (1)")
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 1")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("update no_retry set id = 2")
+
+	tk2.MustExec("begin")
+	tk2.MustExec("update no_retry set id = 3")
+	tk2.MustExec("commit")
+
+	// No auto retry because tidb_disable_txn_auto_retry is set to 1.
+	_, err := tk1.Se.Execute(context.Background(), "commit")
+	c.Assert(err, NotNil)
+
+	// session 1 starts a transaction early.
+	// execute a select statement to clear retry history.
+	tk1.MustExec("select 1")
+	tk1.Se.NewTxn()
+	// session 2 update the value.
+	tk2.MustExec("update no_retry set id = 4")
+	// Autocommit update will retry, so it would not fail.
+	tk1.MustExec("update no_retry set id = 5")
+
+	// RestrictedSQL should retry.
+	tk1.Se.GetSessionVars().InRestrictedSQL = true
+	tk1.MustExec("begin")
+
+	tk2.MustExec("update no_retry set id = 6")
+
+	tk1.MustExec("update no_retry set id = 7")
+	tk1.MustExec("commit")
 }

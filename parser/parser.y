@@ -398,34 +398,36 @@ import (
 	variables	"VARIABLES"
 	view		"VIEW"
 	warnings	"WARNINGS"
+	identSQLErrors	"ERRORS"
 	week		"WEEK"
 	yearType	"YEAR"
 
 	/* The following tokens belong to NotKeywordToken. */
-	addDate		"ADDDATE"
-	bitAnd		"BIT_AND"
-	bitOr		"BIT_OR"
-	bitXor		"BIT_XOR"
-	cast		"CAST"
-	copyKwd		"COPY"
-	count		"COUNT"
-	curTime		"CURTIME"
-	dateAdd		"DATE_ADD"
-	dateSub		"DATE_SUB"
-	extract		"EXTRACT"
-	getFormat	"GET_FORMAT"
-	groupConcat	"GROUP_CONCAT"
-	inplace 	"INPLACE"
-	min		"MIN"
-	max		"MAX"
-	now		"NOW"
-	position	"POSITION"
-	subDate		"SUBDATE"
-	sum		"SUM"
-	substring	"SUBSTRING"
-	timestampAdd	"TIMESTAMPADD"
-	timestampDiff	"TIMESTAMPDIFF"
-	trim		"TRIM"
+	addDate			"ADDDATE"
+	bitAnd			"BIT_AND"
+	bitOr			"BIT_OR"
+	bitXor			"BIT_XOR"
+	cast			"CAST"
+	copyKwd			"COPY"
+	count			"COUNT"
+	curTime			"CURTIME"
+	dateAdd			"DATE_ADD"
+	dateSub			"DATE_SUB"
+	extract			"EXTRACT"
+	getFormat		"GET_FORMAT"
+	groupConcat		"GROUP_CONCAT"
+	inplace 		"INPLACE"
+	min			"MIN"
+	max			"MAX"
+	maxExecutionTime	"MAX_EXECUTION_TIME"
+	now			"NOW"
+	position		"POSITION"
+	subDate			"SUBDATE"
+	sum			"SUM"
+	substring		"SUBSTRING"
+	timestampAdd		"TIMESTAMPADD"
+	timestampDiff		"TIMESTAMPDIFF"
+	trim			"TRIM"
 
 	/* The following tokens belong to TiDBKeyword. */
 	admin		"ADMIN"
@@ -600,6 +602,7 @@ import (
 	ConstraintKeywordOpt		"Constraint Keyword or empty"
 	CreateIndexStmtUnique		"CREATE INDEX optional UNIQUE clause"
 	CreateTableOptionListOpt	"create table option list opt"
+	CreateTableSelectOpt	        "Select/Union statement in CREATE TABLE ... SELECT"
 	DatabaseOption			"CREATE Database specification"
 	DatabaseOptionList		"CREATE Database specification list"
 	DatabaseOptionListOpt		"CREATE Database specification list opt"
@@ -653,6 +656,7 @@ import (
 	JoinType			"join type"
 	KillOrKillTiDB			"Kill or Kill TiDB"
 	LikeEscapeOpt 			"like escape option"
+	LikeTableWithOrWithoutParen	"LIKE table_name or ( LIKE table_name )"
 	LimitClause			"LIMIT clause"
 	LimitOption			"Limit option could be integer or parameter marker."
 	Lines				"Lines clause"
@@ -663,6 +667,7 @@ import (
 	NoWriteToBinLogAliasOpt 	"NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType			"Grant statement object type"
 	OnDuplicateKeyUpdate		"ON DUPLICATE KEY UPDATE value list"
+	DuplicateOpt			"[IGNORE|REPLACE] in CREATE TABLE ... SELECT statement"
 	OptFull				"Full or empty"
 	Order				"ORDER BY clause optional collation specification"
 	OrderBy				"ORDER BY clause"
@@ -719,6 +724,7 @@ import (
 	TableAsNameOpt 			"table alias name optional"
 	TableElement			"table definition element"
 	TableElementList		"table definition element list"
+	TableElementListOpt		"table definition element list optional"
 	TableFactor 			"table factor"
 	TableLock			"Table name and lock type"
 	TableLockList			"Table lock list"
@@ -799,6 +805,7 @@ import (
 	TableOptimizerHintList	"Table level optimizer hint list"
 
 %type	<ident>
+	AsOpt			"AS or EmptyString"
 	KeyOrIndex		"{KEY|INDEX}"
 	ColumnKeywordOpt	"Column keyword or empty"
 	PrimaryOpt		"Optional primary keyword"
@@ -855,6 +862,8 @@ import (
 %precedence set
 %precedence lowerThanInsertValues
 %precedence insertValues
+%precedence lowerThanCreateTableSelect
+%precedence createTableSelect
 %precedence lowerThanKey
 %precedence key
 
@@ -948,6 +957,17 @@ AlterTableSpec:
 			Constraint: constraint,
 		}
 	}
+|	"ADD" "PARTITION" PartitionDefinitionListOpt
+	{
+		var defs []*ast.PartitionDefinition
+		if $3 != nil {
+			defs = $3.([]*ast.PartitionDefinition)
+		}
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableAddPartitions,
+			PartDefinitions: defs,
+		}
+	}
 |	"DROP" ColumnKeywordOpt ColumnName RestrictOrCascadeOpt
 	{
 		$$ = &ast.AlterTableSpec{
@@ -959,6 +979,13 @@ AlterTableSpec:
 	{
 		$$ = &ast.AlterTableSpec{Tp: ast.AlterTableDropPrimaryKey}
 	}
+|	"DROP" "PARTITION" Identifier
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp: ast.AlterTableDropPartition,
+			Name: $3,
+		}
+	}	
 |	"DROP" KeyOrIndex Identifier
 	{
 		$$ = &ast.AlterTableSpec{
@@ -1727,42 +1754,26 @@ DatabaseOptionList:
  *          PRIMARY KEY (P_Id)
  *      )
  *******************************************************************/
+
 CreateTableStmt:
-	"CREATE" "TABLE" IfNotExists TableName '(' TableElementList ')' CreateTableOptionListOpt PartitionOpt
+	"CREATE" "TABLE" IfNotExists TableName TableElementListOpt CreateTableOptionListOpt PartitionOpt DuplicateOpt AsOpt CreateTableSelectOpt
 	{
-		tes := $6.([]interface {})
-		var columnDefs []*ast.ColumnDef
-		var constraints []*ast.Constraint
-		for _, te := range tes {
-			switch te := te.(type) {
-			case *ast.ColumnDef:
-				columnDefs = append(columnDefs, te)
-			case *ast.Constraint:
-				constraints = append(constraints, te)
-			}
+		stmt := $5.(*ast.CreateTableStmt)
+		stmt.Table = $4.(*ast.TableName)
+		stmt.IfNotExists = $3.(bool)
+		stmt.Options = $6.([]*ast.TableOption)
+		if $7 != nil {
+			stmt.Partition = $7.(*ast.PartitionOptions)
 		}
-		if len(columnDefs) == 0 {
-			yylex.Errorf("Column Definition List can't be empty.")
-			return 1
-		}
-		var part *ast.PartitionOptions
-		if $9 != nil {
-			part = $9.(*ast.PartitionOptions)
-		}
-		$$ = &ast.CreateTableStmt{
-			Table:          $4.(*ast.TableName),
-			IfNotExists:    $3.(bool),
-			Cols:           columnDefs,
-			Constraints:    constraints,
-			Options:        $8.([]*ast.TableOption),
-			Partition:	part,
-		}
+		stmt.OnDuplicate = $8.(ast.OnDuplicateCreateTableSelectType)
+		stmt.Select = $10.(*ast.CreateTableStmt).Select
+		$$ = stmt
 	}
-|	"CREATE" "TABLE" IfNotExists TableName "LIKE" TableName
+|	"CREATE" "TABLE" IfNotExists TableName LikeTableWithOrWithoutParen
 	{
 		$$ = &ast.CreateTableStmt{
 			Table:          $4.(*ast.TableName),
-			ReferTable:	$6.(*ast.TableName),
+			ReferTable:	$5.(*ast.TableName),
 			IfNotExists:    $3.(bool),
 		}
 	}
@@ -1814,6 +1825,7 @@ PartitionNumOpt:
 	{}
 
 PartitionDefinitionListOpt:
+	/* empty */ %prec lowerThanCreateTableSelect
 	{
 		$$ = nil
 	}
@@ -1836,8 +1848,8 @@ PartitionDefinition:
 	"PARTITION" Identifier PartDefValuesOpt PartDefCommentOpt PartDefStorageOpt
 	{
 		partDef := &ast.PartitionDefinition{
-			Name:		$2,
-			Comment:	$4.(string),
+			Name: model.NewCIStr($2),
+			Comment: $4.(string),
 		}
 		switch $3.(type) {
 		case []ast.ExprNode:
@@ -1875,6 +1887,57 @@ PartDefStorageOpt:
 	{}
 |	"ENGINE" eq Identifier
 	{}
+
+DuplicateOpt:
+	{
+		$$ = ast.OnDuplicateCreateTableSelectError
+	}
+|   "IGNORE"
+	{
+		$$ = ast.OnDuplicateCreateTableSelectIgnore
+	}
+|   "REPLACE"
+	{
+		$$ = ast.OnDuplicateCreateTableSelectReplace
+	}
+
+AsOpt:
+	{}
+|	"AS"
+	{}
+
+CreateTableSelectOpt:
+	/* empty */
+	{
+		$$ = &ast.CreateTableStmt{}
+	}
+|
+	SelectStmt
+	{
+		$$ = &ast.CreateTableStmt{Select: $1}
+	}
+|
+	UnionStmt
+	{
+		$$ = &ast.CreateTableStmt{Select: $1}
+	}
+|
+	SubSelect %prec createTableSelect
+	// TODO: We may need better solution as issue #320.
+	{
+		$$ = &ast.CreateTableStmt{Select: $1}
+	}
+
+LikeTableWithOrWithoutParen:
+	"LIKE" TableName
+	{
+		$$ = $2
+	}
+|
+	'(' "LIKE" TableName ')'
+	{
+		$$ = $3
+	}
 
 /*******************************************************************
  *
@@ -2686,7 +2749,7 @@ identifier | UnReservedKeyword | NotKeywordToken | TiDBKeyword
 UnReservedKeyword:
  "ACTION" | "ASCII" | "AUTO_INCREMENT" | "AFTER" | "ALWAYS" | "AVG" | "BEGIN" | "BIT" | "BOOL" | "BOOLEAN" | "BTREE" | "BYTE" | "CLEANUP" | "CHARSET"
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
-| "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FORMAT" | "FULL" |"GLOBAL"
+| "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ERRORS" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
 | "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken | "TIMESTAMP" %prec lowerThanStringLitToken
 | "TRACE" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
@@ -2705,7 +2768,7 @@ TiDBKeyword:
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
-| "INPLACE" |"MIN" | "MAX" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
+| "INPLACE" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
 
 /************************************************************************************
  *
@@ -4107,16 +4170,20 @@ SelectStmtBasic:
 	}
 
 SelectStmtFromDual:
-	SelectStmtBasic FromDual WhereClauseOptional
+	SelectStmtBasic FromDual WhereClauseOptional OrderByOptional
 	{
 		st := $1.(*ast.SelectStmt)
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
-			lastEnd := yyS[yypt-1].offset-1
+			lastEnd := yyS[yypt-2].offset-1	
 			lastField.SetText(parser.src[lastField.Offset:lastEnd])
 		}
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
+		}
+
+		if $4 != nil {
+			st.OrderBy = $4.(*ast.OrderByClause)
 		}
 	}
 
@@ -4539,6 +4606,10 @@ TableOptimizerHintOpt:
 	{
 		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), Tables: $3.([]model.CIStr)}
 	}
+|	maxExecutionTime '(' NUM ')'
+	{
+		$$ = &ast.TableOptimizerHint{HintName: model.NewCIStr($1), MaxExecutionTime: getUint64FromNUM($3)}
+	}
 
 SelectStmtCalcFoundRows:
 	{
@@ -4949,6 +5020,7 @@ SystemVariable:
 	{
 		v := strings.ToLower($1)
 		var isGlobal bool
+		explicitScope := true
 		if strings.HasPrefix(v, "@@global.") {
 			isGlobal = true
 			v = strings.TrimPrefix(v, "@@global.")
@@ -4957,9 +5029,9 @@ SystemVariable:
 		} else if strings.HasPrefix(v, "@@local.") {
 			v = strings.TrimPrefix(v, "@@local.")
 		} else if strings.HasPrefix(v, "@@") {
-			v = strings.TrimPrefix(v, "@@")
+			v, explicitScope = strings.TrimPrefix(v, "@@"), false
 		}
-		$$ = &ast.VariableExpr{Name: v, IsGlobal: isGlobal, IsSystem: true}
+		$$ = &ast.VariableExpr{Name: v, IsGlobal: isGlobal, IsSystem: true, ExplicitScope: explicitScope}
 	}
 
 UserVariable:
@@ -5023,6 +5095,13 @@ AdminStmt:
 |	"ADMIN" "SHOW" "DDL" "JOBS"
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
+	}
+|	"ADMIN" "SHOW" "DDL" "JOBS" NUM
+	{
+		$$ = &ast.AdminStmt{
+		    Tp: ast.AdminShowDDLJobs,
+		    JobNumber: $5.(int64),
+		}
 	}
 |	"ADMIN" "CHECK" "TABLE" TableNameList
 	{
@@ -5310,6 +5389,10 @@ ShowTargetFilterable:
 |	"WARNINGS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowWarnings}
+	}
+|	"ERRORS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowErrors}
 	}
 |	GlobalScope "VARIABLES"
 	{
@@ -5610,6 +5693,36 @@ TableElementList:
 		}
 	}
 
+TableElementListOpt:
+	/* empty */ %prec lowerThanCreateTableSelect
+	{
+		var columnDefs []*ast.ColumnDef
+		var constraints []*ast.Constraint
+		$$ = &ast.CreateTableStmt{
+			Cols:           columnDefs,
+			Constraints:    constraints,
+		}
+	}
+|
+	'(' TableElementList ')'
+	{
+		tes := $2.([]interface {})
+		var columnDefs []*ast.ColumnDef
+		var constraints []*ast.Constraint
+		for _, te := range tes {
+			switch te := te.(type) {
+			case *ast.ColumnDef:
+				columnDefs = append(columnDefs, te)
+			case *ast.Constraint:
+				constraints = append(constraints, te)
+			}
+		}
+		$$ = &ast.CreateTableStmt{
+			Cols:           columnDefs,
+			Constraints:    constraints,
+		}
+	}
+
 TableOption:
 	"ENGINE" StringName
 	{
@@ -5702,6 +5815,7 @@ AlterTableOptionListOpt:
 |	TableOptionList %prec higherThanComma
 
 CreateTableOptionListOpt:
+	/* empty */ %prec lowerThanCreateTableSelect
 	{
 		$$ = []*ast.TableOption{}
 	}

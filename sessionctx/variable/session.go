@@ -106,7 +106,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
 	item := tc.TableDeltaMap[tableID]
-	if item.ColSize == nil {
+	if item.ColSize == nil && colSize != nil {
 		item.ColSize = make(map[int64]int64)
 	}
 	item.Delta += delta
@@ -152,7 +152,8 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
-	RetryLimit int64
+	RetryLimit          int64
+	DisableTxnAutoRetry bool
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
@@ -204,9 +205,6 @@ type SessionVars struct {
 
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
-
-	// PlanCacheEnabled stores the global config "plan-cache-enabled", and it will be only updated in tests.
-	PlanCacheEnabled bool
 
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
@@ -279,6 +277,9 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in planner.
 	OptimizerSelectivityLevel int
 
+	// EnableTablePartition enables table partition feature.
+	EnableTablePartition bool
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -303,6 +304,7 @@ func NewSessionVars() *SessionVars {
 		AllowAggPushDown:          false,
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                DefTiDBRetryLimit,
+		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -336,7 +338,6 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableStreaming = "0"
 	}
-	vars.PlanCacheEnabled = config.GetGlobalConfig().PlanCache.Enabled
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 	return vars
 }
@@ -406,8 +407,8 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
-// GetTimeZone returns the value of time_zone session variable.
-func (s *SessionVars) GetTimeZone() *time.Location {
+// Location returns the value of time_zone session variable. If it is nil, then return time.Local.
+func (s *SessionVars) Location() *time.Location {
 	loc := s.TimeZone
 	if loc == nil {
 		loc = time.Local
@@ -535,10 +536,17 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBRetryLimit:
 		s.RetryLimit = tidbOptInt64(val, DefTiDBRetryLimit)
+	case TiDBDisableTxnAutoRetry:
+		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
+	case TiDBEnableTablePartition:
+		s.EnableTablePartition = TiDBOptOn(val)
+	case TiDBDDLReorgWorkerCount:
+		workerCnt := tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
+		SetDDLReorgWorkerCounter(int32(workerCnt))
 	}
 	s.systems[name] = val
 	return nil
@@ -557,9 +565,10 @@ const (
 
 // TableDelta stands for the changed count for one table.
 type TableDelta struct {
-	Delta   int64
-	Count   int64
-	ColSize map[int64]int64
+	Delta    int64
+	Count    int64
+	ColSize  map[int64]int64
+	InitTime time.Time // InitTime is the time that this delta is generated.
 }
 
 // Concurrency defines concurrency values.
