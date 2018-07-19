@@ -138,7 +138,7 @@ func (c *index) truncateIndexValuesIfNeeded(indexedValues []types.Datum) []types
 					rs := bytes.Runes(val)
 					truncateStr := string(rs[:ic.Length])
 					// truncate value and limit its length
-					v.SetBytes([]byte(truncateStr))
+					v.SetString(truncateStr)
 				}
 			} else {
 				if ic.Length != types.UnspecifiedLength && len(v.GetBytes()) > ic.Length {
