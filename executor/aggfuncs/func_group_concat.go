@@ -19,18 +19,15 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
 type baseGroupConcat4String struct {
 	baseAggFunc
 
-	sep                string
-	maxLen             int
-	truncatedGlobal    bool
-	truncatedThisGroup bool
-	currentRow         int
+	sep       string
+	maxLen    int
+	truncated bool
 }
 
 func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -62,8 +59,6 @@ func (e *groupConcat) AllocPartialResult() PartialResult {
 func (e *groupConcat) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcat)(pr)
 	p.buffer = nil
-	e.truncatedThisGroup = false
-	e.currentRow += 1
 }
 
 func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
@@ -92,13 +87,10 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	p.buffer.Truncate(p.buffer.Len() - len(e.sep))
 	if e.maxLen > 0 && p.buffer.Len() > e.maxLen {
 		p.buffer.Truncate(e.maxLen)
-		if !e.truncatedGlobal {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.GenByArgs(e.currentRow + 1))
-		} else if !e.truncatedThisGroup {
-			sctx.GetSessionVars().StmtCtx.GetWarnings()[sctx.GetSessionVars().StmtCtx.WarningCount()-1] = stmtctx.SQLWarn{Level: stmtctx.WarnLevelWarning, Err: expression.ErrCutValueGroupConcat.GenByArgs(e.currentRow + 1)}
+		if !e.truncated {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat)
 		}
-		e.truncatedThisGroup = true
-		e.truncatedGlobal = true
+		e.truncated = true
 	}
 	return nil
 }
@@ -123,8 +115,6 @@ func (e *groupConcatDistinct) AllocPartialResult() PartialResult {
 func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	p.buffer, p.valSet = nil, newStringSet()
-	e.truncatedThisGroup = false
-	e.currentRow += 1
 }
 
 func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
@@ -158,13 +148,9 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	}
 	if e.maxLen > 0 && p.buffer.Len() > e.maxLen {
 		p.buffer.Truncate(e.maxLen)
-		if !e.truncatedGlobal {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.GenByArgs(e.currentRow + 1))
-		} else if !e.truncatedThisGroup {
-			sctx.GetSessionVars().StmtCtx.GetWarnings()[sctx.GetSessionVars().StmtCtx.WarningCount()-1] = stmtctx.SQLWarn{Level: stmtctx.WarnLevelWarning, Err: expression.ErrCutValueGroupConcat.GenByArgs(e.currentRow + 1)}
+		if !e.truncated {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat)
 		}
-		e.truncatedThisGroup = true
-		e.truncatedGlobal = true
 	}
 	return nil
 }

@@ -25,11 +25,10 @@ import (
 
 type concatFunction struct {
 	aggFunction
-	separator          string
-	sepInited          bool
-	maxLen             int
-	truncatedGlobal    bool
-	truncatedThisGroup bool
+	separator string
+	sepInited bool
+	maxLen    uint64
+	truncated bool
 }
 
 func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datum) {
@@ -92,15 +91,13 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	for _, val := range datumBuf {
 		cf.writeValue(evalCtx, val)
 	}
-	if cf.maxLen > 0 && evalCtx.Buffer.Len() > cf.maxLen {
-		evalCtx.Buffer.Truncate(cf.maxLen)
-		if !cf.truncatedGlobal {
-			sc.AppendWarning(expression.ErrCutValueGroupConcat.GenByArgs(evalCtx.Count + 1))
-		} else if !cf.truncatedThisGroup {
-			sc.GetWarnings()[sc.WarningCount()-1] = stmtctx.SQLWarn{Level: stmtctx.WarnLevelWarning, Err: expression.ErrCutValueGroupConcat.GenByArgs(evalCtx.Count + 1)}
+	if cf.maxLen > 0 && uint64(evalCtx.Buffer.Len()) > cf.maxLen {
+		//TODO: Deal with condition that cf.maxLen overflow int
+		evalCtx.Buffer.Truncate(int(cf.maxLen))
+		if !cf.truncated {
+			sc.AppendWarning(expression.ErrCutValueGroupConcat)
 		}
-		cf.truncatedThisGroup = true
-		cf.truncatedGlobal = true
+		cf.truncated = true
 	}
 	return nil
 }
@@ -112,7 +109,6 @@ func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum)
 	} else {
 		d.SetNull()
 	}
-	cf.truncatedThisGroup = false
 	return d
 }
 

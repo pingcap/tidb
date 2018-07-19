@@ -984,7 +984,7 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 			e.defaultVal.AppendDatum(i, &value)
 		}
 		// For new aggregate evaluation framework.
-		newAggFunc := aggfuncs.Build(aggDesc, i)
+		newAggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
 		if newAggFunc != nil {
 			newAggFuncs = append(newAggFuncs, newAggFunc)
 		}

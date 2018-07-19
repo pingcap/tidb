@@ -15,6 +15,7 @@ package aggregation
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"strings"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"strconv"
@@ -39,9 +41,8 @@ type AggFuncDesc struct {
 	// Mode represents the execution mode of the aggregation function.
 	Mode AggFunctionMode
 	// HasDistinct represents whether the aggregation function contains distinct attribute.
-	HasDistinct bool
-	// SessionCtx tracks the session context of the AggFunc.
-	SessionCtx sessionctx.Context
+	HasDistinct       bool
+	MaxGroupConcatLen uint64
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
@@ -50,7 +51,21 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 		Name:        strings.ToLower(name),
 		Args:        args,
 		HasDistinct: hasDistinct,
-		SessionCtx:  ctx,
+	}
+	if name == ast.AggFuncGroupConcat {
+		var s string
+		var err error
+		s, err = variable.GetSessionSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
+		if err != nil {
+			s, err = variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
+			if err != nil {
+				panic(fmt.Sprintf("Error happened when NewAggFuncDesc: no system variable named '%s'", variable.GroupConcatMaxLen))
+			}
+		}
+		a.MaxGroupConcatLen, err = strconv.ParseUint(s, 10, 64)
+		if err != nil {
+			panic(fmt.Sprintf("Error happened when NewAggFuncDesc: illegal value for system variable named '%s'", variable.GroupConcatMaxLen))
+		}
 	}
 	a.typeInfer(ctx)
 	return a
@@ -176,12 +191,7 @@ func (a *AggFuncDesc) GetAggFunc() Aggregation {
 	case ast.AggFuncAvg:
 		return &avgFunction{aggFunction: aggFunc}
 	case ast.AggFuncGroupConcat:
-		maxGroupConcatLen := math.MaxInt64
-		if a.SessionCtx != nil {
-			s, _ := a.SessionCtx.GetSessionVars().GetSystemVar("group_concat_max_len")
-			maxGroupConcatLen, _ = strconv.Atoi(s)
-		}
-		return &concatFunction{aggFunction: aggFunc, maxLen: maxGroupConcatLen}
+		return &concatFunction{aggFunction: aggFunc, maxLen: a.MaxGroupConcatLen}
 	case ast.AggFuncMax:
 		return &maxMinFunction{aggFunction: aggFunc, isMax: true}
 	case ast.AggFuncMin:

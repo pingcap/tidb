@@ -689,6 +689,8 @@ const (
 	CharsetDatabase = "character_set_database"
 	// CollationDatabase is the name for collation_database system variable.
 	CollationDatabase = "collation_database"
+	// GroupConcatMaxLen is the name for group_concat_max_len system variable.
+	GroupConcatMaxLen = "group_concat_max_len"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
