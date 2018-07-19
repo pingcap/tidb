@@ -132,8 +132,7 @@ func (c *index) truncateIndexValuesIfNeeded(indexedValues []types.Datum) []types
 		v := &indexedValues[i]
 		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
 			ic := c.idxInfo.Columns[i]
-			colInfo := c.tblInfo.Columns[ic.Offset]
-			if colInfo.Charset == charset.CharsetUTF8 || colInfo.Charset == charset.CharsetUTF8MB4 {
+			if ic.Tp.Charset == charset.CharsetUTF8 || ic.Tp.Charset == charset.CharsetUTF8MB4 {
 				val := v.GetBytes()
 				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(val) > ic.Length {
 					rs := bytes.Runes(val)
