@@ -16,6 +16,7 @@ package ddl
 import (
 	"context"
 	"math"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -504,8 +506,13 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 	handleOutOfRange := false
+	oprStartTime := time.Now()
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
+			oprEndTime := time.Now()
+			w.logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in fetchRowColVals", 0)
+			oprStartTime = oprEndTime
+
 			if !taskRange.endIncluded {
 				handleOutOfRange = handle >= taskRange.endHandle
 			} else {
@@ -534,6 +541,16 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	return w.idxRecords, handleOutOfRange, errors.Trace(err)
 }
 
+func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
+	if threshold == 0 {
+		threshold = atomic.LoadUint32(&variable.DDLSlowOprThreshold)
+	}
+
+	if elapsed >= time.Duration(threshold)*time.Millisecond {
+		log.Infof("[ddl-reorg][SLOW-OPERATIONS] elapsed time: %v, message: %v", elapsed, slowMsg)
+	}
+}
+
 // backfillIndexInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
@@ -541,6 +558,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, addedCount, scanCount int, errInTxn error) {
 	addedCount = 0
 	scanCount = 0
+	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		txn.SetOption(kv.Priority, kv.PriorityLow)
 		idxRecords, handleOutOfRange, err := w.fetchRowColVals(txn, handleRange)
@@ -576,6 +594,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 		}
 		return nil
 	})
+	w.logSlowOperations(time.Since(oprStartTime), "backfillIndexInTxn", 3000)
 
 	return
 }
