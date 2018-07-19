@@ -232,7 +232,7 @@ func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t where a = 'tw' and b < 0").Check(testkit.Rows(
 		"IndexReader_9 0.00 root index:IndexScan_8",
-		"└─IndexScan_8 0.00 cop table:t, index:a, b, range:[tw -inf,tw 0), keep order:false"))
+		"└─IndexScan_8 0.00 cop table:t, index:a, b, range:[\"tw\" -inf,\"tw\" 0), keep order:false"))
 }
 
 func BenchmarkSelectivity(b *testing.B) {

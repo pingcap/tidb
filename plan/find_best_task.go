@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/ranger"
 )
 
 const (
@@ -302,36 +301,6 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 	return true
 }
 
-func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []expression.Expression) PhysicalPlan {
-	is := PhysicalIndexScan{
-		Table:            ds.tableInfo,
-		TableAsName:      ds.TableAsName,
-		DBName:           ds.DBName,
-		Columns:          ds.Columns,
-		Index:            idx,
-		dataSourceSchema: ds.schema,
-		Ranges:           ranger.FullRange(),
-		KeepOrder:        false,
-	}.init(ds.ctx)
-	is.filterCondition = remainedConds
-	is.stats = newSimpleStats(float64(ds.statisticTable.Count))
-	cop := &copTask{
-		indexPlan: is,
-	}
-	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
-		// On this way, it's double read case.
-		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
-		ts.SetSchema(is.dataSourceSchema)
-		cop.tablePlan = ts
-	}
-	is.initSchema(ds.id, idx, cop.tablePlan != nil)
-	indexConds, tblConds := splitIndexFilterConditions(remainedConds, idx.Columns, ds.tableInfo)
-	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
-	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
-	t := finishCopTask(ds.ctx, cop)
-	return t.plan()
-}
-
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
 func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
 	if len(ds.schema.TblID2Handle) > 0 {
@@ -359,6 +328,8 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		Ranges:           path.ranges,
 		filterCondition:  path.indexFilters,
 		dataSourceSchema: ds.schema,
+		isPartition:      ds.isPartition,
+		partitionID:      ds.partitionID,
 	}.init(ds.ctx)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
@@ -401,6 +372,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
 	is.stats = newSimpleStats(rowCount)
+	is.stats.usePseudoStats = ds.statisticTable.Pseudo
 	cop.cst = rowCount * scanFactor
 	task = cop
 	if matchProperty {
@@ -529,32 +501,6 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 	return true
 }
 
-func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
-	var ranges []*ranger.Range
-	if pk != nil {
-		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
-	} else {
-		ranges = ranger.FullIntRange(false)
-	}
-	ts := PhysicalTableScan{
-		Table:       ds.tableInfo,
-		Columns:     ds.Columns,
-		TableAsName: ds.TableAsName,
-		DBName:      ds.DBName,
-		Ranges:      ranges,
-	}.init(ds.ctx)
-	ts.SetSchema(ds.schema)
-	ts.stats = newSimpleStats(float64(ds.statisticTable.Count))
-	ts.filterCondition = ds.pushedDownConds
-	copTask := &copTask{
-		tablePlan:         ts,
-		indexPlanFinished: true,
-	}
-	ts.addPushedDownSelection(copTask, ds.stats)
-	t := finishCopTask(ds.ctx, copTask)
-	return t.plan()
-}
-
 // convertToTableScan converts the DataSource to table scan.
 func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (task task, err error) {
 	// It will be handled in convertToIndexScan.
@@ -597,6 +543,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
 	ts.stats = newSimpleStats(rowCount)
+	ts.stats.usePseudoStats = ds.statisticTable.Pseudo
 	copTask.cst = rowCount * scanFactor
 	if matchProperty {
 		if prop.desc {
