@@ -121,7 +121,7 @@ func (e *PointSelectExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().GetTimeZone())
+	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for id, offset := range colIDs {
 		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(e.schema.Columns[offset].RetType.Flag) {
 			chk.AppendInt64(offset, e.handle)
