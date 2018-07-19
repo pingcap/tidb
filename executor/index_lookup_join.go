@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/tracing"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -189,6 +190,11 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 
 // Next implements the Executor interface.
 func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
+	sp := tracing.ChildSpanFromContxt(ctx, "index_lookup_join")
+	defer func() {
+		sp.LogKV("event", "index lookup join is finished.")
+		sp.Finish()
+	}()
 	chk.Reset()
 	e.joinResult.Reset()
 	for {

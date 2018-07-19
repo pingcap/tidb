@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/tracing"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -211,6 +212,8 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	default:
 	}
 
+	child := tracing.ChildSpanFromContxt(b.ctx, "backoffer")
+	defer child.Finish()
 	metrics.TiKVBackoffCounter.WithLabelValues(typ.String()).Inc()
 	// Lazy initialize.
 	if b.fn == nil {
@@ -225,7 +228,9 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	b.totalSleep += f(b.ctx)
 	b.types = append(b.types, typ)
 
-	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
+	log.Debugf("%v, retry later(totalsleep %dms, maxsleep %dms)", err, b.totalSleep, b.maxSleep)
+	child.LogKV("error", err.Error())
+	child.LogKV("retry", fmt.Sprintf("retry later(totalsleep %dms, maxsleep %dms)", b.totalSleep, b.maxSleep))
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {

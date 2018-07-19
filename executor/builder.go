@@ -89,6 +89,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDelete(v)
 	case *plan.Execute:
 		return b.buildExecute(v)
+	case *plan.Trace:
+		return b.buildTrace(v)
 	case *plan.Explain:
 		return b.buildExplain(v)
 	case *plan.PointGetPlan:

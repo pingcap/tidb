@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
+	"github.com/pingcap/tidb/util/tracing"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -184,7 +185,10 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 // fetchOuterChunks get chunks from fetches chunks from the big table in a background goroutine
 // and sends the chunks to multiple channels which will be read by multiple join workers.
 func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
+	sp := tracing.SpanFromContext(ctx)
 	defer func() {
+		sp.LogKV("event", "finishing fetchOuterChunks")
+		sp.Finish()
 		for i := range e.outerResultChs {
 			close(e.outerResultChs[i])
 		}
@@ -471,6 +475,8 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 // step 1. fetch data from inner child and build a hash table;
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
 func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+	sp := tracing.ChildSpanFromContxt(ctx, "hash_join_exec")
+	defer sp.Finish()
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
 		go e.fetchInnerAndBuildHashTable(ctx)
@@ -491,6 +497,7 @@ func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	}
 	chk.SwapColumns(result.chk)
 	result.src <- result.chk
+	sp.LogKV("event", "hash join exec is finished")
 	return nil
 }
 

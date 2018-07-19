@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/tracing"
 	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
@@ -57,8 +58,8 @@ type TableReaderExecutor struct {
 
 // Open initialzes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
-	span, ctx := startSpanFollowsContext(ctx, "executor.TableReader.Open")
-	defer span.Finish()
+	child := tracing.ChildSpanFromContxt(ctx, "table_reader_exec")
+	defer child.Finish()
 
 	var err error
 	if e.corColInFilter {

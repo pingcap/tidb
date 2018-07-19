@@ -141,6 +141,8 @@ func (b *planBuilder) build(node ast.Node) (Plan, error) {
 		return b.buildExecute(x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
+	case *ast.TraceStmt:
+		return b.buildTrace(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(x)
 	case *ast.LoadDataStmt:

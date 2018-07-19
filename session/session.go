@@ -375,11 +375,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 }
 
 func (s *session) CommitTxn(ctx context.Context) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span = opentracing.StartSpan("session.CommitTxn", opentracing.ChildOf(span.Context()))
-		defer span.Finish()
-	}
-
 	err := s.doCommitWithRetry(ctx)
 	label := metrics.LblOK
 	if err != nil {
@@ -390,11 +385,6 @@ func (s *session) CommitTxn(ctx context.Context) error {
 }
 
 func (s *session) RollbackTxn(ctx context.Context) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span = opentracing.StartSpan("session.RollbackTxn", opentracing.ChildOf(span.Context()))
-		defer span.Finish()
-	}
-
 	var err error
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
