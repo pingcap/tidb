@@ -224,7 +224,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 				pid, err = meta.NewMeta(txn).GenGlobalID()
 				return errors.Trace(err)
 			}
-			err = kv.RunInNewTxn(d.store, true, genID)
+			err = kv.RunInNewTxn(d.store, true /* retryable */, genID)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
