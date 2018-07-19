@@ -119,7 +119,7 @@ func checkPartitionFuncValid(expr ast.ExprNode) error {
 		return ErrPartitionFunctionIsNotAllowed
 	case *ast.FuncCallExpr:
 		// check function which allowed in partitioning expressions
-		// https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.5/en/partitioning-limitations-functions.html
+		// https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
 		switch v.FnName.L {
 		case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Day, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Extract, ast.Floor,
 			ast.Hour, ast.MicroSecond, ast.Minute, ast.Mod, ast.Month, ast.Quarter, ast.Second, ast.TimeToSec, ast.ToDays,
@@ -130,7 +130,7 @@ func checkPartitionFuncValid(expr ast.ExprNode) error {
 		}
 	case *ast.BinaryOperationExpr:
 		// The DIV operator is also supported; the / operator is not permitted.
-		// https://dev.mysql.com/doc/refman/8.0/en/partitioning-limitations.html
+		// https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
 		if v.Op == opcode.Div {
 			return ErrPartitionFunctionIsNotAllowed
 		}
