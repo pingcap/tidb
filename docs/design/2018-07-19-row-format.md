@@ -36,11 +36,11 @@ The new format is defined as follows:
 
 * not-null column ID array
 
-    If there are too many columns, each column ID takes 4 bytes, otherwise the column ID takes 1 byte. The IDs array is sorted in an ascending order.
+    If the row is big, each column ID takes 4 bytes, otherwise the column ID takes 1 byte. The IDs array is sorted in an ascending order.
 
 * null column ID array
 
-    This array lists the IDs of all the columns with value `null`. The IDs array is sorted in an ascending order.
+    This array stores the IDs of all the columns with value `null`. The IDs array is sorted in an ascending order.
 
 * offset array
 
@@ -63,7 +63,7 @@ The new format has better read performance but we need to consider the space eff
 
 In most of the cases, column IDs are less than 255 and the total length of the values is less than 64KB, so we only compare the small row type with the old format.
 
-In the current row format, a string type column takes 1 (varint flag) + 1(colID) + 1 (bytes flag) + 1(varint len) + len(val). In the new row format, a string type column takes 1(colID) + 2(offset) + len(val), one byte less. So the string type is more space efficient and varint is more space efficient.
+In the current row format, a string type column takes 1 (varint flag) + 1(colID) + 1 (bytes flag) + 1(varint len) + len(val). In the new row format, a string type column takes 1(colID) + 2(offset) + len(val), one byte less compared with the old row format. So the string type is more space efficient and varint is more space efficient.
 
 But for the decoding performance, I choose the dynamic size of 1, 2, 4, 8 to store the integers. The space efficiency depends on the value of the integer. It is more space efficient in most of the cases and it’s less space efficient in rare cases, for example if the value is slightly greater than MaxInt32.
 
