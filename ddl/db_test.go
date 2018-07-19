@@ -2702,7 +2702,7 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	// Test truncate table partition.
 	s.tk.MustExec("drop table if exists t3;")
 	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
-	s.tk.MustExec(` create table t3(
+	s.tk.MustExec(`create table t3(
 		id int, name varchar(50), 
 		purchased date
 	)

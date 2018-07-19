@@ -241,7 +241,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		// The startKey here is for compatibility with previous versions.
 		var startKey kv.Key
 		var partitionIDs []int64
-		if err := job.DecodeArgs(startKey, partitionIDs); err != nil {
+		if err := job.DecodeArgs(startKey, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
 		if len(partitionIDs) > 0 {
