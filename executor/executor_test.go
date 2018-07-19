@@ -2919,3 +2919,19 @@ func (s *testSuite) TestIndexJoinTableDualPanic(c *C) {
 	tk.MustQuery("select a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
 		Check(testkit.Rows("1 a"))
 }
+
+func (s *testSuite) TestUnionAutoSignedCast(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int, i int, b bigint, d double, dd decimal)")
+	tk.MustExec("create table t2 (id int, i int unsigned, b bigint unsigned, d double unsigned, dd decimal unsigned)")
+	tk.MustExec("insert into t1 values(1, -1, -1, -1.1, -1)")
+	tk.MustExec("insert into t2 values(2, 1, 1, 1.1, 1)")
+	tk.MustQuery("select * from t1 union select * from t2 order by id").
+		Check(testkit.Rows("1 -1 -1 -1.1 -1", "2 1 1 1.1 1"))
+	tk.MustQuery("select id, i, b, d, dd from t2 union select id, i, b, d, dd from t1 order by id").
+		Check(testkit.Rows("1 0 0 0 -1", "2 1 1 1.1 1"))
+	tk.MustQuery("select id, i from t2 union select id, cast(i as unsigned int) from t1 order by id").
+		Check(testkit.Rows("1 18446744073709551615", "2 1"))
+}

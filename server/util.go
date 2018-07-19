@@ -289,23 +289,11 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 		}
 		switch col.Type {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24, mysql.TypeLong:
-			if mysql.HasUnsignedFlag(uint(columns[i].Flag)) {
-				v := row.GetInt64(i)
-				if v < 0 {
-					v = 0
-				}
-				tmp = strconv.AppendUint(tmp[:0], uint64(v), 10)
-			} else {
-				tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
-			}
+			tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
 			buffer = dumpLengthEncodedString(buffer, tmp)
 		case mysql.TypeLonglong:
 			if mysql.HasUnsignedFlag(uint(columns[i].Flag)) {
-				v := row.GetInt64(i)
-				if v < 0 {
-					v = 0
-				}
-				tmp = strconv.AppendUint(tmp[:0], uint64(v), 10)
+				tmp = strconv.AppendUint(tmp[:0], row.GetUint64(i), 10)
 			} else {
 				tmp = strconv.AppendInt(tmp[:0], row.GetInt64(i), 10)
 			}

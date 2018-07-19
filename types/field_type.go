@@ -39,7 +39,8 @@ type FieldType struct {
 	Charset string
 	Collate string
 	// Elems is the element list for enum and set type.
-	Elems []string
+	Elems           []string
+	BelowZeroBeZero bool
 }
 
 // NewFieldType returns a FieldType,
@@ -52,23 +53,25 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
-// Equal checks whether two FieldType objects are equal.
-func (ft *FieldType) Equal(other *FieldType) bool {
-	// We do not need to compare `ft.Flag == other.Flag` when wrapping cast upon an Expression.
+// NeedCast checks whether two FieldType objects are equal.
+func (ft *FieldType) NeedCast(other *FieldType) bool {
+	// We do not need to compare whole `ft.Flag == other.Flag` when wrapping cast upon an Expression.
+	// but need compare unsigned_flag of ft.Flag.
 	partialEqual := ft.Tp == other.Tp &&
 		ft.Flen == other.Flen &&
 		ft.Decimal == other.Decimal &&
 		ft.Charset == other.Charset &&
-		ft.Collate == other.Collate
+		ft.Collate == other.Collate &&
+		mysql.HasUnsignedFlag(ft.Flag) == mysql.HasUnsignedFlag(other.Flag)
 	if !partialEqual || len(ft.Elems) != len(other.Elems) {
-		return false
+		return true
 	}
 	for i := range ft.Elems {
 		if ft.Elems[i] != other.Elems[i] {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // AggFieldType aggregates field types for a multi-argument function like `IF`, `IFNULL`, `COALESCE`
