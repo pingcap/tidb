@@ -582,9 +582,20 @@ func (s *testDBSuite) TestAddMultiColumnsIndex(c *C) {
 }
 
 func (s *testDBSuite) TestAddIndex(c *C) {
+	s.testAddIndex(c, false, "create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+			      partition by range (c2) (
+			      partition p1 values less than (61440),
+			      partition p2 values less than (122880),
+			      partition p3 values less than (204800),
+			      partition p4 values less than maxvalue)`)
+}
+
+func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL string) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+	s.tk.MustExec("drop table if exists test_add_index")
+	s.tk.MustExec(createTableSQL)
 
 	done := make(chan error, 1)
 	start := -10
@@ -673,6 +684,10 @@ LOOP:
 		index := rand.Intn(len(keys) - 3)
 		rows := s.mustQuery(c, "select c1 from test_add_index where c3 >= ? limit 3", keys[index])
 		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
+	}
+
+	if testPartition {
+		s.tk.MustExec("admin check table test_add_index")
 	}
 
 	// TODO: Support explain in future.
