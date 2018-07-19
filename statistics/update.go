@@ -368,28 +368,37 @@ const (
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
 var AutoAnalyzeMinCnt int64 = 1000
 
-func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
-	if tbl.ModifyCount == 0 || tbl.Count < AutoAnalyzeMinCnt {
-		return false
-	}
-	t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
-	if time.Since(t) < limit {
-		return false
-	}
-	if autoAnalyzeRatio > 0 && float64(tbl.ModifyCount)/float64(tbl.Count) > autoAnalyzeRatio {
-		return true
-	}
+// tableAnalyzed checks if the table is analyzed.
+func tableAnalyzed(tbl *Table) bool {
 	for _, col := range tbl.Columns {
-		if col.Count > 0 {
-			return false
+		if col.Histogram.Len() > 0 {
+			return true
 		}
 	}
 	for _, idx := range tbl.Indices {
-		if idx.Len() > 0 {
-			return false
+		if idx.Histogram.Len() > 0 {
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+// needAnalyzeTable checks if we need to analyze the table:
+// 1. If the table has never been analyzed, we need to analyze it when it has
+//    not been modified for a time.
+// 2. If the table had been analyzed before, we need to analyze it when
+//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
+func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
+	analyzed := tableAnalyzed(tbl)
+	if !analyzed {
+		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
+		return time.Since(t) >= limit
+	}
+	// Auto analyze is disabled.
+	if autoAnalyzeRatio == 0 {
+		return false
+	}
+	return float64(tbl.ModifyCount)/float64(tbl.Count) > autoAnalyzeRatio
 }
 
 const minAutoAnalyzeRatio = 0.3
@@ -422,7 +431,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			statsTbl := h.GetTableStats(tblInfo)
-			if statsTbl.Pseudo || statsTbl.Count == 0 {
+			if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 				continue
 			}
 			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"

@@ -18,11 +18,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
@@ -270,6 +272,20 @@ func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
 	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }
 
+// dumpAnalyzeResult is used for dump the analyze result to KV. We need this because sometimes
+// we need to temporary make the stats lease greater than 0, but the analyze executor will only send
+// the result to a channel.
+func dumpAnalyzeResult(sctx sessionctx.Context, h *statistics.Handle) error {
+	for len(h.AnalyzeResultCh()) > 0 {
+		t := <-h.AnalyzeResultCh()
+		for i, hg := range t.Hist {
+			err := statistics.SaveStatsToStorage(sctx, t.TableID, t.Count, t.IsIndex, hg, t.Cms[i])
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -311,12 +327,16 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 		break
 	}
 
+	// Test that even if the table is recently modified, we can still analyze the table.
+	h.Lease = time.Millisecond
+	defer func() { h.Lease = 0 }()
 	_, err = testKit.Exec("insert into t values ('fff')")
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
+	c.Assert(dumpAnalyzeResult(testKit.Se, h), IsNil)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(2))
@@ -328,6 +348,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
+	c.Assert(dumpAnalyzeResult(testKit.Se, h), IsNil)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(3))
@@ -336,13 +357,10 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	_, err = testKit.Exec("insert into t values ('eee')")
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV()
-	h.Clear()
-	// We set `Lease` here so that `Update` will use load by need strategy.
-	h.Lease = time.Second
 	h.Update(is)
-	h.Lease = 0
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
+	c.Assert(dumpAnalyzeResult(testKit.Se, h), IsNil)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(4))
@@ -354,6 +372,8 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 		break
 	}
 
+	testKit.MustExec("analyze table t")
+	c.Assert(dumpAnalyzeResult(testKit.Se, h), IsNil)
 	_, err = testKit.Exec("create index idx on t(a)")
 	c.Assert(err, IsNil)
 	is = do.InfoSchema()
@@ -361,6 +381,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
 	h.HandleAutoAnalyze(is)
+	c.Assert(dumpAnalyzeResult(testKit.Se, h), IsNil)
 	h.Update(is)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(4))
