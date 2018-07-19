@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 )
@@ -127,6 +128,13 @@ func checkPartitionFuncValid(expr ast.ExprNode) error {
 		default:
 			return ErrPartitionFunctionIsNotAllowed
 		}
+	case *ast.BinaryOperationExpr:
+		// The DIV operator is also supported; the / operator is not permitted.
+		// https://dev.mysql.com/doc/refman/8.0/en/partitioning-limitations.html
+		if v.Op == opcode.Div {
+			return ErrPartitionFunctionIsNotAllowed
+		}
+		return nil
 	default:
 		return nil
 	}

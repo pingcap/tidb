@@ -1674,6 +1674,17 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 		partition p1 values less than (6)
 	);`)
 	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+
+	_, err = s.tk.Exec(`create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`)
+	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+	_, err = s.tk.Exec(`create TABLE t11 (c1 int,c2 int) partition by range(c1 div c2 ) (partition p0 values less than (2));`)
+	c.Assert(err, IsNil)
+	_, err = s.tk.Exec(`create TABLE t12 (c1 int,c2 int) partition by range(c1 + c2 ) (partition p0 values less than (2));`)
+	c.Assert(err, IsNil)
+	_, err = s.tk.Exec(`create TABLE t13 (c1 int,c2 int) partition by range(c1 - c2 ) (partition p0 values less than (2));`)
+	c.Assert(err, IsNil)
+	_, err = s.tk.Exec(`create TABLE t14 (c1 int,c2 int) partition by range(c1 * c2 ) (partition p0 values less than (2));`)
+	c.Assert(err, IsNil)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
