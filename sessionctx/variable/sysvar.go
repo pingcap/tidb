@@ -58,20 +58,24 @@ func GetSysVar(name string) *SysVar {
 
 // Variable error codes.
 const (
-	CodeUnknownStatusVar terror.ErrCode = 1
-	CodeUnknownSystemVar terror.ErrCode = mysql.ErrUnknownSystemVariable
-	CodeIncorrectScope   terror.ErrCode = mysql.ErrIncorrectGlobalLocalVar
-	CodeUnknownTimeZone  terror.ErrCode = mysql.ErrUnknownTimeZone
-	CodeReadOnly         terror.ErrCode = mysql.ErrVariableIsReadonly
+	CodeUnknownStatusVar    terror.ErrCode = 1
+	CodeUnknownSystemVar    terror.ErrCode = mysql.ErrUnknownSystemVariable
+	CodeIncorrectScope      terror.ErrCode = mysql.ErrIncorrectGlobalLocalVar
+	CodeUnknownTimeZone     terror.ErrCode = mysql.ErrUnknownTimeZone
+	CodeReadOnly            terror.ErrCode = mysql.ErrVariableIsReadonly
+	CodeWrongTypeForVar     terror.ErrCode = mysql.ErrWrongTypeForVar
+	CodeTruncatedWrongValue terror.ErrCode = mysql.ErrTruncatedWrongValue
 )
 
 // Variable errors
 var (
-	UnknownStatusVar   = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar   = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
-	ErrIncorrectScope  = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
-	ErrUnknownTimeZone = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
-	ErrReadOnly        = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
+	UnknownStatusVar       = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar       = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
+	ErrIncorrectScope      = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
+	ErrUnknownTimeZone     = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
+	ErrReadOnly            = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
+	ErrWrongTypeForVar     = terror.ClassVariable.New(CodeWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
+	ErrTruncatedWrongValue = terror.ClassVariable.New(CodeTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 )
 
 func init() {
@@ -83,10 +87,12 @@ func init() {
 
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeUnknownSystemVar: mysql.ErrUnknownSystemVariable,
-		CodeIncorrectScope:   mysql.ErrIncorrectGlobalLocalVar,
-		CodeUnknownTimeZone:  mysql.ErrUnknownTimeZone,
-		CodeReadOnly:         mysql.ErrVariableIsReadonly,
+		CodeUnknownSystemVar:    mysql.ErrUnknownSystemVariable,
+		CodeIncorrectScope:      mysql.ErrIncorrectGlobalLocalVar,
+		CodeUnknownTimeZone:     mysql.ErrUnknownTimeZone,
+		CodeReadOnly:            mysql.ErrVariableIsReadonly,
+		CodeWrongTypeForVar:     mysql.ErrWrongTypeForVar,
+		CodeTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }

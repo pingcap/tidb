@@ -137,6 +137,25 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	return vars.SetSystemVar(name, sVal)
 }
 
+func ValidateSetSystemVar(name string, value string) (v string, warn error, err error) {
+	if name == "group_concat_max_len" {
+		var ivalue uint64
+		ivalue, err = strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return "", nil, ErrWrongTypeForVar.GenByArgs("group_concat_max_len")
+		}
+		if ivalue < 4 {
+			warn = ErrTruncatedWrongValue.GenByArgs("group_concat_max_len", strconv.FormatUint(ivalue, 10))
+			ivalue = 4
+		} else if uint64(ivalue) > 18446744073709551615 {
+			warn = ErrTruncatedWrongValue.GenByArgs("group_concat_max_len", strconv.FormatUint(ivalue, 10))
+			ivalue = 18446744073709551615
+		}
+		return strconv.FormatUint(ivalue, 10), warn, err
+	}
+	return value, nil, nil
+}
+
 // ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
 func ValidateGetSystemVar(name string, isGlobal bool) error {
 	sysVar, exists := SysVars[name]

@@ -136,6 +136,14 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if err != nil {
 			return errors.Trace(err)
 		}
+		var warn error
+		svalue, warn, err = variable.ValidateSetSystemVar(name, svalue)
+		if warn != nil {
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
 		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, svalue)
 		if err != nil {
 			return errors.Trace(err)
@@ -153,6 +161,19 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
 			return errors.Trace(ErrCantChangeTxCharacteristics)
 		}
+		sVal, err := value.ToString()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		var warn error
+		sVal, warn, err = variable.ValidateSetSystemVar(name, sVal)
+		if warn != nil {
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		value.SetString(sVal)
 		err = variable.SetSessionSystemVar(sessionVars, name, value)
 		if err != nil {
 			return errors.Trace(err)

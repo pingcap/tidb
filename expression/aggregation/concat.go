@@ -18,15 +18,18 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
 type concatFunction struct {
 	aggFunction
-	separator string
-	sepInited bool
-	maxLen    int
+	separator          string
+	sepInited          bool
+	maxLen             int
+	truncatedGlobal    bool
+	truncatedThisGroup bool
 }
 
 func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datum) {
@@ -91,6 +94,13 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	}
 	if cf.maxLen > 0 && evalCtx.Buffer.Len() > cf.maxLen {
 		evalCtx.Buffer.Truncate(cf.maxLen)
+		if !cf.truncatedGlobal {
+			sc.AppendWarning(expression.ErrCutValueGroupConcat.GenByArgs(evalCtx.Count + 1))
+		} else if !cf.truncatedThisGroup {
+			sc.GetWarnings()[sc.WarningCount()-1] = stmtctx.SQLWarn{Level: stmtctx.WarnLevelWarning, Err: expression.ErrCutValueGroupConcat.GenByArgs(evalCtx.Count + 1)}
+		}
+		cf.truncatedThisGroup = true
+		cf.truncatedGlobal = true
 	}
 	return nil
 }
@@ -102,6 +112,7 @@ func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum)
 	} else {
 		d.SetNull()
 	}
+	cf.truncatedThisGroup = false
 	return d
 }
 
