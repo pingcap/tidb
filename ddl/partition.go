@@ -112,6 +112,26 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) 
 	return nil
 }
 
+func checkPartitionFuncValid(expr ast.ExprNode) error {
+	switch v := expr.(type) {
+	case *ast.CaseExpr:
+		return ErrPartitionFunctionIsNotAllowed
+	case *ast.FuncCallExpr:
+		// check function which allowed in partitioning expressions
+		// https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.5/en/partitioning-limitations-functions.html
+		switch v.FnName.L {
+		case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Day, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Extract, ast.Floor,
+			ast.Hour, ast.MicroSecond, ast.Minute, ast.Mod, ast.Month, ast.Quarter, ast.Second, ast.TimeToSec, ast.ToDays,
+			ast.ToSeconds, ast.UnixTimestamp, ast.Weekday, ast.Year, ast.YearWeek:
+			return nil
+		default:
+			return ErrPartitionFunctionIsNotAllowed
+		}
+	default:
+		return nil
+	}
+}
+
 // checkCreatePartitionValue checks whether `less than value` is strictly increasing for each partition.
 func checkCreatePartitionValue(pi *model.PartitionInfo) error {
 	defs := pi.Definitions
