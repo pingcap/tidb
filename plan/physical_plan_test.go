@@ -1118,10 +1118,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  `select a from t where c like '1'`,
 			best: "TableReader(Table(t))->Sel([like(cast(test.t.c), 1, 92)])->Projection",
 		},
-		//{
-		//	sql:  `select a from t where c = 1.9 and d > 3`,
-		//	best: "Index(t.c_d_e)[]->Projection",
-		//},
+		{
+			sql:  `select a from t where c = 1.9 and d > 3`,
+			best: "Dual->Projection",
+		},
 		{
 			sql:  `select a from t where c < 1.1`,
 			best: "IndexReader(Index(t.c_d_e)[[-inf,2)])->Projection",
@@ -1140,7 +1140,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  `select a from t where c = 123456789098765432101234`,
-			best: "TableReader(Table(t))->Sel([eq(cast(test.t.c), 123456789098765432101234)])->Projection",
+			best: "Dual->Projection",
 		},
 		{
 			sql:  `select a from t where c = 'hanfei'`,

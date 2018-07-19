@@ -303,3 +303,25 @@ Projection_11	10000.00	root	9_aux_0
       │ └─TableScan_37	10.00	cop	table:t, keep order:false, stats:pseudo
       └─TableReader_32	10.00	root	data:TableScan_31
         └─TableScan_31	10.00	cop	table:t1, range: decided by [s.c], keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int unsigned);
+explain select t.a = '123455' from t;
+id	count	task	operator info
+Projection_3	10000.00	root	eq(test.t.a, 123455)
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select t.a > '123455' from t;
+id	count	task	operator info
+Projection_3	10000.00	root	gt(test.t.a, 123455)
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select t.a != '123455' from t;
+id	count	task	operator info
+Projection_3	10000.00	root	ne(test.t.a, 123455)
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select t.a = 12345678912345678998789678687678.111 from t;
+id	count	task	operator info
+Projection_3	10000.00	root	0
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
