@@ -690,6 +690,7 @@ func (c *twoPhaseCommitter) writeFinishBinlog(tp binlog.BinlogType, commitTS int
 	binInfo := c.txn.us.GetOption(kv.BinlogInfo).(*binloginfo.BinlogInfo)
 	binInfo.Data.Tp = tp
 	binInfo.Data.CommitTs = commitTS
+	binInfo.Data.PrewriteValue = nil
 	go func() {
 		err := binInfo.WriteBinlog(c.store.clusterID)
 		if err != nil {

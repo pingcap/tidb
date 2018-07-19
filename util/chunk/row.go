@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/mysql"
@@ -86,9 +87,10 @@ func (r Row) GetTime(colIdx int) types.Time {
 }
 
 // GetDuration returns the Duration value with the colIdx.
-func (r Row) GetDuration(colIdx int) types.Duration {
+func (r Row) GetDuration(colIdx int, fillFsp int) types.Duration {
 	col := r.c.columns[colIdx]
-	return *(*types.Duration)(unsafe.Pointer(&col.data[r.idx*16]))
+	dur := *(*int64)(unsafe.Pointer(&col.data[r.idx*8]))
+	return types.Duration{Duration: time.Duration(dur), Fsp: fillFsp}
 }
 
 func (r Row) getNameValue(colIdx int) (string, uint64) {
@@ -175,7 +177,8 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		}
 	case mysql.TypeDuration:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlDuration(r.GetDuration(colIdx))
+			duration := r.GetDuration(colIdx, tp.Decimal)
+			d.SetMysqlDuration(duration)
 		}
 	case mysql.TypeNewDecimal:
 		if !r.IsNull(colIdx) {

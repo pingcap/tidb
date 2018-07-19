@@ -230,7 +230,7 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
 	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
-	c.Assert(err.Error(), Equals, "[types:1292]Incorrect time value '-20070219173709.055870'")
+	c.Assert(err.Error(), Equals, "[types:1292]Incorrect time value: '-20070219173709.055870'")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@sql_mode=''")

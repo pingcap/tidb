@@ -485,7 +485,7 @@ LOOP:
 	}
 
 	ctx := s.s.(sessionctx.Context)
-	idx := tables.NewIndex(t.Meta(), c3IdxInfo)
+	idx := tables.NewIndex(t.Meta().ID, c3IdxInfo)
 	checkDelRangeDone(c, ctx, idx)
 
 	s.mustExec(c, "drop table t1")
@@ -795,7 +795,7 @@ LOOP:
 	}
 	c.Assert(nidx, IsNil)
 
-	idx := tables.NewIndex(t.Meta(), c3idx.Meta())
+	idx := tables.NewIndex(t.Meta().ID, c3idx.Meta())
 	checkDelRangeDone(c, ctx, idx)
 	s.tk.MustExec("drop table test_drop_index")
 }
@@ -2638,4 +2638,37 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 	s.tk.MustExec("alter table table4 drop partition PAR5;")
 	sql4 := "alter table table4 drop partition PAR0;"
 	s.testErrorCode(c, sql4, tmysql.ErrDropPartitionNonExistent)
+}
+
+func (s *testDBSuite) TestAddPartitionTooManyPartitions(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	count := ddl.PartitionCountLimit
+	s.tk.MustExec("drop table if exists p1;")
+	sql1 := `create table p1 (
+		id int not null
+	)
+	partition by range( id ) (`
+	for i := 1; i <= count; i++ {
+		sql1 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
+	}
+	sql1 += "partition p1025 values less than (1025) );"
+	s.testErrorCode(c, sql1, tmysql.ErrTooManyPartitions)
+
+	s.tk.MustExec("drop table if exists p2;")
+	sql2 := `create table p2 (
+		id int not null
+	)
+	partition by range( id ) (`
+	for i := 1; i < count; i++ {
+		sql2 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
+	}
+	sql2 += "partition p1024 values less than (1024) );"
+
+	s.tk.MustExec(sql2)
+	sql3 := `alter table p2 add partition (
+   	partition p1025 values less than (1025)
+	);`
+	s.testErrorCode(c, sql3, tmysql.ErrTooManyPartitions)
 }
