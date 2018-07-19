@@ -238,7 +238,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		}
 	case model.ActionDropTable, model.ActionTruncateTable:
 		tableID := job.TableID
-		// The startKey here is for compatibility with previous versions.
+		// The startKey here is for compatibility with previous versions and old version did not handle endKey.
 		var startKey kv.Key
 		var partitionIDs []int64
 		if err := job.DecodeArgs(startKey, &partitionIDs); err != nil {

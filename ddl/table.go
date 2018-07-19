@@ -219,11 +219,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		oldPartitionIDs = getPartitionIDs(tblInfo)
 		for _, def := range tblInfo.Partition.Definitions {
 			var pid int64
-			err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+			genID := func(txn kv.Transaction) error {
 				var err error
 				pid, err = meta.NewMeta(txn).GenGlobalID()
 				return errors.Trace(err)
-			})
+			}
+			err := kv.RunInNewTxn(d.store, true, genID)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
