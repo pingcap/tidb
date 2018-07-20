@@ -13,6 +13,7 @@
 
 package variable
 
+// MockGlobalAccessor implements GlobalVarAccessor interface. it's used in tests
 type MockGlobalAccessor struct {
 	vars map[string]string
 }
