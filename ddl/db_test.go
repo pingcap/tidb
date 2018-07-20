@@ -2673,6 +2673,31 @@ func (s *testDBSuite) TestAddPartitionTooManyPartitions(c *C) {
 	s.testErrorCode(c, sql3, tmysql.ErrTooManyPartitions)
 }
 
+func checkPartitionDelRangeDone(c *C, s *testDBSuite, partitionPrefix kv.Key) bool {
+	hasOldPartitionData := true
+	for i := 0; i < waitForCleanDataRound; i++ {
+		err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+			it, err := txn.Seek(partitionPrefix)
+			if err != nil {
+				return err
+			}
+			if !it.Valid() {
+				hasOldPartitionData = false
+			} else {
+				hasOldPartitionData = it.Key().HasPrefix(partitionPrefix)
+			}
+			it.Close()
+			return nil
+		})
+		c.Assert(err, IsNil)
+		if !hasOldPartitionData {
+			break
+		}
+		time.Sleep(waitForCleanDataInterval)
+	}
+	return hasOldPartitionData
+}
+
 func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
@@ -2727,10 +2752,16 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	(10, 'lava lamp', '1998-12-25');`)
 	result = s.tk.MustQuery("select * from t3;")
 	c.Assert(len(result.Rows()), Equals, 10)
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	// Only one partition id test is taken here.
+	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
 	s.tk.MustExec("truncate table t3;")
-	time.Sleep(waitForCleanDataInterval)
-	result = s.tk.MustQuery("select * from t3;")
-	c.Assert(len(result.Rows()), Equals, 0)
+	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+	hasOldPartitionData := checkPartitionDelRangeDone(c, s, partitionPrefix)
+	c.Assert(hasOldPartitionData, IsFalse)
 
 	// Test drop table partition.
 	s.tk.MustExec("drop table if exists t4;")
@@ -2760,6 +2791,14 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	(10, 'lava lamp', '1998-12-25');`)
 	result = s.tk.MustQuery("select * from t4;")
 	c.Assert(len(result.Rows()), Equals, 10)
+	is = domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	c.Assert(err, IsNil)
+	// Only one partition id test is taken here.
+	oldPID = oldTblInfo.Meta().Partition.Definitions[1].ID
 	s.tk.MustExec("drop table t4;")
+	partitionPrefix = tablecodec.EncodeTablePrefix(oldPID)
+	hasOldPartitionData = checkPartitionDelRangeDone(c, s, partitionPrefix)
+	c.Assert(hasOldPartitionData, IsFalse)
 	s.testErrorCode(c, "select * from t4;", tmysql.ErrNoSuchTable)
 }
