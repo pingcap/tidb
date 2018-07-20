@@ -131,6 +131,35 @@ func (c *RawKVClient) Put(key, value []byte) error {
 	return nil
 }
 
+// BatchPut stores key-value pairs to TiKV.
+func (c *RawKVClient) BatchPut(keys, values [][]byte) error {
+	start := time.Now()
+	defer func() {
+		metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_put").Observe(time.Since(start).Seconds())
+	}()
+
+	if len(keys) != len(values) {
+		return errors.New("the len of keys is not equal to the len of values")
+	}
+	for _, value := range values {
+		if len(value) == 0 {
+			return errors.New("empty value is not supported")
+		}
+	}
+	resp, err := c.sendBatchReq(keys, values)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cmdResp := resp.RawBatchPut
+	if cmdResp == nil {
+		return errors.Trace(ErrBodyMissing)
+	}
+	if cmdResp.GetError() != "" {
+		return errors.New(cmdResp.GetError())
+	}
+	return nil
+}
+
 // Delete deletes a key-value pair from TiKV.
 func (c *RawKVClient) Delete(key []byte) error {
 	start := time.Now()
@@ -252,6 +281,53 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Respon
 		}
 		return resp, loc, nil
 	}
+}
+
+func (c *RawKVClient) sendBatchReq(keys, values [][]byte) (*tikvrpc.Response, error) {
+
+	k2v := make(map[string][]byte)
+	for i, key := range keys {
+		k2v[string(key)] = values[i]
+	}
+	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	groups, _, err := c.regionCache.GroupKeysByRegion(bo, keys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
+
+	for regionID, groupKeys := range groups {
+		for {
+			pairs := make([]*kvrpcpb.KvPair, 0, len(groupKeys))
+			for _, key := range groupKeys {
+				value := k2v[string(key)]
+				pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Value: value})
+			}
+			req := &tikvrpc.Request{
+				Type: tikvrpc.CmdRawBatchPut,
+				RawBathPut: &kvrpcpb.RawBatchPutRequest{
+					Pairs: pairs,
+				},
+			}
+			resp, err := sender.SendReq(bo, req, regionID, readTimeoutShort)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			regionErr, err := resp.GetRegionError()
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if regionErr != nil {
+				err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				continue
+			}
+		}
+	}
+	return nil, nil
 }
 
 // sendDeleteRangeReq sends a raw delete range request and returns the response and the actual endKey.
