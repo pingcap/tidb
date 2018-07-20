@@ -946,7 +946,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 				aggDesc.Mode = aggregation.Partial2Mode
 			}
 		}
-		aggFunc := aggDesc.GetAggFunc()
+		aggFunc := aggDesc.GetAggFunc(b.ctx)
 		e.AggFuncs = append(e.AggFuncs, aggFunc)
 		if e.defaultVal != nil {
 			value := aggFunc.GetDefaultValue()
@@ -978,7 +978,7 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	}
 	newAggFuncs := make([]aggfuncs.AggFunc, 0, len(v.AggFuncs))
 	for i, aggDesc := range v.AggFuncs {
-		aggFunc := aggDesc.GetAggFunc()
+		aggFunc := aggDesc.GetAggFunc(b.ctx)
 		e.AggFuncs = append(e.AggFuncs, aggFunc)
 		if e.defaultVal != nil {
 			value := aggFunc.GetDefaultValue()

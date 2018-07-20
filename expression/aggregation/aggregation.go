@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -48,13 +49,13 @@ type Aggregation interface {
 	ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext)
 
 	// GetFinalAggFunc constructs the final agg functions, only used in parallel execution.
-	GetFinalAggFunc(idx int) (int, Aggregation)
+	GetFinalAggFunc(ctx sessionctx.Context, idx int) (int, Aggregation)
 
 	// GetArgs gets the args of the aggregate function.
 	GetArgs() []expression.Expression
 
 	// Clone deep copy the Aggregation.
-	Clone() Aggregation
+	Clone(ctx sessionctx.Context) Aggregation
 
 	// GetDefaultValue gets the default value when the aggregation function's input is null.
 	GetDefaultValue() types.Datum
@@ -178,7 +179,7 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	return nil
 }
 
-func (af *aggFunction) GetFinalAggFunc(idx int) (_ int, newAggFunc Aggregation) {
+func (af *aggFunction) GetFinalAggFunc(ctx sessionctx.Context, idx int) (_ int, newAggFunc Aggregation) {
 	switch af.Mode {
 	case DedupMode:
 		panic("DedupMode is not supported now.")
@@ -207,12 +208,12 @@ func (af *aggFunction) GetFinalAggFunc(idx int) (_ int, newAggFunc Aggregation) 
 		desc := af.AggFuncDesc.Clone()
 		desc.Mode = FinalMode
 		desc.Args = args
-		newAggFunc = desc.GetAggFunc()
+		newAggFunc = desc.GetAggFunc(ctx)
 	case Partial2Mode:
 		desc := af.AggFuncDesc.Clone()
 		desc.Mode = FinalMode
 		idx += len(desc.Args)
-		newAggFunc = desc.GetAggFunc()
+		newAggFunc = desc.GetAggFunc(ctx)
 	case FinalMode, CompleteMode:
 		panic("GetFinalAggFunc should not be called when aggMode is FinalMode/CompleteMode.")
 	}
@@ -223,9 +224,9 @@ func (af *aggFunction) GetArgs() []expression.Expression {
 	return af.Args
 }
 
-func (af *aggFunction) Clone() Aggregation {
+func (af *aggFunction) Clone(ctx sessionctx.Context) Aggregation {
 	desc := af.AggFuncDesc.Clone()
-	return desc.GetAggFunc()
+	return desc.GetAggFunc(ctx)
 }
 
 // GetDefaultValue gets the default value when the aggregation function's input is null.
