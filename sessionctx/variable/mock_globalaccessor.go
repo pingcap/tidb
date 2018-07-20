@@ -17,6 +17,7 @@ type mockGlobalAccessor struct {
 	vars map[string]string
 }
 
+// NewMockGlobalAccessor implements GlobalVarAccessor interface.
 func NewMockGlobalAccessor() *mockGlobalAccessor {
 	m := &mockGlobalAccessor{
 		vars: make(map[string]string),
@@ -27,15 +28,18 @@ func NewMockGlobalAccessor() *mockGlobalAccessor {
 	return m
 }
 
+// GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (m *mockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
 	return m.vars[name], nil
 }
 
+// SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (m *mockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
 	m.vars[name] = value
 	return nil
 }
 
+// GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
 func (m *mockGlobalAccessor) GetAllSysVars() (map[string]string, error) {
 	return m.vars, nil
 }
