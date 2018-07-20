@@ -15,6 +15,7 @@ package variable
 
 import (
 	"crypto/tls"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -280,6 +281,9 @@ type SessionVars struct {
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition bool
 
+	// DDLReorgPriority is the operation priority of adding indices.
+	DDLReorgPriority int
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -305,6 +309,7 @@ func NewSessionVars() *SessionVars {
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                DefTiDBRetryLimit,
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:          kv.PriorityLow,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -443,6 +448,18 @@ func (s *SessionVars) deleteSystemVar(name string) error {
 	return nil
 }
 
+func (s *SessionVars) setDDLReorgPriority(val string) {
+	val = strings.ToLower(val)
+	switch val {
+	case "priority_low":
+		s.DDLReorgPriority = kv.PriorityLow
+	case "priority_normal":
+		s.DDLReorgPriority = kv.PriorityNormal
+	case "priority_high":
+		s.DDLReorgPriority = kv.PriorityHigh
+	}
+}
+
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
@@ -547,6 +564,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBDDLReorgWorkerCount:
 		workerCnt := tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
 		SetDDLReorgWorkerCounter(int32(workerCnt))
+	case TiDBDDLReorgPriority:
+		s.setDDLReorgPriority(val)
 	}
 	s.systems[name] = val
 	return nil
