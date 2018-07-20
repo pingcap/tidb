@@ -207,7 +207,7 @@ func ValidateSetSystemVar(name string, value string) (string, error, error) {
 		TiDBRetryLimit:
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+			return value, nil, ErrWrongValueForVar.GenByArgs(name)
 		}
 		return value, nil, nil
 	}

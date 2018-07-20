@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
 )
@@ -246,4 +247,34 @@ func (s *testSuite) TestSetCharset(c *C) {
 
 	// Issue 1523
 	tk.MustExec(`SET NAMES binary`)
+}
+
+func (s *testSuite) TestValidateSetVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	_, err = tk.Exec("set global tidb_distsql_scan_concurrency=-1;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency='fff';")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency=-1;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	_, err = tk.Exec("set @@tidb_batch_delete='ok';")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	tk.MustExec("set @@tidb_batch_delete='On';")
+	tk.MustExec("set @@tidb_batch_delete='oFf';")
+	tk.MustExec("set @@tidb_batch_delete=1;")
+	tk.MustExec("set @@tidb_batch_delete=0;")
+
+	_, err = tk.Exec("set @@tidb_batch_delete=3;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	_, err = tk.Exec("set @@tidb_mem_quota_mergejoin='tidb';")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
 }
