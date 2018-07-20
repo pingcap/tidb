@@ -63,7 +63,7 @@ var (
 	EnableSplitTableRegion = false
 
 	// PartitionCountLimit is limit of the number of partitions in a table.
-	// Mysql maximum number of partitions is 8192, our maximum number of partitions is.
+	// Mysql maximum number of partitions is 8192, our maximum number of partitions is 1024.
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
 	PartitionCountLimit = 1024
 )
