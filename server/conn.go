@@ -822,7 +822,9 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		}
 		return errors.Trace(err)
 	}
-	return errors.Trace(txn.Commit(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
+
+	txn.SetOption(kv.BypassLatch, true)
+	return errors.Trace(cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
