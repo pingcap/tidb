@@ -644,7 +644,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 				resultTp = joinFieldType(resultTp, childTp)
 			}
 		}
-		resultTp.BelowZeroBeZero = true
+		resultTp.NegativeUnsignedBeZero = true
 		unionSchema.Columns[i] = col.Clone().(*expression.Column)
 		unionSchema.Columns[i].RetType = resultTp
 		unionSchema.Columns[i].DBName = model.NewCIStr("")

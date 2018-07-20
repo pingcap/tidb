@@ -39,8 +39,8 @@ type FieldType struct {
 	Charset string
 	Collate string
 	// Elems is the element list for enum and set type.
-	Elems           []string
-	BelowZeroBeZero bool
+	Elems                  []string
+	NegativeUnsignedBeZero bool
 }
 
 // NewFieldType returns a FieldType,

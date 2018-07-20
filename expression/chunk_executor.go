@@ -133,7 +133,7 @@ func executeToInt(ctx sessionctx.Context, expr Expression, fieldType *types.Fiel
 		return nil
 	}
 	if mysql.HasUnsignedFlag(fieldType.Flag) {
-		if fieldType.BelowZeroBeZero && res < 0 {
+		if fieldType.NegativeUnsignedBeZero && res < 0 {
 			res = 0
 		}
 		output.AppendUint64(colID, uint64(res))
@@ -152,7 +152,7 @@ func executeToReal(ctx sessionctx.Context, expr Expression, fieldType *types.Fie
 		output.AppendNull(colID)
 		return nil
 	}
-	if fieldType.BelowZeroBeZero && mysql.HasUnsignedFlag(fieldType.Flag) && res < 0 {
+	if fieldType.NegativeUnsignedBeZero && mysql.HasUnsignedFlag(fieldType.Flag) && res < 0 {
 		res = 0
 	}
 	if fieldType.Tp == mysql.TypeFloat {
@@ -172,7 +172,7 @@ func executeToDecimal(ctx sessionctx.Context, expr Expression, fieldType *types.
 		output.AppendNull(colID)
 		return nil
 	}
-	if fieldType.BelowZeroBeZero && mysql.HasUnsignedFlag(fieldType.Flag) && res.IsNegative() {
+	if fieldType.NegativeUnsignedBeZero && mysql.HasUnsignedFlag(fieldType.Flag) && res.IsNegative() {
 		res = &types.MyDecimal{}
 	}
 	output.AppendMyDecimal(colID, res)
