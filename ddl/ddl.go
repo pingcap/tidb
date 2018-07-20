@@ -255,14 +255,13 @@ func (dc *ddlCtx) isOwner() bool {
 	return isOwner
 }
 
-func (d *ddlCtx) genGlobalID() (int64, error) {
+func (dc *ddlCtx) genGlobalID() (int64, error) {
 	var globalID int64
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+	err := kv.RunInNewTxn(dc.store, true, func(txn kv.Transaction) error {
 		var err error
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)
 	})
-
 	return globalID, errors.Trace(err)
 }
 
