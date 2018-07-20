@@ -21,12 +21,14 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 )
 
 const (
@@ -137,6 +139,24 @@ func checkPartitionFuncValid(expr ast.ExprNode) error {
 		return nil
 	default:
 		return nil
+	}
+}
+
+func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, tblInfo *model.TableInfo) error {
+	if expr == nil {
+		return nil
+	}
+	buf := new(bytes.Buffer)
+	expr.Format(buf)
+	e, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	switch e.GetType().EvalType() {
+	case types.ETInt:
+		return nil
+	default:
+		return ErrPartitionFuncNotAllowed.GenByArgs("PARTITION")
 	}
 }
 

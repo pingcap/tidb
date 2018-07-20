@@ -180,6 +180,8 @@ var (
 	ErrTooManyPartitions = terror.ClassDDL.New(codeTooManyPartitions, mysql.MySQLErrName[mysql.ErrTooManyPartitions])
 	//ErrPartitionFunctionIsNotAllowed returns this partition function is not allowed.
 	ErrPartitionFunctionIsNotAllowed = terror.ClassDDL.New(codePartitionFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFunctionIsNotAllowed])
+	//
+	ErrPartitionFuncNotAllowed = terror.ClassDDL.New(codeErrPartitionFuncNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFuncNotAllowed])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -587,6 +589,7 @@ const (
 	codeDropLastPartition             = terror.ErrCode(mysql.ErrDropLastPartition)
 	codeTooManyPartitions             = terror.ErrCode(mysql.ErrTooManyPartitions)
 	codePartitionFunctionIsNotAllowed = terror.ErrCode(mysql.ErrPartitionFunctionIsNotAllowed)
+	codeErrPartitionFuncNotAllowed    = terror.ErrCode(mysql.ErrPartitionFuncNotAllowed)
 )
 
 func init() {
@@ -629,6 +632,7 @@ func init() {
 		codeDropLastPartition:             mysql.ErrDropLastPartition,
 		codeTooManyPartitions:             mysql.ErrTooManyPartitions,
 		codePartitionFunctionIsNotAllowed: mysql.ErrPartitionFunctionIsNotAllowed,
+		codeErrPartitionFuncNotAllowed:    mysql.ErrPartitionFuncNotAllowed,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

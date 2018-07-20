@@ -1666,25 +1666,23 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	);`)
 	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
 
-	_, err = s.tk.Exec(`create TABLE t9 (
+	sql9 := `create TABLE t9 (
 	col1 int
 	)
 	partition by range( case when col1 > 0 then 10 else 20 end ) (
 		partition p0 values less than (2),
 		partition p1 values less than (6)
-	);`)
-	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+	);`
+	s.testErrorCode(c, sql9, tmysql.ErrPartitionFunctionIsNotAllowed)
 
-	_, err = s.tk.Exec(`create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`)
-	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
-	_, err = s.tk.Exec(`create TABLE t11 (c1 int,c2 int) partition by range(c1 div c2 ) (partition p0 values less than (2));`)
-	c.Assert(err, IsNil)
-	_, err = s.tk.Exec(`create TABLE t12 (c1 int,c2 int) partition by range(c1 + c2 ) (partition p0 values less than (2));`)
-	c.Assert(err, IsNil)
-	_, err = s.tk.Exec(`create TABLE t13 (c1 int,c2 int) partition by range(c1 - c2 ) (partition p0 values less than (2));`)
-	c.Assert(err, IsNil)
-	_, err = s.tk.Exec(`create TABLE t14 (c1 int,c2 int) partition by range(c1 * c2 ) (partition p0 values less than (2));`)
-	c.Assert(err, IsNil)
+	s.testErrorCode(c, `create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
+
+	s.tk.MustExec(`create TABLE t11 (c1 int,c2 int) partition by range(c1 div c2 ) (partition p0 values less than (2));`)
+	s.tk.MustExec(`create TABLE t12 (c1 int,c2 int) partition by range(c1 + c2 ) (partition p0 values less than (2));`)
+	s.tk.MustExec(`create TABLE t13 (c1 int,c2 int) partition by range(c1 - c2 ) (partition p0 values less than (2));`)
+	s.tk.MustExec(`create TABLE t14 (c1 int,c2 int) partition by range(c1 * c2 ) (partition p0 values less than (2));`)
+
+	s.testErrorCode(c, `create TABLE t15 (c1 int,c2 float) partition by range(c1 + c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFuncNotAllowed)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {

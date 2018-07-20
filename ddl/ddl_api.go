@@ -853,6 +853,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		if err != nil {
 			return errors.Trace(err)
 		}
+		err = checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		tbInfo.Partition = pi
 	}
 
