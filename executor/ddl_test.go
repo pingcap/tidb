@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
@@ -409,17 +410,15 @@ func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(1))
 	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = invalid_val")
-	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
+	_, err := tk.Exec("set tidb_ddl_reorg_worker_cnt = invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
-	tk.MustExec("set tidb_ddl_reorg_worker_cnt = -1")
-	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
+	_, err = tk.Exec("set tidb_ddl_reorg_worker_cnt = -1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
 
-	res := tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
-	res.Check(testkit.Rows("-1"))
 	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
-	res = tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
+	res := tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
 
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")

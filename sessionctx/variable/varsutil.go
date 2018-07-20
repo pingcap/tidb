@@ -130,9 +130,18 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if value.IsNull() {
 		return vars.deleteSystemVar(name)
 	}
-	sVal, err := value.ToString()
+	var sVal string
+	var err, warn error
+	sVal, err = value.ToString()
 	if err != nil {
 		return errors.Trace(err)
+	}
+	sVal, warn, err = ValidateSetSystemVar(name, sVal)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if warn != nil {
+		vars.StmtCtx.AppendWarning(warn)
 	}
 	return vars.SetSystemVar(name, sVal)
 }
@@ -154,6 +163,55 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 		}
 	}
 	return nil
+}
+
+// ValidateSetSystemVar checks if system variable satisfies specific restriction.
+func ValidateSetSystemVar(name string, value string) (string, error, error) {
+	switch name {
+	// opt
+	case AutocommitVar, TiDBImportingData, TiDBSkipUTF8Check, TiDBOptAggPushDown,
+		TiDBOptInSubqUnFolding, TiDBEnableTablePartition,
+		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
+		TiDBBatchDelete:
+		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
+			return value, nil, nil
+		}
+		return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
+	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
+		TiDBIndexLookupSize,
+		TiDBHashJoinConcurrency,
+		TiDBHashAggPartialConcurrency,
+		TiDBHashAggFinalConcurrency,
+		TiDBDistSQLScanConcurrency,
+		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
+		TiDBBackoffLockFast, TiDBMaxChunkSize,
+		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel,
+		TiDBGeneralLog:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if v <= 0 {
+			return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
+		}
+		return value, nil, nil
+	case TiDBProjectionConcurrency,
+		TIDBMemQuotaQuery,
+		TIDBMemQuotaHashJoin,
+		TIDBMemQuotaMergeJoin,
+		TIDBMemQuotaSort,
+		TIDBMemQuotaTopn,
+		TIDBMemQuotaIndexLookupReader,
+		TIDBMemQuotaIndexLookupJoin,
+		TIDBMemQuotaNestedLoopApply,
+		TiDBRetryLimit:
+		_, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		return value, nil, nil
+	}
+	return value, nil, nil
 }
 
 // TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.

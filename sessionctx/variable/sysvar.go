@@ -63,15 +63,19 @@ const (
 	CodeIncorrectScope   terror.ErrCode = mysql.ErrIncorrectGlobalLocalVar
 	CodeUnknownTimeZone  terror.ErrCode = mysql.ErrUnknownTimeZone
 	CodeReadOnly         terror.ErrCode = mysql.ErrVariableIsReadonly
+	CodeWrongValueForVar terror.ErrCode = mysql.ErrWrongValueForVar
+	CodeWrongTypeForVar  terror.ErrCode = mysql.ErrWrongTypeForVar
 )
 
 // Variable errors
 var (
-	UnknownStatusVar   = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar   = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
-	ErrIncorrectScope  = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
-	ErrUnknownTimeZone = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
-	ErrReadOnly        = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
+	UnknownStatusVar    = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar    = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
+	ErrIncorrectScope   = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
+	ErrUnknownTimeZone  = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
+	ErrReadOnly         = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
+	ErrWrongValueForVar = terror.ClassVariable.New(CodeWrongValueForVar, mysql.MySQLErrName[mysql.ErrWrongValueForVar])
+	ErrWrongTypeForVar  = terror.ClassVariable.New(CodeWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
 )
 
 func init() {
@@ -87,6 +91,8 @@ func init() {
 		CodeIncorrectScope:   mysql.ErrIncorrectGlobalLocalVar,
 		CodeUnknownTimeZone:  mysql.ErrUnknownTimeZone,
 		CodeReadOnly:         mysql.ErrVariableIsReadonly,
+		CodeWrongValueForVar: mysql.ErrWrongValueForVar,
+		CodeWrongTypeForVar:  mysql.ErrWrongTypeForVar,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
