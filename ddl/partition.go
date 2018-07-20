@@ -138,9 +138,8 @@ func checkPartitionFuncValid(expr ast.ExprNode) error {
 			return ErrPartitionFunctionIsNotAllowed
 		}
 		return nil
-	default:
-		return nil
 	}
+	return nil
 }
 
 // checkPartitionFuncType checks partition function return type.
@@ -154,12 +153,10 @@ func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, tblInfo *
 	if err != nil {
 		return errors.Trace(err)
 	}
-	switch e.GetType().EvalType() {
-	case types.ETInt:
+	if e.GetType().EvalType() == types.ETInt {
 		return nil
-	default:
-		return ErrPartitionFuncNotAllowed.GenByArgs("PARTITION")
 	}
+	return ErrPartitionFuncNotAllowed.GenByArgs("PARTITION")
 }
 
 // checkCreatePartitionValue checks whether `less than value` is strictly increasing for each partition.
