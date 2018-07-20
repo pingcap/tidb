@@ -16,6 +16,8 @@ package tikv
 import (
 	"bytes"
 
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"golang.org/x/net/context"
@@ -63,6 +65,11 @@ func (s *testRawKVSuite) mustGet(c *C, key, value []byte) {
 
 func (s *testRawKVSuite) mustPut(c *C, key, value []byte) {
 	err := s.client.Put(key, value)
+	c.Assert(err, IsNil)
+}
+
+func (s *testRawKVSuite) mustBathPut(c *C, keys, values [][]byte) {
+	err := s.client.BatchPut(keys, values)
 	c.Assert(err, IsNil)
 }
 
@@ -124,6 +131,24 @@ func (s *testRawKVSuite) TestSimple(c *C) {
 	s.mustNotExist(c, []byte("key"))
 	err := s.client.Put([]byte("key"), []byte(""))
 	c.Assert(err, NotNil)
+}
+
+func (s *testRawKVSuite) TestBatch(c *C) {
+	testNum := 3
+	testKeys := make([][]byte, 0, testNum)
+	testValues := make([][]byte, 0, testNum)
+	for i := 0; i < testNum; i++ {
+		key := fmt.Sprint("key", i)
+		testKeys = append(testKeys, []byte(key))
+		value := fmt.Sprint("value", i)
+		testValues = append(testValues, []byte(value))
+
+		s.mustNotExist(c, []byte(key))
+	}
+	s.mustBathPut(c, testKeys, testValues)
+	for i := 0; i < testNum; i++ {
+		s.mustGet(c, testKeys[i], testValues[i])
+	}
 }
 
 func (s *testRawKVSuite) TestSplit(c *C) {
