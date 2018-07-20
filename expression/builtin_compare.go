@@ -1049,7 +1049,7 @@ func tryToConvertConstantInt(ctx sessionctx.Context, isUnsigned bool, con *Const
 }
 
 // RefineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
-func RefineConstantArg(ctx sessionctx.Context, isUnsigned bool, con *Constant, op opcode.Op) (_ *Constant, isOverflow bool) {
+func RefineConstantArg(ctx sessionctx.Context, isUnsigned bool, con *Constant, op opcode.Op) (_ *Constant, isAlwaysFalse bool) {
 	dt, err := con.Eval(nil)
 	if err != nil {
 		return con, false
@@ -1130,16 +1130,16 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	arg1IsInt := arg1Type.EvalType() == types.ETInt
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
-	isOverflow, finalArg0, finalArg1 := false, args[0], args[1]
+	isAlways, finalArg0, finalArg1 := false, args[0], args[1]
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		finalArg1, isOverflow = RefineConstantArg(ctx, mysql.HasUnsignedFlag(arg0Type.Flag), arg1, c.op)
+		finalArg1, isAlways = RefineConstantArg(ctx, mysql.HasUnsignedFlag(arg0Type.Flag), arg1, c.op)
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		finalArg0, isOverflow = RefineConstantArg(ctx, mysql.HasUnsignedFlag(arg1Type.Flag), arg0, symmetricOp[c.op])
+		finalArg0, isAlways = RefineConstantArg(ctx, mysql.HasUnsignedFlag(arg1Type.Flag), arg0, symmetricOp[c.op])
 	}
-	if !isOverflow {
+	if !isAlways {
 		return []Expression{finalArg0, finalArg1}
 	}
 	switch c.op {
