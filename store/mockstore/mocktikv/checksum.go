@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func (h *mockRPCHandler) handleCopChecksumRequest(req *coprocessor.Request) *coprocessor.Response {
+func (h *rpcHandler) handleCopChecksumRequest(req *coprocessor.Request) *coprocessor.Response {
 	resp := &tipb.ChecksumResponse{
 		Checksum:   1,
 		TotalKvs:   1,
