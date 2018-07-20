@@ -168,7 +168,44 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
 func ValidateSetSystemVar(name string, value string) (string, error, error) {
 	switch name {
-	// opt
+	case DefaultWeekFormat:
+		val, err := strconv.Atoi(value)
+		if err != nil {
+			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 0 {
+			return "0", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+		if val > 7 {
+			return "7", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+	case GroupConcatMaxLen:
+		val, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 4 {
+			return "4", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+		if val > 18446744073709551615 {
+			return "18446744073709551615", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+	case DelayKeyWrite:
+		if strings.EqualFold(value, "ON") || value == "1" {
+			return "ON", nil, nil
+		} else if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil, nil
+		} else if strings.EqualFold(value, "ALL") || value == "2" {
+			return "ALL", nil, nil
+		}
+		return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
+	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJson, SQLLogBin:
+		if strings.EqualFold(value, "ON") || value == "1" {
+			return "1", nil, nil
+		} else if strings.EqualFold(value, "OFF") || value == "0" {
+			return "0", nil, nil
+		}
+		return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
 	case AutocommitVar, TiDBImportingData, TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqUnFolding, TiDBEnableTablePartition,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,

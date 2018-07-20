@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 	"golang.org/x/net/context"
 )
 
@@ -213,15 +214,15 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
 	tk.MustExec("set global avoid_temporal_upgrade = on")
-	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.avoid_temporal_upgrade = off")
-	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("off"))
+	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("0"))
 	tk.MustExec("set session sql_log_bin = on")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 	tk.MustExec("set sql_log_bin = off")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("off"))
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("0"))
 	tk.MustExec("set @@sql_log_bin = on")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
@@ -277,4 +278,26 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 
 	_, err = tk.Exec("set @@tidb_mem_quota_mergejoin='tidb';")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	tk.MustExec("set @@group_concat_max_len=1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
+	result := tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("4"))
+
+	_, err = tk.Exec("set @@group_concat_max_len = 18446744073709551616")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	// Test illegal type
+	_, err = tk.Exec("set @@group_concat_max_len='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@default_week_format=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect default_week_format value: '-1'"))
+	result = tk.MustQuery("select @@default_week_format;")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@default_week_format=9")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect default_week_format value: '9'"))
+	result = tk.MustQuery("select @@default_week_format;")
+	result.Check(testkit.Rows("7"))
 }

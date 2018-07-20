@@ -58,24 +58,26 @@ func GetSysVar(name string) *SysVar {
 
 // Variable error codes.
 const (
-	CodeUnknownStatusVar terror.ErrCode = 1
-	CodeUnknownSystemVar terror.ErrCode = mysql.ErrUnknownSystemVariable
-	CodeIncorrectScope   terror.ErrCode = mysql.ErrIncorrectGlobalLocalVar
-	CodeUnknownTimeZone  terror.ErrCode = mysql.ErrUnknownTimeZone
-	CodeReadOnly         terror.ErrCode = mysql.ErrVariableIsReadonly
-	CodeWrongValueForVar terror.ErrCode = mysql.ErrWrongValueForVar
-	CodeWrongTypeForVar  terror.ErrCode = mysql.ErrWrongTypeForVar
+	CodeUnknownStatusVar    terror.ErrCode = 1
+	CodeUnknownSystemVar    terror.ErrCode = mysql.ErrUnknownSystemVariable
+	CodeIncorrectScope      terror.ErrCode = mysql.ErrIncorrectGlobalLocalVar
+	CodeUnknownTimeZone     terror.ErrCode = mysql.ErrUnknownTimeZone
+	CodeReadOnly            terror.ErrCode = mysql.ErrVariableIsReadonly
+	CodeWrongValueForVar    terror.ErrCode = mysql.ErrWrongValueForVar
+	CodeWrongTypeForVar     terror.ErrCode = mysql.ErrWrongTypeForVar
+	CodeTruncatedWrongValue terror.ErrCode = mysql.ErrTruncatedWrongValue
 )
 
 // Variable errors
 var (
-	UnknownStatusVar    = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar    = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
-	ErrIncorrectScope   = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
-	ErrUnknownTimeZone  = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
-	ErrReadOnly         = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
-	ErrWrongValueForVar = terror.ClassVariable.New(CodeWrongValueForVar, mysql.MySQLErrName[mysql.ErrWrongValueForVar])
-	ErrWrongTypeForVar  = terror.ClassVariable.New(CodeWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
+	UnknownStatusVar       = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar       = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
+	ErrIncorrectScope      = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
+	ErrUnknownTimeZone     = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
+	ErrReadOnly            = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
+	ErrWrongValueForVar    = terror.ClassVariable.New(CodeWrongValueForVar, mysql.MySQLErrName[mysql.ErrWrongValueForVar])
+	ErrWrongTypeForVar     = terror.ClassVariable.New(CodeWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
+	ErrTruncatedWrongValue = terror.ClassVariable.New(CodeTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 )
 
 func init() {
@@ -87,12 +89,13 @@ func init() {
 
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeUnknownSystemVar: mysql.ErrUnknownSystemVariable,
-		CodeIncorrectScope:   mysql.ErrIncorrectGlobalLocalVar,
-		CodeUnknownTimeZone:  mysql.ErrUnknownTimeZone,
-		CodeReadOnly:         mysql.ErrVariableIsReadonly,
-		CodeWrongValueForVar: mysql.ErrWrongValueForVar,
-		CodeWrongTypeForVar:  mysql.ErrWrongTypeForVar,
+		CodeUnknownSystemVar:    mysql.ErrUnknownSystemVariable,
+		CodeIncorrectScope:      mysql.ErrIncorrectGlobalLocalVar,
+		CodeUnknownTimeZone:     mysql.ErrUnknownTimeZone,
+		CodeReadOnly:            mysql.ErrVariableIsReadonly,
+		CodeWrongValueForVar:    mysql.ErrWrongValueForVar,
+		CodeWrongTypeForVar:     mysql.ErrWrongTypeForVar,
+		CodeTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
@@ -117,7 +120,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "old_passwords", "0"},
 	{ScopeNone, "innodb_version", "5.6.25"},
 	{ScopeGlobal, "max_connections", "151"},
-	{ScopeGlobal | ScopeSession, "big_tables", "OFF"},
+	{ScopeGlobal | ScopeSession, BigTables, "0"},
 	{ScopeNone, "skip_external_locking", "ON"},
 	{ScopeGlobal, "slave_pending_jobs_size_max", "16777216"},
 	{ScopeNone, "innodb_sync_array_size", "1"},
@@ -127,7 +130,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "sql_select_limit", "18446744073709551615"},
 	{ScopeGlobal, "ndb_show_foreign_key_mock_tables", ""},
 	{ScopeNone, "multi_range_count", "256"},
-	{ScopeGlobal | ScopeSession, "default_week_format", "0"},
+	{ScopeGlobal | ScopeSession, DefaultWeekFormat, "0"},
 	{ScopeGlobal | ScopeSession, "binlog_error_action", "IGNORE_ERROR"},
 	{ScopeGlobal, "slave_transaction_retries", "10"},
 	{ScopeGlobal | ScopeSession, "default_storage_engine", "InnoDB"},
@@ -154,7 +157,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_max_purge_lag", "0"},
 	{ScopeGlobal | ScopeSession, "preload_buffer_size", "32768"},
 	{ScopeGlobal, "slave_checkpoint_period", "300"},
-	{ScopeGlobal, "check_proxy_users", ""},
+	{ScopeGlobal, CheckProxyUsers, "0"},
 	{ScopeNone, "have_query_cache", "YES"},
 	{ScopeGlobal, "innodb_flush_log_at_timeout", "1"},
 	{ScopeGlobal, "innodb_max_undo_log_size", ""},
@@ -170,7 +173,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_ft_sort_pll_degree", "2"},
 	{ScopeNone, "thread_stack", "262144"},
 	{ScopeGlobal, "relay_log_info_repository", "FILE"},
-	{ScopeGlobal | ScopeSession, "sql_log_bin", "ON"},
+	{ScopeGlobal | ScopeSession, SQLLogBin, "1"},
 	{ScopeGlobal, "super_read_only", "OFF"},
 	{ScopeGlobal | ScopeSession, "max_delayed_threads", "20"},
 	{ScopeNone, "protocol_version", "10"},
@@ -189,7 +192,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_log_write_ahead_size", ""},
 	{ScopeNone, "innodb_log_group_home_dir", "./"},
 	{ScopeNone, "performance_schema_events_statements_history_size", "10"},
-	{ScopeGlobal, "general_log", "OFF"},
+	{ScopeGlobal, GeneralLog, "0"},
 	{ScopeGlobal, "validate_password_dictionary_file", ""},
 	{ScopeGlobal, "binlog_order_commits", "ON"},
 	{ScopeGlobal, "master_verify_checksum", "OFF"},
@@ -219,7 +222,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "key_buffer_size", "8388608"},
 	{ScopeGlobal | ScopeSession, "foreign_key_checks", "ON"},
 	{ScopeGlobal, "host_cache_size", "279"},
-	{ScopeGlobal, "delay_key_write", "ON"},
+	{ScopeGlobal, DelayKeyWrite, "ON"},
 	{ScopeNone, "metadata_locks_cache_size", "1024"},
 	{ScopeNone, "innodb_force_recovery", "0"},
 	{ScopeGlobal, "innodb_file_format_max", "Antelope"},
@@ -322,7 +325,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "ndb_optimization_delay", ""},
 	{ScopeGlobal, "innodb_ft_num_word_optimize", "2000"},
 	{ScopeGlobal | ScopeSession, "max_join_size", "18446744073709551615"},
-	{ScopeNone, "core_file", "OFF"},
+	{ScopeNone, CoreFile, "0"},
 	{ScopeGlobal | ScopeSession, "max_seeks_for_key", "18446744073709551615"},
 	{ScopeNone, "innodb_log_buffer_size", "8388608"},
 	{ScopeGlobal, "delayed_insert_timeout", "300"},
@@ -564,7 +567,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "back_log", "80"},
 	{ScopeNone, "lower_case_file_system", "ON"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_no_slave", ""},
-	{ScopeGlobal | ScopeSession, "group_concat_max_len", "1024"},
+	{ScopeGlobal | ScopeSession, GroupConcatMaxLen, "1024"},
 	{ScopeSession, "pseudo_thread_id", ""},
 	{ScopeNone, "socket", "/tmp/myssock"},
 	{ScopeNone, "have_dynamic_loading", "YES"},
@@ -604,8 +607,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_buffer_pool_dump_pct", ""},
 	{ScopeGlobal | ScopeSession, "lc_time_names", "en_US"},
 	{ScopeGlobal | ScopeSession, "max_statement_time", ""},
-	{ScopeGlobal | ScopeSession, "end_markers_in_json", "OFF"},
-	{ScopeGlobal, "avoid_temporal_upgrade", "OFF"},
+	{ScopeGlobal | ScopeSession, EndMakersInJson, "0"},
+	{ScopeGlobal, AvoidTemporalUpgrade, "0"},
 	{ScopeGlobal, "key_cache_age_threshold", "300"},
 	{ScopeGlobal, "innodb_status_output", "OFF"},
 	{ScopeSession, "identity", ""},
@@ -689,6 +692,26 @@ const (
 	CharsetDatabase = "character_set_database"
 	// CollationDatabase is the name for collation_database system variable.
 	CollationDatabase = "collation_database"
+	// GeneralLog is the name for 'general_log' system variable.
+	GeneralLog = "general_log"
+	// AvoidTemporalUpgrade is the name for 'avoid_temporal_upgrade' system variable.
+	AvoidTemporalUpgrade = "avoid_temporal_upgrade"
+	// BigTables is the name for 'big_tables' system variable.
+	BigTables = "big_tables"
+	// CheckProxyUsers is the name for 'check_proxy_users' system variable.
+	CheckProxyUsers = "check_proxy_users"
+	// CoreFile is the name for 'core_file' system variable.
+	CoreFile = "core_file"
+	// DefaultWeekFormat is the name for 'default_week_format' system variable.
+	DefaultWeekFormat = "default_week_format"
+	// GroupConcatMaxLen is the name for 'group_concat_max_len' system variable.
+	GroupConcatMaxLen = "group_concat_max_len"
+	// DelayKeyWrite is the name for 'delay_key_write' system variable.
+	DelayKeyWrite = "delay_key_write"
+	// EndMakersInJson is the name for 'end_markers_in_json' system variable.
+	EndMakersInJson = "end_markers_in_json"
+	// SQLLogBin is the name for 'sql_log_bin' system variable.
+	SQLLogBin = "sql_log_bin"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
