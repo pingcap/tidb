@@ -137,6 +137,7 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	return vars.SetSystemVar(name, sVal)
 }
 
+// ValidateGetSystemVar checks if system variable satisfies specific restriction.
 func ValidateSetSystemVar(name string, value string) (v string, warn error, err error) {
 	if name == GroupConcatMaxLen {
 		var ivalue uint64

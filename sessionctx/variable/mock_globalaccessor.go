@@ -13,13 +13,13 @@
 
 package variable
 
-type mockGlobalAccessor struct {
+type MockGlobalAccessor struct {
 	vars map[string]string
 }
 
 // NewMockGlobalAccessor implements GlobalVarAccessor interface.
-func NewMockGlobalAccessor() *mockGlobalAccessor {
-	m := &mockGlobalAccessor{
+func NewMockGlobalAccessor() *MockGlobalAccessor {
+	m := &MockGlobalAccessor{
 		vars: make(map[string]string),
 	}
 	for name, val := range SysVars {
@@ -29,17 +29,17 @@ func NewMockGlobalAccessor() *mockGlobalAccessor {
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
-func (m *mockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
+func (m *MockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
 	return m.vars[name], nil
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
-func (m *mockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
+func (m *MockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
 	m.vars[name] = value
 	return nil
 }
 
 // GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
-func (m *mockGlobalAccessor) GetAllSysVars() (map[string]string, error) {
+func (m *MockGlobalAccessor) GetAllSysVars() (map[string]string, error) {
 	return m.vars, nil
 }
