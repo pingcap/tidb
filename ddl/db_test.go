@@ -2708,10 +2708,10 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 		s.mustExec(c, "insert into t1 values (?)", i)
 	}
 	result := s.tk.MustQuery("select count(*) from t1;")
-	c.Assert(len(result.Rows()), Equals, 100)
+	result.Check(testkit.Rows("100"))
 	s.tk.MustExec("truncate table t1;")
 	result = s.tk.MustQuery("select count(*) from t1")
-	c.Assert(len(result.Rows()), Equals, 0)
+	result.Check(testkit.Rows("0"))
 
 	// Test drop common table.
 	s.tk.MustExec("drop table if exists t2;")
@@ -2720,7 +2720,7 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 		s.mustExec(c, "insert into t2 values (?)", i)
 	}
 	result = s.tk.MustQuery("select count(*) from t2;")
-	c.Assert(len(result.Rows()), Equals, 100)
+	result.Check(testkit.Rows("100"))
 	s.tk.MustExec("drop table t2;")
 	s.testErrorCode(c, "select * from t2;", tmysql.ErrNoSuchTable)
 
@@ -2751,7 +2751,7 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	(9, 'study desk', '2006-09-16'),
 	(10, 'lava lamp', '1998-12-25');`)
 	result = s.tk.MustQuery("select count(*) from t3;")
-	c.Assert(len(result.Rows()), Equals, 10)
+	result.Check(testkit.Rows("10"))
 	ctx := s.tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
@@ -2789,8 +2789,8 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	(8, 'aquarium', '1992-08-04'),
 	(9, 'study desk', '2006-09-16'),
 	(10, 'lava lamp', '1998-12-25');`)
-	result = s.tk.MustQuery("select count(*) from t4;")
-	c.Assert(len(result.Rows()), Equals, 10)
+	result = s.tk.MustQuery("select count(*) from t4; ")
+	result.Check(testkit.Rows("10"))
 	is = domain.GetDomain(ctx).InfoSchema()
 	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
 	c.Assert(err, IsNil)
