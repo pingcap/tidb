@@ -115,13 +115,14 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) 
 	return nil
 }
 
+// checkPartitionFuncValid checks partition function validly.
 func checkPartitionFuncValid(expr ast.ExprNode) error {
 	switch v := expr.(type) {
 	case *ast.CaseExpr:
 		return ErrPartitionFunctionIsNotAllowed
 	case *ast.FuncCallExpr:
 		// check function which allowed in partitioning expressions
-		// https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
+		// see https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
 		switch v.FnName.L {
 		case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Day, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Extract, ast.Floor,
 			ast.Hour, ast.MicroSecond, ast.Minute, ast.Mod, ast.Month, ast.Quarter, ast.Second, ast.TimeToSec, ast.ToDays,
@@ -131,8 +132,8 @@ func checkPartitionFuncValid(expr ast.ExprNode) error {
 			return ErrPartitionFunctionIsNotAllowed
 		}
 	case *ast.BinaryOperationExpr:
-		// The DIV operator is also supported; the / operator is not permitted.
-		// https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
+		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
+		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
 		if v.Op == opcode.Div {
 			return ErrPartitionFunctionIsNotAllowed
 		}
@@ -142,6 +143,7 @@ func checkPartitionFuncValid(expr ast.ExprNode) error {
 	}
 }
 
+// checkPartitionFuncType checks partition function return type.
 func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, tblInfo *model.TableInfo) error {
 	if expr == nil {
 		return nil
