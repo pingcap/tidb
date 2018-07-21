@@ -714,9 +714,9 @@ const (
 	SQLLogBin = "sql_log_bin"
 	// MaxSortLength is the name for 'max_sort_length' system variable.
 	MaxSortLength = "max_sort_length"
-	// MaxSortLength is the name for 'max_sp_recursion_depth' system variable.
+	// MaxSpRecursionDepth is the name for 'max_sp_recursion_depth' system variable.
 	MaxSpRecursionDepth = "max_sp_recursion_depth"
-	// MaxSortLength is the name for 'max_user_connections' system variable.
+	// MaxUserConnections is the name for 'max_user_connections' system variable.
 	MaxUserConnections = "max_user_connections"
 	// OfflineMode is the name for 'offline_mode' system variable.
 	OfflineMode = "offline_mode"
