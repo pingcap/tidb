@@ -1,7 +1,7 @@
 # Proposal: A new aggregate function execution framework
 
 - Author(s):     [@zz-jason](https://github.com/zz-jason)
-- Last updated:  2017-07-01
+- Last updated:  2018-07-01
 - Discussion at: https://github.com/pingcap/tidb/pull/6852
 
 ## Abstract
@@ -68,5 +68,3 @@ So this new framework can be tested during the development, and all the results 
 
 ## Open issues (if applicable)
 
-- https://github.com/pingcap/tidb/issues/7042: add unit tests for package "aggfuncs".
-- https://github.com/pingcap/tidb/issues/6952: implement aggregate functions under the new framework.
