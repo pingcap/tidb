@@ -66,7 +66,7 @@ func (e *sumOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	p := (*partialResult4SumDecimal)(pr)
 	newSum := new(types.MyDecimal)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
+		inputSum, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -74,7 +74,7 @@ func (e *sumOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 
-		err = types.DecimalAdd(&p.sum, input, newSum)
+		err = types.DecimalAdd(&p.sum, inputSum, newSum)
 		if err != nil {
 			return errors.Trace(err)
 		}
