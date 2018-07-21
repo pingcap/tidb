@@ -712,9 +712,17 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 
 	if union.OrderBy != nil {
 		unionPlan = b.buildSort(unionPlan, union.OrderBy.Items, nil)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
 	if union.Limit != nil {
 		unionPlan = b.buildLimit(unionPlan, union.Limit)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
 	return unionPlan
 }
