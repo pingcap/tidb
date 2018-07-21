@@ -199,7 +199,7 @@ func ValidateSetSystemVar(name string, value string) (string, error, error) {
 			return "ALL", nil, nil
 		}
 		return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
-	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJson, SQLLogBin:
+	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil, nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {

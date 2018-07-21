@@ -607,7 +607,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_buffer_pool_dump_pct", ""},
 	{ScopeGlobal | ScopeSession, "lc_time_names", "en_US"},
 	{ScopeGlobal | ScopeSession, "max_statement_time", ""},
-	{ScopeGlobal | ScopeSession, EndMakersInJson, "0"},
+	{ScopeGlobal | ScopeSession, EndMakersInJSON, "0"},
 	{ScopeGlobal, AvoidTemporalUpgrade, "0"},
 	{ScopeGlobal, "key_cache_age_threshold", "300"},
 	{ScopeGlobal, "innodb_status_output", "OFF"},
@@ -708,8 +708,8 @@ const (
 	GroupConcatMaxLen = "group_concat_max_len"
 	// DelayKeyWrite is the name for 'delay_key_write' system variable.
 	DelayKeyWrite = "delay_key_write"
-	// EndMakersInJson is the name for 'end_markers_in_json' system variable.
-	EndMakersInJson = "end_markers_in_json"
+	// EndMakersInJSON is the name for 'end_markers_in_json' system variable.
+	EndMakersInJSON = "end_markers_in_json"
 	// SQLLogBin is the name for 'sql_log_bin' system variable.
 	SQLLogBin = "sql_log_bin"
 )
