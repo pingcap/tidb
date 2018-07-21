@@ -32,8 +32,9 @@ var (
 	_ AggFunc = (*avgOriginal4Float64)(nil)
 	_ AggFunc = (*avgPartial4Float64)(nil)
 
-	_ AggFunc = (*sumPartial4Decimal)(nil)
-	_ AggFunc = (*sumOriginal4Decimal)(nil)
+	_ AggFunc = (*sumAggFunc4Int)(nil)
+	_ AggFunc = (*sumAggFunc4Uint)(nil)
+	_ AggFunc = (*sumAggFunc4Decimal)(nil)
 
 	// All the AggFunc implementations for "FIRSTROW" are listed here.
 	// All the AggFunc implementations for "MAX" are listed here.
