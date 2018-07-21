@@ -22,98 +22,171 @@ import (
 
 // All the following sum function implementations return the decimal result,
 // which store the partial results in "partialResult4SumDecimal".
-//
-// "baseSumDecimal" is wrapped by:
-// - "sumOriginal4Decimal"
-// - "sumPartial4Decimal"
-type baseSumDecimal struct {
-	baseAggFunc
+
+type partialResult4SumInt struct {
+	val int64
+	// isNull is used to indicates:
+	// 1. whether the partial result is the initialization value which should not be sum during evaluation;
+	// 2. whether all the values of arg are all null, if so, we should return null as the default value for SUM.
+	isNull bool
+}
+
+type partialResult4SumUint struct {
+	val    uint64
+	isNull bool
 }
 
 type partialResult4SumDecimal struct {
-	sum   types.MyDecimal
-	count int64
+	val    types.MyDecimal
+	isNull bool
 }
 
-func (e *baseSumDecimal) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4SumDecimal{})
-
+type baseSumAggFunc struct {
+	baseAggFunc
 }
 
-func (e *baseSumDecimal) ResetPartialResult(pr PartialResult) {
-	p := (*partialResult4SumDecimal)(pr)
-	p.sum = *types.NewDecFromInt(0)
-	p.count = int64(0)
+type sumAggFunc4Int struct {
+	baseSumAggFunc
 }
 
-func (e *baseSumDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
-	p := (*partialResult4SumDecimal)(pr)
-	if p.count == 0 {
+func (e *sumAggFunc4Int) AllocPartialResult() PartialResult {
+	p := new(partialResult4SumInt)
+	p.isNull = true
+	return PartialResult(p)
+}
+
+func (e *sumAggFunc4Int) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4SumInt)(pr)
+	p.val = 0
+	p.isNull = true
+}
+
+func (e *sumAggFunc4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4SumInt)(pr)
+	if p.isNull {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	finalResult := &p.sum
-
-	chk.AppendMyDecimal(e.ordinal, finalResult)
+	chk.AppendInt64(e.ordinal, p.val)
 	return nil
 }
 
-type sumOriginal4Decimal struct {
-	baseSumDecimal
-}
-
-func (e *sumOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
-	p := (*partialResult4SumDecimal)(pr)
-	newSum := new(types.MyDecimal)
+func (e *sumAggFunc4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	p := (*partialResult4SumInt)(pr)
 	for _, row := range rowsInGroup {
-		inputSum, isNull, err := e.args[0].EvalDecimal(sctx, row)
+		input, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if isNull {
 			continue
 		}
-
-		err = types.DecimalAdd(&p.sum, inputSum, newSum)
-		if err != nil {
-			return errors.Trace(err)
+		if p.isNull {
+			p.val = input
+			p.isNull = false
+			continue
 		}
-		p.sum = *newSum
-		p.count++
+		p.val += input
 	}
 	return nil
 }
 
-type sumPartial4Decimal struct {
-	baseSumDecimal
+type sumAggFunc4Uint struct {
+	baseSumAggFunc
 }
 
-func (e *sumPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (e *sumAggFunc4Uint) AllocPartialResult() PartialResult {
+	p := new(partialResult4SumUint)
+	p.isNull = true
+	return PartialResult(p)
+}
+
+func (e *sumAggFunc4Uint) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4SumUint)(pr)
+	p.val = 0
+	p.isNull = true
+}
+
+func (e *sumAggFunc4Uint) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4SumUint)(pr)
+	if p.isNull {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendUint64(e.ordinal, p.val)
+	return nil
+}
+
+func (e *sumAggFunc4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	p := (*partialResult4SumUint)(pr)
+	for _, row := range rowsInGroup {
+		input, isNull, err := e.args[0].EvalInt(sctx, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull {
+			continue
+		}
+		uintVal := uint64(input)
+		if p.isNull {
+			p.val = uintVal
+			p.isNull = false
+			continue
+		}
+		p.val += uintVal
+	}
+	return nil
+}
+
+type sumAggFunc4Decimal struct {
+	baseSumAggFunc
+}
+
+func (e *sumAggFunc4Decimal) AllocPartialResult() PartialResult {
+	p := new(partialResult4SumDecimal)
+	//p.val = *types.NewDecFromInt(0) should the line un-commented?
+	p.isNull = true
+	return PartialResult(p)
+}
+
+func (e *sumAggFunc4Decimal) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4SumDecimal)(pr)
+	//p.val = *types.NewDecFromInt(0)   should the line un-commented?
+	p.isNull = true
+}
+
+func (e *sumAggFunc4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4SumDecimal)(pr)
+	if p.isNull {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendMyDecimal(e.ordinal, &p.val)
+	return nil
+}
+
+func (e *sumAggFunc4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4SumDecimal)(pr)
 	newSum := new(types.MyDecimal)
 	for _, row := range rowsInGroup {
-		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, row)
+		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if isNull {
 			continue
 		}
-
-		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if p.isNull {
+			p.val = *input
+			p.isNull = false
 			continue
 		}
 
-		err = types.DecimalAdd(&p.sum, inputSum, newSum)
+		err = types.DecimalAdd(&p.val, input, newSum)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		p.sum = *newSum
-		p.count += inputCount
+		p.val = *newSum
 	}
 	return nil
 }
