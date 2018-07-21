@@ -228,7 +228,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_file_format_max", "Antelope"},
 	{ScopeGlobal | ScopeSession, "debug", ""},
 	{ScopeGlobal, "log_warnings", "1"},
-	{ScopeGlobal, "offline_mode", ""},
+	{ScopeGlobal, OfflineMode, "0"},
 	{ScopeGlobal | ScopeSession, "innodb_strict_mode", "OFF"},
 	{ScopeGlobal, "innodb_rollback_segments", "128"},
 	{ScopeGlobal | ScopeSession, "join_buffer_size", "262144"},
@@ -261,7 +261,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "thread_concurrency", "10"},
 	{ScopeGlobal | ScopeSession, "query_prealloc_size", "8192"},
 	{ScopeNone, "relay_log_space_limit", "0"},
-	{ScopeGlobal | ScopeSession, "max_user_connections", "0"},
+	{ScopeGlobal | ScopeSession, MaxUserConnections, "0"},
 	{ScopeNone, "performance_schema_max_thread_classes", "50"},
 	{ScopeGlobal, "innodb_api_trx_level", "0"},
 	{ScopeNone, "disconnect_on_expired_password", "ON"},
@@ -330,7 +330,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_log_buffer_size", "8388608"},
 	{ScopeGlobal, "delayed_insert_timeout", "300"},
 	{ScopeGlobal, "max_relay_log_size", "0"},
-	{ScopeGlobal | ScopeSession, "max_sort_length", "1024"},
+	{ScopeGlobal | ScopeSession, MaxSortLength, "1024"},
 	{ScopeNone, "metadata_locks_hash_instances", "8"},
 	{ScopeGlobal, "ndb_eventbuffer_free_percent", ""},
 	{ScopeNone, "large_files_support", "ON"},
@@ -470,7 +470,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "lock_wait_timeout", "31536000"},
 	{ScopeGlobal | ScopeSession, "read_buffer_size", "131072"},
 	{ScopeNone, "innodb_read_io_threads", "4"},
-	{ScopeGlobal | ScopeSession, "max_sp_recursion_depth", "0"},
+	{ScopeGlobal | ScopeSession, MaxSpRecursionDepth, "0"},
 	{ScopeNone, "ignore_builtin_innodb", "OFF"},
 	{ScopeGlobal, "rpl_semi_sync_master_enabled", ""},
 	{ScopeGlobal, "slow_query_log_file", "/usr/local/mysql/data/localhost-slow.log"},
@@ -712,6 +712,16 @@ const (
 	EndMakersInJSON = "end_markers_in_json"
 	// SQLLogBin is the name for 'sql_log_bin' system variable.
 	SQLLogBin = "sql_log_bin"
+	// MaxSortLength is the name for 'max_sort_length' system variable.
+	MaxSortLength = "max_sort_length"
+	// MaxSortLength is the name for 'max_sp_recursion_depth' system variable.
+	MaxSpRecursionDepth = "max_sp_recursion_depth"
+	// MaxSortLength is the name for 'max_user_connections' system variable.
+	MaxUserConnections = "max_user_connections"
+	// OfflineMode is the name for 'offline_mode' system variable.
+	OfflineMode = "offline_mode"
+	// InteractiveTimeout is the name for 'interactive_timeout' system variable.
+	InteractiveTimeout = "interactive_timeout"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

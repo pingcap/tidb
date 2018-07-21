@@ -190,6 +190,47 @@ func ValidateSetSystemVar(name string, value string) (string, error, error) {
 		if val > 18446744073709551615 {
 			return "18446744073709551615", ErrTruncatedWrongValue.GenByArgs(name, value), nil
 		}
+	case MaxUserConnections:
+		val, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 0 {
+			return "0", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+		if val > 4294967295 {
+			return "4294967295", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+	case MaxSortLength:
+		val, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 4 {
+			return "4", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+		if val > 8388608 {
+			return "8388608", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+	case MaxSpRecursionDepth:
+		val, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 0 {
+			return "0", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+		if val > 255 {
+			return "255", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+	case InteractiveTimeout:
+		val, err := strconv.Atoi(value)
+		if err != nil {
+			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 1 {
+			return "1", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
 	case DelayKeyWrite:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "ON", nil, nil
@@ -199,7 +240,7 @@ func ValidateSetSystemVar(name string, value string) (string, error, error) {
 			return "ALL", nil, nil
 		}
 		return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
-	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin:
+	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil, nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {
