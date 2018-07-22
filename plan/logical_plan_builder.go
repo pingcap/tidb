@@ -701,9 +701,17 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 
 	if union.OrderBy != nil {
 		unionPlan = b.buildSort(unionPlan, union.OrderBy.Items, nil)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
 	if union.Limit != nil {
 		unionPlan = b.buildLimit(unionPlan, union.Limit)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
 	return unionPlan
 }
@@ -1790,7 +1798,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
-		schema.Append(&expression.Column{
+		newCol := &expression.Column{
 			FromID:   ds.id,
 			Position: i,
 			DBName:   dbName,
@@ -1798,11 +1806,12 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 			ColName:  col.Name,
 			ID:       col.ID,
 			RetType:  &col.FieldType,
-		})
+		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			handleCol = schema.Columns[i]
+			handleCol = newCol
 		}
+		schema.Append(newCol)
 	}
 	ds.SetSchema(schema)
 

@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
@@ -58,24 +57,25 @@ import (
 
 // Flag Names
 const (
-	nmVersion         = "V"
-	nmConfig          = "config"
-	nmStore           = "store"
-	nmStorePath       = "path"
-	nmHost            = "host"
-	nmPort            = "P"
-	nmSocket          = "socket"
-	nmBinlogSocket    = "binlog-socket"
-	nmRunDDL          = "run-ddl"
-	nmLogLevel        = "L"
-	nmLogFile         = "log-file"
-	nmLogSlowQuery    = "log-slow-query"
-	nmReportStatus    = "report-status"
-	nmStatusPort      = "status"
-	nmMetricsAddr     = "metrics-addr"
-	nmMetricsInterval = "metrics-interval"
-	nmDdlLease        = "lease"
-	nmTokenLimit      = "token-limit"
+	nmVersion          = "V"
+	nmConfig           = "config"
+	nmStore            = "store"
+	nmStorePath        = "path"
+	nmHost             = "host"
+	nmAdvertiseAddress = "advertise-address"
+	nmPort             = "P"
+	nmSocket           = "socket"
+	nmBinlogSocket     = "binlog-socket"
+	nmRunDDL           = "run-ddl"
+	nmLogLevel         = "L"
+	nmLogFile          = "log-file"
+	nmLogSlowQuery     = "log-slow-query"
+	nmReportStatus     = "report-status"
+	nmStatusPort       = "status"
+	nmMetricsAddr      = "metrics-addr"
+	nmMetricsInterval  = "metrics-interval"
+	nmDdlLease         = "lease"
+	nmTokenLimit       = "token-limit"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -86,15 +86,16 @@ var (
 	configPath = flag.String(nmConfig, "", "config file path")
 
 	// Base
-	store        = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
-	storePath    = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
-	host         = flag.String(nmHost, "0.0.0.0", "tidb server host")
-	port         = flag.String(nmPort, "4000", "tidb server port")
-	socket       = flag.String(nmSocket, "", "The socket file to use for connection.")
-	binlogSocket = flag.String(nmBinlogSocket, "", "socket file to write binlog")
-	runDDL       = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
-	ddlLease     = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
-	tokenLimit   = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
+	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
+	storePath        = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
+	host             = flag.String(nmHost, "0.0.0.0", "tidb server host")
+	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
+	port             = flag.String(nmPort, "4000", "tidb server port")
+	socket           = flag.String(nmSocket, "", "The socket file to use for connection.")
+	binlogSocket     = flag.String(nmBinlogSocket, "", "socket file to write binlog")
+	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
+	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
+	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -263,6 +264,9 @@ func overrideConfig() {
 	if actualFlags[nmHost] {
 		cfg.Host = *host
 	}
+	if actualFlags[nmAdvertiseAddress] {
+		cfg.AdvertiseAddress = *advertiseAddress
+	}
 	var err error
 	if actualFlags[nmPort] {
 		var p int
@@ -380,10 +384,6 @@ func setGlobalVars() {
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
-	if cfg.PlanCache.Enabled {
-		plan.GlobalPlanCache = kvcache.NewShardedLRUCache(cfg.PlanCache.Capacity, cfg.PlanCache.Shards)
-	}
-
 	plan.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled
 	if plan.PreparedPlanCacheEnabled {
 		plan.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
@@ -392,6 +392,8 @@ func setGlobalVars() {
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
 		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
 	}
+	tikv.GrpcKeepAliveTime = time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
+	tikv.GrpcKeepAliveTimeout = time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second
 
 	// set lower_case_table_names
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)

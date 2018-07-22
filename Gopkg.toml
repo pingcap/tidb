@@ -88,3 +88,7 @@ required = ["github.com/golang/protobuf/jsonpb"]
   name = "github.com/sirupsen/logrus"
   revision = "3bcb09397d6d88e7676a9bc8433ca11ba5304837"
 
+
+[[constraint]]
+  name = "github.com/opentracing/basictracer-go"
+  version = "1.0.0"
