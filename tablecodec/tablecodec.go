@@ -203,7 +203,11 @@ func DecodeTableID(key kv.Key) int64 {
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (int64, error) {
 	_, handle, err := DecodeRecordKey(key)
-	return handle, errors.Trace(err)
+	// errors.Trace can't be inlined by compiler, let's check error explicitly
+	if err != nil {
+		return handle, errors.Trace(err)
+	}
+	return handle, nil
 }
 
 // EncodeValue encodes a go value to bytes.
