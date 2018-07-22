@@ -59,7 +59,7 @@ func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv
 			Tp:        tipb.ExprType_ScalarFunc,
 			Sig:       tipb.ScalarFuncSig_LogicalAnd,
 			Children:  []*tipb.Expr{pbCNF, pbExpr},
-			FieldType: toPBFieldType(retTypeOfAnd),
+			FieldType: ToPBFieldType(retTypeOfAnd),
 		}
 	}
 	return
@@ -114,7 +114,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	if !pc.client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
 	}
-	return &tipb.Expr{Tp: tp, Val: val, FieldType: toPBFieldType(ft)}
+	return &tipb.Expr{Tp: tp, Val: val, FieldType: ToPBFieldType(ft)}
 }
 
 func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) {
@@ -178,7 +178,8 @@ func (pc *PbConverter) encodeDatum(d types.Datum) (tipb.ExprType, []byte, bool) 
 	return tp, val, true
 }
 
-func toPBFieldType(ft *types.FieldType) *tipb.FieldType {
+// ToPBFieldType converts *types.FieldType to *tipb.FieldType.
+func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 	return &tipb.FieldType{
 		Tp:      int32(ft.Tp),
 		Flag:    uint32(ft.Flag),
@@ -210,7 +211,7 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 		return &tipb.Expr{
 			Tp:        tipb.ExprType_ColumnRef,
 			Val:       codec.EncodeInt(nil, int64(column.Index)),
-			FieldType: toPBFieldType(column.RetType),
+			FieldType: ToPBFieldType(column.RetType),
 		}
 	}
 	id := column.ID
@@ -251,7 +252,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		Tp:        tipb.ExprType_ScalarFunc,
 		Sig:       pbCode,
 		Children:  children,
-		FieldType: toPBFieldType(expr.RetType),
+		FieldType: ToPBFieldType(expr.RetType),
 	}
 }
 
