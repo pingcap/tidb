@@ -390,6 +390,7 @@ func (do *Domain) mustRestartSyncer() error {
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
 	if do.ddl != nil {
+		RemoveServerInfoFromPD(do.ddl)
 		terror.Log(errors.Trace(do.ddl.Stop()))
 	}
 	close(do.exit)
@@ -500,7 +501,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = do.ddl.StoreServerInfoToPD()
+	err = StoreServerInfoToPD(do.ddl)
 	if err != nil {
 		return errors.Trace(err)
 	}

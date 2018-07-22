@@ -26,7 +26,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -39,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/printer"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
 	"golang.org/x/net/context"
@@ -206,18 +204,11 @@ type DDL interface {
 	OwnerManager() owner.Manager
 	// GetTableMaxRowID gets table max row ID.
 	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (int64, bool, error)
+	// GetID gets the ddl ID
+	GetID() string
 
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(interface{})
-
-	// GetServerInfo get self DDL server static information.
-	GetServerInfo() *util.DDLServerInfo
-	// StoreServerInfoToPD store self DDL server static information to PD when DDL server Started.
-	StoreServerInfoToPD() error
-	// GetOwnerServerInfo get owner DDL server static information from PD.
-	GetOwnerServerInfo() (*util.DDLServerInfo, error)
-	// GetAllServerInfo get all DDL servers static information from PD.
-	GetAllServerInfo() (map[string]*util.DDLServerInfo, error)
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
@@ -387,11 +378,6 @@ func (d *ddl) close() {
 	if err != nil {
 		log.Errorf("[ddl] remove self version path failed %v", err)
 	}
-	err = d.schemaSyncer.RemoveSelfServerInfo()
-	if err != nil {
-		log.Errorf("[ddl] remove self server info path failed %v", err)
-	}
-
 	for _, worker := range d.workers {
 		worker.close()
 	}
@@ -443,6 +429,11 @@ func (d *ddl) SchemaSyncer() SchemaSyncer {
 // OwnerManager implements DDL.OwnerManager interface.
 func (d *ddl) OwnerManager() owner.Manager {
 	return d.ownerManager
+}
+
+// GetID implements DDL.GetID interface.
+func (d *ddl) GetID() string {
+	return d.uuid
 }
 
 func checkJobMaxInterval(job *model.Job) time.Duration {
@@ -523,47 +514,6 @@ func (d *ddl) callHookOnChanged(err error) error {
 // SetBinlogClient implements DDL.SetBinlogClient interface.
 func (d *ddl) SetBinlogClient(binlogCli interface{}) {
 	d.binlogCli = binlogCli
-}
-
-func (d *ddl) GetServerInfo() *util.DDLServerInfo {
-	cfg := config.GetGlobalConfig()
-	info := &util.DDLServerInfo{
-		ID:         d.uuid,
-		IP:         cfg.AdvertiseAddress,
-		StatusPort: cfg.Status.StatusPort,
-		Lease:      cfg.Lease,
-	}
-	info.Version = mysql.ServerVersion
-	info.GitHash = printer.TiDBGitHash
-	return info
-}
-
-func (d *ddl) GetOwnerServerInfo() (*util.DDLServerInfo, error) {
-	ctx := context.Background()
-	ddlOwnerID, err := d.ownerManager.GetOwnerID(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	ownerInfo, err := d.schemaSyncer.GetServerInfoFromPD(ctx, ddlOwnerID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return ownerInfo, nil
-}
-
-func (d *ddl) GetAllServerInfo() (map[string]*util.DDLServerInfo, error) {
-	ctx := context.Background()
-	AllDDLServerInfo, err := d.schemaSyncer.GetAllServerInfoFromPD(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return AllDDLServerInfo, nil
-}
-
-func (d *ddl) StoreServerInfoToPD() error {
-	info := d.GetServerInfo()
-	ctx := context.Background()
-	return d.schemaSyncer.UpdateSelfServerInfo(ctx, info)
 }
 
 // DDL error codes.

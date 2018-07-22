@@ -14,13 +14,13 @@
 package ddl
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
 	"sync"
 	"time"
 
-	"encoding/json"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/juju/errors"
@@ -93,8 +93,8 @@ type SchemaSyncer interface {
 	GetServerInfoFromPD(ctx context.Context, id string) (*util.DDLServerInfo, error)
 	// GetAllServerInfoFromPD get all DDL servers information from PD.
 	GetAllServerInfoFromPD(ctx context.Context) (map[string]*util.DDLServerInfo, error)
-	// UpdateSelfServerInfo store DDL server information to PD.
-	UpdateSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error
+	// StoreSelfServerInfo store DDL server information to PD.
+	StoreSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error
 	// RemoveSelfServerInfo remove DDL server information from PD.
 	RemoveSelfServerInfo() error
 }
@@ -186,12 +186,12 @@ func (s *schemaVersionSyncer) GetServerInfoFromPD(ctx context.Context, id string
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
-		if err == nil && len(resp.Kvs) > 0 {
+		if len(resp.Kvs) > 0 {
 			info := &util.DDLServerInfo{}
 			err := json.Unmarshal(resp.Kvs[0].Value, info)
 			if err != nil {
 				log.Infof("[syncer] get ddl server info, ddl %s json.Unmarshal %v failed %v.", resp.Kvs[0].Key, resp.Kvs[0].Value, err)
-				return nil, err
+				return nil, errors.Trace(err)
 			}
 			return info, nil
 		}
@@ -221,7 +221,7 @@ func (s *schemaVersionSyncer) GetAllServerInfoFromPD(ctx context.Context) (map[s
 			err := json.Unmarshal(kv.Value, info)
 			if err != nil {
 				log.Infof("[syncer] get all ddl server info, ddl %s json.Unmarshal %v failed %v.", kv.Key, kv.Value, err)
-				return nil, err
+				return nil, errors.Trace(err)
 			}
 			allDDLInfo[info.ID] = info
 		}
@@ -229,8 +229,8 @@ func (s *schemaVersionSyncer) GetAllServerInfoFromPD(ctx context.Context) (map[s
 	}
 }
 
-// UpdateSelfServerInfo implements SchemaSyncer.UpdateSelfServerInfo interface.
-func (s *schemaVersionSyncer) UpdateSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error {
+// StoreSelfServerInfo implements SchemaSyncer.StoreSelfServerInfo interface.
+func (s *schemaVersionSyncer) StoreSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error {
 	infoBuf, err := json.Marshal(info)
 	if err != nil {
 		return errors.Trace(err)
@@ -383,7 +383,7 @@ func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx context.Context) (int64, 
 		if err != nil {
 			continue
 		}
-		if err == nil && len(resp.Kvs) > 0 {
+		if len(resp.Kvs) > 0 {
 			var ver int
 			ver, err = strconv.Atoi(string(resp.Kvs[0].Value))
 			if err == nil {

@@ -1279,13 +1279,13 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, errors.New("ddl server information not found"))
 		return
 	}
-	selfInfo := ddl.GetServerInfo()
+	selfInfo := domain.GetServerInfo(ddl.GetID())
 	reportServerInfo := ReportServerInfo{
 		IsOwner:        selfInfo.ID == ownerID,
 		SelfServerInfo: selfInfo,
 	}
 	if !reportServerInfo.IsOwner {
-		ownerInfo, err := ddl.GetOwnerServerInfo()
+		ownerInfo, err := domain.GetOwnerServerInfo(ddl)
 		if err != nil {
 			writeError(w, errors.New("ddl server information not found"))
 			return
@@ -1313,7 +1313,7 @@ func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 	}
 	ddl := domain.GetDomain(se.(sessionctx.Context)).DDL()
 
-	allServersInfo, err := ddl.GetAllServerInfo()
+	allServersInfo, err := domain.GetAllServerInfo(ddl)
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		return
