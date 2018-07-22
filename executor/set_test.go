@@ -90,16 +90,16 @@ func (s *testSuite) TestSetVar(c *C) {
 	// Set default
 	// {ScopeGlobal | ScopeSession, "low_priority_updates", "OFF"},
 	// For global var
-	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("0"))
 	tk.MustExec(`set @@global.low_priority_updates="ON";`)
-	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("1"))
 	tk.MustExec(`set @@global.low_priority_updates=DEFAULT;`) // It will be set to compiled-in default value.
-	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("0"))
 	// For session
-	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("0"))
 	tk.MustExec(`set @@global.low_priority_updates="ON";`)
 	tk.MustExec(`set @@session.low_priority_updates=DEFAULT;`) // It will be set to global var value.
-	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("1"))
 
 	// For mysql jdbc driver issue.
 	tk.MustQuery(`select @@session.tx_read_only;`).Check(testkit.Rows("0"))
@@ -300,4 +300,10 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect default_week_format value: '9'"))
 	result = tk.MustQuery("select @@default_week_format;")
 	result.Check(testkit.Rows("7"))
+
+	_, err = tk.Exec("set @@error_count = 0")
+	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue)
+
+	_, err = tk.Exec("set @@warning_count = 0")
+	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue)
 }

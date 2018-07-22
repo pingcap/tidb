@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/sessionctx/variable"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -167,6 +168,12 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
 func ValidateSetSystemVar(name string, value string) (string, error, error) {
+	if strings.EqualFold(value, "DEFAULT") {
+		if val := variable.GetSysVar(name); val != nil {
+			return val.Value, nil, nil
+		}
+		return value, nil, nil
+	}
 	switch name {
 	case DefaultWeekFormat:
 		val, err := strconv.Atoi(value)
@@ -179,6 +186,23 @@ func ValidateSetSystemVar(name string, value string) (string, error, error) {
 		if val > 7 {
 			return "7", ErrTruncatedWrongValue.GenByArgs(name, value), nil
 		}
+	case DelayKeyWrite:
+		if strings.EqualFold(value, "ON") || value == "1" {
+			return "ON", nil, nil
+		} else if strings.EqualFold(value, "OFF") || value == "0" {
+			return "OFF", nil, nil
+		} else if strings.EqualFold(value, "ALL") || value == "2" {
+			return "ALL", nil, nil
+		}
+		return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
+	case FlushTime:
+		val, err := strconv.Atoi(value)
+		if err != nil {
+			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 0 {
+			return "0", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
 	case GroupConcatMaxLen:
 		val, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
@@ -190,16 +214,24 @@ func ValidateSetSystemVar(name string, value string) (string, error, error) {
 		if val > 18446744073709551615 {
 			return "18446744073709551615", ErrTruncatedWrongValue.GenByArgs(name, value), nil
 		}
-	case MaxUserConnections:
-		val, err := strconv.ParseUint(value, 10, 64)
+	case InteractiveTimeout:
+		val, err := strconv.Atoi(value)
 		if err != nil {
 			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
 		}
-		if val < 0 {
-			return "0", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		if val < 1 {
+			return "1", ErrTruncatedWrongValue.GenByArgs(name, value), nil
 		}
-		if val > 4294967295 {
-			return "4294967295", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+	case MaxConnections:
+		val, err := strconv.Atoi(value)
+		if err != nil {
+			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 1 {
+			return "1", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+		if val > 100000 {
+			return "100000", ErrTruncatedWrongValue.GenByArgs(name, value), nil
 		}
 	case MaxSortLength:
 		val, err := strconv.ParseInt(value, 10, 64)
@@ -223,24 +255,41 @@ func ValidateSetSystemVar(name string, value string) (string, error, error) {
 		if val > 255 {
 			return "255", ErrTruncatedWrongValue.GenByArgs(name, value), nil
 		}
-	case InteractiveTimeout:
+	case OldPasswords:
 		val, err := strconv.Atoi(value)
 		if err != nil {
 			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
 		}
-		if val < 1 {
-			return "1", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		if val < 0 {
+			return "0", ErrTruncatedWrongValue.GenByArgs(name, value), nil
 		}
-	case DelayKeyWrite:
-		if strings.EqualFold(value, "ON") || value == "1" {
-			return "ON", nil, nil
-		} else if strings.EqualFold(value, "OFF") || value == "0" {
+		if val > 2 {
+			return "2", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+	case MaxUserConnections:
+		val, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		if val < 0 {
+			return "0", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+		if val > 4294967295 {
+			return "4294967295", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+		}
+	case SessionTrackGtids:
+		if strings.EqualFold(value, "OFF") || value == "0" {
 			return "OFF", nil, nil
-		} else if strings.EqualFold(value, "ALL") || value == "2" {
-			return "ALL", nil, nil
+		} else if strings.EqualFold(value, "OWN_GTID") || value == "1" {
+			return "OWN_GTID", nil, nil
+		} else if strings.EqualFold(value, "ALL_GTIDS") || value == "2" {
+			return "ALL_GTIDS", nil, nil
 		}
 		return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
-	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode:
+	case WarningCount, ErrorCount:
+		return value, nil, ErrReadOnly.GenByArgs(name)
+	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
+		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, ForeignKeyChecks, SQLSafeUpdates:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil, nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {

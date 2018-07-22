@@ -110,16 +110,16 @@ func boolToIntStr(b bool) string {
 // we only support MySQL now
 var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "gtid_mode", "OFF"},
-	{ScopeGlobal, "flush_time", "0"},
-	{ScopeSession, "pseudo_slave_mode", ""},
+	{ScopeGlobal, FlushTime, "0"},
+	{ScopeSession, PseudoSlaveMode, ""},
 	{ScopeNone, "performance_schema_max_mutex_classes", "200"},
-	{ScopeGlobal | ScopeSession, "low_priority_updates", "OFF"},
-	{ScopeGlobal | ScopeSession, "session_track_gtids", ""},
+	{ScopeGlobal | ScopeSession, LowPriorityUpdates, "0"},
+	{ScopeGlobal | ScopeSession, SessionTrackGtids, "OFF"},
 	{ScopeGlobal | ScopeSession, "ndbinfo_max_rows", ""},
 	{ScopeGlobal | ScopeSession, "ndb_index_stat_option", ""},
-	{ScopeGlobal | ScopeSession, "old_passwords", "0"},
+	{ScopeGlobal | ScopeSession, OldPasswords, "0"},
 	{ScopeNone, "innodb_version", "5.6.25"},
-	{ScopeGlobal, "max_connections", "151"},
+	{ScopeGlobal, MaxConnections, "151"},
 	{ScopeGlobal | ScopeSession, BigTables, "0"},
 	{ScopeNone, "skip_external_locking", "ON"},
 	{ScopeGlobal, "slave_pending_jobs_size_max", "16777216"},
@@ -146,7 +146,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "lc_messages_dir", "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/"},
 	{ScopeGlobal, "ft_boolean_syntax", "+ -><()~*:\"\"&|"},
 	{ScopeGlobal, "table_definition_cache", "1400"},
-	{ScopeNone, "skip_name_resolve", "OFF"},
+	{ScopeNone, SkipNameResolve, "0"},
 	{ScopeNone, "performance_schema_max_file_handles", "32768"},
 	{ScopeSession, "transaction_allow_batching", ""},
 	{ScopeGlobal | ScopeSession, SQLModeVar, mysql.DefaultSQLMode},
@@ -220,7 +220,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_autoinc_lock_mode", "1"},
 	{ScopeGlobal, "slave_net_timeout", "3600"},
 	{ScopeGlobal, "key_buffer_size", "8388608"},
-	{ScopeGlobal | ScopeSession, "foreign_key_checks", "ON"},
+	{ScopeGlobal | ScopeSession, ForeignKeyChecks, "1"},
 	{ScopeGlobal, "host_cache_size", "279"},
 	{ScopeGlobal, DelayKeyWrite, "ON"},
 	{ScopeNone, "metadata_locks_cache_size", "1024"},
@@ -600,7 +600,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_undo_directory", "."},
 	{ScopeNone, "bind_address", "*"},
 	{ScopeGlobal, "innodb_sync_spin_loops", "30"},
-	{ScopeGlobal | ScopeSession, "sql_safe_updates", "OFF"},
+	{ScopeGlobal | ScopeSession, SQLSafeUpdates, "0"},
 	{ScopeNone, "tmpdir", "/var/tmp/"},
 	{ScopeGlobal, "innodb_thread_concurrency", "0"},
 	{ScopeGlobal, "slave_allow_batching", "OFF"},
@@ -615,8 +615,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "min_examined_row_limit", "0"},
 	{ScopeGlobal, "sync_frm", "ON"},
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
-	{ScopeSession, "warning_count", "0"},
-	{ScopeSession, "error_count", "0"},
+	{ScopeSession, WarningCount, "0"},
+	{ScopeSession, ErrorCount, "0"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
 	{ScopeSession, TiDBImportingData, "0"},
@@ -722,6 +722,28 @@ const (
 	OfflineMode = "offline_mode"
 	// InteractiveTimeout is the name for 'interactive_timeout' system variable.
 	InteractiveTimeout = "interactive_timeout"
+	// FlushTime is the name for 'flush_time' system variable.
+	FlushTime = "flush_time"
+	// PseudoSlaveMode is the name for 'pseudo_slave_mode' system variable.
+	PseudoSlaveMode = "pseudo_slave_mode"
+	// LowPriorityUpdates is the name for 'low_priority_updates' system variable.
+	LowPriorityUpdates = "low_priority_updates"
+	// SessionTrackGtids is the name for 'session_track_gtids' system variable.
+	SessionTrackGtids = "session_track_gtids"
+	// OldPasswords is the name for 'old_passwords' system variable.
+	OldPasswords = "old_passwords"
+	// MaxConnections is the name for 'max_connections' system variable.
+	MaxConnections = "max_connections"
+	// SkipNameResolve is the name for 'skip_name_resolve' system variable.
+	SkipNameResolve = "skip_name_resolve"
+	// ForeignKeyChecks is the name for 'foreign_key_checks' system variable.
+	ForeignKeyChecks = "foreign_key_checks"
+	// SQLSafeUpdates is the name for 'sql_safe_updates' system variable.
+	SQLSafeUpdates = "sql_safe_updates"
+	// WarningCount is the name for 'warning_count' system variable.
+	WarningCount = "warning_count"
+	// ErrorCount is the name for 'error_count' system variable.
+	ErrorCount = "error_count"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
