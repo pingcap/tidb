@@ -18,8 +18,8 @@ import (
 	"github.com/pingcap/pd/pd-client"
 )
 
-// NewTestClient creates a TiKV client and PD client from options.
-func NewTestClient(cluster *Cluster, mvccStore MVCCStore, path string) (*RPCClient, pd.Client, error) {
+// NewTiKVAndPDClient creates a TiKV client and PD client from options.
+func NewTiKVAndPDClient(cluster *Cluster, mvccStore MVCCStore, path string) (*RPCClient, pd.Client, error) {
 	if cluster == nil {
 		cluster = NewCluster()
 		BootstrapWithSingleStore(cluster)
