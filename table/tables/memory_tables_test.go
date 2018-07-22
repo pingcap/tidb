@@ -15,6 +15,7 @@ package tables_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -25,20 +26,25 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testMemoryTableSuite{})
 
 type testMemoryTableSuite struct {
 	store kv.Storage
+	dom   *domain.Domain
 	se    session.Session
 	tbl   table.Table
 }
 
 func (ts *testMemoryTableSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	store, err := mockstore.NewMockTikvStore()
 	c.Check(err, IsNil)
 	ts.store = store
+	ts.dom, err = session.BootstrapSession(store)
+	c.Assert(err, IsNil)
 	ts.se, err = session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
@@ -68,6 +74,12 @@ func (ts *testMemoryTableSuite) SetUpSuite(c *C) {
 	tblInfo.Columns[0].Flag |= mysql.PriKeyFlag
 	alloc := autoid.NewMemoryAllocator(int64(10))
 	ts.tbl = tables.MemoryTableFromMeta(alloc, tblInfo)
+}
+
+func (ts *testMemoryTableSuite) TearDownSuite(c *C) {
+	ts.dom.Close()
+	c.Assert(ts.store.Close(), IsNil)
+	testleak.AfterTest(c)
 }
 
 func (ts *testMemoryTableSuite) TestMemoryBasic(c *C) {
