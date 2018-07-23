@@ -240,7 +240,7 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo
 	}
 	ranges := ranger.FullIntRange(false)
 	var builder distsql.RequestBuilder
-	builder.SetTableRanges(tblInfo.ID, ranges, nil).
+	builder.SetTableRanges(partitionID, ranges, nil).
 		SetDAGRequest(dagPB).
 		SetKeepOrder(true).
 		SetConcurrency(1).SetDesc(true)
@@ -301,6 +301,8 @@ var gofailOnceGuard bool
 
 // getTableRange gets the start and end handle of a table (or partition).
 func getTableRange(d *ddlCtx, tblInfo *model.TableInfo, partitionID int64, snapshotVer uint64) (StartHandle, EndHandle int64, err error) {
+	StartHandle = math.MinInt64
+	EndHandle = math.MaxInt64
 	// Get the start handle of this partition.
 	err = iterateSnapshotRows(d.store, partitionID, snapshotVer, math.MinInt64,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
@@ -317,6 +319,7 @@ func getTableRange(d *ddlCtx, tblInfo *model.TableInfo, partitionID int64, snaps
 		return 0, 0, errors.Trace(err)
 	}
 	if EndHandle < StartHandle || emptyTable {
+		log.Warnf("[ddl-reorg] get table range %s EndHandle < StartHandle partition %d [%d %d]", tblInfo, partitionID, EndHandle, StartHandle)
 		EndHandle = StartHandle
 	}
 	return

@@ -2656,9 +2656,10 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 }
 
 func (s *testDBSuite) TestPartitionAddIndex(c *C) {
-	s.tk.MustExec("use test")
-	s.tk.MustExec("set @@tidb_enable_table_partition = 1")
-	s.tk.MustExec(`create table partition_add_idx (
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_table_partition = 1")
+	tk.MustExec(`create table partition_add_idx (
 	id int not null,
 	hired date not null
 	)
@@ -2671,15 +2672,15 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	partition p7 values less than (2018)
 	);`)
 	for i := 0; i < 500; i++ {
-		s.tk.MustExec(fmt.Sprintf("insert into partition_add_idx values (%d, '%d-01-01')", i, 1988+rand.Intn(30)))
+		tk.MustExec(fmt.Sprintf("insert into partition_add_idx values (%d, '%d-01-01')", i, 1988+rand.Intn(30)))
 	}
 
-	s.tk.MustExec("alter table partition_add_idx add index idx1 (hired)")
-	s.tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
+	tk.MustExec("alter table partition_add_idx add index idx1 (hired)")
+	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
 
-	s.tk.MustQuery("select count(hired) from partition_add_idx use index(idx1)").Check(testkit.Rows("500"))
-	s.tk.MustQuery("select count(id) from partition_add_idx use index(idx2)").Check(testkit.Rows("500"))
+	tk.MustQuery("select count(hired) from partition_add_idx use index(idx1)").Check(testkit.Rows("500"))
+	tk.MustQuery("select count(id) from partition_add_idx use index(idx2)").Check(testkit.Rows("500"))
 
-	s.tk.MustExec("admin check table partition_add_idx")
-	s.tk.MustExec("drop table partition_add_idx")
+	tk.MustExec("admin check table partition_add_idx")
+	tk.MustExec("drop table partition_add_idx")
 }
