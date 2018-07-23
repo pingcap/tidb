@@ -61,6 +61,11 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = false
+
+	// PartitionCountLimit is limit of the number of partitions in a table.
+	// Mysql maximum number of partitions is 8192, our maximum number of partitions is 1024.
+	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
+	PartitionCountLimit = 1024
 )
 
 var (
@@ -172,6 +177,8 @@ var (
 	ErrTooManyValues = terror.ClassDDL.New(codeErrTooManyValues, mysql.MySQLErrName[mysql.ErrTooManyValues])
 	//ErrDropLastPartition returns cannot remove all partitions, use drop table instead.
 	ErrDropLastPartition = terror.ClassDDL.New(codeDropLastPartition, mysql.MySQLErrName[mysql.ErrDropLastPartition])
+	//ErrTooManyPartitions returns too many partitions were defined.
+	ErrTooManyPartitions = terror.ClassDDL.New(codeTooManyPartitions, mysql.MySQLErrName[mysql.ErrTooManyPartitions])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -248,6 +255,16 @@ func (dc *ddlCtx) isOwner() bool {
 		metrics.DDLCounter.WithLabelValues(metrics.IsDDLOwner).Inc()
 	}
 	return isOwner
+}
+
+func (dc *ddlCtx) genGlobalID() (int64, error) {
+	var globalID int64
+	err := kv.RunInNewTxn(dc.store, true, func(txn kv.Transaction) error {
+		var err error
+		globalID, err = meta.NewMeta(txn).GenGlobalID()
+		return errors.Trace(err)
+	})
+	return globalID, errors.Trace(err)
 }
 
 // RegisterEventCh registers passed channel for ddl Event.
@@ -399,17 +416,6 @@ func (d *ddl) GetInformationSchema(ctx sessionctx.Context) infoschema.InfoSchema
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.mu.interceptor.OnGetInfoSchema(ctx, is)
-}
-
-func (d *ddl) genGlobalID() (int64, error) {
-	var globalID int64
-	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		var err error
-		globalID, err = meta.NewMeta(txn).GenGlobalID()
-		return errors.Trace(err)
-	})
-
-	return globalID, errors.Trace(err)
 }
 
 // generalWorker returns the first worker. The ddl structure has only one worker before we implement the parallel worker.
@@ -583,6 +589,7 @@ const (
 	codePartitionMaxvalue             = terror.ErrCode(mysql.ErrPartitionMaxvalue)
 	codeErrTooManyValues              = terror.ErrCode(mysql.ErrTooManyValues)
 	codeDropLastPartition             = terror.ErrCode(mysql.ErrDropLastPartition)
+	codeTooManyPartitions             = terror.ErrCode(mysql.ErrTooManyPartitions)
 )
 
 func init() {
@@ -623,6 +630,7 @@ func init() {
 		codePartitionMaxvalue:             mysql.ErrPartitionMaxvalue,
 		codeErrTooManyValues:              mysql.ErrTooManyValues,
 		codeDropLastPartition:             mysql.ErrDropLastPartition,
+		codeTooManyPartitions:             mysql.ErrTooManyPartitions,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
