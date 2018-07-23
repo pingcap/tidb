@@ -831,7 +831,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	pi, err := buildTablePartitionInfo(ctx, d, s, cols)
+	pi, err := buildTablePartitionInfo(ctx, d, s)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -853,7 +853,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = checkPartitionFuncType(ctx, s.Partition.Expr, tbInfo)
+		err = checkPartitionFuncType(ctx, s, cols, tbInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

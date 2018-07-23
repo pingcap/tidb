@@ -35,7 +35,7 @@ const (
 )
 
 // buildTablePartitionInfo builds partition info and checks for some errors.
-func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, cols []*table.Column) (*model.PartitionInfo, error) {
+func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt) (*model.PartitionInfo, error) {
 	if s.Partition == nil {
 		return nil, nil
 	}
@@ -47,20 +47,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		buf := new(bytes.Buffer)
 		s.Partition.Expr.Format(buf)
 		pi.Expr = buf.String()
-		if s.Partition.Tp == model.PartitionTypeRange {
-			for _, col := range cols {
-				name := strings.Replace(col.Name.String(), ".", "`.`", -1)
-				if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
-					// TODO: check that the expression returns an integer.
-				}
-				if _, ok := s.Partition.Expr.(ast.ExprNode); ok {
-					// Range partitioning key supported types: tinyint, smallint, mediumint, int and bigint.
-					if !validRangePartitionType(col) && fmt.Sprintf("`%s`", name) == pi.Expr {
-						return nil, errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
-					}
-				}
-			}
-		}
 	} else if s.Partition.ColumnNames != nil {
 		pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
 		for _, cn := range s.Partition.ColumnNames {
@@ -142,12 +128,26 @@ func checkPartitionFuncValid(expr ast.ExprNode) error {
 }
 
 // checkPartitionFuncType checks partition function return type.
-func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, tblInfo *model.TableInfo) error {
-	if expr == nil {
+func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols []*table.Column, tblInfo *model.TableInfo) error {
+	if s.Partition.Expr == nil {
 		return nil
 	}
 	buf := new(bytes.Buffer)
-	expr.Format(buf)
+	s.Partition.Expr.Format(buf)
+	exprStr := buf.String()
+	if s.Partition.Tp == model.PartitionTypeRange {
+		// if partition by columnExpr, check the column type
+		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
+			for _, col := range cols {
+				name := strings.Replace(col.Name.String(), ".", "`.`", -1)
+				// Range partitioning key supported types: tinyint, smallint, mediumint, int and bigint.
+				if !validRangePartitionType(col) && fmt.Sprintf("`%s`", name) == exprStr {
+					return errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(exprStr))
+				}
+			}
+		}
+	}
+
 	e, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
 	if err != nil {
 		return errors.Trace(err)
