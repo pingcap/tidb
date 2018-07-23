@@ -220,7 +220,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		oldPartitionIDs = getPartitionIDs(tblInfo)
 		for _, def := range tblInfo.Partition.Definitions {
 			var pid int64
-			pid, err := d.genGlobalID()
+			pid, err = d.genGlobalID()
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
