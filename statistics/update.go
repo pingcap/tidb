@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -117,7 +116,9 @@ func (h *Handle) merge(s *SessionStatsCollector) {
 	for id, item := range s.mapper {
 		h.globalMap.update(id, item.Delta, item.Count, &item.ColSize)
 	}
-	h.rateMap.merge(s.rateMap)
+	h.mu.Lock()
+	h.mu.rateMap.merge(s.rateMap)
+	h.mu.Unlock()
 	s.rateMap = make(errorRateDeltaMap)
 	h.feedback = mergeQueryFeedback(h.feedback, s.feedback)
 	s.mapper = make(tableDeltaMap)
@@ -298,53 +299,63 @@ func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
-func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (bool, error) {
+func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (updated bool, err error) {
 	if delta.Count == 0 {
 		return true, nil
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	ctx := context.TODO()
-	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "begin")
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	defer func() {
+		err = finishTransaction(context.Background(), exec, err)
+	}()
 	var sql string
 	if delta.Delta < 0 {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", h.ctx.Txn().StartTS(), -delta.Delta, delta.Count, id, -delta.Delta)
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", h.mu.ctx.Txn().StartTS(), -delta.Delta, delta.Count, id, -delta.Delta)
 	} else {
-		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.ctx.Txn().StartTS(), delta.Delta, delta.Count, id)
+		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count + %d, modify_count = modify_count + %d where table_id = %d", h.mu.ctx.Txn().StartTS(), delta.Delta, delta.Count, id)
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
-		return false, errors.Trace(err)
+		return
 	}
-	updated := h.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "commit")
-	return updated, errors.Trace(err)
+	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+	return
 }
 
-func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) error {
+func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (err error) {
 	if len(delta.ColSize) == 0 {
 		return nil
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	ctx := context.TODO()
-	_, err := h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "begin")
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version := h.ctx.Txn().StartTS()
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	version := h.mu.ctx.Txn().StartTS()
 
 	for key, val := range delta.ColSize {
 		if val == 0 {
 			continue
 		}
 		sql := fmt.Sprintf("update mysql.stats_histograms set version = %d, tot_col_size = tot_col_size + %d where hist_id = %d and table_id = %d and is_index = 0", version, val, key, id)
-		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+		_, err = exec.Execute(ctx, sql)
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 	}
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "commit")
-	return errors.Trace(err)
+	return
 }
 
 // DumpStatsFeedbackToKV dumps the stats feedback to KV.
@@ -376,7 +387,9 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
 		"(%d, %d, %d, X'%X')", fb.tableID, fb.hist.ID, isIndex, vals)
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	h.mu.Lock()
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	h.mu.Unlock()
 	if err != nil {
 		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblError).Inc()
 	} else {
@@ -387,8 +400,9 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 
 // UpdateErrorRate updates the error rate of columns from h.rateMap to cache.
 func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
-	tbls := make([]*Table, 0, len(h.rateMap))
-	for id, item := range h.rateMap {
+	h.mu.Lock()
+	tbls := make([]*Table, 0, len(h.mu.rateMap))
+	for id, item := range h.mu.rateMap {
 		table, ok := is.TableByID(id)
 		if !ok {
 			continue
@@ -408,15 +422,16 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 			tbl.Indices[key] = &idx
 		}
 		tbls = append(tbls, tbl)
-		delete(h.rateMap, id)
+		delete(h.mu.rateMap, id)
 	}
+	h.mu.Unlock()
 	h.UpdateTableStats(tbls, nil)
 }
 
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	sql := "select table_id, hist_id, is_index, feedback from mysql.stats_feedback order by table_id, hist_id, is_index"
-	rows, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if len(rows) == 0 || err != nil {
 		return errors.Trace(err)
 	}
@@ -501,13 +516,15 @@ func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedbac
 		}
 	}()
 	hist = UpdateHistogram(hist, q)
-	err = SaveStatsToStorage(h.ctx, tableID, -1, isIndex, hist, cms, 0)
+	err = h.SaveStatsToStorage(tableID, -1, isIndex, hist, cms, 0)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	h.ctx.GetSessionVars().BatchDelete = true
+	h.mu.Lock()
+	h.mu.ctx.GetSessionVars().BatchDelete = true
 	sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d", tableID, hist.ID, isIndex)
-	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	h.mu.Unlock()
 	q.feedback = q.feedback[:0]
 	return errors.Trace(err)
 }
@@ -522,35 +539,44 @@ const (
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
 var AutoAnalyzeMinCnt int64 = 1000
 
-func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
-	if tbl.ModifyCount == 0 || tbl.Count < AutoAnalyzeMinCnt {
-		return false
-	}
-	t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
-	if time.Since(t) < limit {
-		return false
-	}
-	if autoAnalyzeRatio > 0 && float64(tbl.ModifyCount)/float64(tbl.Count) > autoAnalyzeRatio {
-		return true
-	}
+// tableAnalyzed checks if the table is analyzed.
+func tableAnalyzed(tbl *Table) bool {
 	for _, col := range tbl.Columns {
-		if col.Count > 0 {
-			return false
+		if col.Histogram.Len() > 0 {
+			return true
 		}
 	}
 	for _, idx := range tbl.Indices {
-		if idx.Len() > 0 {
-			return false
+		if idx.Histogram.Len() > 0 {
+			return true
 		}
 	}
-	return true
+	return false
+}
+
+// needAnalyzeTable checks if we need to analyze the table:
+// 1. If the table has never been analyzed, we need to analyze it when it has
+//    not been modified for a time.
+// 2. If the table had been analyzed before, we need to analyze it when
+//    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
+func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
+	analyzed := tableAnalyzed(tbl)
+	if !analyzed {
+		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
+		return time.Since(t) >= limit
+	}
+	// Auto analyze is disabled.
+	if autoAnalyzeRatio == 0 {
+		return false
+	}
+	return float64(tbl.ModifyCount)/float64(tbl.Count) > autoAnalyzeRatio
 }
 
 const minAutoAnalyzeRatio = 0.3
 
-func getAutoAnalyzeRatio(sctx sessionctx.Context) float64 {
+func (h *Handle) getAutoAnalyzeRatio() float64 {
 	sql := fmt.Sprintf("select variable_value from mysql.global_variables where variable_name = '%s'", variable.TiDBAutoAnalyzeRatio)
-	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sctx, sql)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if err != nil {
 		return variable.DefAutoAnalyzeRatio
 	}
@@ -570,13 +596,13 @@ func getAutoAnalyzeRatio(sctx sessionctx.Context) float64 {
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 	dbs := is.AllSchemaNames()
-	autoAnalyzeRatio := getAutoAnalyzeRatio(h.ctx)
+	autoAnalyzeRatio := h.getAutoAnalyzeRatio()
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			statsTbl := h.GetTableStats(tblInfo)
-			if statsTbl.Pseudo || statsTbl.Count == 0 {
+			if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 				continue
 			}
 			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
@@ -602,7 +628,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 
 func (h *Handle) execAutoAnalyze(sql string) error {
 	startTime := time.Now()
-	_, _, err := h.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(h.ctx, sql)
+	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	metrics.AutoAnalyzeHistogram.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()

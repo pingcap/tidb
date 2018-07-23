@@ -168,6 +168,7 @@ var columnsCols = []columnInfo{
 	{"EXTRA", mysql.TypeVarchar, 30, 0, nil, nil},
 	{"PRIVILEGES", mysql.TypeVarchar, 80, 0, nil, nil},
 	{"COLUMN_COMMENT", mysql.TypeVarchar, 1024, 0, nil, nil},
+	{"GENERATION_EXPRESSION", mysql.TypeBlob, 589779, mysql.NotNullFlag, nil, nil},
 }
 
 var statisticsCols = []columnInfo{
@@ -650,6 +651,29 @@ func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
 	return rowCountMap, nil
 }
 
+func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
+	hasAutoIncID := false
+	for _, col := range tblInfo.Cols() {
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			hasAutoIncID = true
+			break
+		}
+	}
+	autoIncID := tblInfo.AutoIncID
+	if hasAutoIncID {
+		is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
+		tbl, err := is.TableByName(schema.Name, tblInfo.Name)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		autoIncID, err = tbl.Allocator(ctx).NextGlobalAutoID(tblInfo.ID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	return autoIncID, nil
+}
+
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
 	tableRowsMap, err := getRowCountAllTable(ctx)
 	if err != nil {
@@ -675,6 +699,10 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				continue
 			}
 
+			autoIncID, err := getAutoIncrementID(ctx, schema, table)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
 			record := types.MakeDatums(
 				catalogVal,             // TABLE_CATALOG
 				schema.Name.O,          // TABLE_SCHEMA
@@ -689,7 +717,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 				uint64(0),              // MAX_DATA_LENGTH
 				uint64(0),              // INDEX_LENGTH
 				uint64(0),              // DATA_FREE
-				table.AutoIncID,        // AUTO_INCREMENT
+				autoIncID,              // AUTO_INCREMENT
 				createTime,             // CREATE_TIME
 				nil,                    // UPDATE_TIME
 				nil,                    // CHECK_TIME
@@ -758,6 +786,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDesc.Extra,                  // EXTRA
 			"select,insert,update,references", // PRIVILEGES
 			columnDesc.Comment,                // COLUMN_COMMENT
+			col.GeneratedExprString,           // GENERATION_EXPRESSION
 		)
 		// In mysql, 'character_set_name' and 'collation_name' are setted to null when column type is non-varchar or non-blob in information_schema.
 		if col.Tp != mysql.TypeVarchar && col.Tp != mysql.TypeBlob {

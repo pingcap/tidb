@@ -57,11 +57,11 @@ func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t1, t2 where t1.a = t2.a").Check(testkit.Rows(
-		"HashLeftJoin_8 root inner join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)] 7.50",
-		"├─TableReader_11 root data:TableScan_10 6.00",
-		"│ └─TableScan_10 cop table:t1, range:[-inf,+inf], keep order:false 6.00",
-		"└─TableReader_13 root data:TableScan_12 6.00",
-		"  └─TableScan_12 cop table:t2, range:[-inf,+inf], keep order:false 6.00",
+		"HashLeftJoin_8 7.50 root inner join, inner:TableReader_13, equal:[eq(test.t1.a, test.t2.a)]",
+		"├─TableReader_11 6.00 root data:TableScan_10",
+		"│ └─TableScan_10 6.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_13 6.00 root data:TableScan_12",
+		"  └─TableScan_12 6.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
 
@@ -82,45 +82,45 @@ func (s *testAnalyzeSuite) TestStraightJoin(c *C) {
 	}
 
 	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4").Check(testkit.Rows(
-		"HashLeftJoin_10 root inner join, inner:TableReader_23 10000000000000000.00",
-		"├─HashLeftJoin_12 root inner join, inner:TableReader_21 1000000000000.00",
-		"│ ├─HashLeftJoin_14 root inner join, inner:TableReader_19 100000000.00",
-		"│ │ ├─TableReader_17 root data:TableScan_16 10000.00",
-		"│ │ │ └─TableScan_16 cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
-		"│ │ └─TableReader_19 root data:TableScan_18 10000.00",
-		"│ │   └─TableScan_18 cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
-		"│ └─TableReader_21 root data:TableScan_20 10000.00",
-		"│   └─TableScan_20 cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
-		"└─TableReader_23 root data:TableScan_22 10000.00",
-		"  └─TableScan_22 cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
+		"HashLeftJoin_10 10000000000000000.00 root inner join, inner:TableReader_23",
+		"├─HashLeftJoin_12 1000000000000.00 root inner join, inner:TableReader_21",
+		"│ ├─HashLeftJoin_14 100000000.00 root inner join, inner:TableReader_19",
+		"│ │ ├─TableReader_17 10000.00 root data:TableScan_16",
+		"│ │ │ └─TableScan_16 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ │ └─TableReader_19 10000.00 root data:TableScan_18",
+		"│ │   └─TableScan_18 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ └─TableReader_21 10000.00 root data:TableScan_20",
+		"│   └─TableScan_20 10000.00 cop table:t3, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_23 10000.00 root data:TableScan_22",
+		"  └─TableScan_22 10000.00 cop table:t4, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	testKit.MustQuery("explain select * from t1 straight_join t2 straight_join t3 straight_join t4").Check(testkit.Rows(
-		"HashLeftJoin_10 root inner join, inner:TableReader_23 10000000000000000.00",
-		"├─HashLeftJoin_12 root inner join, inner:TableReader_21 1000000000000.00",
-		"│ ├─HashLeftJoin_14 root inner join, inner:TableReader_19 100000000.00",
-		"│ │ ├─TableReader_17 root data:TableScan_16 10000.00",
-		"│ │ │ └─TableScan_16 cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
-		"│ │ └─TableReader_19 root data:TableScan_18 10000.00",
-		"│ │   └─TableScan_18 cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
-		"│ └─TableReader_21 root data:TableScan_20 10000.00",
-		"│   └─TableScan_20 cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
-		"└─TableReader_23 root data:TableScan_22 10000.00",
-		"  └─TableScan_22 cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
+		"HashLeftJoin_10 10000000000000000.00 root inner join, inner:TableReader_23",
+		"├─HashLeftJoin_12 1000000000000.00 root inner join, inner:TableReader_21",
+		"│ ├─HashLeftJoin_14 100000000.00 root inner join, inner:TableReader_19",
+		"│ │ ├─TableReader_17 10000.00 root data:TableScan_16",
+		"│ │ │ └─TableScan_16 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ │ └─TableReader_19 10000.00 root data:TableScan_18",
+		"│ │   └─TableScan_18 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ └─TableReader_21 10000.00 root data:TableScan_20",
+		"│   └─TableScan_20 10000.00 cop table:t3, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_23 10000.00 root data:TableScan_22",
+		"  └─TableScan_22 10000.00 cop table:t4, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	testKit.MustQuery("explain select straight_join * from t1, t2, t3, t4 where t1.a=t4.a;").Check(testkit.Rows(
-		"HashLeftJoin_11 root inner join, inner:TableReader_24, equal:[eq(test.t1.a, test.t4.a)] 1250000000000.00",
-		"├─HashLeftJoin_13 root inner join, inner:TableReader_22 1000000000000.00",
-		"│ ├─HashLeftJoin_15 root inner join, inner:TableReader_20 100000000.00",
-		"│ │ ├─TableReader_18 root data:TableScan_17 10000.00",
-		"│ │ │ └─TableScan_17 cop table:t1, range:[-inf,+inf], keep order:false 10000.00",
-		"│ │ └─TableReader_20 root data:TableScan_19 10000.00",
-		"│ │   └─TableScan_19 cop table:t2, range:[-inf,+inf], keep order:false 10000.00",
-		"│ └─TableReader_22 root data:TableScan_21 10000.00",
-		"│   └─TableScan_21 cop table:t3, range:[-inf,+inf], keep order:false 10000.00",
-		"└─TableReader_24 root data:TableScan_23 10000.00",
-		"  └─TableScan_23 cop table:t4, range:[-inf,+inf], keep order:false 10000.00",
+		"HashLeftJoin_11 1250000000000.00 root inner join, inner:TableReader_24, equal:[eq(test.t1.a, test.t4.a)]",
+		"├─HashLeftJoin_13 1000000000000.00 root inner join, inner:TableReader_22",
+		"│ ├─HashLeftJoin_15 100000000.00 root inner join, inner:TableReader_20",
+		"│ │ ├─TableReader_18 10000.00 root data:TableScan_17",
+		"│ │ │ └─TableScan_17 10000.00 cop table:t1, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ │ └─TableReader_20 10000.00 root data:TableScan_19",
+		"│ │   └─TableScan_19 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"│ └─TableReader_22 10000.00 root data:TableScan_21",
+		"│   └─TableScan_21 10000.00 cop table:t3, range:[-inf,+inf], keep order:false, stats:pseudo",
+		"└─TableReader_24 10000.00 root data:TableScan_23",
+		"  └─TableScan_23 10000.00 cop table:t4, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 }
 
@@ -144,12 +144,12 @@ func (s *testAnalyzeSuite) TestTableDual(c *C) {
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 
 	testKit.MustQuery(`explain select * from t where 1 = 0`).Check(testkit.Rows(
-		`Projection_5 root test.t.a 0.00`,
-		`└─TableDual_6 root rows:0 0.00`,
+		`Projection_5 0.00 root test.t.a`,
+		`└─TableDual_6 0.00 root rows:0`,
 	))
 
 	testKit.MustQuery(`explain select * from t where 1 = 1 limit 0`).Check(testkit.Rows(
-		`TableDual_5 root rows:0 0.00`,
+		`TableDual_5 0.00 root rows:0`,
 	))
 }
 
@@ -179,10 +179,10 @@ func (s *testAnalyzeSuite) TestEstimation(c *C) {
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select count(*) from t group by a").Check(testkit.Rows(
-		"HashAgg_9 root group by:col_1, funcs:count(col_0) 2.00",
-		"└─TableReader_10 root data:HashAgg_5 2.00",
-		"  └─HashAgg_5 cop group by:test.t.a, funcs:count(1) 2.00",
-		"    └─TableScan_8 cop table:t, range:[-inf,+inf], keep order:false 8.00",
+		"HashAgg_9 2.00 root group by:col_1, funcs:count(col_0)",
+		"└─TableReader_10 2.00 root data:HashAgg_5",
+		"  └─HashAgg_5 2.00 cop group by:test.t.a, funcs:count(1)",
+		"    └─TableScan_8 8.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 }
 
@@ -229,7 +229,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 	}{
 		{
 			sql:  "select count(*) from t group by e",
-			best: "IndexReader(Index(t.e)[[<nil>,+inf]]->StreamAgg)->StreamAgg",
+			best: "IndexReader(Index(t.e)[[NULL,+inf]]->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e <= 10 group by e",
@@ -241,7 +241,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(*) from t where c > '1' group by b",
-			best: "IndexReader(Index(t.b_c)[[<nil>,+inf]]->Sel([gt(test.t.c, 1)])->StreamAgg)->StreamAgg",
+			best: "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(test.t.c, 1)])->StreamAgg)->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e = 1 group by b",
@@ -249,7 +249,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		},
 		{
 			sql:  "select count(*) from t where e > 1 group by b",
-			best: "IndexLookUp(Index(t.b)[[<nil>,+inf]], Table(t)->Sel([gt(test.t.e, 1)]))->StreamAgg",
+			best: "IndexLookUp(Index(t.b)[[NULL,+inf]], Table(t)->Sel([gt(test.t.e, 1)]))->StreamAgg",
 		},
 		{
 			sql:  "select count(e) from t where t.b <= 20",
@@ -496,16 +496,16 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	statistics.RatioOfPseudoEstimate = 10.0
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableReader_7 root data:Selection_6 28.80",
-		"└─Selection_6 cop le(test.t.a, 5), le(test.t.b, 5) 28.80",
-		"  └─TableScan_5 cop table:t, range:[-inf,+inf], keep order:false 80.00",
+		"TableReader_7 28.80 root data:Selection_6",
+		"└─Selection_6 28.80 cop le(test.t.a, 5), le(test.t.b, 5)",
+		"  └─TableScan_5 80.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 	statistics.RatioOfPseudoEstimate = 0.7
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"IndexLookUp_11 root index:IndexScan_8, table:Selection_10 8.84",
-		"├─IndexScan_8 cop table:t, index:a, range:[-inf,5], keep order:false 26.59",
-		"└─Selection_10 cop le(test.t.b, 5) 8.84",
-		"  └─TableScan_9 cop table:t, keep order:false 26.59",
+		"IndexLookUp_11 8.84 root ",
+		"├─IndexScan_8 26.59 cop table:t, index:a, range:[-inf,5], keep order:false, stats:pseudo",
+		"└─Selection_10 8.84 cop le(test.t.b, 5)",
+		"  └─TableScan_9 26.59 cop table:t, keep order:false, stats:pseudo",
 	))
 }
 
@@ -565,14 +565,14 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 	testKit.MustExec("insert into t values (null, null), (null, null)")
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t where a is null").Check(testkit.Rows(
-		"TableReader_7 root data:Selection_6 2.00",
-		"└─Selection_6 cop isnull(test.t.a) 2.00",
-		"  └─TableScan_5 cop table:t, range:[-inf,+inf], keep order:false 2.00",
+		"TableReader_7 2.00 root data:Selection_6",
+		"└─Selection_6 2.00 cop isnull(test.t.a)",
+		"  └─TableScan_5 2.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery("explain select * from t use index(idx) where a is null").Check(testkit.Rows(
-		"IndexLookUp_7 root index:IndexScan_5, table:TableScan_6 2.00",
-		"├─IndexScan_5 cop table:t, index:a, range:[<nil>,<nil>], keep order:false 2.00",
-		"└─TableScan_6 cop table:t, keep order:false 2.00",
+		"IndexLookUp_7 2.00 root ",
+		"├─IndexScan_5 2.00 cop table:t, index:a, range:[NULL,NULL], keep order:false",
+		"└─TableScan_6 2.00 cop table:t, keep order:false",
 	))
 	h := dom.StatsHandle()
 	h.Clear()
@@ -580,14 +580,14 @@ func (s *testAnalyzeSuite) TestNullCount(c *C) {
 	defer func() { h.Lease = 0 }()
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	testKit.MustQuery("explain select * from t where b = 1").Check(testkit.Rows(
-		"TableReader_7 root data:Selection_6 0.00",
-		"└─Selection_6 cop eq(test.t.b, 1) 0.00",
-		"  └─TableScan_5 cop table:t, range:[-inf,+inf], keep order:false 2.00",
+		"TableReader_7 0.00 root data:Selection_6",
+		"└─Selection_6 0.00 cop eq(test.t.b, 1)",
+		"  └─TableScan_5 2.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 	testKit.MustQuery("explain select * from t where b < 1").Check(testkit.Rows(
-		"TableReader_7 root data:Selection_6 0.00",
-		"└─Selection_6 cop lt(test.t.b, 1) 0.00",
-		"  └─TableScan_5 cop table:t, range:[-inf,+inf], keep order:false 2.00",
+		"TableReader_7 0.00 root data:Selection_6",
+		"└─Selection_6 0.00 cop lt(test.t.b, 1)",
+		"  └─TableScan_5 2.00 cop table:t, range:[-inf,+inf], keep order:false",
 	))
 }
 
@@ -606,17 +606,17 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
-			"Projection_11 root 9_aux_0 10.00",
-			"└─Apply_13 root left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))] 10.00",
-			"  ├─TableReader_15 root data:TableScan_14 10.00",
-			"  │ └─TableScan_14 cop table:t, range:[-inf,+inf], keep order:false 10.00",
-			"  └─StreamAgg_20 root funcs:count(1) 1.00",
-			"    └─HashRightJoin_22 root inner join, inner:TableReader_25, equal:[eq(s.a, t1.a)] 1.00",
-			"      ├─TableReader_25 root data:Selection_24 1.00",
-			"      │ └─Selection_24 cop eq(s.a, test.t.a) 1.00",
-			"      │   └─TableScan_23 cop table:s, range:[-inf,+inf], keep order:false 10.00",
-			"      └─TableReader_27 root data:TableScan_26 10.00",
-			"        └─TableScan_26 cop table:t1, range:[-inf,+inf], keep order:false 10.00",
+			"Projection_11 10.00 root 9_aux_0",
+			"└─Apply_13 10.00 root left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]",
+			"  ├─TableReader_15 10.00 root data:TableScan_14",
+			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
+			"  └─StreamAgg_20 1.00 root funcs:count(1)",
+			"    └─HashRightJoin_22 1.00 root inner join, inner:TableReader_25, equal:[eq(s.a, t1.a)]",
+			"      ├─TableReader_25 1.00 root data:Selection_24",
+			"      │ └─Selection_24 1.00 cop eq(s.a, test.t.a)",
+			"      │   └─TableScan_23 10.00 cop table:s, range:[-inf,+inf], keep order:false",
+			"      └─TableReader_27 10.00 root data:TableScan_26",
+			"        └─TableScan_26 10.00 cop table:t1, range:[-inf,+inf], keep order:false",
 		))
 }
 
@@ -659,7 +659,7 @@ func BenchmarkOptimize(b *testing.B) {
 	}{
 		{
 			sql:  "select count(*) from t group by e",
-			best: "IndexReader(Index(t.e)[[<nil>,+inf]])->StreamAgg",
+			best: "IndexReader(Index(t.e)[[NULL,+inf]])->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e <= 10 group by e",
@@ -671,7 +671,7 @@ func BenchmarkOptimize(b *testing.B) {
 		},
 		{
 			sql:  "select count(*) from t where c > '1' group by b",
-			best: "IndexReader(Index(t.b_c)[[<nil>,+inf]]->Sel([gt(test.t.c, 1)]))->StreamAgg",
+			best: "IndexReader(Index(t.b_c)[[NULL,+inf]]->Sel([gt(test.t.c, 1)]))->StreamAgg",
 		},
 		{
 			sql:  "select count(*) from t where e = 1 group by b",

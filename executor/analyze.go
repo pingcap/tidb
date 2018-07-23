@@ -15,7 +15,6 @@ package executor
 
 import (
 	"strconv"
-	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
@@ -66,49 +65,27 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		taskCh <- task
 	}
 	close(taskCh)
-	dom := domain.GetDomain(e.ctx)
-	h := dom.StatsHandle()
-	lease := h.Lease
-	if lease > 0 {
-		var err1 error
-		for i := 0; i < len(e.tasks); i++ {
-			result := <-resultCh
-			if result.Err != nil {
-				err1 = result.Err
-				log.Error(errors.ErrorStack(err1))
-				continue
-			}
-			h.AnalyzeResultCh() <- &result
-		}
-		// We sleep two lease to make sure other tidb node has updated this node.
-		time.Sleep(lease * 2)
-		return errors.Trace(err1)
-	}
-	results := make([]statistics.AnalyzeResult, 0, len(e.tasks))
-	var err1 error
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for i := 0; i < len(e.tasks); i++ {
 		result := <-resultCh
 		if result.Err != nil {
-			err1 = result.Err
-			log.Error(errors.ErrorStack(err1))
+			err = result.Err
+			log.Error(errors.ErrorStack(err))
 			continue
 		}
-		results = append(results, result)
-	}
-	if err1 != nil {
-		return errors.Trace(err1)
-	}
-	for _, result := range results {
 		for i, hg := range result.Hist {
-			err = statistics.SaveStatsToStorage(e.ctx, result.TableID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
-			if err != nil {
-				return errors.Trace(err)
+			err1 := statsHandle.SaveStatsToStorage(result.TableID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
+			if err1 != nil {
+				err = err1
+				log.Error(errors.ErrorStack(err))
+				continue
 			}
 		}
 	}
-	is := dom.InfoSchema()
-	err = h.Update(is)
-	return errors.Trace(err)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(statsHandle.Update(GetInfoSchema(e.ctx)))
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
@@ -354,7 +331,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 			collectors[i].MergeSampleCollector(sc, statistics.SampleCollectorFromProto(rc))
 		}
 	}
-	timeZone := e.ctx.GetSessionVars().GetTimeZone()
+	timeZone := e.ctx.GetSessionVars().Location()
 	if e.pkInfo != nil {
 		pkHist.ID = e.pkInfo.ID
 		err = pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)

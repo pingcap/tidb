@@ -45,6 +45,19 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
+	if tbInfo.Partition != nil {
+		err = checkCreatePartitionValue(tbInfo.Partition)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		err = checkAddPartitionTooManyPartitions(len(tbInfo.Partition.Definitions))
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -121,7 +134,7 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(tableID)
-		job.Args = append(job.Args, startKey)
+		job.Args = append(job.Args, startKey, getPartitionIDs(tblInfo))
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -181,7 +194,7 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
 // As all the old data is encoded with old table ID, it can not be accessed any more.
 // A background job will be created to delete old data.
-func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	var newTableID int64
@@ -200,6 +213,22 @@ func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
+	var oldPartitionIDs []int64
+	if tblInfo.GetPartitionInfo() != nil {
+		oldPartitionIDs = getPartitionIDs(tblInfo)
+		for _, def := range tblInfo.Partition.Definitions {
+			var pid int64
+			pid, err := d.genGlobalID()
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			def.ID = pid
+		}
+	}
+
 	tblInfo.ID = newTableID
 	err = t.CreateTable(schemaID, tblInfo)
 	if err != nil {
@@ -213,7 +242,7 @@ func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
-	job.Args = []interface{}{startKey}
+	job.Args = []interface{}{startKey, oldPartitionIDs}
 	return ver, nil
 }
 
@@ -410,7 +439,12 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	err = checkPartitionNotExists(tblInfo, partInfo)
+	err = checkAddPartitionTooManyPartitions(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions))
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	err = checkPartitionNameUnique(tblInfo, partInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -433,21 +467,6 @@ func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.Tabl
 	parInfo.Definitions = append(parInfo.Definitions, oldDefs...)
 	parInfo.Definitions = append(parInfo.Definitions, newDefs...)
 	tblInfo.Partition.Definitions = parInfo.Definitions
-}
-
-func checkPartitionNotExists(meta *model.TableInfo, part *model.PartitionInfo) error {
-	oldPars, newPars := meta.Partition.Definitions, part.Definitions
-	set := make(map[string]bool)
-	for _, oldPar := range oldPars {
-		set[strings.ToLower(oldPar.Name)] = true
-	}
-	for _, newPar := range newPars {
-		if _, ok := set[strings.ToLower(newPar.Name)]; ok {
-			return ErrSameNamePartition.GenByArgs(newPar.Name)
-		}
-		set[strings.ToLower(newPar.Name)] = true
-	}
-	return nil
 }
 
 // checkAddPartitionValue values less than value must be strictly increasing for each partition.

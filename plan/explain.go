@@ -50,7 +50,9 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 			break
 		}
 	}
-	if haveCorCol {
+	if len(p.rangeDecidedBy) > 0 {
+		fmt.Fprintf(buffer, ", range: decided by %s", p.rangeDecidedBy)
+	} else if haveCorCol {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
 		fmt.Fprint(buffer, ", range:")
@@ -64,6 +66,9 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
 	if p.Desc {
 		buffer.WriteString(", desc")
+	}
+	if p.stats.usePseudoStats {
+		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
 }
@@ -86,7 +91,9 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 			break
 		}
 	}
-	if haveCorCol {
+	if len(p.rangeDecidedBy) > 0 {
+		fmt.Fprintf(buffer, ", range: decided by %s", p.rangeDecidedBy)
+	} else if haveCorCol {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
 		fmt.Fprint(buffer, ", range:")
@@ -100,6 +107,9 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
 	if p.Desc {
 		buffer.WriteString(", desc")
+	}
+	if p.stats.usePseudoStats {
+		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
 }
@@ -116,7 +126,8 @@ func (p *PhysicalIndexReader) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
-	return fmt.Sprintf("index:%s, table:%s", p.indexPlan.ExplainID(), p.tablePlan.ExplainID())
+	// The children can be inferred by the relation symbol.
+	return ""
 }
 
 // ExplainInfo implements PhysicalPlan interface.

@@ -96,7 +96,8 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 	row := chk.GetRow(0)
 	c.Assert(row.GetFloat32(0), check.Equals, f32Val)
 	c.Assert(row.GetTime(2).Compare(tVal), check.Equals, 0)
-	c.Assert(row.GetDuration(3), check.DeepEquals, durVal)
+	// fsp no longer maintain in arrow
+	c.Assert(row.GetDuration(3, 0).Duration, check.DeepEquals, durVal.Duration)
 	c.Assert(row.GetEnum(4), check.DeepEquals, enumVal)
 	c.Assert(row.GetSet(5), check.DeepEquals, setVal)
 
@@ -412,7 +413,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	colUsage[1] = initCap>>3 + (initCap+1)*4 + initCap*4 + 0
 	colUsage[2] = initCap>>3 + (initCap+1)*4 + initCap*4 + 0
 	colUsage[3] = initCap>>3 + 0 + initCap*16 + 16
-	colUsage[4] = initCap>>3 + 0 + initCap*16 + 16
+	colUsage[4] = initCap>>3 + 0 + initCap*8 + 8
 
 	expectedUsage := 0
 	for i := range colUsage {

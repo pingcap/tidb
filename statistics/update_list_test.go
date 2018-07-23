@@ -23,7 +23,7 @@ type testUpdateListSuite struct {
 }
 
 func (s *testUpdateListSuite) TestInsertAndDelete(c *C) {
-	h := NewHandle(nil, 0)
+	h := Handle{listHead: &SessionStatsCollector{mapper: make(tableDeltaMap)}}
 	var items []*SessionStatsCollector
 	for i := 0; i < 5; i++ {
 		items = append(items, h.NewSessionStatsCollector())

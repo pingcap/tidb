@@ -19,12 +19,14 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -682,14 +684,14 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	}
 	isIndex := q.hist.tp.Tp == mysql.TypeBlob
 	id := q.hist.ID
-	if isIndex && (t.Indices[id] == nil || t.Indices[id].IsPseudo() == false) {
+	if isIndex && (t.Indices[id] == nil || t.Indices[id].NotAccurate() == false) {
 		return nil
 	}
-	if !isIndex && (t.Columns[id] == nil || t.Columns[id].IsPseudo() == false) {
+	if !isIndex && (t.Columns[id] == nil || t.Columns[id].NotAccurate() == false) {
 		return nil
 	}
 
-	sc := h.ctx.GetSessionVars().StmtCtx
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	ranges, err := q.DecodeToRanges(isIndex)
 	if err != nil {
 		return errors.Trace(err)

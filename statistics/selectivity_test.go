@@ -97,11 +97,15 @@ func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.
 }
 
 func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
+	histColl := statistics.HistColl{
+		TableID:   tbl.ID,
+		HaveTblID: true,
+		Count:     rowCount,
+		Columns:   make(map[int64]*statistics.Column, len(tbl.Columns)),
+		Indices:   make(map[int64]*statistics.Index, len(tbl.Indices)),
+	}
 	statsTbl := &statistics.Table{
-		TableID: tbl.ID,
-		Count:   rowCount,
-		Columns: make(map[int64]*statistics.Column, len(tbl.Columns)),
-		Indices: make(map[int64]*statistics.Index, len(tbl.Indices)),
+		HistColl: histColl,
 	}
 	return statsTbl
 }
@@ -205,14 +209,14 @@ func (s *testSelectivitySuite) TestPseudoSelectivity(c *C) {
 	testKit.MustExec("drop table if exists t, t1")
 	testKit.MustExec("create table t(a int, b int, unique key idx(a,b))")
 	testKit.MustQuery("explain select * from t where a = 1 and b = 1").Check(testkit.Rows(
-		"IndexReader_6 root index:IndexScan_5 1.00",
-		"└─IndexScan_5 cop table:t, index:a, b, range:[1 1,1 1], keep order:false 1.00"))
+		"IndexReader_6 1.00 root index:IndexScan_5",
+		"└─IndexScan_5 1.00 cop table:t, index:a, b, range:[1 1,1 1], keep order:false, stats:pseudo"))
 
 	testKit.MustExec("create table t1(a int, b int, primary key(a))")
 	testKit.MustQuery("explain select b from t1 where a = 1").Check(testkit.Rows(
-		"Projection_4 root test.t1.b 1.00",
-		"└─TableReader_6 root data:TableScan_5 1.00",
-		"  └─TableScan_5 cop table:t1, range:[1,1], keep order:false 1.00"))
+		"Projection_4 1.00 root test.t1.b",
+		"└─TableReader_6 1.00 root data:TableScan_5",
+		"  └─TableScan_5 1.00 cop table:t1, range:[1,1], keep order:false, stats:pseudo"))
 }
 
 // TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
@@ -230,8 +234,8 @@ func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
 	}
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t where a = 'tw' and b < 0").Check(testkit.Rows(
-		"IndexReader_9 root index:IndexScan_8 0.00",
-		"└─IndexScan_8 cop table:t, index:a, b, range:[tw -inf,tw 0), keep order:false 0.00"))
+		"IndexReader_9 0.00 root index:IndexScan_8",
+		"└─IndexScan_8 0.00 cop table:t, index:a, b, range:[\"tw\" -inf,\"tw\" 0), keep order:false"))
 }
 
 func BenchmarkSelectivity(b *testing.B) {

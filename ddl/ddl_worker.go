@@ -264,7 +264,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		}
 		// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 		err = w.deleteRange(job)
-	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex:
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition:
 		err = w.deleteRange(job)
 	}
 	if err != nil {
@@ -333,9 +333,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
 				return errors.Trace(err)
 			}
 
-			d.hookMu.Lock()
-			d.hook.OnJobRunBefore(job)
-			d.hookMu.Unlock()
+			d.mu.RLock()
+			d.mu.hook.OnJobRunBefore(job)
+			d.mu.RUnlock()
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
@@ -363,9 +363,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
 			return nil
 		}
 
-		d.hookMu.Lock()
-		d.hook.OnJobUpdated(job)
-		d.hookMu.Unlock()
+		d.mu.RLock()
+		d.mu.hook.OnJobUpdated(job)
+		d.mu.RUnlock()
 
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
@@ -419,6 +419,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onCreateTable(d, t, job)
 	case model.ActionDropTable:
 		ver, err = onDropTable(t, job)
+	case model.ActionDropTablePartition:
+		ver, err = onDropTablePartition(t, job)
 	case model.ActionAddColumn:
 		ver, err = onAddColumn(d, t, job)
 	case model.ActionDropColumn:
@@ -438,7 +440,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropForeignKey:
 		ver, err = onDropForeignKey(t, job)
 	case model.ActionTruncateTable:
-		ver, err = onTruncateTable(t, job)
+		ver, err = onTruncateTable(d, t, job)
 	case model.ActionRebaseAutoID:
 		ver, err = onRebaseAutoID(d.store, t, job)
 	case model.ActionRenameTable:

@@ -285,7 +285,7 @@ type PartitionInfo struct {
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
 	ID       int64    `json:"id"`
-	Name     string   `json:"name"`
+	Name     CIStr    `json:"name"`
 	LessThan []string `json:"less_than"`
 	Comment  string   `json:"comment,omitempty"`
 }
@@ -298,6 +298,8 @@ type IndexColumn struct {
 	// for indexing;
 	// UnspecifedLength if not using prefix indexing
 	Length int `json:"length"`
+	// Tp is the index column field type.
+	Tp *types.FieldType
 }
 
 // Clone clones IndexColumn.

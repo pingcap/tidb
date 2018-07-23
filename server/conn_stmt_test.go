@@ -32,6 +32,40 @@ func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
 		err    error
 		expect interface{}
 	}{
+		// Tests for int overflow
+		{
+			args{
+				make([]interface{}, 1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{1, 0},
+				[]byte{0xff},
+			},
+			nil,
+			int8(-1),
+		},
+		{
+			args{
+				make([]interface{}, 1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{2, 0},
+				[]byte{0xff, 0xff},
+			},
+			nil,
+			int16(-1),
+		},
+		{
+			args{
+				make([]interface{}, 1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{3, 0},
+				[]byte{0xff, 0xff, 0xff, 0xff},
+			},
+			nil,
+			int32(-1),
+		},
 		// Tests for date/datetime/timestamp
 		{
 			args{

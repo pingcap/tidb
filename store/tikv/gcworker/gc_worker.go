@@ -243,7 +243,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	return nil
 }
 
-// prepare checks required conditions for starting a GC job. It returns a bool
+// prepare checks preconditions for starting a GC job. It returns a bool
 // that indicates whether the GC job should start and the new safePoint.
 func (w *GCWorker) prepare() (bool, uint64, error) {
 	now, err := w.getOracleTime()
@@ -258,11 +258,11 @@ func (w *GCWorker) prepare() (bool, uint64, error) {
 	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
-	err = w.saveTime(gcLastRunTimeKey, now, w.session)
+	err = w.saveTime(gcLastRunTimeKey, now)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
-	err = w.saveTime(gcSafePointKey, *newSafePoint, w.session)
+	err = w.saveTime(gcSafePointKey, *newSafePoint)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -285,7 +285,7 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 		return false, errors.Trace(err)
 	}
 	gcConfigGauge.WithLabelValues(gcRunIntervalKey).Set(runInterval.Seconds())
-	lastRun, err := w.loadTime(gcLastRunTimeKey, w.session)
+	lastRun, err := w.loadTime(gcLastRunTimeKey)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -303,7 +303,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 		return nil, errors.Trace(err)
 	}
 	gcConfigGauge.WithLabelValues(gcLifeTimeKey).Set(lifeTime.Seconds())
-	lastSafePoint, err := w.loadTime(gcSafePointKey, w.session)
+	lastSafePoint, err := w.loadTime(gcSafePointKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -383,12 +383,12 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 }
 
 func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {
-	str, err := w.loadValueFromSysTable(gcConcurrencyKey, w.session)
+	str, err := w.loadValueFromSysTable(gcConcurrencyKey)
 	if err != nil {
 		return gcDefaultConcurrency, errors.Trace(err)
 	}
 	if str == "" {
-		err = w.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency), w.session)
+		err = w.saveValueToSysTable(gcConcurrencyKey, strconv.Itoa(gcDefaultConcurrency))
 		if err != nil {
 			return gcDefaultConcurrency, errors.Trace(err)
 		}
@@ -735,7 +735,8 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey, se)
+	w.session = se
+	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey)
 	if err != nil {
 		_, err1 := se.Execute(ctx, "ROLLBACK")
 		terror.Log(errors.Trace(err1))
@@ -743,7 +744,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	}
 	log.Debugf("[gc worker] got leader: %s", leader)
 	if leader == w.uuid {
-		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease), se)
+		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
 		if err != nil {
 			_, err1 := se.Execute(ctx, "ROLLBACK")
 			terror.Log(errors.Trace(err1))
@@ -763,7 +764,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	lease, err := w.loadTime(gcLeaderLeaseKey, se)
+	lease, err := w.loadTime(gcLeaderLeaseKey)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -771,19 +772,19 @@ func (w *GCWorker) checkLeader() (bool, error) {
 		log.Debugf("[gc worker] register %s as leader", w.uuid)
 		gcWorkerCounter.WithLabelValues("register_leader").Inc()
 
-		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid, se)
+		err = w.saveValueToSysTable(gcLeaderUUIDKey, w.uuid)
 		if err != nil {
 			_, err1 := se.Execute(ctx, "ROLLBACK")
 			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
-		err = w.saveValueToSysTable(gcLeaderDescKey, w.desc, se)
+		err = w.saveValueToSysTable(gcLeaderDescKey, w.desc)
 		if err != nil {
 			_, err1 := se.Execute(ctx, "ROLLBACK")
 			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
-		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease), se)
+		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
 		if err != nil {
 			_, err1 := se.Execute(ctx, "ROLLBACK")
 			terror.Log(errors.Trace(err1))
@@ -810,13 +811,13 @@ func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, key string, t uint64) erro
 	return nil
 }
 
-func (w *GCWorker) saveTime(key string, t time.Time, s session.Session) error {
-	err := w.saveValueToSysTable(key, t.Format(gcTimeFormat), s)
+func (w *GCWorker) saveTime(key string, t time.Time) error {
+	err := w.saveValueToSysTable(key, t.Format(gcTimeFormat))
 	return errors.Trace(err)
 }
 
-func (w *GCWorker) loadTime(key string, s session.Session) (*time.Time, error) {
-	str, err := w.loadValueFromSysTable(key, s)
+func (w *GCWorker) loadTime(key string) (*time.Time, error) {
+	str, err := w.loadValueFromSysTable(key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -831,12 +832,12 @@ func (w *GCWorker) loadTime(key string, s session.Session) (*time.Time, error) {
 }
 
 func (w *GCWorker) saveDuration(key string, d time.Duration) error {
-	err := w.saveValueToSysTable(key, d.String(), w.session)
+	err := w.saveValueToSysTable(key, d.String())
 	return errors.Trace(err)
 }
 
 func (w *GCWorker) loadDuration(key string) (*time.Duration, error) {
-	str, err := w.loadValueFromSysTable(key, w.session)
+	str, err := w.loadValueFromSysTable(key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -865,10 +866,10 @@ func (w *GCWorker) loadDurationWithDefault(key string, def time.Duration) (*time
 	return d, nil
 }
 
-func (w *GCWorker) loadValueFromSysTable(key string, s session.Session) (string, error) {
+func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	ctx := context.Background()
 	stmt := fmt.Sprintf(`SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name='%s' FOR UPDATE`, key)
-	rs, err := s.Execute(ctx, stmt)
+	rs, err := w.session.Execute(ctx, stmt)
 	if len(rs) > 0 {
 		defer terror.Call(rs[0].Close)
 	}
@@ -889,15 +890,15 @@ func (w *GCWorker) loadValueFromSysTable(key string, s session.Session) (string,
 	return value, nil
 }
 
-func (w *GCWorker) saveValueToSysTable(key, value string, s session.Session) error {
+func (w *GCWorker) saveValueToSysTable(key, value string) error {
 	stmt := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
 		key, value, gcVariableComments[key])
-	if s == nil {
+	if w.session == nil {
 		return errors.New("[saveValueToSysTable session is nil]")
 	}
-	_, err := s.Execute(context.Background(), stmt)
+	_, err := w.session.Execute(context.Background(), stmt)
 	log.Debugf("[gc worker] save kv, %s:%s %v", key, value, err)
 	return errors.Trace(err)
 }

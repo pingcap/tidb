@@ -741,6 +741,7 @@ const (
 	AlterTableRenameIndex
 	AlterTableForce
 	AlterTableAddPartitions
+	AlterTableDropPartition
 
 // TODO: Add more actions
 )
@@ -877,7 +878,7 @@ func (n *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	Name     string
+	Name     model.CIStr
 	LessThan []ExprNode
 	MaxValue bool
 	Comment  string

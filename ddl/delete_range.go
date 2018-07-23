@@ -238,9 +238,34 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		}
 	case model.ActionDropTable, model.ActionTruncateTable:
 		tableID := job.TableID
-		startKey := tablecodec.EncodeTablePrefix(tableID)
+		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
+		var startKey kv.Key
+		var partitionIDs []int64
+		if err := job.DecodeArgs(startKey, &partitionIDs); err != nil {
+			return errors.Trace(err)
+		}
+		if len(partitionIDs) > 0 {
+			for _, pid := range partitionIDs {
+				startKey = tablecodec.EncodeTablePrefix(pid)
+				endKey := tablecodec.EncodeTablePrefix(pid + 1)
+				if err := doInsert(s, job.ID, pid, startKey, endKey, now); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			return nil
+		}
+
+		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
+	case model.ActionDropTablePartition:
+		var partitionID int64
+		if err := job.DecodeArgs(&partitionID); err != nil {
+			return errors.Trace(err)
+		}
+		startKey := tablecodec.EncodeTablePrefix(partitionID)
+		endKey := tablecodec.EncodeTablePrefix(partitionID + 1)
+		return doInsert(s, job.ID, partitionID, startKey, endKey, now)
 	// ActionAddIndex needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex:
 		tableID := job.TableID

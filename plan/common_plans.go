@@ -39,6 +39,8 @@ type ShowDDL struct {
 // ShowDDLJobs is for showing DDL job list.
 type ShowDDLJobs struct {
 	baseSchemaProducer
+
+	JobNumber int64
 }
 
 // ShowDDLJobQueries is for showing DDL job queries sql.
@@ -317,7 +319,9 @@ type Insert struct {
 	Columns     []*ast.ColumnName
 	Lists       [][]expression.Expression
 	SetList     []*expression.Assignment
-	OnDuplicate []*expression.Assignment
+
+	OnDuplicate        []*expression.Assignment
+	Schema4OnDuplicate *expression.Schema
 
 	IsReplace bool
 
@@ -411,7 +415,7 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 	e.prepareOperatorInfo(p, taskType, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
-	// For every chidl we create a new sub-tree rooted by it.
+	// For every child we create a new sub-tree rooted by it.
 	childIndent := e.getIndent4Child(indent, isLastChild)
 	for i, child := range p.Children() {
 		if e.explainedPlans[child.ID()] {
@@ -436,7 +440,7 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.StatsInfo().count, 'f', 2, 64))
-	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), taskType, operatorInfo, count}
+	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
 	e.Rows = append(e.Rows, row)
 }
 

@@ -749,15 +749,11 @@ func (b *builtinUnaryMinusDecimalSig) Clone() builtinFunc {
 }
 
 func (b *builtinUnaryMinusDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
-	var dec *types.MyDecimal
 	dec, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if err != nil || isNull {
 		return dec, isNull, errors.Trace(err)
 	}
-
-	to := new(types.MyDecimal)
-	err = types.DecimalSub(new(types.MyDecimal), dec, to)
-	return to, err != nil, errors.Trace(err)
+	return types.DecimalNeg(dec), false, nil
 }
 
 type builtinUnaryMinusRealSig struct {

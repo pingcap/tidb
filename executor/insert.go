@@ -17,9 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -207,30 +205,11 @@ func (e *InsertExec) Open(ctx context.Context) error {
 }
 
 // updateDupRow updates a duplicate row to a new row.
-func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) (err error) {
-	// Get the table record row from storage for update.
-	oldValue, ok := e.dupOldRowValues[string(e.Table.RecordKey(handle))]
-	if !ok {
-		return errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", handle)
-	}
-	cols := e.Table.WritableCols()
-	oldRow, oldRowMap, err := tables.DecodeRawRowData(e.ctx, e.Table.Meta(), handle, cols, oldValue)
+func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
+	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
-	for _, col := range cols {
-		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
-			_, found := oldRowMap[col.ID]
-			if !found {
-				oldRow[col.Offset], err = table.GetColOriginDefaultValue(e.ctx, col.ToInfo())
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-		}
-	}
-
 	// Do update row.
 	updatedRow, handleChanged, newHandle, err := e.doDupRowUpdate(handle, oldRow, row.row, onDuplicate)
 	if e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning && kv.ErrKeyExists.Equal(err) {
@@ -250,16 +229,25 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow types.DatumRow, newRow 
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(newRow)
-	newData := make(types.DatumRow, len(oldRow))
-	copy(newData, oldRow)
+
+	// NOTE: In order to execute the expression inside the column assignment,
+	// we have to put the value of "oldRow" before "newRow" in "row4Update" to
+	// be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.
+	row4Update := make(types.DatumRow, 0, len(oldRow)+len(newRow))
+	row4Update = append(row4Update, oldRow...)
+	row4Update = append(row4Update, newRow...)
+
+	// Update old row when the key is duplicated.
 	for _, col := range cols {
-		val, err1 := col.Expr.Eval(newData)
+		val, err1 := col.Expr.Eval(row4Update)
 		if err1 != nil {
 			return nil, false, 0, errors.Trace(err1)
 		}
-		newData[col.Col.Index] = val
+		row4Update[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
 	}
+
+	newData := row4Update[:len(oldRow)]
 	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)

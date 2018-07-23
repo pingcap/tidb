@@ -166,20 +166,20 @@ tr.trade_type IN (1) AND
 te.expect_time BETWEEN '2018-04-23 00:00:00.0' AND '2018-04-23 23:59:59.0'
 ORDER BY te.expect_time asc
 LIMIT 0, 5;
-id	task	operator info	count
-Projection_12	root	te.expect_time	0.00
-└─Limit_18	root	offset:0, count:5	0.00
-  └─IndexJoin_136	root	left outer join, inner:IndexReader_135, outer key:tr.id, inner key:p.relate_id	0.00
-    ├─TopN_139	root	te.expect_time:asc, offset:0, count:5	0.00
-    │ └─IndexJoin_34	root	inner join, inner:IndexLookUp_33, outer key:tr.id, inner key:te.trade_id	0.00
-    │   ├─IndexLookUp_104	root	index:Selection_102, table:Selection_103	0.00
-    │   │ ├─Selection_102	cop	eq(tr.business_type, 18), in(tr.trade_type, 1)	0.00
-    │   │ │ └─IndexScan_100	cop	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false	10.00
-    │   │ └─Selection_103	cop	eq(tr.brand_identy, 32314), eq(tr.domain_type, 2)	0.00
-    │   │   └─TableScan_101	cop	table:tr, keep order:false	0.00
-    │   └─IndexLookUp_33	root	index:IndexScan_30, table:Selection_32	250.00
-    │     ├─IndexScan_30	cop	table:te, index:trade_id, range:[<nil>,+inf], keep order:false	10000.00
-    │     └─Selection_32	cop	ge(te.expect_time, 2018-04-23 00:00:00.000000), le(te.expect_time, 2018-04-23 23:59:59.000000)	250.00
-    │       └─TableScan_31	cop	table:te, keep order:false	10000.00
-    └─IndexReader_135	root	index:IndexScan_134	10000.00
-      └─IndexScan_134	cop	table:p, index:relate_id, range:[<nil>,+inf], keep order:false	10000.00
+id	count	task	operator info
+Projection_12	0.00	root	te.expect_time
+└─Limit_18	0.00	root	offset:0, count:5
+  └─IndexJoin_136	0.00	root	left outer join, inner:IndexReader_135, outer key:tr.id, inner key:p.relate_id
+    ├─TopN_139	0.00	root	te.expect_time:asc, offset:0, count:5
+    │ └─IndexJoin_34	0.00	root	inner join, inner:IndexLookUp_33, outer key:tr.id, inner key:te.trade_id
+    │   ├─IndexLookUp_104	0.00	root	
+    │   │ ├─Selection_102	0.00	cop	eq(tr.business_type, 18), in(tr.trade_type, 1)
+    │   │ │ └─IndexScan_100	10.00	cop	table:tr, index:shop_identy, trade_status, business_type, trade_pay_status, trade_type, delivery_type, source, biz_date, range:[810094178,810094178], keep order:false, stats:pseudo
+    │   │ └─Selection_103	0.00	cop	eq(tr.brand_identy, 32314), eq(tr.domain_type, 2)
+    │   │   └─TableScan_101	0.00	cop	table:tr, keep order:false
+    │   └─IndexLookUp_33	250.00	root	
+    │     ├─IndexScan_30	10.00	cop	table:te, index:trade_id, range: decided by [tr.id], keep order:false, stats:pseudo
+    │     └─Selection_32	250.00	cop	ge(te.expect_time, 2018-04-23 00:00:00.000000), le(te.expect_time, 2018-04-23 23:59:59.000000)
+    │       └─TableScan_31	10.00	cop	table:te, keep order:false, stats:pseudo
+    └─IndexReader_135	10.00	root	index:IndexScan_134
+      └─IndexScan_134	10.00	cop	table:p, index:relate_id, range: decided by [tr.id], keep order:false, stats:pseudo

@@ -232,7 +232,7 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 		case mysql.TypeDuration:
 			// duration may have negative value, so we cannot use String to encode directly.
 			b = append(b, durationFlag)
-			b = EncodeInt(b, int64(row.GetDuration(i).Duration))
+			b = EncodeInt(b, int64(row.GetDuration(i, 0).Duration))
 		case mysql.TypeNewDecimal:
 			b = append(b, decimalFlag)
 			if hash {
@@ -602,7 +602,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return b, errors.Trace(err)
+	return b, nil
 }
 
 func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {

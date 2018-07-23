@@ -38,12 +38,32 @@ type DDLExec struct {
 	done bool
 }
 
+// toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
+func (e *DDLExec) toErr(err error) error {
+	if e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
+		return errors.Trace(err)
+	}
+
+	// Before the DDL job is ready, it encouters an error that may be due to the outdated schema information.
+	// After the DDL job is ready, the ErrInfoSchemaChanged error won't happen because we are getting the schema directly from storage.
+	// So we needn't to consider this condition.
+	// Here we distinguish the ErrInfoSchemaChanged error from other errors.
+	dom := domain.GetDomain(e.ctx)
+	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil)
+	schemaInfoErr := checker.Check(e.ctx.Txn().StartTS())
+	if schemaInfoErr != nil {
+		return errors.Trace(schemaInfoErr)
+	}
+	return errors.Trace(err)
+}
+
 // Next implements the Executor Next interface.
 func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.done {
 		return nil
 	}
 	e.done = true
+	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	switch x := e.stmt.(type) {
 	case *ast.TruncateTableStmt:
@@ -66,7 +86,7 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		err = e.executeRenameTable(x)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Trace(e.toErr(err))
 	}
 
 	dom := domain.GetDomain(e.ctx)

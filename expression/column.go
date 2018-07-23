@@ -272,7 +272,8 @@ func (col *Column) EvalDuration(ctx sessionctx.Context, row types.Row) (types.Du
 	if row.IsNull(col.Index) {
 		return types.Duration{}, true, nil
 	}
-	return row.GetDuration(col.Index), false, nil
+	duration := row.GetDuration(col.Index, col.RetType.Decimal)
+	return duration, false, nil
 }
 
 // EvalJSON returns JSON representation of Column.

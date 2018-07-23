@@ -290,7 +290,6 @@ func (s *testSuite) TestDropStats(c *C) {
 
 	h.Lease = 1
 	testKit.MustExec("drop stats t")
-	h.HandleDDLEvent(<-h.DDLEventCh())
 	h.Update(is)
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
