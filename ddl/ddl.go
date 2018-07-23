@@ -409,7 +409,7 @@ func (d *ddl) genGlobalID() (int64, error) {
 	return globalID, errors.Trace(err)
 }
 
-// generalWorker returns the first worker. The ddl structure has only one worker before we implement the parallel worker.
+// generalWorker returns the general worker.
 // It's used for testing.
 // TODO: Remove this function.
 func (d *ddl) generalWorker() *worker {
