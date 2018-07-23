@@ -199,7 +199,7 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 func (ds *DataSource) findBestTask(prop *requiredProp) (t task, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
 	// So here we do nothing.
-	// TODO: Add a special prop to Handle IndexJoin's inner plan.
+	// TODO: Add a special prop to handle IndexJoin's inner plan.
 	// Then we can remove forceToTableScan and forceToIndexScan.
 	if prop == nil {
 		return nil, nil
@@ -416,8 +416,8 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 			break
 		}
 	}
-	// If it's double read case, the first index must return Handle. So we should add extra Handle column
-	// if there isn't a Handle column.
+	// If it's double read case, the first index must return handle. So we should add extra handle column
+	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
 		indexCols = append(indexCols, &expression.Column{FromID: id, ID: model.ExtraHandleID, Position: -1})
 	}

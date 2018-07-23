@@ -82,7 +82,7 @@ type CheckIndex struct {
 	IdxName           string
 }
 
-// CheckIndexRange is used for checking index data, output the index values that Handle within begin and end.
+// CheckIndexRange is used for checking index data, output the index values that handle within begin and end.
 type CheckIndexRange struct {
 	baseSchemaProducer
 

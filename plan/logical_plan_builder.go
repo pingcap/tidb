@@ -68,7 +68,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagAggregationOptimize
 	// We may apply aggregation eliminate optimization.
-	// So we add the flagMaxMinEliminate to try to convert max/min to topn and flagPushDownTopN to Handle the newly added topn operator.
+	// So we add the flagMaxMinEliminate to try to convert max/min to topn and flagPushDownTopN to handle the newly added topn operator.
 	b.optFlag = b.optFlag | flagMaxMinEliminate
 	b.optFlag = b.optFlag | flagPushDownTopN
 	// when we eliminate the max and min we may add `is not null` filter.
@@ -286,7 +286,7 @@ func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
 		joinPlan.JoinType = InnerJoin
 	}
 
-	// Merge sub join's redundantSchema into this join plan. When Handle query like
+	// Merge sub join's redundantSchema into this join plan. When handle query like
 	// select t2.a from (t1 join t2 using (a)) join t3 using (a);
 	// we can simply search in the top level join plan to find redundant column.
 	var lRedundant, rRedundant *expression.Schema
@@ -1716,13 +1716,13 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 
 // getStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
-// 1. tidb-server started and statistics Handle has not been initialized.
+// 1. tidb-server started and statistics handle has not been initialized.
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
 func (b *planBuilder) getStatsTable(tblInfo *model.TableInfo) *statistics.Table {
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 
-	// 1. tidb-server started and statistics Handle has not been initialized.
+	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
 		return statistics.PseudoTable(tblInfo)
 	}
@@ -1807,8 +1807,8 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	}
 	ds.SetSchema(schema)
 
-	// We append an extra Handle column to the schema when "ds" is not a memory
-	// table e.g. table in the "INFORMATION_SCHEMA" database, and the Handle
+	// We append an extra handle column to the schema when "ds" is not a memory
+	// table e.g. table in the "INFORMATION_SCHEMA" database, and the handle
 	// column is not the primary key of "ds".
 	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
 	if !isMemDB && handleCol == nil {
