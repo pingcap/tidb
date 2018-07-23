@@ -41,6 +41,21 @@ func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context
 	return nil
 }
 
+func (e *baseGroupConcat4String) truncatePartialResultIfNeed(sctx sessionctx.Context, buffer *bytes.Buffer) (err error) {
+	if e.maxLen > 0 && uint64(buffer.Len()) > e.maxLen {
+		i := mathutil.MaxInt
+		if uint64(i) > e.maxLen {
+			i = int(e.maxLen)
+		}
+		buffer.Truncate(i)
+		if !e.truncated {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat)
+		}
+		e.truncated = true
+	}
+	return nil
+}
+
 type basePartialResult4GroupConcat struct {
 	buffer *bytes.Buffer
 }
@@ -86,18 +101,7 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		}
 	}
 	p.buffer.Truncate(p.buffer.Len() - len(e.sep))
-	if e.maxLen > 0 && uint64(p.buffer.Len()) > e.maxLen {
-		i := mathutil.MaxInt
-		if uint64(i) > e.maxLen {
-			i = int(e.maxLen)
-		}
-		p.buffer.Truncate(i)
-		if !e.truncated {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat)
-		}
-		e.truncated = true
-	}
-	return nil
+	return e.truncatePartialResultIfNeed(sctx, p.buffer)
 }
 
 type partialResult4GroupConcatDistinct struct {
@@ -151,15 +155,5 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		// write values
 		p.buffer.WriteString(joinedVals)
 	}
-	if e.maxLen > 0 && uint64(p.buffer.Len()) > e.maxLen {
-		i := mathutil.MaxInt
-		if uint64(i) > e.maxLen {
-			i = int(e.maxLen)
-		}
-		p.buffer.Truncate(i)
-		if !e.truncated {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat)
-		}
-	}
-	return nil
+	return e.truncatePartialResultIfNeed(sctx, p.buffer)
 }

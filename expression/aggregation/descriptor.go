@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/cznic/mathutil"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	"strconv"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
@@ -180,10 +180,7 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 		var maxLen uint64
 		s, err = variable.GetSessionSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
 		if err != nil {
-			s, err = variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
-			if err != nil {
-				panic(fmt.Sprintf("Error happened when GetAggFunc: no system variable named '%s'", variable.GroupConcatMaxLen))
-			}
+			panic(fmt.Sprintf("Error happened when GetAggFunc: no system variable named '%s'", variable.GroupConcatMaxLen))
 		}
 		maxLen, err = strconv.ParseUint(s, 10, 64)
 		if err != nil {
