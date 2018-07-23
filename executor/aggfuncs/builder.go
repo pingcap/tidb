@@ -251,10 +251,7 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 		var s string
 		s, err = variable.GetSessionSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
 		if err != nil {
-			s, err = variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
-			if err != nil {
-				panic(fmt.Sprintf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
-			}
+			panic(fmt.Sprintf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
 		}
 		maxLen, err := strconv.ParseUint(s, 10, 64)
 		// Should never happen
