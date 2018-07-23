@@ -453,6 +453,8 @@ type indexRecord struct {
 	handle int64
 	key    []byte        // It's used to lock a record. Record it to reduce the encoding time.
 	vals   []types.Datum // It's the index values.
+	// skip indicate the index key is already exists, we should not add it.
+	skip bool
 }
 
 type addIndexWorker struct {
@@ -467,9 +469,12 @@ type addIndexWorker struct {
 	colFieldMap map[int64]*types.FieldType
 	closed      bool
 
-	defaultVals []types.Datum         // It's used to reduce the number of new slice.
-	idxRecords  []*indexRecord        // It's used to reduce the number of new slice.
-	rowMap      map[int64]types.Datum // It's the index column values map. It is used to reduce the number of making map.
+	defaultVals        []types.Datum         // It's used to reduce the number of new slice.
+	idxRecords         []*indexRecord        // It's used to reduce the number of new slice.
+	rowMap             map[int64]types.Datum // It's the index column values map. It is used to reduce the number of making map.
+	idxKeyBufs         [][]byte              // It's used to reduce the number of new slice.
+	batchCheckKeys     []kv.Key              // It's used to reduce the number of new slice.
+	distinctCheckFlags []bool                // It's used to reduce the number of new slice.
 }
 
 type reorgIndexTask struct {
@@ -489,7 +494,7 @@ type addIndexResult struct {
 
 func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.Table, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
 	index := tables.NewIndex(t.Meta().ID, indexInfo)
-	return &addIndexWorker{
+	w := &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
 		batchCnt:    defaultTaskHandleCnt,
@@ -499,10 +504,15 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		index:       index,
 		table:       t,
 		colFieldMap: colFieldMap,
-
 		defaultVals: make([]types.Datum, len(t.Cols())),
 		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
 	}
+	w.reAllocIdxKeyBufs(w.batchCnt)
+	return w
+}
+
+func (w *addIndexWorker) reAllocIdxKeyBufs(size int) {
+	w.idxKeyBufs = make([][]byte, size)
 }
 
 func (w *addIndexWorker) close() {
@@ -599,6 +609,71 @@ func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string
 	}
 }
 
+func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
+	if len(w.idxKeyBufs) < batchCount {
+		w.reAllocIdxKeyBufs(batchCount)
+	}
+
+	w.batchCheckKeys = w.batchCheckKeys[:0]
+	w.distinctCheckFlags = w.distinctCheckFlags[:0]
+}
+
+func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
+	idxInfo := w.index.Meta()
+	if !idxInfo.Unique {
+		// non-unique key need not to check, just overwrite it,
+		// because in most case, backfilling indices is not exists.
+		return nil
+	}
+
+	w.initBatchCheckBufs(len(idxRecords))
+	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
+	for i, record := range idxRecords {
+		idxKey, distinct, err := w.index.GenIndexKey(stmtCtx, record.vals, record.handle, w.idxKeyBufs[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// save the buffer to reduce memory allocations.
+		w.idxKeyBufs[i] = idxKey
+
+		w.batchCheckKeys = append(w.batchCheckKeys, idxKey)
+		w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
+	}
+
+	batchVals, err := kv.BatchGetValues(txn, w.batchCheckKeys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// 1. unique-key is duplicate and the handle is equal, skip it.
+	// 2. unique-key is duplicate and the handle is not equal, return duplicate error.
+	// 3. non-unique-key is duplicate, skip it.
+	for i, key := range w.batchCheckKeys {
+		if val, found := batchVals[string(key)]; found {
+			if w.distinctCheckFlags[i] {
+				handle, err1 := tables.DecodeHandle(val)
+				if err1 != nil {
+					return errors.Trace(err1)
+				}
+
+				if handle != idxRecords[i].handle {
+					return errors.Trace(kv.ErrKeyExists)
+				}
+			}
+			idxRecords[i].skip = true
+		}
+
+		// The keys in w.batchCheckKeys also maybe duplicate,
+		// so we need to backfill the not found key into `batchVals` map.
+		if w.distinctCheckFlags[i] {
+			batchVals[string(key)] = tables.EncodeHandle(idxRecords[i].handle)
+		}
+	}
+	// Constrains is already checked.
+	w.sessCtx.GetSessionVars().StmtCtx.BatchCheck = true
+	return nil
+}
+
 // backfillIndexInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
@@ -614,7 +689,20 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 			return errors.Trace(err)
 		}
 
+		err = w.batchCheckUniqueKey(txn, idxRecords)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		for _, idxRecord := range idxRecords {
+			// The index is already exists, we skip it, no needs to backfill it.
+			// The following update, delete, insert on these rows, TiDB can handle it correctly.
+			if idxRecord.skip {
+				continue
+			}
+
+			// Lock the row key to notify us that someone delete or update the row,
+			// then we should not backfill the index of it, otherwise the adding index is redundant.
 			err := txn.LockKeys(idxRecord.key)
 			if err != nil {
 				return errors.Trace(err)
@@ -622,7 +710,6 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 			scanCount++
 
 			// Create the index.
-			// TODO: backfill unique-key will check constraint every row, we can speed up this case by using batch check.
 			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {

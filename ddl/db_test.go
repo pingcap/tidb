@@ -373,7 +373,6 @@ LOOP:
 		s.mustExec(c, "delete from t1 where c1 = ?", i+10)
 	}
 	sessionExec(c, s.store, "create index c3_index on t1 (c3)")
-
 	s.mustExec(c, "drop table t1")
 }
 
