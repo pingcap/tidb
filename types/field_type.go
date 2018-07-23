@@ -40,9 +40,6 @@ type FieldType struct {
 	Collate string
 	// Elems is the element list for enum and set type.
 	Elems []string
-	// NegativeUnsignedBeZero indicates that unsigned type with negative number will be cast 0 instead of Big number.
-	// it's only used in union implicitly cast.
-	NegativeUnsignedBeZero bool
 }
 
 // NewFieldType returns a FieldType,

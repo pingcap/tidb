@@ -644,7 +644,6 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 				resultTp = joinFieldType(resultTp, childTp)
 			}
 		}
-		resultTp.NegativeUnsignedBeZero = true
 		unionSchema.Columns[i] = col.Clone().(*expression.Column)
 		unionSchema.Columns[i].RetType = resultTp
 		unionSchema.Columns[i].DBName = model.NewCIStr("")
@@ -657,7 +656,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			dstType := unionSchema.Columns[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
-				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol, dstType)
+				exprs[i] = expression.BuildCastFunction4Insert(b.ctx, srcCol, dstType)
 				needProjection = true
 			} else {
 				exprs[i] = srcCol

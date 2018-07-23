@@ -45,47 +45,47 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	base.tp = fieldTp
 	switch sigCode {
 	case tipb.ScalarFuncSig_CastIntAsInt:
-		f = &builtinCastIntAsIntSig{base}
+		f = &builtinCastIntAsIntSig{base, false}
 	case tipb.ScalarFuncSig_CastRealAsInt:
-		f = &builtinCastRealAsIntSig{base}
+		f = &builtinCastRealAsIntSig{base, false}
 	case tipb.ScalarFuncSig_CastDecimalAsInt:
-		f = &builtinCastDecimalAsIntSig{base}
+		f = &builtinCastDecimalAsIntSig{base, false}
 	case tipb.ScalarFuncSig_CastDurationAsInt:
 		f = &builtinCastDurationAsIntSig{base}
 	case tipb.ScalarFuncSig_CastTimeAsInt:
 		f = &builtinCastTimeAsIntSig{base}
 	case tipb.ScalarFuncSig_CastStringAsInt:
-		f = &builtinCastStringAsIntSig{base}
+		f = &builtinCastStringAsIntSig{base, false}
 	case tipb.ScalarFuncSig_CastJsonAsInt:
 		f = &builtinCastJSONAsIntSig{base}
 
 	case tipb.ScalarFuncSig_CastIntAsReal:
-		f = &builtinCastIntAsRealSig{base}
+		f = &builtinCastIntAsRealSig{base, false}
 	case tipb.ScalarFuncSig_CastRealAsReal:
-		f = &builtinCastRealAsRealSig{base}
+		f = &builtinCastRealAsRealSig{base, false}
 	case tipb.ScalarFuncSig_CastDecimalAsReal:
-		f = &builtinCastDecimalAsRealSig{base}
+		f = &builtinCastDecimalAsRealSig{base, false}
 	case tipb.ScalarFuncSig_CastDurationAsReal:
 		f = &builtinCastDurationAsRealSig{base}
 	case tipb.ScalarFuncSig_CastTimeAsReal:
 		f = &builtinCastTimeAsRealSig{base}
 	case tipb.ScalarFuncSig_CastStringAsReal:
-		f = &builtinCastStringAsRealSig{base}
+		f = &builtinCastStringAsRealSig{base, false}
 	case tipb.ScalarFuncSig_CastJsonAsReal:
 		f = &builtinCastJSONAsRealSig{base}
 
 	case tipb.ScalarFuncSig_CastIntAsDecimal:
-		f = &builtinCastIntAsDecimalSig{base}
+		f = &builtinCastIntAsDecimalSig{base, false}
 	case tipb.ScalarFuncSig_CastRealAsDecimal:
-		f = &builtinCastRealAsDecimalSig{base}
+		f = &builtinCastRealAsDecimalSig{base, false}
 	case tipb.ScalarFuncSig_CastDecimalAsDecimal:
-		f = &builtinCastDecimalAsDecimalSig{base}
+		f = &builtinCastDecimalAsDecimalSig{base, false}
 	case tipb.ScalarFuncSig_CastDurationAsDecimal:
 		f = &builtinCastDurationAsDecimalSig{base}
 	case tipb.ScalarFuncSig_CastTimeAsDecimal:
 		f = &builtinCastTimeAsDecimalSig{base}
 	case tipb.ScalarFuncSig_CastStringAsDecimal:
-		f = &builtinCastStringAsDecimalSig{base}
+		f = &builtinCastStringAsDecimalSig{base, false}
 	case tipb.ScalarFuncSig_CastJsonAsDecimal:
 		f = &builtinCastJSONAsDecimalSig{base}
 
