@@ -364,7 +364,7 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 			c.Assert(len(warnings), Equals, warnCount+1)
 
 			lastWarn := warnings[len(warnings)-1]
-			c.Assert(terror.ErrorEqual(errDeprecatedSyntaxNoReplacement, lastWarn), IsTrue)
+			c.Assert(terror.ErrorEqual(errDeprecatedSyntaxNoReplacement, lastWarn.Err), IsTrue)
 
 			warnCount = len(warnings)
 		} else {

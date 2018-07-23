@@ -132,7 +132,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 		var converted types.Datum
 		converted, err = CastValue(ctx, rec[c.Offset], c.ToInfo())
 		if err != nil {
-			if sc.IgnoreErr {
+			if sc.DupKeyAsWarning {
 				sc.AppendWarning(err)
 				log.Warnf("cast values failed:%v", err)
 			} else {
@@ -171,7 +171,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 				continue
 			}
 			err = ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-			log.Errorf("[con:%d] %v", ctx.GetSessionVars().ConnectionID, err)
+			log.Errorf("con:%d %v", ctx.GetSessionVars().ConnectionID, err)
 			// Truncate to valid utf8 string.
 			casted = types.NewStringDatum(str[:i])
 			err = sc.HandleTruncate(err)
@@ -283,7 +283,7 @@ func CheckOnce(cols []*Column) error {
 // CheckNotNull checks if nil value set to a column with NotNull flag is set.
 func (c *Column) CheckNotNull(data types.Datum) error {
 	if mysql.HasNotNullFlag(c.Flag) && data.IsNull() {
-		return errColumnCantNull.Gen("Column %s can't be null.", c.Name)
+		return ErrColumnCantNull.GenByArgs(c.Name)
 	}
 	return nil
 }
@@ -347,9 +347,9 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 		// Auto increment column doesn't has default value and we should not return error.
 		return types.Datum{}, nil
 	}
-	if !ctx.GetSessionVars().StrictSQLMode {
-		// Non strict mode use zero value.
-		// TODO: add warning.
+	sc := ctx.GetSessionVars().StmtCtx
+	if sc.BadNullAsWarning {
+		sc.AppendWarning(ErrColumnCantNull.GenByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
 	return types.Datum{}, ErrNoDefaultValue.Gen("Field '%s' doesn't have a default value", col.Name)

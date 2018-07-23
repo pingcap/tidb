@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -523,7 +524,7 @@ func (s *builtinArithmeticMultiplyDecimalSig) evalDecimal(row types.Row) (*types
 	}
 	c := &types.MyDecimal{}
 	err = types.DecimalMul(a, b, c)
-	if err != nil {
+	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
 		return nil, true, errors.Trace(err)
 	}
 	return c, false, nil
