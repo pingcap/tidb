@@ -861,8 +861,11 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 
 		if len(batchTasks) >= len(workers) {
 			break
-
 		}
+	}
+
+	if len(batchTasks) == 0 {
+		return nil, nil
 	}
 
 	// Wait tasks finish.
