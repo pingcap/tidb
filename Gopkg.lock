@@ -218,7 +218,7 @@
   revision = "8d44bfdf1030639ae7130922c95df12d6d4da3b6"
 
 [[projects]]
-  branch = "misono/upload-gc-safepoint"
+  branch = "master"
   name = "github.com/pingcap/kvproto"
   packages = [
     "pkg/coprocessor",
@@ -230,15 +230,13 @@
     "pkg/raft_serverpb",
     "pkg/tikvpb"
   ]
-  revision = "11e8f245581483e73bee991d7b8f8c4cc3d7f462"
-  source = "https://github.com/MyonKeminta/kvproto"
+  revision = "5e6e69a5ed381bd4a8afe7cb96cc47f955f6d160"
 
 [[projects]]
-  branch = "misono/upload-gc-safepoint"
+  branch = "master"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
-  revision = "b07a7cf3a779b4272c32b147d8508789482c7c41"
-  source = "https://github.com/MyonKeminta/pd"
+  revision = "c188a621139418550fcb8fe81928ab5b476615e8"
 
 [[projects]]
   branch = "master"
@@ -422,6 +420,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "8edc10ad65dbfebaec4badbf0954ad89e272446001fe4e7b2e96094589520ce2"
+  inputs-digest = "95583762251fa1ae02daccd8da17397f27a9f91ea03603b8059a4b75d807f065"
   solver-name = "gps-cdcl"
   solver-version = 1

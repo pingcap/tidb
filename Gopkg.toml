@@ -74,13 +74,11 @@ required = ["github.com/golang/protobuf/jsonpb"]
 
 [[constraint]]
   name = "github.com/pingcap/pd"
-  source = "https://github.com/MyonKeminta/pd"
-  branch = "misono/upload-gc-safepoint"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/pingcap/kvproto"
-  source = "https://github.com/MyonKeminta/kvproto"
-  branch = "misono/upload-gc-safepoint"
+  branch = "master"
 	
 [[constraint]]
   name = "gopkg.in/natefinch/lumberjack.v2"
