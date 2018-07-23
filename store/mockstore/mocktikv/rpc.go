@@ -95,6 +95,8 @@ func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
 	return kvPairs
 }
 
+// rpcHandler mocks tikv's side handler behavior. In general, you may assume
+// TiKV just translate the logic from Go to Rust.
 type rpcHandler struct {
 	cluster   *Cluster
 	mvccStore MVCCStore
@@ -435,7 +437,8 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 	return &kvrpcpb.SplitRegionResponse{}
 }
 
-// RPCClient sends kv RPC calls to mock cluster.
+// RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
+// a rpc client at tikv's side.
 type RPCClient struct {
 	Cluster       *Cluster
 	MvccStore     MVCCStore
