@@ -369,7 +369,7 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (
 		if val == 0 {
 			continue
 		}
-		sql := fmt.Sprintf("update mysql.stats_histograms set tot_col_size = tot_col_size + %d where hist_id = %d and table_id = %d and is_index = 0", val, key, id)
+		sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count) values (%d, 0, %d, 0) on duplicate key update tot_col_size = tot_col_size + %d", id, key, val)
 		_, err = exec.Execute(ctx, sql)
 		if err != nil {
 			return
