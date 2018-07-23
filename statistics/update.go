@@ -346,11 +346,11 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (
 	}()
 	version := h.mu.ctx.Txn().StartTS()
 	values := make([]string, 0, len(delta.ColSize))
-	for key, val := range delta.ColSize {
-		if val == 0 {
+	for histID, deltaColSize := range delta.ColSize {
+		if deltaColSize == 0 {
 			continue
 		}
-		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d, %d)", id, key, val, version))
+		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d, %d)", id, histID, deltaColSize, version))
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size, version) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size), version = values(version)", strings.Join(values, ","))
