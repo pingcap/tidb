@@ -697,13 +697,10 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 		}
 	}
 	var sVal string
-	var err, warn error
-	sVal, warn, err = variable.ValidateSetSystemVar(name, value)
+	var err error
+	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if warn != nil {
-		s.sessionVars.StmtCtx.AppendWarning(warn)
 	}
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), sVal)

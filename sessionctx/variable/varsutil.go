@@ -131,17 +131,14 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 		return vars.deleteSystemVar(name)
 	}
 	var sVal string
-	var err, warn error
+	var err error
 	sVal, err = value.ToString()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sVal, warn, err = ValidateSetSystemVar(name, sVal)
+	sVal, err = ValidateSetSystemVar(vars, name, sVal)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if warn != nil {
-		vars.StmtCtx.AppendWarning(warn)
 	}
 	return vars.SetSystemVar(name, sVal)
 }
@@ -166,143 +163,160 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 }
 
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
-func ValidateSetSystemVar(name string, value string) (string, error, error) {
+func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string, error) {
 	if strings.EqualFold(value, "DEFAULT") {
 		if val := GetSysVar(name); val != nil {
-			return val.Value, nil, nil
+			return val.Value, nil
 		}
-		return value, nil, nil
+		// should never happen
+		panic(fmt.Sprintf("Error happened when ValidateSetSystemVar. Invalid system variable: %s", name))
 	}
 	switch name {
 	case DefaultWeekFormat:
 		val, err := strconv.Atoi(value)
 		if err != nil {
-			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
 		if val < 0 {
-			return "0", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "0", nil
 		}
 		if val > 7 {
-			return "7", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "7", nil
 		}
 	case DelayKeyWrite:
 		if strings.EqualFold(value, "ON") || value == "1" {
-			return "ON", nil, nil
+			return "ON", nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {
-			return "OFF", nil, nil
+			return "OFF", nil
 		} else if strings.EqualFold(value, "ALL") || value == "2" {
-			return "ALL", nil, nil
+			return "ALL", nil
 		}
-		return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
+		return value, ErrWrongValueForVar.GenByArgs(name, value)
 	case FlushTime:
 		val, err := strconv.Atoi(value)
 		if err != nil {
-			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
 		if val < 0 {
-			return "0", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "0", nil
 		}
 	case GroupConcatMaxLen:
 		val, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
-			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
 		if val < 4 {
-			return "4", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "4", nil
 		}
 		if val > 18446744073709551615 {
-			return "18446744073709551615", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "18446744073709551615", nil
 		}
 	case InteractiveTimeout:
 		val, err := strconv.Atoi(value)
 		if err != nil {
-			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
 		if val < 1 {
-			return "1", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "1", nil
 		}
 	case MaxConnections:
 		val, err := strconv.Atoi(value)
 		if err != nil {
-			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
 		if val < 1 {
-			return "1", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "1", nil
 		}
 		if val > 100000 {
-			return "100000", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "100000", nil
 		}
 	case MaxSortLength:
 		val, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
 		if val < 4 {
-			return "4", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "4", nil
 		}
 		if val > 8388608 {
-			return "8388608", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "8388608", nil
 		}
 	case MaxSpRecursionDepth:
 		val, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
 		if val < 0 {
-			return "0", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "0", nil
 		}
 		if val > 255 {
-			return "255", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "255", nil
 		}
 	case OldPasswords:
 		val, err := strconv.Atoi(value)
 		if err != nil {
-			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
 		if val < 0 {
-			return "0", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "0", nil
 		}
 		if val > 2 {
-			return "2", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "2", nil
 		}
 	case MaxUserConnections:
 		val, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
-			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
 		if val < 0 {
-			return "0", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "0", nil
 		}
 		if val > 4294967295 {
-			return "4294967295", ErrTruncatedWrongValue.GenByArgs(name, value), nil
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+			return "4294967295", nil
 		}
 	case SessionTrackGtids:
 		if strings.EqualFold(value, "OFF") || value == "0" {
-			return "OFF", nil, nil
+			return "OFF", nil
 		} else if strings.EqualFold(value, "OWN_GTID") || value == "1" {
-			return "OWN_GTID", nil, nil
+			return "OWN_GTID", nil
 		} else if strings.EqualFold(value, "ALL_GTIDS") || value == "2" {
-			return "ALL_GTIDS", nil, nil
+			return "ALL_GTIDS", nil
 		}
-		return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
+		return value, ErrWrongValueForVar.GenByArgs(name, value)
 	case WarningCount, ErrorCount:
-		return value, nil, ErrReadOnly.GenByArgs(name)
+		return value, ErrReadOnly.GenByArgs(name)
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
 		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, ForeignKeyChecks, SQLSafeUpdates:
 		if strings.EqualFold(value, "ON") || value == "1" {
-			return "1", nil, nil
+			return "1", nil
 		} else if strings.EqualFold(value, "OFF") || value == "0" {
-			return "0", nil, nil
+			return "0", nil
 		}
-		return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
+		return value, ErrWrongValueForVar.GenByArgs(name, value)
 	case AutocommitVar, TiDBImportingData, TiDBSkipUTF8Check, TiDBOptAggPushDown,
 		TiDBOptInSubqUnFolding, TiDBEnableTablePartition,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming,
 		TiDBBatchDelete:
 		if strings.EqualFold(value, "ON") || value == "1" || strings.EqualFold(value, "OFF") || value == "0" {
-			return value, nil, nil
+			return value, nil
 		}
-		return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
+		return value, ErrWrongValueForVar.GenByArgs(name, value)
 	case TiDBIndexLookupConcurrency, TiDBIndexLookupJoinConcurrency, TiDBIndexJoinBatchSize,
 		TiDBIndexLookupSize,
 		TiDBHashJoinConcurrency,
@@ -315,12 +329,12 @@ func ValidateSetSystemVar(name string, value string) (string, error, error) {
 		TiDBGeneralLog:
 		v, err := strconv.Atoi(value)
 		if err != nil {
-			return value, nil, ErrWrongTypeForVar.GenByArgs(name)
+			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
 		if v <= 0 {
-			return value, nil, ErrWrongValueForVar.GenByArgs(name, value)
+			return value, ErrWrongValueForVar.GenByArgs(name, value)
 		}
-		return value, nil, nil
+		return value, nil
 	case TiDBProjectionConcurrency,
 		TIDBMemQuotaQuery,
 		TIDBMemQuotaHashJoin,
@@ -333,11 +347,11 @@ func ValidateSetSystemVar(name string, value string) (string, error, error) {
 		TiDBRetryLimit:
 		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return value, nil, ErrWrongValueForVar.GenByArgs(name)
+			return value, ErrWrongValueForVar.GenByArgs(name)
 		}
-		return value, nil, nil
+		return value, nil
 	}
-	return value, nil, nil
+	return value, nil
 }
 
 // TiDBOptOn could be used for all tidb session variable options, we use "ON"/1 to turn on those options.
