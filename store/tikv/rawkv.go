@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 )
 
 var (
