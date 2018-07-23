@@ -1048,8 +1048,9 @@ func tryToConvertConstantInt(ctx sessionctx.Context, isUnsigned bool, con *Const
 	}, false
 }
 
-// RefineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
-func RefineConstantArg(ctx sessionctx.Context, isUnsigned bool, con *Constant, op opcode.Op) (_ *Constant, isAlwaysFalse bool) {
+// RefineComparedConstant changes the constant argument, type of which is not int, to it's ceiling or flooring result by the given op.
+// isAlwaysFalse indicates whether int column <cmp> `con` is definite false.
+func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Constant, op opcode.Op) (_ *Constant, isAlwaysFalse bool) {
 	dt, err := con.Eval(nil)
 	if err != nil {
 		return con, false
@@ -1088,7 +1089,11 @@ func RefineConstantArg(ctx sessionctx.Context, isUnsigned bool, con *Constant, o
 		}
 	case opcode.NullEQ, opcode.EQ:
 		switch con.RetType.EvalType() {
-		// e.g. 1 = 1.1 or 1 <=> 1.1 should always be false.
+		// An integer value equals or null-equals to a float value contains
+		// non-zero decimal digits is definite false.
+		// e.g:
+		//   1. "integer  =  1.1" is definite false.
+		//   2. "integer <=> 1.1" is definite false.
 		case types.ETReal, types.ETDecimal:
 			// We set isOverFlow as true here does not indicate this constant overflows,
 			// but indicate that the compare function should be false.
@@ -1117,13 +1122,12 @@ func RefineConstantArg(ctx sessionctx.Context, isUnsigned bool, con *Constant, o
 				return con, true
 			}
 		}
-		// TODO: refine a != 1.1 to TRUE.
 	}
 	return con, false
 }
 
-// refineArgs rewrite the arguments if one of them is int expression and another one is non-int constant.
-// Like a < 1.1 will be changed to a < 2.
+// refineArgs rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
+// `non-int constant <cmp> int column`. e.g. `a < 1.1` will be rewritten to `a < 2`.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0IsInt := arg0Type.EvalType() == types.ETInt
@@ -1133,18 +1137,18 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isAlways, finalArg0, finalArg1 := false, args[0], args[1]
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		finalArg1, isAlways = RefineConstantArg(ctx, mysql.HasUnsignedFlag(arg0Type.Flag), arg1, c.op)
+		finalArg1, isAlways = RefineComparedConstant(ctx, mysql.HasUnsignedFlag(arg0Type.Flag), arg1, c.op)
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		finalArg0, isAlways = RefineConstantArg(ctx, mysql.HasUnsignedFlag(arg1Type.Flag), arg0, symmetricOp[c.op])
+		finalArg0, isAlways = RefineComparedConstant(ctx, mysql.HasUnsignedFlag(arg1Type.Flag), arg0, symmetricOp[c.op])
 	}
 	if !isAlways {
 		return []Expression{finalArg0, finalArg1}
 	}
 	switch c.op {
 	case opcode.LT, opcode.LE:
-		// This will always be tru.e
+		// This will always be true.
 		return []Expression{Zero.Clone(), One.Clone()}
 	case opcode.EQ, opcode.NullEQ, opcode.GT, opcode.GE:
 		// This will always be false.
