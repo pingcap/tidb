@@ -134,7 +134,7 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(tableID)
-		job.Args = append(job.Args, startKey)
+		job.Args = append(job.Args, startKey, getPartitionIDs(tblInfo))
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -194,7 +194,7 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
 // As all the old data is encoded with old table ID, it can not be accessed any more.
 // A background job will be created to delete old data.
-func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tableID := job.TableID
 	var newTableID int64
@@ -213,6 +213,22 @@ func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
+	var oldPartitionIDs []int64
+	if tblInfo.GetPartitionInfo() != nil {
+		oldPartitionIDs = getPartitionIDs(tblInfo)
+		for _, def := range tblInfo.Partition.Definitions {
+			var pid int64
+			pid, err := d.genGlobalID()
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			def.ID = pid
+		}
+	}
+
 	tblInfo.ID = newTableID
 	err = t.CreateTable(schemaID, tblInfo)
 	if err != nil {
@@ -226,7 +242,7 @@ func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
-	job.Args = []interface{}{startKey}
+	job.Args = []interface{}{startKey, oldPartitionIDs}
 	return ver, nil
 }
 
