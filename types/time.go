@@ -2109,26 +2109,26 @@ var monthAbbrev = map[string]gotime.Month{
 type dateFormatParser func(t *MysqlTime, date string, ctx map[string]int) (remain string, succ bool)
 
 var dateFormatParserTable = map[string]dateFormatParser{
-	"%b": abbreviatedMonth,           // Abbreviated month name (Jan..Dec)
-	"%c": monthNumeric,               // Month, numeric (0..12)
-	"%d": dayOfMonthNumericTwoDigits, // Day of the month, numeric (00..31)
-	"%e": dayOfMonthNumeric,          // Day of the month, numeric (0..31)
-	"%f": microSeconds,               // Microseconds (000000..999999)
-	"%h": hour24TwoDigits,            // Hour (01..12)
-	"%H": hour24TwoDigits,            // Hour (01..12)
-	"%I": hour24TwoDigits,            // Hour (01..12)
-	"%i": minutesNumeric,             // Minutes, numeric (00..59)
-	"%j": dayOfYearThreeDigits,       // Day of year (001..366)
-	"%k": hour24Numeric,              // Hour (0..23)
-	"%l": hour12Numeric,              // Hour (1..12)
-	"%M": fullNameMonth,              // Month name (January..December)
-	"%m": monthNumericTwoDigits,      // Month, numeric (00..12)
-	"%p": isAMOrPM,                   // AM or PM
-	"%r": time12Hour,                 // Time, 12-hour (hh:mm:ss followed by AM or PM)
-	"%s": secondsNumeric,             // Seconds (00..59)
-	"%S": secondsNumeric,             // Seconds (00..59)
-	"%T": time24Hour,                 // Time, 24-hour (hh:mm:ss)
-	"%Y": yearNumericFourDigits,      // Year, numeric, four digits
+	"%b": abbreviatedMonth,      // Abbreviated month name (Jan..Dec)
+	"%c": monthNumeric,          // Month, numeric (0..12)
+	"%d": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
+	"%e": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
+	"%f": microSeconds,          // Microseconds (000000..999999)
+	"%h": hour24TwoDigits,       // Hour (01..12)
+	"%H": hour24TwoDigits,       // Hour (01..12)
+	"%I": hour24TwoDigits,       // Hour (01..12)
+	"%i": minutesNumeric,        // Minutes, numeric (00..59)
+	"%j": dayOfYearThreeDigits,  // Day of year (001..366)
+	"%k": hour24Numeric,         // Hour (0..23)
+	"%l": hour12Numeric,         // Hour (1..12)
+	"%M": fullNameMonth,         // Month name (January..December)
+	"%m": monthNumeric,          // Month, numeric (00..12)
+	"%p": isAMOrPM,              // AM or PM
+	"%r": time12Hour,            // Time, 12-hour (hh:mm:ss followed by AM or PM)
+	"%s": secondsNumeric,        // Seconds (00..59)
+	"%S": secondsNumeric,        // Seconds (00..59)
+	"%T": time24Hour,            // Time, 24-hour (hh:mm:ss)
+	"%Y": yearNumericFourDigits, // Year, numeric, four digits
 	// TODO: Add the following...
 	// "%a": abbreviatedWeekday,         // Abbreviated weekday name (Sun..Sat)
 	// "%D": dayOfMonthWithSuffix,       // Day of the month with English suffix (0th, 1st, 2nd, 3rd)
@@ -2319,15 +2319,10 @@ func isAMOrPM(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 	return input[2:], true
 }
 
-func dayOfMonthNumericTwoDigits(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	v, succ := parseDigits(input, 2)
-	if !succ || v >= 32 {
-		return input, false
-	}
-	t.day = uint8(v)
-	return input[2:], true
-}
+// digitRegex: it was used to scan a variable-length monthly day or month in the string. Ex:  "01" or "1" or "30"
+var oneOrTwoDigitRegex = regexp.MustCompile("^[0-9]{1,2}")
 
+// twoDigitRegex: it was just for two digit number string. Ex: "01" or "12"
 var twoDigitRegex = regexp.MustCompile("^[1-9][0-9]?")
 
 // parseTwoNumeric is used for pattens 0..31 0..24 0..60 and so on.
@@ -2350,32 +2345,42 @@ func parseTwoNumeric(input string) (int, string) {
 }
 
 func dayOfMonthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	v, remain := parseTwoNumeric(input) // 0..31
-	if len(remain) == len(input) || v > 31 {
+	result := oneOrTwoDigitRegex.FindString(input) // 0..31
+	length := len(result)
+
+	v, ok := parseDigits(input, length)
+
+	if !ok || v > 31 {
 		return input, false
 	}
-	t.month = uint8(v)
-	return remain, true
+	t.day = uint8(v)
+	return input[length:], true
 }
 
 func hour24Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	// 0..23
-	v, remain := parseTwoNumeric(input)
-	if len(remain) == len(input) || v > 23 {
+	result := oneOrTwoDigitRegex.FindString(input) // 0..23
+	length := len(result)
+
+	v, ok := parseDigits(input, length)
+
+	if !ok || v > 23 {
 		return input, false
 	}
 	t.hour = v
-	return remain, true
+	return input[length:], true
 }
 
 func hour12Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	// 1..12
-	v, remain := parseTwoNumeric(input)
-	if len(remain) == len(input) || v > 12 || v == 0 {
+	result := oneOrTwoDigitRegex.FindString(input) // 1..12
+	length := len(result)
+
+	v, ok := parseDigits(input, length)
+
+	if !ok || v > 12 || v == 0 {
 		return input, false
 	}
 	t.hour = v
-	return remain, true
+	return input[length:], true
 }
 
 func microSeconds(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
@@ -2406,16 +2411,6 @@ func dayOfYearThreeDigits(t *MysqlTime, input string, ctx map[string]int) (strin
 	}
 	ctx["%j"] = v
 	return input[3:], true
-}
-
-func monthNumericTwoDigits(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	v, succ := parseDigits(input, 2)
-	if !succ || v > 12 {
-		return input, false
-	}
-
-	t.month = uint8(v)
-	return input[2:], true
 }
 
 func abbreviatedWeekday(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
@@ -2451,12 +2446,16 @@ func fullNameMonth(t *MysqlTime, input string, ctx map[string]int) (string, bool
 }
 
 func monthNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
-	v, rem := parseTwoNumeric(input)
-	if len(rem) == len(input) || v > 12 {
-		return rem, false
+	result := oneOrTwoDigitRegex.FindString(input) // 1..12
+	length := len(result)
+
+	v, ok := parseDigits(input, length)
+
+	if !ok || v > 12 {
+		return input, false
 	}
 	t.month = uint8(v)
-	return rem, false
+	return input[length:], true
 }
 
 //  dayOfMonthWithSuffix returns different suffix according t being which day. i.e. 0 return th. 1 return st.
