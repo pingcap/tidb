@@ -223,6 +223,12 @@ type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
 	// with each tikv-server.
 	GrpcConnectionCount uint `toml:"grpc-connection-count" json:"grpc-connection-count"`
+	// After a duration of this time in seconds if the client doesn't see any activity it pings
+	// the server to see if the transport is still alive.
+	GrpcKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
+	// After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
+	// and if no activity is seen even after that the connection is closed.
+	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
 }
@@ -301,8 +307,10 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount: 16,
-		CommitTimeout:       "41s",
+		GrpcConnectionCount:  16,
+		GrpcKeepAliveTime:    10,
+		GrpcKeepAliveTimeout: 3,
+		CommitTimeout:        "41s",
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/juju/errors"
@@ -77,27 +78,48 @@ type KvEncoder interface {
 	Close() error
 }
 
+var (
+	// refCount is used to ensure that there is only one domain.Domain instance.
+	refCount    int64
+	mu          sync.Mutex
+	storeGlobal kv.Storage
+	domGlobal   *domain.Domain
+)
+
 type kvEncoder struct {
+	se    session.Session
 	store kv.Storage
 	dom   *domain.Domain
-	se    session.Session
 }
 
 // New new a KvEncoder
 func New(dbName string, idAlloc autoid.Allocator) (KvEncoder, error) {
 	kvEnc := &kvEncoder{}
+	mu.Lock()
+	defer mu.Unlock()
+	if refCount == 0 {
+		if err := initGlobal(); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	err := kvEnc.initial(dbName, idAlloc)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
+	refCount++
 	return kvEnc, nil
 }
 
 func (e *kvEncoder) Close() error {
-	e.dom.Close()
-	if err := e.store.Close(); err != nil {
-		return errors.Trace(err)
+	e.se.Close()
+	mu.Lock()
+	defer mu.Unlock()
+	refCount--
+	if refCount == 0 {
+		e.dom.Close()
+		if err := e.store.Close(); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
@@ -202,37 +224,7 @@ func newMockTikvWithBootstrap() (kv.Storage, *domain.Domain, error) {
 }
 
 func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error) {
-	var (
-		store kv.Storage
-		dom   *domain.Domain
-		se    session.Session
-	)
-	defer func() {
-		if err == nil {
-			return
-		}
-		if store != nil {
-			if err1 := store.Close(); err1 != nil {
-				log.Error(errors.ErrorStack(err1))
-			}
-		}
-		if dom != nil {
-			dom.Close()
-		}
-		if se != nil {
-			se.Close()
-		}
-	}()
-
-	// disable stats update.
-	session.SetStatsLease(0)
-	store, dom, err = newMockTikvWithBootstrap()
-	if err != nil {
-		err = errors.Trace(err)
-		return
-	}
-
-	se, err = session.CreateSession(store)
+	se, err := session.CreateSession(storeGlobal)
 	if err != nil {
 		err = errors.Trace(err)
 		return
@@ -254,7 +246,28 @@ func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error)
 	se.GetSessionVars().ImportingData = true
 	se.GetSessionVars().SkipUTF8Check = true
 	e.se = se
-	e.store = store
-	e.dom = dom
+	e.store = storeGlobal
+	e.dom = domGlobal
 	return nil
+}
+
+// initGlobal modify the global domain and store
+func initGlobal() error {
+	// disable stats update.
+	session.SetStatsLease(0)
+	var err error
+	storeGlobal, domGlobal, err = newMockTikvWithBootstrap()
+	if err == nil {
+		return nil
+	}
+
+	if storeGlobal != nil {
+		if err1 := storeGlobal.Close(); err1 != nil {
+			log.Error(errors.ErrorStack(err1))
+		}
+	}
+	if domGlobal != nil {
+		domGlobal.Close()
+	}
+	return errors.Trace(err)
 }
