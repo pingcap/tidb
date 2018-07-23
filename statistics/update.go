@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -345,36 +344,16 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-
-	sql := fmt.Sprintf("select * from mysql.stats_histograms where table_id = %d and is_index = 0 for update", id)
-	rs, err := exec.Execute(ctx, sql)
-	if len(rs) > 0 {
-		defer terror.Call(rs[0].Close)
-	}
-	if err != nil {
-		return
-	}
-	if len(rs) > 0 {
-		chk := rs[0].NewChunk()
-		for {
-			err = rs[0].Next(ctx, chk)
-			if err != nil {
-				return
-			}
-			if chk.NumRows() == 0 {
-				break
-			}
-		}
-	}
+	version := h.mu.ctx.Txn().StartTS()
 	values := make([]string, 0, len(delta.ColSize))
 	for key, val := range delta.ColSize {
 		if val == 0 {
 			continue
 		}
-		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d)", id, key, val))
+		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d, %d)", id, key, val, version))
 	}
-	sql = fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
-		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
+	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size, version) "+
+		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size), version = values(version)", strings.Join(values, ","))
 	_, err = exec.Execute(ctx, sql)
 	return
 }
