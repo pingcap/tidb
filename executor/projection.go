@@ -50,12 +50,13 @@ type ProjectionExec struct {
 	evaluatorSuit    *expression.EvaluatorSuit
 	calculateNoDelay bool
 
-	prepared   bool
-	finishCh   chan struct{}
-	outputCh   chan *projectionOutput
-	fetcher    projectionInputFetcher
-	numWorkers int64
-	workers    []*projectionWorker
+	prepared    bool
+	finishCh    chan struct{}
+	outputCh    chan *projectionOutput
+	fetcher     projectionInputFetcher
+	numWorkers  int64
+	workers     []*projectionWorker
+	childResult *chunk.Chunk
 }
 
 // Open implements the Executor Open interface.
@@ -71,6 +72,10 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	// Projection can not be executed parallelly.
 	if e.numWorkers > 0 && !e.evaluatorSuit.Vectorizable() {
 		e.numWorkers = 0
+	}
+
+	if e.isUnparallelExec() {
+		e.childResult = e.children[0].newChunk()
 	}
 
 	return nil
@@ -135,19 +140,23 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //
 func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if e.numWorkers <= 0 {
+	if e.isUnparallelExec() {
 		return errors.Trace(e.unParallelExecute(ctx, chk))
 	}
 	return errors.Trace(e.parallelExecute(ctx, chk))
 
 }
 
+func (e *ProjectionExec) isUnparallelExec() bool {
+	return e.numWorkers <= 0
+}
+
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
-	err := e.children[0].Next(ctx, e.childrenResults[0])
+	err := e.children[0].Next(ctx, e.childResult)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = e.evaluatorSuit.Run(e.ctx, e.childrenResults[0], chk)
+	err = e.evaluatorSuit.Run(e.ctx, e.childResult, chk)
 	return errors.Trace(err)
 }
 
@@ -216,6 +225,9 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 
 // Close implements the Executor Close interface.
 func (e *ProjectionExec) Close() error {
+	if e.isUnparallelExec() {
+		e.childResult = nil
+	}
 	if e.outputCh != nil {
 		close(e.finishCh)
 		// Wait for "projectionInputFetcher" to finish and exit.

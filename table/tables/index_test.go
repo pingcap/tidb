@@ -210,8 +210,8 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 				ID:   2,
 				Name: model.NewCIStr("test"),
 				Columns: []*model.IndexColumn{
-					{},
-					{},
+					{Tp: &types.FieldType{}},
+					{Tp: &types.FieldType{}},
 				},
 			},
 		},

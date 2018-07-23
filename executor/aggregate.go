@@ -159,6 +159,8 @@ type HashAggExec struct {
 	defaultVal       *chunk.Chunk
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
 	isChildReturnEmpty bool
+
+	childResult *chunk.Chunk
 }
 
 // HashAggInput indicates the input of hash agg exec.
@@ -201,6 +203,7 @@ func (d *HashAggIntermData) ToRows(sc *stmtctx.StatementContext, rows []types.Da
 // Close implements the Executor Close interface.
 func (e *HashAggExec) Close() error {
 	if e.isUnparallelExec {
+		e.childResult = nil
 		e.groupMap = nil
 		e.groupIterator = nil
 		e.aggCtxsMap = nil
@@ -247,6 +250,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 	e.groupKey = make([]byte, 0, 8)
 	e.groupVals = make([][]byte, 0, 8)
+	e.childResult = e.children[0].newChunk()
 }
 
 func (e *HashAggExec) initForParallelExec() {
@@ -676,14 +680,14 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
 func (e *HashAggExec) execute(ctx context.Context) (err error) {
-	inputIter := chunk.NewIterator4Chunk(e.childrenResults[0])
+	inputIter := chunk.NewIterator4Chunk(e.childResult)
 	for {
-		err := e.children[0].Next(ctx, e.childrenResults[0])
+		err := e.children[0].Next(ctx, e.childResult)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		// no more data.
-		if e.childrenResults[0].NumRows() == 0 {
+		if e.childResult.NumRows() == 0 {
 			return nil
 		}
 		for row := inputIter.Begin(); row != inputIter.End(); row = inputIter.Next() {
@@ -765,6 +769,8 @@ type StreamAggExec struct {
 	newAggFuncs    []aggfuncs.AggFunc
 	partialResults []aggfuncs.PartialResult
 	groupRows      []chunk.Row
+
+	childResult *chunk.Chunk
 }
 
 // Open implements the Executor Open interface.
@@ -772,10 +778,10 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-
+	e.childResult = e.children[0].newChunk()
 	e.executed = false
 	e.isChildReturnEmpty = true
-	e.inputIter = chunk.NewIterator4Chunk(e.childrenResults[0])
+	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
 	e.inputRow = e.inputIter.End()
 	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
 	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
@@ -793,6 +799,12 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *StreamAggExec) Close() error {
+	e.childResult = nil
+	return errors.Trace(e.baseExecutor.Close())
 }
 
 // Next implements the Executor Next interface.
@@ -876,13 +888,13 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 		}
 	}
 
-	err = e.children[0].Next(ctx, e.childrenResults[0])
+	err = e.children[0].Next(ctx, e.childResult)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// No more data.
-	if e.childrenResults[0].NumRows() == 0 {
+	if e.childResult.NumRows() == 0 {
 		if !e.isChildReturnEmpty {
 			err = e.appendResult2Chunk(chk)
 		} else if e.defaultVal != nil {

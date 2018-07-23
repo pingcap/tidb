@@ -216,3 +216,21 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	job.Args = []interface{}{partitionID}
 	return ver, nil
 }
+
+func checkAddPartitionTooManyPartitions(piDefs int) error {
+	if piDefs > PartitionCountLimit {
+		return ErrTooManyPartitions
+	}
+	return nil
+}
+
+func getPartitionIDs(table *model.TableInfo) []int64 {
+	if table.GetPartitionInfo() == nil {
+		return []int64{}
+	}
+	partitionIDs := make([]int64, 0, len(table.Partition.Definitions))
+	for _, def := range table.Partition.Definitions {
+		partitionIDs = append(partitionIDs, def.ID)
+	}
+	return partitionIDs
+}
