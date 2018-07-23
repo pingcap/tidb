@@ -498,12 +498,14 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
 		}
 	}
-	// Update the NDV of primary key column.
-	if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
-		hist.NDV = int64(hist.totalRowCount())
+	if hist != nil {
+		// Update the NDV of primary key column.
+		if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
+			hist.NDV = int64(hist.totalRowCount())
+		}
+		// dump the last feedback into kv
+		err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
 	}
-	// dump the last feedback into kv
-	err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
 	return errors.Trace(err)
 }
 
