@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -365,16 +366,16 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (
 			}
 		}
 	}
+	values := make([]string, 0, len(delta.ColSize))
 	for key, val := range delta.ColSize {
 		if val == 0 {
 			continue
 		}
-		sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count) values (%d, 0, %d, 0) on duplicate key update tot_col_size = tot_col_size + %d", id, key, val)
-		_, err = exec.Execute(ctx, sql)
-		if err != nil {
-			return
-		}
+		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d)", id, key, val))
 	}
+	sql = fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
+		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
+	_, err = exec.Execute(ctx, sql)
 	return
 }
 
