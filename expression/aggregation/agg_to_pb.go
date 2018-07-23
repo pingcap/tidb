@@ -62,5 +62,5 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 		}
 		children = append(children, pbArg)
 	}
-	return &tipb.Expr{Tp: tp, Children: children}
+	return &tipb.Expr{Tp: tp, Children: children, FieldType: expression.ToPBFieldType(aggFunc.RetTp)}
 }
