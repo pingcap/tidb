@@ -41,7 +41,7 @@ func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalInt(sctx, row)
+		_, isNull, err := e.args[0].EvalInt(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}
