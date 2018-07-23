@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 )
 
 const (
@@ -148,8 +148,8 @@ func checkCreatePartitionValue(pi *model.PartitionInfo) error {
 
 // validRangePartitionType checks the type supported by the range partitioning key.
 func validRangePartitionType(col *table.Column) bool {
-	switch col.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+	switch col.FieldType.EvalType() {
+	case types.ETInt:
 		return true
 	default:
 		return false
