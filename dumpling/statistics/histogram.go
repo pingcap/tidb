@@ -605,6 +605,10 @@ func (hg *Histogram) popFirstBucket() {
 	hg.Bounds = c
 }
 
+func (hg *Histogram) isIndexHist() bool {
+	return hg.tp.Tp == mysql.TypeBlob
+}
+
 // MergeHistograms merges two histograms.
 func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram, bucketSize int) (*Histogram, error) {
 	if lh.Len() == 0 {
@@ -784,7 +788,7 @@ func (idx *Index) String() string {
 
 func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 {
 	if idx.CMSketch != nil {
-		return float64(idx.CMSketch.queryBytes(b))
+		return float64(idx.CMSketch.QueryBytes(b))
 	}
 	return idx.Histogram.equalRowCount(types.NewBytesDatum(b))
 }
