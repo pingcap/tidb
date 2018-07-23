@@ -187,7 +187,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	metrics.StatsInaccuracyRate.Observe(rate)
 	s.Lock()
 	defer s.Unlock()
-	isIndex := q.hist.tp.Tp == mysql.TypeBlob
+	isIndex := q.hist.isIndexHist()
 	s.rateMap.update(q.tableID, q.hist.ID, rate, isIndex)
 	if len(s.feedback) < MaxQueryFeedbackCount {
 		s.feedback = append(s.feedback, q)
@@ -380,10 +380,8 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 		return nil
 	}
 	var isIndex int64
-	if fb.hist.tp.Tp == mysql.TypeBlob {
+	if fb.hist.isIndexHist() {
 		isIndex = 1
-	} else {
-		isIndex = 0
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
 		"(%d, %d, %d, X'%X')", fb.tableID, fb.hist.ID, isIndex, vals)
@@ -396,6 +394,46 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
 	}
 	return errors.Trace(err)
+}
+
+// UpdateStatsByLocalFeedback will update statistics by the local feedback.
+// Currently, we dump the feedback with the period of 10 minutes, which means
+// it takes 10 minutes for a feedback to take effect. However, we can use the
+// feedback locally on this tidb-server, so it could be used more timely.
+func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
+	h.listHead.Lock()
+	for collector := h.listHead.next; collector != nil; collector = collector.next {
+		collector.tryToRemoveFromList()
+		h.merge(collector)
+	}
+	h.listHead.Unlock()
+	for _, fb := range h.feedback {
+		table, ok := is.TableByID(fb.tableID)
+		if !ok {
+			continue
+		}
+		tblStats := h.GetTableStats(table.Meta())
+		newTblStats := tblStats.copy()
+		if fb.hist.isIndexHist() {
+			idx, ok := tblStats.Indices[fb.hist.ID]
+			if !ok {
+				continue
+			}
+			newIdx := *idx
+			newIdx.Histogram = *UpdateHistogram(&idx.Histogram, fb)
+			newIdx.CMSketch = UpdateCMSketch(idx.CMSketch, fb)
+			newTblStats.Indices[fb.hist.ID] = &newIdx
+		} else {
+			col, ok := tblStats.Columns[fb.hist.ID]
+			if !ok {
+				continue
+			}
+			newCol := *col
+			newCol.Histogram = *UpdateHistogram(&col.Histogram, fb)
+			newTblStats.Columns[fb.hist.ID] = &newCol
+		}
+		h.UpdateTableStats([]*Table{newTblStats}, nil)
+	}
 }
 
 // UpdateErrorRate updates the error rate of columns from h.rateMap to cache.
