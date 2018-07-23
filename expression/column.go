@@ -72,8 +72,14 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row types.Row) (
 	}
 	res, err := col.Data.ToString()
 	resLen := len([]rune(res))
-	if resLen < col.RetType.Flen && ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
-		res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
+	if col.GetType().Tp == mysql.TypeString {
+		if ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
+			if resLen < col.RetType.Flen {
+				res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
+			}
+		} else {
+			res = strings.TrimRight(res, " ")
+		}
 	}
 	return res, err != nil, errors.Trace(err)
 }
@@ -236,16 +242,26 @@ func (col *Column) EvalString(ctx sessionctx.Context, row types.Row) (string, bo
 		}
 		res, err := val.ToString()
 		resLen := len([]rune(res))
-		if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString && resLen < col.RetType.Flen {
-			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
+		if col.GetType().Tp == mysql.TypeString {
+			if ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
+				if resLen < col.RetType.Flen {
+					res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
+				}
+			} else {
+				res = strings.TrimRight(res, " ")
+			}
 		}
 		return res, err != nil, errors.Trace(err)
 	}
 	val := row.GetString(col.Index)
-	if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {
-		valLen := len([]rune(val))
-		if valLen < col.RetType.Flen {
-			val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
+	if col.GetType().Tp == mysql.TypeString {
+		if ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
+			valLen := len([]rune(val))
+			if valLen < col.RetType.Flen {
+				val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
+			}
+		} else {
+			val = strings.TrimRight(val, " ")
 		}
 	}
 	return val, false, nil

@@ -3281,6 +3281,22 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert t values (1)")
 	tk.MustQuery("select * from t where cast(a as binary)").Check(testkit.Rows("1"))
+
+	// for issue ##7085
+	r = tk.MustQuery(`SELECT 'a' = 'a ';`)
+	r.Check(testkit.Rows("1"))
+
+	r = tk.MustQuery(`SELECT 'a' = ' a';`)
+	r.Check(testkit.Rows("0"))
+
+	r = tk.MustQuery(`SELECT char_length('a'), char_length('a '), char_length(' a');`)
+	r.Check(testkit.Rows("1 2 2"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(50), b varchar(50));")
+	tk.MustExec("insert into t values('a', 'a'), ('a     ', 'a     ');")
+	tk.MustQuery(`select a, b, char_length(a), char_length(b) from t;`).Check(testutil.RowsWithSep("|",
+		"a|a|1|1", "a|a     |1|6"))
 }
 
 func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {

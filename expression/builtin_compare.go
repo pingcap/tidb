@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tipb/go-tipb"
+	"strings"
 )
 
 var (
@@ -2234,7 +2235,8 @@ func compareString(args []Expression, row types.Row, ctx sessionctx.Context) (va
 	if isNull1 || err != nil {
 		return 0, isNull1, errors.Trace(err)
 	}
-	return int64(types.CompareString(arg0, arg1)), false, nil
+	// See issue #7085
+	return int64(types.CompareString(strings.TrimRight(arg0, " "), strings.TrimRight(arg1, " "))), false, nil
 }
 
 func compareReal(ctx sessionctx.Context, args []Expression, row types.Row) (val int64, isNull bool, err error) {
