@@ -223,7 +223,7 @@ func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			pid, err = t.GenGlobalID()
 			if err != nil {
 				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err1)
+				return ver, errors.Trace(err)
 			}
 			def.ID = pid
 		}
