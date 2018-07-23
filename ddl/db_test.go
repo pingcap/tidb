@@ -1675,6 +1675,9 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 		partition p1 values less than (6)
 	);`)
 	c.Assert(err, IsNil)
+
+	s.tk.MustExec(`create TABLE t20 (c1 int,c2 bit(10)) partition by range(c2) (partition p0 values less than (10));`)
+	s.tk.MustExec(`create TABLE t21 (c1 int,c2 year) partition by range( c2 ) (partition p0 values less than (2000));`)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
