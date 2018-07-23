@@ -117,8 +117,8 @@ var (
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "get_token_duration_seconds",
-			Help:      "Duration (ms) for getting token, it should be small until concurrency limit is reached",
-			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 12), // 500ns ~ 2s
+			Help:      "Duration (us) for getting token, it should be small until concurrency limit is reached.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1us ~ 2s
 		})
 )
 
