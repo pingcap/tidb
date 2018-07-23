@@ -419,14 +419,18 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			if !ok {
 				continue
 			}
-			newTblStats.Indices[fb.hist.ID].Histogram = *UpdateHistogram(&idx.Histogram, fb)
-			newTblStats.Indices[fb.hist.ID].CMSketch = UpdateCMSketch(idx.CMSketch, fb)
+			newIdx := *idx
+			newIdx.Histogram = *UpdateHistogram(&idx.Histogram, fb)
+			newIdx.CMSketch = UpdateCMSketch(idx.CMSketch, fb)
+			newTblStats.Indices[fb.hist.ID] = &newIdx
 		} else {
 			col, ok := tblStats.Columns[fb.hist.ID]
 			if !ok {
 				continue
 			}
-			newTblStats.Columns[fb.hist.ID].Histogram = *UpdateHistogram(&col.Histogram, fb)
+			newCol := *col
+			newCol.Histogram = *UpdateHistogram(&col.Histogram, fb)
+			newTblStats.Columns[fb.hist.ID] = &newCol
 		}
 		h.UpdateTableStats([]*Table{newTblStats}, nil)
 	}
@@ -443,13 +447,17 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		}
 		tbl := h.GetTableStats(table.Meta()).copy()
 		if item.PkErrorRate != nil && tbl.Columns[item.PkID] != nil {
-			tbl.Columns[item.PkID].ErrorRate.merge(item.PkErrorRate)
+			col := *tbl.Columns[item.PkID]
+			col.ErrorRate.merge(item.PkErrorRate)
+			tbl.Columns[item.PkID] = &col
 		}
 		for key, val := range item.IdxErrorRate {
 			if tbl.Indices[key] == nil {
 				continue
 			}
-			tbl.Indices[key].ErrorRate.merge(val)
+			idx := *tbl.Indices[key]
+			idx.ErrorRate.merge(val)
+			tbl.Indices[key] = &idx
 		}
 		tbls = append(tbls, tbl)
 		delete(h.mu.rateMap, id)
