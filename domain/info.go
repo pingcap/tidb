@@ -1,3 +1,16 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package domain
 
 import (
@@ -53,12 +66,12 @@ func GetAllServerInfo(d ddl.DDL) (map[string]*util.DDLServerInfo, error) {
 func StoreServerInfoToPD(d ddl.DDL) error {
 	info := GetServerInfo(d.GetID())
 	ctx := context.Background()
-	return d.SchemaSyncer().StoreSelfServerInfo(ctx, info)
+	return d.SchemaSyncer().StoreSelfServerInfoToPD(ctx, info)
 }
 
 // RemoveServerInfoFromPD remove self DDL server static information from PD when domain close.
 func RemoveServerInfoFromPD(d ddl.DDL) {
-	err := d.SchemaSyncer().RemoveSelfServerInfo()
+	err := d.SchemaSyncer().RemoveSelfServerInfoFromPD()
 	if err != nil {
 		log.Errorf("[ddl] remove self server info failed %v", err)
 	}

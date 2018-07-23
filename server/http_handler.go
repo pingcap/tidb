@@ -1268,12 +1268,12 @@ type ReportServerInfo struct {
 
 // ServeHTTP handles request of ddl server info.
 func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	se, err := session.CreateSession(h.store.(kv.Storage))
+	do, err := session.GetDomain(h.store.(kv.Storage))
 	if err != nil {
 		writeError(w, errors.New("create session error"))
 		return
 	}
-	ddl := domain.GetDomain(se.(sessionctx.Context)).DDL()
+	ddl := do.DDL()
 	ownerID, err := ddl.OwnerManager().GetOwnerID(context.Background())
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
@@ -1306,12 +1306,12 @@ type ClusterServerInfo struct {
 
 // ServeHTTP handles request of all ddl servers info.
 func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	se, err := session.CreateSession(h.store.(kv.Storage))
+	do, err := session.GetDomain(h.store.(kv.Storage))
 	if err != nil {
 		writeError(w, errors.New("create session error"))
 		return
 	}
-	ddl := domain.GetDomain(se.(sessionctx.Context)).DDL()
+	ddl := do.DDL()
 
 	allServersInfo, err := domain.GetAllServerInfo(ddl)
 	if err != nil {

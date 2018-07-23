@@ -117,14 +117,14 @@ func (s *mockSchemaSyncer) GetAllServerInfoFromPD(ctx context.Context) (map[stri
 	return allDDLInfo, nil
 }
 
-// StoreSelfServerInfo implements SchemaSyncer.StoreSelfServerInfo interface.
-func (s *mockSchemaSyncer) StoreSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error {
+// StoreSelfServerInfoToPD implements SchemaSyncer.StoreSelfServerInfoToPD interface.
+func (s *mockSchemaSyncer) StoreSelfServerInfoToPD(ctx context.Context, info *util.DDLServerInfo) error {
 	s.selfServerInfo = info
 	return nil
 }
 
-// RemoveSelfServerInfo implements SchemaSyncer.RemoveSelfServerInfo interface.
-func (s *mockSchemaSyncer) RemoveSelfServerInfo() error {
+// RemoveSelfServerInfoFromPD implements SchemaSyncer.RemoveSelfServerInfoFromPD interface.
+func (s *mockSchemaSyncer) RemoveSelfServerInfoFromPD() error {
 	return nil
 }
 

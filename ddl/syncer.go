@@ -36,7 +36,7 @@ const (
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	// It's exported for testing.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
-	//DDLServerInformation store DDL server information such as IP,port and so on
+	// DDLServerInformation store DDL server information such as IP, port and so on.
 	DDLServerInformation = "/tidb/ddl/info"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	// It's exported for testing.
@@ -93,10 +93,10 @@ type SchemaSyncer interface {
 	GetServerInfoFromPD(ctx context.Context, id string) (*util.DDLServerInfo, error)
 	// GetAllServerInfoFromPD get all DDL servers information from PD.
 	GetAllServerInfoFromPD(ctx context.Context) (map[string]*util.DDLServerInfo, error)
-	// StoreSelfServerInfo store DDL server information to PD.
-	StoreSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error
-	// RemoveSelfServerInfo remove DDL server information from PD.
-	RemoveSelfServerInfo() error
+	// StoreSelfServerInfoToPD store DDL server information to PD.
+	StoreSelfServerInfoToPD(ctx context.Context, info *util.DDLServerInfo) error
+	// RemoveSelfServerInfoFromPD remove DDL server information from PD.
+	RemoveSelfServerInfoFromPD() error
 }
 
 type schemaVersionSyncer struct {
@@ -229,8 +229,8 @@ func (s *schemaVersionSyncer) GetAllServerInfoFromPD(ctx context.Context) (map[s
 	}
 }
 
-// StoreSelfServerInfo implements SchemaSyncer.StoreSelfServerInfo interface.
-func (s *schemaVersionSyncer) StoreSelfServerInfo(ctx context.Context, info *util.DDLServerInfo) error {
+// StoreSelfServerInfoToPD implements SchemaSyncer.StoreSelfServerInfoToPD interface.
+func (s *schemaVersionSyncer) StoreSelfServerInfoToPD(ctx context.Context, info *util.DDLServerInfo) error {
 	infoBuf, err := json.Marshal(info)
 	if err != nil {
 		return errors.Trace(err)
@@ -239,8 +239,8 @@ func (s *schemaVersionSyncer) StoreSelfServerInfo(ctx context.Context, info *uti
 	return errors.Trace(err)
 }
 
-// RemoveSelfServerInfo implements SchemaSyncer.RemoveSelfServerInfo interface.
-func (s *schemaVersionSyncer) RemoveSelfServerInfo() error {
+// RemoveSelfServerInfoFromPD implements SchemaSyncer.RemoveSelfServerInfoFromPD interface.
+func (s *schemaVersionSyncer) RemoveSelfServerInfoFromPD() error {
 	var err error
 	ctx := context.Background()
 	for i := 0; i < keyOpDefaultRetryCnt; i++ {
