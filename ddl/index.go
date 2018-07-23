@@ -862,6 +862,8 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 	return nil, nil
 }
 
+// buildKVRangesIndex build backfilling tasks from [reorgInfo.StartHandle, reorgInfo.EndHandle),
+// and send these tasks to add index workers, till we finish adding the indices.
 func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, job *model.Job, reorgInfo *reorgInfo) error {
 	totalAddedCount := job.GetRowCount()
 
