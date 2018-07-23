@@ -105,7 +105,7 @@ func (s *Server) getToken() *Token {
 	start := time.Now()
 	tok := s.concurrentLimiter.Get()
 	// Note that data smaller than one microsecond is ignored, because that case can be viewed as non-block.
-	metrics.GetTokenDurationHistogram.Observe(float64(time.Since(start).Nanoseconds() / time.Microsecond))
+	metrics.GetTokenDurationHistogram.Observe(float64(time.Since(start).Nanoseconds() / 1e3))
 	return tok
 }
 
