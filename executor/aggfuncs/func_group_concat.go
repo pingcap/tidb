@@ -26,8 +26,11 @@ import (
 type baseGroupConcat4String struct {
 	baseAggFunc
 
-	sep       string
-	maxLen    uint64
+	sep    string
+	maxLen uint64
+	// According to MySQL, a 'group_concat' function generates exactly one 'truncated' warning during its life time, no matter
+	// how many group actually truncated. 'truncated' acts as a sentinel to indicate whether this warning has already been
+	// generated.
 	truncated bool
 }
 
