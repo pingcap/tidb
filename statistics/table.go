@@ -437,8 +437,8 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	return result, errors.Trace(err)
 }
 
-// PseudoAvgCountPerCount gets a pseudo average count if histogram not exists.
-func (t *Table) PseudoAvgCountPerCount() float64 {
+// PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
+func (t *Table) PseudoAvgCountPerValue() float64 {
 	return float64(t.Count) / pseudoEqualRate
 }
 

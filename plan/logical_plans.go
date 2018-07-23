@@ -440,7 +440,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		if ok && !ds.statisticTable.Pseudo {
 			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
 		} else {
-			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerCount()
+			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
 		}
 	}
 	if path.indexFilters != nil {

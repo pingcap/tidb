@@ -42,7 +42,9 @@ type Row interface {
 	GetTime(colIdx int) Time
 
 	// GetDuration returns the Duration value with the colIdx.
-	GetDuration(colIdx int) Duration
+	// fillFsp is needed for refill fsp info if duration came from chunk.Row which is no longer store fsp info.
+	// If caller make sure that data from Datum or only use Duration.Duration properties can pass 0 as fillFsp.
+	GetDuration(colIdx int, fillFsp int) Duration
 
 	// GetEnum returns the Enum value with the colIdx.
 	GetEnum(colIdx int) Enum
@@ -117,7 +119,7 @@ func (dr DatumRow) GetTime(colIdx int) Time {
 }
 
 // GetDuration implements Row interface.
-func (dr DatumRow) GetDuration(colIdx int) Duration {
+func (dr DatumRow) GetDuration(colIdx int, fillFsp int) Duration {
 	return dr[colIdx].GetMysqlDuration()
 }
 

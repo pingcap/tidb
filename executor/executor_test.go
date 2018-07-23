@@ -772,7 +772,7 @@ func (s *testSuite) TestIssue2612(c *C) {
 	chk := rs.NewChunk()
 	err = rs.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(chk.GetRow(0).GetDuration(0).String(), Equals, "-46:09:02")
+	c.Assert(chk.GetRow(0).GetDuration(0, 0).String(), Equals, "-46:09:02")
 }
 
 // TestIssue345 is related with https://github.com/pingcap/tidb/issues/345
@@ -1938,6 +1938,7 @@ func (s *testSuite) TestTimestampTimeZone(c *C) {
 	r.Check(testkit.Rows("123381351 1734 2014-03-31 08:57:10 127.0.0.1")) // Cover IndexLookupExec
 
 	// For issue https://github.com/pingcap/tidb/issues/3485
+	tk.MustExec("set time_zone = 'Asia/Shanghai'")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec(`CREATE TABLE t1 (
 	    id bigint(20) NOT NULL AUTO_INCREMENT,

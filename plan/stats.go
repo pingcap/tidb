@@ -26,6 +26,10 @@ import (
 type statsInfo struct {
 	count       float64
 	cardinality []float64
+
+	// usePseudoStats indicates whether the statsInfo is calculated using the
+	// pseudo statistics on a table.
+	usePseudoStats bool
 }
 
 func (s *statsInfo) String() string {
@@ -39,8 +43,9 @@ func (s *statsInfo) Count() int64 {
 // scale receives a selectivity and multiplies it with count and cardinality.
 func (s *statsInfo) scale(factor float64) *statsInfo {
 	profile := &statsInfo{
-		count:       s.count * factor,
-		cardinality: make([]float64, len(s.cardinality)),
+		count:          s.count * factor,
+		cardinality:    make([]float64, len(s.cardinality)),
+		usePseudoStats: s.usePseudoStats,
 	}
 	for i := range profile.cardinality {
 		profile.cardinality[i] = s.cardinality[i] * factor
@@ -104,8 +109,9 @@ func (p *baseLogicalPlan) deriveStats() (*statsInfo, error) {
 
 func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
 	profile := &statsInfo{
-		count:       float64(ds.statisticTable.Count),
-		cardinality: make([]float64, len(ds.Columns)),
+		count:          float64(ds.statisticTable.Count),
+		cardinality:    make([]float64, len(ds.Columns)),
+		usePseudoStats: ds.statisticTable.Pseudo,
 	}
 	for i, col := range ds.Columns {
 		hist, ok := ds.statisticTable.Columns[col.ID]

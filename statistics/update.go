@@ -299,17 +299,21 @@ func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
-func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (bool, error) {
+func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (updated bool, err error) {
 	if delta.Count == 0 {
 		return true, nil
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
-	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(ctx, "begin")
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
+	defer func() {
+		err = finishTransaction(context.Background(), exec, err)
+	}()
 	var sql string
 	if delta.Delta < 0 {
 		sql = fmt.Sprintf("update mysql.stats_meta set version = %d, count = count - %d, modify_count = modify_count + %d where table_id = %d and count >= %d", h.mu.ctx.Txn().StartTS(), -delta.Delta, delta.Count, id, -delta.Delta)
@@ -318,24 +322,27 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (bo
 	}
 	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
-		return false, errors.Trace(err)
+		return
 	}
-	updated := h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(ctx, "commit")
-	return updated, errors.Trace(err)
+	updated = h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0
+	return
 }
 
-func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) error {
+func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (err error) {
 	if len(delta.ColSize) == 0 {
 		return nil
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
-	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(ctx, "begin")
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
 	version := h.mu.ctx.Txn().StartTS()
 
 	for key, val := range delta.ColSize {
@@ -343,13 +350,12 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 			continue
 		}
 		sql := fmt.Sprintf("update mysql.stats_histograms set version = %d, tot_col_size = tot_col_size + %d where hist_id = %d and table_id = %d and is_index = 0", version, val, key, id)
-		_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+		_, err = exec.Execute(ctx, sql)
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 	}
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(ctx, "commit")
-	return errors.Trace(err)
+	return
 }
 
 // DumpStatsFeedbackToKV dumps the stats feedback to KV.

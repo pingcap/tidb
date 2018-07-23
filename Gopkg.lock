@@ -87,6 +87,12 @@
   revision = "3955978caca48c1658a4bb7a9c6a0f084e326af3"
 
 [[projects]]
+  name = "github.com/gogo/protobuf"
+  packages = ["proto"]
+  revision = "1adfc126b41513cc696b209667c8656ea7aac67c"
+  version = "v1.0.0"
+
+[[projects]]
   name = "github.com/golang/protobuf"
   packages = [
     "jsonpb",
@@ -161,6 +167,15 @@
   name = "github.com/ngaut/sync2"
   packages = ["."]
   revision = "7a24ed77b2efb460c1468b7dc917821c66e80e55"
+
+[[projects]]
+  name = "github.com/opentracing/basictracer-go"
+  packages = [
+    ".",
+    "wire"
+  ]
+  revision = "1b32af207119a14b1b231d451df3ed04a72efebf"
+  version = "v1.0.0"
 
 [[projects]]
   name = "github.com/opentracing/opentracing-go"
@@ -405,6 +420,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "788e74759cb6b86aae177485b25bfdf3963eb7a8f0b2e46cf125843fa9adb5bb"
+  inputs-digest = "8edc10ad65dbfebaec4badbf0954ad89e272446001fe4e7b2e96094589520ce2"
   solver-name = "gps-cdcl"
   solver-version = 1

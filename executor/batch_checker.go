@@ -16,6 +16,7 @@ package executor
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -214,7 +215,6 @@ func (b *batchChecker) initDupOldRowFromUniqueKey(ctx sessionctx.Context, t tabl
 					return errors.Trace(err)
 				}
 				handles = append(handles, handle)
-				break
 			}
 		}
 	}
@@ -248,4 +248,30 @@ func (b *batchChecker) deleteDupKeys(row toBeCheckedRow) {
 	for _, uk := range row.uniqueKeys {
 		delete(b.dupKVs, string(uk.newKV.key))
 	}
+}
+
+// getOldRow gets the table record row from storage for batch check.
+func (b *batchChecker) getOldRow(ctx sessionctx.Context, t table.Table, handle int64) (types.DatumRow, error) {
+	oldValue, ok := b.dupOldRowValues[string(t.RecordKey(handle))]
+	if !ok {
+		return nil, errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", handle)
+	}
+	cols := t.WritableCols()
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(ctx, t.Meta(), handle, cols, oldValue)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
+	for _, col := range cols {
+		if col.State != model.StatePublic && oldRow[col.Offset].IsNull() {
+			_, found := oldRowMap[col.ID]
+			if !found {
+				oldRow[col.Offset], err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+			}
+		}
+	}
+	return oldRow, nil
 }
