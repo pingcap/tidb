@@ -840,7 +840,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	return nil
 }
 
-// sendRangeTaskToWorkers send tasks to workers, and return remaining kvRanges that is not handled.
+// sendRangeTaskToWorkers sends tasks to workers, and returns remaining kvRanges that is not handled.
 func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker, reorgInfo *reorgInfo, totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
 
@@ -901,7 +901,7 @@ func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, jo
 			return errors.Trace(err)
 		}
 
-		if remains == nil || len(remains) == 0 {
+		if len(remains) == 0 {
 			break
 		}
 		startHandle, _, err = decodeHandleRange(remains[0])
