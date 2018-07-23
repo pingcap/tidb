@@ -21,11 +21,13 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 )
 
 const (
@@ -33,7 +35,7 @@ const (
 )
 
 // buildTablePartitionInfo builds partition info and checks for some errors.
-func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt, cols []*table.Column) (*model.PartitionInfo, error) {
+func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableStmt) (*model.PartitionInfo, error) {
 	if s.Partition == nil {
 		return nil, nil
 	}
@@ -45,20 +47,6 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		buf := new(bytes.Buffer)
 		s.Partition.Expr.Format(buf)
 		pi.Expr = buf.String()
-		if s.Partition.Tp == model.PartitionTypeRange {
-			for _, col := range cols {
-				name := strings.Replace(col.Name.String(), ".", "`.`", -1)
-				if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
-					// TODO: check that the expression returns an integer.
-				}
-				if _, ok := s.Partition.Expr.(ast.ExprNode); ok {
-					// Range partitioning key supported types: tinyint, smallint, mediumint, int and bigint.
-					if !validRangePartitionType(col) && fmt.Sprintf("`%s`", name) == pi.Expr {
-						return nil, errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(pi.Expr))
-					}
-				}
-			}
-		}
 	} else if s.Partition.ColumnNames != nil {
 		pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
 		for _, cn := range s.Partition.ColumnNames {
@@ -112,6 +100,64 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) 
 	return nil
 }
 
+// checkPartitionFuncValid checks partition function validly.
+func checkPartitionFuncValid(expr ast.ExprNode) error {
+	switch v := expr.(type) {
+	case *ast.CaseExpr:
+		return ErrPartitionFunctionIsNotAllowed
+	case *ast.FuncCallExpr:
+		// check function which allowed in partitioning expressions
+		// see https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
+		switch v.FnName.L {
+		case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Day, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Extract, ast.Floor,
+			ast.Hour, ast.MicroSecond, ast.Minute, ast.Mod, ast.Month, ast.Quarter, ast.Second, ast.TimeToSec, ast.ToDays,
+			ast.ToSeconds, ast.UnixTimestamp, ast.Weekday, ast.Year, ast.YearWeek:
+			return nil
+		default:
+			return ErrPartitionFunctionIsNotAllowed
+		}
+	case *ast.BinaryOperationExpr:
+		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
+		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
+		if v.Op == opcode.Div {
+			return ErrPartitionFunctionIsNotAllowed
+		}
+		return nil
+	}
+	return nil
+}
+
+// checkPartitionFuncType checks partition function return type.
+func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols []*table.Column, tblInfo *model.TableInfo) error {
+	if s.Partition.Expr == nil {
+		return nil
+	}
+	buf := new(bytes.Buffer)
+	s.Partition.Expr.Format(buf)
+	exprStr := buf.String()
+	if s.Partition.Tp == model.PartitionTypeRange {
+		// if partition by columnExpr, check the column type
+		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
+			for _, col := range cols {
+				name := strings.Replace(col.Name.String(), ".", "`.`", -1)
+				// Range partitioning key supported types: tinyint, smallint, mediumint, int and bigint.
+				if !validRangePartitionType(col) && fmt.Sprintf("`%s`", name) == exprStr {
+					return errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(exprStr))
+				}
+			}
+		}
+	}
+
+	e, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if e.GetType().EvalType() == types.ETInt {
+		return nil
+	}
+	return ErrPartitionFuncNotAllowed.GenByArgs("PARTITION")
+}
+
 // checkCreatePartitionValue checks whether `less than value` is strictly increasing for each partition.
 func checkCreatePartitionValue(pi *model.PartitionInfo) error {
 	defs := pi.Definitions
@@ -148,8 +194,8 @@ func checkCreatePartitionValue(pi *model.PartitionInfo) error {
 
 // validRangePartitionType checks the type supported by the range partitioning key.
 func validRangePartitionType(col *table.Column) bool {
-	switch col.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+	switch col.FieldType.EvalType() {
+	case types.ETInt:
 		return true
 	default:
 		return false
