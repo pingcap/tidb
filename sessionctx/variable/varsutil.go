@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/sessionctx/variable"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -169,7 +168,7 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
 func ValidateSetSystemVar(name string, value string) (string, error, error) {
 	if strings.EqualFold(value, "DEFAULT") {
-		if val := variable.GetSysVar(name); val != nil {
+		if val := GetSysVar(name); val != nil {
 			return val.Value, nil, nil
 		}
 		return value, nil, nil
