@@ -135,7 +135,7 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 	return jobs, nil
 }
 
-// GetDDLJobs returns the DDL jobs and an error.
+// GetDDLJobs returns all DDL jobs.
 // TODO: Sort jobs.
 func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)

@@ -311,7 +311,7 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 	if historyJob == nil {
 		return false, nil
 	}
-	log.Infof("[ddl] DDL job %v isn't dependent on job ID %d", job, job.DependencyID)
+	log.Infof("[ddl] current DDL job %v dependent job ID %d is finished", job, job.DependencyID)
 	job.DependencyID = 0
 	return true, nil
 }
