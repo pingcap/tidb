@@ -44,6 +44,8 @@ const (
 	addIdxWorker workerType = 1
 	// waitDependencyJobInterval is the interval when the dependency job doesn't be done.
 	waitDependencyJobInterval = 200 * time.Millisecond
+	// noneDependencyJob means a job has no dependency-job.
+	noneDependencyJob = 0
 )
 
 // worker is used for handling DDL jobs.
@@ -300,7 +302,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 }
 
 func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
-	if job.DependencyID == 0 {
+	if job.DependencyID == noneDependencyJob {
 		return true, nil
 	}
 
@@ -312,7 +314,7 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 		return false, nil
 	}
 	log.Infof("[ddl] current DDL job %v dependent job ID %d is finished", job, job.DependencyID)
-	job.DependencyID = 0
+	job.DependencyID = noneDependencyJob
 	return true, nil
 }
 
@@ -420,7 +422,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 // waitDependencyJobFinished waits for the dependency-job to be finished.
 // If the dependency job isn't finished yet, we'd better wait a moment.
 func (w *worker) waitDependencyJobFinished(job *model.Job, cnt *int) {
-	if job.DependencyID != 0 {
+	if job.DependencyID != noneDependencyJob {
 		intervalCnt := int(3 * time.Second / waitDependencyJobInterval)
 		if *cnt%intervalCnt == 0 {
 			log.Infof("[ddl] worker %s job %d needs to wait dependency job %d, sleeps a while:%v then retries it.", w, job.ID, job.DependencyID, waitDependencyJobInterval)
