@@ -504,11 +504,11 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-// GetDDLJob returns the DDL job with index.
-func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
+// GetDDLJobByIdx returns the corresponding DDL job by the index.
+func (m *Meta) GetDDLJobByIdx(index int64) (*model.Job, error) {
 	startTime := time.Now()
 	job, err := m.getDDLJob(m.jobListKey, index)
-	metrics.MetaHistogram.WithLabelValues(metrics.GetDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	metrics.MetaHistogram.WithLabelValues(metrics.GetDDLJobByIdx, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return job, errors.Trace(err)
 }
 

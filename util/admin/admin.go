@@ -47,7 +47,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	info := &DDLInfo{}
 	t := meta.NewMeta(txn)
 
-	info.Job, err = t.GetDDLJob(0)
+	info.Job, err = t.GetDDLJobByIdx(0)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -73,7 +73,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		return nil, nil
 	}
 
-	jobs, err := GetDDLJobs(txn)
+	jobs, err := GetDDLJobByIdxs(txn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -116,8 +116,8 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	return errs, nil
 }
 
-// GetDDLJobs returns the DDL jobs and an error.
-func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
+// GetDDLJobByIdxs returns the DDL jobs and an error.
+func GetDDLJobByIdxs(txn kv.Transaction) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
 	cnt, err := t.DDLJobQueueLen()
 	if err != nil {
@@ -126,7 +126,7 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 
 	jobs := make([]*model.Job, cnt)
 	for i := range jobs {
-		jobs[i], err = t.GetDDLJob(int64(i))
+		jobs[i], err = t.GetDDLJobByIdx(int64(i))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

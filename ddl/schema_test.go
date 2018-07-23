@@ -83,7 +83,7 @@ func testDropSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) 
 }
 
 func isDDLJobDone(c *C, t *meta.Meta) bool {
-	job, err := t.GetDDLJob(0)
+	job, err := t.GetDDLJobByIdx(0)
 	c.Assert(err, IsNil)
 	if job == nil {
 		return true

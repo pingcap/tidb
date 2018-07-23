@@ -152,7 +152,7 @@ func (s *testDDLSuite) TestCleanJobs(c *C) {
 			t := meta.NewMeta(txn)
 			t.SetJobListKey(meta.AddIndexJobListKey)
 			lastJobID := int64(len(failedJobIDs) - 1)
-			job, err1 := t.GetDDLJob(lastJobID)
+			job, err1 := t.GetDDLJobByIdx(lastJobID)
 			c.Assert(err1, IsNil)
 			_, err1 = d.generalWorker().runDDLJob(d.ddlCtx, t, job)
 			c.Assert(err1, IsNil)

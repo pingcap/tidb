@@ -273,10 +273,10 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
-	v, err := t.GetDDLJob(0)
+	v, err := t.GetDDLJobByIdx(0)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
-	v, err = t.GetDDLJob(1)
+	v, err = t.GetDDLJobByIdx(1)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 	job.ID = 2

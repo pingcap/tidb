@@ -90,7 +90,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestGetDDLJobs(c *C) {
+func (s *testSuite) TestGetDDLJobByIdxs(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -104,12 +104,12 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 		}
 		err = t.EnQueueDDLJob(jobs[i])
 		c.Assert(err, IsNil)
-		currJobs, err1 := GetDDLJobs(txn)
+		currJobs, err1 := GetDDLJobByIdxs(txn)
 		c.Assert(err1, IsNil)
 		c.Assert(currJobs, HasLen, i+1)
 	}
 
-	currJobs, err := GetDDLJobs(txn)
+	currJobs, err := GetDDLJobByIdxs(txn)
 	c.Assert(err, IsNil)
 	for i, job := range jobs {
 		c.Assert(job.ID, Equals, currJobs[i].ID)
