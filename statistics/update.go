@@ -453,17 +453,14 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 			}
 			continue
 		}
-		// dump the stats into kv
-		if hist != nil {
-			// Update the NDV of primary key column.
-			if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
-				hist.NDV = int64(hist.totalRowCount())
-				col = nil
-			}
-			err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		// Update the NDV of primary key column.
+		if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
+			hist.NDV = int64(hist.totalRowCount())
+			col = nil
+		}
+		err = h.dumpStatsUpdateToKV(tableID, int(isIndex), histID, q, hist, cms)
+		if err != nil {
+			return errors.Trace(err)
 		}
 		// initialize new feedback
 		tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
@@ -498,18 +495,16 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
 		}
 	}
-	if hist != nil {
-		// Update the NDV of primary key column.
-		if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
-			hist.NDV = int64(hist.totalRowCount())
-		}
-		// dump the last feedback into kv
-		err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
+	// Update the NDV of primary key column.
+	if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
+		hist.NDV = int64(hist.totalRowCount())
 	}
+	// dump the last feedback into kv
+	err = h.dumpStatsUpdateToKV(tableID, int(isIndex), histID, q, hist, cms)
 	return errors.Trace(err)
 }
 
-func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedback, hist *Histogram, cms *CMSketch) (err error) {
+func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, histID int64, q *QueryFeedback, hist *Histogram, cms *CMSketch) (err error) {
 	defer func() {
 		if err != nil {
 			metrics.UpdateStatsCounter.WithLabelValues(metrics.LblError).Inc()
@@ -517,14 +512,16 @@ func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedbac
 			metrics.UpdateStatsCounter.WithLabelValues(metrics.LblOK).Inc()
 		}
 	}()
-	hist = UpdateHistogram(hist, q)
-	err = h.SaveStatsToStorage(tableID, -1, isIndex, hist, cms, 0)
-	if err != nil {
-		return errors.Trace(err)
+	if hist != nil {
+		hist = UpdateHistogram(hist, q)
+		err = h.SaveStatsToStorage(tableID, -1, isIndex, hist, cms, 0)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	h.mu.Lock()
 	h.mu.ctx.GetSessionVars().BatchDelete = true
-	sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d", tableID, hist.ID, isIndex)
+	sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex)
 	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	h.mu.Unlock()
 	q.feedback = q.feedback[:0]
