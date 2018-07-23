@@ -216,8 +216,14 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				Count:     int64(hg.totalRowCount()),
 				ErrorRate: errorRate,
 			}
+			break
 		}
-		break
+		// Update the total col size.
+		if col.TotColSize != totColSize {
+			newCol := *col
+			newCol.TotColSize = totColSize
+			col = &newCol
+		}
 	}
 	if col != nil {
 		table.Columns[col.ID] = col

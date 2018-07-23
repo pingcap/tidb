@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -343,13 +344,32 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	version := h.mu.ctx.Txn().StartTS()
 
+	sql := fmt.Sprintf("select * from mysql.stats_histograms where table_id = %d and is_index = 0 for update", id)
+	rs, err := exec.Execute(ctx, sql)
+	if len(rs) > 0 {
+		defer terror.Call(rs[0].Close)
+	}
+	if err != nil {
+		return
+	}
+	if len(rs) > 0 {
+		chk := rs[0].NewChunk()
+		for {
+			err = rs[0].Next(ctx, chk)
+			if err != nil {
+				return
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+	}
 	for key, val := range delta.ColSize {
 		if val == 0 {
 			continue
 		}
-		sql := fmt.Sprintf("update mysql.stats_histograms set version = %d, tot_col_size = tot_col_size + %d where hist_id = %d and table_id = %d and is_index = 0", version, val, key, id)
+		sql := fmt.Sprintf("update mysql.stats_histograms set tot_col_size = tot_col_size + %d where hist_id = %d and table_id = %d and is_index = 0", val, key, id)
 		_, err = exec.Execute(ctx, sql)
 		if err != nil {
 			return
