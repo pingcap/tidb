@@ -101,10 +101,16 @@ func (s *Server) ConnectionCount() int {
 	return cnt
 }
 
+func durationToMilliseconds(d time.Duration) float64 {
+	ms := d / time.Millisecond
+	rem := d % time.Millisecond
+	return float64(ms) + float64(rem)/1e3
+}
+
 func (s *Server) getToken() *Token {
 	start := time.Now()
 	tok := s.concurrentLimiter.Get()
-	metrics.GetTokenDurationHistogram.Observe(time.Since(start).Seconds())
+	metrics.GetTokenDurationHistogram.Observe(durationToMilliseconds(time.Since(start)))
 	return tok
 }
 
