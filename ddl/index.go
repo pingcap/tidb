@@ -508,7 +508,6 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		defaultVals: make([]types.Datum, len(t.Cols())),
 		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
 	}
-	w.initBatchCheckBufs(w.batchCnt)
 	return w
 }
 
