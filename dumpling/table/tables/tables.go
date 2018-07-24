@@ -163,7 +163,7 @@ func initTableIndices(t *tableCommon) error {
 		}
 
 		// Use partition ID for index, because tableCommon may be table or partition.
-		idx := NewIndex(t.partitionID, idxInfo)
+		idx := NewIndex(t.partitionID, tblInfo, idxInfo)
 		t.indices = append(t.indices, idx)
 	}
 	return nil
