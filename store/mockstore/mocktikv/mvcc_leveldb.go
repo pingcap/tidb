@@ -902,7 +902,7 @@ func (mvcc *MVCCLevelDB) RawBatchPut(keys, values [][]byte) {
 	for i, key := range keys {
 		batch.Put(key, values[i])
 	}
-	mvcc.db.Write(batch, nil)
+	terror.Log(mvcc.db.Write(batch, nil))
 }
 
 // RawGet implements the RawKV interface.
