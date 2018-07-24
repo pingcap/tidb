@@ -258,16 +258,6 @@ func (dc *ddlCtx) isOwner() bool {
 	return isOwner
 }
 
-func (dc *ddlCtx) genGlobalID() (int64, error) {
-	var globalID int64
-	err := kv.RunInNewTxn(dc.store, true, func(txn kv.Transaction) error {
-		var err error
-		globalID, err = meta.NewMeta(txn).GenGlobalID()
-		return errors.Trace(err)
-	})
-	return globalID, errors.Trace(err)
-}
-
 // RegisterEventCh registers passed channel for ddl Event.
 func (d *ddl) RegisterEventCh(ch chan<- *util.Event) {
 	d.ddlEventCh = ch
@@ -418,6 +408,16 @@ func (d *ddl) GetInformationSchema(ctx sessionctx.Context) infoschema.InfoSchema
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.mu.interceptor.OnGetInfoSchema(ctx, is)
+}
+
+func (d *ddl) genGlobalID() (int64, error) {
+	var globalID int64
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		var err error
+		globalID, err = meta.NewMeta(txn).GenGlobalID()
+		return errors.Trace(err)
+	})
+	return globalID, errors.Trace(err)
 }
 
 // generalWorker returns the first worker. The ddl structure has only one worker before we implement the parallel worker.
