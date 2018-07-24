@@ -453,7 +453,7 @@ type indexRecord struct {
 	handle int64
 	key    []byte        // It's used to lock a record. Record it to reduce the encoding time.
 	vals   []types.Datum // It's the index values.
-	// skip indicate the index key is already exists, we should not add it.
+	// skip indicates that the index key is already exists, we should not add it.
 	skip bool
 }
 
@@ -469,12 +469,13 @@ type addIndexWorker struct {
 	colFieldMap map[int64]*types.FieldType
 	closed      bool
 
-	defaultVals        []types.Datum         // It's used to reduce the number of new slice.
-	idxRecords         []*indexRecord        // It's used to reduce the number of new slice.
-	rowMap             map[int64]types.Datum // It's the index column values map. It is used to reduce the number of making map.
-	idxKeyBufs         [][]byte              // It's used to reduce the number of new slice.
-	batchCheckKeys     []kv.Key              // It's used to reduce the number of new slice.
-	distinctCheckFlags []bool                // It's used to reduce the number of new slice.
+	// The following attributes are used to reduce memory allocation.
+	defaultVals        []types.Datum
+	idxRecords         []*indexRecord
+	rowMap             map[int64]types.Datum
+	idxKeyBufs         [][]byte
+	batchCheckKeys     []kv.Key
+	distinctCheckFlags []bool
 }
 
 type reorgIndexTask struct {
@@ -507,12 +508,8 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		defaultVals: make([]types.Datum, len(t.Cols())),
 		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
 	}
-	w.reAllocIdxKeyBufs(w.batchCnt)
+	w.initBatchCheckBufs(w.batchCnt)
 	return w
-}
-
-func (w *addIndexWorker) reAllocIdxKeyBufs(size int) {
-	w.idxKeyBufs = make([][]byte, size)
 }
 
 func (w *addIndexWorker) close() {
@@ -611,7 +608,7 @@ func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string
 
 func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
 	if len(w.idxKeyBufs) < batchCount {
-		w.reAllocIdxKeyBufs(batchCount)
+		w.idxKeyBufs = make([][]byte, batchCount)
 	}
 
 	w.batchCheckKeys = w.batchCheckKeys[:0]
@@ -670,7 +667,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 		}
 	}
 	// Constrains is already checked.
-	w.sessCtx.GetSessionVars().StmtCtx.BatchCheck = true
+	stmtCtx.BatchCheck = true
 	return nil
 }
 
