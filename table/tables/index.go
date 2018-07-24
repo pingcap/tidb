@@ -110,7 +110,7 @@ func NewIndex(id int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ta
 	index := &index{
 		idxInfo: indexInfo,
 		tblInfo: tblInfo,
-		// The prefix can't Encode from tblInfo.ID, because table partition may change the id to partition id.
+		// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
 		prefix: tablecodec.EncodeTableIndexPrefix(id, indexInfo.ID),
 	}
 	return index
