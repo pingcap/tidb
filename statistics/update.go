@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -221,16 +222,18 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 		return errors.Trace(err)
 	}
 	version := h.ctx.Txn().StartTS()
-
-	for key, val := range delta.ColSize {
-		if val == 0 {
+	values := make([]string, 0, len(delta.ColSize))
+	for histID, deltaColSize := range delta.ColSize {
+		if deltaColSize == 0 {
 			continue
 		}
-		sql := fmt.Sprintf("update mysql.stats_histograms set version = %d, tot_col_size = tot_col_size + %d where hist_id = %d and table_id = %d and is_index = 0", version, val, key, id)
-		_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d, %d)", id, histID, deltaColSize, version))
+	}
+	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size, version) "+
+		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size), version = values(version)", strings.Join(values, ","))
+	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	_, err = h.ctx.(sqlexec.SQLExecutor).Execute(ctx, "commit")
 	return errors.Trace(err)
