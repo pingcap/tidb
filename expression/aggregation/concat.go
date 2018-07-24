@@ -66,7 +66,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if value.GetValue() == nil {
+		if value.IsNull() {
 			return nil
 		}
 		datumBuf = append(datumBuf, value)
