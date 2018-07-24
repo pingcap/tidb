@@ -18,8 +18,10 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
@@ -33,7 +35,8 @@ import (
 var _ = Suite(&testIndexSuite{})
 
 type testIndexSuite struct {
-	s kv.Storage
+	s   kv.Storage
+	dom *domain.Domain
 }
 
 func (s *testIndexSuite) SetUpSuite(c *C) {
@@ -41,9 +44,12 @@ func (s *testIndexSuite) SetUpSuite(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
+	s.dom, err = session.BootstrapSession(store)
+	c.Assert(err, IsNil)
 }
 
 func (s *testIndexSuite) TearDownSuite(c *C) {
+	s.dom.Close()
 	err := s.s.Close()
 	c.Assert(err, IsNil)
 	testleak.AfterTest(c)()
@@ -210,8 +216,8 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 				ID:   2,
 				Name: model.NewCIStr("test"),
 				Columns: []*model.IndexColumn{
-					{},
-					{},
+					{Tp: &types.FieldType{}},
+					{Tp: &types.FieldType{}},
 				},
 			},
 		},

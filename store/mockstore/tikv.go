@@ -103,7 +103,7 @@ func NewMockTikvStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		f(&opt)
 	}
 
-	client, pdClient, err := mocktikv.NewTestClient(opt.cluster, opt.mvccStore, opt.path)
+	client, pdClient, err := mocktikv.NewTiKVAndPDClient(opt.cluster, opt.mvccStore, opt.path)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
