@@ -53,8 +53,8 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "SUM".
-func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isNull bool) AggFunc {
+// buildSum builds the AggFunc implementation for function "SUM".
+func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseSumAggFunc{
 		baseAggFunc: baseAggFunc{
 			args:    aggFuncDesc.Args,
@@ -84,7 +84,7 @@ func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isNull bool) Ag
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "AVG".
+// buildAvg builds the AggFunc implementation for function "AVG".
 func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
 		args:    aggFuncDesc.Args,
@@ -125,27 +125,27 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "FIRST_ROW".
+// buildFirstRow builds the AggFunc implementation for function "FIRST_ROW".
 func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "MAX".
+// buildMax builds the AggFunc implementation for function "MAX".
 func buildMax(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "MIN".
+// buildMin builds the AggFunc implementation for function "MIN".
 func buildMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "GROUP_CONCAT".
+// buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
 func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "BIT_OR".
+// buildBitOr builds the AggFunc implementation for function "BIT_OR".
 func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// BIT_OR doesn't need to handle the distinct property.
 	switch aggFuncDesc.Args[0].GetType().EvalType() {
@@ -159,12 +159,12 @@ func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "BIT_XOR".
+// buildBitXor builds the AggFunc implementation for function "BIT_XOR".
 func buildBitXor(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
 
-// buildCount builds the AggFunc implementation for function "BIT_AND".
+// buildBitAnd builds the AggFunc implementation for function "BIT_AND".
 func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return nil
 }
