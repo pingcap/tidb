@@ -658,12 +658,12 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 				}
 			}
 			idxRecords[i].skip = true
-		}
-
-		// The keys in w.batchCheckKeys also maybe duplicate,
-		// so we need to backfill the not found key into `batchVals` map.
-		if w.distinctCheckFlags[i] {
-			batchVals[string(key)] = tables.EncodeHandle(idxRecords[i].handle)
+		} else {
+			// The keys in w.batchCheckKeys also maybe duplicate,
+			// so we need to backfill the not found key into `batchVals` map.
+			if w.distinctCheckFlags[i] {
+				batchVals[string(key)] = tables.EncodeHandle(idxRecords[i].handle)
+			}
 		}
 	}
 	// Constrains is already checked.
