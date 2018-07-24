@@ -1014,23 +1014,26 @@ func (p *Insert) validateOnDup(onDup []*ast.Assignment, colMap map[string]*table
 	return onDupColSet, dupCols, nil
 }
 
-func (p *Insert) getAffectCols(insert *ast.InsertStmt) (affectedValuesCols []*table.Column, err error) {
-	if len(insert.Columns) > 0 {
-		// Branch for `INSERT INTO tbl_name (col_name [, col_name] ...) {VALUES | VALUE} (value_list) [, (value_list)] ...`,
-		// and for `INSERT INTO tbl_name (col_name [, col_name] ...) SELECT ...`.
-		colName := make([]string, 0, len(insert.Columns))
-		for _, col := range insert.Columns {
+func (b *planBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert) (affectedValuesCols []*table.Column) {
+	if len(insertStmt.Columns) > 0 {
+		// This branch is for the following scenarios:
+		// 1. `INSERT INTO tbl_name (col_name [, col_name] ...) {VALUES | VALUE} (value_list) [, (value_list)] ...`,
+		// 2. `INSERT INTO tbl_name (col_name [, col_name] ...) SELECT ...`.
+		colName := make([]string, 0, len(insertStmt.Columns))
+		for _, col := range insertStmt.Columns {
 			colName = append(colName, col.Name.O)
 		}
-		affectedValuesCols, err = table.FindCols(p.Table.Cols(), colName, p.Table.Meta().PKIsHandle)
-		if err != nil {
-			return nil, errors.Trace(err)
+		affectedValuesCols, b.err = table.FindCols(insertPlan.Table.Cols(), colName, insertPlan.Table.Meta().PKIsHandle)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return
 		}
 
-	} else if len(insert.Setlist) == 0 {
-		// Branch for `INSERT INTO tbl_name {VALUES | VALUE} (value_list) [, (value_list)] ...`,
-		// and for `INSERT INTO tbl_name SELECT ...`.
-		affectedValuesCols = p.Table.Cols()
+	} else if len(insertStmt.Setlist) == 0 {
+		// This branch is for the following scenarios:
+		// 1. `INSERT INTO tbl_name {VALUES | VALUE} (value_list) [, (value_list)] ...`,
+		// 2. `INSERT INTO tbl_name SELECT ...`.
+		affectedValuesCols = insertPlan.Table.Cols()
 	}
 	return
 }
@@ -1082,9 +1085,9 @@ func (b *planBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan 
 
 func (b *planBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual,
 	checkRefColumn func(n ast.Node) ast.Node) {
-	affectedValuesCols, err := insertPlan.getAffectCols(insert)
-	if err != nil {
-		b.err = errors.Trace(err)
+	affectedValuesCols := b.getAffectCols(insert, insertPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return
 	}
 
@@ -1107,12 +1110,12 @@ func (b *planBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 
 	totalTableCols := insertPlan.Table.Cols()
 	for i, valuesItem := range insert.Lists {
-		// The length of the value_list should keep unchanged.
+		// The length of the all the value_list should be the same.
 		// "insert into t values (), ()" is valid.
 		// "insert into t values (), (1)" is not valid.
 		// "insert into t values (1), ()" is not valid.
 		// "insert into t values (1,2), (1)" is not valid.
-		if i > 0 && len(insert.Lists[i-1]) != len(valuesItem) {
+		if i > 0 && len(insert.Lists[i-1]) != len(insert.Lists[i]) {
 			b.err = ErrWrongValueCountOnRow.GenByArgs(i + 1)
 			return
 		}
@@ -1120,18 +1123,19 @@ func (b *planBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 		for j, valueItem := range valuesItem {
 			var expr expression.Expression
 			var err error
-			if dft, ok := valueItem.(*ast.DefaultExpr); ok {
-				if dft.Name != nil {
-					expr, err = b.findDefaultValue(totalTableCols, dft.Name)
+			switch x := valueItem.(type) {
+			case *ast.DefaultExpr:
+				if x.Name != nil {
+					expr, err = b.findDefaultValue(totalTableCols, x.Name)
 				} else {
 					expr, err = b.getDefaultValue(affectedValuesCols[j])
 				}
-			} else if val, ok := valueItem.(*ast.ValueExpr); ok {
+			case *ast.ValueExpr:
 				expr = &expression.Constant{
-					Value:   val.Datum,
-					RetType: &val.Type,
+					Value:   x.Datum,
+					RetType: &x.Type,
 				}
-			} else {
+			default:
 				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, true, checkRefColumn)
 			}
 			if err != nil {
@@ -1145,9 +1149,9 @@ func (b *planBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 }
 
 func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan *Insert) {
-	affectedValuesCols, err := insertPlan.getAffectCols(insert)
-	if err != nil {
-		b.err = errors.Trace(err)
+	affectedValuesCols := b.getAffectCols(insert, insertPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return
 	}
 	selectPlan := b.build(insert.Select)
@@ -1161,7 +1165,7 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 		return
 	}
 
-	// Check that there's no generated column.
+	// Check to guarantee that there's no generated column.
 	// This check is done after the above one is to make compatible with mysql.
 	// i.e. table t have two column a and b where b is generated column.
 	// `insert into t (b) select * from t` will raise a error which tells you that the column count is not matched.
