@@ -402,7 +402,11 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	}
 
 	if fld.Column.Decimal == types.UnspecifiedLength {
-		ci.Decimal = mysql.NotFixedDec
+		if fld.Column.Tp == mysql.TypeDuration {
+			ci.Decimal = types.DefaultFsp
+		} else {
+			ci.Decimal = mysql.NotFixedDec
+		}
 	} else {
 		ci.Decimal = uint8(fld.Column.Decimal)
 	}

@@ -206,9 +206,6 @@ type SessionVars struct {
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
 
-	// PlanCacheEnabled stores the global config "plan-cache-enabled", and it will be only updated in tests.
-	PlanCacheEnabled bool
-
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
@@ -341,7 +338,6 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableStreaming = "0"
 	}
-	vars.PlanCacheEnabled = config.GetGlobalConfig().PlanCache.Enabled
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 	return vars
 }
@@ -411,8 +407,8 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
-// GetTimeZone returns the value of time_zone session variable.
-func (s *SessionVars) GetTimeZone() *time.Location {
+// Location returns the value of time_zone session variable. If it is nil, then return time.Local.
+func (s *SessionVars) Location() *time.Location {
 	loc := s.TimeZone
 	if loc == nil {
 		loc = time.Local

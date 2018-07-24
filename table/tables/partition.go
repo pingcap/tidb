@@ -53,6 +53,31 @@ type Partition struct {
 type PartitionedTable struct {
 	Table
 	partitionExpr *PartitionExpr
+	partitions    map[int64]*Partition
+}
+
+func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, error) {
+	partitionExpr, err := generatePartitionExpr(tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	partitions := make(map[int64]*Partition)
+	pi := tblInfo.GetPartitionInfo()
+	for _, p := range pi.Definitions {
+		var t Partition
+		err = initTableCommonWithIndices(&t.tableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		partitions[p.ID] = &t
+	}
+
+	return &PartitionedTable{
+		Table:         *tbl,
+		partitionExpr: partitionExpr,
+		partitions:    partitions,
+	}, nil
 }
 
 // PartitionExpr is the partition definition expressions.
@@ -146,13 +171,7 @@ func (t *PartitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 
 // GetPartition returns a Table, which is actually a Partition.
 func (t *PartitionedTable) GetPartition(pid int64) table.Table {
-	var ret Partition
-	// Make a shallow copy, change ID to partition ID.
-	ret.tableCommon = t.tableCommon
-	ret.partitionID = pid
-	ret.recordPrefix = tablecodec.GenTableRecordPrefix(pid)
-	ret.indexPrefix = tablecodec.GenTableIndexPrefix(pid)
-	return &ret
+	return t.partitions[pid]
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.

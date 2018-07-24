@@ -72,27 +72,27 @@ type Table struct {
 var _ table.Table = &Table{}
 
 // MockTableFromMeta only serves for test.
-func MockTableFromMeta(tableInfo *model.TableInfo) table.Table {
-	columns := make([]*table.Column, 0, len(tableInfo.Columns))
-	for _, colInfo := range tableInfo.Columns {
+func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
+	columns := make([]*table.Column, 0, len(tblInfo.Columns))
+	for _, colInfo := range tblInfo.Columns {
 		col := table.ToColumn(colInfo)
 		columns = append(columns, col)
 	}
+
 	var t Table
-	initTableCommon(&t.tableCommon, tableInfo.ID, tableInfo.ID, columns, nil)
-	t.meta = tableInfo
-	if tableInfo.GetPartitionInfo() == nil {
+	initTableCommon(&t.tableCommon, tblInfo, tblInfo.ID, columns, nil)
+	if tblInfo.GetPartitionInfo() == nil {
+		if err := initTableIndices(&t.tableCommon); err != nil {
+			return nil
+		}
 		return &t
 	}
 
-	partitionExpr, err := generatePartitionExpr(tableInfo)
+	ret, err := newPartitionedTable(&t, tblInfo)
 	if err != nil {
 		return nil
 	}
-	return &PartitionedTable{
-		Table:         t,
-		partitionExpr: partitionExpr,
-	}
+	return ret
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
@@ -129,44 +129,49 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	}
 
 	var t Table
-	initTableCommon(&t.tableCommon, tblInfo.ID, tblInfo.ID, columns, alloc)
-
-	for _, idxInfo := range tblInfo.Indices {
-		if idxInfo.State == model.StateNone {
-			return nil, table.ErrIndexStateCantNone.Gen("index %s can't be in none state", idxInfo.Name)
-		}
-
-		idx := NewIndex(tblInfo, idxInfo)
-		t.indices = append(t.indices, idx)
-	}
-
-	t.meta = tblInfo
+	initTableCommon(&t.tableCommon, tblInfo, tblInfo.ID, columns, alloc)
 	if tblInfo.GetPartitionInfo() == nil {
+		if err := initTableIndices(&t.tableCommon); err != nil {
+			return nil, errors.Trace(err)
+		}
 		return &t, nil
 	}
 
-	partitionExpr, err := generatePartitionExpr(tblInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &PartitionedTable{
-		Table:         t,
-		partitionExpr: partitionExpr,
-	}, nil
+	return newPartitionedTable(&t, tblInfo)
 }
 
 // initTableCommon initializes a tableCommon struct.
-func initTableCommon(t *tableCommon, tableID, partitionID int64, cols []*table.Column, alloc autoid.Allocator) {
-	t.tableID = tableID
+func initTableCommon(t *tableCommon, tblInfo *model.TableInfo, partitionID int64, cols []*table.Column, alloc autoid.Allocator) {
+	t.tableID = tblInfo.ID
 	t.partitionID = partitionID
 	t.alloc = alloc
+	t.meta = tblInfo
 	t.Columns = cols
 	t.publicColumns = t.Cols()
 	t.writableColumns = t.WritableCols()
 	t.writableIndices = t.WritableIndices()
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(partitionID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(partitionID)
-	return
+}
+
+// initTableIndices initializes the indices of the tableCommon.
+func initTableIndices(t *tableCommon) error {
+	tblInfo := t.meta
+	for _, idxInfo := range tblInfo.Indices {
+		if idxInfo.State == model.StateNone {
+			return table.ErrIndexStateCantNone.Gen("index %s can't be in none state", idxInfo.Name)
+		}
+
+		// Use partition ID for index, because tableCommon may be table or partition.
+		idx := NewIndex(t.partitionID, idxInfo)
+		t.indices = append(t.indices, idx)
+	}
+	return nil
+}
+
+func initTableCommonWithIndices(t *tableCommon, tblInfo *model.TableInfo, partitionID int64, cols []*table.Column, alloc autoid.Allocator) error {
+	initTableCommon(t, tblInfo, partitionID, cols, alloc)
+	return errors.Trace(initTableIndices(t))
 }
 
 // Indices implements table.Table Indices interface.
@@ -583,7 +588,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().GetTimeZone())
+	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().Location())
 	if err != nil {
 		return nil, rowMap, errors.Trace(err)
 	}
@@ -765,7 +770,7 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, ctx.GetSessionVars().GetTimeZone())
+		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, ctx.GetSessionVars().Location())
 		if err != nil {
 			return errors.Trace(err)
 		}

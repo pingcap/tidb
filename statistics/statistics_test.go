@@ -455,8 +455,10 @@ func (s *testStatisticsSuite) TestColumnRange(c *C) {
 	c.Check(err, IsNil)
 	col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data), Info: &model.ColumnInfo{}}
 	tbl := &Table{
-		Count:   int64(col.totalRowCount()),
-		Columns: make(map[int64]*Column),
+		HistColl: HistColl{
+			Count:   int64(col.totalRowCount()),
+			Columns: make(map[int64]*Column),
+		},
 	}
 	ran := []*ranger.Range{{
 		LowVal:  []types.Datum{{}},
@@ -522,8 +524,10 @@ func (s *testStatisticsSuite) TestIntColumnRanges(c *C) {
 	c.Check(rowCount, Equals, int64(100000))
 	col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}}
 	tbl := &Table{
-		Count:   int64(col.totalRowCount()),
-		Columns: make(map[int64]*Column),
+		HistColl: HistColl{
+			Count:   int64(col.totalRowCount()),
+			Columns: make(map[int64]*Column),
+		},
 	}
 	ran := []*ranger.Range{{
 		LowVal:  []types.Datum{types.NewIntDatum(math.MinInt64)},
@@ -612,8 +616,10 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 	idxInfo := &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}}
 	idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 	tbl := &Table{
-		Count:   int64(idx.totalRowCount()),
-		Indices: make(map[int64]*Index),
+		HistColl: HistColl{
+			Count:   int64(idx.totalRowCount()),
+			Indices: make(map[int64]*Index),
+		},
 	}
 	ran := []*ranger.Range{{
 		LowVal:  []types.Datum{types.MinNotNullDatum()},

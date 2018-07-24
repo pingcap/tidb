@@ -172,7 +172,7 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 		}
 		err = t.AddHistoryDDLJob(jobs[i])
 		c.Assert(err, IsNil)
-		historyJobs, err1 := GetHistoryDDLJobs(txn)
+		historyJobs, err1 := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
 		c.Assert(err1, IsNil)
 		if i+1 > MaxHistoryJobs {
 			c.Assert(historyJobs, HasLen, MaxHistoryJobs)
@@ -182,7 +182,7 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 	}
 
 	delta := cnt - MaxHistoryJobs
-	historyJobs, err := GetHistoryDDLJobs(txn)
+	historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
 	c.Assert(err, IsNil)
 	c.Assert(historyJobs, HasLen, MaxHistoryJobs)
 	l := len(historyJobs) - 1
@@ -259,7 +259,7 @@ func (s *testSuite) TestScan(c *C) {
 
 	idxRow1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(10))}
 	idxRow2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20))}
-	kvIndex := tables.NewIndex(tb.Meta(), indices[0].Meta())
+	kvIndex := tables.NewIndex(tb.Meta().ID, indices[0].Meta())
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	idxRows, nextVals, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)

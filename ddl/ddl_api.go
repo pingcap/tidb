@@ -86,7 +86,6 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 	if !ok {
 		return errors.Trace(infoschema.ErrDatabaseNotExists)
 	}
-
 	job := &model.Job{
 		SchemaID:   old.ID,
 		Type:       model.ActionDropSchema,
@@ -539,13 +538,6 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-func checkAddColumnTooManyColumns(oldCols []*model.ColumnInfo) error {
-	if len(oldCols) > TableColumnCountLimit {
-		return errTooManyFields
-	}
-	return nil
-}
-
 // checkPointTypeColumns checks multiple decimal/float/double columns.
 func checkPointTypeColumns(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
@@ -839,7 +831,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	pi, err := buildTablePartitionInfo(ctx, d, s, cols)
+	pi, err := buildTablePartitionInfo(ctx, d, s)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -850,6 +842,18 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			return errors.Trace(err)
 		}
 		err = checkCreatePartitionValue(pi)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = checkAddPartitionTooManyPartitions(len(pi.Definitions))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = checkPartitionFuncValid(s.Partition.Expr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = checkPartitionFuncType(ctx, s, cols, tbInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -984,6 +988,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			err = d.DropColumn(ctx, ident, spec.OldColumnName.Name)
 		case ast.AlterTableDropIndex:
 			err = d.DropIndex(ctx, ident, model.NewCIStr(spec.Name))
+		case ast.AlterTableDropPartition:
+			err = d.DropTablePartition(ctx, ident, spec)
 		case ast.AlterTableAddConstraint:
 			constr := spec.Constraint
 			switch spec.Constraint.Tp {
@@ -1138,7 +1144,9 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
 	}
-
+	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
+		return errors.Trace(err)
+	}
 	// Check whether added column has existed.
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
@@ -1217,10 +1225,15 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	meta := t.Meta()
-	if meta.GetPartitionInfo() == nil && meta.Partition == nil {
+	if meta.GetPartitionInfo() == nil {
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 	partInfo, err := buildPartitionInfo(meta, d, spec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = checkAddPartitionTooManyPartitions(len(meta.Partition.Definitions) + len(partInfo.Definitions))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1244,6 +1257,41 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	is := d.infoHandle.Get()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(schema))
+	}
+	t, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+	}
+	meta := t.Meta()
+	if meta.GetPartitionInfo() == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+	err = checkDropTablePartition(meta, spec.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		Type:       model.ActionDropTablePartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{spec.Name},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

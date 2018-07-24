@@ -155,7 +155,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 	var mu sync.Mutex
 	wg := sync.WaitGroup{}
 	m := map[int64]struct{}{}
-	count := 100
+	count := 10
 	errCh := make(chan error, count)
 
 	allocIDs := func() {

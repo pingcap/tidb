@@ -23,8 +23,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -338,6 +340,9 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 		break
 	}
 
+	// Test that even if the table is recently modified, we can still analyze the table.
+	h.Lease = time.Second
+	defer func() { h.Lease = 0 }()
 	_, err = testKit.Exec("insert into t values ('fff')")
 	c.Assert(err, IsNil)
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
@@ -363,11 +368,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	_, err = testKit.Exec("insert into t values ('eee')")
 	c.Assert(err, IsNil)
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
-	h.Clear()
-	// We set `Lease` here so that `Update` will use load by need strategy.
-	h.Lease = time.Second
 	h.Update(is)
-	h.Lease = 0
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
 	h.Update(is)
@@ -381,6 +382,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 		break
 	}
 
+	testKit.MustExec("analyze table t")
 	_, err = testKit.Exec("create index idx on t(a)")
 	c.Assert(err, IsNil)
 	is = do.InfoSchema()
@@ -437,7 +439,7 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	bID := tblInfo.Indices[0].ID
 
 	// The statistic table is outdated now.
-	c.Assert(tbl.Columns[aID].IsPseudo(), IsTrue)
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsTrue)
 
 	testKit.MustQuery("select * from t where a between 1 and 10")
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
@@ -448,9 +450,9 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	tbl = h.GetTableStats(tblInfo)
 
 	// The error rate of this column is not larger than MaxErrorRate now.
-	c.Assert(tbl.Columns[aID].IsPseudo(), IsFalse)
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsFalse)
 
-	c.Assert(tbl.Indices[bID].IsPseudo(), IsTrue)
+	c.Assert(tbl.Indices[bID].NotAccurate(), IsTrue)
 	testKit.MustQuery("select * from t where b between 2 and 10")
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
@@ -458,7 +460,7 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	h.UpdateErrorRate(is)
 	h.Update(is)
 	tbl = h.GetTableStats(tblInfo)
-	c.Assert(tbl.Indices[bID].IsPseudo(), IsFalse)
+	c.Assert(tbl.Indices[bID].NotAccurate(), IsFalse)
 	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(1))
 
 	testKit.MustExec("analyze table t")
@@ -663,4 +665,52 @@ func (s *testStatsUpdateSuite) TestOutOfOrderUpdate(c *C) {
 
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	testKit.MustQuery("select count from mysql.stats_meta").Check(testkit.Rows("0"))
+}
+
+func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
+	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("insert into t values (3,5)")
+	h := s.do.StatsHandle()
+
+	oriProbability := statistics.FeedbackProbability
+	oriNumber := statistics.MaxNumberOfRanges
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		statistics.MaxNumberOfRanges = oriNumber
+	}()
+	statistics.FeedbackProbability = 1
+
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	tblInfo := table.Meta()
+	tbl := h.GetTableStats(tblInfo)
+
+	testKit.MustQuery("select * from t use index(idx) where b <= 5")
+	testKit.MustQuery("select * from t use index(idx) where a > 1")
+	testKit.MustQuery("select * from t use index(idx) where b = 5")
+
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+	tbl = h.GetTableStats(tblInfo)
+
+	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
+		"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n"+
+		"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n"+
+		"num: 3\tlower_bound: 4\tupper_bound: 4\trepeats: 1")
+
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	low, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
+	c.Assert(err, IsNil)
+
+	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint32(2))
+
+	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
+		"num: 2\tlower_bound: NULL\tupper_bound: 2\trepeats: 0\n"+
+		"num: 4\tlower_bound: 3\tupper_bound: \trepeats: 0")
 }

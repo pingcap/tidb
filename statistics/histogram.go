@@ -198,15 +198,18 @@ func isAnalyzed(flag int64) bool {
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch, isAnalyzed int64) error {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch, isAnalyzed int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(ctx, "begin")
+	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		err = finishTransaction(context.Background(), exec, err)
+	}()
 	txn := h.mu.ctx.Txn()
 	version := txn.StartTS()
 	var sql string
@@ -218,11 +221,11 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 	_, err = exec.Execute(ctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	data, err := encodeCMSketch(cms)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	flag := 0
 	if isAnalyzed == 1 {
@@ -232,12 +235,12 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, curStatsVersion, flag)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
 	_, err = exec.Execute(ctx, deleteSQL)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	for i := range hg.Buckets {
@@ -248,43 +251,40 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		var upperBound types.Datum
 		upperBound, err = hg.GetUpper(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 		var lowerBound types.Datum
 		lowerBound, err = hg.GetLower(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes())
 		_, err = exec.Execute(ctx, insertSQL)
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 	}
-	_, err = exec.Execute(ctx, "commit")
-	return errors.Trace(err)
+	return
 }
 
 // SaveMetaToStorage will save stats_meta to storage.
-func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) error {
+func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(ctx, "begin")
+	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
 	var sql string
 	version := h.mu.ctx.Txn().StartTS()
 	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
-	if _, err = exec.Execute(ctx, sql); err != nil {
-		_, err1 := exec.Execute(ctx, "rollback")
-		terror.Log(errors.Trace(err1))
-		return errors.Trace(err)
-	}
-	_, err = exec.Execute(ctx, "commit")
-	return errors.Trace(err)
+	_, err = exec.Execute(ctx, sql)
+	return
 }
 
 func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64) (*Histogram, error) {
@@ -605,6 +605,10 @@ func (hg *Histogram) popFirstBucket() {
 	hg.Bounds = c
 }
 
+func (hg *Histogram) isIndexHist() bool {
+	return hg.tp.Tp == mysql.TypeBlob
+}
+
 // MergeHistograms merges two histograms.
 func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram, bucketSize int) (*Histogram, error) {
 	if lh.Len() == 0 {
@@ -676,9 +680,9 @@ type ErrorRate struct {
 // then the column is not pseudo.
 const MaxErrorRate = 0.25
 
-// IsPseudo is true when the total of query is zero or the average error
+// NotAccurate is true when the total of query is zero or the average error
 // rate is greater than MaxErrorRate.
-func (e *ErrorRate) IsPseudo() bool {
+func (e *ErrorRate) NotAccurate() bool {
 	if e.QueryTotal == 0 {
 		return true
 	}
@@ -784,7 +788,7 @@ func (idx *Index) String() string {
 
 func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 {
 	if idx.CMSketch != nil {
-		return float64(idx.CMSketch.queryBytes(b))
+		return float64(idx.CMSketch.QueryBytes(b))
 	}
 	return idx.Histogram.equalRowCount(types.NewBytesDatum(b))
 }

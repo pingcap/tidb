@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/ranger"
 )
 
 const (
@@ -302,36 +301,6 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 	return true
 }
 
-func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []expression.Expression) PhysicalPlan {
-	is := PhysicalIndexScan{
-		Table:            ds.tableInfo,
-		TableAsName:      ds.TableAsName,
-		DBName:           ds.DBName,
-		Columns:          ds.Columns,
-		Index:            idx,
-		dataSourceSchema: ds.schema,
-		Ranges:           ranger.FullRange(),
-		KeepOrder:        false,
-	}.init(ds.ctx)
-	is.filterCondition = remainedConds
-	is.stats = ds.stats
-	cop := &copTask{
-		indexPlan: is,
-	}
-	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
-		// On this way, it's double read case.
-		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
-		ts.SetSchema(is.dataSourceSchema)
-		cop.tablePlan = ts
-	}
-	is.initSchema(ds.id, idx, cop.tablePlan != nil)
-	indexConds, tblConds := splitIndexFilterConditions(remainedConds, idx.Columns, ds.tableInfo)
-	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
-	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
-	t := finishCopTask(ds.ctx, cop)
-	return t.plan()
-}
-
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
 func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
 	if len(ds.schema.TblID2Handle) > 0 {
@@ -359,6 +328,8 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		Ranges:           path.ranges,
 		filterCondition:  path.indexFilters,
 		dataSourceSchema: ds.schema,
+		isPartition:      ds.isPartition,
+		partitionID:      ds.partitionID,
 	}.init(ds.ctx)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
@@ -394,13 +365,14 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		}
 	}
 	// Only use expectedCnt when it's smaller than the count we calculated.
-	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
-		selectivity := ds.statsAfterSelect.count / path.countAfterAccess
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.stats.count {
+		selectivity := ds.stats.count / path.countAfterAccess
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
-	is.stats = ds.stats.scaleByExpectCnt(rowCount)
+	is.stats = newSimpleStats(rowCount)
+	is.stats.usePseudoStats = ds.statisticTable.Pseudo
 	cop.cst = rowCount * scanFactor
 	task = cop
 	if matchProperty {
@@ -434,12 +406,12 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, 0, len(idx.Columns))
 	for _, col := range idx.Columns {
-		indexCols = append(indexCols, &expression.Column{FromID: id, Position: col.Offset})
+		indexCols = append(indexCols, &expression.Column{FromID: id, ColName: col.Name, Position: col.Offset})
 	}
 	setHandle := false
 	for _, col := range is.Columns {
 		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-			indexCols = append(indexCols, &expression.Column{FromID: id, ID: col.ID, Position: col.Offset})
+			indexCols = append(indexCols, &expression.Column{FromID: id, ID: col.ID, ColName: col.Name, Position: col.Offset})
 			setHandle = true
 			break
 		}
@@ -447,7 +419,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{FromID: id, ID: model.ExtraHandleID, Position: -1})
+		indexCols = append(indexCols, &expression.Column{FromID: id, ID: model.ExtraHandleID, ColName: model.ExtraHandleName, Position: -1})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
@@ -470,7 +442,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	if tableConds != nil {
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * cpuFactor
-		tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.statsAfterSelect.scaleByExpectCnt(expectedCnt))
+		tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.stats.scaleByExpectCnt(expectedCnt))
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
@@ -529,32 +501,6 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 	return true
 }
 
-func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
-	var ranges []*ranger.Range
-	if pk != nil {
-		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
-	} else {
-		ranges = ranger.FullIntRange(false)
-	}
-	ts := PhysicalTableScan{
-		Table:       ds.tableInfo,
-		Columns:     ds.Columns,
-		TableAsName: ds.TableAsName,
-		DBName:      ds.DBName,
-		Ranges:      ranges,
-	}.init(ds.ctx)
-	ts.SetSchema(ds.schema)
-	ts.stats = ds.stats
-	ts.filterCondition = ds.pushedDownConds
-	copTask := &copTask{
-		tablePlan:         ts,
-		indexPlanFinished: true,
-	}
-	ts.addPushedDownSelection(copTask, ds.stats)
-	t := finishCopTask(ds.ctx, copTask)
-	return t.plan()
-}
-
 // convertToTableScan converts the DataSource to table scan.
 func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (task task, err error) {
 	// It will be handled in convertToIndexScan.
@@ -590,13 +536,14 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 	task = copTask
 	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(nil, pkCol)
 	// Only use expectedCnt when it's smaller than the count we calculated.
-	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.count` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
-		selectivity := ds.statsAfterSelect.count / rowCount
+	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.stats.count {
+		selectivity := ds.stats.count / rowCount
 		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
 	}
-	ts.stats = ds.stats.scaleByExpectCnt(rowCount)
+	ts.stats = newSimpleStats(rowCount)
+	ts.stats.usePseudoStats = ds.statisticTable.Pseudo
 	copTask.cst = rowCount * scanFactor
 	if matchProperty {
 		if prop.desc {
@@ -605,7 +552,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
-		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(prop.expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.stats.scaleByExpectCnt(prop.expectedCnt))
 	} else {
 		expectedCnt := math.MaxFloat64
 		if prop.isEmpty() {
@@ -613,7 +560,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 		} else {
 			return invalidTask, nil
 		}
-		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.stats.scaleByExpectCnt(expectedCnt))
 	}
 	if prop.taskTp == rootTaskType {
 		task = finishCopTask(ds.ctx, task)

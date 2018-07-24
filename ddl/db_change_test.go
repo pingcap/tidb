@@ -535,9 +535,29 @@ func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
+func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
+	sql1 := "ALTER TABLE t add index index_b(b);"
+	sql2 := "CREATE INDEX index_b ON t (c);"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1061]index already exist index_b")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
+	sql := "ALTER TABLE t drop COLUMN c ;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[ddl:1091]column c doesn't exist")
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
 func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	sql1 := "create table t_exists(c int);"
 	sql2 := "alter table t rename to t_exists;"
+	defer s.se.Execute(context.Background(), "drop table t_exists")
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_exists' already exists")

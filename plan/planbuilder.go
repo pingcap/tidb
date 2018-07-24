@@ -469,7 +469,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p.SetSchema(buildShowDDLFields())
 		ret = p
 	case ast.AdminShowDDLJobs:
-		p := &ShowDDLJobs{}
+		p := &ShowDDLJobs{JobNumber: as.JobNumber}
 		p.SetSchema(buildShowDDLJobsFields())
 		ret = p
 	case ast.AdminCancelDDLJobs:

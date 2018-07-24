@@ -401,7 +401,16 @@ func (c *timeDiffFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	arg0FieldTp, arg1FieldTp := args[0].GetType(), args[1].GetType()
 	arg0Tp, arg1Tp := c.getArgEvalTp(arg0FieldTp), c.getArgEvalTp(arg1FieldTp)
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, arg0Tp, arg1Tp)
-	bf.tp.Decimal = mathutil.Max(arg0FieldTp.Decimal, arg1FieldTp.Decimal)
+
+	arg0Dec, err := getExpressionFsp(ctx, args[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	arg1Dec, err := getExpressionFsp(ctx, args[1])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bf.tp.Decimal = mathutil.Max(arg0Dec, arg1Dec)
 
 	var sig builtinFunc
 	// arg0 and arg1 must be the same time type(compatible), or timediff will return NULL.
@@ -1889,8 +1898,8 @@ func (b *builtinSysDateWithFspSig) evalTime(row types.Row) (d types.Time, isNull
 		return types.Time{}, isNull, errors.Trace(err)
 	}
 
-	tz := b.ctx.GetSessionVars().GetTimeZone()
-	now := time.Now().In(tz)
+	loc := b.ctx.GetSessionVars().Location()
+	now := time.Now().In(loc)
 	result, err := convertTimeToMysqlTime(now, int(fsp))
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
@@ -1911,7 +1920,7 @@ func (b *builtinSysDateWithoutFspSig) Clone() builtinFunc {
 // evalTime evals SYSDATE().
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_sysdate
 func (b *builtinSysDateWithoutFspSig) evalTime(row types.Row) (d types.Time, isNull bool, err error) {
-	tz := b.ctx.GetSessionVars().GetTimeZone()
+	tz := b.ctx.GetSessionVars().Location()
 	now := time.Now().In(tz)
 	result, err := convertTimeToMysqlTime(now, 0)
 	if err != nil {
@@ -1947,7 +1956,7 @@ func (b *builtinCurrentDateSig) Clone() builtinFunc {
 // evalTime evals CURDATE().
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_curdate
 func (b *builtinCurrentDateSig) evalTime(row types.Row) (d types.Time, isNull bool, err error) {
-	tz := b.ctx.GetSessionVars().GetTimeZone()
+	tz := b.ctx.GetSessionVars().Location()
 	year, month, day := time.Now().In(tz).Date()
 	result := types.Time{
 		Time: types.FromDate(year, int(month), day, 0, 0, 0, 0),
@@ -2002,7 +2011,7 @@ func (b *builtinCurrentTime0ArgSig) Clone() builtinFunc {
 }
 
 func (b *builtinCurrentTime0ArgSig) evalDuration(row types.Row) (types.Duration, bool, error) {
-	tz := b.ctx.GetSessionVars().GetTimeZone()
+	tz := b.ctx.GetSessionVars().Location()
 	dur := time.Now().In(tz).Format(types.TimeFormat)
 	res, err := types.ParseDuration(dur, types.MinFsp)
 	if err != nil {
@@ -2026,7 +2035,7 @@ func (b *builtinCurrentTime1ArgSig) evalDuration(row types.Row) (types.Duration,
 	if err != nil {
 		return types.Duration{}, true, errors.Trace(err)
 	}
-	tz := b.ctx.GetSessionVars().GetTimeZone()
+	tz := b.ctx.GetSessionVars().Location()
 	dur := time.Now().In(tz).Format(types.TimeFSPFormat)
 	res, err := types.ParseDuration(dur, int(fsp))
 	if err != nil {
@@ -2040,10 +2049,15 @@ type timeFunctionClass struct {
 }
 
 func (c *timeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
+	err := c.verifyArgs(args)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDuration, types.ETString)
+	bf.tp.Decimal, err = getExpressionFsp(ctx, args[0])
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	sig := &builtinTimeSig{bf}
 	return sig, nil
 }
@@ -2310,7 +2324,7 @@ func evalNowWithFsp(ctx sessionctx.Context, fsp int) (types.Time, bool, error) {
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	err = result.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
+	err = result.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
 	if err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
@@ -3274,9 +3288,11 @@ func (c *unixTimestampFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	var argTps []types.EvalType
-	var retTp types.EvalType
-	var retFLen, retDecimal int
+	var (
+		argTps              []types.EvalType
+		retTp               types.EvalType
+		retFLen, retDecimal int
+	)
 
 	if len(args) == 0 {
 		retTp, retDecimal = types.ETInt, 0
@@ -3635,7 +3651,7 @@ func getFsp4TimeAddSub(s string) int {
 
 // getBf4TimeAddSub parses input types, generates baseBuiltinFunc and set related attributes for
 // builtin function 'ADDTIME' and 'SUBTIME'
-func getBf4TimeAddSub(ctx sessionctx.Context, args []Expression) (tp1, tp2 *types.FieldType, bf baseBuiltinFunc) {
+func getBf4TimeAddSub(ctx sessionctx.Context, args []Expression) (tp1, tp2 *types.FieldType, bf baseBuiltinFunc, err error) {
 	tp1, tp2 = args[0].GetType(), args[1].GetType()
 	var argTp1, argTp2, retTp types.EvalType
 	switch tp1.Tp {
@@ -3654,8 +3670,17 @@ func getBf4TimeAddSub(ctx sessionctx.Context, args []Expression) (tp1, tp2 *type
 	default:
 		argTp2 = types.ETString
 	}
+	arg0Dec, err := getExpressionFsp(ctx, args[0])
+	if err != nil {
+		return
+	}
+	arg1Dec, err := getExpressionFsp(ctx, args[1])
+	if err != nil {
+		return
+	}
+
 	bf = newBaseBuiltinFuncWithTp(ctx, args, retTp, argTp1, argTp2)
-	bf.tp.Decimal = tp1.Decimal
+	bf.tp.Decimal = mathutil.Min(mathutil.Max(arg0Dec, arg1Dec), types.MaxFsp)
 	if retTp == types.ETString {
 		bf.tp.Tp, bf.tp.Flen, bf.tp.Decimal = mysql.TypeString, mysql.MaxDatetimeWidthWithFsp, types.UnspecifiedLength
 	}
@@ -3759,7 +3784,10 @@ func (c *addTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tp1, tp2, bf := getBf4TimeAddSub(ctx, args)
+	tp1, tp2, bf, err := getBf4TimeAddSub(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 	switch tp1.Tp {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		switch tp2.Tp {
@@ -4622,7 +4650,10 @@ func (c *subTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
-	tp1, tp2, bf := getBf4TimeAddSub(ctx, args)
+	tp1, tp2, bf, err := getBf4TimeAddSub(ctx, args)
+	if err != nil {
+		return nil, err
+	}
 	switch tp1.Tp {
 	case mysql.TypeDatetime, mysql.TypeTimestamp:
 		switch tp2.Tp {
@@ -5369,4 +5400,17 @@ func (b *builtinLastDaySig) evalTime(row types.Row) (types.Time, bool, error) {
 		Fsp:  types.DefaultFsp,
 	}
 	return ret, false, nil
+}
+
+// getExpressionFsp calculates the fsp from given expression.
+func getExpressionFsp(ctx sessionctx.Context, expression Expression) (int, error) {
+	constExp, isConstant := expression.(*Constant)
+	if isConstant && types.IsString(expression.GetType()) && !isTemporalColumn(expression) {
+		str, isNil, err := constExp.EvalString(ctx, nil)
+		if isNil || err != nil {
+			return 0, errors.Trace(err)
+		}
+		return types.GetFsp(str), nil
+	}
+	return mathutil.Min(expression.GetType().Decimal, types.MaxFsp), nil
 }

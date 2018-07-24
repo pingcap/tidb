@@ -61,6 +61,11 @@ var (
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
 	EnableSplitTableRegion = false
+
+	// PartitionCountLimit is limit of the number of partitions in a table.
+	// Mysql maximum number of partitions is 8192, our maximum number of partitions is 1024.
+	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
+	PartitionCountLimit = 1024
 )
 
 var (
@@ -155,7 +160,7 @@ var (
 	ErrUnknownCharacterSet = terror.ClassDDL.New(codeUnknownCharacterSet, "Unknown character set: '%s'")
 
 	// ErrNotAllowedTypeInPartition returns not allowed type error when creating table partiton with unsupport expression type.
-	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(codeCantCreateTable, "Field '%s' is of a not allowed type for this type of partitioning")
+	ErrNotAllowedTypeInPartition = terror.ClassDDL.New(codeErrFieldTypeNotAllowedAsPartitionField, mysql.MySQLErrName[mysql.ErrFieldTypeNotAllowedAsPartitionField])
 	// ErrPartitionsMustBeDefined returns each partition must be defined.
 	ErrPartitionsMustBeDefined = terror.ClassDDL.New(codePartitionsMustBeDefined, "For RANGE partitions each partition must be defined")
 	// ErrPartitionMgmtOnNonpartitioned returns it's not a partition table.
@@ -170,6 +175,14 @@ var (
 	ErrPartitionMaxvalue = terror.ClassDDL.New(codePartitionMaxvalue, "MAXVALUE can only be used in last partition definition")
 	// ErrTooManyValues returns cannot have more than one value for this type of partitioning.
 	ErrTooManyValues = terror.ClassDDL.New(codeErrTooManyValues, mysql.MySQLErrName[mysql.ErrTooManyValues])
+	//ErrDropLastPartition returns cannot remove all partitions, use drop table instead.
+	ErrDropLastPartition = terror.ClassDDL.New(codeDropLastPartition, mysql.MySQLErrName[mysql.ErrDropLastPartition])
+	//ErrTooManyPartitions returns too many partitions were defined.
+	ErrTooManyPartitions = terror.ClassDDL.New(codeTooManyPartitions, mysql.MySQLErrName[mysql.ErrTooManyPartitions])
+	//ErrPartitionFunctionIsNotAllowed returns this partition function is not allowed.
+	ErrPartitionFunctionIsNotAllowed = terror.ClassDDL.New(codePartitionFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFunctionIsNotAllowed])
+	// ErrPartitionFuncNotAllowed returns partition function returns the wrong type.
+	ErrPartitionFuncNotAllowed = terror.ClassDDL.New(codeErrPartitionFuncNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFuncNotAllowed])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -405,7 +418,6 @@ func (d *ddl) genGlobalID() (int64, error) {
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)
 	})
-
 	return globalID, errors.Trace(err)
 }
 
@@ -538,81 +550,91 @@ const (
 	codeUnsupportedModifyPrimaryKey = 206
 	codeUnsupportedShardRowIDBits   = 207
 
-	codeFileNotFound                  = 1017
-	codeErrorOnRename                 = 1025
-	codeBadNull                       = mysql.ErrBadNull
-	codeBadField                      = 1054
-	codeTooLongIdent                  = 1059
-	codeDupKeyName                    = 1061
-	codeTooLongKey                    = 1071
-	codeKeyColumnDoesNotExits         = 1072
-	codeIncorrectPrefixKey            = 1089
-	codeCantRemoveAllFields           = 1090
-	codeCantDropFieldOrKey            = 1091
-	codeBlobCantHaveDefault           = 1101
-	codeWrongDBName                   = 1102
-	codeWrongTableName                = 1103
-	codeTooManyFields                 = 1117
-	codeInvalidUseOfNull              = 1138
-	codeWrongColumnName               = 1166
-	codeWrongKeyColumn                = 1167
-	codeBlobKeyWithoutLength          = 1170
-	codeInvalidOnUpdate               = 1294
-	codeUnsupportedOnGeneratedColumn  = 3106
-	codeGeneratedColumnNonPrior       = 3107
-	codeDependentByGeneratedColumn    = 3108
-	codeJSONUsedAsKey                 = 3152
-	codeWrongNameForIndex             = terror.ErrCode(mysql.ErrWrongNameForIndex)
-	codeErrTooLongIndexComment        = terror.ErrCode(mysql.ErrTooLongIndexComment)
-	codeUnknownCharacterSet           = terror.ErrCode(mysql.ErrUnknownCharacterSet)
-	codeCantCreateTable               = terror.ErrCode(mysql.ErrCantCreateTable)
-	codeTableMustHaveColumns          = terror.ErrCode(mysql.ErrTableMustHaveColumns)
-	codePartitionsMustBeDefined       = terror.ErrCode(mysql.ErrPartitionsMustBeDefined)
-	codePartitionMgmtOnNonpartitioned = terror.ErrCode(mysql.ErrPartitionMgmtOnNonpartitioned)
-	codeDropPartitionNonExistent      = terror.ErrCode(mysql.ErrDropPartitionNonExistent)
-	codeSameNamePartition             = terror.ErrCode(mysql.ErrSameNamePartition)
-	codeRangeNotIncreasing            = terror.ErrCode(mysql.ErrRangeNotIncreasing)
-	codePartitionMaxvalue             = terror.ErrCode(mysql.ErrPartitionMaxvalue)
-	codeErrTooManyValues              = terror.ErrCode(mysql.ErrTooManyValues)
+	codeFileNotFound                           = 1017
+	codeErrorOnRename                          = 1025
+	codeBadNull                                = mysql.ErrBadNull
+	codeBadField                               = 1054
+	codeTooLongIdent                           = 1059
+	codeDupKeyName                             = 1061
+	codeTooLongKey                             = 1071
+	codeKeyColumnDoesNotExits                  = 1072
+	codeIncorrectPrefixKey                     = 1089
+	codeCantRemoveAllFields                    = 1090
+	codeCantDropFieldOrKey                     = 1091
+	codeBlobCantHaveDefault                    = 1101
+	codeWrongDBName                            = 1102
+	codeWrongTableName                         = 1103
+	codeTooManyFields                          = 1117
+	codeInvalidUseOfNull                       = 1138
+	codeWrongColumnName                        = 1166
+	codeWrongKeyColumn                         = 1167
+	codeBlobKeyWithoutLength                   = 1170
+	codeInvalidOnUpdate                        = 1294
+	codeUnsupportedOnGeneratedColumn           = 3106
+	codeGeneratedColumnNonPrior                = 3107
+	codeDependentByGeneratedColumn             = 3108
+	codeJSONUsedAsKey                          = 3152
+	codeWrongNameForIndex                      = terror.ErrCode(mysql.ErrWrongNameForIndex)
+	codeErrTooLongIndexComment                 = terror.ErrCode(mysql.ErrTooLongIndexComment)
+	codeUnknownCharacterSet                    = terror.ErrCode(mysql.ErrUnknownCharacterSet)
+	codeCantCreateTable                        = terror.ErrCode(mysql.ErrCantCreateTable)
+	codeTableMustHaveColumns                   = terror.ErrCode(mysql.ErrTableMustHaveColumns)
+	codePartitionsMustBeDefined                = terror.ErrCode(mysql.ErrPartitionsMustBeDefined)
+	codePartitionMgmtOnNonpartitioned          = terror.ErrCode(mysql.ErrPartitionMgmtOnNonpartitioned)
+	codeDropPartitionNonExistent               = terror.ErrCode(mysql.ErrDropPartitionNonExistent)
+	codeSameNamePartition                      = terror.ErrCode(mysql.ErrSameNamePartition)
+	codeRangeNotIncreasing                     = terror.ErrCode(mysql.ErrRangeNotIncreasing)
+	codePartitionMaxvalue                      = terror.ErrCode(mysql.ErrPartitionMaxvalue)
+	codeErrTooManyValues                       = terror.ErrCode(mysql.ErrTooManyValues)
+	codeDropLastPartition                      = terror.ErrCode(mysql.ErrDropLastPartition)
+	codeTooManyPartitions                      = terror.ErrCode(mysql.ErrTooManyPartitions)
+	codePartitionFunctionIsNotAllowed          = terror.ErrCode(mysql.ErrPartitionFunctionIsNotAllowed)
+	codeErrPartitionFuncNotAllowed             = terror.ErrCode(mysql.ErrPartitionFuncNotAllowed)
+	codeErrFieldTypeNotAllowedAsPartitionField = terror.ErrCode(mysql.ErrFieldTypeNotAllowedAsPartitionField)
 )
 
 func init() {
 	ddlMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeBadNull:                       mysql.ErrBadNull,
-		codeCantRemoveAllFields:           mysql.ErrCantRemoveAllFields,
-		codeCantDropFieldOrKey:            mysql.ErrCantDropFieldOrKey,
-		codeInvalidOnUpdate:               mysql.ErrInvalidOnUpdate,
-		codeBlobKeyWithoutLength:          mysql.ErrBlobKeyWithoutLength,
-		codeIncorrectPrefixKey:            mysql.ErrWrongSubKey,
-		codeTooLongIdent:                  mysql.ErrTooLongIdent,
-		codeTooLongKey:                    mysql.ErrTooLongKey,
-		codeKeyColumnDoesNotExits:         mysql.ErrKeyColumnDoesNotExits,
-		codeDupKeyName:                    mysql.ErrDupKeyName,
-		codeWrongDBName:                   mysql.ErrWrongDBName,
-		codeWrongTableName:                mysql.ErrWrongTableName,
-		codeFileNotFound:                  mysql.ErrFileNotFound,
-		codeErrorOnRename:                 mysql.ErrErrorOnRename,
-		codeBadField:                      mysql.ErrBadField,
-		codeInvalidUseOfNull:              mysql.ErrInvalidUseOfNull,
-		codeUnsupportedOnGeneratedColumn:  mysql.ErrUnsupportedOnGeneratedColumn,
-		codeGeneratedColumnNonPrior:       mysql.ErrGeneratedColumnNonPrior,
-		codeDependentByGeneratedColumn:    mysql.ErrDependentByGeneratedColumn,
-		codeJSONUsedAsKey:                 mysql.ErrJSONUsedAsKey,
-		codeBlobCantHaveDefault:           mysql.ErrBlobCantHaveDefault,
-		codeWrongColumnName:               mysql.ErrWrongColumnName,
-		codeWrongKeyColumn:                mysql.ErrWrongKeyColumn,
-		codeWrongNameForIndex:             mysql.ErrWrongNameForIndex,
-		codeTableMustHaveColumns:          mysql.ErrTableMustHaveColumns,
-		codeTooManyFields:                 mysql.ErrTooManyFields,
-		codeErrTooLongIndexComment:        mysql.ErrTooLongIndexComment,
-		codeUnknownCharacterSet:           mysql.ErrUnknownCharacterSet,
-		codePartitionsMustBeDefined:       mysql.ErrPartitionsMustBeDefined,
-		codePartitionMgmtOnNonpartitioned: mysql.ErrPartitionMgmtOnNonpartitioned,
-		codeDropPartitionNonExistent:      mysql.ErrDropPartitionNonExistent,
-		codeSameNamePartition:             mysql.ErrSameNamePartition,
-		codeRangeNotIncreasing:            mysql.ErrRangeNotIncreasing,
-		codePartitionMaxvalue:             mysql.ErrPartitionMaxvalue,
-		codeErrTooManyValues:              mysql.ErrTooManyValues,
+		codeBadNull:                                mysql.ErrBadNull,
+		codeCantRemoveAllFields:                    mysql.ErrCantRemoveAllFields,
+		codeCantDropFieldOrKey:                     mysql.ErrCantDropFieldOrKey,
+		codeInvalidOnUpdate:                        mysql.ErrInvalidOnUpdate,
+		codeBlobKeyWithoutLength:                   mysql.ErrBlobKeyWithoutLength,
+		codeIncorrectPrefixKey:                     mysql.ErrWrongSubKey,
+		codeTooLongIdent:                           mysql.ErrTooLongIdent,
+		codeTooLongKey:                             mysql.ErrTooLongKey,
+		codeKeyColumnDoesNotExits:                  mysql.ErrKeyColumnDoesNotExits,
+		codeDupKeyName:                             mysql.ErrDupKeyName,
+		codeWrongDBName:                            mysql.ErrWrongDBName,
+		codeWrongTableName:                         mysql.ErrWrongTableName,
+		codeFileNotFound:                           mysql.ErrFileNotFound,
+		codeErrorOnRename:                          mysql.ErrErrorOnRename,
+		codeBadField:                               mysql.ErrBadField,
+		codeInvalidUseOfNull:                       mysql.ErrInvalidUseOfNull,
+		codeUnsupportedOnGeneratedColumn:           mysql.ErrUnsupportedOnGeneratedColumn,
+		codeGeneratedColumnNonPrior:                mysql.ErrGeneratedColumnNonPrior,
+		codeDependentByGeneratedColumn:             mysql.ErrDependentByGeneratedColumn,
+		codeJSONUsedAsKey:                          mysql.ErrJSONUsedAsKey,
+		codeBlobCantHaveDefault:                    mysql.ErrBlobCantHaveDefault,
+		codeWrongColumnName:                        mysql.ErrWrongColumnName,
+		codeWrongKeyColumn:                         mysql.ErrWrongKeyColumn,
+		codeWrongNameForIndex:                      mysql.ErrWrongNameForIndex,
+		codeTableMustHaveColumns:                   mysql.ErrTableMustHaveColumns,
+		codeTooManyFields:                          mysql.ErrTooManyFields,
+		codeErrTooLongIndexComment:                 mysql.ErrTooLongIndexComment,
+		codeUnknownCharacterSet:                    mysql.ErrUnknownCharacterSet,
+		codePartitionsMustBeDefined:                mysql.ErrPartitionsMustBeDefined,
+		codePartitionMgmtOnNonpartitioned:          mysql.ErrPartitionMgmtOnNonpartitioned,
+		codeDropPartitionNonExistent:               mysql.ErrDropPartitionNonExistent,
+		codeSameNamePartition:                      mysql.ErrSameNamePartition,
+		codeRangeNotIncreasing:                     mysql.ErrRangeNotIncreasing,
+		codePartitionMaxvalue:                      mysql.ErrPartitionMaxvalue,
+		codeErrTooManyValues:                       mysql.ErrTooManyValues,
+		codeDropLastPartition:                      mysql.ErrDropLastPartition,
+		codeTooManyPartitions:                      mysql.ErrTooManyPartitions,
+		codePartitionFunctionIsNotAllowed:          mysql.ErrPartitionFunctionIsNotAllowed,
+		codeErrPartitionFuncNotAllowed:             mysql.ErrPartitionFuncNotAllowed,
+		codeErrFieldTypeNotAllowedAsPartitionField: mysql.ErrFieldTypeNotAllowedAsPartitionField,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }

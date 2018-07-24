@@ -36,8 +36,8 @@ func isIdentExtend(ch rune) bool {
 	return ch >= 0x80 && ch <= '\uffff'
 }
 
-func isIdentFirstChar(ch rune) bool {
-	return isLetter(ch) || ch == '_'
+func isUserVarChar(ch rune) bool {
+	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
 }
 
 type trieNode struct {

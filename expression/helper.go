@@ -59,7 +59,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 		if upperX == strings.ToUpper(ast.CurrentTimestamp) {
 			value.Time = types.FromGoTime(defaultTime)
 			if tp == mysql.TypeTimestamp {
-				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
+				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
 				if err != nil {
 					return d, errors.Trace(err)
 				}

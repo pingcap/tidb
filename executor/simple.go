@@ -121,7 +121,7 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
-	log.Debugf("[con:%d] execute rollback statement", sessVars.ConnectionID)
+	log.Debugf("con:%d execute rollback statement", sessVars.ConnectionID)
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	if e.ctx.Txn().Valid() {
 		e.ctx.GetSessionVars().TxnCtx.ClearDelta()

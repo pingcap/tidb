@@ -467,27 +467,27 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
-			Name:     "p1",
+			Name:     model.NewCIStr("p1"),
 			LessThan: []string{"16"},
 		},
 		{
 			ID:       42,
-			Name:     "p2",
+			Name:     model.NewCIStr("p2"),
 			LessThan: []string{"32"},
 		},
 		{
 			ID:       43,
-			Name:     "p3",
+			Name:     model.NewCIStr("p3"),
 			LessThan: []string{"64"},
 		},
 		{
 			ID:       44,
-			Name:     "p4",
+			Name:     model.NewCIStr("p4"),
 			LessThan: []string{"128"},
 		},
 		{
 			ID:       45,
-			Name:     "p5",
+			Name:     model.NewCIStr("p5"),
 			LessThan: []string{"maxvalue"},
 		},
 	}

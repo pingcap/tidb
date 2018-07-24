@@ -39,6 +39,8 @@ type ShowDDL struct {
 // ShowDDLJobs is for showing DDL job list.
 type ShowDDLJobs struct {
 	baseSchemaProducer
+
+	JobNumber int64
 }
 
 // ShowDDLJobQueries is for showing DDL job queries sql.
