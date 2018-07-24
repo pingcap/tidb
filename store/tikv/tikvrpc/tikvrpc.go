@@ -124,7 +124,7 @@ type Request struct {
 	DeleteRange      *kvrpcpb.DeleteRangeRequest
 	RawGet           *kvrpcpb.RawGetRequest
 	RawPut           *kvrpcpb.RawPutRequest
-	RawBatchPut		 *kvrpcpb.RawBatchPutRequest
+	RawBatchPut      *kvrpcpb.RawBatchPutRequest
 	RawDelete        *kvrpcpb.RawDeleteRequest
 	RawDeleteRange   *kvrpcpb.RawDeleteRangeRequest
 	RawScan          *kvrpcpb.RawScanRequest
@@ -411,6 +411,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.RawGet, err = client.RawGet(ctx, req.RawGet)
 	case CmdRawPut:
 		resp.RawPut, err = client.RawPut(ctx, req.RawPut)
+	case CmdRawBatchPut:
+		resp.RawBatchPut, err = client.RawBatchPut(ctx, req.RawBatchPut)
 	case CmdRawDelete:
 		resp.RawDelete, err = client.RawDelete(ctx, req.RawDelete)
 	case CmdRawDeleteRange:

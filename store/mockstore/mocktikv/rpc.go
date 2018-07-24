@@ -388,6 +388,23 @@ func (h *rpcHandler) handleKvRawPut(req *kvrpcpb.RawPutRequest) *kvrpcpb.RawPutR
 	return &kvrpcpb.RawPutResponse{}
 }
 
+func (h *rpcHandler) handleKvRawBatchPut(req *kvrpcpb.RawBatchPutRequest) *kvrpcpb.RawBatchPutResponse {
+	rawKV, ok := h.mvccStore.(RawKV)
+	if !ok {
+		return &kvrpcpb.RawBatchPutResponse{
+			Error: "not implemented",
+		}
+	}
+	keys := make([][]byte, len(req.Pairs))
+	values := make([][]byte, len(req.Pairs))
+	for _, pair := range req.Pairs {
+		keys = append(keys, pair.Key)
+		values = append(values, pair.Value)
+	}
+	rawKV.RawBatchPut(keys, values)
+	return &kvrpcpb.RawBatchPutResponse{}
+}
+
 func (h *rpcHandler) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.RawDeleteResponse {
 	rawKV, ok := h.mvccStore.(RawKV)
 	if !ok {
@@ -615,6 +632,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.RawPut = handler.handleKvRawPut(r)
+	case tikvrpc.CmdRawBatchPut:
+		r := req.RawBatchPut
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.RawBatchPut = &kvrpcpb.RawBatchPutResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.RawBatchPut = handler.handl
 	case tikvrpc.CmdRawDelete:
 		r := req.RawDelete
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
