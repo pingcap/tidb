@@ -46,6 +46,7 @@ const (
 
 	CmdRawGet CmdType = 256 + iota
 	CmdRawPut
+	CmdRawBatchPut
 	CmdRawDelete
 	CmdRawDeleteRange
 	CmdRawScan
@@ -123,6 +124,7 @@ type Request struct {
 	DeleteRange      *kvrpcpb.DeleteRangeRequest
 	RawGet           *kvrpcpb.RawGetRequest
 	RawPut           *kvrpcpb.RawPutRequest
+	RawBatchPut		 *kvrpcpb.RawBatchPutRequest
 	RawDelete        *kvrpcpb.RawDeleteRequest
 	RawDeleteRange   *kvrpcpb.RawDeleteRangeRequest
 	RawScan          *kvrpcpb.RawScanRequest
@@ -148,6 +150,7 @@ type Response struct {
 	DeleteRange      *kvrpcpb.DeleteRangeResponse
 	RawGet           *kvrpcpb.RawGetResponse
 	RawPut           *kvrpcpb.RawPutResponse
+	RawBatchPut      *kvrpcpb.RawBatchPutResponse
 	RawDelete        *kvrpcpb.RawDeleteResponse
 	RawDeleteRange   *kvrpcpb.RawDeleteRangeResponse
 	RawScan          *kvrpcpb.RawScanResponse
