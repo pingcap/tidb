@@ -551,12 +551,13 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	return idxRecord, nil
 }
 
-func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*indexRecord, bool, error) {
+func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*indexRecord, int64, bool, error) {
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 	handleOutOfRange := false
 	oprStartTime := time.Now()
+	nextHandle := taskRange.startHandle
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
@@ -590,8 +591,19 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	if len(w.idxRecords) == 0 {
 		handleOutOfRange = true
 	}
+
+	if handleOutOfRange {
+		if taskRange.endIncluded && taskRange.endHandle != math.MaxInt64 {
+			nextHandle = taskRange.endHandle + 1
+		} else {
+			nextHandle = taskRange.endHandle
+		}
+	} else {
+		nextHandle = w.idxRecords[len(w.idxRecords)-1].handle + 1
+	}
+
 	log.Debugf("[ddl] txn %v fetches handle info %v, takes time %v", txn.StartTS(), taskRange, time.Since(startTime))
-	return w.idxRecords, handleOutOfRange, errors.Trace(err)
+	return w.idxRecords, nextHandle, handleOutOfRange, errors.Trace(err)
 }
 
 func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
@@ -618,7 +630,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 			idxRecords []*indexRecord
 			err        error
 		)
-		idxRecords, handleOutOfRange, err = w.fetchRowColVals(txn, handleRange)
+		idxRecords, nextHandle, handleOutOfRange, err = w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -644,15 +656,6 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 			addedCount++
 		}
 
-		if handleOutOfRange {
-			if handleRange.endIncluded && handleRange.endHandle != math.MaxInt64 {
-				nextHandle = handleRange.endHandle + 1
-			} else {
-				nextHandle = handleRange.endHandle
-			}
-		} else {
-			nextHandle = idxRecords[len(idxRecords)-1].handle + 1
-		}
 		return nil
 	})
 	w.logSlowOperations(time.Since(oprStartTime), "backfillIndexInTxn", 3000)
