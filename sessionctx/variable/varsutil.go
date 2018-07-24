@@ -168,8 +168,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if val := GetSysVar(name); val != nil {
 			return val.Value, nil
 		}
-		// should never happen
-		panic(fmt.Sprintf("Error happened when ValidateSetSystemVar. Invalid system variable: %s", name))
+		return value, UnknownSystemVar.GenByArgs(name)
 	}
 	switch name {
 	case DefaultWeekFormat:
