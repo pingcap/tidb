@@ -638,7 +638,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			resp.RawBatchPut = &kvrpcpb.RawBatchPutResponse{RegionError: err}
 			return resp, nil
 		}
-		resp.RawBatchPut = handler.handl
+		resp.RawBatchPut = handler.handleKvRawBatchPut(r)
 	case tikvrpc.CmdRawDelete:
 		r := req.RawDelete
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
