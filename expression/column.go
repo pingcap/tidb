@@ -72,14 +72,16 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row types.Row) (
 	}
 	res, err := col.Data.ToString()
 	resLen := len([]rune(res))
-	if col.GetType().Tp == mysql.TypeString {
-		if ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
-			if resLen < col.RetType.Flen {
-				res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
-			}
-		} else {
-			res = strings.TrimRight(res, " ")
-		}
+	if col.GetType().Tp != mysql.TypeString {
+		return res, err != nil, errors.Trace(err)
+	}
+	// If sql_mode 'pad_char_to_full_length' is no set, the right trailing spaces should be removed for type 'CHAR'.
+	// See: #7085 for more details
+	if !ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
+		res = strings.TrimRight(res, " ")
+	} else if resLen < col.RetType.Flen {
+		// Deal with sql_mode: 'pad_char_to_full_length': https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sqlmode_pad_char_to_full_length
+		res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
 	}
 	return res, err != nil, errors.Trace(err)
 }
@@ -242,27 +244,28 @@ func (col *Column) EvalString(ctx sessionctx.Context, row types.Row) (string, bo
 		}
 		res, err := val.ToString()
 		resLen := len([]rune(res))
-		if col.GetType().Tp == mysql.TypeString {
-			if ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
-				if resLen < col.RetType.Flen {
-					res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
-				}
-			} else {
-				res = strings.TrimRight(res, " ")
-			}
+		if col.GetType().Tp != mysql.TypeString {
+			return res, err != nil, errors.Trace(err)
+		}
+		// If sql_mode 'pad_char_to_full_length' is no set, the right trailing spaces should be removed for type 'CHAR'.
+		// See: #7085 for more details
+		if !ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
+			res = strings.TrimRight(res, " ")
+		} else if resLen < col.RetType.Flen {
+			// Deal with sql_mode: 'pad_char_to_full_length': https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sqlmode_pad_char_to_full_length
+			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
 		}
 		return res, err != nil, errors.Trace(err)
+
 	}
 	val := row.GetString(col.Index)
-	if col.GetType().Tp == mysql.TypeString {
-		if ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
-			valLen := len([]rune(val))
-			if valLen < col.RetType.Flen {
-				val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
-			}
-		} else {
-			val = strings.TrimRight(val, " ")
-		}
+	if col.GetType().Tp != mysql.TypeString {
+		return val, false, nil
+	}
+	if !ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
+		val = strings.TrimRight(val, " ")
+	} else if valLen := len([]rune(val)); valLen < col.RetType.Flen {
+		val = val + strings.Repeat(" ", col.RetType.Flen-valLen)
 	}
 	return val, false, nil
 }

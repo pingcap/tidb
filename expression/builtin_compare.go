@@ -2235,7 +2235,8 @@ func compareString(args []Expression, row types.Row, ctx sessionctx.Context) (va
 	if isNull1 || err != nil {
 		return 0, isNull1, errors.Trace(err)
 	}
-	// See issue #7085
+	// To be compatible with MySQL, we should trim the tailing spaces on the right before
+	// comparing the two strings, see issue #7085 for more details.
 	return int64(types.CompareString(strings.TrimRight(arg0, " "), strings.TrimRight(arg1, " "))), false, nil
 }
 
