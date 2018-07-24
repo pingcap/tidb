@@ -523,6 +523,7 @@ func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, histID int64, q
 	h.mu.ctx.GetSessionVars().BatchDelete = true
 	sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex)
 	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	h.mu.ctx.GetSessionVars().BatchDelete = false
 	h.mu.Unlock()
 	q.feedback = q.feedback[:0]
 	return errors.Trace(err)
