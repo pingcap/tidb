@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/goroutine_pool"
 	"golang.org/x/net/context"
-	gp "github.com/pingcap/tidb/util/goroutine_pool"
 )
 
 var (
@@ -380,7 +380,7 @@ func appendBatchs(batchs []batch, regionID RegionVerID, groupKeys [][]byte, keyT
 }
 
 func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
-	kvPair := make([]*kvrpcpb.KvPair, len(batch.keys))
+	kvPair := make([]*kvrpcpb.KvPair, 0, len(batch.keys))
 	for i, key := range batch.keys {
 		kvPair = append(kvPair, &kvrpcpb.KvPair{Key: key, Value: batch.values[i]})
 	}
