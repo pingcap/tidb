@@ -90,7 +90,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 
 	tblInfo := tbl.Meta()
 	idxInfo := findIndexByName("c2", tblInfo.Indices)
-	indexOpr := tables.NewIndex(tblInfo.ID, idxInfo)
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 	sc := s.ctx.GetSessionVars().StmtCtx
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -186,7 +186,7 @@ func (s *testSuite) TestAdminRecoverIndex1(c *C) {
 	tblInfo := tbl.Meta()
 	idxInfo := findIndexByName("primary", tblInfo.Indices)
 	c.Assert(idxInfo, NotNil)
-	indexOpr := tables.NewIndex(tblInfo.ID, idxInfo)
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -242,9 +242,9 @@ func (s *testSuite) TestAdminCleanupIndex(c *C) {
 
 	tblInfo := tbl.Meta()
 	idxInfo2 := findIndexByName("c2", tblInfo.Indices)
-	indexOpr2 := tables.NewIndex(tblInfo.ID, idxInfo2)
+	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
 	idxInfo3 := findIndexByName("c3", tblInfo.Indices)
-	indexOpr3 := tables.NewIndex(tblInfo.ID, idxInfo3)
+	indexOpr3 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -309,7 +309,7 @@ func (s *testSuite) TestAdminCleanupIndexPKNotHandle(c *C) {
 
 	tblInfo := tbl.Meta()
 	idxInfo := findIndexByName("primary", tblInfo.Indices)
-	indexOpr := tables.NewIndex(tblInfo.ID, idxInfo)
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -357,9 +357,9 @@ func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
 
 	tblInfo := tbl.Meta()
 	idxInfo1 := findIndexByName("c1", tblInfo.Indices)
-	indexOpr1 := tables.NewIndex(tblInfo.ID, idxInfo1)
+	indexOpr1 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo1)
 	idxInfo2 := findIndexByName("c2", tblInfo.Indices)
-	indexOpr2 := tables.NewIndex(tblInfo.ID, idxInfo2)
+	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
