@@ -69,7 +69,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 			},
 		},
 	}
-	index := tables.NewIndex(tblInfo.ID, tblInfo.Indices[0])
+	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	// Test ununiq index.
 	txn, err := s.s.Begin()
@@ -154,7 +154,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 			},
 		},
 	}
-	index = tables.NewIndex(tblInfo.ID, tblInfo.Indices[0])
+	index = tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	// Test uniq index.
 	txn, err = s.s.Begin()
@@ -216,13 +216,18 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 				ID:   2,
 				Name: model.NewCIStr("test"),
 				Columns: []*model.IndexColumn{
-					{Tp: &types.FieldType{}},
-					{Tp: &types.FieldType{}},
+					{Offset: 1},
+					{Offset: 2},
 				},
 			},
 		},
+		Columns: []*model.ColumnInfo{
+			{Offset: 0},
+			{Offset: 1},
+			{Offset: 2},
+		},
 	}
-	index := tables.NewIndex(tblInfo.ID, tblInfo.Indices[0])
+	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
@@ -232,7 +237,7 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	_, err = index.Create(mockCtx, txn, values, 1)
 	c.Assert(err, IsNil)
 
-	index2 := tables.NewIndex(tblInfo.ID, tblInfo.Indices[0])
+	index2 := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	iter, hit, err := index2.Seek(sc, txn, types.MakeDatums("abc", nil))
 	c.Assert(err, IsNil)
