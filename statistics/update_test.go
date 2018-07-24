@@ -142,7 +142,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
 	rs.Check(testkit.Rows("40", "70"))
 
-	rs = testKit.MustQuery(fmt.Sprintf("select tot_col_size from mysql.stats_histograms where table_id in (%d, %d)" +
+	rs = testKit.MustQuery(fmt.Sprintf("select tot_col_size from mysql.stats_histograms where table_id in (%d, %d)"+
 		" order by tot_col_size", tbl2.Meta().ID, tbl1.Meta().ID))
 	rs.Check(testkit.Rows("0", "0", "10", "10"))
 }
