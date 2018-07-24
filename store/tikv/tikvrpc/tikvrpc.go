@@ -87,6 +87,8 @@ func (t CmdType) String() string {
 		return "RawGet"
 	case CmdRawPut:
 		return "RawPut"
+	case CmdRawBatchPut:
+		return "RawBatchPut"
 	case CmdRawDelete:
 		return "RawDelete"
 	case CmdRawDeleteRange:
@@ -205,6 +207,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.RawGet.Context = ctx
 	case CmdRawPut:
 		req.RawPut.Context = ctx
+	case CmdRawBatchPut:
+		req.RawBatchPut.Context = ctx
 	case CmdRawDelete:
 		req.RawDelete.Context = ctx
 	case CmdRawDeleteRange:
@@ -285,6 +289,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.RawPut = &kvrpcpb.RawPutResponse{
 			RegionError: e,
 		}
+	case CmdRawBatchPut:
+		resp.RawBatchPut = &kvrpcpb.RawBatchPutResponse{
+			RegionError: e,
+		}
 	case CmdRawDelete:
 		resp.RawDelete = &kvrpcpb.RawDeleteResponse{
 			RegionError: e,
@@ -355,6 +363,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.RawGet.GetRegionError()
 	case CmdRawPut:
 		e = resp.RawPut.GetRegionError()
+	case CmdRawBatchPut:
+		e = resp.RawBatchPut.GetRegionError()
 	case CmdRawDelete:
 		e = resp.RawDelete.GetRegionError()
 	case CmdRawDeleteRange:
