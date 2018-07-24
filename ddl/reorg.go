@@ -185,7 +185,7 @@ type reorgInfo struct {
 	d         *ddlCtx
 	first     bool
 	// DDL reorganize for a partitioned table will handle partitions one by one,
-	// PartitionID is used to trace the partition been handled currently.
+	// PartitionID is used to trace the current partition we are handling.
 	// If the table is not partitioned, PartitionID would be TableID.
 	PartitionID int64
 }

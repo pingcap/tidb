@@ -692,7 +692,7 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
 	return errors.Trace(err)
 }
 
-// GetDDLReorgHandle gets the latest processed handles.
+// GetDDLReorgHandle gets the latest processed ddl reorganize position.
 func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, partitionID int64, err error) {
 	startHandle, err = m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID))
 	if err != nil {
