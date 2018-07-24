@@ -51,6 +51,11 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+		err = checkAddPartitionTooManyPartitions(len(tbInfo.Partition.Definitions))
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	ver, err = updateSchemaVersion(t, job)
@@ -414,6 +419,11 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	err = checkAddPartitionTooManyPartitions(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions))
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)

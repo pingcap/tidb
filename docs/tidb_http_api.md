@@ -99,15 +99,15 @@ timezone.*
 1. Enable/Disable TiDB server general log
 
     ```shell
-    curl -x POST -d "tidb_general_log=1" http://{TiDBIP}:10080/settings
-    curl -x POST -d "tidb_general_log=0" http://{TiDBIP}:10080/settings
+    curl -X POST -d "tidb_general_log=1" http://{TiDBIP}:10080/settings
+    curl -X POST -d "tidb_general_log=0" http://{TiDBIP}:10080/settings
     ```
 
 1. Change TiDB server log level
 
     ```shell
-    curl -x POST -d "log_level=debug" http://{TiDBIP}:10080/settings
-    curl -x POST -d "log_level=info" http://{TiDBIP}:10080/settings
+    curl -X POST -d "log_level=debug" http://{TiDBIP}:10080/settings
+    curl -X POST -d "log_level=info" http://{TiDBIP}:10080/settings
     ```
 
 1. Change TiDB DDL slow log threshold
@@ -115,7 +115,7 @@ timezone.*
     The unit is millisecond.
 
     ```shell
-    curl -x POST -d "ddl_slow_threshold=300" http://{TiDBIP}:10080/settings
+    curl -X POST -d "ddl_slow_threshold=300" http://{TiDBIP}:10080/settings
     ```
 
 1. Get the column value by an encoded row and some information that can be obtained from a column of the table schema information. 
