@@ -38,7 +38,7 @@ type LoadDataExec struct {
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
 func NewLoadDataInfo(ctx sessionctx.Context, row types.DatumRow, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
+	insertVal := &InsertValues{baseNoResultExecutor: newBaseNoResultExecutor(newBaseExecutor(ctx, nil, "InsertValues")), Table: tbl}
 	return &LoadDataInfo{
 		row:          row,
 		InsertValues: insertVal,

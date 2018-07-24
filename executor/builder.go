@@ -482,17 +482,17 @@ func (b *executorBuilder) buildSimple(v *plan.Simple) Executor {
 		return b.buildRevoke(s)
 	}
 	e := &SimpleExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		Statement:    v.Statement,
-		is:           b.is,
+		baseNoResultExecutor: newBaseNoResultExecutor(newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())),
+		Statement:            v.Statement,
+		is:                   b.is,
 	}
 	return e
 }
 
 func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 	e := &SetExecutor{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		vars:         v.VarAssigns,
+		baseNoResultExecutor: newBaseNoResultExecutor(newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())),
+		vars:                 v.VarAssigns,
 	}
 	return e
 }
@@ -511,7 +511,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	}
 
 	ivs := &InsertValues{
-		baseExecutor:          baseExec,
+		baseNoResultExecutor:  newBaseNoResultExecutor(baseExec),
 		Table:                 v.Table,
 		Columns:               v.Columns,
 		Lists:                 v.Lists,
@@ -539,11 +539,11 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		return nil
 	}
 	insertVal := &InsertValues{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
-		Table:        tbl,
-		Columns:      v.Columns,
-		GenColumns:   v.GenCols.Columns,
-		GenExprs:     v.GenCols.Exprs,
+		baseNoResultExecutor: newBaseNoResultExecutor(newBaseExecutor(b.ctx, nil, v.ExplainID())),
+		Table:                tbl,
+		Columns:              v.Columns,
+		GenColumns:           v.GenCols.Columns,
+		GenExprs:             v.GenCols.Exprs,
 	}
 	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
@@ -1203,10 +1203,10 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		return nil
 	}
 	updateExec := &UpdateExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
-		SelectExec:   selExec,
-		OrderedList:  v.OrderedList,
-		tblID2table:  tblID2table,
+		baseNoResultExecutor: newBaseNoResultExecutor(newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec)),
+		SelectExec:           selExec,
+		OrderedList:          v.OrderedList,
+		tblID2table:          tblID2table,
 	}
 	return updateExec
 }
@@ -1222,11 +1222,11 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 		return nil
 	}
 	deleteExec := &DeleteExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
-		SelectExec:   selExec,
-		Tables:       v.Tables,
-		IsMultiTable: v.IsMultiTable,
-		tblID2Table:  tblID2table,
+		baseNoResultExecutor: newBaseNoResultExecutor(newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec)),
+		SelectExec:           selExec,
+		Tables:               v.Tables,
+		IsMultiTable:         v.IsMultiTable,
+		tblID2Table:          tblID2table,
 	}
 	return deleteExec
 }

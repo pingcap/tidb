@@ -30,7 +30,7 @@ import (
 
 // InsertValues is the data to insert.
 type InsertValues struct {
-	baseExecutor
+	baseNoResultExecutor
 	batchChecker
 
 	rowCount              uint64

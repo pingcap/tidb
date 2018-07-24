@@ -26,7 +26,7 @@ import (
 
 // UpdateExec represents a new update executor.
 type UpdateExec struct {
-	baseExecutor
+	baseNoResultExecutor
 
 	SelectExec  Executor
 	OrderedList []*expression.Assignment

@@ -37,6 +37,10 @@ const (
 	InitialCapacity = 32
 )
 
+// VoidChunk is a void chunk.
+// just like `void` for programmer, it's mainly used in NoDelayExecutor for OLTP situation.
+var VoidChunk = &Chunk{make([]*column, 0), 0}
+
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
 func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 	chk := new(Chunk)

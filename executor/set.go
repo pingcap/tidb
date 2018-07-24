@@ -36,7 +36,7 @@ import (
 
 // SetExecutor executes set statement.
 type SetExecutor struct {
-	baseExecutor
+	baseNoResultExecutor
 
 	vars []*expression.VarAssignment
 	done bool

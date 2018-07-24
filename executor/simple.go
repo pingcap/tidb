@@ -39,7 +39,7 @@ import (
 // `BeginStmt`, `CommitStmt`, `RollbackStmt`.
 // TODO: list all simple statements.
 type SimpleExec struct {
-	baseExecutor
+	baseNoResultExecutor
 
 	Statement ast.StmtNode
 	done      bool

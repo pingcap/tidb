@@ -134,6 +134,18 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 	return e
 }
 
+type baseNoResultExecutor struct {
+	baseExecutor
+}
+
+func (b *baseNoResultExecutor) newChunk() *chunk.Chunk {
+	return chunk.VoidChunk
+}
+
+func newBaseNoResultExecutor(base baseExecutor) baseNoResultExecutor {
+	return baseNoResultExecutor{base}
+}
+
 // Executor is the physical implementation of a algebra operator.
 //
 // In TiDB, all algebra operators are implemented as iterators, i.e., they

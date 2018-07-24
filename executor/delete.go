@@ -27,7 +27,7 @@ import (
 // DeleteExec represents a delete executor.
 // See https://dev.mysql.com/doc/refman/5.7/en/delete.html
 type DeleteExec struct {
-	baseExecutor
+	baseNoResultExecutor
 
 	SelectExec Executor
 
