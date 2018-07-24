@@ -445,7 +445,8 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 const (
-	defaultTaskHandleCnt = 128
+	// DefaultTaskHandleCnt is default batch size of adding indices.
+	DefaultTaskHandleCnt = 128
 )
 
 // indexRecord is the record information of an index.
@@ -492,7 +493,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
-		batchCnt:    defaultTaskHandleCnt,
+		batchCnt:    DefaultTaskHandleCnt,
 		sessCtx:     sessCtx,
 		taskCh:      make(chan *reorgIndexTask, 1),
 		resultCh:    make(chan *addIndexResult, 1),
@@ -603,13 +604,17 @@ func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
-func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, addedCount, scanCount int, errInTxn error) {
+func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, handleOutOfRange bool, addedCount, scanCount int, errInTxn error) {
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		addedCount = 0
 		scanCount = 0
 		txn.SetOption(kv.Priority, kv.PriorityLow)
-		idxRecords, handleOutOfRange, err := w.fetchRowColVals(txn, handleRange)
+		var (
+			idxRecords []*indexRecord
+			err        error
+		)
+		idxRecords, handleOutOfRange, err = w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -637,6 +642,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 
 		if handleOutOfRange || len(idxRecords) == 0 {
 			nextHandle = handleRange.endHandle
+			handleOutOfRange = true
 		} else {
 			nextHandle = idxRecords[len(idxRecords)-1].handle + 1
 		}
@@ -655,7 +661,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	startTime := time.Now()
 	for {
 		addedCount := 0
-		nextHandle, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
+		nextHandle, handleOutOfRange, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
 		if err == nil {
 			// Because reorgIndexTask may run a long time,
 			// we should check whether this ddl job is still runnable.
@@ -678,7 +684,19 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 		}
 
 		handleRange.startHandle = nextHandle
-		if handleRange.startHandle >= handleRange.endHandle {
+		finishTask := false
+		// if nextHandle is math.Int64, we can only use handleOutOfRange to indicates the nexHandle is handled.
+		if handleOutOfRange && nextHandle == handleRange.endHandle {
+			break
+		}
+
+		if handleRange.endIncluded {
+			finishTask = handleRange.startHandle > handleRange.endHandle
+		} else {
+			finishTask = handleRange.startHandle >= handleRange.endHandle
+		}
+
+		if finishTask {
 			break
 		}
 	}
