@@ -121,7 +121,7 @@ var opsLiteral = map[Op]string{
 	Mul:        "*",
 	Not:        "!",
 	BitNeg:     "~",
-	IntDiv:     "//",
+	IntDiv:     "DIV",
 	NullEQ:     "<=>",
 	In:         "IN",
 	Like:       "LIKE",
