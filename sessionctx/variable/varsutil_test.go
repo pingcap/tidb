@@ -223,11 +223,11 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1))
 	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(1))
 
-	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
+	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
+	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
 	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(int64(maxDDLReorgWorkerCount)+1))
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(maxDDLReorgWorkerCount))
+	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
 	err = SetSessionSystemVar(v, TiDBRetryLimit, types.NewStringDatum("3"))
 	c.Assert(err, IsNil)
