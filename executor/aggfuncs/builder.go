@@ -97,6 +97,32 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildSum builds the AggFunc implementation for function "SUM".
 func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseSumAggFunc{
+		baseAggFunc: baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+	default:
+		switch evalType {
+		case types.ETInt:
+			return nil
+		case types.ETReal:
+			switch fieldType.Tp {
+			case mysql.TypeFloat:
+				return &sumAggFunc4Float64{base}
+			case mysql.TypeDouble:
+				return &sumAggFunc4Float64{base}
+			}
+		case types.ETDecimal:
+			return &sumAggFunc4Decimal{base}
+		default:
+			return nil
+		}
+	}
 	return nil
 }
 
