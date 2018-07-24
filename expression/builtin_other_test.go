@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -123,7 +124,7 @@ func (s *testEvaluatorSuite) TestInFunc(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(fn, types.DatumRow(types.MakeDatums(tc.args...)))
+		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		c.Assert(err, IsNil)
 		c.Assert(d.GetValue(), Equals, tc.res, Commentf("%v", types.MakeDatums(tc.args)))
 	}
@@ -152,7 +153,7 @@ func (s *testEvaluatorSuite) TestSetVar(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(fn, types.DatumRow(types.MakeDatums(tc.args...)))
+		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
 		if tc.args[1] != nil {
@@ -193,7 +194,7 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(fn, types.DatumRow(types.MakeDatums(tc.args...)))
+		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		c.Assert(err, IsNil)
 		c.Assert(d.GetString(), Equals, tc.res)
 	}
@@ -208,11 +209,11 @@ func (s *testEvaluatorSuite) TestValues(c *C) {
 	c.Assert(err, IsNil)
 	_, err = evalBuiltinFunc(sig, nil)
 	c.Assert(err.Error(), Equals, "Session current insert values is nil")
-	s.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(types.MakeDatums("1"))
+	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
 	_, err = evalBuiltinFunc(sig, nil)
 	c.Assert(err.Error(), Equals, fmt.Sprintf("Session current insert values len %d and column's offset %v don't match", 1, 1))
 	currInsertValues := types.MakeDatums("1", "2")
-	s.ctx.GetSessionVars().CurrInsertValues = types.DatumRow(currInsertValues)
+	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
 	ret, err := evalBuiltinFunc(sig, nil)
 	c.Assert(err, IsNil)
 	cmp, err := ret.CompareDatum(nil, &currInsertValues[1])
