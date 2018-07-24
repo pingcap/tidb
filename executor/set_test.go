@@ -306,4 +306,9 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 
 	_, err = tk.Exec("set @@warning_count = 0")
 	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue)
+
+	tk.MustExec("set time_zone='SySTeM'")
+	result = tk.MustQuery("select @@time_zone;")
+	result.Check(testkit.Rows("SYSTEM"))
+
 }

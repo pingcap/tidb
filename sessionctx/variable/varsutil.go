@@ -298,6 +298,11 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "ALL_GTIDS", nil
 		}
 		return value, ErrWrongValueForVar.GenByArgs(name, value)
+	case TimeZone:
+		if strings.EqualFold(value, "SYSTEM") {
+			return "SYSTEM", nil
+		}
+		return value, nil
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenByArgs(name)
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
@@ -375,7 +380,7 @@ func tidbOptInt64(opt string, defaultVal int64) int64 {
 }
 
 func parseTimeZone(s string) (*time.Location, error) {
-	if s == "SYSTEM" {
+	if strings.EqualFold(s, "SYSTEM") {
 		// TODO: Support global time_zone variable, it should be set to global time_zone value.
 		return time.Local, nil
 	}
