@@ -684,12 +684,12 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 		}
 
 		handleRange.startHandle = nextHandle
-		finishTask := false
-		// if nextHandle is math.Int64, we can only use handleOutOfRange to indicates the nexHandle is handled.
+		// If nextHandle is math.Int64, we can only use handleOutOfRange to indicate the nextHandle is handled.
 		if handleOutOfRange && nextHandle == handleRange.endHandle {
 			break
 		}
 
+		finishTask := false
 		if handleRange.endIncluded {
 			finishTask = handleRange.startHandle > handleRange.endHandle
 		} else {
