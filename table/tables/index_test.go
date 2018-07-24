@@ -210,10 +210,15 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 				ID:   2,
 				Name: model.NewCIStr("test"),
 				Columns: []*model.IndexColumn{
-					{Tp: &types.FieldType{}},
-					{Tp: &types.FieldType{}},
+					{Offset: 1},
+					{Offset: 2},
 				},
 			},
+		},
+		Columns: []*model.ColumnInfo{
+			{Offset: 0},
+			{Offset: 1},
+			{Offset: 2},
 		},
 	}
 	index := tables.NewIndex(tblInfo, tblInfo.Indices[0])
