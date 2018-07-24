@@ -124,7 +124,6 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 			Name:   col.Name,
 			Offset: col.Offset,
 			Length: ic.Length,
-			Tp:     &col.FieldType,
 		})
 	}
 
@@ -490,7 +489,8 @@ type addIndexResult struct {
 }
 
 func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.Table, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
-	index := tables.NewIndex(t.Meta().ID, indexInfo)
+	tblInfo := t.Meta()
+	index := tables.NewIndex(tblInfo.ID, tblInfo, indexInfo)
 	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,

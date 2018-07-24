@@ -140,7 +140,7 @@ func (s *testDistsqlSuite) TestIndexScanToProto(c *C) {
 		Name:  name,
 		State: model.StatePublic,
 		Columns: []*model.IndexColumn{
-			{Tp: tp, Name: name, Length: types.UnspecifiedLength},
+			{Length: types.UnspecifiedLength},
 		},
 	}
 	p := new(PhysicalIndexScan)
