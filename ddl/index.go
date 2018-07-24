@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -586,6 +587,9 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 			return true, nil
 		})
 
+	if len(w.idxRecords) == 0 {
+		handleOutOfRange = true
+	}
 	log.Debugf("[ddl] txn %v fetches handle info %v, takes time %v", txn.StartTS(), taskRange, time.Since(startTime))
 	return w.idxRecords, handleOutOfRange, errors.Trace(err)
 }
@@ -640,9 +644,12 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 			addedCount++
 		}
 
-		if handleOutOfRange || len(idxRecords) == 0 {
-			nextHandle = handleRange.endHandle
-			handleOutOfRange = true
+		if handleOutOfRange {
+			if handleRange.endIncluded && handleRange.endHandle != math.MaxInt64 {
+				nextHandle = handleRange.endHandle + 1
+			} else {
+				nextHandle = handleRange.endHandle
+			}
 		} else {
 			nextHandle = idxRecords[len(idxRecords)-1].handle + 1
 		}
@@ -684,24 +691,17 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 		}
 
 		handleRange.startHandle = nextHandle
-		// If nextHandle is math.Int64, we can only use handleOutOfRange to indicate the nextHandle is handled.
-		if handleOutOfRange && nextHandle == handleRange.endHandle {
-			break
-		}
-
-		finishTask := false
-		if handleRange.endIncluded {
-			finishTask = handleRange.startHandle > handleRange.endHandle
-		} else {
-			finishTask = handleRange.startHandle >= handleRange.endHandle
-		}
-
-		if finishTask {
+		// handleOutOfRange means we added all indices in the range from startHandle to endHandle.
+		if handleOutOfRange {
 			break
 		}
 	}
-	log.Infof("[ddl-reorg] worker(%v), finish region ranges [%v,%v) addedCount:%v, scanCount:%v, nextHandle:%v, elapsed time(s):%v",
-		w.id, task.startHandle, task.endHandle, result.addedCount, result.scanCount, result.nextHandle, time.Since(startTime).Seconds())
+	rightParenthesis := ")"
+	if task.endIncluded {
+		rightParenthesis = "]"
+	}
+	log.Infof("[ddl-reorg] worker(%v), finish region ranges [%v,%v%s, addedCount:%v, scanCount:%v, nextHandle:%v, elapsed time(s):%v",
+		w.id, task.startHandle, task.endHandle, rightParenthesis, result.addedCount, result.scanCount, result.nextHandle, time.Since(startTime).Seconds())
 
 	return result
 }
