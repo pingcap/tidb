@@ -429,6 +429,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				continue
 			}
 			newCol := *col
+			fb = fb.decodeIntValues()
 			newCol.Histogram = *UpdateHistogram(&col.Histogram, fb)
 			newTblStats.Columns[fb.hist.ID] = &newCol
 		}

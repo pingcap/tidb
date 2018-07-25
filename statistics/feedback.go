@@ -131,6 +131,26 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 	return ranges, nil
 }
 
+func (q *QueryFeedback) decodeIntValues() *QueryFeedback {
+	nq := &QueryFeedback{hist: q.hist}
+	nq.feedback = make([]feedback, 0, len(q.feedback))
+	for _, fb := range q.feedback {
+		_, lowInt, err := codec.DecodeInt(fb.lower.GetBytes())
+		if err != nil {
+			log.Debugf("decode int value failed: ", err)
+			continue
+		}
+		_, highInt, err := codec.DecodeInt(fb.upper.GetBytes())
+		if err != nil {
+			log.Debugf("decode int value failed: ", err)
+			continue
+		}
+		low, high := types.NewIntDatum(lowInt), types.NewIntDatum(highInt)
+		nq.feedback = append(nq.feedback, feedback{lower: &low, upper: &high, count: fb.count})
+	}
+	return nq
+}
+
 // StoreRanges stores the ranges for update.
 func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
 	q.feedback = make([]feedback, 0, len(ranges))
