@@ -97,7 +97,7 @@ func (e *firstRow4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalInt(sctx, row)
+		input, isNull, err := e.args[0].EvalInt(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -136,7 +136,7 @@ func (e *firstRow4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, row)
+		input, isNull, err := e.args[0].EvalReal(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -175,7 +175,7 @@ func (e *firstRow4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, row)
+		input, isNull, err := e.args[0].EvalReal(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -214,7 +214,7 @@ func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalString(sctx, row)
+		input, isNull, err := e.args[0].EvalString(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -253,7 +253,7 @@ func (e *firstRow4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalTime(sctx, row)
+		input, isNull, err := e.args[0].EvalTime(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -292,7 +292,7 @@ func (e *firstRow4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDuration(sctx, row)
+		input, isNull, err := e.args[0].EvalDuration(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -331,7 +331,7 @@ func (e *firstRow4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalJSON(sctx, row)
+		input, isNull, err := e.args[0].EvalJSON(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -370,7 +370,7 @@ func (e *firstRow4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
+		input, isNull, err := e.args[0].EvalDecimal(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}
