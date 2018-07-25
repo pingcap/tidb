@@ -1105,8 +1105,11 @@ func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Consta
 			if err != nil {
 				return con, false
 			}
-			if c, err = doubleDatum.CompareDatum(sc, &intDatum); c != 0 || err != nil {
+			if c, err = doubleDatum.CompareDatum(sc, &intDatum); err != nil {
 				return con, false
+			}
+			if c != 0 {
+				return con, true
 			}
 			return &Constant{
 				Value:        intDatum,
