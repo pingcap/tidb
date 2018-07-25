@@ -967,7 +967,8 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) 
 	pid, err := findNextPartitionID(reorg.PartitionID, pi.Definitions)
 	if err != nil {
 		// Fatal error, should not run here.
-		return false, errors.Errorf("wrong reorgInfo, partition id %d not found", reorg.PartitionID)
+		log.Error("[ddl-reorg] update reorg fail, %v error stack: %s", t, errors.ErrorStack(err))
+		return false, errors.Trace(err)
 	}
 	if pid == 0 {
 		// Next partition does not exist, all the job done.
@@ -994,7 +995,7 @@ func findNextPartitionID(partitionID int64, defs []model.PartitionDefinition) (i
 			return defs[i+1].ID, nil
 		}
 	}
-	return 0, errors.New("partition id not found")
+	return 0, errors.Errorf("partition id not found %d", partitionID)
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
