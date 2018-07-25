@@ -556,12 +556,8 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *QueryFeedback, hist *Histogram, cms *CMSketch) error {
 	hist = UpdateHistogram(hist, q)
 	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, 0)
-	if err != nil {
-		metrics.UpdateStatsCounter.WithLabelValues(metrics.LblError).Inc()
-		return errors.Trace(err)
-	}
-	metrics.UpdateStatsCounter.WithLabelValues(metrics.LblOK).Inc()
-	return nil
+	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
+	return errors.Trace(err)
 }
 
 const (
