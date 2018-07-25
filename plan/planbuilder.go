@@ -202,8 +202,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 		}
 		p.Exprs = append(p.Exprs, expr)
 		schema.Append(&expression.Column{
-			FromID:   p.id,
-			Position: schema.Len() + 1,
+			Position: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  expr.GetType(),
 		})
 	}
@@ -404,8 +403,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 			if idxCol.Name.L == col.Name.L {
 				columns = append(columns, col)
 				schema.Append(&expression.Column{
-					FromID:   id,
-					Position: schema.Len() + 1,
+					Position: b.ctx.GetSessionVars().AllocPlanColumnID(),
 					RetType:  &col.FieldType,
 				})
 			}
@@ -478,9 +476,9 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		ret = p
 	case ast.AdminCheckIndexRange:
 		p := &CheckIndexRange{Table: as.Tables[0], IndexName: as.Index, HandleRanges: as.HandleRanges}
-		schema, err := buildCheckIndexSchema(as.Tables[0], as.Index)
-		if err != nil {
-			b.err = errors.Trace(err)
+		schema := b.buildCheckIndexSchema(as.Tables[0], as.Index)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			break
 		}
 		p.SetSchema(schema)
@@ -495,7 +493,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	return ret
 }
 
-func buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {
+func (b *planBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string) *expression.Schema {
 	schema := expression.NewSchema()
 	indexName = strings.ToLower(indexName)
 	indicesInfo := tn.TableInfo.Indices
@@ -504,31 +502,30 @@ func buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Sch
 		if idxInfo.Name.L != indexName {
 			continue
 		}
-		for i, idxCol := range idxInfo.Columns {
+		for _, idxCol := range idxInfo.Columns {
 			col := cols[idxCol.Offset]
 			schema.Append(&expression.Column{
-				FromID:   1,
 				ColName:  idxCol.Name,
 				TblName:  tn.Name,
 				DBName:   tn.Schema,
 				RetType:  &col.FieldType,
-				Position: i,
+				Position: b.ctx.GetSessionVars().AllocPlanColumnID(),
 				ID:       col.ID})
 		}
 		schema.Append(&expression.Column{
-			FromID:   1,
 			ColName:  model.NewCIStr("extra_handle"),
 			TblName:  tn.Name,
 			DBName:   tn.Schema,
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			Position: len(idxInfo.Columns),
+			Position: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:       -1,
 		})
 	}
 	if schema.Len() == 0 {
-		return nil, errors.Errorf("index %s not found", indexName)
+		b.err = errors.Errorf("index %s not found", indexName)
+		return nil
 	}
-	return schema, nil
+	return schema
 }
 
 // getColsInfo returns the info of index columns, normal columns and primary key.
@@ -745,8 +742,8 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		}
 		p.SetSchema(buildShowSchema(show))
 	}
-	for i, col := range p.schema.Columns {
-		col.Position = i
+	for _, col := range p.schema.Columns {
+		col.Position = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(p.schema)
@@ -902,7 +899,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	}
 	tableInfo := tn.TableInfo
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
-	schema := expression.TableInfo2SchemaWithDBName(tn.Schema, tableInfo)
+	schema := expression.TableInfo2SchemaWithDBName(b.ctx, tn.Schema, tableInfo)
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can't get table %s.", tableInfo.Name.O)
@@ -1117,7 +1114,7 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {
 		b.err = infoschema.ErrTableNotExists.GenByArgs(db, tableInfo.Name.O)
 		return nil
 	}
-	schema := expression.TableInfo2Schema(tableInfo)
+	schema := expression.TableInfo2Schema(b.ctx, tableInfo)
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
 	p.GenCols = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)

@@ -14,9 +14,11 @@
 package expression
 
 import (
+	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -27,7 +29,38 @@ import (
 
 var _ = Suite(&testEvalSuite{})
 
-type testEvalSuite struct{}
+type testEvalSuite struct {
+	colID int
+}
+
+func (s *testEvalSuite) SetUpSuite(c *C) {
+	s.colID = 0
+}
+
+func (s *testEvalSuite) allocColID() int {
+	s.colID++
+	return s.colID
+}
+
+// generateSchema will generate a schema for test. Used only in this file.
+func (s *testEvalSuite) generateSchema(colCount int, dbName, tblName string) *Schema {
+	cols := make([]*Column, 0, colCount)
+	for i := 0; i < colCount; i++ {
+		cols = append(cols, &Column{
+			Position: s.allocColID(),
+			DBName:   model.NewCIStr(dbName),
+			TblName:  model.NewCIStr(tblName),
+			ColName:  model.NewCIStr(fmt.Sprintf("C%v", i)),
+		})
+		if i >= 2 {
+			cols[i].DBName = model.NewCIStr("")
+		}
+		if i >= 3 {
+			cols[i].TblName = model.NewCIStr("")
+		}
+	}
+	return NewSchema(cols...)
+}
 
 // TestEval test expr.Eval().
 // TODO: add more tests.
