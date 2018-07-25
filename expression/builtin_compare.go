@@ -1024,7 +1024,7 @@ func isTemporalColumn(expr Expression) bool {
 }
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
-func tryToConvertConstantInt(ctx sessionctx.Context, isUnsigned bool, con *Constant) (_ *Constant, isOverflow bool) {
+func tryToConvertConstantInt(ctx sessionctx.Context, isUnsigned bool, con *Constant) (_ *Constant, isAlwaysFalse bool) {
 	if con.GetType().EvalType() == types.ETInt {
 		return con, false
 	}
@@ -1048,8 +1048,8 @@ func tryToConvertConstantInt(ctx sessionctx.Context, isUnsigned bool, con *Const
 	}, false
 }
 
-// RefineComparedConstant changes the constant argument, type of which is not int, to it's ceiling or flooring result by the given op.
-// isAlwaysFalse indicates whether int column <cmp> `con` is definite false.
+// RefineComparedConstant changes an non-integer constant argument to its ceiling or floor result by the given op.
+// isAlwaysFalse indicates whether the int column "con" is false.
 func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Constant, op opcode.Op) (_ *Constant, isAlwaysFalse bool) {
 	dt, err := con.Eval(nil)
 	if err != nil {
@@ -1095,9 +1095,6 @@ func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Consta
 		//   1. "integer  =  1.1" is definite false.
 		//   2. "integer <=> 1.1" is definite false.
 		case types.ETReal, types.ETDecimal:
-			// We set isOverFlow as true here does not indicate this constant overflows,
-			// but indicate that the compare function should be false.
-
 			return con, true
 		case types.ETString:
 			// We try to convert the string constant to double,
@@ -1108,19 +1105,14 @@ func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Consta
 			if err != nil {
 				return con, false
 			}
-			if c, err = doubleDatum.CompareDatum(sc, &intDatum); err != nil {
+			if c, err = doubleDatum.CompareDatum(sc, &intDatum); c != 0 || err != nil {
 				return con, false
 			}
-			switch c {
-			case 0:
-				return &Constant{
-					Value:        intDatum,
-					RetType:      intFieldType,
-					DeferredExpr: con.DeferredExpr,
-				}, false
-			default:
-				return con, true
-			}
+			return &Constant{
+				Value:        intDatum,
+				RetType:      intFieldType,
+				DeferredExpr: con.DeferredExpr,
+			}, false
 		}
 	}
 	return con, false
