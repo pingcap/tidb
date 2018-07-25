@@ -551,27 +551,36 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	return idxRecord, nil
 }
 
-func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, handleOutOfRange bool) (nextHandle int64) {
-	nextHandle = taskRange.startHandle
-	if handleOutOfRange {
-		if taskRange.endIncluded && taskRange.endHandle != math.MaxInt64 {
-			nextHandle = taskRange.endHandle + 1
-		} else {
-			nextHandle = taskRange.endHandle
-		}
-	} else {
-		nextHandle = w.idxRecords[len(w.idxRecords)-1].handle + 1
+func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) (nextHandle int64) {
+	if !taskDone {
+		// The task is not done. So we need to pick the last processed entry's handle and plus one.
+		return w.idxRecords[len(w.idxRecords)-1].handle + 1
 	}
-	return nextHandle
+
+	// The task is done. So we need to choose a handle out side this range.
+	// There are some corner cases should be considered:
+	// - The end of task range is MaxInt64.
+	// - The end of the task is excluded in the range.
+	if taskRange.endHandle == math.MaxInt64 || !taskRange.endIncluded {
+		return taskRange.endHandle
+	}
+
+	return taskRange.endHandle + 1
 }
 
+// fetchRowColVals fetch w.batchCnt count rows that need to backfill indices, and build the corresponding indexRecord slice.
+// fetchRowColVals returns:
+// 1. The corresponding indexRecord slice.
+// 2. Next handle of entry that we need to process.
+// 3. Boolean indicates whether the task is done.
+// 4. error occurs in fetchRowColVals. nil if no error occurs.
 func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*indexRecord, int64, bool, error) {
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 
-	// handleOutOfRange means that the added handle is out of taskRange.endHandle.
-	handleOutOfRange := false
+	// taskDone means that the added handle is out of taskRange.endHandle.
+	taskDone := false
 	oprStartTime := time.Now()
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
@@ -580,12 +589,12 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 			oprStartTime = oprEndTime
 
 			if !taskRange.endIncluded {
-				handleOutOfRange = handle >= taskRange.endHandle
+				taskDone = handle >= taskRange.endHandle
 			} else {
-				handleOutOfRange = handle > taskRange.endHandle
+				taskDone = handle > taskRange.endHandle
 			}
 
-			if handleOutOfRange || len(w.idxRecords) >= w.batchCnt {
+			if taskDone || len(w.idxRecords) >= w.batchCnt {
 				return false, nil
 			}
 
@@ -597,18 +606,18 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 			w.idxRecords = append(w.idxRecords, idxRecord)
 			if handle == taskRange.endHandle {
 				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
-				handleOutOfRange = true
+				taskDone = true
 				return false, nil
 			}
 			return true, nil
 		})
 
 	if len(w.idxRecords) == 0 {
-		handleOutOfRange = true
+		taskDone = true
 	}
 
 	log.Debugf("[ddl] txn %v fetches handle info %v, takes time %v", txn.StartTS(), taskRange, time.Since(startTime))
-	return w.idxRecords, w.getNextHandle(taskRange, handleOutOfRange), handleOutOfRange, errors.Trace(err)
+	return w.idxRecords, w.getNextHandle(taskRange, taskDone), taskDone, errors.Trace(err)
 }
 
 func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
@@ -625,7 +634,7 @@ func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
-func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, handleOutOfRange bool, addedCount, scanCount int, errInTxn error) {
+func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, taskDone bool, addedCount, scanCount int, errInTxn error) {
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		addedCount = 0
@@ -635,7 +644,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 			idxRecords []*indexRecord
 			err        error
 		)
-		idxRecords, nextHandle, handleOutOfRange, err = w.fetchRowColVals(txn, handleRange)
+		idxRecords, nextHandle, taskDone, err = w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -676,7 +685,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	startTime := time.Now()
 	for {
 		addedCount := 0
-		nextHandle, handleOutOfRange, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
+		nextHandle, taskDone, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
 		if err == nil {
 			// Because reorgIndexTask may run a long time,
 			// we should check whether this ddl job is still runnable.
@@ -699,8 +708,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 		}
 
 		handleRange.startHandle = nextHandle
-		// handleOutOfRange means we added all indices in the range from startHandle to endHandle.
-		if handleOutOfRange {
+		if taskDone {
 			break
 		}
 	}
