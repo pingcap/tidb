@@ -73,7 +73,7 @@ func (e *sum4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 func (e *sum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4SumFloat64)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, row)
+		input, isNull, err := e.args[0].EvalReal(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -119,7 +119,7 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	p := (*partialResult4SumDecimal)(pr)
 	newSum := new(types.MyDecimal)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
+		input, isNull, err := e.args[0].EvalDecimal(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -161,7 +161,7 @@ func (e *sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4SumDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, row)
+		input, isNull, err := e.args[0].EvalReal(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -210,7 +210,7 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	var newSum types.MyDecimal
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
+		input, isNull, err := e.args[0].EvalDecimal(sctx, &row)
 		if err != nil {
 			return errors.Trace(err)
 		}

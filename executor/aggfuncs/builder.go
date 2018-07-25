@@ -137,8 +137,8 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	case aggregation.DedupMode:
 		return nil // not implemented yet.
 
-		// Build avg functions which consume the original data and update their
-		// partial results.
+	// Build avg functions which consume the original data and update their
+	// partial results.
 	case aggregation.CompleteMode, aggregation.Partial1Mode:
 		switch aggFuncDesc.Args[0].GetType().Tp {
 		case mysql.TypeNewDecimal:
@@ -153,8 +153,8 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			return &avgOriginal4Float64{baseAvgFloat64{base}}
 		}
 
-		// Build avg functions which consume the partial result of other avg
-		// functions and update their partial results.
+	// Build avg functions which consume the partial result of other avg
+	// functions and update their partial results.
 	case aggregation.Partial2Mode, aggregation.FinalMode:
 		switch aggFuncDesc.Args[1].GetType().Tp {
 		case mysql.TypeNewDecimal:
