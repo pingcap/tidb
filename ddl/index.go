@@ -551,13 +551,28 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	return idxRecord, nil
 }
 
+func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, handleOutOfRange bool) (nextHandle int64) {
+	nextHandle = taskRange.startHandle
+	if handleOutOfRange {
+		if taskRange.endIncluded && taskRange.endHandle != math.MaxInt64 {
+			nextHandle = taskRange.endHandle + 1
+		} else {
+			nextHandle = taskRange.endHandle
+		}
+	} else {
+		nextHandle = w.idxRecords[len(w.idxRecords)-1].handle + 1
+	}
+	return nextHandle
+}
+
 func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*indexRecord, int64, bool, error) {
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
+
+	// handleOutOfRange means that the added handle is out of taskRange.endHandle.
 	handleOutOfRange := false
 	oprStartTime := time.Now()
-	nextHandle := taskRange.startHandle
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
@@ -592,18 +607,8 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 		handleOutOfRange = true
 	}
 
-	if handleOutOfRange {
-		if taskRange.endIncluded && taskRange.endHandle != math.MaxInt64 {
-			nextHandle = taskRange.endHandle + 1
-		} else {
-			nextHandle = taskRange.endHandle
-		}
-	} else {
-		nextHandle = w.idxRecords[len(w.idxRecords)-1].handle + 1
-	}
-
 	log.Debugf("[ddl] txn %v fetches handle info %v, takes time %v", txn.StartTS(), taskRange, time.Since(startTime))
-	return w.idxRecords, nextHandle, handleOutOfRange, errors.Trace(err)
+	return w.idxRecords, w.getNextHandle(taskRange, handleOutOfRange), handleOutOfRange, errors.Trace(err)
 }
 
 func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
