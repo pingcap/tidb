@@ -94,6 +94,8 @@ load stats 's/tpch_stats/customer.json';
 load stats 's/tpch_stats/orders.json';
 load stats 's/tpch_stats/lineitem.json';
 
+set @@session.tidb_opt_agg_push_down = 0;
+
 /*
     Q1 Pricing Summary Report
     This query reports the amount of business that was billed, shipped, and returned.

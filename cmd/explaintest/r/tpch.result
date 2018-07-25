@@ -84,6 +84,7 @@ load stats 's/tpch_stats/partsupp.json';
 load stats 's/tpch_stats/customer.json';
 load stats 's/tpch_stats/orders.json';
 load stats 's/tpch_stats/lineitem.json';
+set @@session.tidb_opt_agg_push_down = 0;
 /*
 Q1 Pricing Summary Report
 This query reports the amount of business that was billed, shipped, and returned.
@@ -122,7 +123,7 @@ Sort_6	2.94	root	tpch.lineitem.l_returnflag:asc, tpch.lineitem.l_linestatus:asc
 └─Projection_8	2.94	root	tpch.lineitem.l_returnflag, tpch.lineitem.l_linestatus, 3_col_0, 3_col_1, 3_col_2, 3_col_3, 3_col_4, 3_col_5, 3_col_6, 3_col_7
   └─HashAgg_14	2.94	root	group by:col_13, col_14, funcs:sum(col_0), sum(col_1), sum(col_2), sum(col_3), avg(col_4, col_5), avg(col_6, col_7), avg(col_8, col_9), count(col_10), firstrow(col_11), firstrow(col_12)
     └─TableReader_15	2.94	root	data:HashAgg_9
-      └─HashAgg_9	2.94	cop	group by:tpch.lineitem.l_returnflag, tpch.lineitem.l_linestatus, funcs:sum(tpch.lineitem.l_quantity), sum(tpch.lineitem.l_extendedprice), sum(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))), sum(mul(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), plus(1, tpch.lineitem.l_tax))), avg(tpch.lineitem.l_quantity), avg(tpch.lineitem.l_extendedprice), avg(tpch.lineitem.l_discount), count(1), firstrow(tpch.lineitem.l_returnflag), firstrow(tpch.lineitem.l_linestatus)
+      └─HashAgg_9	2.94	cop	group by:tpch.lineitem.l_linestatus, tpch.lineitem.l_returnflag, funcs:sum(tpch.lineitem.l_quantity), sum(tpch.lineitem.l_extendedprice), sum(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))), sum(mul(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)), plus(1, tpch.lineitem.l_tax))), avg(tpch.lineitem.l_quantity), avg(tpch.lineitem.l_extendedprice), avg(tpch.lineitem.l_discount), count(1), firstrow(tpch.lineitem.l_returnflag), firstrow(tpch.lineitem.l_linestatus)
         └─Selection_13	293683189.00	cop	le(tpch.lineitem.l_shipdate, 1998-08-15)
           └─TableScan_12	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
 /*
@@ -389,7 +390,7 @@ id	count	task	operator info
 StreamAgg_20	1.00	root	funcs:sum(col_0)
 └─TableReader_21	1.00	root	data:StreamAgg_9
   └─StreamAgg_9	1.00	cop	funcs:sum(mul(tpch.lineitem.l_extendedprice, tpch.lineitem.l_discount))
-    └─Selection_19	3713857.91	cop	ge(tpch.lineitem.l_shipdate, 1994-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1995-01-01), ge(tpch.lineitem.l_discount, 0.05), le(tpch.lineitem.l_discount, 0.07), lt(tpch.lineitem.l_quantity, 24)
+    └─Selection_19	3713857.91	cop	ge(tpch.lineitem.l_discount, 0.05), ge(tpch.lineitem.l_shipdate, 1994-01-01 00:00:00.000000), le(tpch.lineitem.l_discount, 0.07), lt(tpch.lineitem.l_quantity, 24), lt(tpch.lineitem.l_shipdate, 1995-01-01)
       └─TableScan_18	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
 /*
 Q7 Volume Shipping Query
@@ -444,7 +445,7 @@ l_year;
 id	count	task	operator info
 Sort_22	768.91	root	shipping.supp_nation:asc, shipping.cust_nation:asc, shipping.l_year:asc
 └─Projection_24	768.91	root	shipping.supp_nation, shipping.cust_nation, shipping.l_year, 14_col_0
-  └─HashAgg_27	768.91	root	group by:shipping.supp_nation, shipping.cust_nation, shipping.l_year, funcs:sum(shipping.volume), firstrow(shipping.supp_nation), firstrow(shipping.cust_nation), firstrow(shipping.l_year)
+  └─HashAgg_27	768.91	root	group by:shipping.cust_nation, shipping.l_year, shipping.supp_nation, funcs:sum(shipping.volume), firstrow(shipping.supp_nation), firstrow(shipping.cust_nation), firstrow(shipping.l_year)
     └─Projection_28	91321768.29	root	n1.n_name, n2.n_name, extract("YEAR", tpch.lineitem.l_shipdate), mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))
       └─HashLeftJoin_32	91321768.29	root	inner join, inner:TableReader_80, equal:[eq(tpch.customer.c_nationkey, n2.n_nationkey)], other cond:or(and(eq(n1.n_name, "JAPAN"), eq(n2.n_name, "INDIA")), and(eq(n1.n_name, "INDIA"), eq(n2.n_name, "JAPAN")))
         ├─HashLeftJoin_37	91321768.29	root	inner join, inner:TableReader_78, equal:[eq(tpch.orders.o_custkey, tpch.customer.c_custkey)]
@@ -657,7 +658,7 @@ limit 20;
 id	count	task	operator info
 Projection_17	20.00	root	tpch.customer.c_custkey, tpch.customer.c_name, 9_col_0, tpch.customer.c_acctbal, tpch.nation.n_name, tpch.customer.c_address, tpch.customer.c_phone, tpch.customer.c_comment
 └─TopN_20	20.00	root	9_col_0:desc, offset:0, count:20
-  └─HashAgg_26	7500000.00	root	group by:tpch.customer.c_custkey, tpch.customer.c_name, tpch.customer.c_acctbal, tpch.customer.c_phone, tpch.nation.n_name, tpch.customer.c_address, tpch.customer.c_comment, funcs:sum(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))), firstrow(tpch.customer.c_custkey), firstrow(tpch.customer.c_name), firstrow(tpch.customer.c_address), firstrow(tpch.customer.c_phone), firstrow(tpch.customer.c_acctbal), firstrow(tpch.customer.c_comment), firstrow(tpch.nation.n_name)
+  └─HashAgg_26	7500000.00	root	group by:tpch.customer.c_acctbal, tpch.customer.c_address, tpch.customer.c_comment, tpch.customer.c_custkey, tpch.customer.c_name, tpch.customer.c_phone, tpch.nation.n_name, funcs:sum(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))), firstrow(tpch.customer.c_custkey), firstrow(tpch.customer.c_name), firstrow(tpch.customer.c_address), firstrow(tpch.customer.c_phone), firstrow(tpch.customer.c_acctbal), firstrow(tpch.customer.c_comment), firstrow(tpch.nation.n_name)
     └─HashLeftJoin_30	12222016.17	root	inner join, inner:TableReader_66, equal:[eq(tpch.customer.c_nationkey, tpch.nation.n_nationkey)]
       ├─IndexJoin_34	12222016.17	root	inner join, inner:TableReader_33, outer key:tpch.orders.o_custkey, inner key:tpch.customer.c_custkey
       │ ├─IndexJoin_42	12222016.17	root	inner join, inner:IndexLookUp_41, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey
@@ -766,7 +767,7 @@ Sort_9	1.00	root	tpch.lineitem.l_shipmode:asc
   └─HashAgg_14	1.00	root	group by:tpch.lineitem.l_shipmode, funcs:sum(case(or(eq(tpch.orders.o_orderpriority, "1-URGENT"), eq(tpch.orders.o_orderpriority, "2-HIGH")), 1, 0)), sum(case(and(ne(tpch.orders.o_orderpriority, "1-URGENT"), ne(tpch.orders.o_orderpriority, "2-HIGH")), 1, 0)), firstrow(tpch.lineitem.l_shipmode)
     └─IndexJoin_18	10023369.01	root	inner join, inner:TableReader_17, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey
       ├─TableReader_35	10023369.01	root	data:Selection_34
-      │ └─Selection_34	10023369.01	cop	in(tpch.lineitem.l_shipmode, "RAIL", "FOB"), lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate), lt(tpch.lineitem.l_shipdate, tpch.lineitem.l_commitdate), ge(tpch.lineitem.l_receiptdate, 1997-01-01 00:00:00.000000), lt(tpch.lineitem.l_receiptdate, 1998-01-01)
+      │ └─Selection_34	10023369.01	cop	ge(tpch.lineitem.l_receiptdate, 1997-01-01 00:00:00.000000), in(tpch.lineitem.l_shipmode, "RAIL", "FOB"), lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate), lt(tpch.lineitem.l_receiptdate, 1998-01-01), lt(tpch.lineitem.l_shipdate, tpch.lineitem.l_commitdate)
       │   └─TableScan_33	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
       └─TableReader_17	1.00	root	data:TableScan_16
         └─TableScan_16	1.00	cop	table:orders, range: decided by [tpch.lineitem.l_orderkey], keep order:false
@@ -922,11 +923,11 @@ p_size;
 id	count	task	operator info
 Sort_13	14.41	root	supplier_cnt:desc, tpch.part.p_brand:asc, tpch.part.p_type:asc, tpch.part.p_size:asc
 └─Projection_14	14.41	root	tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size, 9_col_0
-  └─HashAgg_17	14.41	root	group by:tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size, funcs:count(distinct tpch.partsupp.ps_suppkey), firstrow(tpch.part.p_brand), firstrow(tpch.part.p_type), firstrow(tpch.part.p_size)
+  └─HashAgg_17	14.41	root	group by:tpch.part.p_brand, tpch.part.p_size, tpch.part.p_type, funcs:count(distinct tpch.partsupp.ps_suppkey), firstrow(tpch.part.p_brand), firstrow(tpch.part.p_type), firstrow(tpch.part.p_size)
     └─HashLeftJoin_22	3863988.24	root	anti semi join, inner:TableReader_46, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
       ├─IndexJoin_26	4829985.30	root	inner join, inner:IndexReader_25, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
       │ ├─TableReader_41	1200618.43	root	data:Selection_40
-      │ │ └─Selection_40	1200618.43	cop	ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92)), in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39)
+      │ │ └─Selection_40	1200618.43	cop	in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39), ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92))
       │ │   └─TableScan_39	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
       │ └─IndexReader_25	1.00	root	index:IndexScan_24
       │   └─IndexScan_24	1.00	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [tpch.part.p_partkey], keep order:false
@@ -1022,7 +1023,7 @@ limit 100;
 id	count	task	operator info
 Projection_20	100.00	root	tpch.customer.c_name, tpch.customer.c_custkey, tpch.orders.o_orderkey, tpch.orders.o_orderdate, tpch.orders.o_totalprice, 13_col_0
 └─TopN_23	100.00	root	tpch.orders.o_totalprice:desc, tpch.orders.o_orderdate:asc, offset:0, count:100
-  └─HashAgg_26	60000000.00	root	group by:tpch.customer.c_name, tpch.customer.c_custkey, tpch.orders.o_orderkey, tpch.orders.o_orderdate, tpch.orders.o_totalprice, funcs:sum(tpch.lineitem.l_quantity), firstrow(tpch.customer.c_custkey), firstrow(tpch.customer.c_name), firstrow(tpch.orders.o_orderkey), firstrow(tpch.orders.o_totalprice), firstrow(tpch.orders.o_orderdate)
+  └─HashAgg_26	60000000.00	root	group by:tpch.customer.c_custkey, tpch.customer.c_name, tpch.orders.o_orderdate, tpch.orders.o_orderkey, tpch.orders.o_totalprice, funcs:sum(tpch.lineitem.l_quantity), firstrow(tpch.customer.c_custkey), firstrow(tpch.customer.c_name), firstrow(tpch.orders.o_orderkey), firstrow(tpch.orders.o_totalprice), firstrow(tpch.orders.o_orderdate)
     └─HashLeftJoin_27	240004648.80	root	semi join, inner:Selection_55, equal:[eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)]
       ├─IndexJoin_32	300005811.00	root	inner join, inner:IndexLookUp_31, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey
       │ ├─HashRightJoin_48	75000000.00	root	inner join, inner:TableReader_52, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
@@ -1087,7 +1088,7 @@ id	count	task	operator info
 StreamAgg_13	1.00	root	funcs:sum(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount)))
 └─IndexJoin_29	10667730.87	root	inner join, inner:TableReader_28, outer key:tpch.lineitem.l_partkey, inner key:tpch.part.p_partkey, other cond:or(and(and(eq(tpch.part.p_brand, "Brand#52"), in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG")), and(ge(tpch.lineitem.l_quantity, 4), and(le(tpch.lineitem.l_quantity, 14), le(tpch.part.p_size, 5)))), or(and(and(eq(tpch.part.p_brand, "Brand#11"), in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK")), and(ge(tpch.lineitem.l_quantity, 18), and(le(tpch.lineitem.l_quantity, 28), le(tpch.part.p_size, 10)))), and(and(eq(tpch.part.p_brand, "Brand#51"), in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG")), and(ge(tpch.lineitem.l_quantity, 29), and(le(tpch.lineitem.l_quantity, 39), le(tpch.part.p_size, 15))))))
   ├─TableReader_34	10667730.87	root	data:Selection_33
-  │ └─Selection_33	10667730.87	cop	in(tpch.lineitem.l_shipmode, "AIR", "AIR REG"), eq(tpch.lineitem.l_shipinstruct, "DELIVER IN PERSON")
+  │ └─Selection_33	10667730.87	cop	eq(tpch.lineitem.l_shipinstruct, "DELIVER IN PERSON"), in(tpch.lineitem.l_shipmode, "AIR", "AIR REG")
   │   └─TableScan_32	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
   └─TableReader_28	10000000.00	root	data:Selection_27
     └─Selection_27	10000000.00	cop	ge(tpch.part.p_size, 1)

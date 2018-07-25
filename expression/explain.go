@@ -16,6 +16,7 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"sort"
 
 	"github.com/pingcap/tidb/types"
 )
@@ -60,12 +61,26 @@ func (expr *Constant) format(dt types.Datum) string {
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.
-func ExplainExpressionList(exprs []Expression) []byte {
+func ExplainExpressionList(exprs []Expression, needSort bool) []byte {
 	buffer := bytes.NewBufferString("")
-	for i, expr := range exprs {
-		buffer.WriteString(expr.ExplainInfo())
-		if i+1 < len(exprs) {
-			buffer.WriteString(", ")
+	if needSort {
+		exprInfos := make([]string, 0, len(exprs))
+		for _, expr := range exprs {
+			exprInfos = append(exprInfos, expr.ExplainInfo())
+		}
+		sort.Strings(exprInfos)
+		for i, info := range exprInfos {
+			buffer.WriteString(info)
+			if i+1 < len(exprInfos) {
+				buffer.WriteString(", ")
+			}
+		}
+	} else {
+		for i, expr := range exprs {
+			buffer.WriteString(expr.ExplainInfo())
+			if i+1 < len(exprs) {
+				buffer.WriteString(", ")
+			}
 		}
 	}
 	return buffer.Bytes()
