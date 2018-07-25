@@ -620,7 +620,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		},
 		// Test simple insert.
 		{
-			sql:  "insert into t values(0,0,0,0,0,0,0)",
+			sql:  "insert into t (a, b, c, e, f, g) values(0,0,0,0,0,0)",
 			best: "Insert",
 		},
 		// Test dual.
