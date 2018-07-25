@@ -376,7 +376,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 		}
 		aggEvalCtxs := w.getContext(sc, groupKey, w.aggCtxsMap)
 		for i, af := range w.aggFuncs {
-			if err = af.Update(aggEvalCtxs[i], sc, row); err != nil {
+			if err = af.Update(aggEvalCtxs[i], sc, &row); err != nil {
 				return errors.Trace(err)
 			}
 		}
