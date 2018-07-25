@@ -359,7 +359,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		// if errorUpdateReorgHandle && !gofailOnceGuard {
 		//  // only return error once.
 		//	gofailOnceGuard = true
-		// 	return info, errors.New("occur an error when update reorg handle.")
+		// 	return &info, errors.New("occur an error when update reorg handle.")
 		// }
 		err = t.UpdateDDLReorgHandle(job, start, end, pid)
 		if err != nil {
