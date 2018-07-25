@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
@@ -32,9 +33,9 @@ type testEvalSuite struct{}
 // TestEval test expr.Eval().
 // TODO: add more tests.
 func (s *testEvalSuite) TestEval(c *C) {
-	row := types.DatumRow{types.NewDatum(100)}
+	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(100)}).ToRow()
 	fieldTps := make([]*types.FieldType, 1)
-	fieldTps[0] = types.NewFieldType(mysql.TypeDouble)
+	fieldTps[0] = types.NewFieldType(mysql.TypeLonglong)
 	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum

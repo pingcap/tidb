@@ -102,7 +102,11 @@ func (s *Server) ConnectionCount() int {
 }
 
 func (s *Server) getToken() *Token {
-	return s.concurrentLimiter.Get()
+	start := time.Now()
+	tok := s.concurrentLimiter.Get()
+	// Note that data smaller than one microsecond is ignored, because that case can be viewed as non-block.
+	metrics.GetTokenDurationHistogram.Observe(float64(time.Since(start).Nanoseconds() / 1e3))
+	return tok
 }
 
 func (s *Server) releaseToken(token *Token) {

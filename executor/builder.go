@@ -618,6 +618,7 @@ func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 	return e
 }
 
+// buildExplain builds a explain executor. `e.rows` collects final result to `ExplainExec`.
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	e := &ExplainExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -1494,6 +1495,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 	return e, nil
 }
 
+// buildTableReader builds a table reader executor. It first build a no range table reader,
+// and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableReaderExecutor {
 	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
@@ -1580,6 +1583,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 
+	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
+
 	e := &IndexLookUpExecutor{
 		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:             indexReq,
@@ -1589,7 +1594,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		keepOrder:         is.KeepOrder,
 		desc:              is.Desc,
 		tableRequest:      tableReq,
-		columns:           is.Columns,
+		columns:           ts.Columns,
 		indexStreaming:    indexStreaming,
 		tableStreaming:    tableStreaming,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},

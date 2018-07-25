@@ -178,7 +178,7 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 		return
 	}
 
-	if q.hist.tp.Tp == mysql.TypeBlob {
+	if q.hist.isIndexHist() {
 		startKey = tablecodec.CutIndexPrefix(startKey)
 	} else {
 		startKey = tablecodec.CutRowKeyPrefix(startKey)
@@ -539,6 +539,21 @@ func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
 	return buildNewHistogram(h, buckets)
 }
 
+// UpdateCMSketch updates the CMSketch by feedback.
+func UpdateCMSketch(c *CMSketch, feedback *QueryFeedback) *CMSketch {
+	if c == nil {
+		return nil
+	}
+	newCMSketch := c.copy()
+	for _, fb := range feedback.feedback {
+		if bytes.Compare(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) >= 0 {
+			h1, h2 := murmur3.Sum128(fb.lower.GetBytes())
+			newCMSketch.setValue(h1, h2, uint32(fb.count))
+		}
+	}
+	return newCMSketch
+}
+
 func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.tp, len(buckets), h.TotColSize)
 	preCount := int64(0)
@@ -598,7 +613,7 @@ func encodeIndexFeedback(q *QueryFeedback) *queryFeedback {
 func encodeFeedback(q *QueryFeedback) ([]byte, error) {
 	var pb *queryFeedback
 	var err error
-	if q.hist.tp.Tp == mysql.TypeBlob {
+	if q.hist.isIndexHist() {
 		pb = encodeIndexFeedback(q)
 	} else {
 		pb, err = encodePKFeedback(q)
