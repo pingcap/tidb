@@ -602,7 +602,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return b, errors.Trace(err)
+	return b, nil
 }
 
 func appendIntToChunk(val int64, chk *chunk.Chunk, colIdx int, ft *types.FieldType) {

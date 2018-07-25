@@ -216,6 +216,12 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				Count:     int64(hg.totalRowCount()),
 				ErrorRate: errorRate,
 			}
+			break
+		}
+		if col.TotColSize != totColSize {
+			newCol := *col
+			newCol.TotColSize = totColSize
+			col = &newCol
 		}
 		break
 	}
@@ -477,7 +483,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index,
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		selectivity = float64(idx.CMSketch.queryBytes(bytes)) / float64(coll.Count)
+		selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(coll.Count)
 		// use histogram to estimate the range condition
 		if rangePosition != len(ran.LowVal) {
 			rang := ranger.Range{
