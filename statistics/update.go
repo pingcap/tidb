@@ -487,57 +487,60 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	}
 	groupedRows = append(groupedRows, rows[preIdx:])
 
-	q := &QueryFeedback{}
 	for _, rows := range groupedRows {
-		tableID, histID, isIndex = rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
-		table, ok := is.TableByID(tableID)
-		// The table has been deleted.
-		if !ok {
-			if err := h.deleteOutdatedFeedback(tableID, histID, isIndex); err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-		tbl := h.GetTableStats(table.Meta())
-		var cms *CMSketch
-		var hist *Histogram
-		if isIndex == 1 {
-			idx, ok := tbl.Indices[histID]
-			if ok {
-				idxHist := idx.Histogram
-				hist = &idxHist
-				cms = idx.CMSketch.copy()
-			}
-		} else {
-			col, ok := tbl.Columns[histID]
-			if ok {
-				colHist := col.Histogram
-				hist = &colHist
-			}
-		}
-		// The column or index has been deleted.
-		if hist == nil {
-			if err := h.deleteOutdatedFeedback(tableID, histID, isIndex); err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-		for _, row := range rows {
-			err = decodeFeedback(row.GetBytes(3), q, cms)
-			if err != nil {
-				log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
-			}
-		}
-		// Update the NDV of primary key column.
-		if table.Meta().PKIsHandle && isIndex == 0 {
-			hist.NDV = int64(hist.totalRowCount())
-		}
-		err = h.dumpStatsUpdateToKV(tableID, isIndex, q, hist, cms)
-		if err != nil {
+		if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
+}
+
+func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []types.Row) (err error) {
+	tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
+	defer func() {
+		if err == nil {
+			err = errors.Trace(h.deleteOutdatedFeedback(tableID, histID, isIndex))
+		}
+	}()
+	table, ok := is.TableByID(tableID)
+	// The table has been deleted.
+	if !ok {
+		return nil
+	}
+	tbl := h.GetTableStats(table.Meta())
+	var cms *CMSketch
+	var hist *Histogram
+	if isIndex == 1 {
+		idx, ok := tbl.Indices[histID]
+		if ok {
+			idxHist := idx.Histogram
+			hist = &idxHist
+			cms = idx.CMSketch.copy()
+		}
+	} else {
+		col, ok := tbl.Columns[histID]
+		if ok {
+			colHist := col.Histogram
+			hist = &colHist
+		}
+	}
+	// The column or index has been deleted.
+	if hist == nil {
+		return nil
+	}
+	q := &QueryFeedback{}
+	for _, row := range rows {
+		err1 := decodeFeedback(row.GetBytes(3), q, cms)
+		if err1 != nil {
+			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
+		}
+	}
+	// Update the NDV of primary key column.
+	if table.Meta().PKIsHandle && isIndex == 0 {
+		hist.NDV = int64(hist.totalRowCount())
+	}
+	err = h.dumpStatsUpdateToKV(tableID, isIndex, q, hist, cms)
+	return errors.Trace(err)
 }
 
 func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
@@ -550,22 +553,15 @@ func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	return errors.Trace(err)
 }
 
-func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *QueryFeedback, hist *Histogram, cms *CMSketch) (err error) {
-	defer func() {
-		if err != nil {
-			metrics.UpdateStatsCounter.WithLabelValues(metrics.LblError).Inc()
-		} else {
-			metrics.UpdateStatsCounter.WithLabelValues(metrics.LblOK).Inc()
-		}
-	}()
+func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *QueryFeedback, hist *Histogram, cms *CMSketch) error {
 	hist = UpdateHistogram(hist, q)
-	q.feedback = q.feedback[:0]
-	err = h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, 0)
+	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, 0)
 	if err != nil {
+		metrics.UpdateStatsCounter.WithLabelValues(metrics.LblError).Inc()
 		return errors.Trace(err)
 	}
-	err = h.deleteOutdatedFeedback(tableID, hist.ID, isIndex)
-	return errors.Trace(err)
+	metrics.UpdateStatsCounter.WithLabelValues(metrics.LblOK).Inc()
+	return nil
 }
 
 const (
