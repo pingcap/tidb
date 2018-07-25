@@ -28,13 +28,13 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
@@ -580,15 +580,14 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 		if times != 0 {
 			return
 		}
-		var qLen int64
-		var err1 error
+		var qLen int
 		for {
 			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-				m := meta.NewMeta(txn)
-				qLen, err1 = m.DDLJobQueueLen()
+				jobs, err1 := admin.GetDDLJobs(txn)
 				if err1 != nil {
 					return err1
 				}
+				qLen = len(jobs)
 				return nil
 			})
 			if qLen == 2 {
