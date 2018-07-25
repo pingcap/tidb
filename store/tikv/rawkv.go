@@ -346,7 +346,7 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 			ch <- c.doBatchPut(singleBatchBackoffer, batch)
 		})
 	}
-	err = nil
+
 	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
 			cancel()
