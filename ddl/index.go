@@ -554,12 +554,12 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 // getNextHandle gets next handle of entry that we are going to process.
 func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) (nextHandle int64) {
 	if !taskDone {
-		// The task is not done. So we need to pick the last processed entry's handle and plus one.
+		// The task is not done. So we need to pick the last processed entry's handle and add one.
 		return w.idxRecords[len(w.idxRecords)-1].handle + 1
 	}
 
-	// The task is done. So we need to choose a handle out side this range.
-	// There are some corner cases should be considered:
+	// The task is done. So we need to choose a handle outside this range.
+	// Some corner cases should be considered:
 	// - The end of task range is MaxInt64.
 	// - The end of the task is excluded in the range.
 	if taskRange.endHandle == math.MaxInt64 || !taskRange.endIncluded {
