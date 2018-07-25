@@ -921,9 +921,9 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 	return nil, nil
 }
 
-// buildKVRangesIndex build backfilling tasks from [reorgInfo.StartHandle, reorgInfo.EndHandle),
+// buildIndexForReorgInfo build backfilling tasks from [reorgInfo.StartHandle, reorgInfo.EndHandle),
 // and send these tasks to add index workers, till we finish adding the indices.
-func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, job *model.Job, reorgInfo *reorgInfo) error {
+func (w *worker) buildIndexForReorgInfo(t table.Table, workers []*addIndexWorker, job *model.Job, reorgInfo *reorgInfo) error {
 	totalAddedCount := job.GetRowCount()
 
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
@@ -979,7 +979,7 @@ func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgI
 
 	finish := false
 	for !finish {
-		err := w.buildKVRangesIndex(t, idxWorkers, job, reorgInfo)
+		err := w.buildIndexForReorgInfo(t, idxWorkers, job, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1014,7 +1014,7 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) 
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	log.Infof("[ddl] job %v update reorgInfo partition %d range [%d %d]", reorg.Job.ID, pid, start, end)
+	log.Infof("[ddl-reorg] job %v update reorgInfo partition %d range [%d %d]", reorg.Job.ID, pid, start, end)
 	reorg.StartHandle, reorg.EndHandle, reorg.PartitionID = start, end, pid
 	return false, errors.Trace(err)
 }

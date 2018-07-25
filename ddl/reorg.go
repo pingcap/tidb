@@ -300,13 +300,13 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo, part
 var gofailOnceGuard bool
 
 // getTableRange gets the start and end handle of a table (or partition).
-func getTableRange(d *ddlCtx, tblInfo *model.TableInfo, partitionID int64, snapshotVer uint64) (StartHandle, EndHandle int64, err error) {
-	StartHandle = math.MinInt64
-	EndHandle = math.MaxInt64
+func getTableRange(d *ddlCtx, tblInfo *model.TableInfo, partitionID int64, snapshotVer uint64) (startHandle, endHandle int64, err error) {
+	startHandle = math.MinInt64
+	endHandle = math.MaxInt64
 	// Get the start handle of this partition.
 	err = iterateSnapshotRows(d.store, partitionID, snapshotVer, math.MinInt64,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
-			StartHandle = h
+			startHandle = h
 			return false, nil
 		})
 	if err != nil {
@@ -314,31 +314,28 @@ func getTableRange(d *ddlCtx, tblInfo *model.TableInfo, partitionID int64, snaps
 	}
 	var emptyTable bool
 	// Get the end handle of this partition.
-	EndHandle, emptyTable, err = d.GetTableMaxRowID(snapshotVer, tblInfo, partitionID)
+	endHandle, emptyTable, err = d.GetTableMaxRowID(snapshotVer, tblInfo, partitionID)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-	if EndHandle < StartHandle || emptyTable {
-		log.Warnf("[ddl-reorg] get table range %s EndHandle < StartHandle partition %d [%d %d]", tblInfo, partitionID, EndHandle, StartHandle)
-		EndHandle = StartHandle
+	if endHandle < startHandle || emptyTable {
+		log.Warnf("[ddl-reorg] get table range %s endHandle < startHandle partition %d [%d %d]", tblInfo, partitionID, endHandle, startHandle)
+		endHandle = startHandle
 	}
 	return
 }
 
 func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
-	var err error
+	var (
+		err   error
+		start int64 = math.MinInt64
+		end   int64 = math.MaxInt64
+		pid   int64
+		info  reorgInfo
+	)
 
-	info := &reorgInfo{
-		Job: job,
-		d:   d,
-		// init start handle is math.MinInt64
-		StartHandle: math.MinInt64,
-		// init end handle is math.MaxInt64
-		EndHandle: math.MaxInt64,
-		first:     job.SnapshotVer == 0,
-	}
-
-	if info.first {
+	if job.SnapshotVer == 0 {
+		info.first = true
 		// get the current version for reorganization if we don't have
 		var ver kv.Version
 		ver, err = d.store.CurrentVersion()
@@ -347,17 +344,16 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		} else if ver.Ver <= 0 {
 			return nil, errInvalidStoreVer.Gen("invalid storage current version %d", ver.Ver)
 		}
-
 		tblInfo := tbl.Meta()
-		pid := tblInfo.ID
+		pid = tblInfo.ID
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			pid = pi.Definitions[0].ID
 		}
-		start, end, err1 := getTableRange(d, tblInfo, pid, ver.Ver)
-		if err1 != nil {
-			return nil, errors.Trace(err1)
+		start, end, err = getTableRange(d, tblInfo, pid, ver.Ver)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
-		log.Infof("[ddl-reorg] job %v get partition %d range [%d %d]", job.ID, pid, info.StartHandle, info.EndHandle)
+		log.Infof("[ddl-reorg] job %v get partition %d range [%d %d]", job.ID, pid, start, end)
 
 		// gofail: var errorUpdateReorgHandle bool
 		// if errorUpdateReorgHandle && !gofailOnceGuard {
@@ -367,28 +363,23 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		// }
 		err = t.UpdateDDLReorgHandle(job, start, end, pid)
 		if err != nil {
-			return info, errors.Trace(err)
+			return &info, errors.Trace(err)
 		}
 		// Update info should after data persistent.
-		info.StartHandle = start
-		info.EndHandle = end
-		info.PartitionID = pid
-
 		job.SnapshotVer = ver.Ver
 	} else {
-		start, end, pid, err := t.GetDDLReorgHandle(job)
+		start, end, pid, err = t.GetDDLReorgHandle(job)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		info.StartHandle = start
-		info.EndHandle = end
-		info.PartitionID = pid
 	}
-	// tbl set to nil is only in the tests.
-	if tbl == nil {
-		return info, errors.Trace(err)
-	}
-	return info, errors.Trace(err)
+	info.Job = job
+	info.d = d
+	info.StartHandle = start
+	info.EndHandle = end
+	info.PartitionID = pid
+
+	return &info, errors.Trace(err)
 }
 
 func (r *reorgInfo) UpdateHandle(txn kv.Transaction, startHandle, endHandle, partitionID int64) error {

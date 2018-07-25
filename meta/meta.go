@@ -722,11 +722,20 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle, part
 
 // RemoveDDLReorgHandle removes the job reorganization handle.
 func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
-	err := m.txn.HDel(mDDLJobReorgKey, m.jobIDKey(job.ID))
-	return errors.Trace(err)
+	err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID)); err != nil {
+		log.Warn(err)
+	}
+	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobPartitionID(job.ID)); err != nil {
+		log.Warn(err)
+	}
+	return nil
 }
 
-// GetDDLReorgHandle gets the latest processed ddl reorganize position.
+// GetDDLReorgHandle gets the latest processed DDL reorganize position.
 func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, partitionID int64, err error) {
 	startHandle, err = m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID))
 	if err != nil {
@@ -752,7 +761,7 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, partit
 			endHandle = math.MaxInt64
 		}
 		partitionID = job.TableID
-		log.Warn("new TiDB binary running on old TiDB ddl reorg data, partition %v [%v %v]", partitionID, startHandle, endHandle)
+		log.Warnf("new TiDB binary running on old TiDB ddl reorg data, partition %v [%v %v]", partitionID, startHandle, endHandle)
 	}
 	return
 }
