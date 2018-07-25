@@ -507,11 +507,11 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-// GetDDLJob returns the DDL job with index.
+// GetDDLJobByIdx returns the corresponding DDL job by the index.
 // The length of jobListKeys can only be 1 or 0.
 // If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
 // Otherwise, we use m.jobListKey directly.
-func (m *Meta) GetDDLJob(index int64, jobListKeys ...JobListKeyType) (*model.Job, error) {
+func (m *Meta) GetDDLJobByIdx(index int64, jobListKeys ...JobListKeyType) (*model.Job, error) {
 	listKey := m.jobListKey
 	if len(jobListKeys) != 0 {
 		listKey = jobListKeys[0]
@@ -519,7 +519,7 @@ func (m *Meta) GetDDLJob(index int64, jobListKeys ...JobListKeyType) (*model.Job
 
 	startTime := time.Now()
 	job, err := m.getDDLJob(listKey, index)
-	metrics.MetaHistogram.WithLabelValues(metrics.GetDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	metrics.MetaHistogram.WithLabelValues(metrics.GetDDLJobByIdx, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return job, errors.Trace(err)
 }
 
