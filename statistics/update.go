@@ -495,6 +495,8 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	return nil
 }
 
+// handleSingleHistogramUpdate updates the Histogram and CM Sketch using these feedbacks. All the feedbacks for
+// the same index or column are gathered in `rows`.
 func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []types.Row) (err error) {
 	tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
 	defer func() {
