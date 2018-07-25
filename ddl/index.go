@@ -551,6 +551,7 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	return idxRecord, nil
 }
 
+// getNextHandle gets next handle of entry that we are going to process.
 func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) (nextHandle int64) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and plus one.
