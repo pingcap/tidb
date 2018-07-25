@@ -15,6 +15,7 @@ package plan
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -120,4 +121,43 @@ func (s *testDistsqlSuite) TestIndexToProto(c *C) {
 	c.Assert(pIdx.TableId, Equals, int64(1))
 	c.Assert(pIdx.IndexId, Equals, int64(1))
 	c.Assert(pIdx.Unique, Equals, true)
+}
+
+func (s *testDistsqlSuite) TestIndexScanToProto(c *C) {
+	tp := types.NewFieldType(mysql.TypeLong)
+	tp.Flag = 10
+	tp.Collate = "utf8_bin"
+
+	name := model.NewCIStr("a")
+	col := &model.ColumnInfo{
+		ID:        1,
+		Name:      name,
+		State:     model.StatePublic,
+		FieldType: *tp,
+	}
+	idxInfo := &model.IndexInfo{
+		ID:    2,
+		Name:  name,
+		State: model.StatePublic,
+		Columns: []*model.IndexColumn{
+			{Length: types.UnspecifiedLength},
+		},
+	}
+	p := new(PhysicalIndexScan)
+	p.Table = &model.TableInfo{
+		ID:      1,
+		Columns: []*model.ColumnInfo{col},
+		Indices: []*model.IndexInfo{idxInfo},
+	}
+	p.Index = idxInfo
+	p.schema = expression.NewSchema(&expression.Column{
+		ID: model.ExtraHandleID,
+	})
+	pbExec, err := p.ToPB(nil)
+	c.Assert(err, IsNil)
+	idxScan := pbExec.IdxScan
+	pbColumn := idxScan.Columns[0]
+	c.Assert(pbColumn.Tp, Equals, int32(mysql.TypeLonglong))
+	c.Assert(pbColumn.ColumnId, Equals, int64(model.ExtraHandleID))
+	c.Assert(pbColumn.PkHandle, Equals, true)
 }
