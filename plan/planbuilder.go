@@ -1091,6 +1091,8 @@ func (b *planBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 		return
 	}
 
+	// If the value_list and col_list is empty and we have generated column, we can still write to this table.
+	// i.e. insert into t values(); can be executed successfully if t have generated column.
 	if len(insert.Columns) > 0 || len(insert.Lists[0]) > 0 {
 		// If value_list is not empty or the col_list is not empty, length of value_list should be the same with col_list's.
 		if len(insert.Lists[0]) != len(affectedValuesCols) {
@@ -1104,8 +1106,6 @@ func (b *planBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 				return
 			}
 		}
-		// If the value_list and col_list is empty and we have generated column, we can still write to this table.
-		// i.e. insert into t values(); can be executed successfully if t have generated column.
 	}
 
 	totalTableCols := insertPlan.Table.Cols()
