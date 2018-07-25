@@ -197,3 +197,35 @@ func (t *PartitionedTable) RemoveRecord(ctx sessionctx.Context, h int64, r []typ
 	tbl := t.GetPartition(pid)
 	return tbl.RemoveRecord(ctx, h, r)
 }
+
+// UpdateRecord implements table.Table UpdateRecord interface.
+// `touched` means which columns are really modified, used for secondary indices.
+// Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
+func (t *PartitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error {
+	partitionInfo := t.meta.GetPartitionInfo()
+	old, err := t.locatePartition(ctx, partitionInfo, currData)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	new, err := t.locatePartition(ctx, partitionInfo, newData)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// The old and new data locate in different partitions.
+	// Remove record from old partition and add record to new partition.
+	if old != new {
+		err = t.GetPartition(old).RemoveRecord(ctx, h, currData)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		_, err = t.GetPartition(new).AddRecord(ctx, newData, false)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
+	tbl := t.GetPartition(new)
+	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
+}
