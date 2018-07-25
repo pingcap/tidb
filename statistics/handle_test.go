@@ -398,6 +398,7 @@ func (s *testStatsCacheSuite) TestInitStats(c *C) {
 }
 
 func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
 	store, do, err := newStoreWithBootstrap(10 * time.Millisecond)
 	c.Assert(err, IsNil)
 	defer store.Close()
