@@ -329,33 +329,21 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	return
 }
 
-func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (err error) {
+func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) error {
 	if len(delta.ColSize) == 0 {
 		return nil
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	ctx := context.TODO()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.Execute(ctx, "begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = finishTransaction(ctx, exec, err)
-	}()
-	version := h.mu.ctx.Txn().StartTS()
 	values := make([]string, 0, len(delta.ColSize))
 	for histID, deltaColSize := range delta.ColSize {
 		if deltaColSize == 0 {
 			continue
 		}
-		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d, %d)", id, histID, deltaColSize, version))
+		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d)", id, histID, deltaColSize))
 	}
-	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size, version) "+
-		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size), version = values(version)", strings.Join(values, ","))
-	_, err = exec.Execute(ctx, sql)
-	return
+	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
+		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
+	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	return errors.Trace(err)
 }
 
 // DumpStatsFeedbackToKV dumps the stats feedback to KV.
