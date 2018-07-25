@@ -224,7 +224,7 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 
 // getFirstDDLJob gets the first DDL job form DDL queue.
 func (w *worker) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
-	job, err := t.GetDDLJob(0)
+	job, err := t.GetDDLJobByIdx(0)
 	return job, errors.Trace(err)
 }
 
