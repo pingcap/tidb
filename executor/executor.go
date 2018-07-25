@@ -237,7 +237,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobByIdxs(e.ctx.Txn())
+	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -278,7 +278,7 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	jobs, err := admin.GetDDLJobByIdxs(e.ctx.Txn())
+	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
 	if err != nil {
 		return errors.Trace(err)
 	}

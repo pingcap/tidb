@@ -90,7 +90,7 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testSuite) TestGetDDLJobByIdxs(c *C) {
+func (s *testSuite) TestGetDDLJobs(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -104,12 +104,12 @@ func (s *testSuite) TestGetDDLJobByIdxs(c *C) {
 		}
 		err = t.EnQueueDDLJob(jobs[i])
 		c.Assert(err, IsNil)
-		currJobs, err1 := GetDDLJobByIdxs(txn)
+		currJobs, err1 := GetDDLJobs(txn)
 		c.Assert(err1, IsNil)
 		c.Assert(currJobs, HasLen, i+1)
 	}
 
-	currJobs, err := GetDDLJobByIdxs(txn)
+	currJobs, err := GetDDLJobs(txn)
 	c.Assert(err, IsNil)
 	for i, job := range jobs {
 		c.Assert(job.ID, Equals, currJobs[i].ID)
@@ -259,7 +259,7 @@ func (s *testSuite) TestScan(c *C) {
 
 	idxRow1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(10))}
 	idxRow2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20))}
-	kvIndex := tables.NewIndex(tb.Meta().ID, indices[0].Meta())
+	kvIndex := tables.NewIndex(tb.Meta().ID, tb.Meta(), indices[0].Meta())
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	idxRows, nextVals, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)

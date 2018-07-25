@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -69,26 +70,7 @@ func (s *testDDLSuite) TestRunWorker(c *C) {
 	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	testCheckOwner(c, d, false)
 	defer d.Stop()
-	ctx := testNewContext(d)
 
-	dbInfo := testSchemaInfo(c, d, "test")
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionCreateSchema,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{dbInfo},
-	}
-
-	exitCh := make(chan struct{})
-	go func(ch chan struct{}) {
-		err := d.doDDLJob(ctx, job)
-		c.Assert(err, IsNil)
-		close(ch)
-	}(exitCh)
-	// Make sure the DDL job is in the DDL job queue.
-	// The reason for doing it twice is to eliminate the operation in the start function.
-	<-d.ddlJobCh
-	<-d.ddlJobCh
 	// Make sure the DDL worker is nil.
 	worker := d.generalWorker()
 	c.Assert(worker, IsNil)
@@ -97,125 +79,8 @@ func (s *testDDLSuite) TestRunWorker(c *C) {
 	d1 := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	testCheckOwner(c, d1, true)
 	defer d1.Stop()
-	asyncNotify(d1.ddlJobCh)
-	<-exitCh
-}
-
-func (s *testDDLSuite) TestCleanJobs(c *C) {
-	defer testleak.AfterTest(c)()
-	store := testCreateStore(c, "test_clean_jobs")
-	defer store.Close()
-	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
-
-	ctx := testNewContext(d)
-	dbInfo := testSchemaInfo(c, d, "test")
-	testCreateSchema(c, ctx, d, dbInfo)
-	tblInfo := testTableInfo(c, d, "t", 2)
-	testCreateTable(c, ctx, d, dbInfo, tblInfo)
-
-	var failedJobIDs []int64
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddIndex,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-	idxColNames := []*ast.IndexColName{{
-		Column: &ast.ColumnName{Name: model.NewCIStr("c1")},
-		Length: types.UnspecifiedLength}}
-	// Add some adding index jobs to AddIndexJobList.
-	backfillAddIndexJob := func(jobArgs []interface{}) {
-		kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-			var err error
-			t := meta.NewMeta(txn)
-			t.SetJobListKey(meta.AddIndexJobListKey)
-			job.ID, err = t.GenGlobalID()
-			c.Assert(err, IsNil)
-			failedJobIDs = append(failedJobIDs, job.ID)
-			job.Args = jobArgs
-			err = t.EnQueueDDLJob(job)
-			c.Assert(err, IsNil)
-			return nil
-		})
-	}
-
-	// Add a StateNone job.
-	indexName := model.NewCIStr("idx_none")
-	args := []interface{}{false, indexName, idxColNames, nil}
-	backfillAddIndexJob(args)
-	// Add a StateDeleteOnly job.
-	indexName = model.NewCIStr("idx_delete_only")
-	args = []interface{}{false, indexName, idxColNames, nil}
-	backfillAddIndexJob(args)
-	changeJobState := func() {
-		kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
-			t.SetJobListKey(meta.AddIndexJobListKey)
-			lastJobID := int64(len(failedJobIDs) - 1)
-			job, err1 := t.GetDDLJobByIdx(lastJobID)
-			c.Assert(err1, IsNil)
-			_, err1 = d.generalWorker().runDDLJob(d.ddlCtx, t, job)
-			c.Assert(err1, IsNil)
-			_, err1 = updateSchemaVersion(t, job)
-			c.Assert(err1, IsNil)
-			err1 = t.UpdateDDLJob(lastJobID, job, true)
-			c.Assert(err1, IsNil)
-			return nil
-		})
-		err := d.callHookOnChanged(nil)
-		c.Assert(err, IsNil)
-	}
-	changeJobState()
-	// Add a StateWriteReorganization job.
-	indexName = model.NewCIStr("idx_write_reorg")
-	args = []interface{}{false, indexName, idxColNames, nil}
-	backfillAddIndexJob(args)
-	changeJobState() // convert to delete only
-	changeJobState() // convert to write only
-	changeJobState() // convert to write reorg
-
-	err := d.Stop()
-	c.Assert(err, IsNil)
-	// Make sure shouldCleanJobs is ture.
-	d = testNewDDL(context.Background(), nil, store, nil, nil, testLease)
-	defer d.Stop()
-
-	// Make sure all DDL jobs are done.
-	for {
-		var isAllJobDone bool
-		kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
-			len, err := t.DDLJobQueueLen()
-			c.Assert(err, IsNil)
-			t.SetJobListKey(meta.AddIndexJobListKey)
-			addIndexLen, err := t.DDLJobQueueLen()
-			c.Assert(err, IsNil)
-			if len == 0 && addIndexLen == 0 {
-				isAllJobDone = true
-			}
-			return nil
-		})
-		if isAllJobDone {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-
-	// Check that the jobs in add index list are finished.
-	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		for i, id := range failedJobIDs {
-			historyJob, err := t.GetHistoryDDLJob(id)
-			c.Assert(err, IsNil)
-			c.Assert(historyJob, NotNil, Commentf("job %v", historyJob))
-			if i == 0 {
-				c.Assert(historyJob.State, Equals, model.JobStateCancelled)
-			} else {
-				c.Assert(historyJob.State, Equals, model.JobStateRollbackDone)
-			}
-		}
-		return nil
-	})
+	worker = d1.generalWorker()
+	c.Assert(worker, NotNil)
 }
 
 func (s *testDDLSuite) TestSchemaError(c *C) {
@@ -585,15 +450,17 @@ func (s *testDDLSuite) TestIgnorableSpec(c *C) {
 }
 
 func (s *testDDLSuite) TestBuildJobDependence(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_set_job_relation")
 	defer store.Close()
 
-	job1 := &model.Job{ID: 1, TableID: 1}
-	job2 := &model.Job{ID: 2, TableID: 1}
-	job3 := &model.Job{ID: 3, TableID: 2}
-	job6 := &model.Job{ID: 6, TableID: 1}
-	job7 := &model.Job{ID: 7, TableID: 2}
+	// Add some non-add-index jobs.
+	job1 := &model.Job{ID: 1, TableID: 1, Type: model.ActionAddColumn}
+	job2 := &model.Job{ID: 2, TableID: 1, Type: model.ActionCreateTable}
+	job3 := &model.Job{ID: 3, TableID: 2, Type: model.ActionDropColumn}
+	job6 := &model.Job{ID: 6, TableID: 1, Type: model.ActionDropTable}
+	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
+	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
+	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []interface{}{int64(111), "old db name"}}
 	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := t.EnQueueDDLJob(job1)
@@ -606,9 +473,13 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		c.Assert(err, IsNil)
 		err = t.EnQueueDDLJob(job7)
 		c.Assert(err, IsNil)
+		err = t.EnQueueDDLJob(job9)
+		c.Assert(err, IsNil)
+		err = t.EnQueueDDLJob(job11)
+		c.Assert(err, IsNil)
 		return nil
 	})
-	job4 := &model.Job{ID: 4, TableID: 1}
+	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex}
 	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job4)
@@ -616,7 +487,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		c.Assert(job4.DependencyID, Equals, int64(2))
 		return nil
 	})
-	job5 := &model.Job{ID: 5, TableID: 2}
+	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex}
 	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job5)
@@ -624,7 +495,7 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		c.Assert(job5.DependencyID, Equals, int64(3))
 		return nil
 	})
-	job8 := &model.Job{ID: 8, TableID: 3}
+	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex}
 	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := buildJobDependence(t, job8)
@@ -632,4 +503,210 @@ func (s *testDDLSuite) TestBuildJobDependence(c *C) {
 		c.Assert(job8.DependencyID, Equals, int64(0))
 		return nil
 	})
+	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex}
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := buildJobDependence(t, job10)
+		c.Assert(err, IsNil)
+		c.Assert(job10.DependencyID, Equals, int64(9))
+		return nil
+	})
+	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex}
+	kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		err := buildJobDependence(t, job12)
+		c.Assert(err, IsNil)
+		c.Assert(job12.DependencyID, Equals, int64(11))
+		return nil
+	})
+}
+
+func (s *testDDLSuite) TestParallelDDL(c *C) {
+	store := testCreateStore(c, "test_parallel_ddl")
+	defer store.Close()
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	defer d.Stop()
+	ctx := testNewContext(d)
+	err := ctx.NewTxn()
+	c.Assert(err, IsNil)
+
+	/*
+		build structure:
+			DBs -> {
+			 db1: test_parallel_ddl_1
+			 db2: test_parallel_ddl_2
+			}
+			Tables -> {
+			 db1.t1 (c1 int, c2 int)
+			 db1.t2 (c1 int primary key, c2 int, c3 int)
+			 db2.t3 (c1 int, c2 int, c3 int, c4 int)
+			}
+			Data -> {
+			 t1: (10, 10), (20, 20)
+			 t2: (1, 1, 1), (2, 2, 2), (3, 3, 3)
+			 t3: (11, 22, 33, 44)
+			}
+	*/
+	// create database test_parallel_ddl_1;
+	dbInfo1 := testSchemaInfo(c, d, "test_parallel_ddl_1")
+	testCreateSchema(c, ctx, d, dbInfo1)
+	// create table t1 (c1 int, c2 int);
+	tblInfo1 := testTableInfo(c, d, "t1", 2)
+	testCreateTable(c, ctx, d, dbInfo1, tblInfo1)
+	// insert t1 values (10, 10), (20, 20)
+	tbl1 := testGetTable(c, d, dbInfo1.ID, tblInfo1.ID)
+	_, err = tbl1.AddRecord(ctx, types.MakeDatums(1, 1), false)
+	c.Assert(err, IsNil)
+	_, err = tbl1.AddRecord(ctx, types.MakeDatums(2, 2), false)
+	c.Assert(err, IsNil)
+	// create table t2 (c1 int primary key, c2 int, c3 int);
+	tblInfo2 := testTableInfo(c, d, "t2", 3)
+	tblInfo2.Columns[0].Flag = mysql.PriKeyFlag | mysql.NotNullFlag
+	tblInfo2.PKIsHandle = true
+	testCreateTable(c, ctx, d, dbInfo1, tblInfo2)
+	// insert t2 values (1, 1), (2, 2), (3, 3)
+	tbl2 := testGetTable(c, d, dbInfo1.ID, tblInfo2.ID)
+	_, err = tbl2.AddRecord(ctx, types.MakeDatums(1, 1, 1), false)
+	c.Assert(err, IsNil)
+	_, err = tbl2.AddRecord(ctx, types.MakeDatums(2, 2, 2), false)
+	c.Assert(err, IsNil)
+	_, err = tbl2.AddRecord(ctx, types.MakeDatums(3, 3, 3), false)
+	c.Assert(err, IsNil)
+	// create database test_parallel_ddl_2;
+	dbInfo2 := testSchemaInfo(c, d, "test_parallel_ddl_2")
+	testCreateSchema(c, ctx, d, dbInfo2)
+	// create table t3 (c1 int, c2 int, c3 int, c4 int);
+	tblInfo3 := testTableInfo(c, d, "t3", 4)
+	testCreateTable(c, ctx, d, dbInfo2, tblInfo3)
+	// insert t3 values (11, 22, 33, 44)
+	tbl3 := testGetTable(c, d, dbInfo2.ID, tblInfo3.ID)
+	_, err = tbl3.AddRecord(ctx, types.MakeDatums(11, 22, 33, 44), false)
+	c.Assert(err, IsNil)
+
+	// set hook to execute jobs after all jobs are in queue.
+	jobCnt := int64(11)
+	tc := &TestDDLCallback{}
+	once := sync.Once{}
+	var checkErr error
+	tc.onJobRunBefore = func(job *model.Job) {
+		// TODO: extract a unified function for other tests.
+		once.Do(func() {
+			qLen1 := int64(0)
+			qLen2 := int64(0)
+			for {
+				checkErr = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+					m := meta.NewMeta(txn)
+					qLen1, err = m.DDLJobQueueLen()
+					if err != nil {
+						return err
+					}
+					qLen2, err = m.DDLJobQueueLen(meta.AddIndexJobListKey)
+					if err != nil {
+						return err
+					}
+					return nil
+				})
+				if checkErr != nil {
+					break
+				}
+				if qLen1+qLen2 == jobCnt {
+					if qLen2 != 5 {
+						checkErr = errors.Errorf("add index jobs cnt %v != 5", qLen2)
+					}
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		})
+	}
+	d.SetHook(tc)
+	c.Assert(checkErr, IsNil)
+
+	/*
+		prepare jobs:
+		/	job no.	/	database no.	/	table no.	/	action type	 /
+		/     1		/	 	1			/		1		/	add index	 /
+		/     2		/	 	1			/		1		/	add column	 /
+		/     3		/	 	1			/		1		/	add index	 /
+		/     4		/	 	1			/		2		/	drop column	 /
+		/     5		/	 	1			/		1		/	drop index 	 /
+		/     6		/	 	1			/		2		/	add index	 /
+		/     7		/	 	2			/		3		/	drop column	 /
+		/     8		/	 	2			/		3		/	rebase autoID/
+		/     9		/	 	1			/		1		/	add index	 /
+		/     10	/	 	2			/		null   	/	drop schema  /
+		/     11	/	 	2			/		2		/	add index	 /
+	*/
+	job1 := buildCreateIdxJob(dbInfo1, tblInfo1, false, "db1_idx1", "c1")
+	d.addDDLJob(ctx, job1)
+	job2 := buildCreateColumnJob(dbInfo1, tblInfo1, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
+	d.addDDLJob(ctx, job2)
+	job3 := buildCreateIdxJob(dbInfo1, tblInfo1, false, "db1_idx2", "c3")
+	d.addDDLJob(ctx, job3)
+	job4 := buildDropColumnJob(dbInfo1, tblInfo2, "c3")
+	d.addDDLJob(ctx, job4)
+	job5 := buildDropIdxJob(dbInfo1, tblInfo1, "db1_idx1")
+	d.addDDLJob(ctx, job5)
+	job6 := buildCreateIdxJob(dbInfo1, tblInfo2, false, "db2_idx1", "c2")
+	d.addDDLJob(ctx, job6)
+	job7 := buildDropColumnJob(dbInfo2, tblInfo3, "c4")
+	d.addDDLJob(ctx, job7)
+	job8 := buildRebaseAutoIDJobJob(dbInfo2, tblInfo3, 1024)
+	d.addDDLJob(ctx, job8)
+	job9 := buildCreateIdxJob(dbInfo1, tblInfo1, false, "db1_idx3", "c2")
+	d.addDDLJob(ctx, job9)
+	job10 := buildDropSchemaJob(dbInfo2)
+	d.addDDLJob(ctx, job10)
+	job11 := buildCreateIdxJob(dbInfo2, tblInfo3, false, "db3_idx1", "c2")
+	d.addDDLJob(ctx, job11)
+	// TODO: add rename table job
+
+	// check results.
+	isChecked := false
+	for !isChecked {
+		kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+			m := meta.NewMeta(txn)
+			lastJob, err := m.GetHistoryDDLJob(job11.ID)
+			c.Assert(err, IsNil)
+			// all jobs are finished.
+			if lastJob != nil {
+				finishedJobs, err := m.GetAllHistoryDDLJobs()
+				c.Assert(err, IsNil)
+				// get the last 11 jobs completed.
+				finishedJobs = finishedJobs[len(finishedJobs)-11:]
+				// check some jobs are ordered because of the dependence.
+				c.Assert(finishedJobs[0].ID, Equals, job1.ID)
+				c.Assert(finishedJobs[1].ID, Equals, job2.ID)
+				c.Assert(finishedJobs[2].ID, Equals, job3.ID)
+				c.Assert(finishedJobs[4].ID, Equals, job5.ID)
+				c.Assert(finishedJobs[10].ID, Equals, job11.ID)
+				// check the jobs are ordered in the adding-index-job queue or general-job queue.
+				addIdxJobID := int64(0)
+				generalJobID := int64(0)
+				for _, job := range finishedJobs {
+					// check jobs' order.
+					if job.Type == model.ActionAddIndex {
+						c.Assert(job.ID, Greater, addIdxJobID)
+						addIdxJobID = job.ID
+					} else {
+						c.Assert(job.ID, Greater, generalJobID)
+						generalJobID = job.ID
+					}
+					// check jobs' state.
+					if job.ID == lastJob.ID {
+						c.Assert(job.State, Equals, model.JobStateCancelled, Commentf("job: %v", job))
+					} else {
+						c.Assert(job.State, Equals, model.JobStateSynced, Commentf("job: %v", job))
+					}
+				}
+
+				isChecked = true
+			}
+			return nil
+		})
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	tc = &TestDDLCallback{}
+	d.SetHook(tc)
 }
