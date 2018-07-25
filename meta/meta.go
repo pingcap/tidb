@@ -23,13 +23,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -131,7 +131,7 @@ func (m *Meta) parseDatabaseID(key string) (int64, error) {
 	}
 
 	n, err := strconv.ParseInt(seps[1], 10, 64)
-	return n, errors.Trace(err)
+	return n, errors.WithStack(err)
 }
 
 func (m *Meta) autoTableIDKey(tableID int64) []byte {
@@ -149,7 +149,7 @@ func (m *Meta) parseTableID(key string) (int64, error) {
 	}
 
 	n, err := strconv.ParseInt(seps[1], 10, 64)
-	return n, errors.Trace(err)
+	return n, errors.WithStack(err)
 }
 
 // GenAutoTableIDIDKeyValue generate meta key by dbID, tableID and coresponding value by autoID.
@@ -164,12 +164,12 @@ func (m *Meta) GenAutoTableID(dbID, tableID, step int64) (int64, error) {
 	// Check if DB exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	// Check if table exists.
 	tableKey := m.tableKey(tableID)
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 
 	return m.txn.HInc(dbKey, m.autoTableIDKey(tableID), step)
@@ -193,7 +193,7 @@ func (m *Meta) GenSchemaVersion() (int64, error) {
 func (m *Meta) checkDBExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	} else if v == nil {
 		return ErrDBNotExists
 	}
@@ -204,7 +204,7 @@ func (m *Meta) checkDBExists(dbKey []byte) error {
 func (m *Meta) checkDBNotExists(dbKey []byte) error {
 	v, err := m.txn.HGet(mDBs, dbKey)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	if v != nil {
@@ -217,7 +217,7 @@ func (m *Meta) checkDBNotExists(dbKey []byte) error {
 func (m *Meta) checkTableExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	if v == nil {
@@ -230,7 +230,7 @@ func (m *Meta) checkTableExists(dbKey []byte, tableKey []byte) error {
 func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 	v, err := m.txn.HGet(dbKey, tableKey)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	if v != nil {
@@ -245,12 +245,12 @@ func (m *Meta) CreateDatabase(dbInfo *model.DBInfo) error {
 	dbKey := m.dbKey(dbInfo.ID)
 
 	if err := m.checkDBNotExists(dbKey); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	data, err := json.Marshal(dbInfo)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	return m.txn.HSet(mDBs, dbKey, data)
@@ -261,12 +261,12 @@ func (m *Meta) UpdateDatabase(dbInfo *model.DBInfo) error {
 	dbKey := m.dbKey(dbInfo.ID)
 
 	if err := m.checkDBExists(dbKey); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	data, err := json.Marshal(dbInfo)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	return m.txn.HSet(mDBs, dbKey, data)
@@ -277,18 +277,18 @@ func (m *Meta) CreateTable(dbID int64, tableInfo *model.TableInfo) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// Check if table exists.
 	tableKey := m.tableKey(tableInfo.ID)
 	if err := m.checkTableNotExists(dbKey, tableKey); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	data, err := json.Marshal(tableInfo)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	return m.txn.HSet(dbKey, tableKey, data)
@@ -299,11 +299,11 @@ func (m *Meta) DropDatabase(dbID int64) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.txn.HClear(dbKey); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	if err := m.txn.HDel(mDBs, dbKey); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	return nil
@@ -316,21 +316,21 @@ func (m *Meta) DropTable(dbID int64, tblID int64, delAutoID bool) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// Check if table exists.
 	tableKey := m.tableKey(tblID)
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	if err := m.txn.HDel(dbKey, tableKey); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if delAutoID {
 		if err := m.txn.HDel(dbKey, m.autoTableIDKey(tblID)); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -341,34 +341,34 @@ func (m *Meta) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// Check if table exists.
 	tableKey := m.tableKey(tableInfo.ID)
 	if err := m.checkTableExists(dbKey, tableKey); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	data, err := json.Marshal(tableInfo)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	err = m.txn.HSet(dbKey, tableKey, data)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // ListTables shows all tables in database.
 func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	res, err := m.txn.HGetAll(dbKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	tables := make([]*model.TableInfo, 0, len(res)/2)
@@ -382,7 +382,7 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		tbInfo := &model.TableInfo{}
 		err = json.Unmarshal(r.Value, tbInfo)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 
 		tables = append(tables, tbInfo)
@@ -395,7 +395,7 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 func (m *Meta) ListDatabases() ([]*model.DBInfo, error) {
 	res, err := m.txn.HGetAll(mDBs)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	dbs := make([]*model.DBInfo, 0, len(res))
@@ -403,7 +403,7 @@ func (m *Meta) ListDatabases() ([]*model.DBInfo, error) {
 		dbInfo := &model.DBInfo{}
 		err = json.Unmarshal(r.Value, dbInfo)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		dbs = append(dbs, dbInfo)
 	}
@@ -415,12 +415,12 @@ func (m *Meta) GetDatabase(dbID int64) (*model.DBInfo, error) {
 	dbKey := m.dbKey(dbID)
 	value, err := m.txn.HGet(mDBs, dbKey)
 	if err != nil || value == nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	dbInfo := &model.DBInfo{}
 	err = json.Unmarshal(value, dbInfo)
-	return dbInfo, errors.Trace(err)
+	return dbInfo, errors.WithStack(err)
 }
 
 // GetTable gets the table value in database with tableID.
@@ -428,18 +428,18 @@ func (m *Meta) GetTable(dbID int64, tableID int64) (*model.TableInfo, error) {
 	// Check if db exists.
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	tableKey := m.tableKey(tableID)
 	value, err := m.txn.HGet(dbKey, tableKey)
 	if err != nil || value == nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	tableInfo := &model.TableInfo{}
 	err = json.Unmarshal(value, tableInfo)
-	return tableInfo, errors.Trace(err)
+	return tableInfo, errors.WithStack(err)
 }
 
 // DDL job structure
@@ -470,7 +470,7 @@ var (
 func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
 	b, err := job.Encode(true)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return m.txn.RPush(key, b)
 }
@@ -483,12 +483,12 @@ func (m *Meta) EnQueueDDLJob(job *model.Job) error {
 func (m *Meta) deQueueDDLJob(key []byte) (*model.Job, error) {
 	value, err := m.txn.LPop(key)
 	if err != nil || value == nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	job := &model.Job{}
 	err = job.Decode(value)
-	return job, errors.Trace(err)
+	return job, errors.WithStack(err)
 }
 
 // DeQueueDDLJob pops a DDL job from the list.
@@ -499,12 +499,12 @@ func (m *Meta) DeQueueDDLJob() (*model.Job, error) {
 func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 	value, err := m.txn.LIndex(key, index)
 	if err != nil || value == nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	job := &model.Job{}
 	err = job.Decode(value)
-	return job, errors.Trace(err)
+	return job, errors.WithStack(err)
 }
 
 // GetDDLJobByIdx returns the corresponding DDL job by the index.
@@ -520,7 +520,7 @@ func (m *Meta) GetDDLJobByIdx(index int64, jobListKeys ...JobListKeyType) (*mode
 	startTime := time.Now()
 	job, err := m.getDDLJob(listKey, index)
 	metrics.MetaHistogram.WithLabelValues(metrics.GetDDLJobByIdx, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return job, errors.Trace(err)
+	return job, errors.WithStack(err)
 }
 
 // updateDDLJob updates the DDL job with index and key.
@@ -528,7 +528,7 @@ func (m *Meta) GetDDLJobByIdx(index int64, jobListKeys ...JobListKeyType) (*mode
 func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte, updateRawArgs bool) error {
 	b, err := job.Encode(updateRawArgs)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return m.txn.LSet(key, index, b)
 }
@@ -547,7 +547,7 @@ func (m *Meta) UpdateDDLJob(index int64, job *model.Job, updateRawArgs bool, job
 	startTime := time.Now()
 	err := m.updateDDLJob(index, job, listKey, updateRawArgs)
 	metrics.MetaHistogram.WithLabelValues(metrics.UpdateDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // DDLJobQueueLen returns the DDL job queue length.
@@ -574,7 +574,7 @@ func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job
 
 	values, err := m.txn.LGetAll(listKey)
 	if err != nil || values == nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	jobs := make([]*model.Job, 0, len(values))
@@ -582,7 +582,7 @@ func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job
 		job := &model.Job{}
 		err = job.Decode(val)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		jobs = append(jobs, job)
 	}
@@ -599,7 +599,7 @@ func (m *Meta) jobIDKey(id int64) []byte {
 func (m *Meta) addHistoryDDLJob(key []byte, job *model.Job) error {
 	b, err := job.Encode(true)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	return m.txn.HSet(key, m.jobIDKey(job.ID), b)
@@ -613,12 +613,12 @@ func (m *Meta) AddHistoryDDLJob(job *model.Job) error {
 func (m *Meta) getHistoryDDLJob(key []byte, id int64) (*model.Job, error) {
 	value, err := m.txn.HGet(key, m.jobIDKey(id))
 	if err != nil || value == nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	job := &model.Job{}
 	err = job.Decode(value)
-	return job, errors.Trace(err)
+	return job, errors.WithStack(err)
 }
 
 // GetHistoryDDLJob gets a history DDL job.
@@ -626,21 +626,21 @@ func (m *Meta) GetHistoryDDLJob(id int64) (*model.Job, error) {
 	startTime := time.Now()
 	job, err := m.getHistoryDDLJob(mDDLJobHistoryKey, id)
 	metrics.MetaHistogram.WithLabelValues(metrics.GetHistoryDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return job, errors.Trace(err)
+	return job, errors.WithStack(err)
 }
 
 // GetAllHistoryDDLJobs gets all history DDL jobs.
 func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 	pairs, err := m.txn.HGetAll(mDDLJobHistoryKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	var jobs []*model.Job
 	for _, pair := range pairs {
 		job := &model.Job{}
 		err = job.Decode(pair.Value)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		jobs = append(jobs, job)
 	}
@@ -670,31 +670,31 @@ func (s *jobsSorter) Less(i, j int) bool {
 // If the store is not bootstraped, the version will be zero.
 func (m *Meta) GetBootstrapVersion() (int64, error) {
 	value, err := m.txn.GetInt64(mBootstrapKey)
-	return value, errors.Trace(err)
+	return value, errors.WithStack(err)
 }
 
 // FinishBootstrap finishes bootstrap.
 func (m *Meta) FinishBootstrap(version int64) error {
 	err := m.txn.Set(mBootstrapKey, []byte(fmt.Sprintf("%d", version)))
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // UpdateDDLReorgHandle saves the job reorganization latest processed handle for later resuming.
 func (m *Meta) UpdateDDLReorgHandle(job *model.Job, handle int64) error {
 	err := m.txn.HSet(mDDLJobReorgKey, m.jobIDKey(job.ID), []byte(strconv.FormatInt(handle, 10)))
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // RemoveDDLReorgHandle removes the job reorganization handle.
 func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
 	err := m.txn.HDel(mDDLJobReorgKey, m.jobIDKey(job.ID))
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // GetDDLReorgHandle gets the latest processed handle.
 func (m *Meta) GetDDLReorgHandle(job *model.Job) (int64, error) {
 	value, err := m.txn.HGetInt64(mDDLJobReorgKey, m.jobIDKey(job.ID))
-	return value, errors.Trace(err)
+	return value, errors.WithStack(err)
 }
 
 func (m *Meta) tableStatsKey(tableID int64) []byte {
@@ -712,27 +712,27 @@ func (m *Meta) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
 	data, err := m.txn.Get(diffKey)
 	metrics.MetaHistogram.WithLabelValues(metrics.GetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if len(data) == 0 {
 		return nil, nil
 	}
 	diff := &model.SchemaDiff{}
 	err = json.Unmarshal(data, diff)
-	return diff, errors.Trace(err)
+	return diff, errors.WithStack(err)
 }
 
 // SetSchemaDiff sets the modification information on a given schema version.
 func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	data, err := json.Marshal(diff)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	diffKey := m.schemaDiffKey(diff.Version)
 	startTime := time.Now()
 	err = m.txn.Set(diffKey, data)
 	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // meta error codes.

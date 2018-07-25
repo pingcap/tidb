@@ -16,7 +16,6 @@ package executor
 import (
 	"sync"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
+	"github.com/pkg/errors"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
 )
@@ -224,13 +224,13 @@ func (e *HashAggExec) Close() error {
 	}
 	for range e.finalOutputCh {
 	}
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.WithStack(e.baseExecutor.Close())
 }
 
 // Open implements the Executor Open interface.
 func (e *HashAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.prepared = false
 
@@ -358,7 +358,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			return
 		}
 		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.aggCtxsMap)); err != nil {
-			w.globalOutputCh <- &AfFinalResult{err: errors.Trace(err)}
+			w.globalOutputCh <- &AfFinalResult{err: errors.WithStack(err)}
 			return
 		}
 		// The intermData can be promised to be not empty if reaching here,
@@ -372,12 +372,12 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 	for row := inputIter.Begin(); row != inputIter.End(); row = inputIter.Next() {
 		groupKey, err := w.getGroupKey(sc, row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		aggEvalCtxs := w.getContext(sc, groupKey, w.aggCtxsMap)
 		for i, af := range w.aggFuncs {
 			if err = af.Update(aggEvalCtxs[i], sc, &row); err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -414,7 +414,7 @@ func (w *HashAggPartialWorker) getGroupKey(sc *stmtctx.StatementContext, row chu
 	for _, item := range w.groupByItems {
 		v, err := item.Eval(row)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		// This check is used to avoid error during the execution of `EncodeDecimal`.
 		if item.GetType().Tp == mysql.TypeNewDecimal {
@@ -424,7 +424,7 @@ func (w *HashAggPartialWorker) getGroupKey(sc *stmtctx.StatementContext, row chu
 	}
 	var err error
 	w.groupKey, err = codec.EncodeValue(sc, w.groupKey[:0], w.groupValDatums...)
-	return w.groupKey, errors.Trace(err)
+	return w.groupKey, errors.WithStack(err)
 }
 
 func (w baseHashAggWorker) getContext(sc *stmtctx.StatementContext, groupKey []byte, mapper aggCtxsMapper) []*aggregation.AggEvaluateContext {
@@ -475,7 +475,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sc *stmtctx.StatementContext) (er
 				aggEvalCtxs := w.getContext(sc, groupKey, w.aggCtxsMap)
 				for i, af := range w.aggFuncs {
 					if err = af.Update(aggEvalCtxs[i], sc, row); err != nil {
-						return errors.Trace(err)
+						return errors.WithStack(err)
 					}
 				}
 			}
@@ -531,7 +531,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	}()
 	sc := ctx.GetSessionVars().StmtCtx
 	if err := w.consumeIntermData(sc); err != nil {
-		w.outputCh <- &AfFinalResult{err: errors.Trace(err)}
+		w.outputCh <- &AfFinalResult{err: errors.WithStack(err)}
 	}
 	w.getFinalResult(sc)
 }
@@ -540,9 +540,9 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.isUnparallelExec {
-		return errors.Trace(e.unparallelExec(ctx, chk))
+		return errors.WithStack(e.unparallelExec(ctx, chk))
 	}
-	return errors.Trace(e.parallelExec(ctx, chk))
+	return errors.WithStack(e.parallelExec(ctx, chk))
 }
 
 func (e *HashAggExec) fetchChildData(ctx context.Context) {
@@ -569,7 +569,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context) {
 		}
 		err = e.children[0].Next(ctx, chk)
 		if err != nil {
-			e.finalOutputCh <- &AfFinalResult{err: errors.Trace(err)}
+			e.finalOutputCh <- &AfFinalResult{err: errors.WithStack(err)}
 			return
 		}
 		if chk.NumRows() == 0 {
@@ -623,7 +623,7 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		result, ok := <-e.finalOutputCh
 		if !ok || result.err != nil || result.chk.NumRows() == 0 {
 			if result != nil {
-				return errors.Trace(result.err)
+				return errors.WithStack(result.err)
 			}
 			if e.isChildReturnEmpty && e.defaultVal != nil {
 				chk.Append(e.defaultVal, 0, 1)
@@ -648,7 +648,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 	if !e.prepared {
 		err := e.execute(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if (e.groupMap.Len() == 0) && len(e.GroupByItems) == 0 {
 			// If no groupby and no data, we should add an empty group.
@@ -684,7 +684,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	for {
 		err := e.children[0].Next(ctx, e.childResult)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		// no more data.
 		if e.childResult.NumRows() == 0 {
@@ -693,7 +693,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		for row := inputIter.Begin(); row != inputIter.End(); row = inputIter.Next() {
 			groupKey, err := e.getGroupKey(row)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			if len(e.groupMap.Get(groupKey, e.groupVals[:0])) == 0 {
 				e.groupMap.Put(groupKey, []byte{})
@@ -702,7 +702,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			for i, af := range e.AggFuncs {
 				err = af.Update(aggCtxs[i], e.sc, row)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 			}
 		}
@@ -717,14 +717,14 @@ func (e *HashAggExec) getGroupKey(row chunk.Row) ([]byte, error) {
 			v.SetLength(0)
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		vals = append(vals, v)
 	}
 	var err error
 	e.groupKey, err = codec.EncodeValue(e.sc, e.groupKey[:0], vals...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return e.groupKey, nil
 }
@@ -776,7 +776,7 @@ type StreamAggExec struct {
 // Open implements the Executor Open interface.
 func (e *StreamAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.childResult = e.children[0].newChunk()
 	e.executed = false
@@ -804,7 +804,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 // Close implements the Executor Close interface.
 func (e *StreamAggExec) Close() error {
 	e.childResult = nil
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.WithStack(e.baseExecutor.Close())
 }
 
 // Next implements the Executor Next interface.
@@ -815,7 +815,7 @@ func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		err := e.consumeOneGroup(ctx, chk)
 		if err != nil {
 			e.executed = true
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -824,21 +824,21 @@ func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) error {
 	for !e.executed {
 		if err := e.fetchChildIfNecessary(ctx, chk); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
 			meetNewGroup, err := e.meetNewGroup(e.inputRow)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			if meetNewGroup {
 				err := e.consumeGroupRows()
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 				err = e.appendResult2Chunk(chk)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 			}
 			if e.newAggFuncs != nil {
@@ -847,7 +847,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 				for i, af := range e.AggFuncs {
 					err := af.Update(e.aggCtxs[i], e.StmtCtx, e.inputRow)
 					if err != nil {
-						return errors.Trace(err)
+						return errors.WithStack(err)
 					}
 				}
 			}
@@ -868,7 +868,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 	for i, newAggFunc := range e.newAggFuncs {
 		err := newAggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	e.groupRows = e.groupRows[:0]
@@ -884,13 +884,13 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 	if e.newAggFuncs != nil {
 		err = e.consumeGroupRows()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 
 	err = e.children[0].Next(ctx, e.childResult)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// No more data.
@@ -901,7 +901,7 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 			chk.Append(e.defaultVal, 0, 1)
 		}
 		e.executed = true
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// Reach here, "e.childrenResults[0].NumRows() > 0" is guaranteed.
 	e.isChildReturnEmpty = false
@@ -916,7 +916,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 		for i, newAggFunc := range e.newAggFuncs {
 			err := newAggFunc.AppendFinalResult2Chunk(e.ctx, e.partialResults[i], chk)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			newAggFunc.ResetPartialResult(e.partialResults[i])
 		}
@@ -948,12 +948,12 @@ func (e *StreamAggExec) meetNewGroup(row chunk.Row) (bool, error) {
 	for i, item := range e.GroupByItems {
 		v, err := item.Eval(row)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, errors.WithStack(err)
 		}
 		if matched {
 			c, err := v.CompareDatum(e.StmtCtx, &e.curGroupKey[i])
 			if err != nil {
-				return false, errors.Trace(err)
+				return false, errors.WithStack(err)
 			}
 			matched = c == 0
 		}

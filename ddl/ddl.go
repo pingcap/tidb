@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl/util"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
 	"golang.org/x/net/context"
@@ -355,7 +355,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 	// Otherwise, we needn't do that.
 	if RunWorker {
 		err := d.ownerManager.CampaignOwner(ctx)
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 
 		d.workers = make(map[workerType]*worker, 2)
 		d.workers[generalWorker] = newWorker(generalWorker, 0, d.store, ctxPool)
@@ -414,10 +414,10 @@ func (d *ddl) genGlobalID() (int64, error) {
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
 		var err error
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	})
 
-	return globalID, errors.Trace(err)
+	return globalID, errors.WithStack(err)
 }
 
 // generalWorker returns the general worker.
@@ -462,13 +462,13 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// For every DDL, we must commit current transaction.
 	if err := ctx.NewTxn(); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// Get a global job ID and put the DDL job in the queue.
 	err := d.addDDLJob(ctx, job)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
@@ -511,7 +511,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		}
 
 		if historyJob.Error != nil {
-			return errors.Trace(historyJob.Error)
+			return errors.WithStack(historyJob.Error)
 		}
 		panic("When the state is JobCancel, historyJob.Error should never be nil")
 	}
@@ -522,7 +522,7 @@ func (d *ddl) callHookOnChanged(err error) error {
 	defer d.mu.RUnlock()
 
 	err = d.mu.hook.OnChanged(err)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // SetBinlogClient implements DDL.SetBinlogClient interface.
