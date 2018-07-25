@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -444,7 +445,8 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 }
 
 const (
-	defaultTaskHandleCnt = 128
+	// DefaultTaskHandleCnt is default batch size of adding indices.
+	DefaultTaskHandleCnt = 128
 )
 
 // indexRecord is the record information of an index.
@@ -491,7 +493,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
-		batchCnt:    defaultTaskHandleCnt,
+		batchCnt:    DefaultTaskHandleCnt,
 		sessCtx:     sessCtx,
 		taskCh:      make(chan *reorgIndexTask, 1),
 		resultCh:    make(chan *addIndexResult, 1),
@@ -548,12 +550,38 @@ func (w *addIndexWorker) getIndexRecord(index table.Index, handle int64, recordK
 	return idxRecord, nil
 }
 
-func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, index table.Index, taskRange reorgIndexTask) ([]*indexRecord, bool, error) {
+// getNextHandle gets next handle of entry that we are going to process.
+func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) (nextHandle int64) {
+	if !taskDone {
+		// The task is not done. So we need to pick the last processed entry's handle and add one.
+		return w.idxRecords[len(w.idxRecords)-1].handle + 1
+	}
+
+	// The task is done. So we need to choose a handle outside this range.
+	// Some corner cases should be considered:
+	// - The end of task range is MaxInt64.
+	// - The end of the task is excluded in the range.
+	if taskRange.endHandle == math.MaxInt64 || !taskRange.endIncluded {
+		return taskRange.endHandle
+	}
+
+	return taskRange.endHandle + 1
+}
+
+// fetchRowColVals fetch w.batchCnt count rows that need to backfill indices, and build the corresponding indexRecord slice.
+// fetchRowColVals returns:
+// 1. The corresponding indexRecord slice.
+// 2. Next handle of entry that we need to process.
+// 3. Boolean indicates whether the task is done.
+// 4. error occurs in fetchRowColVals. nil if no error occurs.
+func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, index table.Index, taskRange reorgIndexTask) ([]*indexRecord, int64, bool, error) {
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
+
+	// taskDone means that the added handle is out of taskRange.endHandle.
+	taskDone := false
 	oprStartTime := startTime
-	handleOutOfRange := false
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), taskRange.partitionID, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
@@ -561,12 +589,12 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, index table.Index, 
 			oprStartTime = oprEndTime
 
 			if !taskRange.endIncluded {
-				handleOutOfRange = handle >= taskRange.endHandle
+				taskDone = handle >= taskRange.endHandle
 			} else {
-				handleOutOfRange = handle > taskRange.endHandle
+				taskDone = handle > taskRange.endHandle
 			}
 
-			if handleOutOfRange || len(w.idxRecords) >= w.batchCnt {
+			if taskDone || len(w.idxRecords) >= w.batchCnt {
 				return false, nil
 			}
 
@@ -578,14 +606,18 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, index table.Index, 
 			w.idxRecords = append(w.idxRecords, idxRecord)
 			if handle == taskRange.endHandle {
 				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
-				handleOutOfRange = true
+				taskDone = true
 				return false, nil
 			}
 			return true, nil
 		})
 
+	if len(w.idxRecords) == 0 {
+		taskDone = true
+	}
+
 	log.Debugf("[ddl] txn %v fetches handle info %v, takes time %v", txn.StartTS(), taskRange, time.Since(startTime))
-	return w.idxRecords, handleOutOfRange, errors.Trace(err)
+	return w.idxRecords, w.getNextHandle(taskRange, taskDone), taskDone, errors.Trace(err)
 }
 
 func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
@@ -602,13 +634,17 @@ func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
-func (w *addIndexWorker) backfillIndexInTxn(index table.Index, handleRange reorgIndexTask) (nextHandle int64, addedCount, scanCount int, errInTxn error) {
+func (w *addIndexWorker) backfillIndexInTxn(index table.Index, handleRange reorgIndexTask) (nextHandle int64, taskDone bool, addedCount, scanCount int, errInTxn error) {
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		addedCount = 0
 		scanCount = 0
 		txn.SetOption(kv.Priority, kv.PriorityLow)
-		idxRecords, handleOutOfRange, err := w.fetchRowColVals(txn, index, handleRange)
+		var (
+			idxRecords []*indexRecord
+			err        error
+		)
+		idxRecords, nextHandle, taskDone, err = w.fetchRowColVals(txn, index, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -634,11 +670,6 @@ func (w *addIndexWorker) backfillIndexInTxn(index table.Index, handleRange reorg
 			addedCount++
 		}
 
-		if handleOutOfRange || len(idxRecords) == 0 {
-			nextHandle = handleRange.endHandle
-		} else {
-			nextHandle = idxRecords[len(idxRecords)-1].handle + 1
-		}
 		return nil
 	})
 	w.logSlowOperations(time.Since(oprStartTime), "backfillIndexInTxn", 3000)
@@ -656,7 +687,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 
 	for {
 		addedCount := 0
-		nextHandle, addedCount, scanCount, err := w.backfillIndexInTxn(index, handleRange)
+		nextHandle, taskDone, addedCount, scanCount, err := w.backfillIndexInTxn(index, handleRange)
 		if err == nil {
 			// Because reorgIndexTask may run a long time,
 			// we should check whether this ddl job is still runnable.
@@ -679,12 +710,16 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 		}
 
 		handleRange.startHandle = nextHandle
-		if handleRange.startHandle >= handleRange.endHandle {
+		if taskDone {
 			break
 		}
 	}
-	log.Infof("[ddl-reorg] worker(%v), finish region %v ranges [%v,%v) addedCount:%v, scanCount:%v, nextHandle:%v, elapsed time(s):%v",
-		w.id, task.partitionID, task.startHandle, task.endHandle, result.addedCount, result.scanCount, result.nextHandle, time.Since(startTime).Seconds())
+	rightParenthesis := ")"
+	if task.endIncluded {
+		rightParenthesis = "]"
+	}
+	log.Infof("[ddl-reorg] worker(%v), finish region %v ranges [%v,%v%s, addedCount:%v, scanCount:%v, nextHandle:%v, elapsed time(s):%v",
+		w.id, task.partitionID, task.startHandle, task.endHandle, rightParenthesis, result.addedCount, result.scanCount, result.nextHandle, time.Since(startTime).Seconds())
 
 	return result
 }

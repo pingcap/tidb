@@ -273,10 +273,10 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
-	v, err := t.GetDDLJob(0)
+	v, err := t.GetDDLJobByIdx(0)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
-	v, err = t.GetDDLJob(1)
+	v, err = t.GetDDLJobByIdx(1)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 	job.ID = 2
@@ -313,12 +313,12 @@ func (s *testSuite) TestDDL(c *C) {
 		lastID = job.ID
 	}
 
-	// Test GetAllDDLJobs.
+	// Test GetAllDDLJobsInQueue.
 	err = t.EnQueueDDLJob(job)
 	job1 := &model.Job{ID: 2}
 	err = t.EnQueueDDLJob(job1)
 	c.Assert(err, IsNil)
-	jobs, err := t.GetAllDDLJobs()
+	jobs, err := t.GetAllDDLJobsInQueue()
 	c.Assert(err, IsNil)
 	expectJobs := []*model.Job{job, job1}
 	c.Assert(jobs, DeepEquals, expectJobs)
