@@ -185,3 +185,15 @@ func (t *PartitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, sk
 	tbl := t.GetPartition(pid)
 	return tbl.AddRecord(ctx, r, skipHandleCheck)
 }
+
+// RemoveRecord implements table.Table RemoveRecord interface.
+func (t *PartitionedTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
+	partitionInfo := t.meta.GetPartitionInfo()
+	pid, err := t.locatePartition(ctx, partitionInfo, r)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tbl := t.GetPartition(pid)
+	return tbl.RemoveRecord(ctx, h, r)
+}
