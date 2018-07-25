@@ -103,22 +103,21 @@ func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			ordinal: ordinal,
 		},
 	}
-	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
+		return nil
 	default:
-		switch evalType {
-		case types.ETInt:
-			return nil
-		case types.ETReal:
-			switch fieldType.Tp {
-			case mysql.TypeFloat:
-				return &sumAggFunc4Float64{base}
-			case mysql.TypeDouble:
-				return &sumAggFunc4Float64{base}
+		switch aggFuncDesc.Args[0].GetType().Tp {
+		case mysql.TypeFloat, mysql.TypeDouble:
+			if aggFuncDesc.HasDistinct {
+				return &sum4DistinctFloat64{base}
 			}
-		case types.ETDecimal:
-			return &sumAggFunc4Decimal{base}
+			return &sum4Float64{base}
+		case mysql.TypeNewDecimal:
+			if aggFuncDesc.HasDistinct {
+				return &sum4DistinctDecimal{base}
+			}
+			return &sum4Decimal{base}
 		default:
 			return nil
 		}
@@ -138,8 +137,8 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	case aggregation.DedupMode:
 		return nil // not implemented yet.
 
-	// Build avg functions which consume the original data and update their
-	// partial results.
+		// Build avg functions which consume the original data and update their
+		// partial results.
 	case aggregation.CompleteMode, aggregation.Partial1Mode:
 		switch aggFuncDesc.Args[0].GetType().Tp {
 		case mysql.TypeNewDecimal:
@@ -154,8 +153,8 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			return &avgOriginal4Float64{baseAvgFloat64{base}}
 		}
 
-	// Build avg functions which consume the partial result of other avg
-	// functions and update their partial results.
+		// Build avg functions which consume the partial result of other avg
+		// functions and update their partial results.
 	case aggregation.Partial2Mode, aggregation.FinalMode:
 		switch aggFuncDesc.Args[1].GetType().Tp {
 		case mysql.TypeNewDecimal:
