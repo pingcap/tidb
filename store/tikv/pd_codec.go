@@ -14,10 +14,10 @@
 package tikv
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -42,14 +42,14 @@ func (c *codecPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*me
 
 func processRegionResult(region *metapb.Region, peer *metapb.Peer, err error) (*metapb.Region, *metapb.Peer, error) {
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, errors.WithStack(err)
 	}
 	if region == nil {
 		return nil, nil, nil
 	}
 	err = decodeRegionMetaKey(region)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, errors.WithStack(err)
 	}
 	return region, peer, nil
 }
@@ -58,14 +58,14 @@ func decodeRegionMetaKey(r *metapb.Region) error {
 	if len(r.StartKey) != 0 {
 		_, decoded, err := codec.DecodeBytes(r.StartKey, nil)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		r.StartKey = decoded
 	}
 	if len(r.EndKey) != 0 {
 		_, decoded, err := codec.DecodeBytes(r.EndKey, nil)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		r.EndKey = decoded
 	}

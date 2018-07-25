@@ -17,12 +17,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // Plan is the description of an execution flow.
@@ -397,5 +397,5 @@ func (p *baseLogicalPlan) findColumn(column *ast.ColumnName) (*expression.Column
 	if err == nil && col == nil {
 		err = errors.Errorf("column %s not found", column.Name.O)
 	}
-	return col, idx, errors.Trace(err)
+	return col, idx, errors.WithStack(err)
 }

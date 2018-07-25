@@ -18,12 +18,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -432,7 +432,7 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		return nil, errors.Errorf("invalid request type: %v", req.Type)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return resp, nil
 }
@@ -451,7 +451,7 @@ func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
 	ret, err := resp.Tikv_CoprocessorStreamClient.Recv()
 
 	atomic.StoreInt64(&resp.Lease.deadline, 0) // Stop the lease check.
-	return ret, errors.Trace(err)
+	return ret, errors.WithStack(err)
 }
 
 // Close closes the CopStreamResponse object.

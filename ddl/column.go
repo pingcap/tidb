@@ -14,12 +14,12 @@
 package ddl
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -119,7 +119,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	// gofail: var errorBeforeDecodeArgs bool
 	// if errorBeforeDecodeArgs {
@@ -131,7 +131,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	err = job.DecodeArgs(col, pos, &offset)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
@@ -145,7 +145,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		columnInfo, offset, err = createColumnInfo(tblInfo, col, pos)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 		log.Infof("[ddl] add column, run DDL job %s, column info %#v, offset %d", job, columnInfo, offset)
 		// Set offset arg to job.
@@ -154,7 +154,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		}
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 	}
 
@@ -182,7 +182,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		columnInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 
 		// Finish this job.
@@ -192,21 +192,21 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		err = ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
 	}
 
-	return ver, errors.Trace(err)
+	return ver, errors.WithStack(err)
 }
 
 func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	var colName model.CIStr
 	err = job.DecodeArgs(&colName)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
@@ -216,7 +216,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	originalState := colInfo.State
@@ -245,7 +245,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 
 		// Finish this job.
@@ -253,7 +253,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
-	return ver, errors.Trace(err)
+	return ver, errors.WithStack(err)
 }
 
 func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -261,7 +261,7 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	err := job.DecodeArgs(newCol)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	return updateColumn(t, job, newCol, &newCol.Name)
@@ -274,7 +274,7 @@ func onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	err := job.DecodeArgs(newCol, oldColName, pos)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	return doModifyColumn(t, job, newCol, oldColName, pos)
@@ -284,7 +284,7 @@ func onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
@@ -372,7 +372,7 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
@@ -382,7 +382,7 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldColName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
@@ -394,7 +394,7 @@ func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldCol
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)

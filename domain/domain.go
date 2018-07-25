@@ -21,9 +21,9 @@ import (
 	"time"
 	"unsafe"
 
+	"fmt"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
-	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -70,12 +71,12 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	var fullLoad bool
 	snapshot, err := do.store.GetSnapshot(kv.NewVersion(startTS))
 	if err != nil {
-		return 0, nil, fullLoad, errors.Trace(err)
+		return 0, nil, fullLoad, errors.WithStack(err)
 	}
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersion()
 	if err != nil {
-		return 0, nil, fullLoad, errors.Trace(err)
+		return 0, nil, fullLoad, errors.WithStack(err)
 	}
 	if usedSchemaVersion != 0 && usedSchemaVersion == latestSchemaVersion {
 		return latestSchemaVersion, nil, fullLoad, nil
@@ -108,12 +109,12 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	fullLoad = true
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
-		return 0, nil, fullLoad, errors.Trace(err)
+		return 0, nil, fullLoad, errors.WithStack(err)
 	}
 
 	newISBuilder, err := infoschema.NewBuilder(handle).InitWithDBInfos(schemas, latestSchemaVersion)
 	if err != nil {
-		return 0, nil, fullLoad, errors.Trace(err)
+		return 0, nil, fullLoad, errors.WithStack(err)
 	}
 	log.Infof("[ddl] full load InfoSchema from version %d to %d, in %v",
 		usedSchemaVersion, latestSchemaVersion, time.Since(startTime))
@@ -124,7 +125,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, error) {
 	allSchemas, err := m.ListDatabases()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
 	doneCh := make(chan error, len(splittedSchemas))
@@ -134,7 +135,7 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 	for range splittedSchemas {
 		err = <-doneCh
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	return allSchemas, nil
@@ -210,7 +211,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		usedVersion++
 		diff, err := m.GetSchemaDiff(usedVersion)
 		if err != nil {
-			return false, nil, errors.Trace(err)
+			return false, nil, errors.WithStack(err)
 		}
 		if diff == nil {
 			// If diff is missing for any version between used and new version, we fall back to full reload.
@@ -223,7 +224,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 	for _, diff := range diffs {
 		ids, err := builder.ApplyDiff(m, diff)
 		if err != nil {
-			return false, nil, errors.Trace(err)
+			return false, nil, errors.WithStack(err)
 		}
 		tblIDs = append(tblIDs, ids...)
 	}
@@ -241,7 +242,7 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 	snapHandle := do.infoHandle.EmptyClone()
 	_, _, _, err := do.loadInfoSchema(snapHandle, do.infoHandle.Get().SchemaMetaVersion(), snapshotTS)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return snapHandle.Get(), nil
 }
@@ -285,7 +286,7 @@ func (do *Domain) Reload() error {
 
 	ver, err := do.store.CurrentVersion()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	schemaVersion := int64(0)
@@ -302,7 +303,7 @@ func (do *Domain) Reload() error {
 	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
@@ -337,12 +338,12 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-ticker.C:
 			err := do.Reload()
 			if err != nil {
-				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
+				log.Errorf("[ddl] reload schema in loop err %v", fmt.Sprintf("%+v", err))
 			}
 		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
-				log.Errorf("[ddl] reload schema in loop err %v", errors.ErrorStack(err))
+				log.Errorf("[ddl] reload schema in loop err %v", fmt.Sprintf("%+v", err))
 			}
 			if !ok {
 				log.Warn("[ddl] reload schema in loop, schema syncer need rewatch")
@@ -355,7 +356,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			do.SchemaValidator.Stop()
 			err := do.mustRestartSyncer()
 			if err != nil {
-				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
+				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", fmt.Sprintf("%+v", err))
 				break
 			}
 			do.SchemaValidator.Restart()
@@ -379,7 +380,7 @@ func (do *Domain) mustRestartSyncer() error {
 		// If the domain has stopped, we return an error immediately.
 		select {
 		case <-do.exit:
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		default:
 		}
 		time.Sleep(time.Second)
@@ -390,11 +391,11 @@ func (do *Domain) mustRestartSyncer() error {
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
 	if do.ddl != nil {
-		terror.Log(errors.Trace(do.ddl.Stop()))
+		terror.Log(errors.WithStack(do.ddl.Stop()))
 	}
 	close(do.exit)
 	if do.etcdClient != nil {
-		terror.Log(errors.Trace(do.etcdClient.Close()))
+		terror.Log(errors.WithStack(do.etcdClient.Close()))
 	}
 	do.sysSessionPool.Close()
 	do.wg.Wait()
@@ -476,7 +477,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 				TLS: ebd.TLSConfig(),
 			})
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			do.etcdClient = cli
 		}
@@ -498,11 +499,11 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 
 	err := do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = do.Reload()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// Only when the store is local that the lease value is 0.
@@ -528,7 +529,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 	do.privHandle = privileges.NewHandle()
 	err := do.privHandle.Update(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	var watchCh clientv3.WatchChan
@@ -563,7 +564,7 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 			err := do.privHandle.Update(ctx)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
-				log.Error("[domain] load privilege fail:", errors.ErrorStack(err))
+				log.Error("[domain] load privilege fail:", fmt.Sprintf("%+v", err))
 			} else {
 				log.Info("[domain] reload privilege success.")
 			}
@@ -623,7 +624,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 	// TODO: Need to do something when err is not nil.
 	err := statsOwner.CampaignOwner(cancelCtx)
 	if err != nil {
-		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
+		log.Warnf("[stats] campaign owner fail:", fmt.Sprintf("%+v", err))
 	}
 	return statsOwner
 }
@@ -647,7 +648,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	t := time.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
 	if err != nil {
-		log.Debug("[stats] init stats info failed: ", errors.ErrorStack(err))
+		log.Debug("[stats] init stats info failed: ", fmt.Sprintf("%+v", err))
 	} else {
 		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
 	}
@@ -657,7 +658,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case <-loadTicker.C:
 			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
-				log.Debug("[stats] update stats info fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] update stats info fail: ", fmt.Sprintf("%+v", err))
 			}
 		case <-do.exit:
 			statsHandle.FlushStats()
@@ -667,18 +668,18 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case t := <-statsHandle.DDLEventCh():
 			err = statsHandle.HandleDDLEvent(t)
 			if err != nil {
-				log.Debug("[stats] handle ddl event fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] handle ddl event fail: ", fmt.Sprintf("%+v", err))
 			}
 		case <-deltaUpdateTicker.C:
 			err = statsHandle.DumpStatsDeltaToKV(statistics.DumpDelta)
 			if err != nil {
-				log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] dump stats delta fail: ", fmt.Sprintf("%+v", err))
 			}
 			statsHandle.UpdateErrorRate(do.InfoSchema())
 		case <-loadHistogramTicker.C:
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
-				log.Debug("[stats] load histograms fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] load histograms fail: ", fmt.Sprintf("%+v", err))
 			}
 		case <-loadFeedbackTicker.C:
 			statsHandle.UpdateStatsByLocalFeedback(do.InfoSchema())
@@ -687,12 +688,12 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 			err = statsHandle.HandleUpdateStats(do.InfoSchema())
 			if err != nil {
-				log.Debug("[stats] update stats using feedback fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] update stats using feedback fail: ", fmt.Sprintf("%+v", err))
 			}
 		case <-dumpFeedbackTicker.C:
 			err = statsHandle.DumpStatsFeedbackToKV()
 			if err != nil {
-				log.Debug("[stats] dump stats feedback fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] dump stats feedback fail: ", fmt.Sprintf("%+v", err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {
@@ -700,7 +701,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 			err = statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
-				log.Debug("[stats] gc stats fail: ", errors.ErrorStack(err))
+				log.Debug("[stats] gc stats fail: ", fmt.Sprintf("%+v", err))
 			}
 		}
 	}
@@ -717,7 +718,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 			if owner.IsOwner() {
 				err := statsHandle.HandleAutoAnalyze(do.InfoSchema())
 				if err != nil {
-					log.Error("[stats] auto analyze fail:", errors.ErrorStack(err))
+					log.Error("[stats] auto analyze fail:", fmt.Sprintf("%+v", err))
 				}
 			}
 		case <-do.exit:

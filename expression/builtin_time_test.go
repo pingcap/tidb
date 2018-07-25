@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 )
 
 func (s *testEvaluatorSuite) TestDate(c *C) {
@@ -924,7 +924,7 @@ func convertToTimeWithFsp(sc *stmtctx.StatementContext, arg types.Datum, tp byte
 	d, err = arg.ConvertTo(sc, f)
 	if err != nil {
 		d.SetNull()
-		return d, errors.Trace(err)
+		return d, errors.WithStack(err)
 	}
 
 	if d.IsNull() {
@@ -945,7 +945,7 @@ func convertToTime(sc *stmtctx.StatementContext, arg types.Datum, tp byte) (d ty
 func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datum, err error) {
 	date, err := convertToTime(ctx.GetSessionVars().StmtCtx, args[0], mysql.TypeDatetime)
 	if err != nil {
-		return d, errors.Trace(err)
+		return d, errors.WithStack(err)
 	}
 
 	if date.IsNull() {
@@ -954,7 +954,7 @@ func builtinDateFormat(ctx sessionctx.Context, args []types.Datum) (d types.Datu
 	t := date.GetMysqlTime()
 	str, err := t.DateFormat(args[1].GetString())
 	if err != nil {
-		return d, errors.Trace(err)
+		return d, errors.WithStack(err)
 	}
 	d.SetString(str)
 	return

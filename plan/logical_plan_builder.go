@@ -22,7 +22,6 @@ import (
 	"unicode"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -84,7 +84,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		for _, arg := range aggFunc.Args {
 			newArg, np, err := b.rewrite(arg, p, nil, true)
 			if err != nil {
-				b.err = errors.Trace(err)
+				b.err = errors.WithStack(err)
 				return nil, nil
 			}
 			p = np
@@ -301,7 +301,7 @@ func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
 	// Set preferred join algorithm if some join hints is specified by user.
 	err := joinPlan.setPreferredJoinType(b.TableHints())
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 
@@ -314,19 +314,19 @@ func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
 	// See https://dev.mysql.com/doc/refman/5.7/en/join.html for more detail.
 	if joinNode.NaturalJoin {
 		if err = b.buildNaturalJoin(joinPlan, leftPlan, rightPlan, joinNode); err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil
 		}
 	} else if joinNode.Using != nil {
 		if err = b.buildUsingClause(joinPlan, leftPlan, rightPlan, joinNode); err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil
 		}
 	} else if joinNode.On != nil {
 		b.curClause = onClause
 		onExpr, newPlan, err := b.rewrite(joinNode.On.Expr, joinPlan, nil, false)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil
 		}
 		if newPlan != joinPlan {
@@ -425,7 +425,7 @@ func (b *planBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 		lc, rc := lsc.Columns[i], rsc.Columns[i]
 		cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), lc, rc)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		conds = append(conds, cond)
 	}
@@ -571,7 +571,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	for _, field := range fields {
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil, oldLen
 		}
 		p = np
@@ -671,13 +671,13 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	distinctSelectPlans, allSelectPlans := b.divideUnionSelectPlans(union.SelectList.Selects)
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 
 	unionDistinctPlan := b.buildSubUnion(distinctSelectPlans)
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 
@@ -690,7 +690,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 
 	unionAllPlan := b.buildSubUnion(allSelectPlans)
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 
@@ -702,14 +702,14 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
 	if union.OrderBy != nil {
 		unionPlan = b.buildSort(unionPlan, union.OrderBy.Items, nil)
 		if b.err != nil {
-			b.err = errors.Trace(b.err)
+			b.err = errors.WithStack(b.err)
 			return nil
 		}
 	}
 	if union.Limit != nil {
 		unionPlan = b.buildLimit(unionPlan, union.Limit)
 		if b.err != nil {
-			b.err = errors.Trace(b.err)
+			b.err = errors.WithStack(b.err)
 			return nil
 		}
 	}
@@ -731,7 +731,7 @@ func (b *planBuilder) divideUnionSelectPlans(selects []*ast.SelectStmt) (distinc
 		}
 		selectPlan := b.buildSelect(stmt)
 		if b.err != nil {
-			b.err = errors.Trace(b.err)
+			b.err = errors.WithStack(b.err)
 			return nil, nil
 		}
 		if columnNums == -1 {
@@ -806,7 +806,7 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 		}
 	case string:
 		uVal, err := types.StrToUint(sc, v)
-		return uVal, errors.Trace(err)
+		return uVal, errors.WithStack(err)
 	}
 	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
@@ -933,7 +933,7 @@ func (a *havingAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, skipChi
 func (a *havingAndOrderbyExprResolver) resolveFromSchema(v *ast.ColumnNameExpr, schema *expression.Schema) (int, error) {
 	col, err := schema.FindColumn(v.Name)
 	if err != nil {
-		return -1, errors.Trace(err)
+		return -1, errors.WithStack(err)
 	}
 	if col == nil {
 		return -1, nil
@@ -1013,7 +1013,7 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 			for _, schema := range a.outerSchemas {
 				col, err1 := schema.FindColumn(v.Name)
 				if err1 != nil {
-					a.err = errors.Trace(err1)
+					a.err = errors.WithStack(err1)
 					return node, false
 				}
 				if col != nil {
@@ -1051,7 +1051,7 @@ func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 		extractor.curClause = havingClause
 		n, ok := sel.Having.Expr.Accept(extractor)
 		if !ok {
-			b.err = errors.Trace(extractor.err)
+			b.err = errors.WithStack(extractor.err)
 			return nil, nil
 		}
 		sel.Having.Expr = n.(ast.ExprNode)
@@ -1066,7 +1066,7 @@ func (b *planBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 		for _, item := range sel.OrderBy.Items {
 			n, ok := item.Expr.Accept(extractor)
 			if !ok {
-				b.err = errors.Trace(extractor.err)
+				b.err = errors.WithStack(extractor.err)
 				return nil, nil
 			}
 			item.Expr = n.(ast.ExprNode)
@@ -1133,7 +1133,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 					return ret, true
 				}
 			}
-			g.err = errors.Trace(err)
+			g.err = errors.WithStack(err)
 			return inNode, false
 		}
 	case *ast.PositionExpr:
@@ -1417,7 +1417,7 @@ func (b *planBuilder) checkOnlyFullGroupByWithOutGroupClause(p LogicalPlan, fiel
 		resolver.exprIdx = idx
 		field.Accept(&resolver)
 		if err := resolver.Check(); err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return
 		}
 	}
@@ -1501,13 +1501,13 @@ func (b *planBuilder) resolveGbyExprs(p LogicalPlan, gby *ast.GroupByClause, fie
 		resolver.inExpr = false
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
-			b.err = errors.Trace(resolver.err)
+			b.err = errors.WithStack(resolver.err)
 			return nil, nil
 		}
 		item.Expr = retExpr.(ast.ExprNode)
 		expr, np, err := b.rewrite(item.Expr, p, nil, true)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil, nil
 		}
 		exprs = append(exprs, expr)
@@ -1760,7 +1760,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 
 	tbl, err := b.is.TableByName(dbName, tn.Name)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 
@@ -1773,7 +1773,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 
 	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 
@@ -1876,7 +1876,7 @@ func (b *planBuilder) projectVirtualColumns(ds *DataSource, columns []*table.Col
 				var err error
 				expr, _, err = b.rewrite(column.GeneratedExpr, ds, nil, true)
 				if err != nil {
-					b.err = errors.Trace(err)
+					b.err = errors.WithStack(err)
 					return nil
 				}
 				// Because the expression maybe return different type from
@@ -2070,7 +2070,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 	for _, assign := range list {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil, nil
 		}
 		columnFullName := fmt.Sprintf("%s.%s.%s", col.DBName.L, col.TblName.L, col.ColName.L)
@@ -2113,7 +2113,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 	for i, assign := range allAssignments {
 		col, _, err := p.findColumn(assign.Column)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil, nil
 		}
 		var newExpr expression.Expression
@@ -2136,7 +2136,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			newExpr, np, err = b.rewriteWithPreprocess(assign.Expr, p, nil, false, rewritePreprocess)
 		}
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil, nil
 		}
 		newExpr = expression.BuildCastFunction(b.ctx, newExpr, col.GetType())

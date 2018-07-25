@@ -20,11 +20,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -207,7 +207,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	}
 	select {
 	case <-b.ctx.Done():
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	default:
 	}
 

@@ -19,8 +19,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 )
 
 // UserIdentity represents username and hostname.
@@ -54,9 +54,9 @@ func (user *UserIdentity) String() string {
 func CheckScrambledPassword(salt, hpwd, auth []byte) bool {
 	crypt := sha1.New()
 	_, err := crypt.Write(salt)
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	_, err = crypt.Write(hpwd)
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	hash := crypt.Sum(nil)
 	// token = scrambleHash XOR stage1Hash
 	for i := range hash {
@@ -70,7 +70,7 @@ func CheckScrambledPassword(salt, hpwd, auth []byte) bool {
 func Sha1Hash(bs []byte) []byte {
 	crypt := sha1.New()
 	_, err := crypt.Write(bs)
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	return crypt.Sum(nil)
 }
 
@@ -89,7 +89,7 @@ func EncodePassword(pwd string) string {
 func DecodePassword(pwd string) ([]byte, error) {
 	x, err := hex.DecodeString(pwd[1:])
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return x, nil
 }

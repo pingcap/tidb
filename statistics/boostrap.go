@@ -14,7 +14,7 @@
 package statistics
 
 import (
-	"github.com/juju/errors"
+	"fmt"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -63,7 +64,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	tables := statsCache{}
 	chk := rc[0].NewChunk()
@@ -71,7 +72,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	for {
 		err := rc[0].Next(context.TODO(), chk)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -103,7 +104,7 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter
 			cms, err := decodeCMSketch(row.GetBytes(6))
 			if err != nil {
 				cms = nil
-				terror.Log(errors.Trace(err))
+				terror.Log(errors.WithStack(err))
 			}
 			hist := NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 			table.Indices[hist.ID] = &Index{Histogram: *hist, CMSketch: cms, Info: idxInfo, statsVer: row.GetInt64(8)}
@@ -133,14 +134,14 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	chk := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(chk)
 	for {
 		err := rc[0].Next(context.TODO(), chk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -180,14 +181,14 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables statsCache, iter *chu
 			var err error
 			lower, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				log.Debugf("decode bucket lower bound failed: %s", errors.ErrorStack(err))
+				log.Debugf("decode bucket lower bound failed: %s", fmt.Sprintf("%+v", err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
 			upper, err = d.ConvertTo(ctx.GetSessionVars().StmtCtx, &column.Info.FieldType)
 			if err != nil {
-				log.Debugf("decode bucket upper bound failed: %s", errors.ErrorStack(err))
+				log.Debugf("decode bucket upper bound failed: %s", fmt.Sprintf("%+v", err))
 				delete(table.Columns, histID)
 				continue
 			}
@@ -205,14 +206,14 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	chk := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(chk)
 	for {
 		err := rc[0].Next(context.TODO(), chk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -244,15 +245,15 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 func (h *Handle) InitStats(is infoschema.InfoSchema) error {
 	tables, err := h.initStatsMeta(is)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = h.initStatsHistograms(is, tables)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = h.initStatsBuckets(tables)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	h.statsCache.Store(tables)
 	return nil

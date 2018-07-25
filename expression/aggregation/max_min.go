@@ -14,9 +14,9 @@
 package aggregation
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 type maxMinFunction struct {
@@ -39,7 +39,7 @@ func (mmf *maxMinFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.State
 	a := mmf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if evalCtx.Value.IsNull() {
 		evalCtx.Value = *(&value).Copy()
@@ -50,7 +50,7 @@ func (mmf *maxMinFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.State
 	var c int
 	c, err = evalCtx.Value.CompareDatum(sc, &value)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if (mmf.isMax && c == -1) || (!mmf.isMax && c == 1) {
 		evalCtx.Value = *(&value).Copy()

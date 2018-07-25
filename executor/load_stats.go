@@ -16,11 +16,11 @@ package executor
 import (
 	"encoding/json"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -78,12 +78,12 @@ func (e *LoadStatsExec) Open(ctx context.Context) error {
 func (e *LoadStatsInfo) Update(data []byte) error {
 	jsonTbl := &statistics.JSONTable{}
 	if err := json.Unmarshal(data, jsonTbl); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	do := domain.GetDomain(e.Ctx)
 	h := do.StatsHandle()
 	if h == nil {
 		return errors.New("Load Stats: handle is nil")
 	}
-	return errors.Trace(h.LoadStatsFromJSON(GetInfoSchema(e.Ctx), jsonTbl))
+	return errors.WithStack(h.LoadStatsFromJSON(GetInfoSchema(e.Ctx), jsonTbl))
 }

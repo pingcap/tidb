@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 // ScalarFunction is the function that returns a value.
@@ -85,7 +85,7 @@ func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldTy
 	copy(funcArgs, args)
 	f, err := fc.getFunction(ctx, funcArgs)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if builtinRetTp := f.getRetTp(); builtinRetTp.Tp != mysql.TypeUnspecified || retType.Tp == mysql.TypeUnspecified {
 		retType = builtinRetTp
@@ -101,7 +101,7 @@ func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldTy
 // NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
 func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	return expr
 }
 
@@ -190,7 +190,7 @@ func (sf *ScalarFunction) Eval(row types.Row) (d types.Datum, err error) {
 
 	if isNull || err != nil {
 		d.SetValue(nil)
-		return d, errors.Trace(err)
+		return d, errors.WithStack(err)
 	}
 	d.SetValue(res)
 	return

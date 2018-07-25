@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
+	"fmt"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -70,12 +71,12 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
-			log.Errorf("[ddl] init domain failed %v", errors.ErrorStack(errors.Trace(err1)))
+			log.Errorf("[ddl] init domain failed %v", fmt.Sprintf("%+v", errors.WithStack(err1)))
 		}
-		return true, errors.Trace(err1)
+		return true, errors.WithStack(err1)
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	dm.domains[key] = d
 
@@ -130,7 +131,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	stmts, err := p.Parse(src, charset, collation)
 	if err != nil {
 		log.Warnf("compiling %s, error: %v", src, err)
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return stmts, nil
 }
@@ -139,7 +140,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode) (ast.Statement, error) {
 	compiler := executor.Compiler{Ctx: sctx}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	return stmt, errors.Trace(err)
+	return stmt, errors.WithStack(err)
 }
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
@@ -171,7 +172,7 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s ast.Statement) (ast
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
 			err1 := se.RollbackTxn(ctx1)
-			terror.Log(errors.Trace(err1))
+			terror.Log(errors.WithStack(err1))
 		} else {
 			err = se.CommitTxn(ctx1)
 		}
@@ -181,12 +182,12 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s ast.Statement) (ast
 		history := GetHistory(sctx)
 		if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 			err1 := se.RollbackTxn(ctx1)
-			terror.Log(errors.Trace(err1))
+			terror.Log(errors.WithStack(err1))
 			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
 				history.Count(), sctx.GetSessionVars().IsAutocommit())
 		}
 	}
-	return rs, errors.Trace(err)
+	return rs, errors.WithStack(err)
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
@@ -213,7 +214,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs ast.RecordSet
 
 		err := rs.Next(ctx, chk)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -254,7 +255,7 @@ func NewStore(path string) (kv.Storage, error) {
 func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	storeURL, err := url.Parse(path)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	name := strings.ToLower(storeURL.Scheme)
@@ -269,7 +270,7 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 		s, err = d.Open(path)
 		return kv.IsRetryableError(err), err
 	})
-	return s, errors.Trace(err)
+	return s, errors.WithStack(err)
 }
 
 // DialPumpClientWithRetry tries to dial to binlogSocket,
@@ -282,7 +283,7 @@ func DialPumpClientWithRetry(binlogSocket string, maxRetries int, dialerOpt grpc
 		var err error
 		tlsConfig, err := config.GetGlobalConfig().Security.ToTLSConfig()
 		if err != nil {
-			log.Infof("error happen when setting binlog client: %s", errors.ErrorStack(err))
+			log.Infof("error happen when setting binlog client: %s", fmt.Sprintf("%+v", err))
 		}
 
 		if tlsConfig != nil {
@@ -292,11 +293,11 @@ func DialPumpClientWithRetry(binlogSocket string, maxRetries int, dialerOpt grpc
 		}
 
 		if err != nil {
-			log.Infof("error happen when setting binlog client: %s", errors.ErrorStack(err))
+			log.Infof("error happen when setting binlog client: %s", fmt.Sprintf("%+v", err))
 		}
-		return true, errors.Trace(err)
+		return true, errors.WithStack(err)
 	})
-	return clientCon, errors.Trace(err)
+	return clientCon, errors.WithStack(err)
 }
 
 var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}

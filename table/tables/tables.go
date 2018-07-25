@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
@@ -117,11 +117,11 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		if col.IsGenerated() {
 			expr, err := parseExpression(colInfo.GeneratedExprString)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			expr, err = simpleResolveName(expr, tblInfo)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			col.GeneratedExpr = expr
 		}
@@ -132,7 +132,7 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 	initTableCommon(&t.tableCommon, tblInfo, tblInfo.ID, columns, alloc)
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t.tableCommon); err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		return &t, nil
 	}
@@ -171,7 +171,7 @@ func initTableIndices(t *tableCommon) error {
 
 func initTableCommonWithIndices(t *tableCommon, tblInfo *model.TableInfo, partitionID int64, cols []*table.Column, alloc autoid.Allocator) error {
 	initTableCommon(t, tblInfo, partitionID, cols, alloc)
-	return errors.Trace(initTableIndices(t))
+	return errors.WithStack(initTableIndices(t))
 }
 
 // Indices implements table.Table Indices interface.
@@ -275,7 +275,7 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	// rebuild index
 	err := t.rebuildIndices(ctx, bs, h, touched, oldData, newData)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
 
@@ -313,13 +313,13 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	key := t.RecordKey(h)
 	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, nil, nil)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if err = bs.Set(key, value); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if err = bs.SaveTo(txn); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if shouldWriteBinlog(ctx) {
 		if !t.meta.PKIsHandle {
@@ -329,7 +329,7 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 		}
 		err = t.addUpdateBinlog(ctx, binlogOldRow, binlogNewRow, binlogColIDs)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -343,10 +343,10 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 			}
 			oldVs, err := idx.FetchValues(oldData, nil)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			if err = t.removeRowIndex(ctx.GetSessionVars().StmtCtx, rm, h, oldVs, idx); err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			break
 		}
@@ -358,10 +358,10 @@ func (t *tableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 			}
 			newVs, err := idx.FetchValues(newData, nil)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			if err := t.buildIndexForRow(ctx, rm, h, newVs, idx); err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			break
 		}
@@ -416,7 +416,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 	if !hasRecordID {
 		recordID, err = t.AllocAutoID(ctx)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 	}
 
@@ -433,7 +433,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 	// Insert new entries into indices.
 	h, err := t.addIndices(ctx, recordID, r, rm, skipHandleCheck)
 	if err != nil {
-		return h, errors.Trace(err)
+		return h, errors.WithStack(err)
 	}
 
 	var colIDs, binlogColIDs []int64
@@ -447,7 +447,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 			// If col is in write only or write reorganization state, we must add it with its default value.
 			value, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, errors.WithStack(err)
 			}
 		} else {
 			value = r[col.Offset]
@@ -462,15 +462,15 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 	key := t.RecordKey(recordID)
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	value := writeBufs.RowValBuf
 	if err = txn.Set(key, value); err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	if !sessVars.ImportingData {
 		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 	}
 	if shouldWriteBinlog(ctx) {
@@ -479,7 +479,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 		binlogColIDs = colIDs
 		err = t.addInsertBinlog(ctx, recordID, binlogRow, binlogColIDs)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 	}
 	sessVars.StmtCtx.AddAffectedRows(1)
@@ -504,7 +504,7 @@ func (t *tableCommon) genIndexKeyStr(colVals []types.Datum) (string, error) {
 		if !cv.IsNull() {
 			cvs, err = types.ToString(cv.GetValue())
 			if err != nil {
-				return "", errors.Trace(err)
+				return "", errors.WithStack(err)
 			}
 		}
 		strVals = append(strVals, cvs)
@@ -520,7 +520,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 	skipCheck := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !skipHandleCheck {
 		if err := CheckHandleExists(ctx, t, recordID); err != nil {
-			return recordID, errors.Trace(err)
+			return recordID, errors.WithStack(err)
 		}
 	}
 
@@ -530,22 +530,22 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 		var err2 error
 		indexVals, err2 = v.FetchValues(r, indexVals)
 		if err2 != nil {
-			return 0, errors.Trace(err2)
+			return 0, errors.WithStack(err2)
 		}
 		var dupKeyErr error
 		if !skipCheck && (v.Meta().Unique || v.Meta().Primary) {
 			entryKey, err1 := t.genIndexKeyStr(indexVals)
 			if err1 != nil {
-				return 0, errors.Trace(err1)
+				return 0, errors.WithStack(err1)
 			}
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
 		}
 		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
-				return dupHandle, errors.Trace(dupKeyErr)
+				return dupHandle, errors.WithStack(dupKeyErr)
 			}
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 		txn.DelOption(kv.PresumeKeyNotExistsError)
 	}
@@ -560,11 +560,11 @@ func (t *tableCommon) RowWithCols(ctx sessionctx.Context, h int64, cols []*table
 	key := t.RecordKey(h)
 	value, err := ctx.Txn().Get(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	v, _, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return v, nil
 }
@@ -590,7 +590,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 	}
 	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().Location())
 	if err != nil {
-		return nil, rowMap, errors.Trace(err)
+		return nil, rowMap, errors.WithStack(err)
 	}
 	defaultVals := make([]types.Datum, len(cols))
 	for i, col := range cols {
@@ -607,7 +607,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 		}
 		v[i], err = GetColDefaultValue(ctx, col, defaultVals)
 		if err != nil {
-			return nil, rowMap, errors.Trace(err)
+			return nil, rowMap, errors.WithStack(err)
 		}
 	}
 	return v, rowMap, nil
@@ -617,7 +617,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 func (t *tableCommon) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
 	r, err := t.RowWithCols(ctx, h, t.Cols())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return r, nil
 }
@@ -626,11 +626,11 @@ func (t *tableCommon) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error
 func (t *tableCommon) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
 	err := t.removeRowData(ctx, h)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = t.removeRowIndices(ctx, h, r)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if shouldWriteBinlog(ctx) {
 		cols := t.Cols()
@@ -649,18 +649,18 @@ func (t *tableCommon) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Da
 		}
 		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (t *tableCommon) addInsertBinlog(ctx sessionctx.Context, h int64, row []types.Datum, colIDs []int64) error {
 	mutation := t.getMutation(ctx)
 	pk, err := codec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, types.NewIntDatum(h))
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	value, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, row, colIDs, nil, nil)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	bin := append(pk, value...)
 	mutation.InsertedRows = append(mutation.InsertedRows, bin)
@@ -671,11 +671,11 @@ func (t *tableCommon) addInsertBinlog(ctx sessionctx.Context, h int64, row []typ
 func (t *tableCommon) addUpdateBinlog(ctx sessionctx.Context, oldRow, newRow []types.Datum, colIDs []int64) error {
 	old, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, oldRow, colIDs, nil, nil)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	newVal, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, newRow, colIDs, nil, nil)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	bin := append(old, newVal...)
 	mutation := t.getMutation(ctx)
@@ -687,7 +687,7 @@ func (t *tableCommon) addUpdateBinlog(ctx sessionctx.Context, oldRow, newRow []t
 func (t *tableCommon) addDeleteBinlog(ctx sessionctx.Context, r []types.Datum, colIDs []int64) error {
 	data, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, r, colIDs, nil, nil)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	mutation := t.getMutation(ctx)
 	mutation.DeletedRows = append(mutation.DeletedRows, data)
@@ -699,7 +699,7 @@ func (t *tableCommon) removeRowData(ctx sessionctx.Context, h int64) error {
 	// Remove row data.
 	err := ctx.Txn().Delete([]byte(t.RecordKey(h)))
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -710,7 +710,7 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
 			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS, h, rec)
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if err = v.Delete(ctx.GetSessionVars().StmtCtx, ctx.Txn(), vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
@@ -719,7 +719,7 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), ctx.Txn().StartTS, h)
 				continue
 			}
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -728,7 +728,7 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 // removeRowIndex implements table.Table RemoveRowIndex interface.
 func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
 	if err := idx.Delete(sc, rm, vals, h); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -736,7 +736,7 @@ func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.Retriev
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
 	if _, err := idx.Create(ctx, rm, vals, h); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -746,7 +746,7 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 	fn table.RecordIterFunc) error {
 	it, err := ctx.Txn().Seek(startKey)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	defer it.Close()
 
@@ -768,11 +768,11 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		// get row handle
 		handle, err := tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, ctx.GetSessionVars().Location())
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		data := make([]types.Datum, len(cols))
 		for _, col := range cols {
@@ -790,18 +790,18 @@ func (t *tableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 			}
 			data[col.Offset], err = GetColDefaultValue(ctx, col, defaultVals)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 		more, err := fn(handle, data, cols)
 		if !more || err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		rk := t.RecordKey(handle)
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 
@@ -821,7 +821,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 	if defaultVals[col.Offset].IsNull() {
 		colVal, err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 		if err != nil {
-			return colVal, errors.Trace(err)
+			return colVal, errors.WithStack(err)
 		}
 		defaultVals[col.Offset] = colVal
 	} else {
@@ -835,7 +835,7 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 func (t *tableCommon) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 	rowID, err := t.Allocator(ctx).Alloc(t.tableID)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	if t.meta.ShardRowIDBits > 0 {
 		txnCtx := ctx.GetSessionVars().TxnCtx
@@ -881,7 +881,7 @@ func (t *tableCommon) Seek(ctx sessionctx.Context, h int64) (int64, bool, error)
 	}
 	handle, err := tablecodec.DecodeRowKey(iter.Key())
 	if err != nil {
-		return 0, false, errors.Trace(err)
+		return 0, false, errors.WithStack(err)
 	}
 	return handle, true, nil
 }
@@ -961,9 +961,9 @@ func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64) er
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	_, err := txn.Get(recordKey)
 	if err == nil {
-		return errors.Trace(e)
+		return errors.WithStack(e)
 	} else if !kv.ErrNotExist.Equal(err) {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return nil
 }

@@ -14,10 +14,10 @@
 package ddl
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pkg/errors"
 )
 
 func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -26,7 +26,7 @@ func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err := job.DecodeArgs(dbInfo); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	dbInfo.ID = schemaID
@@ -34,7 +34,7 @@ func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 	dbs, err := t.ListDatabases()
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	for _, db := range dbs {
@@ -50,7 +50,7 @@ func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	switch dbInfo.State {
@@ -59,7 +59,7 @@ func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		dbInfo.State = model.StatePublic
 		err = t.CreateDatabase(dbInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 		// Finish this job.
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
@@ -73,7 +73,7 @@ func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	if dbInfo == nil {
 		job.State = model.JobStateCancelled
@@ -82,7 +82,7 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	switch dbInfo.State {
@@ -101,12 +101,12 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		var tables []*model.TableInfo
 		tables, err = t.ListTables(job.SchemaID)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 
 		err = t.UpdateDatabase(dbInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 		if err = t.DropDatabase(dbInfo.ID); err != nil {
 			break
@@ -122,7 +122,7 @@ func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		err = errors.Errorf("invalid db state %v", dbInfo.State)
 	}
 
-	return ver, errors.Trace(err)
+	return ver, errors.WithStack(err)
 }
 
 func getIDs(tables []*model.TableInfo) []int64 {

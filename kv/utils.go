@@ -16,7 +16,7 @@ package kv
 import (
 	"strconv"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 // IncInt64 increases the value for key k in kv store by step.
@@ -25,23 +25,23 @@ func IncInt64(rm RetrieverMutator, k Key, step int64) (int64, error) {
 	if IsErrNotFound(err) {
 		err = rm.Set(k, []byte(strconv.FormatInt(step, 10)))
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 		return step, nil
 	}
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 
 	intVal, err := strconv.ParseInt(string(val), 10, 0)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 
 	intVal += step
 	err = rm.Set(k, []byte(strconv.FormatInt(intVal, 10)))
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	return intVal, nil
 }
@@ -53,8 +53,8 @@ func GetInt64(r Retriever, k Key) (int64, error) {
 		return 0, nil
 	}
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	intVal, err := strconv.ParseInt(string(val), 10, 0)
-	return intVal, errors.Trace(err)
+	return intVal, errors.WithStack(err)
 }

@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -452,7 +452,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TimeZone:
 		tz, err := parseTimeZone(val)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		s.TimeZone = tz
 	case SQLModeVar:
@@ -460,7 +460,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		// Modes is a list of different modes separated by commas.
 		sqlMode, err2 := mysql.GetSQLMode(val)
 		if err2 != nil {
-			return errors.Trace(err2)
+			return errors.WithStack(err2)
 		}
 		s.StrictSQLMode = sqlMode.HasStrictMode()
 		s.SQLMode = sqlMode
@@ -468,7 +468,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBSnapshot:
 		err := setSnapshotTS(s, val)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	case AutocommitVar:
 		isAutocommit := TiDBOptOn(val)

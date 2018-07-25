@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // Aggregation stands for aggregate functions.
@@ -66,7 +66,7 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 	for _, child := range expr.Children {
 		arg, err := expression.PBToExpr(child, fieldTps, sc)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		args = append(args, arg)
 	}
@@ -156,7 +156,7 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	a := af.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if value.IsNull() {
 		return nil
@@ -164,7 +164,7 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	if af.HasDistinct {
 		d, err1 := evalCtx.DistinctChecker.Check([]types.Datum{value})
 		if err1 != nil {
-			return errors.Trace(err1)
+			return errors.WithStack(err1)
 		}
 		if !d {
 			return nil
@@ -172,7 +172,7 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	}
 	evalCtx.Value, err = calculateSum(sc, evalCtx.Value, value)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	evalCtx.Count++
 	return nil

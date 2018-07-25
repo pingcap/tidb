@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testTypeConvertSuite{})
@@ -44,7 +44,7 @@ func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	sc.TimeZone = time.UTC
 	ret, err := d.ConvertTo(sc, target)
 	if err != nil {
-		return ret.GetValue(), errors.Trace(err)
+		return ret.GetValue(), errors.WithStack(err)
 	}
 	return ret.GetValue(), nil
 }
@@ -235,7 +235,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	ft.Flen = 8
 	ft.Decimal = 4
 	v, err = Convert(3.1416, ft)
-	c.Assert(err, IsNil, Commentf(errors.ErrorStack(err)))
+	c.Assert(err, IsNil, Commentf(fmt.Sprintf("%+v", err)))
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("3.1415926", ft)
 	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
@@ -282,7 +282,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, Enum{Name: "a", Value: 1})
 	v, err = Convert(2, ft)
-	c.Log(errors.ErrorStack(err))
+	c.Log(fmt.Sprintf("%+v", err))
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, Enum{Name: "b", Value: 2})
 	_, err = Convert("d", ft)

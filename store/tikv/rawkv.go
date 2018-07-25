@@ -17,12 +17,12 @@ import (
 	"bytes"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -50,7 +50,7 @@ func NewRawKVClient(pdAddrs []string, security config.Security) (*RawKVClient, e
 		KeyPath:  security.ClusterSSLKey,
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return &RawKVClient{
 		clusterID:   pdCli.GetClusterID(context.TODO()),
@@ -84,11 +84,11 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 	}
 	resp, _, err := c.sendReq(key, req)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	cmdResp := resp.RawGet
 	if cmdResp == nil {
-		return nil, errors.Trace(ErrBodyMissing)
+		return nil, errors.WithStack(ErrBodyMissing)
 	}
 	if cmdResp.GetError() != "" {
 		return nil, errors.New(cmdResp.GetError())
@@ -119,11 +119,11 @@ func (c *RawKVClient) Put(key, value []byte) error {
 	}
 	resp, _, err := c.sendReq(key, req)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	cmdResp := resp.RawPut
 	if cmdResp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return errors.WithStack(ErrBodyMissing)
 	}
 	if cmdResp.GetError() != "" {
 		return errors.New(cmdResp.GetError())
@@ -144,11 +144,11 @@ func (c *RawKVClient) Delete(key []byte) error {
 	}
 	resp, _, err := c.sendReq(key, req)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	cmdResp := resp.RawDelete
 	if cmdResp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return errors.WithStack(ErrBodyMissing)
 	}
 	if cmdResp.GetError() != "" {
 		return errors.New(cmdResp.GetError())
@@ -174,11 +174,11 @@ func (c *RawKVClient) DeleteRange(startKey []byte, endKey []byte) error {
 		var actualEndKey []byte
 		resp, actualEndKey, err = c.sendDeleteRangeReq(startKey, endKey)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		cmdResp := resp.RawDeleteRange
 		if cmdResp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return errors.WithStack(ErrBodyMissing)
 		}
 		if cmdResp.GetError() != "" {
 			return errors.New(cmdResp.GetError())
@@ -196,7 +196,7 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 	defer func() { metrics.TiKVRawkvCmdHistogram.WithLabelValues("raw_scan").Observe(time.Since(start).Seconds()) }()
 
 	if limit > MaxRawKVScanLimit {
-		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
+		return nil, nil, errors.WithStack(ErrMaxScanLimitExceeded)
 	}
 
 	for len(keys) < limit {
@@ -209,11 +209,11 @@ func (c *RawKVClient) Scan(startKey []byte, limit int) (keys [][]byte, values []
 		}
 		resp, loc, err := c.sendReq(startKey, req)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		cmdResp := resp.RawScan
 		if cmdResp == nil {
-			return nil, nil, errors.Trace(ErrBodyMissing)
+			return nil, nil, errors.WithStack(ErrBodyMissing)
 		}
 		for _, pair := range cmdResp.Kvs {
 			keys = append(keys, pair.Key)
@@ -233,20 +233,20 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Respon
 	for {
 		loc, err := c.regionCache.LocateKey(bo, key)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		if regionErr != nil {
 			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, errors.WithStack(err)
 			}
 			continue
 		}
@@ -264,7 +264,7 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 	for {
 		loc, err := c.regionCache.LocateKey(bo, startKey)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 
 		actualEndKey := endKey
@@ -282,16 +282,16 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 
 		resp, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		if regionErr != nil {
 			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, errors.WithStack(err)
 			}
 			continue
 		}

@@ -13,12 +13,12 @@
 package plan
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -55,7 +55,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 		for i, child := range children {
 			newChild, err := s.rewriteDataSource(child)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			children[i] = newChild
 		}
@@ -93,7 +93,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 			// If the selection condition would never be satisified, prune that partition.
 			prune, err := s.canBePrune(ds.context(), col, expr, ds.pushedDownConds)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			if prune {
 				continue
@@ -139,7 +139,7 @@ func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.
 	accessConds := ranger.ExtractAccessConditionsForColumn(conds, col.ColName)
 	r, err := ranger.BuildColumnRange(accessConds, ctx.GetSessionVars().StmtCtx, col.RetType)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	return len(r) == 0, nil
 }

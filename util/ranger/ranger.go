@@ -18,7 +18,6 @@ import (
 	"math"
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -26,19 +25,20 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 )
 
 func validInterval(sc *stmtctx.StatementContext, low, high point) (bool, error) {
 	l, err := codec.EncodeKey(sc, nil, low.value)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	if low.excl {
 		l = []byte(kv.Key(l).PrefixNext())
 	}
 	r, err := codec.EncodeKey(sc, nil, high.value)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	if !high.excl {
 		r = []byte(kv.Key(r).PrefixNext())
@@ -53,15 +53,15 @@ func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sc, rangePoints[i], tp)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		endPoint, err := convertPoint(sc, rangePoints[i+1], tp)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		less, err := validInterval(sc, startPoint, endPoint)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if !less {
 			continue
@@ -88,11 +88,11 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 	}
 	casted, err := point.value.ConvertTo(sc, tp)
 	if err != nil {
-		return point, errors.Trace(err)
+		return point, errors.WithStack(err)
 	}
 	valCmpCasted, err := point.value.CompareDatum(sc, &casted)
 	if err != nil {
-		return point, errors.Trace(err)
+		return point, errors.WithStack(err)
 	}
 	point.value = casted
 	if valCmpCasted == 0 {
@@ -140,7 +140,7 @@ func appendPoints2Ranges(sc *stmtctx.StatementContext, origin []*Range, rangePoi
 		} else {
 			newRanges, err := appendPoints2IndexRange(sc, oRange, rangePoints, ft)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			newIndexRanges = append(newIndexRanges, newRanges...)
 		}
@@ -154,15 +154,15 @@ func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *Range, rangeP
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sc, rangePoints[i], ft)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		endPoint, err := convertPoint(sc, rangePoints[i+1], ft)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		less, err := validInterval(sc, startPoint, endPoint)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if !less {
 			continue
@@ -203,7 +203,7 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sc, rangePoints[i], tp)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if startPoint.value.Kind() == types.KindNull {
 			startPoint.value = minValueDatum
@@ -213,7 +213,7 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 		}
 		endPoint, err := convertPoint(sc, rangePoints[i+1], tp)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if endPoint.value.Kind() == types.KindMaxValue {
 			endPoint.value = maxValueDatum
@@ -222,7 +222,7 @@ func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 		}
 		less, err := validInterval(sc, startPoint, endPoint)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if !less {
 			continue
@@ -245,13 +245,13 @@ func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.State
 	for _, cond := range accessConditions {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
+			return nil, errors.WithStack(rb.err)
 		}
 	}
 	newTp := newFieldType(tp)
 	ranges, err := points2TableRanges(sc, rangePoints, newTp)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return ranges, nil
 }
@@ -267,13 +267,13 @@ func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 	for _, cond := range conds {
 		rangePoints = rb.intersection(rangePoints, rb.build(cond))
 		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
+			return nil, errors.WithStack(rb.err)
 		}
 	}
 	newTp := newFieldType(tp)
 	ranges, err := points2Ranges(sc, rangePoints, newTp)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return ranges, nil
 }
@@ -296,7 +296,7 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 		// Build ranges for equal or in access conditions.
 		point := rb.build(accessCondition[i])
 		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
+			return nil, errors.WithStack(rb.err)
 		}
 		if i == 0 {
 			ranges, err = points2Ranges(sc, point, newTp[i])
@@ -304,7 +304,7 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 			ranges, err = appendPoints2Ranges(sc, ranges, point, newTp[i])
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	rangePoints := fullRange
@@ -312,7 +312,7 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 	for i := eqAndInCount; i < len(accessCondition); i++ {
 		rangePoints = rb.intersection(rangePoints, rb.build(accessCondition[i]))
 		if rb.err != nil {
-			return nil, errors.Trace(rb.err)
+			return nil, errors.WithStack(rb.err)
 		}
 	}
 	if eqAndInCount == 0 {
@@ -321,7 +321,7 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 		ranges, err = appendPoints2Ranges(sc, ranges, rangePoints, newTp[eqAndInCount])
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	// Take prefix index into consideration.
@@ -362,14 +362,14 @@ func unionRanges(sc *stmtctx.StatementContext, ranges []*Range) ([]*Range, error
 	for _, ran := range ranges {
 		left, err := codec.EncodeKey(sc, nil, ran.LowVal...)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if ran.LowExclude {
 			left = kv.Key(left).PrefixNext()
 		}
 		right, err := codec.EncodeKey(sc, nil, ran.HighVal...)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if !ran.HighExclude {
 			right = kv.Key(right).PrefixNext()

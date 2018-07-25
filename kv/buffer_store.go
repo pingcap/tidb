@@ -14,7 +14,7 @@
 package kv
 
 import (
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -66,7 +66,7 @@ func (s *BufferStore) Get(k Key) ([]byte, error) {
 		val, err = s.r.Get(k)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if len(val) == 0 {
 		return nil, ErrNotExist
@@ -78,11 +78,11 @@ func (s *BufferStore) Get(k Key) ([]byte, error) {
 func (s *BufferStore) Seek(k Key) (Iterator, error) {
 	bufferIt, err := s.MemBuffer.Seek(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	retrieverIt, err := s.r.Seek(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return NewUnionIter(bufferIt, retrieverIt, false)
 }
@@ -91,27 +91,27 @@ func (s *BufferStore) Seek(k Key) (Iterator, error) {
 func (s *BufferStore) SeekReverse(k Key) (Iterator, error) {
 	bufferIt, err := s.MemBuffer.SeekReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	retrieverIt, err := s.r.SeekReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return NewUnionIter(bufferIt, retrieverIt, true)
 }
 
 // WalkBuffer iterates all buffered kv pairs.
 func (s *BufferStore) WalkBuffer(f func(k Key, v []byte) error) error {
-	return errors.Trace(WalkMemBuffer(s.MemBuffer, f))
+	return errors.WithStack(WalkMemBuffer(s.MemBuffer, f))
 }
 
 // SaveTo saves all buffered kv pairs into a Mutator.
 func (s *BufferStore) SaveTo(m Mutator) error {
 	err := s.WalkBuffer(func(k Key, v []byte) error {
 		if len(v) == 0 {
-			return errors.Trace(m.Delete(k))
+			return errors.WithStack(m.Delete(k))
 		}
-		return errors.Trace(m.Set(k, v))
+		return errors.WithStack(m.Set(k, v))
 	})
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }

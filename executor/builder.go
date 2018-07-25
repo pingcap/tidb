@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/cznic/sortutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -172,7 +172,7 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plan.CancelDDLJobs) Executor {
 	}
 	e.errs, b.err = admin.CancelJobs(e.ctx.Txn(), e.jobIDs)
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	return e
@@ -192,13 +192,13 @@ func (b *executorBuilder) buildShowDDL(v *plan.ShowDDL) Executor {
 	e.ddlOwnerID, err = ownerManager.GetOwnerID(ctx)
 	cancel()
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 
 	ddlInfo, err := admin.GetDDLInfo(e.ctx.Txn())
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 	e.ddlInfo = ddlInfo
@@ -226,7 +226,7 @@ func (b *executorBuilder) buildShowDDLJobQueries(v *plan.ShowDDLJobQueries) Exec
 func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
 	readerExec, err := buildNoRangeIndexLookUpReader(b, v.IndexLookUpReader)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 	readerExec.ranges = ranger.FullRange()
@@ -273,7 +273,7 @@ func (b *executorBuilder) buildRecoverIndex(v *plan.RecoverIndex) Executor {
 	tblInfo := v.Table.TableInfo
 	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 	idxName := strings.ToLower(v.IndexName)
@@ -318,7 +318,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plan.CleanupIndex) Executor {
 	tblInfo := v.Table.TableInfo
 	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 	idxName := strings.ToLower(v.IndexName)
@@ -350,7 +350,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plan.CleanupIndex) Executor {
 func (b *executorBuilder) buildCheckIndexRange(v *plan.CheckIndexRange) Executor {
 	tb, err := b.is.TableByName(v.Table.Schema, v.Table.Name)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 	e := &CheckIndexRangeExec{
@@ -394,7 +394,7 @@ func (b *executorBuilder) buildDeallocate(v *plan.Deallocate) Executor {
 func (b *executorBuilder) buildSelectLock(v *plan.PhysicalLock) Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	if !b.ctx.GetSessionVars().InTxn() {
@@ -414,7 +414,7 @@ func (b *executorBuilder) buildSelectLock(v *plan.PhysicalLock) Executor {
 func (b *executorBuilder) buildLimit(v *plan.PhysicalLimit) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	e := &LimitExec{
@@ -500,7 +500,7 @@ func (b *executorBuilder) buildSet(v *plan.Set) Executor {
 func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	selectExec := b.build(v.SelectPlan)
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	var baseExec baseExecutor
@@ -548,7 +548,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 	tableCols := tbl.Cols()
 	columns, err := insertVal.getColumns(tableCols)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 	loadDataExec := &LoadDataExec{
@@ -633,7 +633,7 @@ func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src)}
@@ -682,7 +682,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 		return src
 	}
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	return us
@@ -692,13 +692,13 @@ func (b *executorBuilder) buildUnionScanExec(v *plan.PhysicalUnionScan) Executor
 func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 
 	rightExec := b.build(v.Children()[1])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 
@@ -750,7 +750,7 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 	// optimizer should guarantee that filters on inner table are pushed down
 	// to tikv or extracted to a Selection.
 	if len(innerFilter) != 0 {
-		b.err = errors.Annotate(ErrBuildExecutor, "merge join's inner filter should be empty.")
+		b.err = errors.Wrap(ErrBuildExecutor, "merge join's inner filter should be empty.")
 		return nil
 	}
 
@@ -770,13 +770,13 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 
 	leftExec := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 
 	rightExec := b.build(v.Children()[1])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 
@@ -791,7 +791,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	lhsTypes, rhsTypes := leftExec.retTypes(), rightExec.retTypes()
 	if v.InnerChildIdx == 0 {
 		if len(v.LeftConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Wrap(ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 		e.innerExec = leftExec
@@ -804,7 +804,7 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 		}
 	} else {
 		if len(v.RightConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Wrap(ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 		e.innerExec = rightExec
@@ -892,7 +892,7 @@ func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc,
 func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	src = b.buildProjBelowAgg(v.AggFuncs, v.GroupByItems, src)
@@ -961,7 +961,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	src := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	src = b.buildProjBelowAgg(v.AggFuncs, v.GroupByItems, src)
@@ -1004,7 +1004,7 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 func (b *executorBuilder) buildSelection(v *plan.PhysicalSelection) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	e := &SelectionExec{
@@ -1017,7 +1017,7 @@ func (b *executorBuilder) buildSelection(v *plan.PhysicalSelection) Executor {
 func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	e := &ProjectionExec{
@@ -1079,7 +1079,7 @@ func (b *executorBuilder) buildMemTable(v *plan.PhysicalMemTable) Executor {
 func (b *executorBuilder) buildSort(v *plan.PhysicalSort) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	sortExec := SortExec{
@@ -1094,7 +1094,7 @@ func (b *executorBuilder) buildSort(v *plan.PhysicalSort) Executor {
 func (b *executorBuilder) buildTopN(v *plan.PhysicalTopN) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	sortExec := SortExec{
@@ -1113,12 +1113,12 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 	v := apply.PhysicalJoin
 	leftChild := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	rightChild := b.build(v.Children()[1])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	joinSchema := expression.MergeSchema(leftChild.Schema(), rightChild.Schema())
@@ -1156,7 +1156,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 func (b *executorBuilder) buildExists(v *plan.PhysicalExists) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	e := &ExistsExec{
@@ -1168,7 +1168,7 @@ func (b *executorBuilder) buildExists(v *plan.PhysicalExists) Executor {
 func (b *executorBuilder) buildMaxOneRow(v *plan.PhysicalMaxOneRow) Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	e := &MaxOneRowExec{
@@ -1182,7 +1182,7 @@ func (b *executorBuilder) buildUnionAll(v *plan.PhysicalUnionAll) Executor {
 	for i, child := range v.Children() {
 		childExecs[i] = b.build(child)
 		if b.err != nil {
-			b.err = errors.Trace(b.err)
+			b.err = errors.WithStack(b.err)
 			return nil
 		}
 	}
@@ -1199,7 +1199,7 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	}
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	updateExec := &UpdateExec{
@@ -1218,7 +1218,7 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	}
 	selExec := b.build(v.SelectPlan)
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	deleteExec := &DeleteExec{
@@ -1289,7 +1289,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
-	b.err = errors.Trace(plan.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols))
+	b.err = errors.WithStack(plan.SetPBColumnsDefaultValue(b.ctx, e.analyzePB.ColReq.ColumnsInfo, cols))
 	return e
 }
 
@@ -1304,7 +1304,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 			colExec:  b.buildAnalyzeColumnsPushdown(task),
 		})
 		if b.err != nil {
-			b.err = errors.Trace(b.err)
+			b.err = errors.WithStack(b.err)
 			return nil
 		}
 	}
@@ -1314,7 +1314,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 			idxExec:  b.buildAnalyzeIndexPushdown(task),
 		})
 		if b.err != nil {
-			b.err = errors.Trace(b.err)
+			b.err = errors.WithStack(b.err)
 			return nil
 		}
 	}
@@ -1327,7 +1327,7 @@ func constructDistExec(sctx sessionctx.Context, plans []plan.PhysicalPlan) ([]*t
 	for _, p := range plans {
 		execPB, err := p.ToPB(sctx)
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, false, errors.WithStack(err)
 		}
 		if !plan.SupportStreaming(p) {
 			streaming = false
@@ -1344,7 +1344,7 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (dagReq *ti
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
-	return dagReq, streaming, errors.Trace(err)
+	return dagReq, streaming, errors.WithStack(err)
 }
 
 func (b *executorBuilder) corColInDistPlan(plans []plan.PhysicalPlan) bool {
@@ -1382,7 +1382,7 @@ func (b *executorBuilder) corColInAccess(p plan.PhysicalPlan) bool {
 func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Executor {
 	outerExec := b.build(v.Children()[v.OuterIndex])
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 	outerTypes := outerExec.retTypes()
@@ -1401,14 +1401,14 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plan.PhysicalIndexJoin) Execut
 		leftTypes, rightTypes = innerTypes, outerTypes
 		outerFilter = v.RightConditions
 		if len(v.LeftConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Wrap(ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	} else {
 		leftTypes, rightTypes = outerTypes, innerTypes
 		outerFilter = v.LeftConditions
 		if len(v.RightConditions) > 0 {
-			b.err = errors.Annotate(ErrBuildExecutor, "join's inner condition should be empty")
+			b.err = errors.Wrap(ErrBuildExecutor, "join's inner condition should be empty")
 			return nil
 		}
 	}
@@ -1460,7 +1460,7 @@ func containsLimit(execs []*tipb.Executor) bool {
 func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*TableReaderExecutor, error) {
 	dagReq, streaming, err := b.constructDAGReq(v.TablePlans)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
@@ -1500,7 +1500,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableReaderExecutor {
 	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 
@@ -1514,7 +1514,7 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*IndexReaderExecutor, error) {
 	dagReq, streaming, err := b.constructDAGReq(v.IndexPlans)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	table, _ := b.is.TableByID(is.Table.ID)
@@ -1555,7 +1555,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexReaderExecutor {
 	ret, err := buildNoRangeIndexReader(b, v)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 
@@ -1569,11 +1569,11 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexRe
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
 	indexReq, indexStreaming, err := b.constructDAGReq(v.IndexPlans)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	tableReq, tableStreaming, err := b.constructDAGReq(v.TablePlans)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	indexReq.OutputOffsets = []uint32{uint32(len(is.Index.Columns))}
@@ -1625,7 +1625,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpReader) *IndexLookUpExecutor {
 	ret, err := buildNoRangeIndexLookUpReader(b, v)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 
@@ -1666,7 +1666,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plan.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	handles := make([]int64, 0, len(datums))
 	for _, datum := range datums {
@@ -1686,12 +1686,12 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	e.resultHandler = &tableResultHandler{}
 	result, err := distsql.Select(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	result.Fetch(ctx)
 	e.resultHandler.open(nil, result)
@@ -1702,28 +1702,28 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	values [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	kvRanges, err := buildKvRangesForIndexJoin(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, values, indexRanges, keyOff2IdxOff)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	err = e.open(ctx, kvRanges)
-	return e, errors.Trace(err)
+	return e, errors.WithStack(err)
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *plan.PhysicalIndexLookUpReader,
 	values [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
 	e, err := buildNoRangeIndexLookUpReader(builder.executorBuilder, v)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	kvRanges, err := buildKvRangesForIndexJoin(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, values, indexRanges, keyOff2IdxOff)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	err = e.open(ctx, kvRanges)
-	return e, errors.Trace(err)
+	return e, errors.WithStack(err)
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
@@ -1739,7 +1739,7 @@ func buildKvRangesForIndexJoin(sc *stmtctx.StatementContext, tableID, indexID in
 
 		tmpKvRanges, err := distsql.IndexRangesToKVRanges(sc, tableID, indexID, indexRanges, nil)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		kvRanges = append(kvRanges, tmpKvRanges...)
 	}

@@ -14,13 +14,13 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -44,7 +44,7 @@ type UpdateExec struct {
 func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
 	assignFlag, err := e.getUpdateColumns(schema.Len())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if e.cursor >= len(e.rows) {
 		return nil, nil
@@ -85,7 +85,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
 				sc.AppendWarning(err1)
 				continue
 			}
-			return nil, errors.Trace(err1)
+			return nil, errors.WithStack(err1)
 		}
 	}
 	e.cursor++
@@ -98,14 +98,14 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if !e.fetched {
 		err := e.fetchChunkRows(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		e.fetched = true
 
 		for {
 			row, err := e.exec(e.children[0].Schema())
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 
 			// once "row == nil" there is no more data waiting to be updated,
@@ -126,7 +126,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 		chk := e.children[0].newChunk()
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		if chk.NumRows() == 0 {
@@ -138,7 +138,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 			datumRow := chunkRow.GetDatumRow(fields)
 			newRow, err1 := e.composeNewRow(globalRowIdx, datumRow)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return errors.WithStack(err1)
 			}
 			e.rows = append(e.rows, datumRow)
 			e.newRowsData = append(e.newRowsData, newRow)
@@ -157,7 +157,7 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 		return resetErrDataTooLong(colName.O, rowIdx+1, err)
 	}
 
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow types.DatumRow) (types.DatumRow, error) {
@@ -166,7 +166,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow types.DatumRow) (types.Dat
 		val, err := assign.Expr.Eval(newRowData)
 
 		if err1 := e.handleErr(assign.Col.ColName, rowIdx, err); err1 != nil {
-			return nil, errors.Trace(err1)
+			return nil, errors.WithStack(err1)
 		}
 		newRowData[assign.Col.Index] = val
 	}

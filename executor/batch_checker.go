@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 type keyValue struct {
@@ -56,7 +56,7 @@ func (b *batchChecker) batchGetOldValues(ctx sessionctx.Context, t table.Table, 
 	}
 	values, err := kv.BatchGetValues(ctx.Txn(), batchKeys)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	for k, v := range values {
 		b.dupOldRowValues[k] = v
@@ -76,7 +76,7 @@ func (b *batchChecker) encodeNewRow(ctx sessionctx.Context, t table.Table, row t
 	}
 	newRowValue, err := tablecodec.EncodeRow(ctx.GetSessionVars().StmtCtx, skimmedRow, colIDs, nil, nil)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return newRowValue, nil
 }
@@ -108,7 +108,7 @@ func (b *batchChecker) getKeysNeedCheck(ctx sessionctx.Context, t table.Table, r
 		uniqueKeys := make([]*keyValueWithDupInfo, 0, nUnique)
 		newRowValue, err := b.encodeNewRow(ctx, t, row)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		// Append record keys and errors.
 		if t.Meta().PKIsHandle {
@@ -129,14 +129,14 @@ func (b *batchChecker) getKeysNeedCheck(ctx sessionctx.Context, t table.Table, r
 			}
 			colVals, err1 := v.FetchValues(row, nil)
 			if err1 != nil {
-				return nil, errors.Trace(err1)
+				return nil, errors.WithStack(err1)
 			}
 			// Pass handle = 0 to GenIndexKey,
 			// due to we only care about distinct key.
 			key, distinct, err1 := v.GenIndexKey(ctx.GetSessionVars().StmtCtx,
 				colVals, 0, nil)
 			if err1 != nil {
-				return nil, errors.Trace(err1)
+				return nil, errors.WithStack(err1)
 			}
 			// Skip the non-distinct keys.
 			if !distinct {
@@ -144,7 +144,7 @@ func (b *batchChecker) getKeysNeedCheck(ctx sessionctx.Context, t table.Table, r
 			}
 			colValStr, err1 := types.DatumsToString(colVals, false)
 			if err1 != nil {
-				return nil, errors.Trace(err1)
+				return nil, errors.WithStack(err1)
 			}
 			uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
 				newKV: keyValue{
@@ -169,7 +169,7 @@ func (b *batchChecker) batchGetInsertKeys(ctx sessionctx.Context, t table.Table,
 	// Get keys need to be checked.
 	b.toBeCheckedRows, err = b.getKeysNeedCheck(ctx, t, newRows)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// Batch get values.
@@ -190,7 +190,7 @@ func (b *batchChecker) batchGetInsertKeys(ctx sessionctx.Context, t table.Table,
 		}
 	}
 	b.dupKVs, err = kv.BatchGetValues(ctx.Txn(), batchKeys)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (b *batchChecker) initDupOldRowFromHandleKey() {
@@ -212,20 +212,20 @@ func (b *batchChecker) initDupOldRowFromUniqueKey(ctx sessionctx.Context, t tabl
 			if val, found := b.dupKVs[string(uk.newKV.key)]; found {
 				handle, err := tables.DecodeHandle(val)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 				handles = append(handles, handle)
 			}
 		}
 	}
-	return errors.Trace(b.batchGetOldValues(ctx, t, handles))
+	return errors.WithStack(b.batchGetOldValues(ctx, t, handles))
 }
 
 // initDupOldRowValue initializes dupOldRowValues which contain the to-be-updated rows from storage.
 func (b *batchChecker) initDupOldRowValue(ctx sessionctx.Context, t table.Table, newRows []types.DatumRow) error {
 	b.dupOldRowValues = make(map[string][]byte, len(newRows))
 	b.initDupOldRowFromHandleKey()
-	return errors.Trace(b.initDupOldRowFromUniqueKey(ctx, t, newRows))
+	return errors.WithStack(b.initDupOldRowFromUniqueKey(ctx, t, newRows))
 }
 
 // fillBackKeys fills the updated key-value pair to the dupKeyValues for further check.
@@ -254,12 +254,12 @@ func (b *batchChecker) deleteDupKeys(row toBeCheckedRow) {
 func (b *batchChecker) getOldRow(ctx sessionctx.Context, t table.Table, handle int64) (types.DatumRow, error) {
 	oldValue, ok := b.dupOldRowValues[string(t.RecordKey(handle))]
 	if !ok {
-		return nil, errors.NotFoundf("can not be duplicated row, due to old row not found. handle %d", handle)
+		return nil, errors.Errorf("can not be duplicated row, due to old row not found. handle %d", handle)
 	}
 	cols := t.WritableCols()
 	oldRow, oldRowMap, err := tables.DecodeRawRowData(ctx, t.Meta(), handle, cols, oldValue)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	// Fill write-only and write-reorg columns with originDefaultValue if not found in oldValue.
 	for _, col := range cols {
@@ -268,7 +268,7 @@ func (b *batchChecker) getOldRow(ctx sessionctx.Context, t table.Table, handle i
 			if !found {
 				oldRow[col.Offset], err = table.GetColOriginDefaultValue(ctx, col.ToInfo())
 				if err != nil {
-					return nil, errors.Trace(err)
+					return nil, errors.WithStack(err)
 				}
 			}
 		}

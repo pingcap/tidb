@@ -14,12 +14,12 @@
 package aggfuncs
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pkg/errors"
 )
 
 type basePartialResult4FirstRow struct {
@@ -99,7 +99,7 @@ func (e *firstRow4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 		break
@@ -138,7 +138,7 @@ func (e *firstRow4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, float32(input)
 		break
@@ -177,7 +177,7 @@ func (e *firstRow4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 		break
@@ -216,7 +216,7 @@ func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, stringutil.Copy(input)
 		break
@@ -255,7 +255,7 @@ func (e *firstRow4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalTime(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 		break
@@ -294,7 +294,7 @@ func (e *firstRow4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDuration(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 		break
@@ -333,7 +333,7 @@ func (e *firstRow4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalJSON(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 		break
@@ -372,7 +372,7 @@ func (e *firstRow4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		p.gotFirstRow, p.isNull = true, isNull
 		if input != nil {

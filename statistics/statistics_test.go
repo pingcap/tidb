@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -176,7 +176,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSe
 		chk := records.NewChunk()
 		err := records.Next(ctx, chk)
 		if err != nil {
-			return 0, nil, errors.Trace(err)
+			return 0, nil, errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -186,7 +186,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSe
 			datums := ast.RowToDatums(row, records.Fields())
 			err = b.Iterate(datums[0])
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, nil, errors.WithStack(err)
 			}
 		}
 	}
@@ -202,7 +202,7 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.Recor
 	for {
 		err := records.Next(ctx, chk)
 		if err != nil {
-			return 0, nil, nil, errors.Trace(err)
+			return 0, nil, nil, errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -211,12 +211,12 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.Recor
 			datums := ast.RowToDatums(row, records.Fields())
 			buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
 			if err != nil {
-				return 0, nil, nil, errors.Trace(err)
+				return 0, nil, nil, errors.WithStack(err)
 			}
 			data := types.NewBytesDatum(buf)
 			err = b.Iterate(data)
 			if err != nil {
-				return 0, nil, nil, errors.Trace(err)
+				return 0, nil, nil, errors.WithStack(err)
 			}
 			cms.InsertBytes(buf)
 		}

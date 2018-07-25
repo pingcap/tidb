@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -304,17 +304,17 @@ func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 func backgroundExec(s kv.Storage, sql string, done chan error) {
 	se, err := session.CreateSession4Test(s)
 	if err != nil {
-		done <- errors.Trace(err)
+		done <- errors.WithStack(err)
 		return
 	}
 	defer se.Close()
 	_, err = se.Execute(context.Background(), "use test_db")
 	if err != nil {
-		done <- errors.Trace(err)
+		done <- errors.WithStack(err)
 		return
 	}
 	_, err = se.Execute(context.Background(), sql)
-	done <- errors.Trace(err)
+	done <- errors.WithStack(err)
 }
 
 func (s *testDBSuite) TestAddUniqueIndexRollback(c *C) {
@@ -429,23 +429,23 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 		var err error
 		err = hookCtx.NewTxn()
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = errors.WithStack(err)
 			return
 		}
 		jobIDs := []int64{job.ID}
 		errs, err := admin.CancelJobs(hookCtx.Txn(), jobIDs)
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = errors.WithStack(err)
 			return
 		}
 		// It only tests cancel one DDL job.
 		if errs[0] != nil {
-			checkErr = errors.Trace(errs[0])
+			checkErr = errors.WithStack(errs[0])
 			return
 		}
 		err = hookCtx.Txn().Commit(context.Background())
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = errors.WithStack(err)
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
@@ -628,7 +628,7 @@ LOOP:
 			if err == nil {
 				break LOOP
 			}
-			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+			c.Assert(err, IsNil, Commentf("err:%v", fmt.Sprintf("%+v", err)))
 		case <-ticker.C:
 			// When the server performance is particularly poor,
 			// the adding index operation can not be completed.
@@ -765,7 +765,7 @@ LOOP:
 			if err == nil {
 				break LOOP
 			}
-			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+			c.Assert(err, IsNil, Commentf("err:%v", fmt.Sprintf("%+v", err)))
 		case <-ticker.C:
 			step := 10
 			// delete some rows, and add some data
@@ -877,7 +877,7 @@ func (s *testDBSuite) TestIssue6101(c *C) {
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
 	_, err := s.tk.Exec("insert into t1 values (500), (-500), (~0), (-1);")
-	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr := errors.Cause(errors.WithStack(err)).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrWarnDataOutOfRange))
 	s.tk.MustExec("drop table t1")
 
@@ -942,7 +942,7 @@ func sessionExec(c *C, s kv.Storage, sql string) {
 	_, err = se.Execute(context.Background(), "use test_db")
 	c.Assert(err, IsNil)
 	rs, err := se.Execute(context.Background(), sql)
-	c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+	c.Assert(err, IsNil, Commentf("err:%v", fmt.Sprintf("%+v", err)))
 	c.Assert(rs, IsNil)
 	se.Close()
 }
@@ -955,19 +955,19 @@ func execMultiSQLInGoroutine(c *C, s kv.Storage, dbName string, multiSQL []strin
 	go func() {
 		se, err := session.CreateSession4Test(s)
 		if err != nil {
-			done <- errors.Trace(err)
+			done <- errors.WithStack(err)
 			return
 		}
 		defer se.Close()
 		_, err = se.Execute(context.Background(), "use "+dbName)
 		if err != nil {
-			done <- errors.Trace(err)
+			done <- errors.WithStack(err)
 			return
 		}
 		for _, sql := range multiSQL {
 			rs, err := se.Execute(context.Background(), sql)
 			if err != nil {
-				done <- errors.Trace(err)
+				done <- errors.WithStack(err)
 				return
 			}
 			if rs != nil {
@@ -1000,7 +1000,7 @@ LOOP:
 			if err == nil {
 				break LOOP
 			}
-			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+			c.Assert(err, IsNil, Commentf("err:%v", fmt.Sprintf("%+v", err)))
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
@@ -1015,7 +1015,7 @@ LOOP:
 				if err != nil {
 					// if err is failed, the column number must be 4 now.
 					values := s.showColumns(c, "t2")
-					c.Assert(values, HasLen, 4, Commentf("err:%v", errors.ErrorStack(err)))
+					c.Assert(values, HasLen, 4, Commentf("err:%v", fmt.Sprintf("%+v", err)))
 				}
 				s.tk.MustExec("commit")
 			}
@@ -1122,7 +1122,7 @@ LOOP:
 			if err == nil {
 				break LOOP
 			}
-			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+			c.Assert(err, IsNil, Commentf("err:%v", fmt.Sprintf("%+v", err)))
 		case <-ticker.C:
 			// delete some rows, and add some data
 			for i := num; i < num+step; i++ {
@@ -1132,7 +1132,7 @@ LOOP:
 				if err != nil {
 					// If executing is failed, the column number must be 4 now.
 					values := s.showColumns(c, "t2")
-					c.Assert(values, HasLen, 4, Commentf("err:%v", errors.ErrorStack(err)))
+					c.Assert(values, HasLen, 4, Commentf("err:%v", fmt.Sprintf("%+v", err)))
 				}
 				s.tk.MustExec("commit")
 			}
@@ -1176,7 +1176,7 @@ func (s *testDBSuite) TestDropColumn(c *C) {
 	for i := 0; i < num; i++ {
 		select {
 		case err := <-ddlDone:
-			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+			c.Assert(err, IsNil, Commentf("err:%v", fmt.Sprintf("%+v", err)))
 		}
 	}
 
@@ -2340,10 +2340,10 @@ func (s *testDBSuite) getHistoryDDLJob(id int64) (*model.Job, error) {
 		t := meta.NewMeta(txn)
 		var err1 error
 		job, err1 = t.GetHistoryDDLJob(id)
-		return errors.Trace(err1)
+		return errors.WithStack(err1)
 	})
 
-	return job, errors.Trace(err)
+	return job, errors.WithStack(err)
 }
 
 func (s *testDBSuite) TestBackwardCompatibility(c *C) {

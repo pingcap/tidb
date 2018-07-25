@@ -17,9 +17,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -51,7 +51,7 @@ func NewPdOracle(pdClient pd.Client, updateInterval time.Duration) (oracle.Oracl
 	_, err := o.GetTimestamp(ctx)
 	if err != nil {
 		o.Close()
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return o, nil
 }
@@ -67,7 +67,7 @@ func (o *pdOracle) IsExpired(lockTS, TTL uint64) bool {
 func (o *pdOracle) GetTimestamp(ctx context.Context) (uint64, error) {
 	ts, err := o.getTimestamp(ctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	o.setLastTS(ts)
 	return ts, nil
@@ -84,7 +84,7 @@ func (f *tsFuture) Wait() (uint64, error) {
 	physical, logical, err := f.TSFuture.Wait()
 	tsFutureWaitDuration.Observe(time.Since(now).Seconds())
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	ts := oracle.ComposeTS(physical, logical)
 	f.o.setLastTS(ts)
@@ -100,7 +100,7 @@ func (o *pdOracle) getTimestamp(ctx context.Context) (uint64, error) {
 	now := time.Now()
 	physical, logical, err := o.c.GetTS(ctx)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	dist := time.Since(now)
 	if dist > slowDist {

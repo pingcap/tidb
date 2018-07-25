@@ -17,7 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 var statisticsList []Statistics
@@ -52,7 +52,7 @@ func GetStatusVars(vars *SessionVars) (map[string]*StatusVal, error) {
 	for _, statistics := range statisticsList {
 		vals, err := statistics.Stats(vars)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 
 		for name, val := range vals {

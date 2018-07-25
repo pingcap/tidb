@@ -25,11 +25,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 )
 
 type comparableRow struct {
@@ -60,7 +60,7 @@ func lessThan(sc *stmtctx.StatementContext, i []types.Datum, j []types.Datum, by
 
 		ret, err := v1.CompareDatum(sc, &v2)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, errors.WithStack(err)
 		}
 
 		if byDesc[k] {
@@ -221,7 +221,7 @@ func (b *Builder) Build() (*FileSorter, error) {
 		if os.IsNotExist(err) {
 			return nil, errors.New("tmpDir does not exist")
 		}
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	ws := make([]*Worker, b.nWorkers)
@@ -291,7 +291,7 @@ func (fs *FileSorter) closeAllFiles() error {
 		reportErr = err
 	}
 	if reportErr != nil {
-		return errors.Trace(reportErr)
+		return errors.WithStack(reportErr)
 	}
 	return nil
 }
@@ -303,7 +303,7 @@ func (fs *FileSorter) internalSort() (*comparableRow, error) {
 	if !fs.fetched {
 		sort.Sort(w)
 		if w.err != nil {
-			return nil, errors.Trace(w.err)
+			return nil, errors.WithStack(w.err)
 		}
 		fs.fetched = true
 	}
@@ -332,7 +332,7 @@ func (fs *FileSorter) externalSort() (*comparableRow, error) {
 		// check errors from workers
 		for _, w := range fs.workers {
 			if w.err != nil {
-				return nil, errors.Trace(w.err)
+				return nil, errors.WithStack(w.err)
 			}
 			if w.rowSize > fs.maxRowSize {
 				fs.maxRowSize = w.rowSize
@@ -341,20 +341,20 @@ func (fs *FileSorter) externalSort() (*comparableRow, error) {
 
 		heap.Init(fs.rowHeap)
 		if fs.rowHeap.err != nil {
-			return nil, errors.Trace(fs.rowHeap.err)
+			return nil, errors.WithStack(fs.rowHeap.err)
 		}
 
 		fs.rowBytes = make([]byte, fs.maxRowSize)
 
 		err := fs.openAllFiles()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 
 		for id := range fs.fds {
 			row, err := fs.fetchNextRow(id)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			if row == nil {
 				return nil, errors.New("file is empty")
@@ -367,7 +367,7 @@ func (fs *FileSorter) externalSort() (*comparableRow, error) {
 
 			heap.Push(fs.rowHeap, im)
 			if fs.rowHeap.err != nil {
-				return nil, errors.Trace(fs.rowHeap.err)
+				return nil, errors.WithStack(fs.rowHeap.err)
 			}
 		}
 
@@ -377,12 +377,12 @@ func (fs *FileSorter) externalSort() (*comparableRow, error) {
 	if fs.rowHeap.Len() > 0 {
 		im := heap.Pop(fs.rowHeap).(*item)
 		if fs.rowHeap.err != nil {
-			return nil, errors.Trace(fs.rowHeap.err)
+			return nil, errors.WithStack(fs.rowHeap.err)
 		}
 
 		row, err := fs.fetchNextRow(im.index)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if row != nil {
 			nextIm := &item{
@@ -392,7 +392,7 @@ func (fs *FileSorter) externalSort() (*comparableRow, error) {
 
 			heap.Push(fs.rowHeap, nextIm)
 			if fs.rowHeap.err != nil {
-				return nil, errors.Trace(fs.rowHeap.err)
+				return nil, errors.WithStack(fs.rowHeap.err)
 			}
 		}
 
@@ -406,7 +406,7 @@ func (fs *FileSorter) openAllFiles() error {
 	for _, fname := range fs.files {
 		fd, err := os.Open(fname)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		fs.fds = append(fs.fds, fd)
 	}
@@ -420,7 +420,7 @@ func (fs *FileSorter) fetchNextRow(index int) (*comparableRow, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if n != headSize {
 		return nil, errors.New("incorrect header")
@@ -429,7 +429,7 @@ func (fs *FileSorter) fetchNextRow(index int) (*comparableRow, error) {
 
 	n, err = fs.fds[index].Read(fs.rowBytes)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if n != rowSize {
 		return nil, errors.New("incorrect row")
@@ -437,7 +437,7 @@ func (fs *FileSorter) fetchNextRow(index int) (*comparableRow, error) {
 
 	fs.dcod, err = codec.Decode(fs.rowBytes, fs.keySize+fs.valSize+1)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	return &comparableRow{
@@ -510,7 +510,7 @@ func (fs *FileSorter) Output() ([]types.Datum, []types.Datum, int64, error) {
 	}
 
 	if err != nil {
-		return nil, nil, 0, errors.Trace(err)
+		return nil, nil, 0, errors.WithStack(err)
 	} else if r != nil {
 		return r.key, r.val, r.handle, nil
 	} else {
@@ -530,7 +530,7 @@ func (fs *FileSorter) Close() error {
 	fs.closed = true
 	err := fs.closeAllFiles()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -544,7 +544,7 @@ func (w *Worker) Less(i, j int) bool {
 	r := w.buf[j].key
 	ret, err := lessThan(w.ctx.sc, l, r, w.ctx.byDesc)
 	if w.err == nil {
-		w.err = errors.Trace(err)
+		w.err = errors.WithStack(err)
 	}
 	return ret
 }
@@ -577,7 +577,7 @@ func (w *Worker) flushToFile() {
 
 	outputFile, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		w.err = errors.Trace(err)
+		w.err = errors.WithStack(err)
 		return
 	}
 	defer terror.Call(outputFile.Close)
@@ -587,17 +587,17 @@ func (w *Worker) flushToFile() {
 		outputByte = append(outputByte, w.head...)
 		outputByte, err = codec.EncodeKey(sc, outputByte, row.key...)
 		if err != nil {
-			w.err = errors.Trace(err)
+			w.err = errors.WithStack(err)
 			return
 		}
 		outputByte, err = codec.EncodeKey(sc, outputByte, row.val...)
 		if err != nil {
-			w.err = errors.Trace(err)
+			w.err = errors.WithStack(err)
 			return
 		}
 		outputByte, err = codec.EncodeKey(sc, outputByte, types.NewIntDatum(row.handle))
 		if err != nil {
-			w.err = errors.Trace(err)
+			w.err = errors.WithStack(err)
 			return
 		}
 
@@ -612,7 +612,7 @@ func (w *Worker) flushToFile() {
 
 	_, err = outputFile.Write(outputByte)
 	if err != nil {
-		w.err = errors.Trace(err)
+		w.err = errors.WithStack(err)
 		return
 	}
 

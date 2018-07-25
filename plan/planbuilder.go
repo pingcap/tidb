@@ -18,7 +18,6 @@ import (
 	"strings"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 )
 
 type visitInfo struct {
@@ -181,7 +181,7 @@ func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) Plan {
 	for _, expr := range v.UsingVars {
 		newExpr, _, err := b.rewrite(expr, nil, nil, true)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 		}
 		vars = append(vars, newExpr)
 	}
@@ -197,7 +197,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 	for _, astExpr := range v.Exprs {
 		expr, _, err := b.rewrite(astExpr, dual, nil, true)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil
 		}
 		p.Exprs = append(p.Exprs, expr)
@@ -374,7 +374,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 	tblName := as.Tables[0]
 	tbl, err := b.is.TableByName(dbName, tblName.Name)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 	tblInfo := tbl.Meta()
@@ -480,7 +480,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p := &CheckIndexRange{Table: as.Tables[0], IndexName: as.Index, HandleRanges: as.HandleRanges}
 		schema, err := buildCheckIndexSchema(as.Tables[0], as.Index)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			break
 		}
 		p.SetSchema(schema)
@@ -756,7 +756,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		}
 		expr, _, err := b.rewrite(show.Pattern, mockTablePlan, nil, false)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil
 		}
 		p.Conditions = append(p.Conditions, expr)
@@ -766,7 +766,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		for _, cond := range conds {
 			expr, _, err := b.rewrite(cond, mockTablePlan, nil, false)
 			if err != nil {
-				b.err = errors.Trace(err)
+				b.err = errors.WithStack(err)
 				return nil
 			}
 			p.Conditions = append(p.Conditions, expr)
@@ -836,7 +836,7 @@ func collectVisitInfoFromGrantStmt(vi []visitInfo, stmt *ast.GrantStmt) []visitI
 func (b *planBuilder) getDefaultValue(col *table.Column) (*expression.Constant, error) {
 	value, err := table.GetColDefaultValue(b.ctx, col.ToInfo())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return &expression.Constant{Value: value, RetType: &col.FieldType}, nil
 }
@@ -862,13 +862,13 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 
 		colExpr, _, err := mockPlan.findColumn(columnName)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return
 		}
 
 		expr, _, err := b.rewrite(column.GeneratedExpr, mockPlan, nil, true)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return
 		}
 		expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
@@ -973,7 +973,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, true, checkRefColumn)
 			}
 			if err != nil {
-				b.err = errors.Trace(err)
+				b.err = errors.WithStack(err)
 			}
 			exprList = append(exprList, expr)
 		}
@@ -1005,7 +1005,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	for _, assign := range insert.Setlist {
 		col, err := insertPlan.tableSchema.FindColumn(assign.Column)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil
 		}
 		if col == nil {
@@ -1021,7 +1021,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 
 		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, true, checkRefColumn)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil
 		}
 		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
@@ -1061,7 +1061,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		// Check whether the column to be updated exists in the source table.
 		col, err := insertPlan.tableSchema.FindColumn(assign.Column)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil
 		} else if col == nil {
 			b.err = ErrUnknownColumn.GenByArgs(assign.Column.OrigColName(), "field list")
@@ -1078,7 +1078,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		// Construct the function which calculates the assign value of the column.
 		expr, err := b.rewriteInsertOnDuplicateUpdate(assign.Expr, mockTablePlan, insertPlan)
 		if err != nil {
-			b.err = errors.Trace(err)
+			b.err = errors.WithStack(err)
 			return nil
 		}
 
@@ -1093,7 +1093,7 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 	mockTablePlan.schema = insertPlan.tableSchema
 	insertPlan.GenCols = b.resolveGeneratedColumns(insertPlan.Table.Cols(), onDupCols, mockTablePlan)
 	if b.err != nil {
-		b.err = errors.Trace(b.err)
+		b.err = errors.WithStack(b.err)
 		return nil
 	}
 
@@ -1209,7 +1209,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) Plan {
 	}
 	targetPlan, err := Optimize(b.ctx, explain.Stmt, b.is)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = errors.WithStack(err)
 		return nil
 	}
 	pp, ok := targetPlan.(PhysicalPlan)

@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -64,7 +64,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	if e.corColInAccess {
@@ -73,7 +73,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		pkTP := ts.Table.GetPkColInfo().FieldType
 		e.ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 
@@ -82,7 +82,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if len(secondPartRanges) == 0 {
 		e.resultHandler.open(nil, firstResult)
@@ -92,7 +92,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	secondResult, err = e.buildResp(ctx, secondPartRanges)
 	if err != nil {
 		e.feedback.Invalidate()
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.resultHandler.open(firstResult, secondResult)
 	return nil
@@ -105,14 +105,14 @@ func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 	if err != nil {
 		e.feedback.Invalidate()
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
 	e.ctx.StoreQueryFeedback(e.feedback)
 	err := e.resultHandler.Close()
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // buildResp first build request and send it to tikv using distsql.Select. It uses SelectResut returned by the callee
@@ -127,11 +127,11 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	result, err := distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	result.Fetch(ctx)
 	return result, nil
@@ -163,7 +163,7 @@ func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) e
 	if !tr.optionalFinished {
 		err := tr.optionalResult.Next(ctx, chk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if chk.NumRows() > 0 {
 			return nil
@@ -177,7 +177,7 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 	if !tr.optionalFinished {
 		data, err = tr.optionalResult.NextRaw(ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if data != nil {
 			return data, nil
@@ -186,7 +186,7 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 	}
 	data, err = tr.result.NextRaw(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return data, nil
 }
@@ -194,5 +194,5 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 func (tr *tableResultHandler) Close() error {
 	err := closeAll(tr.optionalResult, tr.result)
 	tr.optionalResult, tr.result = nil, nil
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }

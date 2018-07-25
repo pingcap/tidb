@@ -21,7 +21,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -136,7 +136,7 @@ func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err 
 				sc.AppendWarning(err)
 				log.Warnf("cast values failed:%v", err)
 			} else {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 		rec[c.Offset] = converted
@@ -151,7 +151,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 	// TODO: make sure all truncate errors are handled by ConvertTo.
 	err = sc.HandleTruncate(err)
 	if err != nil {
-		return casted, errors.Trace(err)
+		return casted, errors.WithStack(err)
 	}
 
 	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
@@ -179,7 +179,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 		}
 	}
 
-	return casted, errors.Trace(err)
+	return casted, errors.WithStack(err)
 }
 
 // ColDesc describes column information like MySQL desc and show columns do.
@@ -297,7 +297,7 @@ func (c *Column) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
 func CheckNotNull(cols []*Column, row []types.Datum) error {
 	for _, c := range cols {
 		if err := c.CheckNotNull(row[c.Offset]); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -323,13 +323,13 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 		value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
 		if err != nil {
 			return types.Datum{}, errGetDefaultFailed.Gen("Field '%s' get default value fail - %s",
-				col.Name, errors.Trace(err))
+				col.Name, errors.WithStack(err))
 		}
 		return value, nil
 	}
 	value, err := CastValue(ctx, types.NewDatum(defaultVal), col)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return types.Datum{}, errors.WithStack(err)
 	}
 	return value, nil
 }

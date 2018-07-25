@@ -18,7 +18,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 // RoundFloat rounds float val to the nearest integer value with float64 format, like MySQL Round function.
@@ -89,7 +89,7 @@ func TruncateFloat(f float64, flen int, decimal int) (float64, error) {
 		err = ErrOverflow.GenByArgs("DOUBLE", "")
 	}
 
-	return f, errors.Trace(err)
+	return f, errors.WithStack(err)
 }
 
 func isSpace(c byte) bool {
@@ -162,7 +162,7 @@ func strToInt(str string) (int64, error) {
 		hasNum = true
 		if r >= uintCutOff {
 			r = 0
-			err = errors.Trace(ErrBadNumber)
+			err = errors.WithStack(ErrBadNumber)
 			break
 		}
 		r = r * uint64(10)
@@ -170,7 +170,7 @@ func strToInt(str string) (int64, error) {
 		r1 := r + uint64(str[i]-'0')
 		if r1 < r || r1 > maxUint {
 			r = 0
-			err = errors.Trace(ErrBadNumber)
+			err = errors.WithStack(ErrBadNumber)
 			break
 		}
 		r = r1
@@ -180,11 +180,11 @@ func strToInt(str string) (int64, error) {
 	}
 
 	if !negative && r >= intCutOff {
-		return math.MaxInt64, errors.Trace(ErrBadNumber)
+		return math.MaxInt64, errors.WithStack(ErrBadNumber)
 	}
 
 	if negative && r > intCutOff {
-		return math.MinInt64, errors.Trace(ErrBadNumber)
+		return math.MinInt64, errors.WithStack(ErrBadNumber)
 	}
 
 	if negative {

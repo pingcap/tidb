@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -50,7 +50,7 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 	bo := NewBackoffer(context.Background(), tsoMaxBackoff)
 	startTS, err := store.getTimestampWithRetry(bo)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return newTikvTxnWithStartTS(store, startTS)
 }
@@ -93,12 +93,12 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 
 	ret, err := txn.us.Get(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	err = txn.store.CheckVisibility(txn.startTS)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	return ret, nil
@@ -174,7 +174,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()
 
 	if err := txn.us.CheckLazyConditionPairs(); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// connID is used for log.
@@ -185,13 +185,13 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	committer, err := newTwoPhaseCommitter(txn, connID)
 	if err != nil || committer == nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// latches disabled
 	if txn.store.txnLatches == nil {
 		err = committer.executeAndWriteFinishBinlog(ctx)
 		log.Debug("[kv]", connID, " txnLatches disabled, 2pc directly:", err)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// latches enabled
@@ -206,7 +206,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 			txn.store.txnLatches.RefreshCommitTS(committer.keys, committer.commitTS)
 		}
 		log.Debug("[kv]", connID, " txnLatches enabled while txn not retryable, 2pc directly:", err)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// for transactions which need to acquire latches
@@ -214,14 +214,14 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
 		err = errors.Errorf("startTS %d is stale", txn.startTS)
-		return errors.Annotate(err, txnRetryableMark)
+		return errors.Wrap(err, txnRetryableMark)
 	}
 	err = committer.executeAndWriteFinishBinlog(ctx)
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}
 	log.Debug("[kv]", connID, " txnLatches enabled while txn retryable:", err)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (txn *tikvTxn) close() {

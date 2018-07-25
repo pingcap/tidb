@@ -21,12 +21,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pkg/errors"
 	"github.com/twinj/uuid"
 )
 
@@ -81,7 +81,7 @@ type sleepFunctionClass struct {
 
 func (c *sleepFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETReal)
 	bf.tp.Flen = 21
@@ -104,7 +104,7 @@ func (b *builtinSleepSig) Clone() builtinFunc {
 func (b *builtinSleepSig) evalInt(row types.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, isNull, errors.WithStack(err)
 	}
 	sessVars := b.ctx.GetSessionVars()
 	if isNull {
@@ -139,7 +139,7 @@ type lockFunctionClass struct {
 
 func (c *lockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETInt)
 	sig := &builtinLockSig{bf}
@@ -171,7 +171,7 @@ type releaseLockFunctionClass struct {
 
 func (c *releaseLockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	sig := &builtinReleaseLockSig{bf}
@@ -203,7 +203,7 @@ type anyValueFunctionClass struct {
 
 func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	argTp := args[0].GetType().EvalType()
 	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, argTp)
@@ -360,7 +360,7 @@ type inetAtonFunctionClass struct {
 
 func (c *inetAtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 21
@@ -384,7 +384,7 @@ func (b *builtinInetAtonSig) Clone() builtinFunc {
 func (b *builtinInetAtonSig) evalInt(row types.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	// ip address should not end with '.'.
 	if len(val) == 0 || val[len(val)-1] == '.' {
@@ -433,7 +433,7 @@ type inetNtoaFunctionClass struct {
 
 func (c *inetNtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
 	bf.tp.Flen = 93
@@ -457,7 +457,7 @@ func (b *builtinInetNtoaSig) Clone() builtinFunc {
 func (b *builtinInetNtoaSig) evalString(row types.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil || isNull {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 
 	if val < 0 || uint64(val) > math.MaxUint32 {
@@ -481,7 +481,7 @@ type inet6AtonFunctionClass struct {
 
 func (c *inet6AtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = 16
@@ -506,7 +506,7 @@ func (b *builtinInet6AtonSig) Clone() builtinFunc {
 func (b *builtinInet6AtonSig) evalString(row types.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 
 	if len(val) == 0 {
@@ -550,7 +550,7 @@ type inet6NtoaFunctionClass struct {
 
 func (c *inet6NtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = 117
@@ -574,7 +574,7 @@ func (b *builtinInet6NtoaSig) Clone() builtinFunc {
 func (b *builtinInet6NtoaSig) evalString(row types.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 	ip := net.IP([]byte(val)).String()
 	if len(val) == net.IPv6len && !strings.Contains(ip, ":") {
@@ -602,7 +602,7 @@ type isIPv4FunctionClass struct {
 
 func (c *isIPv4FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 1
@@ -625,7 +625,7 @@ func (b *builtinIsIPv4Sig) Clone() builtinFunc {
 func (b *builtinIsIPv4Sig) evalInt(row types.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
-		return 0, err != nil, errors.Trace(err)
+		return 0, err != nil, errors.WithStack(err)
 	}
 	if isIPv4(val) {
 		return 1, false, nil
@@ -666,7 +666,7 @@ type isIPv4CompatFunctionClass struct {
 
 func (c *isIPv4CompatFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 1
@@ -689,7 +689,7 @@ func (b *builtinIsIPv4CompatSig) Clone() builtinFunc {
 func (b *builtinIsIPv4CompatSig) evalInt(row types.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
-		return 0, err != nil, errors.Trace(err)
+		return 0, err != nil, errors.WithStack(err)
 	}
 
 	ipAddress := []byte(val)
@@ -711,7 +711,7 @@ type isIPv4MappedFunctionClass struct {
 
 func (c *isIPv4MappedFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 1
@@ -734,7 +734,7 @@ func (b *builtinIsIPv4MappedSig) Clone() builtinFunc {
 func (b *builtinIsIPv4MappedSig) evalInt(row types.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
-		return 0, err != nil, errors.Trace(err)
+		return 0, err != nil, errors.WithStack(err)
 	}
 
 	ipAddress := []byte(val)
@@ -756,7 +756,7 @@ type isIPv6FunctionClass struct {
 
 func (c *isIPv6FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 1
@@ -779,7 +779,7 @@ func (b *builtinIsIPv6Sig) Clone() builtinFunc {
 func (b *builtinIsIPv6Sig) evalInt(row types.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
-		return 0, err != nil, errors.Trace(err)
+		return 0, err != nil, errors.WithStack(err)
 	}
 	ip := net.ParseIP(val)
 	if ip != nil && !isIPv4(val) {
@@ -826,7 +826,7 @@ type uuidFunctionClass struct {
 
 func (c *uuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
 	bf.tp.Flen = 36

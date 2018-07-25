@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/juju/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -33,24 +32,24 @@ func addJobs(jobCount int, jobChan chan struct{}) {
 func doInsert(table *table, db *sql.DB, count int) {
 	sqls, err := genRowDatas(table, count)
 	if err != nil {
-		log.Fatalf(errors.ErrorStack(err))
+		log.Fatalf(fmt.Sprintf("%+v", err))
 	}
 
 	txn, err := db.Begin()
 	if err != nil {
-		log.Fatalf(errors.ErrorStack(err))
+		log.Fatalf(fmt.Sprintf("%+v", err))
 	}
 
 	for _, sql := range sqls {
 		_, err = txn.Exec(sql)
 		if err != nil {
-			log.Fatalf(errors.ErrorStack(err))
+			log.Fatalf(fmt.Sprintf("%+v", err))
 		}
 	}
 
 	err = txn.Commit()
 	if err != nil {
-		log.Fatalf(errors.ErrorStack(err))
+		log.Fatalf(fmt.Sprintf("%+v", err))
 	}
 }
 

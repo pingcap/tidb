@@ -14,8 +14,8 @@
 package tikv
 
 import (
+	"fmt"
 	gofail "github.com/coreos/gofail/runtime"
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/terror"
 	"golang.org/x/net/context"
@@ -32,7 +32,7 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRpcErrors(c *C) {
 	c.Assert(err, IsNil)
 	err = t1.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
+	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", fmt.Sprintf("%+v", err)))
 }
 
 // TestFailCommitPrimaryRegionError tests RegionError is handled properly when
@@ -61,7 +61,7 @@ func (s *testCommitterSuite) TestFailCommitPrimaryRPCErrorThenRegionError(c *C) 
 	c.Assert(err, IsNil)
 	err = t1.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", errors.ErrorStack(err)))
+	c.Assert(terror.ErrorEqual(err, terror.ErrResultUndetermined), IsTrue, Commentf("%s", fmt.Sprintf("%+v", err)))
 }
 
 // TestFailCommitPrimaryKeyError tests KeyError is handled properly when

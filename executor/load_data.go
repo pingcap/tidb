@@ -18,12 +18,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -238,7 +238,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 
 		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
-			return nil, false, errors.Trace(err)
+			return nil, false, errors.WithStack(err)
 		}
 		rows = append(rows, e.colsToRow(cols))
 		e.rowCount++
@@ -251,7 +251,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	}
 	err := e.batchCheckAndInsert(rows, e.insertData)
 	if err != nil {
-		return nil, reachLimit, errors.Trace(err)
+		return nil, reachLimit, errors.WithStack(err)
 	}
 	if e.lastInsertID != 0 {
 		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
@@ -277,7 +277,7 @@ func (e *LoadDataInfo) colsToRow(cols []field) types.DatumRow {
 	row, err := e.fillRowData(e.columns, e.row)
 	if err != nil {
 		e.handleWarning(err,
-			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
+			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, fmt.Sprintf("%+v", err)))
 		return nil
 	}
 	return row
@@ -290,7 +290,7 @@ func (e *LoadDataInfo) insertData(row types.DatumRow) (int64, error) {
 	h, err := e.Table.AddRecord(e.ctx, row, false)
 	if err != nil {
 		e.handleWarning(err,
-			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
+			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, fmt.Sprintf("%+v", err)))
 	}
 	return h, nil
 }

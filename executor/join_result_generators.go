@@ -14,12 +14,12 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -117,7 +117,7 @@ func (outputer *baseJoinResultGenerator) makeJoinRowToChunk(chk *chunk.Chunk, lh
 func (outputer *baseJoinResultGenerator) filter(input, output *chunk.Chunk) (matched bool, err error) {
 	outputer.selected, err = expression.VectorizedFilter(outputer.ctx, outputer.conditions, chunk.NewIterator4Chunk(input), outputer.selected)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	for i := 0; i < len(outputer.selected); i++ {
 		if !outputer.selected[i] {
@@ -153,7 +153,7 @@ func (outputer *semiJoinResultGenerator) emit(outer chunk.Row, inners chunk.Iter
 		}
 		selected, err := expression.EvalBool(outputer.ctx, outputer.conditions, outputer.chk.GetRow(0))
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if selected {
 			chk.AppendRow(outer)
@@ -188,7 +188,7 @@ func (outputer *antiSemiJoinResultGenerator) emit(outer chunk.Row, inners chunk.
 
 		matched, err := expression.EvalBool(outputer.ctx, outputer.conditions, outputer.chk.GetRow(0))
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if matched {
 			return nil
@@ -222,7 +222,7 @@ func (outputer *leftOuterSemiJoinResultGenerator) emit(outer chunk.Row, inners c
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		matched, err := expression.EvalBool(outputer.ctx, outputer.conditions, outputer.chk.GetRow(0))
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if matched {
 			chk.AppendPartialRow(0, outer)
@@ -261,7 +261,7 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) emit(outer chunk.Row, inne
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		matched, err := expression.EvalBool(outputer.ctx, outputer.conditions, outputer.chk.GetRow(0))
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		// outer row can be joined with an inner row.
 		if matched {
@@ -305,7 +305,7 @@ func (outputer *leftOuterJoinResultGenerator) emit(outer chunk.Row, inners chunk
 	// reach here, chkForJoin is outputer.chk
 	matched, err := outputer.filter(chkForJoin, chk)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	chkForJoin.Reset()
 	if !matched {
@@ -344,7 +344,7 @@ func (outputer *rightOuterJoinResultGenerator) emit(outer chunk.Row, inners chun
 	// reach here, chkForJoin is outputer.chk
 	matched, err := outputer.filter(chkForJoin, chk)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	chkForJoin.Reset()
 	// outer row can not be joined with any inner row.
@@ -383,7 +383,7 @@ func (outputer *innerJoinResultGenerator) emit(outer chunk.Row, inners chunk.Ite
 	// reach here, chkForJoin is outputer.chk
 	_, err := outputer.filter(chkForJoin, chk)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	chkForJoin.Reset()
 

@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -254,7 +254,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 
 	err := splitRanges(bo, cache, ranges, appendTask)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	if desc {
@@ -271,7 +271,7 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 	for ranges.len() > 0 {
 		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		// Iterate to the first range that is not complete in the region.
@@ -327,7 +327,7 @@ func SplitRegionRanges(bo *Backoffer, cache *RegionCache, keyRanges []kv.KeyRang
 
 	err := splitRanges(bo, cache, &ranges, appendRange)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return ret, nil
 }
@@ -549,12 +549,12 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	}
 
 	if resp.err != nil {
-		return nil, errors.Trace(resp.err)
+		return nil, errors.WithStack(resp.err)
 	}
 
 	err := it.store.CheckVisibility(it.req.StartTs)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	if resp.Data == nil {
@@ -569,7 +569,7 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 	for len(remainTasks) > 0 {
 		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
 		if err != nil {
-			resp := copResponse{err: errors.Trace(err)}
+			resp := copResponse{err: errors.WithStack(err)}
 			worker.sendToRespCh(resp, respCh)
 			return
 		}
@@ -608,7 +608,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	startTime := time.Now()
 	resp, err := sender.SendReq(bo, req, task.region, ReadTimeoutMedium)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = sender.storeAddr
@@ -686,7 +686,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, stream *ti
 	for {
 		remainedTasks, err := worker.handleCopResponse(bo, resp, task, ch, lastRange)
 		if err != nil || len(remainedTasks) != 0 {
-			return remainedTasks, errors.Trace(err)
+			return remainedTasks, errors.WithStack(err)
 		}
 		resp, err = stream.Recv()
 		if err != nil {
@@ -695,7 +695,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, stream *ti
 			}
 
 			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task: %s", err, task)); err1 != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 
 			// No coprocessor.Response for network error, rebuild task based on the last success one.
@@ -713,7 +713,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, stream *ti
 func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, resp *coprocessor.Response, task *copTask, ch chan<- copResponse, lastRange *coprocessor.KeyRange) ([]*copTask, error) {
 	if regionErr := resp.GetRegionError(); regionErr != nil {
 		if err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String())); err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
 		return buildCopTasks(bo, worker.store.regionCache, task.ranges, worker.req.Desc, worker.req.Streaming)
@@ -722,11 +722,11 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, resp *coproces
 		log.Debugf("coprocessor encounters lock: %v", lockErr)
 		ok, err1 := worker.store.lockResolver.ResolveLocks(bo, []*Lock{NewLock(lockErr)})
 		if err1 != nil {
-			return nil, errors.Trace(err1)
+			return nil, errors.WithStack(err1)
 		}
 		if !ok {
 			if err := bo.Backoff(boTxnLockFast, errors.New(lockErr.String())); err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 		}
 		return worker.buildCopTasksFromRemain(bo, lastRange, task)
@@ -734,7 +734,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, resp *coproces
 	if otherErr := resp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
 		log.Warnf("coprocessor err: %v", err)
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	var startKey kv.Key
 	// When the request is using streaming API, the `Range` is not nil.

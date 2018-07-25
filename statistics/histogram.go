@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -146,7 +146,7 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 	for row := oldIter.Begin(); row != oldIter.End(); row = oldIter.Next() {
 		datum, err := tablecodec.DecodeColumnValue(row.GetBytes(0), tp, timeZone)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		hg.Bounds.AppendDatum(0, &datum)
 	}
@@ -161,7 +161,7 @@ func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType
 		d := row.GetDatum(0, hg.tp)
 		d, err := d.ConvertTo(sc, tp)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		hist.Bounds.AppendDatum(0, &d)
 	}
@@ -205,7 +205,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
@@ -275,7 +275,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
@@ -291,7 +291,7 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 	selSQL := fmt.Sprintf("select count, repeats, lower_bound, upper_bound from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d order by bucket_id", tableID, isIndex, colID)
 	rows, fields, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bucketSize := len(rows)
 	hg := NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
@@ -308,12 +308,12 @@ func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.Fiel
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			lowerBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			d = rows[i].GetDatum(3, &fields[3].Column.FieldType)
 			upperBound, err = d.ConvertTo(sc, tp)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 		}
 		totalCount += count
@@ -327,7 +327,7 @@ func (h *Handle) columnCountFromStorage(tableID, colID int64) (int64, error) {
 	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, 0, colID)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, selSQL)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	if rows[0].IsNull(0) {
 		return 0, nil
@@ -343,11 +343,11 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 	}
 	decodedVals, err := codec.Decode(value.GetBytes(), idxCols)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", errors.WithStack(err)
 	}
 	str, err := types.DatumsToString(decodedVals, true)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", errors.WithStack(err)
 	}
 	return str, nil
 }
@@ -362,9 +362,9 @@ func (hg *Histogram) ToString(idxCols int) string {
 	}
 	for i := 0; i < hg.Len(); i++ {
 		upperVal, err := ValueToString(hg.GetUpper(i), idxCols)
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 		lowerVal, err := ValueToString(hg.GetLower(i), idxCols)
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 		strs = append(strs, fmt.Sprintf("num: %d\tlower_bound: %s\tupper_bound: %s\trepeats: %d", hg.Buckets[i].Count, lowerVal, upperVal, hg.Buckets[i].Repeat))
 	}
 	return strings.Join(strs, "\n")
@@ -621,7 +621,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	lLen := lh.Len()
 	cmp, err := lh.GetUpper(lLen-1).CompareDatum(sc, rh.GetLower(0))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	offset := int64(0)
 	if cmp == 0 {
@@ -718,7 +718,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (f
 	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
-		return float64(count), errors.Trace(err)
+		return float64(count), errors.WithStack(err)
 	}
 	// all the values is null
 	if c.Histogram.Bounds == nil {
@@ -733,7 +733,7 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 	for _, rg := range ranges {
 		cmp, err := rg.LowVal[0].CompareDatum(sc, &rg.HighVal[0])
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 		if cmp == 0 {
 			// the point case.
@@ -741,7 +741,7 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 				var cnt float64
 				cnt, err = c.equalRowCount(sc, rg.LowVal[0])
 				if err != nil {
-					return 0, errors.Trace(err)
+					return 0, errors.WithStack(err)
 				}
 				rowCount += cnt
 			}
@@ -752,14 +752,14 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		if rg.LowExclude {
 			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0])
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, errors.WithStack(err)
 			}
 			cnt -= lowCnt
 		}
 		if !rg.HighExclude {
 			highCnt, err := c.equalRowCount(sc, rg.HighVal[0])
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, errors.WithStack(err)
 			}
 			cnt += highCnt
 		}
@@ -798,11 +798,11 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 	for _, indexRange := range indexRanges {
 		lb, err := codec.EncodeKey(sc, nil, indexRange.LowVal...)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 		rb, err := codec.EncodeKey(sc, nil, indexRange.HighVal...)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
 		if fullLen && bytes.Equal(lb, rb) {

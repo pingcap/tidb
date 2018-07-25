@@ -16,10 +16,10 @@ package mocktikv
 import (
 	"container/heap"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 type sortRow struct {
@@ -50,7 +50,7 @@ func (t *topNSorter) Less(i, j int) bool {
 
 		ret, err := v1.CompareDatum(t.sc, &v2)
 		if err != nil {
-			t.err = errors.Trace(err)
+			t.err = errors.WithStack(err)
 			return true
 		}
 
@@ -99,7 +99,7 @@ func (t *topNHeap) Less(i, j int) bool {
 
 		ret, err := v1.CompareDatum(t.sc, &v2)
 		if err != nil {
-			t.err = errors.Trace(err)
+			t.err = errors.WithStack(err)
 			return true
 		}
 

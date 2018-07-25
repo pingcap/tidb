@@ -14,9 +14,9 @@
 package tikv
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pkg/errors"
 	"github.com/twinj/uuid"
 )
 
@@ -41,5 +41,5 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 	}
 
 	tikvStore.mock = true
-	return tikvStore, errors.Trace(err)
+	return tikvStore, errors.WithStack(err)
 }

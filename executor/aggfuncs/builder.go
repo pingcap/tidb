@@ -15,12 +15,12 @@ package aggfuncs
 
 import (
 	"fmt"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 // Build is used to build a specific AggFunc implementation according to the
@@ -242,7 +242,7 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 		sep, _, err := c.EvalString(nil, nil)
 		// This err should never happen.
 		if err != nil {
-			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))
+			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.WithStack(err).Error()))
 		}
 		if aggFuncDesc.HasDistinct {
 			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep}}

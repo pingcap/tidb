@@ -14,10 +14,10 @@
 package aggfuncs
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 // All the following avg function implementations return the decimal result,
@@ -55,7 +55,7 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	finalResult := new(types.MyDecimal)
 	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, types.DivFracIncr)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	chk.AppendMyDecimal(e.ordinal, finalResult)
 	return nil
@@ -71,7 +71,7 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -79,7 +79,7 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		p.sum = *newSum
 		p.count++
@@ -97,7 +97,7 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -105,7 +105,7 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 
 		inputCount, isNull, err := e.args[0].EvalInt(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -113,7 +113,7 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 
 		err = types.DecimalAdd(&p.sum, inputSum, newSum)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		p.sum = *newSum
 		p.count += inputCount
@@ -150,7 +150,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull || p.valSet.exist(input) {
 			continue
@@ -158,7 +158,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		p.sum = *newSum
 		p.count++
@@ -177,7 +177,7 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	finalResult := new(types.MyDecimal)
 	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, types.DivFracIncr)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	chk.AppendMyDecimal(e.ordinal, finalResult)
 	return nil
@@ -227,7 +227,7 @@ func (e *avgOriginal4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -248,7 +248,7 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		inputSum, isNull, err := e.args[1].EvalReal(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -256,7 +256,7 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 
 		inputCount, isNull, err := e.args[0].EvalInt(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -296,7 +296,7 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Contex
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull || p.valSet.exist(input) {
 			continue

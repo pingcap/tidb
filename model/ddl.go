@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 )
 
 // ActionType is the type for DDL action.
@@ -209,7 +209,7 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	if updateRawArgs {
 		job.RawArgs, err = json.Marshal(job.Args)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 
@@ -218,21 +218,21 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	defer job.Mu.Unlock()
 	b, err = json.Marshal(job)
 
-	return b, errors.Trace(err)
+	return b, errors.WithStack(err)
 }
 
 // Decode decodes job from the json buffer, we must use DecodeArgs later to
 // decode special args for this job.
 func (job *Job) Decode(b []byte) error {
 	err := json.Unmarshal(b, job)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // DecodeArgs decodes job args.
 func (job *Job) DecodeArgs(args ...interface{}) error {
 	job.Args = args
 	err := json.Unmarshal(job.RawArgs, &job.Args)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // String implements fmt.Stringer interface.
@@ -250,7 +250,7 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 		if job.Type == ActionRenameTable {
 			var oldSchemaID int64
 			if err := job.DecodeArgs(&oldSchemaID); err != nil {
-				return false, errors.Trace(err)
+				return false, errors.WithStack(err)
 			}
 			if other.SchemaID == oldSchemaID {
 				return true, nil
@@ -267,11 +267,11 @@ func (job *Job) hasDependentSchema(other *Job) (bool, error) {
 func (job *Job) IsDependentOn(other *Job) (bool, error) {
 	isDependent, err := job.hasDependentSchema(other)
 	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
+		return isDependent, errors.WithStack(err)
 	}
 	isDependent, err = other.hasDependentSchema(job)
 	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
+		return isDependent, errors.WithStack(err)
 	}
 
 	// TODO: If a job is ActionRenameTable, we need to check table name.

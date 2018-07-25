@@ -14,12 +14,12 @@
 package ranger
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
@@ -161,7 +161,7 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		filterConds = append(filterConds, conditions...)
 		ranges, err = buildCNFIndexRange(sctx.GetSessionVars().StmtCtx, cols, tpSlice, lengths, eqOrInCount, accessConds)
 		if err != nil {
-			return nil, nil, nil, 0, errors.Trace(err)
+			return nil, nil, nil, 0, errors.WithStack(err)
 		}
 		return ranges, accessConds, filterConds, eqCount, nil
 	}
@@ -184,7 +184,7 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		}
 	}
 	ranges, err = buildCNFIndexRange(sctx.GetSessionVars().StmtCtx, cols, tpSlice, lengths, eqOrInCount, accessConds)
-	return ranges, accessConds, filterConds, eqCount, errors.Trace(err)
+	return ranges, accessConds, filterConds, eqCount, errors.WithStack(err)
 }
 
 func extractEqAndInCondition(conditions []expression.Expression, cols []*expression.Column,
@@ -247,7 +247,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 			points := rb.build(item)
 			ranges, err := points2Ranges(sc, points, newTpSlice[0])
 			if err != nil {
-				return nil, nil, false, errors.Trace(err)
+				return nil, nil, false, errors.WithStack(err)
 			}
 			totalRanges = append(totalRanges, ranges...)
 			newAccessItems = append(newAccessItems, item)
@@ -258,7 +258,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 
 	totalRanges, err := unionRanges(sc, totalRanges)
 	if err != nil {
-		return nil, nil, false, errors.Trace(err)
+		return nil, nil, false, errors.WithStack(err)
 	}
 
 	return totalRanges, []expression.Expression{expression.ComposeDNFCondition(sctx, newAccessItems...)}, hasResidual, nil
@@ -277,7 +277,7 @@ func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expre
 		if sf, ok := conditions[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			ranges, accesses, hasResidual, err := detachDNFCondAndBuildRangeForIndex(sctx, sf, cols, newTpSlice, lengths)
 			if err != nil {
-				return nil, nil, nil, 0, errors.Trace(err)
+				return nil, nil, nil, 0, errors.WithStack(err)
 			}
 			// If this DNF have something cannot be to calculate range, then all this DNF should be pushed as filter condition.
 			if hasResidual {

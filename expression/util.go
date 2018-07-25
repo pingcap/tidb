@@ -19,7 +19,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 // Filter the input expressions, append the results to result.
@@ -165,7 +165,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		for _, arg := range x.GetArgs() {
 			newArg, err := SubstituteCorCol2Constant(arg)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			_, ok := newArg.(*Constant)
 			newArgs = append(newArgs, newArg)
@@ -174,7 +174,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 		if allConstant {
 			val, err := x.Eval(nil)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			return &Constant{Value: val, RetType: x.GetType()}, nil
 		}
@@ -206,9 +206,9 @@ func timeZone2Duration(tz string) time.Duration {
 
 	i := strings.Index(tz, ":")
 	h, err := strconv.Atoi(tz[1:i])
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	m, err := strconv.Atoi(tz[i+1:])
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	return time.Duration(sign) * (time.Duration(h)*time.Hour + time.Duration(m)*time.Minute)
 }
 
@@ -406,7 +406,7 @@ func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err e
 			return args[1], nil
 		}
 		ret, err = NewFunction(ctx, ast.RowFunc, f.GetType(), args[1:]...)
-		return ret, errors.Trace(err)
+		return ret, errors.WithStack(err)
 	}
 	return
 }

@@ -26,12 +26,12 @@ import (
 	"hash"
 	"io"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -78,7 +78,7 @@ type aesDecryptFunctionClass struct {
 
 func (c *aesDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(c.verifyArgs(args))
+		return nil, errors.WithStack(c.verifyArgs(args))
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
 	bf.tp.Flen = args[0].GetType().Flen // At most.
@@ -103,12 +103,12 @@ func (b *builtinAesDecryptSig) evalString(row types.Row) (string, bool, error) {
 	// According to doc: If either function argument is NULL, the function returns NULL.
 	cryptStr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 
 	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 
 	// TODO: Support other modes.
@@ -126,7 +126,7 @@ type aesEncryptFunctionClass struct {
 
 func (c *aesEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(c.verifyArgs(args))
+		return nil, errors.WithStack(c.verifyArgs(args))
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
 	bf.tp.Flen = aes128ecbBlobkSize * (args[0].GetType().Flen/aes128ecbBlobkSize + 1) // At most.
@@ -151,12 +151,12 @@ func (b *builtinAesEncryptSig) evalString(row types.Row) (string, bool, error) {
 	// According to doc: If either function argument is NULL, the function returns NULL.
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 
 	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 
 	// TODO: Support other modes.
@@ -222,7 +222,7 @@ type passwordFunctionClass struct {
 
 func (c *passwordFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.PWDHashLen + 1
@@ -245,7 +245,7 @@ func (b *builtinPasswordSig) Clone() builtinFunc {
 func (b *builtinPasswordSig) evalString(row types.Row) (d string, isNull bool, err error) {
 	pass, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", err != nil, errors.Trace(err)
+		return "", err != nil, errors.WithStack(err)
 	}
 
 	if len(pass) == 0 {
@@ -265,7 +265,7 @@ type randomBytesFunctionClass struct {
 
 func (c *randomBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
 	bf.tp.Flen = 1024 // Max allowed random bytes
@@ -289,14 +289,14 @@ func (b *builtinRandomBytesSig) Clone() builtinFunc {
 func (b *builtinRandomBytesSig) evalString(row types.Row) (string, bool, error) {
 	len, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 	if len < 1 || len > 1024 {
 		return "", false, types.ErrOverflow.GenByArgs("length", "random_bytes")
 	}
 	buf := make([]byte, len)
 	if n, err := rand.Read(buf); err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	} else if int64(n) != len {
 		return "", false, errors.New("fail to generate random bytes")
 	}
@@ -309,7 +309,7 @@ type md5FunctionClass struct {
 
 func (c *md5FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = 32
@@ -332,7 +332,7 @@ func (b *builtinMD5Sig) Clone() builtinFunc {
 func (b *builtinMD5Sig) evalString(row types.Row) (string, bool, error) {
 	arg, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
+		return "", isNull, errors.WithStack(err)
 	}
 	sum := md5.Sum([]byte(arg))
 	hexStr := fmt.Sprintf("%x", sum)
@@ -345,7 +345,7 @@ type sha1FunctionClass struct {
 
 func (c *sha1FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = 40
@@ -369,12 +369,12 @@ func (b *builtinSHA1Sig) Clone() builtinFunc {
 func (b *builtinSHA1Sig) evalString(row types.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
+		return "", isNull, errors.WithStack(err)
 	}
 	hasher := sha1.New()
 	_, err = hasher.Write([]byte(str))
 	if err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 	return fmt.Sprintf("%x", hasher.Sum(nil)), false, nil
 }
@@ -385,7 +385,7 @@ type sha2FunctionClass struct {
 
 func (c *sha2FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
 	bf.tp.Flen = 128 // sha512
@@ -417,11 +417,11 @@ const (
 func (b *builtinSHA2Sig) evalString(row types.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
+		return "", isNull, errors.WithStack(err)
 	}
 	hashLength, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return "", isNull, errors.Trace(err)
+		return "", isNull, errors.WithStack(err)
 	}
 	var hasher hash.Hash
 	switch int(hashLength) {
@@ -440,7 +440,7 @@ func (b *builtinSHA2Sig) evalString(row types.Row) (string, bool, error) {
 
 	_, err = hasher.Write([]byte(str))
 	if err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 	return fmt.Sprintf("%x", hasher.Sum(nil)), false, nil
 }
@@ -450,10 +450,10 @@ func deflate(data []byte) ([]byte, error) {
 	var buffer bytes.Buffer
 	w := zlib.NewWriter(&buffer)
 	if _, err := w.Write(data); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if err := w.Close(); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return buffer.Bytes(), nil
 }
@@ -464,13 +464,13 @@ func inflate(compressStr []byte) ([]byte, error) {
 	var out bytes.Buffer
 	r, err := zlib.NewReader(reader)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if _, err = io.Copy(&out, r); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	err = r.Close()
-	return out.Bytes(), errors.Trace(err)
+	return out.Bytes(), errors.WithStack(err)
 }
 
 type compressFunctionClass struct {
@@ -479,7 +479,7 @@ type compressFunctionClass struct {
 
 func (c *compressFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	srcLen := args[0].GetType().Flen
@@ -508,7 +508,7 @@ func (b *builtinCompressSig) Clone() builtinFunc {
 func (b *builtinCompressSig) evalString(row types.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 
 	// According to doc: Empty strings are stored as empty strings.
@@ -546,7 +546,7 @@ type uncompressFunctionClass struct {
 
 func (c *uncompressFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.MaxBlobWidth
@@ -571,7 +571,7 @@ func (b *builtinUncompressSig) evalString(row types.Row) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	payload, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 	if len(payload) == 0 {
 		return "", false, nil
@@ -595,7 +595,7 @@ type uncompressedLengthFunctionClass struct {
 
 func (c *uncompressedLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
 	bf.tp.Flen = 10
@@ -619,7 +619,7 @@ func (b *builtinUncompressedLengthSig) evalInt(row types.Row) (int64, bool, erro
 	sc := b.ctx.GetSessionVars().StmtCtx
 	payload, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	if len(payload) == 0 {
 		return 0, false, nil

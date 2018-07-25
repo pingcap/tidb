@@ -16,12 +16,12 @@ package executor
 import (
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 func (e *ShowExec) fetchShowStatsMeta() error {
@@ -94,13 +94,13 @@ func (e *ShowExec) fetchShowStatsBuckets() error {
 				for _, col := range statsTbl.Columns {
 					err := e.bucketsToRows(db.Name.O, tbl.Name.O, col.Info.Name.O, 0, col.Histogram)
 					if err != nil {
-						return errors.Trace(err)
+						return errors.WithStack(err)
 					}
 				}
 				for _, idx := range statsTbl.Indices {
 					err := e.bucketsToRows(db.Name.O, tbl.Name.O, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram)
 					if err != nil {
-						return errors.Trace(err)
+						return errors.WithStack(err)
 					}
 				}
 			}
@@ -119,11 +119,11 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, colName string, numOfCols int,
 	for i := 0; i < hist.Len(); i++ {
 		lowerBoundStr, err := statistics.ValueToString(hist.GetLower(i), numOfCols)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		upperBoundStr, err := statistics.ValueToString(hist.GetUpper(i), numOfCols)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		e.appendRow([]interface{}{
 			dbName,

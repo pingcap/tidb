@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/google/btree"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -106,7 +106,7 @@ func (c *RegionCache) GetRPCContext(bo *Backoffer, id RegionVerID) (*RPCContext,
 
 	addr, err := c.GetStoreAddr(bo, peer.GetStoreId())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if addr == "" {
 		// Store not found, region must be out of date.
@@ -151,7 +151,7 @@ func (c *RegionCache) LocateKey(bo *Backoffer, key []byte) (*KeyLocation, error)
 
 	r, err := c.loadRegion(bo, key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	c.mu.Lock()
@@ -182,7 +182,7 @@ func (c *RegionCache) LocateRegionByID(bo *Backoffer, regionID uint64) (*KeyLoca
 
 	r, err := c.loadRegionByID(bo, regionID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	c.mu.Lock()
@@ -207,7 +207,7 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte) (map[Regio
 			var err error
 			lastLoc, err = c.LocateKey(bo, k)
 			if err != nil {
-				return nil, first, errors.Trace(err)
+				return nil, first, errors.WithStack(err)
 			}
 		}
 		id := lastLoc.Region
@@ -224,7 +224,7 @@ func (c *RegionCache) ListRegionIDsInKeyRange(bo *Backoffer, startKey, endKey []
 	for {
 		curRegion, err := c.LocateKey(bo, startKey)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		regionIDs = append(regionIDs, curRegion.Region.id)
 		if curRegion.Contains(endKey) {
@@ -332,7 +332,7 @@ func (c *RegionCache) loadRegion(bo *Backoffer, key []byte) (*Region, error) {
 		if backoffErr != nil {
 			err := bo.Backoff(boPDRPC, backoffErr)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 		}
 		meta, leader, err := c.pdClient.GetRegion(bo.ctx, key)
@@ -366,7 +366,7 @@ func (c *RegionCache) loadRegionByID(bo *Backoffer, regionID uint64) (*Region, e
 		if backoffErr != nil {
 			err := bo.Backoff(boPDRPC, backoffErr)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 		}
 		meta, leader, err := c.pdClient.GetRegionByID(bo.ctx, regionID)
@@ -409,7 +409,7 @@ func (c *RegionCache) GetStoreAddr(bo *Backoffer, id uint64) (string, error) {
 func (c *RegionCache) ReloadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	addr, err := c.loadStoreAddr(bo, id)
 	if err != nil || addr == "" {
-		return "", errors.Trace(err)
+		return "", errors.WithStack(err)
 	}
 
 	c.storeMu.Lock()
@@ -434,11 +434,11 @@ func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 		metrics.TiKVRegionCacheCounter.WithLabelValues("get_store", metrics.RetLabel(err)).Inc()
 		if err != nil {
 			if errors.Cause(err) == context.Canceled {
-				return "", errors.Trace(err)
+				return "", errors.WithStack(err)
 			}
 			err = errors.Errorf("loadStore from PD failed, id: %d, err: %v", id, err)
 			if err = bo.Backoff(boPDRPC, err); err != nil {
-				return "", errors.Trace(err)
+				return "", errors.WithStack(err)
 			}
 			continue
 		}

@@ -18,7 +18,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 type ecb struct {
@@ -122,7 +122,7 @@ func PKCS7Unpad(data []byte, blockSize int) ([]byte, error) {
 func AESEncryptWithECB(str, key []byte) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	blockSize := cb.BlockSize()
 	// The str arguments can be any length, and padding is automatically added to
@@ -142,7 +142,7 @@ func AESEncryptWithECB(str, key []byte) ([]byte, error) {
 func AESDecryptWithECB(cryptStr, key []byte) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	blockSize := cb.BlockSize()
 	if len(cryptStr)%blockSize != 0 {

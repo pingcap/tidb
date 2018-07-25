@@ -17,7 +17,6 @@ import (
 	"sync"
 
 	"github.com/google/btree"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -192,12 +192,12 @@ func (t *MemoryTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 	if t.pkHandleCol != nil {
 		recordID, err = r[t.pkHandleCol.Offset].ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 	} else {
 		recordID, err = t.alloc.Alloc(t.ID)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 	}
 	item := &itemPair{
@@ -236,7 +236,7 @@ func (t *MemoryTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table
 func (t *MemoryTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
 	r, err := t.RowWithCols(nil, h, t.Cols())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return r, nil
 }

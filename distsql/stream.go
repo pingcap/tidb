@@ -14,7 +14,6 @@
 package distsql
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -48,7 +48,7 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	for chk.NumRows() < maxChunkSize {
 		err := r.readDataIfNecessary(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if r.curr == nil {
 			return nil
@@ -56,7 +56,7 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 		err = r.flushToChunk(chk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -66,7 +66,7 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
 	resultSubset, err := resp.Next(ctx)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	if resultSubset == nil {
 		return true, nil
@@ -75,7 +75,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	var stream tipb.StreamResponse
 	err = stream.Unmarshal(resultSubset.GetData())
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	if stream.Error != nil {
 		return false, errors.Errorf("stream response error: [%d]%s\n", stream.Error.Code, stream.Error.Msg)
@@ -86,7 +86,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 
 	err = result.Unmarshal(stream.Data)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
 	r.partialCount++
@@ -102,7 +102,7 @@ func (r *streamResult) readDataIfNecessary(ctx context.Context) error {
 	tmp := new(tipb.Chunk)
 	finish, err := r.readDataFromResponse(ctx, r.resp, tmp)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if finish {
 		r.curr = nil
@@ -120,7 +120,7 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 		for i := 0; i < r.rowLen; i++ {
 			remainRowsData, err = decoder.DecodeOne(remainRowsData, i, r.fieldTypes[i])
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -137,9 +137,9 @@ func (r *streamResult) NextRaw(ctx context.Context) ([]byte, error) {
 	r.feedback.Invalidate()
 	resultSubset, err := r.resp.Next(ctx)
 	if resultSubset == nil || err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
-	return resultSubset.GetData(), errors.Trace(err)
+	return resultSubset.GetData(), errors.WithStack(err)
 }
 
 func (r *streamResult) Close() error {

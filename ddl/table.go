@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -36,31 +36,31 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	if err := job.DecodeArgs(tbInfo); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(t, job, schemaID, tbInfo.Name.L)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	if tbInfo.Partition != nil {
 		err = checkCreatePartitionValue(tbInfo.Partition)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 		err = checkAddPartitionTooManyPartitions(len(tbInfo.Partition.Definitions))
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	switch tbInfo.State {
@@ -70,7 +70,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		tbInfo.UpdateTS = t.StartTS
 		err = t.CreateTable(schemaID, tbInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 		if EnableSplitTableRegion {
 			// TODO: Add restrictions to this operation.
@@ -94,17 +94,17 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(
+			return ver, errors.WithStack(infoschema.ErrDatabaseNotExists.GenByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
 			))
 		}
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	// Check the table.
 	if tblInfo == nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(infoschema.ErrTableNotExists.GenByArgs(
+		return ver, errors.WithStack(infoschema.ErrTableNotExists.GenByArgs(
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		))
@@ -126,7 +126,7 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		tblInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != tblInfo.State)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 		if err = t.DropTable(job.SchemaID, tableID, true); err != nil {
 			break
@@ -139,7 +139,7 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
 
-	return ver, errors.Trace(err)
+	return ver, errors.WithStack(err)
 }
 
 type splitableStore interface {
@@ -154,14 +154,14 @@ func splitTableRegion(store kv.Storage, tableID int64) {
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
 	if err := s.SplitRegion(tableStartKey); err != nil {
 		// It will be automatically split by TiKV later.
-		log.Warnf("[ddl] splitting table region failed %v", errors.ErrorStack(err))
+		log.Warnf("[ddl] splitting table region failed %v", fmt.Sprintf("%+v", err))
 	}
 }
 
 func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
 	alloc := autoid.NewAllocator(store, tblInfo.GetDBID(schemaID))
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
-	return tbl, errors.Trace(err)
+	return tbl, errors.WithStack(err)
 }
 
 func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
@@ -170,14 +170,14 @@ func getTableInfo(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInf
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			job.State = model.JobStateCancelled
-			return nil, errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(
+			return nil, errors.WithStack(infoschema.ErrDatabaseNotExists.GenByArgs(
 				fmt.Sprintf("(Schema ID %d)", schemaID),
 			))
 		}
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	} else if tblInfo == nil {
 		job.State = model.JobStateCancelled
-		return nil, errors.Trace(infoschema.ErrTableNotExists.GenByArgs(
+		return nil, errors.WithStack(infoschema.ErrTableNotExists.GenByArgs(
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		))
@@ -201,17 +201,17 @@ func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	err := job.DecodeArgs(&newTableID)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	err = t.DropTable(schemaID, tblInfo.ID, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
@@ -223,7 +223,7 @@ func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			pid, err = t.GenGlobalID()
 			if err != nil {
 				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
+				return ver, errors.WithStack(err)
 			}
 			def.ID = pid
 		}
@@ -233,12 +233,12 @@ func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	err = t.CreateTable(schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	startKey := tablecodec.EncodeTablePrefix(tableID)
@@ -252,18 +252,18 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 	err := job.DecodeArgs(&newBase)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	tblInfo.AutoIncID = newBase
 	tbl, err := getTable(store, schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	// The operation of the minus 1 to make sure that the current value doesn't be used,
 	// the next Alloc operation will get this value.
@@ -271,12 +271,12 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 	err = tbl.RebaseAutoID(nil, tblInfo.AutoIncID-1, false)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
@@ -287,18 +287,18 @@ func onShardRowID(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	err := job.DecodeArgs(&shardRowIDBits)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	tblInfo.ShardRowIDBits = shardRowIDBits
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
@@ -310,17 +310,17 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err := job.DecodeArgs(&oldSchemaID, &tableName); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	tblInfo, err := getTableInfo(t, job, oldSchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	newSchemaID := job.SchemaID
 	err = checkTableNotExists(t, job, newSchemaID, tableName.L)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	var baseID int64
@@ -330,7 +330,7 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		baseID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 		// It's compatible with old version.
 		// TODO: Remove it.
@@ -340,26 +340,26 @@ func onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	err = t.DropTable(oldSchemaID, tblInfo.ID, shouldDelAutoID)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	tblInfo.Name = tableName
 	err = t.CreateTable(newSchemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	// Update the table's auto-increment ID.
 	if newSchemaID != oldSchemaID {
 		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, baseID)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 	}
 
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
@@ -369,18 +369,18 @@ func onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var comment string
 	if err := job.DecodeArgs(&comment); err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	tblInfo.Comment = comment
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
@@ -394,7 +394,7 @@ func checkTableNotExists(t *meta.Meta, job *model.Job, schemaID int64, tableName
 			job.State = model.JobStateCancelled
 			return infoschema.ErrDatabaseNotExists.GenByArgs("")
 		}
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// Check the table.
@@ -415,7 +415,7 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 	if shouldUpdateVer {
 		ver, err = updateSchemaVersion(t, job)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 	}
 
@@ -431,33 +431,33 @@ func onAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	err := job.DecodeArgs(&partInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	err = checkAddPartitionTooManyPartitions(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions))
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	err = checkPartitionNameUnique(tblInfo, partInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	updatePartitionInfo(partInfo, tblInfo)
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	return ver, errors.Trace(err)
+	return ver, errors.WithStack(err)
 }
 
 func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.TableInfo) {
@@ -475,12 +475,12 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 		newDefs, oldDefs := part.Definitions, meta.Partition.Definitions
 		rangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
 		if strings.EqualFold(rangeValue, "MAXVALUE") {
-			return errors.Trace(ErrPartitionMaxvalue)
+			return errors.WithStack(ErrPartitionMaxvalue)
 		}
 
 		currentRangeValue, err := strconv.Atoi(rangeValue)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		for i := 0; i < len(newDefs); i++ {
@@ -488,15 +488,15 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 			if ifMaxvalue && i == len(newDefs)-1 {
 				return nil
 			} else if ifMaxvalue && i != len(newDefs)-1 {
-				return errors.Trace(ErrPartitionMaxvalue)
+				return errors.WithStack(ErrPartitionMaxvalue)
 			}
 
 			nextRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			if nextRangeValue <= currentRangeValue {
-				return errors.Trace(ErrRangeNotIncreasing)
+				return errors.WithStack(ErrRangeNotIncreasing)
 			}
 			currentRangeValue = nextRangeValue
 		}

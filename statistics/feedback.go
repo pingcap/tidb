@@ -21,8 +21,8 @@ import (
 	"sort"
 	"time"
 
+	"fmt"
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
@@ -104,20 +105,20 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 			// As we do not know the origin length, just use a custom value here.
 			lowVal, err = codec.Decode(low.GetBytes(), 4)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			highVal, err = codec.Decode(high.GetBytes(), 4)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 		} else {
 			_, lowInt, err := codec.DecodeInt(val.lower.GetBytes())
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			_, highInt, err := codec.DecodeInt(val.upper.GetBytes())
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			lowVal = []types.Datum{types.NewIntDatum(lowInt)}
 			highVal = []types.Datum{types.NewIntDatum(highInt)}
@@ -243,7 +244,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		// Update the bound if necessary.
 		res, err := bkt.lower.CompareDatum(nil, ran.lower)
 		if err != nil {
-			log.Debugf("compare datum %v with %v failed, err: %v", bkt.lower, ran.lower, errors.ErrorStack(err))
+			log.Debugf("compare datum %v with %v failed, err: %v", bkt.lower, ran.lower, fmt.Sprintf("%+v", err))
 			continue
 		}
 		if res > 0 {
@@ -251,7 +252,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		}
 		res, err = bkt.upper.CompareDatum(nil, ran.upper)
 		if err != nil {
-			log.Debugf("compare datum %v with %v failed, err: %v", bkt.upper, ran.upper, errors.ErrorStack(err))
+			log.Debugf("compare datum %v with %v failed, err: %v", bkt.upper, ran.upper, fmt.Sprintf("%+v", err))
 			continue
 		}
 		if res < 0 {
@@ -271,7 +272,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	vals = append(vals, *b.lower)
 	err := types.SortDatums(nil, vals)
 	if err != nil {
-		log.Debugf("sort datums failed, err: %v", errors.ErrorStack(err))
+		log.Debugf("sort datums failed, err: %v", fmt.Sprintf("%+v", err))
 		vals = vals[:0]
 		vals = append(vals, *b.lower, *b.upper)
 		return vals
@@ -289,7 +290,7 @@ func (b *BucketFeedback) getBoundaries(num int) []types.Datum {
 	for i := 1; i < len(vals); i++ {
 		cmp, err := vals[total-1].CompareDatum(nil, &vals[i])
 		if err != nil {
-			log.Debugf("compare datum %v with %v failed, err: %v", vals[total-1], vals[i], errors.ErrorStack(err))
+			log.Debugf("compare datum %v with %v failed, err: %v", vals[total-1], vals[i], fmt.Sprintf("%+v", err))
 			continue
 		}
 		if cmp == 0 {
@@ -581,11 +582,11 @@ func encodePKFeedback(q *QueryFeedback) (*queryFeedback, error) {
 		}
 		_, low, err := codec.DecodeInt(fb.lower.GetBytes())
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		_, high, err := codec.DecodeInt(fb.upper.GetBytes())
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		pb.IntRanges = append(pb.IntRanges, low, high)
 		pb.Counts = append(pb.Counts, fb.count)
@@ -618,14 +619,14 @@ func encodeFeedback(q *QueryFeedback) ([]byte, error) {
 	} else {
 		pb, err = encodePKFeedback(q)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 	err = enc.Encode(pb)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return buf.Bytes(), nil
 }
@@ -636,7 +637,7 @@ func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
 	pb := &queryFeedback{}
 	err := dec.Decode(pb)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// decode the index range feedback
 	for i := 0; i < len(pb.IndexRanges); i += 2 {
@@ -709,7 +710,7 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	ranges, err := q.DecodeToRanges(isIndex)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	expected := 0.0
 	if isIndex {
@@ -722,7 +723,7 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 		expected *= c.getIncreaseFactor(t.Count)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	q.expected = int64(expected)
 	return nil

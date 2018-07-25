@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pkg/errors"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 
@@ -338,7 +338,7 @@ func (c *Config) Load(confFile string) error {
 	if c.TokenLimit <= 0 {
 		c.TokenLimit = 1000
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

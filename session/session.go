@@ -27,7 +27,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
@@ -56,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -205,12 +205,12 @@ func (s *session) GetTLSState() *tls.ConnectionState {
 func (s *session) SetCollation(coID int) error {
 	cs, co, err := charset.GetCharsetInfoByID(coID)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	for _, v := range variable.SetNamesVariables {
-		terror.Log(errors.Trace(s.sessionVars.SetSystemVar(v, cs)))
+		terror.Log(errors.WithStack(s.sessionVars.SetSystemVar(v, cs)))
 	}
-	terror.Log(errors.Trace(s.sessionVars.SetSystemVar(variable.CollationConnection, co)))
+	terror.Log(errors.WithStack(s.sessionVars.SetSystemVar(variable.CollationConnection, co)))
 	return nil
 }
 
@@ -251,7 +251,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	tName := model.NewCIStr(tableName)
 	table, err := is.TableByName(dbName, tName)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	cols := table.Cols()
@@ -282,7 +282,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		if prewriteValue != nil {
 			prewriteData, err := prewriteValue.Marshal()
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			info := &binloginfo.BinlogInfo{
 				Data: &binlog.Binlog{
@@ -308,7 +308,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 
 	if err := s.txn.Commit(sessionctx.SetCommitCtx(ctx, s)); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -360,7 +360,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 
 	if err != nil {
 		log.Warnf("con:%d finished txn:%v, %v", s.sessionVars.ConnectionID, s.txn, err)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
@@ -383,7 +383,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		label = metrics.LblError
 	}
 	metrics.TransactionCounter.WithLabelValues(label).Inc()
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (s *session) RollbackTxn(ctx context.Context) error {
@@ -400,7 +400,7 @@ func (s *session) RollbackTxn(ctx context.Context) error {
 	s.cleanRetryInfo()
 	s.txn.changeToInvalid()
 	s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (s *session) GetClient() kv.Client {
@@ -431,7 +431,7 @@ func (s *session) String() string {
 		data["preparedStmtCount"] = len(sessVars.PreparedStmts)
 	}
 	b, err := json.MarshalIndent(data, "", "  ")
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	return string(b)
 }
 
@@ -478,7 +478,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			}
 			schemaVersion, err = st.RebuildPlan()
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 
 			if retryCnt == 0 {
@@ -510,13 +510,13 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 		if !s.isRetryableError(err) {
 			log.Warnf("con:%d session:%v, err:%v in retry", connID, s, err)
 			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblUnretryable)
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		retryCnt++
 		if retryCnt >= maxCnt {
 			log.Warnf("con:%d Retry reached max count %d", connID, retryCnt)
 			metrics.SessionRetryErrorCounter.WithLabelValues(metrics.LblReachMax)
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		log.Warnf("con:%d retryable error: %v, txn: %v", connID, err, s.txn)
 		kv.BackOff(retryCnt)
@@ -550,7 +550,7 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]type
 	// Use special session to execute the sql.
 	tmp, err := s.sysSessionPool().Get()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, errors.WithStack(err)
 	}
 	se := tmp.(*session)
 	defer s.sysSessionPool().Put(tmp)
@@ -558,7 +558,7 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]type
 
 	recordSets, err := se.Execute(ctx, sql)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, errors.WithStack(err)
 	}
 
 	var (
@@ -569,10 +569,10 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]type
 	for i, rs := range recordSets {
 		tmp, err := drainRecordSet(ctx, rs)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		if err = rs.Close(); err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 
 		if i == 0 {
@@ -587,11 +587,11 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 	return func() (pools.Resource, error) {
 		se, err := createSession(store)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
@@ -603,11 +603,11 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	return func(dom *domain.Domain) (pools.Resource, error) {
 		se, err := createSessionWithDomain(store, dom)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		err = variable.SetSessionSystemVar(se.sessionVars, variable.AutocommitVar, types.NewStringDatum("1"))
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
@@ -621,7 +621,7 @@ func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) 
 		chk := rs.NewChunk()
 		err := rs.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
-			return rows, errors.Trace(err)
+			return rows, errors.WithStack(err)
 		}
 		iter := chunk.NewIterator4Chunk(chk)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
@@ -635,7 +635,7 @@ func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) 
 func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error) {
 	rows, fields, err := s.ExecRestrictedSQL(ctx, sql)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", errors.WithStack(err)
 	}
 	if len(rows) == 0 {
 		return "", executor.ErrResultIsEmpty
@@ -643,7 +643,7 @@ func (s *session) getExecRet(ctx sessionctx.Context, sql string) (string, error)
 	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
 	value, err := d.ToString()
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", errors.WithStack(err)
 	}
 	return value, nil
 }
@@ -657,7 +657,7 @@ func (s *session) GetAllSysVars() (map[string]string, error) {
 	sql = fmt.Sprintf(sql, mysql.SystemDB, mysql.GlobalVariablesTable)
 	rows, _, err := s.ExecRestrictedSQL(s, sql)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	ret := make(map[string]string)
 	for _, r := range rows {
@@ -683,7 +683,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 			}
 			return "", variable.UnknownSystemVar.GenByArgs(name)
 		}
-		return "", errors.Trace(err)
+		return "", errors.WithStack(err)
 	}
 	return sysVar, nil
 }
@@ -693,19 +693,19 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 	if name == variable.SQLModeVar {
 		value = mysql.FormatSQLModeStr(value)
 		if _, err := mysql.GetSQLMode(value); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	var sVal string
 	var err error
 	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
 		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), sVal)
 	_, _, err = s.ExecRestrictedSQL(s, sql)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, error) {
@@ -746,9 +746,9 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
 			log.Warnf("con:%d schema_ver:%d session error:\n%v\n%s",
-				connID, s.sessionVars.TxnCtx.SchemaVersion, errors.ErrorStack(err), s)
+				connID, s.sessionVars.TxnCtx.SchemaVersion, fmt.Sprintf("%+v", err), s)
 		}
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	metrics.SessionExecuteRunDuration.Observe(time.Since(startTime).Seconds())
 
@@ -760,7 +760,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 
 func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.RecordSet, err error) {
 	if recordSets, err = s.execute(ctx, sql); err != nil {
-		err = errors.Trace(err)
+		err = errors.WithStack(err)
 		s.sessionVars.StmtCtx.AppendError(err)
 	}
 	return
@@ -776,7 +776,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 	connID := s.sessionVars.ConnectionID
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
@@ -787,7 +787,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 	if err != nil {
 		s.rollbackOnError(ctx)
 		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	metrics.SessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
 
@@ -799,19 +799,19 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		startTS = time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
 		if err := executor.ResetStmtCtx(s, stmtNode); err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
 			log.Warnf("con:%d compile error:\n%v\n%s", connID, err, sql)
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
 		// Step3: Execute the physical plan.
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 
@@ -837,7 +837,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	}
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
-		err = errors.Trace(err)
+		err = errors.WithStack(err)
 		return
 	}
 
@@ -849,14 +849,14 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	prepareExec := executor.NewPrepareExec(s, executor.GetInfoSchema(s), sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
-		err = errors.Trace(err)
+		err = errors.WithStack(err)
 		return
 	}
 	if !inTxn {
 		// We could start a transaction to build the prepare executor before, we should rollback it here.
 		err = s.RollbackTxn(ctx)
 		if err != nil {
-			err = errors.Trace(err)
+			err = errors.WithStack(err)
 			return
 		}
 	}
@@ -913,17 +913,17 @@ func checkArgs(args ...interface{}) error {
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args ...interface{}) (ast.RecordSet, error) {
 	err := checkArgs(args...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	s.PrepareTxnCtx(ctx)
 	st, err := executor.CompileExecutePreparedStmt(s, stmtID, args...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	logQuery(st.OriginText(), s.sessionVars)
 	r, err := runStmt(ctx, s, st)
-	return r, errors.Trace(err)
+	return r, errors.WithStack(err)
 }
 
 func (s *session) DropPreparedStmt(stmtID uint32) error {
@@ -948,7 +948,7 @@ func (s *session) NewTxn() error {
 		ctx := context.TODO()
 		err := s.CommitTxn(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		vars := s.GetSessionVars()
 		log.Infof("con:%d schema_ver:%d NewTxn() inside a transaction auto commit: %d", vars.ConnectionID, vars.TxnCtx.SchemaVersion, txnID)
@@ -956,7 +956,7 @@ func (s *session) NewTxn() error {
 
 	txn, err := s.store.Begin()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	txn.SetCap(s.getMembufCap())
 	txn.SetVars(s.sessionVars.KVVars)
@@ -997,7 +997,7 @@ func (s *session) Close() {
 	}
 	ctx := context.TODO()
 	if err := s.RollbackTxn(ctx); err != nil {
-		log.Error("session Close error:", errors.ErrorStack(err))
+		log.Error("session Close error:", fmt.Sprintf("%+v", err))
 	}
 }
 
@@ -1035,7 +1035,7 @@ func getHostByIP(ip string) []string {
 		return []string{"localhost"}
 	}
 	addrs, err := net.LookupAddr(ip)
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	return addrs
 }
 
@@ -1053,20 +1053,20 @@ func CreateSession4Test(store kv.Storage) (Session, error) {
 		// initialize session variables for test.
 		s.GetSessionVars().MaxChunkSize = 2
 	}
-	return s, errors.Trace(err)
+	return s, errors.WithStack(err)
 }
 
 // CreateSession creates a new session environment.
 func CreateSession(store kv.Storage) (Session, error) {
 	s, err := createSession(store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	// Add auth here.
 	do, err := domap.Get(store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	pm := &privileges.UserPrivileges{
 		Handle: do.PrivilegeHandle(),
@@ -1092,30 +1092,30 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 
 	se, err := createSession(store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	dom := domain.GetDomain(se)
 	err = dom.LoadPrivilegeLoop(se)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	se1, err := createSession(store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	err = dom.UpdateTableStatsLoop(se1)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	if raw, ok := store.(domain.EtcdBackend); ok {
 		err = raw.StartGCWorker()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 
-	return dom, errors.Trace(err)
+	return dom, errors.WithStack(err)
 }
 
 // GetDomain gets the associated domain for store.
@@ -1133,7 +1133,7 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
-		log.Fatal(errors.ErrorStack(err))
+		log.Fatal(fmt.Sprintf("%+v", err))
 	}
 	schemaLease = saveLease
 
@@ -1150,7 +1150,7 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 func createSession(store kv.Storage) (*session, error) {
 	dom, err := domap.Get(store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	s := &session{
 		store:           store,
@@ -1211,7 +1211,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		var err error
 		t := meta.NewMeta(txn)
 		ver, err = t.GetBootstrapVersion()
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	})
 
 	if err != nil {
@@ -1234,7 +1234,7 @@ func finishBootstrap(store kv.Storage) {
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		err := t.FinishBootstrap(currentBootstrapVersion)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	})
 	if err != nil {
 		log.Fatalf("finish bootstrap err %v", err)
@@ -1289,7 +1289,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		if err != nil {
 			vars.CommonGlobalLoaded = false
 			log.Errorf("Failed to load common global variables.")
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		gvc.Update(rows, fields)
 	}
@@ -1300,7 +1300,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 		if _, ok := vars.GetSystemVar(varName); !ok {
 			err = variable.SetSessionSystemVar(s.sessionVars, varName, varVal)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -1331,10 +1331,10 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 // RefreshTxnCtx implements context.RefreshTxnCtx interface.
 func (s *session) RefreshTxnCtx(ctx context.Context) error {
 	if err := s.doCommit(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
-	return errors.Trace(s.NewTxn())
+	return errors.WithStack(s.NewTxn())
 }
 
 // ActivePendingTxn implements Context.ActivePendingTxn interface.
@@ -1345,7 +1345,7 @@ func (s *session) ActivePendingTxn() error {
 	txnCap := s.getMembufCap()
 	// The transaction status should be pending.
 	if err := s.txn.changePendingToValid(txnCap); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
 	isoLevel, _ := s.sessionVars.GetSystemVar(variable.TxnIsolation)
@@ -1364,13 +1364,13 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	// no need to get txn from txnFutureCh since txn should init with startTs
 	txn, err := s.store.BeginWithStartTS(startTS)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	s.txn.changeInvalidToValid(txn)
 	s.txn.SetCap(s.getMembufCap())
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return nil
 }

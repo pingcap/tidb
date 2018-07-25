@@ -17,9 +17,10 @@ import (
 	"io"
 	"net"
 
-	"github.com/juju/errors"
+	"fmt"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -44,7 +45,7 @@ func (cc *clientConn) Run() {
 			log.Error(x)
 		}
 		err := cc.Close()
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 	}()
 
 	for !cc.killed {
@@ -52,17 +53,17 @@ func (cc *clientConn) Run() {
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				log.Errorf("con:%d read packet error, close this connection %s",
-					cc.connectionID, errors.ErrorStack(err))
+					cc.connectionID, fmt.Sprintf("%+v", err))
 			}
 			return
 		}
 		if err = cc.dispatch(tp, payload); err != nil {
 			if terror.ErrorEqual(err, terror.ErrResultUndetermined) {
 				log.Errorf("con:%d result undetermined error, close this connection %s",
-					cc.connectionID, errors.ErrorStack(err))
+					cc.connectionID, fmt.Sprintf("%+v", err))
 			} else if terror.ErrorEqual(err, terror.ErrCritical) {
 				log.Errorf("con:%d critical error, stop the server listener %s",
-					cc.connectionID, errors.ErrorStack(err))
+					cc.connectionID, fmt.Sprintf("%+v", err))
 				select {
 				case cc.server.stopListenerCh <- struct{}{}:
 				default:
@@ -77,7 +78,7 @@ func (cc *clientConn) Run() {
 
 func (cc *clientConn) Close() error {
 	err := cc.conn.Close()
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (cc *clientConn) handshake() error {

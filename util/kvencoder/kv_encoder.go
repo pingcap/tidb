@@ -20,7 +20,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -99,12 +99,12 @@ func New(dbName string, idAlloc autoid.Allocator) (KvEncoder, error) {
 	defer mu.Unlock()
 	if refCount == 0 {
 		if err := initGlobal(); err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	err := kvEnc.initial(dbName, idAlloc)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	refCount++
 	return kvEnc, nil
@@ -118,7 +118,7 @@ func (e *kvEncoder) Close() error {
 	if refCount == 0 {
 		e.dom.Close()
 		if err := e.store.Close(); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -129,13 +129,13 @@ func (e *kvEncoder) Encode(sql string, tableID int64) (kvPairs []KvPair, affecte
 	defer func() {
 		err1 := e.se.RollbackTxn(context.Background())
 		if err1 != nil {
-			log.Error(errors.ErrorStack(err1))
+			log.Error(fmt.Sprintf("%+v", err1))
 		}
 	}()
 
 	_, err = e.se.Execute(context.Background(), sql)
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, 0, errors.WithStack(err)
 	}
 
 	return e.getKvPairsInMemBuffer(tableID)
@@ -153,7 +153,7 @@ func (e *kvEncoder) getKvPairsInMemBuffer(tableID int64) (kvPairs []KvPair, affe
 	})
 
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, 0, errors.WithStack(err)
 	}
 	return kvPairs, e.se.GetSessionVars().StmtCtx.AffectedRows(), nil
 }
@@ -168,13 +168,13 @@ func (e *kvEncoder) EncodePrepareStmt(tableID int64, stmtID uint32, param ...int
 	defer func() {
 		err1 := e.se.RollbackTxn(context.Background())
 		if err1 != nil {
-			log.Error(errors.ErrorStack(err1))
+			log.Error(fmt.Sprintf("%+v", err1))
 		}
 	}()
 
 	_, err = e.se.ExecutePreparedStmt(context.Background(), stmtID, param...)
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, 0, errors.WithStack(err)
 	}
 
 	return e.getKvPairsInMemBuffer(tableID)
@@ -190,7 +190,7 @@ func (e *kvEncoder) EncodeMetaAutoID(dbID, tableID, autoID int64) (KvPair, error
 func (e *kvEncoder) ExecDDLSQL(sql string) error {
 	_, err := e.se.Execute(context.Background(), sql)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	return nil
@@ -216,29 +216,29 @@ func (e *kvEncoder) GetSystemVariable(name string) (string, bool) {
 func newMockTikvWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, errors.WithStack(err)
 	}
 	session.SetSchemaLease(0)
 	dom, err := session.BootstrapSession(store)
-	return store, dom, errors.Trace(err)
+	return store, dom, errors.WithStack(err)
 }
 
 func (e *kvEncoder) initial(dbName string, idAlloc autoid.Allocator) (err error) {
 	se, err := session.CreateSession(storeGlobal)
 	if err != nil {
-		err = errors.Trace(err)
+		err = errors.WithStack(err)
 		return
 	}
 
 	se.SetConnectionID(atomic.AddUint64(&mockConnID, 1))
 	_, err = se.Execute(context.Background(), fmt.Sprintf("create database if not exists %s", dbName))
 	if err != nil {
-		err = errors.Trace(err)
+		err = errors.WithStack(err)
 		return
 	}
 	_, err = se.Execute(context.Background(), fmt.Sprintf("use %s", dbName))
 	if err != nil {
-		err = errors.Trace(err)
+		err = errors.WithStack(err)
 		return
 	}
 
@@ -263,11 +263,11 @@ func initGlobal() error {
 
 	if storeGlobal != nil {
 		if err1 := storeGlobal.Close(); err1 != nil {
-			log.Error(errors.ErrorStack(err1))
+			log.Error(fmt.Sprintf("%+v", err1))
 		}
 	}
 	if domGlobal != nil {
 		domGlobal.Close()
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }

@@ -14,10 +14,10 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -62,7 +62,7 @@ type ProjectionExec struct {
 // Open implements the Executor Open interface.
 func (e *ProjectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	e.prepared = false
@@ -141,9 +141,9 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.isUnparallelExec() {
-		return errors.Trace(e.unParallelExecute(ctx, chk))
+		return errors.WithStack(e.unParallelExecute(ctx, chk))
 	}
-	return errors.Trace(e.parallelExecute(ctx, chk))
+	return errors.WithStack(e.parallelExecute(ctx, chk))
 
 }
 
@@ -154,10 +154,10 @@ func (e *ProjectionExec) isUnparallelExec() bool {
 func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk) error {
 	err := e.children[0].Next(ctx, e.childResult)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = e.evaluatorSuit.Run(e.ctx, e.childResult, chk)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) error {
@@ -173,7 +173,7 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 
 	err := <-output.done
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	chk.SwapColumns(output.chk)
@@ -235,7 +235,7 @@ func (e *ProjectionExec) Close() error {
 		}
 		e.outputCh = nil
 	}
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.WithStack(e.baseExecutor.Close())
 }
 
 type projectionInputFetcher struct {
@@ -278,7 +278,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 
 		err := f.child.Next(ctx, input.chk)
 		if err != nil || input.chk.NumRows() == 0 {
-			output.done <- errors.Trace(err)
+			output.done <- errors.WithStack(err)
 			return
 		}
 
@@ -323,7 +323,7 @@ func (w *projectionWorker) run(ctx context.Context) {
 		}
 
 		err := w.evaluatorSuit.Run(w.sctx, input.chk, output.chk)
-		output.done <- errors.Trace(err)
+		output.done <- errors.WithStack(err)
 
 		if err != nil {
 			return

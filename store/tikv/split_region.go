@@ -16,10 +16,10 @@ package tikv
 import (
 	"bytes"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -40,7 +40,7 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 	for {
 		loc, err := s.regionCache.LocateKey(bo, splitKey)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if bytes.Equal(splitKey, loc.StartKey) {
 			log.Infof("skip split_region region at %q", splitKey)
@@ -48,16 +48,16 @@ func (s *tikvStore) SplitRegion(splitKey kv.Key) error {
 		}
 		res, err := sender.SendReq(bo, req, loc.Region, readTimeoutShort)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		regionErr, err := res.GetRegionError()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if regionErr != nil {
 			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			continue
 		}

@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -137,7 +137,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		w.reorgCtx.clean()
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	case <-w.quitCh:
 		log.Info("[ddl] run reorg job quit")
 		w.reorgCtx.setNextHandle(0)
@@ -170,7 +170,7 @@ func (w *worker) isReorgRunnable(d *ddlCtx) error {
 	if !d.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
 		log.Infof("[ddl] the %s not the job owner", d.uuid)
-		return errors.Trace(errNotOwner)
+		return errors.WithStack(errNotOwner)
 	}
 	return nil
 }
@@ -232,7 +232,7 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo *model.TableInfo, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
 	dagPB, err := buildDescTableScanDAG(startTS, tblInfo, columns, limit)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	ranges := ranger.FullIntRange(false)
 	var builder distsql.RequestBuilder
@@ -249,7 +249,7 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tblInfo
 	sctx := newContext(d.store)
 	result, err := distsql.Select(ctx, sctx, kvReq, getColumnsTypes(columns), statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	result.Fetch(ctx)
 	return result, nil
@@ -274,14 +274,14 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (max
 	// build a desc scan of tblInfo, which limit is 1, we can use it to retrive the last handle of the table.
 	result, err := d.buildDescTableScan(ctx, startTS, tblInfo, columns, 1)
 	if err != nil {
-		return maxRowID, false, errors.Trace(err)
+		return maxRowID, false, errors.WithStack(err)
 	}
 	defer terror.Call(result.Close)
 
 	chk := chunk.NewChunkWithCapacity(getColumnsTypes(columns), 1)
 	err = result.Next(ctx, chk)
 	if err != nil {
-		return maxRowID, false, errors.Trace(err)
+		return maxRowID, false, errors.WithStack(err)
 	}
 
 	if chk.NumRows() == 0 {
@@ -313,7 +313,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		var ver kv.Version
 		ver, err = d.store.CurrentVersion()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		} else if ver.Ver <= 0 {
 			return nil, errInvalidStoreVer.Gen("invalid storage current version %d", ver.Ver)
 		}
@@ -325,7 +325,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 				return false, nil
 			})
 		if err != nil {
-			return info, errors.Trace(err)
+			return info, errors.WithStack(err)
 		}
 
 		// gofail: var errorUpdateReorgHandle bool
@@ -336,19 +336,19 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		// }
 		err = t.UpdateDDLReorgHandle(job, info.StartHandle)
 		if err != nil {
-			return info, errors.Trace(err)
+			return info, errors.WithStack(err)
 		}
 
 		job.SnapshotVer = ver.Ver
 	} else {
 		info.StartHandle, err = t.GetDDLReorgHandle(job)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	// tbl set to nil is only in the tests.
 	if tbl == nil {
-		return info, errors.Trace(err)
+		return info, errors.WithStack(err)
 	}
 
 	// init the reorg meta info of job.
@@ -358,7 +358,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		// has no needs to backfill.
 		endHandle, emptyTable, err1 := d.GetTableMaxRowID(job.SnapshotVer, tbl.Meta())
 		if err1 != nil {
-			return info, errors.Trace(err1)
+			return info, errors.WithStack(err1)
 		}
 
 		if endHandle < info.StartHandle || emptyTable {
@@ -370,10 +370,10 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		job.ReorgMeta = reorgMeta
 	}
 	info.EndHandle = job.ReorgMeta.EndHandle
-	return info, errors.Trace(err)
+	return info, errors.WithStack(err)
 }
 
 func (r *reorgInfo) UpdateHandle(txn kv.Transaction, handle int64) error {
 	t := meta.NewMeta(txn)
-	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, handle))
+	return errors.WithStack(t.UpdateDDLReorgHandle(r.Job, handle))
 }

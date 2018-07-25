@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 /*
@@ -167,7 +167,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 				index = arrayIndexAsterisk
 			} else {
 				if index, err = strconv.Atoi(indexStr); err != nil {
-					err = errors.Trace(err)
+					err = errors.WithStack(err)
 					return
 				}
 			}

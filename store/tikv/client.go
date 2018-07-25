@@ -24,13 +24,13 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware"
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -104,7 +104,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 	if len(security.ClusterSSLCA) != 0 {
 		tlsConfig, err := security.ToTLSConfig()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
 	}
@@ -146,7 +146,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 		if err != nil {
 			// Cleanup if the initialization fails.
 			a.Close()
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		a.v[i] = conn
 	}
@@ -164,7 +164,7 @@ func (a *connArray) Close() {
 	for i, c := range a.v {
 		if c != nil {
 			err := c.Close()
-			terror.Log(errors.Trace(err))
+			terror.Log(errors.WithStack(err))
 			a.v[i] = nil
 		}
 	}
@@ -247,7 +247,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	connArray, err := c.getConnArray(addr)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	client := tikvpb.NewTikvClient(connArray.Get())
 
@@ -262,7 +262,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	ctx1, cancel := context.WithCancel(ctx)
 	resp, err := tikvrpc.CallRPC(ctx1, client, req)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	// Put the lease object to the timeout channel, so it would be checked periodically.
@@ -278,7 +278,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	first, err = copStream.Recv()
 	if err != nil {
 		if errors.Cause(err) != io.EOF {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		log.Debug("copstream returns nothing for the request.")
 	}

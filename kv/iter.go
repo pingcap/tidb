@@ -13,7 +13,7 @@
 
 package kv
 
-import "github.com/juju/errors"
+import "github.com/pkg/errors"
 
 // NextUntil applies FnKeyCmp to each entry of the iterator until meets some condition.
 // It will stop when fn returns true, or iterator is invalid or an error occurs.
@@ -22,7 +22,7 @@ func NextUntil(it Iterator, fn FnKeyCmp) error {
 	for it.Valid() && !fn(it.Key()) {
 		err = it.Next()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil

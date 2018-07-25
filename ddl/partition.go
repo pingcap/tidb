@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -57,7 +57,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 		// TODO: generate multiple global ID for paritions, reduce the times of obtaining the global ID from the storage.
 		pid, err := d.genGlobalID()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		piDef := model.PartitionDefinition{
 			Name:    def.Name,
@@ -142,7 +142,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 				name := strings.Replace(col.Name.String(), ".", "`.`", -1)
 				// Range partitioning key supported types: tinyint, smallint, mediumint, int and bigint.
 				if !validRangePartitionType(col) && fmt.Sprintf("`%s`", name) == exprStr {
-					return errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(exprStr))
+					return errors.WithStack(ErrNotAllowedTypeInPartition.GenByArgs(exprStr))
 				}
 			}
 		}
@@ -150,7 +150,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 
 	e, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if e.GetType().EvalType() == types.ETInt {
 		return nil
@@ -171,7 +171,7 @@ func checkCreatePartitionValue(pi *model.PartitionInfo) error {
 	var prevRangeValue int
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
-			return errors.Trace(ErrPartitionMaxvalue)
+			return errors.WithStack(ErrPartitionMaxvalue)
 		}
 
 		currentRangeValue, err := strconv.Atoi(defs[i].LessThan[0])
@@ -185,7 +185,7 @@ func checkCreatePartitionValue(pi *model.PartitionInfo) error {
 		}
 
 		if currentRangeValue <= prevRangeValue {
-			return errors.Trace(ErrRangeNotIncreasing)
+			return errors.WithStack(ErrRangeNotIncreasing)
 		}
 		prevRangeValue = currentRangeValue
 	}
@@ -208,12 +208,12 @@ func checkDropTablePartition(meta *model.TableInfo, partName string) error {
 	for _, def := range oldDefs {
 		if strings.EqualFold(def.Name.L, strings.ToLower(partName)) {
 			if len(oldDefs) == 1 {
-				return errors.Trace(ErrDropLastPartition)
+				return errors.WithStack(ErrDropLastPartition)
 			}
 			return nil
 		}
 	}
-	return errors.Trace(ErrDropPartitionNonExistent.GenByArgs(partName))
+	return errors.WithStack(ErrDropPartitionNonExistent.GenByArgs(partName))
 }
 
 // removePartitionInfo each ddl job deletes a partition.
@@ -238,22 +238,22 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partName string
 	if err := job.DecodeArgs(&partName); err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
 	err = checkDropTablePartition(tblInfo, partName)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	partitionID := removePartitionInfo(tblInfo, partName)
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	// Finish this job.

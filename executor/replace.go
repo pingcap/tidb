@@ -14,12 +14,12 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -51,11 +51,11 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 func (e *ReplaceExec) removeRow(handle int64, newRow types.DatumRow) (bool, error) {
 	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	rowUnchanged, err := types.EqualDatums(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	if rowUnchanged {
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
@@ -63,7 +63,7 @@ func (e *ReplaceExec) removeRow(handle int64, newRow types.DatumRow) (bool, erro
 	}
 	err = e.Table.RemoveRecord(e.ctx, handle, oldRow)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, handle, nil)
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
@@ -71,7 +71,7 @@ func (e *ReplaceExec) removeRow(handle int64, newRow types.DatumRow) (bool, erro
 	// Cleanup keys map, because the record was removed.
 	cleanupRows, err := e.getKeysNeedCheck(e.ctx, e.Table, []types.DatumRow{oldRow})
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	if len(cleanupRows) > 0 {
 		// The length of need-to-cleanup rows should be at most 1, due to we only input 1 row.
@@ -87,7 +87,7 @@ func (e *ReplaceExec) addRow(row types.DatumRow) (int64, error) {
 	h, err := e.Table.AddRecord(e.ctx, row, false)
 	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	if !e.ctx.GetSessionVars().ImportingData {
 		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
@@ -103,11 +103,11 @@ func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
 			if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
 				handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 				rowUnchanged, err := e.removeRow(handle, r.row)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 				if rowUnchanged {
 					return nil
@@ -118,7 +118,7 @@ func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
 
 		rowUnchanged, foundDupKey, err := e.removeIndexRow(r)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if rowUnchanged {
 			return nil
@@ -132,7 +132,7 @@ func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
 	// No duplicated rows now, insert the row.
 	newHandle, err := e.addRow(r.row)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.fillBackKeys(e.Table, r, newHandle)
 	return nil
@@ -149,11 +149,11 @@ func (e *ReplaceExec) removeIndexRow(r toBeCheckedRow) (bool, bool, error) {
 		if val, found := e.dupKVs[string(uk.newKV.key)]; found {
 			handle, err := tables.DecodeHandle(val)
 			if err != nil {
-				return false, found, errors.Trace(err)
+				return false, found, errors.WithStack(err)
 			}
 			rowUnchanged, err := e.removeRow(handle, r.row)
 			if err != nil {
-				return false, found, errors.Trace(err)
+				return false, found, errors.WithStack(err)
 			}
 			return rowUnchanged, found, nil
 		}
@@ -176,19 +176,19 @@ func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
 	 */
 	err := e.batchGetInsertKeys(e.ctx, e.Table, newRows)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// Batch get the to-be-replaced rows in storage.
 	err = e.initDupOldRowValue(e.ctx, e.Table, newRows)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	for _, r := range e.toBeCheckedRows {
 		err = e.replaceRow(r)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	if e.lastInsertID != 0 {
@@ -206,11 +206,11 @@ func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	cols, err := e.getColumns(e.Table.Cols())
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	if len(e.children) > 0 && e.children[0] != nil {
-		return errors.Trace(e.insertRowsFromSelect(ctx, cols, e.exec))
+		return errors.WithStack(e.insertRowsFromSelect(ctx, cols, e.exec))
 	}
-	return errors.Trace(e.insertRows(cols, e.exec))
+	return errors.WithStack(e.insertRows(cols, e.exec))
 }

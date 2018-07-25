@@ -16,12 +16,12 @@ package plan
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pkg/errors"
 )
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
@@ -67,7 +67,7 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 	}
 	p := builder.build(node)
 	if builder.err != nil {
-		return nil, errors.Trace(builder.err)
+		return nil, errors.WithStack(builder.err)
 	}
 
 	// Maybe it's better to move this to Preprocess, but check privilege need table
@@ -83,7 +83,7 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 	}
 	if execPlan, ok := p.(*Execute); ok {
 		err := execPlan.optimizePreparedPlan(ctx, is)
-		return p, errors.Trace(err)
+		return p, errors.WithStack(err)
 	}
 	return p, nil
 }
@@ -98,7 +98,7 @@ func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoS
 	}
 	p := builder.build(node)
 	if builder.err != nil {
-		return nil, errors.Trace(builder.err)
+		return nil, errors.WithStack(builder.err)
 	}
 	return p, nil
 }
@@ -115,14 +115,14 @@ func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 func doOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	logic, err := logicalOptimize(flag, logic)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
-		return nil, errors.Trace(ErrCartesianProductUnsupported)
+		return nil, errors.WithStack(ErrCartesianProductUnsupported)
 	}
 	physical, err := physicalOptimize(logic)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	finalPlan := eliminatePhysicalProjection(physical)
 	return finalPlan, nil
@@ -139,15 +139,15 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 		}
 		logic, err = rule.optimize(logic)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
-	return logic, errors.Trace(err)
+	return logic, errors.WithStack(err)
 }
 
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 	if _, err := logic.deriveStats(); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	logic.preparePossibleProperties()
@@ -159,7 +159,7 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 
 	t, err := logic.findBestTask(prop)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if t.invalid() {
 		return nil, ErrInternal.GenByArgs("Can't find a proper physical plan for this query")

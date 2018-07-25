@@ -21,9 +21,9 @@ import (
 	"sort"
 
 	"github.com/google/btree"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 )
 
 type mvccValueType int
@@ -66,7 +66,7 @@ func (l *mvccLock) MarshalBinary() ([]byte, error) {
 	mh.WriteSlice(&buf, l.value)
 	mh.WriteNumber(&buf, l.op)
 	mh.WriteNumber(&buf, l.ttl)
-	return buf.Bytes(), errors.Trace(mh.err)
+	return buf.Bytes(), errors.WithStack(mh.err)
 }
 
 // UnmarshalBinary implements encoding.BinaryUnmarshaler interface.
@@ -78,7 +78,7 @@ func (l *mvccLock) UnmarshalBinary(data []byte) error {
 	mh.ReadSlice(buf, &l.value)
 	mh.ReadNumber(buf, &l.op)
 	mh.ReadNumber(buf, &l.ttl)
-	return errors.Trace(mh.err)
+	return errors.WithStack(mh.err)
 }
 
 // MarshalBinary implements encoding.BinaryMarshaler interface.
@@ -91,7 +91,7 @@ func (v mvccValue) MarshalBinary() ([]byte, error) {
 	mh.WriteNumber(&buf, v.startTS)
 	mh.WriteNumber(&buf, v.commitTS)
 	mh.WriteSlice(&buf, v.value)
-	return buf.Bytes(), errors.Trace(mh.err)
+	return buf.Bytes(), errors.WithStack(mh.err)
 }
 
 // UnmarshalBinary implements encoding.BinaryUnmarshaler interface.
@@ -104,7 +104,7 @@ func (v *mvccValue) UnmarshalBinary(data []byte) error {
 	mh.ReadNumber(buf, &v.startTS)
 	mh.ReadNumber(buf, &v.commitTS)
 	mh.ReadSlice(buf, &v.value)
-	return errors.Trace(mh.err)
+	return errors.WithStack(mh.err)
 }
 
 type marshalHelper struct {
@@ -118,11 +118,11 @@ func (mh *marshalHelper) WriteSlice(buf io.Writer, slice []byte) {
 	var tmp [binary.MaxVarintLen64]byte
 	off := binary.PutUvarint(tmp[:], uint64(len(slice)))
 	if err := writeFull(buf, tmp[:off]); err != nil {
-		mh.err = errors.Trace(err)
+		mh.err = errors.WithStack(err)
 		return
 	}
 	if err := writeFull(buf, slice); err != nil {
-		mh.err = errors.Trace(err)
+		mh.err = errors.WithStack(err)
 	}
 }
 
@@ -132,7 +132,7 @@ func (mh *marshalHelper) WriteNumber(buf io.Writer, n interface{}) {
 	}
 	err := binary.Write(buf, binary.LittleEndian, n)
 	if err != nil {
-		mh.err = errors.Trace(err)
+		mh.err = errors.WithStack(err)
 	}
 }
 
@@ -141,7 +141,7 @@ func writeFull(w io.Writer, slice []byte) error {
 	for written < len(slice) {
 		n, err := w.Write(slice[written:])
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		written += n
 	}
@@ -154,7 +154,7 @@ func (mh *marshalHelper) ReadNumber(r io.Reader, n interface{}) {
 	}
 	err := binary.Read(r, binary.LittleEndian, n)
 	if err != nil {
-		mh.err = errors.Trace(err)
+		mh.err = errors.WithStack(err)
 	}
 }
 
@@ -164,7 +164,7 @@ func (mh *marshalHelper) ReadSlice(r *bytes.Buffer, slice *[]byte) {
 	}
 	sz, err := binary.ReadUvarint(r)
 	if err != nil {
-		mh.err = errors.Trace(err)
+		mh.err = errors.WithStack(err)
 		return
 	}
 	const c10M = 10 * 1024 * 1024
@@ -174,7 +174,7 @@ func (mh *marshalHelper) ReadSlice(r *bytes.Buffer, slice *[]byte) {
 	}
 	data := make([]byte, sz)
 	if _, err := io.ReadFull(r, data); err != nil {
-		mh.err = errors.Trace(err)
+		mh.err = errors.WithStack(err)
 		return
 	}
 	*slice = data

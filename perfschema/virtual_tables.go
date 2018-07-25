@@ -16,13 +16,13 @@ package perfschema
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -39,7 +39,7 @@ func (ds *statusDataSource) GetRows(ctx sessionctx.Context) (fullRows [][]types.
 	sessionVars := ctx.GetSessionVars()
 	statusVars, err := variable.GetStatusVars(sessionVars)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	var rows = make([][]types.Datum, 0)
@@ -54,7 +54,7 @@ func (ds *statusDataSource) GetRows(ctx sessionctx.Context) (fullRows [][]types.
 		}
 		value, err := types.ToString(v.Value)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		row := types.MakeDatums(status, value)
 		rows = append(rows, row)

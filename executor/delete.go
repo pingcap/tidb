@@ -14,13 +14,13 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -54,9 +54,9 @@ func (e *DeleteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}()
 
 	if e.IsMultiTable {
-		return errors.Trace(e.deleteMultiTablesByChunk(ctx))
+		return errors.WithStack(e.deleteMultiTablesByChunk(ctx))
 	}
-	return errors.Trace(e.deleteSingleTableByChunk(ctx))
+	return errors.WithStack(e.deleteSingleTableByChunk(ctx))
 }
 
 // matchingDeletingTable checks whether this column is from the table which is in the deleting list.
@@ -81,7 +81,7 @@ func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column,
 	handle := row[handleCol.Index].GetInt64()
 	err := e.removeRow(e.ctx, tbl, handle, row[:end])
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	return nil
@@ -110,7 +110,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -129,7 +129,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			datumRow := chunkRow.GetDatumRow(fields)
 			err = e.deleteOneRow(tbl, handleCol, datumRow)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			rowCount++
 		}
@@ -190,7 +190,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -202,7 +202,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 		}
 	}
 
-	return errors.Trace(e.removeRowsInTblRowMap(tblRowMap))
+	return errors.WithStack(e.removeRowsInTblRowMap(tblRowMap))
 }
 
 func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
@@ -210,7 +210,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 		for handle, data := range rowMap {
 			err := e.removeRow(e.ctx, e.tblID2Table[id], handle, data)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -221,7 +221,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, data types.DatumRow) error {
 	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, t.Meta().ID, h, nil)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)

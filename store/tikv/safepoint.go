@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -82,7 +82,7 @@ type EtcdSafePointKV struct {
 func NewEtcdSafePointKV(addrs []string, tlsConfig *tls.Config) (*EtcdSafePointKV, error) {
 	etcdCli, err := createEtcdKV(addrs, tlsConfig)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return &EtcdSafePointKV{cli: etcdCli}, nil
 }
@@ -93,7 +93,7 @@ func (w *EtcdSafePointKV) Put(k string, v string) error {
 	_, err := w.cli.Put(ctx, k, v)
 	cancel()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -104,7 +104,7 @@ func (w *EtcdSafePointKV) Get(k string) (string, error) {
 	resp, err := w.cli.Get(ctx, k)
 	cancel()
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", errors.WithStack(err)
 	}
 	if len(resp.Kvs) > 0 {
 		return string(resp.Kvs[0].Value), nil
@@ -117,7 +117,7 @@ func saveSafePoint(kv SafePointKV, key string, t uint64) error {
 	err := kv.Put(GcSavedSafePoint, s)
 	if err != nil {
 		log.Error("save safepoint failed:", err)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -126,7 +126,7 @@ func loadSafePoint(kv SafePointKV, key string) (uint64, error) {
 	str, err := kv.Get(GcSavedSafePoint)
 
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 
 	if str == "" {
@@ -135,7 +135,7 @@ func loadSafePoint(kv SafePointKV, key string) (uint64, error) {
 
 	t, err := strconv.ParseUint(str, 10, 64)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	return t, nil
 }

@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -38,11 +38,11 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 	sql := fmt.Sprintf("select table_id from mysql.stats_meta where version < %d", h.LastUpdateVersion()-offset)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	for _, row := range rows {
 		if err := h.gcTableStats(is, row.GetInt64(0)); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -52,18 +52,18 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, tableID int64) error {
 	sql := fmt.Sprintf("select is_index, hist_id from mysql.stats_histograms where table_id = %d", tableID)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// The table has already been deleted in stats and acknowledged to all tidb,
 	// we can safely remove the meta info now.
 	if len(rows) == 0 {
 		sql := fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", tableID)
 		_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	tbl, ok := is.TableByID(tableID)
 	if !ok {
-		return errors.Trace(h.DeleteTableStatsFromKV(tableID))
+		return errors.WithStack(h.DeleteTableStatsFromKV(tableID))
 	}
 	tblInfo := tbl.Meta()
 	for _, row := range rows {
@@ -86,7 +86,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, tableID int64) error {
 		}
 		if !find {
 			if err := h.deleteHistStatsFromKV(tblInfo.ID, histID, int(isIndex)); err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -100,7 +100,7 @@ func (h *Handle) deleteHistStatsFromKV(tableID int64, histID int64, isIndex int)
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
@@ -127,7 +127,7 @@ func (h *Handle) DeleteTableStatsFromKV(id int64) (err error) {
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)

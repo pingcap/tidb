@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -160,7 +160,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	prevState := model.StateNone
 	var checkErr error
 	err = testInfo.parseSQLs(s.p)
-	c.Assert(err, IsNil, Commentf("error stack %v", errors.ErrorStack(err)))
+	c.Assert(err, IsNil, Commentf("error stack %v", fmt.Sprintf("%+v", err)))
 	times := 0
 	callback.OnJobUpdatedExported = func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
@@ -221,7 +221,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 	// Mock the server is in `write reorg` state.
 	err = testInfo.execSQL(3)
 	c.Assert(err, IsNil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 	callback = &ddl.TestDDLCallback{}
 	d.(ddl.DDLForTest).SetHook(callback)
 }
@@ -256,11 +256,11 @@ func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
 		for j, c := range info.cases {
 			c.session, err = session.CreateSession4Test(store)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			_, err = c.session.Execute(context.Background(), "use "+useDB)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			// It's used to debug.
 			c.session.SetConnectionID(uint64(i*10 + j))
@@ -280,7 +280,7 @@ func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
 		for j := 0; j < t.execCases; j++ {
 			sqlInfo.cases[j].rawStmt, err = p.ParseOneStmt(sqlInfo.sql, charset, collation)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -296,11 +296,11 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		se.PrepareTxnCtx(ctx)
 		sctx := se.(sessionctx.Context)
 		if err = executor.ResetStmtCtx(sctx, c.rawStmt); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		c.stmt, err = compiler.Compile(ctx, c.rawStmt)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -318,11 +318,11 @@ func (t *testExecInfo) execSQL(idx int) error {
 			}
 		}
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		err = c.session.CommitTxn(context.TODO())
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -422,7 +422,7 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 	d.(ddl.DDLForTest).SetHook(callback)
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 	callback = &ddl.TestDDLCallback{}
 	d.(ddl.DDLForTest).SetHook(callback)
 
@@ -496,7 +496,7 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	alterTableSQL := `alter table t add index c2(c2)`
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 
 	result, err := s.execQuery(tk, showIndexSQL)
 	c.Assert(err, IsNil)

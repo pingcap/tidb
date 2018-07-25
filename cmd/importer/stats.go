@@ -19,25 +19,25 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
 	stats "github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
 func loadStats(tblInfo *model.TableInfo, path string) (*stats.Table, error) {
 	data, err := ioutil.ReadFile(path)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	jsTable := &stats.JSONTable{}
 	err = json.Unmarshal(data, jsTable)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	handle := stats.NewHandle(mock.NewContext(), 0)
 	return handle.LoadStatsFromJSONToTable(tblInfo, jsTable)

@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -69,7 +69,7 @@ func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		e.result = e.newChunk()
 		err := e.fetchAll()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		iter := chunk.NewIterator4Chunk(e.result)
 		for colIdx := 0; colIdx < e.Schema().Len(); colIdx++ {
@@ -265,7 +265,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 func (e *ShowExec) fetchShowColumns() error {
 	tb, err := e.getTable()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	cols := tb.Cols()
 	for _, col := range cols {
@@ -308,7 +308,7 @@ func (e *ShowExec) fetchShowColumns() error {
 func (e *ShowExec) fetchShowIndex() error {
 	tb, err := e.getTable()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if tb.Meta().PKIsHandle {
 		var pkCol *table.Column
@@ -410,7 +410,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 			value, ok, err = variable.GetScopeNoneSystemVar(v.Name)
 		}
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if !ok {
 			unreachedVars = append(unreachedVars, v.Name)
@@ -421,7 +421,7 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	if len(unreachedVars) != 0 {
 		systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		for _, varName := range unreachedVars {
 			varValue, ok := systemVars[varName]
@@ -438,7 +438,7 @@ func (e *ShowExec) fetchShowStatus() error {
 	sessionVars := e.ctx.GetSessionVars()
 	statusVars, err := variable.GetStatusVars(sessionVars)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	for status, v := range statusVars {
 		if e.GlobalScope && v.Scope == variable.ScopeSession {
@@ -450,7 +450,7 @@ func (e *ShowExec) fetchShowStatus() error {
 		}
 		value, err := types.ToString(v.Value)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		e.appendRow([]interface{}{status, value})
 	}
@@ -469,7 +469,7 @@ func getDefaultCollate(charsetName string) string {
 func (e *ShowExec) fetchShowCreateTable() error {
 	tb, err := e.getTable()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// TODO: let the result more like MySQL.
@@ -629,7 +629,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	if hasAutoIncID {
 		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		// It's campatible with MySQL.
 		if autoIncID > 1 {
@@ -693,7 +693,7 @@ func (e *ShowExec) fetchShowGrants() error {
 	}
 	gs, err := checker.ShowGrants(e.ctx, e.User)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	for _, g := range gs {
 		e.appendRow([]interface{}{g})

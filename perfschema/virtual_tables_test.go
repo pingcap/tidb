@@ -16,12 +16,12 @@ package perfschema_test
 import (
 	"testing"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pkg/errors"
 )
 
 func TestT(t *testing.T) {

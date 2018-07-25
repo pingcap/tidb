@@ -21,11 +21,11 @@ import (
 	"io"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pkg/errors"
 )
 
 // IsTypeBlob returns a boolean indicating whether the tp is a blob type.
@@ -168,7 +168,7 @@ func EOFAsNil(err error) error {
 	if terror.ErrorEqual(err, io.EOF) {
 		return nil
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // InvOp2 returns an invalid operation error.

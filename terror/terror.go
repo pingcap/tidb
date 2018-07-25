@@ -19,8 +19,8 @@ import (
 	"runtime"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -190,7 +190,7 @@ func (e *Error) UnmarshalJSON(data []byte) error {
 	}{}
 
 	if err := json.Unmarshal(data, &err); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	e.class = err.Class
@@ -327,7 +327,7 @@ func MustNil(err error, closeFuns ...func()) {
 		for _, f := range closeFuns {
 			f()
 		}
-		log.Fatalf(errors.ErrorStack(err))
+		log.Fatalf(fmt.Sprintf("%+v", err))
 	}
 }
 
@@ -335,13 +335,13 @@ func MustNil(err error, closeFuns ...func()) {
 func Call(fn func() error) {
 	err := fn()
 	if err != nil {
-		log.Error(errors.ErrorStack(err))
+		log.Error(fmt.Sprintf("%+v", err))
 	}
 }
 
 // Log logs the error if it is not nil.
 func Log(err error) {
 	if err != nil {
-		log.Error(errors.ErrorStack(err))
+		log.Error(fmt.Sprintf("%+v", err))
 	}
 }

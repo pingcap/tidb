@@ -14,10 +14,10 @@
 package ddl
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -55,12 +55,12 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 		var err1 error
 		ddlInfo, err1 = admin.GetDDLInfo(txn)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return errors.WithStack(err1)
 		}
-		return errors.Trace(err1)
+		return errors.WithStack(err1)
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	m[ddlSchemaVersion] = ddlInfo.SchemaVer

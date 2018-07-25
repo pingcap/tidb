@@ -19,7 +19,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -59,7 +59,7 @@ type PartitionedTable struct {
 func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, error) {
 	partitionExpr, err := generatePartitionExpr(tblInfo)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	partitions := make(map[int64]*Partition)
@@ -68,7 +68,7 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 		var t Partition
 		err = initTableCommonWithIndices(&t.tableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		partitions[p.ID] = &t
 	}
@@ -113,8 +113,8 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
-			return nil, errors.Trace(err)
+			log.Error("wrong table partition expression:", fmt.Sprintf("%+v", err), buf.String())
+			return nil, errors.WithStack(err)
 		}
 		locateExprs = append(locateExprs, expr)
 
@@ -125,8 +125,8 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		expr, err = expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
-			return nil, errors.Trace(err)
+			log.Error("wrong table partition expression:", fmt.Sprintf("%+v", err), buf.String())
+			return nil, errors.WithStack(err)
 		}
 		partitionPruneExprs = append(partitionPruneExprs, expr)
 		buf.Reset()
@@ -160,11 +160,11 @@ func (t *PartitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 		return ret > 0
 	})
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	if idx < 0 || idx >= len(partitionExprs) {
 		// The data does not belong to any of the partition?
-		return 0, errors.Trace(table.ErrTrgInvalidCreationCtx)
+		return 0, errors.WithStack(table.ErrTrgInvalidCreationCtx)
 	}
 	return pi.Definitions[idx].ID, nil
 }
@@ -179,7 +179,7 @@ func (t *PartitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, sk
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 
 	tbl := t.GetPartition(pid)

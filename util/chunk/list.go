@@ -14,9 +14,9 @@
 package chunk
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pkg/errors"
 )
 
 // List holds a slice of chunks, use to append rows with max chunk size properly handled.
@@ -146,7 +146,7 @@ func (l *List) Walk(walkFunc ListWalkFunc) error {
 		for j := 0; j < chk.NumRows(); j++ {
 			err := walkFunc(chk.GetRow(j))
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}

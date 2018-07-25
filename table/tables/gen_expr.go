@@ -16,10 +16,10 @@ package tables
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pkg/errors"
 )
 
 // getDefaultCharsetAndCollate is copyed from ddl/ddl_api.go.
@@ -69,14 +69,14 @@ func parseExpression(expr string) (node ast.ExprNode, err error) {
 	if err == nil {
 		node = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	}
-	return node, errors.Trace(err)
+	return node, errors.WithStack(err)
 }
 
 // SimpleResolveName resolves all column names in the expression node.
 func simpleResolveName(node ast.ExprNode, tblInfo *model.TableInfo) (ast.ExprNode, error) {
 	nr := nameResolver{tblInfo, nil}
 	if _, ok := node.Accept(&nr); !ok {
-		return nil, errors.Trace(nr.err)
+		return nil, errors.WithStack(nr.err)
 	}
 	return node, nil
 }

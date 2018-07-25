@@ -19,11 +19,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -59,16 +59,16 @@ func NewTestStore(c *C) kv.Storage {
 func clearStorage(store kv.Storage) error {
 	txn, err := store.Begin()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	iter, err := txn.Seek(nil)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	for iter.Valid() {
 		txn.Delete(iter.Key())
 		if err := iter.Next(); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return txn.Commit(context.Background())

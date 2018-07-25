@@ -26,12 +26,12 @@ import (
 
 	"flag"
 	"github.com/go-sql-driver/mysql"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"time"
 )
@@ -94,11 +94,11 @@ func newTester(name string) *tester {
 func (t *tester) Run() error {
 	queries, err := t.loadQueries()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	if err = t.openResult(); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	var s string
@@ -149,7 +149,7 @@ LOOP:
 			}
 		} else {
 			if err = t.execute(q); err != nil {
-				return errors.Annotate(err, fmt.Sprintf("sql:%v", q.Query))
+				return errors.Wrap(err, fmt.Sprintf("sql:%v", q.Query))
 			}
 		}
 	}
@@ -212,7 +212,7 @@ func (t *tester) parserErrorHandle(query query, err error) error {
 	}
 
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// clear expected errors after we execute the first query
@@ -224,15 +224,15 @@ func (t *tester) parserErrorHandle(query query, err error) error {
 		gotBuf := t.buf.Bytes()[offset:]
 		buf := make([]byte, t.buf.Len()-offset)
 		if _, err = t.resultFD.ReadAt(buf, int64(offset)); err != nil {
-			return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", query.Query, query.Line, gotBuf, err))
+			return errors.WithStack(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", query.Query, query.Line, gotBuf, err))
 		}
 
 		if !bytes.Equal(gotBuf, buf) {
-			return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need(%v):\n%s\nbut got(%v):\n%s\n", query.Query, query.Line, len(buf), buf, len(gotBuf), gotBuf))
+			return errors.WithStack(errors.Errorf("run \"%v\" at line %d err, we need(%v):\n%s\nbut got(%v):\n%s\n", query.Query, query.Line, len(buf), buf, len(gotBuf), gotBuf))
 		}
 	}
 
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (t *tester) executeDefault(qText string) (err error) {
@@ -347,7 +347,7 @@ func (t *tester) execute(query query) error {
 		t.singleQuery = false
 
 		if err != nil {
-			return errors.Trace(errors.Errorf("run \"%v\" at line %d err %v", st.Text(), query.Line, err))
+			return errors.WithStack(errors.Errorf("run \"%v\" at line %d err %v", st.Text(), query.Line, err))
 		}
 
 		if !record && !create {
@@ -356,15 +356,15 @@ func (t *tester) execute(query query) error {
 
 			buf := make([]byte, t.buf.Len()-offset)
 			if _, err = t.resultFD.ReadAt(buf, int64(offset)); err != nil {
-				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", st.Text(), query.Line, gotBuf, err))
+				return errors.WithStack(errors.Errorf("run \"%v\" at line %d err, we got \n%s\nbut read result err %s", st.Text(), query.Line, gotBuf, err))
 			}
 
 			if !bytes.Equal(gotBuf, buf) {
-				return errors.Trace(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", query.Query, query.Line, buf, gotBuf))
+				return errors.WithStack(errors.Errorf("run \"%v\" at line %d err, we need:\n%s\nbut got:\n%s\n", query.Query, query.Line, buf, gotBuf))
 			}
 		}
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func filterWarning(err error) error {
@@ -395,7 +395,7 @@ func (t *tester) create(tableName string, qText string) error {
 	stderr := io.MultiWriter(os.Stderr, &stderrBuf)
 
 	if err = cmd.Start(); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	go func() {
@@ -411,11 +411,11 @@ func (t *tester) create(tableName string, qText string) error {
 	}
 
 	if errStdout != nil {
-		return errors.Trace(errStdout)
+		return errors.WithStack(errStdout)
 	}
 
 	if errStderr != nil {
-		return errors.Trace(errStderr)
+		return errors.WithStack(errStderr)
 	}
 
 	if err = t.analyze(tableName); err != nil {
@@ -461,11 +461,11 @@ func (t *tester) executeStmt(query string) error {
 	if session.IsQuery(query) {
 		rows, err := t.tx.Query(query)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		cols, err := rows.Columns()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		for i, c := range cols {
@@ -485,7 +485,7 @@ func (t *tester) executeStmt(query string) error {
 		for rows.Next() {
 			err = rows.Scan(scanArgs...)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 
 			var value string
@@ -505,13 +505,13 @@ func (t *tester) executeStmt(query string) error {
 		}
 		err = rows.Err()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	} else {
 		// TODO: rows affected and last insert id
 		_, err := t.tx.Exec(query)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -620,7 +620,7 @@ func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error)
 	}
 	if err != nil {
 		log.Errorf("open db failed %v, take time %v", err, time.Since(startTime))
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	return

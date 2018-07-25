@@ -18,8 +18,8 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -38,7 +38,7 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		txn, err = store.Begin()
 		if err != nil {
 			log.Errorf("[kv] RunInNewTxn error - %v", err)
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		// originalTxnTS is used to trace the original transaction when the function is retryable.
@@ -49,12 +49,12 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		err = f(txn)
 		if err != nil {
 			err1 := txn.Rollback()
-			terror.Log(errors.Trace(err1))
+			terror.Log(errors.WithStack(err1))
 			if retryable && IsRetryableError(err) {
 				log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
 				continue
 			}
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		err = txn.Commit(context.Background())
@@ -64,13 +64,13 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		if retryable && IsRetryableError(err) {
 			log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
 			err1 := txn.Rollback()
-			terror.Log(errors.Trace(err1))
+			terror.Log(errors.WithStack(err1))
 			BackOff(i)
 			continue
 		}
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 var (
@@ -107,7 +107,7 @@ func BatchGetValues(txn Transaction, keys []Key) (map[string][]byte, error) {
 			continue
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if len(val) != 0 {
 			bufferValues[i] = val
@@ -115,7 +115,7 @@ func BatchGetValues(txn Transaction, keys []Key) (map[string][]byte, error) {
 	}
 	storageValues, err := txn.GetSnapshot().BatchGet(shrinkKeys)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	for i, key := range keys {
 		if bufferValues[i] == nil {

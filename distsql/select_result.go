@@ -16,7 +16,6 @@ package distsql
 import (
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -90,7 +90,7 @@ func (r *selectResult) fetch(ctx context.Context) {
 	for {
 		resultSubset, err := r.resp.Next(ctx)
 		if err != nil {
-			r.results <- resultWithErr{err: errors.Trace(err)}
+			r.results <- resultWithErr{err: errors.WithStack(err)}
 			return
 		}
 		if resultSubset == nil {
@@ -114,7 +114,7 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 	r.partialCount++
 	r.feedback.Invalidate()
 	if re.result == nil || re.err != nil {
-		return nil, errors.Trace(re.err)
+		return nil, errors.WithStack(re.err)
 	}
 	return re.result.GetData(), nil
 }
@@ -126,12 +126,12 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 		err := r.readRowsData(chk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if len(r.selectResp.Chunks[r.respChkIdx].RowsData) == 0 {
 			r.respChkIdx++
@@ -145,7 +145,7 @@ func (r *selectResult) getSelectResp() error {
 	for {
 		re := <-r.results
 		if re.err != nil {
-			return errors.Trace(re.err)
+			return errors.WithStack(re.err)
 		}
 		if re.result == nil {
 			r.selectResp = nil
@@ -154,7 +154,7 @@ func (r *selectResult) getSelectResp() error {
 		r.selectResp = new(tipb.SelectResponse)
 		err := r.selectResp.Unmarshal(re.result.GetData())
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
@@ -179,7 +179,7 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 		for i := 0; i < r.rowLen; i++ {
 			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}

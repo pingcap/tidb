@@ -17,7 +17,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -143,7 +143,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		var t table.Table
 		t, err = testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err != nil {
-			hookErr = errors.Trace(err)
+			hookErr = errors.WithStack(err)
 			return
 		}
 		fk := getForeignKey(t, "c1_fk")
@@ -183,7 +183,7 @@ func (s *testForeighKeySuite) TestForeignKey(c *C) {
 		var t table.Table
 		t, err = testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
 		if err != nil {
-			hookErr = errors.Trace(err)
+			hookErr = errors.WithStack(err)
 			return
 		}
 		fk := getForeignKey(t, "c1_fk")

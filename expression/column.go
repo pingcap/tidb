@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -52,7 +52,7 @@ func (col *CorrelatedColumn) EvalInt(ctx sessionctx.Context, row types.Row) (int
 	}
 	if col.GetType().Hybrid() {
 		res, err := col.Data.ToInt64(ctx.GetSessionVars().StmtCtx)
-		return res, err != nil, errors.Trace(err)
+		return res, err != nil, errors.WithStack(err)
 	}
 	return col.Data.GetInt64(), false, nil
 }
@@ -75,7 +75,7 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row types.Row) (
 	if resLen < col.RetType.Flen && ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
 		res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
 	}
-	return res, err != nil, errors.Trace(err)
+	return res, err != nil, errors.WithStack(err)
 }
 
 // EvalDecimal returns decimal representation of CorrelatedColumn.
@@ -205,7 +205,7 @@ func (col *Column) EvalInt(ctx sessionctx.Context, row types.Row) (int64, bool, 
 			return 0, true, nil
 		}
 		res, err := val.ToInt64(ctx.GetSessionVars().StmtCtx)
-		return res, err != nil, errors.Trace(err)
+		return res, err != nil, errors.WithStack(err)
 	}
 	if row.IsNull(col.Index) {
 		return 0, true, nil
@@ -239,7 +239,7 @@ func (col *Column) EvalString(ctx sessionctx.Context, row types.Row) (string, bo
 		if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString && resLen < col.RetType.Flen {
 			res = res + strings.Repeat(" ", col.RetType.Flen-resLen)
 		}
-		return res, err != nil, errors.Trace(err)
+		return res, err != nil, errors.WithStack(err)
 	}
 	val := row.GetString(col.Index)
 	if ctx.GetSessionVars().StmtCtx.PadCharToFullLength && col.GetType().Tp == mysql.TypeString {

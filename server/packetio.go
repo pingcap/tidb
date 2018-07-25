@@ -38,9 +38,9 @@ import (
 	"bufio"
 	"io"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 )
 
 const defaultWriterSize = 16 * 1024
@@ -67,7 +67,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 	var header [4]byte
 
 	if _, err := io.ReadFull(p.bufReadConn, header[:]); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	sequence := header[3]
@@ -81,7 +81,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 
 	data := make([]byte, length)
 	if _, err := io.ReadFull(p.bufReadConn, data); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return data, nil
 }
@@ -89,7 +89,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 func (p *packetIO) readPacket() ([]byte, error) {
 	data, err := p.readOnePacket()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	if len(data) < mysql.MaxPayloadLen {
@@ -100,7 +100,7 @@ func (p *packetIO) readPacket() ([]byte, error) {
 	for {
 		buf, err := p.readOnePacket()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 
 		data = append(data, buf...)
@@ -141,10 +141,10 @@ func (p *packetIO) writePacket(data []byte) error {
 	data[3] = p.sequence
 
 	if n, err := p.bufWriter.Write(data); err != nil {
-		terror.Log(errors.Trace(err))
-		return errors.Trace(mysql.ErrBadConn)
+		terror.Log(errors.WithStack(err))
+		return errors.WithStack(mysql.ErrBadConn)
 	} else if n != len(data) {
-		return errors.Trace(mysql.ErrBadConn)
+		return errors.WithStack(mysql.ErrBadConn)
 	} else {
 		p.sequence++
 		return nil

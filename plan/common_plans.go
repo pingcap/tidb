@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 )
 
 // ShowDDL is for showing DDL information.
@@ -140,12 +140,12 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	}
 	v := vars.PreparedStmts[e.ExecID]
 	if v == nil {
-		return errors.Trace(ErrStmtNotFound)
+		return errors.WithStack(ErrStmtNotFound)
 	}
 	prepared := v.(*Prepared)
 
 	if len(prepared.Params) != len(e.UsingVars) {
-		return errors.Trace(ErrWrongParamCount)
+		return errors.WithStack(ErrWrongParamCount)
 	}
 
 	if cap(vars.PreparedParams) < len(e.UsingVars) {
@@ -154,7 +154,7 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	for i, usingVar := range e.UsingVars {
 		val, err := usingVar.Eval(nil)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		prepared.Params[i].SetDatum(val)
 		vars.PreparedParams[i] = val
@@ -170,7 +170,7 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	}
 	p, err := e.getPhysicalPlan(ctx, is, prepared)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.Stmt = prepared.Stmt
 	e.Plan = p
@@ -188,14 +188,14 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
 			err := e.rebuildRange(plan)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			return plan, nil
 		}
 	}
 	p, err := Optimize(ctx, prepared.Stmt, is)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if prepared.UseCache {
 		ctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
@@ -219,7 +219,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 			var err error
 			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sc, pkCol.RetType)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		} else {
 			ts.Ranges = ranger.FullIntRange(false)
@@ -229,21 +229,21 @@ func (e *Execute) rebuildRange(p Plan) error {
 		var err error
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is, x.schema)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error
 		is.Ranges, err = e.buildRangeForIndexScan(sctx, is, x.schema)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	case PhysicalPlan:
 		var err error
 		for _, child := range x.Children() {
 			err = e.rebuildRange(child)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -257,7 +257,7 @@ func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIn
 		var err error
 		ranges, _, _, _, err = ranger.DetachCondAndBuildRangeForIndex(sctx, is.AccessCondition, idxCols, colLengths)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	return ranges, nil

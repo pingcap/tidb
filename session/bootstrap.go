@@ -25,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/mysql"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -271,13 +271,13 @@ func checkBootstrapped(s Session) (bool, error) {
 		if infoschema.ErrTableNotExists.Equal(err) {
 			return false, nil
 		}
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	isBootstrapped := sVal == bootstrappedVarTrue
 	if isBootstrapped {
 		// Make sure that doesn't affect the following operations.
 		if err = s.CommitTxn(context.Background()); err != nil {
-			return false, errors.Trace(err)
+			return false, errors.WithStack(err)
 		}
 	}
 	return isBootstrapped, nil
@@ -291,7 +291,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	ctx := context.Background()
 	rs, err := s.Execute(ctx, sql)
 	if err != nil {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 	if len(rs) != 1 {
 		return "", true, errors.New("Wrong number of Recordset")
@@ -301,7 +301,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	chk := r.NewChunk()
 	err = r.Next(ctx, chk)
 	if err != nil || chk.NumRows() == 0 {
-		return "", true, errors.Trace(err)
+		return "", true, errors.WithStack(err)
 	}
 	row := chk.GetRow(0)
 	if row.IsNull(0) {
@@ -661,7 +661,7 @@ func updateBootstrapVer(s Session) {
 func getBootstrapVersion(s Session) (int64, error) {
 	sVal, isNull, err := getTiDBVar(s, tidbServerVersionVar)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	if isNull {
 		return 0, nil
@@ -759,7 +759,7 @@ func mustExecute(s Session, sql string) {
 func oldPasswordUpgrade(pass string) (string, error) {
 	hash1, err := hex.DecodeString(pass)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", errors.WithStack(err)
 	}
 
 	hash2 := auth.Sha1Hash(hash1)

@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -56,7 +56,7 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 			// This is set charset stmt.
 			dt, err := v.Expr.(*expression.Constant).Eval(nil)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			cs := dt.GetString()
 			var co string
@@ -65,7 +65,7 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 			}
 			err = e.setCharset(cs, co)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			continue
 		}
@@ -74,7 +74,7 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 			// Set user variable.
 			value, err := v.Expr.Eval(nil)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 
 			if value.IsNull() {
@@ -82,7 +82,7 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 			} else {
 				svalue, err1 := value.ToString()
 				if err1 != nil {
-					return errors.Trace(err1)
+					return errors.WithStack(err1)
 				}
 				sessionVars.Users[name] = fmt.Sprintf("%v", svalue)
 			}
@@ -94,7 +94,7 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		for _, n := range syns {
 			err := e.setSysVariable(n, v)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -127,18 +127,18 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		value, err := e.getVarValue(v, sysVar)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if value.IsNull() {
 			value.SetString("")
 		}
 		svalue, err := value.ToString()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, svalue)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	} else {
 		// Set session scope system variable.
@@ -147,28 +147,28 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		}
 		value, err := e.getVarValue(v, nil)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		oldSnapshotTS := sessionVars.SnapshotTS
 		if name == variable.TxnIsolationOneShot && sessionVars.InTxn() {
-			return errors.Trace(ErrCantChangeTxCharacteristics)
+			return errors.WithStack(ErrCantChangeTxCharacteristics)
 		}
 		err = variable.SetSessionSystemVar(sessionVars, name, value)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		newSnapshotIsSet := sessionVars.SnapshotTS > 0 && sessionVars.SnapshotTS != oldSnapshotTS
 		if newSnapshotIsSet {
 			err = validateSnapshot(e.ctx, sessionVars.SnapshotTS)
 			if err != nil {
 				sessionVars.SnapshotTS = oldSnapshotTS
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 		err = e.loadSnapshotInfoSchemaIfNeeded(name)
 		if err != nil {
 			sessionVars.SnapshotTS = oldSnapshotTS
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		var valStr string
 		if value.IsNull() {
@@ -176,7 +176,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		} else {
 			var err error
 			valStr, err = value.ToString()
-			terror.Log(errors.Trace(err))
+			terror.Log(errors.WithStack(err))
 		}
 		log.Infof("con:%d %s=%s", sessionVars.ConnectionID, name, valStr)
 	}
@@ -196,7 +196,7 @@ func validateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
 	sql := "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'tikv_gc_safe_point'"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if len(rows) != 1 {
 		return errors.New("can not get 'tikv_gc_safe_point'")
@@ -205,7 +205,7 @@ func validateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
 	const gcTimeFormat = "20060102-15:04:05 -0700 MST"
 	safePointTime, err := time.Parse(gcTimeFormat, safePointString)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	safePointTS := variable.GoTimeToTS(safePointTime)
 	if safePointTS > snapshotTS {
@@ -219,14 +219,14 @@ func (e *SetExecutor) setCharset(cs, co string) error {
 	if len(co) == 0 {
 		co, err = charset.GetDefaultCollation(cs)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	sessionVars := e.ctx.GetSessionVars()
 	for _, v := range variable.SetNamesVariables {
-		terror.Log(errors.Trace(sessionVars.SetSystemVar(v, cs)))
+		terror.Log(errors.WithStack(sessionVars.SetSystemVar(v, cs)))
 	}
-	terror.Log(errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co)))
+	terror.Log(errors.WithStack(sessionVars.SetSystemVar(variable.CollationConnection, co)))
 	return nil
 }
 
@@ -240,14 +240,14 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		} else {
 			s, err1 := variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 			if err1 != nil {
-				return value, errors.Trace(err1)
+				return value, errors.WithStack(err1)
 			}
 			value = types.NewStringDatum(s)
 		}
 		return
 	}
 	value, err = v.Expr.Eval(nil)
-	return value, errors.Trace(err)
+	return value, errors.WithStack(err)
 }
 
 func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
@@ -263,7 +263,7 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string) error {
 	dom := domain.GetDomain(e.ctx)
 	snapInfo, err := dom.GetSnapshotInfoSchema(vars.SnapshotTS)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	vars.SnapshotInfoschema = snapInfo
 	return nil

@@ -16,7 +16,7 @@ package kv
 import (
 	"bytes"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
@@ -105,7 +105,7 @@ type lazyMemBuffer struct {
 
 func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
 	if lmb.mb == nil {
-		return nil, errors.Trace(ErrNotExist)
+		return nil, errors.WithStack(ErrNotExist)
 	}
 
 	return lmb.mb.Get(k)
@@ -176,17 +176,17 @@ func (us *unionStore) Get(k Key) ([]byte, error) {
 			} else {
 				us.markLazyConditionPair(k, nil, ErrKeyExists)
 			}
-			return nil, errors.Trace(ErrNotExist)
+			return nil, errors.WithStack(ErrNotExist)
 		}
 	}
 	if IsErrNotFound(err) {
 		v, err = us.BufferStore.r.Get(k)
 	}
 	if err != nil {
-		return v, errors.Trace(err)
+		return v, errors.WithStack(err)
 	}
 	if len(v) == 0 {
-		return nil, errors.Trace(ErrNotExist)
+		return nil, errors.WithStack(ErrNotExist)
 	}
 	return v, nil
 }
@@ -212,17 +212,17 @@ func (us *unionStore) CheckLazyConditionPairs() error {
 	}
 	values, err := us.snapshot.BatchGet(keys)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	for k, v := range us.lazyConditionPairs {
 		if len(v.value) == 0 {
 			if _, exist := values[k]; exist {
-				return errors.Trace(v.err)
+				return errors.WithStack(v.err)
 			}
 		} else {
 			if bytes.Compare(values[k], v.value) != 0 {
-				return errors.Trace(ErrLazyConditionPairsNotMatch)
+				return errors.WithStack(ErrLazyConditionPairsNotMatch)
 			}
 		}
 	}

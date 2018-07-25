@@ -16,7 +16,6 @@ package expression
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -106,7 +106,7 @@ type coalesceFunctionClass struct {
 
 func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	fieldTps := make([]*types.FieldType, 0, len(args))
@@ -197,7 +197,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	case types.ETDuration:
 		bf.tp.Decimal, err = getExpressionFsp(ctx, args[0])
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		sig = &builtinCoalesceDurationSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CoalesceDuration)
@@ -225,7 +225,7 @@ func (b *builtinCoalesceIntSig) evalInt(row types.Row) (res int64, isNull bool, 
 			break
 		}
 	}
-	return res, isNull, errors.Trace(err)
+	return res, isNull, errors.WithStack(err)
 }
 
 // builtinCoalesceRealSig is buitin function coalesce signature which return type real
@@ -247,7 +247,7 @@ func (b *builtinCoalesceRealSig) evalReal(row types.Row) (res float64, isNull bo
 			break
 		}
 	}
-	return res, isNull, errors.Trace(err)
+	return res, isNull, errors.WithStack(err)
 }
 
 // builtinCoalesceDecimalSig is buitin function coalesce signature which return type Decimal
@@ -269,7 +269,7 @@ func (b *builtinCoalesceDecimalSig) evalDecimal(row types.Row) (res *types.MyDec
 			break
 		}
 	}
-	return res, isNull, errors.Trace(err)
+	return res, isNull, errors.WithStack(err)
 }
 
 // builtinCoalesceStringSig is buitin function coalesce signature which return type string
@@ -291,7 +291,7 @@ func (b *builtinCoalesceStringSig) evalString(row types.Row) (res string, isNull
 			break
 		}
 	}
-	return res, isNull, errors.Trace(err)
+	return res, isNull, errors.WithStack(err)
 }
 
 // builtinCoalesceTimeSig is buitin function coalesce signature which return type time
@@ -313,7 +313,7 @@ func (b *builtinCoalesceTimeSig) evalTime(row types.Row) (res types.Time, isNull
 			break
 		}
 	}
-	return res, isNull, errors.Trace(err)
+	return res, isNull, errors.WithStack(err)
 }
 
 // builtinCoalesceDurationSig is buitin function coalesce signature which return type duration
@@ -335,7 +335,7 @@ func (b *builtinCoalesceDurationSig) evalDuration(row types.Row) (res types.Dura
 			break
 		}
 	}
-	return res, isNull, errors.Trace(err)
+	return res, isNull, errors.WithStack(err)
 }
 
 // temporalWithDateAsNumEvalType makes DATE, DATETIME, TIMESTAMP pretend to be numbers rather than strings.
@@ -393,7 +393,7 @@ type greatestFunctionClass struct {
 
 func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	tp, cmpAsDatetime := getCmpTp4MinMax(args), false
 	if tp == types.ETDatetime {
@@ -438,13 +438,13 @@ func (b *builtinGreatestIntSig) Clone() builtinFunc {
 func (b *builtinGreatestIntSig) evalInt(row types.Row) (max int64, isNull bool, err error) {
 	max, isNull, err = b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return max, isNull, errors.Trace(err)
+		return max, isNull, errors.WithStack(err)
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v int64
 		v, isNull, err = b.args[i].EvalInt(b.ctx, row)
 		if isNull || err != nil {
-			return max, isNull, errors.Trace(err)
+			return max, isNull, errors.WithStack(err)
 		}
 		if v > max {
 			max = v
@@ -468,13 +468,13 @@ func (b *builtinGreatestRealSig) Clone() builtinFunc {
 func (b *builtinGreatestRealSig) evalReal(row types.Row) (max float64, isNull bool, err error) {
 	max, isNull, err = b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
-		return max, isNull, errors.Trace(err)
+		return max, isNull, errors.WithStack(err)
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v float64
 		v, isNull, err = b.args[i].EvalReal(b.ctx, row)
 		if isNull || err != nil {
-			return max, isNull, errors.Trace(err)
+			return max, isNull, errors.WithStack(err)
 		}
 		if v > max {
 			max = v
@@ -498,13 +498,13 @@ func (b *builtinGreatestDecimalSig) Clone() builtinFunc {
 func (b *builtinGreatestDecimalSig) evalDecimal(row types.Row) (max *types.MyDecimal, isNull bool, err error) {
 	max, isNull, err = b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return max, isNull, errors.Trace(err)
+		return max, isNull, errors.WithStack(err)
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v *types.MyDecimal
 		v, isNull, err = b.args[i].EvalDecimal(b.ctx, row)
 		if isNull || err != nil {
-			return max, isNull, errors.Trace(err)
+			return max, isNull, errors.WithStack(err)
 		}
 		if v.Compare(max) > 0 {
 			max = v
@@ -528,13 +528,13 @@ func (b *builtinGreatestStringSig) Clone() builtinFunc {
 func (b *builtinGreatestStringSig) evalString(row types.Row) (max string, isNull bool, err error) {
 	max, isNull, err = b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return max, isNull, errors.Trace(err)
+		return max, isNull, errors.WithStack(err)
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v string
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
-			return max, isNull, errors.Trace(err)
+			return max, isNull, errors.WithStack(err)
 		}
 		if types.CompareString(v, max) > 0 {
 			max = v
@@ -565,12 +565,12 @@ func (b *builtinGreatestTimeSig) evalString(row types.Row) (_ string, isNull boo
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
-			return "", true, errors.Trace(err)
+			return "", true, errors.WithStack(err)
 		}
 		t, err = types.ParseDatetime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
-				return v, true, errors.Trace(err)
+				return v, true, errors.WithStack(err)
 			}
 			continue
 		}
@@ -587,7 +587,7 @@ type leastFunctionClass struct {
 
 func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	tp, cmpAsDatetime := getCmpTp4MinMax(args), false
 	if tp == types.ETDatetime {
@@ -632,13 +632,13 @@ func (b *builtinLeastIntSig) Clone() builtinFunc {
 func (b *builtinLeastIntSig) evalInt(row types.Row) (min int64, isNull bool, err error) {
 	min, isNull, err = b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
-		return min, isNull, errors.Trace(err)
+		return min, isNull, errors.WithStack(err)
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v int64
 		v, isNull, err = b.args[i].EvalInt(b.ctx, row)
 		if isNull || err != nil {
-			return min, isNull, errors.Trace(err)
+			return min, isNull, errors.WithStack(err)
 		}
 		if v < min {
 			min = v
@@ -662,13 +662,13 @@ func (b *builtinLeastRealSig) Clone() builtinFunc {
 func (b *builtinLeastRealSig) evalReal(row types.Row) (min float64, isNull bool, err error) {
 	min, isNull, err = b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
-		return min, isNull, errors.Trace(err)
+		return min, isNull, errors.WithStack(err)
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v float64
 		v, isNull, err = b.args[i].EvalReal(b.ctx, row)
 		if isNull || err != nil {
-			return min, isNull, errors.Trace(err)
+			return min, isNull, errors.WithStack(err)
 		}
 		if v < min {
 			min = v
@@ -692,13 +692,13 @@ func (b *builtinLeastDecimalSig) Clone() builtinFunc {
 func (b *builtinLeastDecimalSig) evalDecimal(row types.Row) (min *types.MyDecimal, isNull bool, err error) {
 	min, isNull, err = b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
-		return min, isNull, errors.Trace(err)
+		return min, isNull, errors.WithStack(err)
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v *types.MyDecimal
 		v, isNull, err = b.args[i].EvalDecimal(b.ctx, row)
 		if isNull || err != nil {
-			return min, isNull, errors.Trace(err)
+			return min, isNull, errors.WithStack(err)
 		}
 		if v.Compare(min) < 0 {
 			min = v
@@ -722,13 +722,13 @@ func (b *builtinLeastStringSig) Clone() builtinFunc {
 func (b *builtinLeastStringSig) evalString(row types.Row) (min string, isNull bool, err error) {
 	min, isNull, err = b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return min, isNull, errors.Trace(err)
+		return min, isNull, errors.WithStack(err)
 	}
 	for i := 1; i < len(b.args); i++ {
 		var v string
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
-			return min, isNull, errors.Trace(err)
+			return min, isNull, errors.WithStack(err)
 		}
 		if types.CompareString(v, min) < 0 {
 			min = v
@@ -764,12 +764,12 @@ func (b *builtinLeastTimeSig) evalString(row types.Row) (res string, isNull bool
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err = b.args[i].EvalString(b.ctx, row)
 		if isNull || err != nil {
-			return "", true, errors.Trace(err)
+			return "", true, errors.WithStack(err)
 		}
 		t, err = types.ParseDatetime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
-				return v, true, errors.Trace(err)
+				return v, true, errors.WithStack(err)
 			} else if !findInvalidTime {
 				res = v
 				findInvalidTime = true
@@ -791,7 +791,7 @@ type intervalFunctionClass struct {
 
 func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	allInt := true
@@ -833,13 +833,13 @@ func (b *builtinIntervalIntSig) Clone() builtinFunc {
 func (b *builtinIntervalIntSig) evalInt(row types.Row) (int64, bool, error) {
 	args0, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	if isNull {
 		return -1, false, nil
 	}
 	idx, err := b.binSearch(args0, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], row)
-	return int64(idx), err != nil, errors.Trace(err)
+	return int64(idx), err != nil, errors.WithStack(err)
 }
 
 // binSearch is a binary search method.
@@ -875,7 +875,7 @@ func (b *builtinIntervalIntSig) binSearch(target int64, isUint1 bool, args []Exp
 			j = mid
 		}
 	}
-	return i, errors.Trace(err)
+	return i, errors.WithStack(err)
 }
 
 type builtinIntervalRealSig struct {
@@ -893,13 +893,13 @@ func (b *builtinIntervalRealSig) Clone() builtinFunc {
 func (b *builtinIntervalRealSig) evalInt(row types.Row) (int64, bool, error) {
 	args0, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	if isNull {
 		return -1, false, nil
 	}
 	idx, err := b.binSearch(args0, b.args[1:], row)
-	return int64(idx), err != nil, errors.Trace(err)
+	return int64(idx), err != nil, errors.WithStack(err)
 }
 
 func (b *builtinIntervalRealSig) binSearch(target float64, args []Expression, row types.Row) (_ int, err error) {
@@ -919,7 +919,7 @@ func (b *builtinIntervalRealSig) binSearch(target float64, args []Expression, ro
 			j = mid
 		}
 	}
-	return i, errors.Trace(err)
+	return i, errors.WithStack(err)
 }
 
 type compareFunctionClass struct {
@@ -1105,12 +1105,12 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 // getFunction sets compare built-in function signatures for various types.
 func (c *compareFunctionClass) getFunction(ctx sessionctx.Context, rawArgs []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(rawArgs); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	args := c.refineArgs(ctx, rawArgs)
 	cmpType := GetAccurateCmpType(args[0], args[1])
 	sig, err = c.generateCmpSigs(ctx, args, cmpType)
-	return sig, errors.Trace(err)
+	return sig, errors.WithStack(err)
 }
 
 // generateCmpSigs generates compare function signatures.
@@ -1897,11 +1897,11 @@ func (b *builtinNullEQIntSig) Clone() builtinFunc {
 func (b *builtinNullEQIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
-		return 0, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.WithStack(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalInt(b.ctx, row)
 	if err != nil {
-		return 0, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.WithStack(err)
 	}
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag)
 	var res int64
@@ -1945,11 +1945,11 @@ func (b *builtinNullEQRealSig) Clone() builtinFunc {
 func (b *builtinNullEQRealSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalReal(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	var res int64
 	switch {
@@ -1976,11 +1976,11 @@ func (b *builtinNullEQDecimalSig) Clone() builtinFunc {
 func (b *builtinNullEQDecimalSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalDecimal(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalDecimal(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	var res int64
 	switch {
@@ -2007,11 +2007,11 @@ func (b *builtinNullEQStringSig) Clone() builtinFunc {
 func (b *builtinNullEQStringSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalString(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	var res int64
 	switch {
@@ -2038,11 +2038,11 @@ func (b *builtinNullEQDurationSig) Clone() builtinFunc {
 func (b *builtinNullEQDurationSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalDuration(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalDuration(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	var res int64
 	switch {
@@ -2069,11 +2069,11 @@ func (b *builtinNullEQTimeSig) Clone() builtinFunc {
 func (b *builtinNullEQTimeSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalTime(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalTime(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	var res int64
 	switch {
@@ -2100,11 +2100,11 @@ func (b *builtinNullEQJSONSig) Clone() builtinFunc {
 func (b *builtinNullEQJSONSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalJSON(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	arg1, isNull1, err := b.args[1].EvalJSON(b.ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	var res int64
 	switch {
@@ -2123,7 +2123,7 @@ func (b *builtinNullEQJSONSig) evalInt(row types.Row) (val int64, isNull bool, e
 
 func resOfLT(val int64, isNull bool, err error) (int64, bool, error) {
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, isNull, errors.WithStack(err)
 	}
 	if val < 0 {
 		val = 1
@@ -2135,7 +2135,7 @@ func resOfLT(val int64, isNull bool, err error) (int64, bool, error) {
 
 func resOfLE(val int64, isNull bool, err error) (int64, bool, error) {
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, isNull, errors.WithStack(err)
 	}
 	if val <= 0 {
 		val = 1
@@ -2147,7 +2147,7 @@ func resOfLE(val int64, isNull bool, err error) (int64, bool, error) {
 
 func resOfGT(val int64, isNull bool, err error) (int64, bool, error) {
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, isNull, errors.WithStack(err)
 	}
 	if val > 0 {
 		val = 1
@@ -2159,7 +2159,7 @@ func resOfGT(val int64, isNull bool, err error) (int64, bool, error) {
 
 func resOfGE(val int64, isNull bool, err error) (int64, bool, error) {
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, isNull, errors.WithStack(err)
 	}
 	if val >= 0 {
 		val = 1
@@ -2171,7 +2171,7 @@ func resOfGE(val int64, isNull bool, err error) (int64, bool, error) {
 
 func resOfEQ(val int64, isNull bool, err error) (int64, bool, error) {
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, isNull, errors.WithStack(err)
 	}
 	if val == 0 {
 		val = 1
@@ -2183,7 +2183,7 @@ func resOfEQ(val int64, isNull bool, err error) (int64, bool, error) {
 
 func resOfNE(val int64, isNull bool, err error) (int64, bool, error) {
 	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+		return 0, isNull, errors.WithStack(err)
 	}
 	if val != 0 {
 		val = 1
@@ -2196,11 +2196,11 @@ func resOfNE(val int64, isNull bool, err error) (int64, bool, error) {
 func compareInt(ctx sessionctx.Context, args []Expression, row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := args[0].EvalInt(ctx, row)
 	if isNull0 || err != nil {
-		return 0, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.WithStack(err)
 	}
 	arg1, isNull1, err := args[1].EvalInt(ctx, row)
 	if isNull1 || err != nil {
-		return 0, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.WithStack(err)
 	}
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(args[0].GetType().Flag), mysql.HasUnsignedFlag(args[1].GetType().Flag)
 	var res int
@@ -2228,11 +2228,11 @@ func compareInt(ctx sessionctx.Context, args []Expression, row types.Row) (val i
 func compareString(args []Expression, row types.Row, ctx sessionctx.Context) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := args[0].EvalString(ctx, row)
 	if isNull0 || err != nil {
-		return 0, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.WithStack(err)
 	}
 	arg1, isNull1, err := args[1].EvalString(ctx, row)
 	if isNull1 || err != nil {
-		return 0, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.WithStack(err)
 	}
 	return int64(types.CompareString(arg0, arg1)), false, nil
 }
@@ -2240,11 +2240,11 @@ func compareString(args []Expression, row types.Row, ctx sessionctx.Context) (va
 func compareReal(ctx sessionctx.Context, args []Expression, row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := args[0].EvalReal(ctx, row)
 	if isNull0 || err != nil {
-		return 0, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.WithStack(err)
 	}
 	arg1, isNull1, err := args[1].EvalReal(ctx, row)
 	if isNull1 || err != nil {
-		return 0, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.WithStack(err)
 	}
 	return int64(types.CompareFloat64(arg0, arg1)), false, nil
 }
@@ -2252,14 +2252,14 @@ func compareReal(ctx sessionctx.Context, args []Expression, row types.Row) (val 
 func compareDecimal(ctx sessionctx.Context, args []Expression, row types.Row) (val int64, isNull bool, err error) {
 	arg0, isNull0, err := args[0].EvalDecimal(ctx, row)
 	if isNull0 || err != nil {
-		return 0, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.WithStack(err)
 	}
 	arg1, isNull1, err := args[1].EvalDecimal(ctx, row)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, errors.WithStack(err)
 	}
 	if isNull1 || err != nil {
-		return 0, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.WithStack(err)
 	}
 	return int64(arg0.Compare(arg1)), false, nil
 }
@@ -2267,11 +2267,11 @@ func compareDecimal(ctx sessionctx.Context, args []Expression, row types.Row) (v
 func compareTime(ctx sessionctx.Context, args []Expression, row types.Row) (int64, bool, error) {
 	arg0, isNull0, err := args[0].EvalTime(ctx, row)
 	if isNull0 || err != nil {
-		return 0, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.WithStack(err)
 	}
 	arg1, isNull1, err := args[1].EvalTime(ctx, row)
 	if isNull1 || err != nil {
-		return 0, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.WithStack(err)
 	}
 	return int64(arg0.Compare(arg1)), false, nil
 }
@@ -2279,11 +2279,11 @@ func compareTime(ctx sessionctx.Context, args []Expression, row types.Row) (int6
 func compareDuration(args []Expression, row types.Row, ctx sessionctx.Context) (int64, bool, error) {
 	arg0, isNull0, err := args[0].EvalDuration(ctx, row)
 	if isNull0 || err != nil {
-		return 0, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.WithStack(err)
 	}
 	arg1, isNull1, err := args[1].EvalDuration(ctx, row)
 	if isNull1 || err != nil {
-		return 0, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.WithStack(err)
 	}
 	return int64(arg0.Compare(arg1)), false, nil
 }
@@ -2291,11 +2291,11 @@ func compareDuration(args []Expression, row types.Row, ctx sessionctx.Context) (
 func compareJSON(ctx sessionctx.Context, args []Expression, row types.Row) (int64, bool, error) {
 	arg0, isNull0, err := args[0].EvalJSON(ctx, row)
 	if isNull0 || err != nil {
-		return 0, isNull0, errors.Trace(err)
+		return 0, isNull0, errors.WithStack(err)
 	}
 	arg1, isNull1, err := args[1].EvalJSON(ctx, row)
 	if isNull1 || err != nil {
-		return 0, isNull1, errors.Trace(err)
+		return 0, isNull1, errors.WithStack(err)
 	}
 	return int64(json.CompareBinary(arg0, arg1)), false, nil
 }

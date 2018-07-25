@@ -14,9 +14,9 @@
 package aggregation
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 type countFunction struct {
@@ -32,7 +32,7 @@ func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stateme
 	for _, a := range cf.Args {
 		value, err := a.Eval(row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if value.IsNull() {
 			return nil
@@ -47,7 +47,7 @@ func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Stateme
 	if cf.HasDistinct {
 		d, err := evalCtx.DistinctChecker.Check(datumBuf)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if !d {
 			return nil

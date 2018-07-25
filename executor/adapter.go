@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -89,7 +89,7 @@ func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	err := a.executor.Next(ctx, chk)
 	if err != nil {
 		a.lastErr = err
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	numRows := chk.NumRows()
 	if numRows == 0 {
@@ -115,7 +115,7 @@ func (a *recordSet) Close() error {
 	if a.processinfo != nil {
 		a.processinfo.SetProcessInfo("")
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // ExecStmt implements the ast.Statement interface, it builds a plan.Plan to an ast.Statement.
@@ -166,11 +166,11 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
 	if err := plan.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	p, err := plan.Optimize(a.Ctx, a.StmtNode, is)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	a.Plan = p
 	return is.SchemaMetaVersion(), nil
@@ -187,26 +187,26 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency
 		oriIso, _ := sctx.GetSessionVars().GetSystemVar(variable.TxnIsolation)
-		terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1")))
+		terror.Log(errors.WithStack(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, "1")))
 		sctx.GetSessionVars().DistSQLScanConcurrency = 1
 		sctx.GetSessionVars().IndexSerialScanConcurrency = 1
-		terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted)))
+		terror.Log(errors.WithStack(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted)))
 		defer func() {
-			terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats)))
+			terror.Log(errors.WithStack(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats)))
 			sctx.GetSessionVars().DistSQLScanConcurrency = oriScan
 			sctx.GetSessionVars().IndexSerialScanConcurrency = oriIndex
-			terror.Log(errors.Trace(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso)))
+			terror.Log(errors.WithStack(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, oriIso)))
 		}()
 	}
 
 	e, err := a.buildExecutor(sctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	if err := e.Open(ctx); err != nil {
 		terror.Call(e.Close)
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	var pi processinfoSetter
@@ -256,7 +256,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		if pi != nil {
 			pi.SetProcessInfo("")
 		}
-		terror.Log(errors.Trace(e.Close()))
+		terror.Log(errors.WithStack(e.Close()))
 		txnTS := uint64(0)
 		if sctx.Txn() != nil {
 			txnTS = sctx.Txn().StartTS()
@@ -266,7 +266,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 
 	err = e.Next(ctx, e.newChunk())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	return nil, nil
@@ -287,7 +287,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 			err = ctx.ActivePendingTxn()
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 
 		stmtCtx := ctx.GetSessionVars().StmtCtx
@@ -307,14 +307,14 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	b := newExecutorBuilder(ctx, a.InfoSchema)
 	e := b.build(a.Plan)
 	if b.err != nil {
-		return nil, errors.Trace(b.err)
+		return nil, errors.WithStack(b.err)
 	}
 
 	// ExecuteExec is not a real Executor, we only use it to build another Executor from a prepared statement.
 	if executorExec, ok := e.(*ExecuteExec); ok {
 		err := executorExec.Build()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		a.Text = executorExec.stmt.Text()
 		a.isPreparedStmt = true

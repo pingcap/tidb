@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -85,7 +85,7 @@ type kvStore interface {
 func writeError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
 	_, err = w.Write([]byte(err.Error()))
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 }
 
 func writeData(w http.ResponseWriter, data interface{}) {
@@ -99,7 +99,7 @@ func writeData(w http.ResponseWriter, data interface{}) {
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(js)
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 }
 
 type tikvHandlerTool struct {
@@ -131,7 +131,7 @@ func (s *Server) newTikvHandlerTool() *tikvHandlerTool {
 func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	keyLocation, err := t.regionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	tikvReq := &tikvrpc.Request{
@@ -144,7 +144,7 @@ func (t *tikvHandlerTool) getMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccG
 	log.Info(string(encodedKey), keyLocation.Region, string(keyLocation.StartKey), string(keyLocation.EndKey), kvResp, err)
 
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return kvResp.MvccGetByKey, nil
 }
@@ -160,7 +160,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		curRegion, err := t.regionCache.LocateKey(bo, startKey)
 		if err != nil {
 			log.Error(startTS, startKey, err)
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 
 		tikvReq := &tikvrpc.Request{
@@ -174,7 +174,7 @@ func (t *tikvHandlerTool) getMvccByStartTs(startTS uint64, startKey, endKey []by
 		log.Info(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), kvResp)
 		if err != nil {
 			log.Error(startTS, string(startKey), curRegion.Region, string(curRegion.StartKey), string(curRegion.EndKey), err)
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		data := kvResp.MvccGetByStartTS
 		if err := data.GetRegionError(); err != nil {
@@ -209,15 +209,15 @@ func (t *tikvHandlerTool) getMvccByIdxValue(idx table.Index, values url.Values, 
 	sc.TimeZone = time.UTC
 	idxRow, err := t.formValue2DatumRow(sc, values, idxCols)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	handle, err := strconv.ParseInt(handleStr, 10, 64)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle, nil)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return t.getMvccByEncodedKey(encodedKey)
 }
@@ -229,7 +229,7 @@ func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 		colName := col.Name.String()
 		vals, ok := values[colName]
 		if !ok {
-			return nil, errors.BadRequestf("Missing value for index column %s.", colName)
+			return nil, errors.Errorf("Missing value for index column %s.", colName)
 		}
 
 		switch len(vals) {
@@ -239,11 +239,11 @@ func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 			bDatum := types.NewStringDatum(vals[0])
 			cDatum, err := bDatum.ConvertTo(sc, &col.FieldType)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			data[i] = cDatum
 		default:
-			return nil, errors.BadRequestf("Invalid query form for column '%s', it's values are %v."+
+			return nil, errors.Errorf("Invalid query form for column '%s', it's values are %v."+
 				" Column value should be unique for one index record.", colName, vals)
 		}
 	}
@@ -253,11 +253,11 @@ func (t *tikvHandlerTool) formValue2DatumRow(sc *stmtctx.StatementContext, value
 func (t *tikvHandlerTool) getTableID(dbName, tableName string) (int64, error) {
 	schema, err := t.schema()
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	return tableVal.Meta().ID, nil
 }
@@ -265,7 +265,7 @@ func (t *tikvHandlerTool) getTableID(dbName, tableName string) (int64, error) {
 func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
 	session, err := session.CreateSession(t.store.(kv.Storage))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return domain.GetDomain(session.(sessionctx.Context)).InfoSchema(), nil
 }
@@ -273,7 +273,7 @@ func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
 func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interface{}, error) {
 	encodedKey, err := hex.DecodeString(params[pHexKey])
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return t.getMvccByEncodedKey(encodedKey)
 }
@@ -281,7 +281,7 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interfac
 func (t *tikvHandlerTool) getAllHistoryDDL() ([]*model.Job, error) {
 	s, err := session.CreateSession(t.store.(kv.Storage))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	if s != nil {
@@ -292,13 +292,13 @@ func (t *tikvHandlerTool) getAllHistoryDDL() ([]*model.Job, error) {
 	txn, err := store.Begin()
 
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	txnMeta := meta.NewMeta(txn)
 
 	jobs, err := txnMeta.GetAllHistoryDDLJobs()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return jobs, nil
 }
@@ -386,7 +386,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// Get the unchanged binary.
 	if req.URL == nil {
-		err = errors.BadRequestf("Invalid URL")
+		err = errors.Errorf("Invalid URL")
 		writeError(w, err)
 		return
 	}
@@ -398,7 +398,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if len(values[pRowBin]) != 1 {
-		err = errors.BadRequestf("Invalid Query:%v", values[pRowBin])
+		err = errors.Errorf("Invalid Query:%v", values[pRowBin])
 		writeError(w, err)
 		return
 	}
@@ -509,7 +509,7 @@ func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 	for i, regionID := range regionIDs {
 		meta, leader, err := t.regionCache.PDClient().GetRegionByID(context.TODO(), regionID)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		regions[i] = RegionMeta{
 			ID:          regionID,
@@ -773,7 +773,7 @@ func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tb
 	tableName := tbl.Meta().Name.String()
 	err := h.addScatterSchedule(startKey, endKey, tableName)
 	if err != nil {
-		writeError(w, errors.Annotate(err, "scatter record error"))
+		writeError(w, errors.Wrap(err, "scatter record error"))
 		return
 	}
 	// for indices
@@ -786,7 +786,7 @@ func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tb
 		name := tableName + "-" + indexName
 		err := h.addScatterSchedule(startKey, endKey, name)
 		if err != nil {
-			writeError(w, errors.Annotatef(err, "scatter index(%s) error", name))
+			writeError(w, errors.Wrapf(err, "scatter index(%s) error", name))
 			return
 		}
 	}
@@ -798,7 +798,7 @@ func (h tableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema
 	tableName := tbl.Meta().Name.String()
 	err := h.deleteScatterSchedule(tableName)
 	if err != nil {
-		writeError(w, errors.Annotate(err, "stop scatter record error"))
+		writeError(w, errors.Wrap(err, "stop scatter record error"))
 		return
 	}
 	// for indices
@@ -807,7 +807,7 @@ func (h tableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema
 		name := tableName + "-" + indexName
 		err := h.deleteScatterSchedule(name)
 		if err != nil {
-			writeError(w, errors.Annotatef(err, "delete scatter index(%s) error", name))
+			writeError(w, errors.Wrapf(err, "delete scatter index(%s) error", name))
 			return
 		}
 	}
@@ -996,7 +996,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 			frame.TableID = tablecodec.DecodeTableID(key)
 			return frame, nil
 		}
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	// key start with tablePrefix must be either record key or index key
@@ -1131,11 +1131,11 @@ func parseQuery(query string, m url.Values, shouldUnescape bool) error {
 			if shouldUnescape {
 				key, err = url.QueryUnescape(key)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 				value, err = url.QueryUnescape(value)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 			}
 			m[key] = append(m[key], value)
@@ -1143,7 +1143,7 @@ func parseQuery(query string, m url.Values, shouldUnescape bool) error {
 			if shouldUnescape {
 				key, err = url.QueryUnescape(key)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 			}
 			if _, ok := m[key]; !ok {
@@ -1151,7 +1151,7 @@ func parseQuery(query string, m url.Values, shouldUnescape bool) error {
 			}
 		}
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // ServeHTTP handles request of list a table's regions.
@@ -1164,7 +1164,7 @@ func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		data, err = h.handleMvccGetByHex(params)
 	case opMvccGetByIdx:
 		if req.URL == nil {
-			err = errors.BadRequestf("Invalid URL")
+			err = errors.Errorf("Invalid URL")
 			break
 		}
 		values := make(url.Values)
@@ -1177,7 +1177,7 @@ func (h mvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case opMvccGetByTxn:
 		data, err = h.handleMvccGetByTxn(params)
 	default:
-		err = errors.NotSupportedf("Operation not supported.")
+		err = errors.Errorf("Operation not supported.")
 	}
 	if err != nil {
 		writeError(w, err)
@@ -1193,12 +1193,12 @@ func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.
 	handleStr := params[pHandle]
 	schema, err := h.schema()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	// get table's schema.
 	t, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	var idxCols []*model.ColumnInfo
 	var idx table.Index
@@ -1212,7 +1212,7 @@ func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.
 		}
 	}
 	if idx == nil {
-		return nil, errors.NotFoundf("Index %s not found!", params[pIndexName])
+		return nil, errors.Errorf("Index %s not found!", params[pIndexName])
 	}
 	return h.getMvccByIdxValue(idx, values, idxCols, handleStr)
 }
@@ -1220,12 +1220,12 @@ func (h mvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.
 func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface{}, error) {
 	handle, err := strconv.ParseInt(params[pHandle], 0, 64)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	tableID, err := h.getTableID(params[pDBName], params[pTableName])
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return h.getMvccByHandle(tableID, handle)
 }
@@ -1233,7 +1233,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string) (interface{
 func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface{}, error) {
 	startTS, err := strconv.ParseInt(params[pStartTS], 0, 64)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	startKey := []byte("")
@@ -1242,7 +1242,7 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 	if len(dbName) > 0 {
 		tableID, err := h.getTableID(params[pDBName], params[pTableName])
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey = tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)

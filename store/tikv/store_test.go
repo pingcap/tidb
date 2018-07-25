@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -119,7 +119,7 @@ func (c *mockPDClient) GetTS(ctx context.Context) (int64, int64, error) {
 	defer c.RUnlock()
 
 	if c.stop {
-		return 0, 0, errors.Trace(errStopped)
+		return 0, 0, errors.WithStack(errStopped)
 	}
 	return c.client.GetTS(ctx)
 }
@@ -133,7 +133,7 @@ func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Regio
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, nil, errors.WithStack(errStopped)
 	}
 	return c.client.GetRegion(ctx, key)
 }
@@ -143,7 +143,7 @@ func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*met
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, nil, errors.WithStack(errStopped)
 	}
 	return c.client.GetRegionByID(ctx, regionID)
 }
@@ -153,7 +153,7 @@ func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.St
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, errors.Trace(errStopped)
+		return nil, errors.WithStack(errStopped)
 	}
 	return c.client.GetStore(ctx, storeID)
 }

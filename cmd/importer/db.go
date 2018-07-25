@@ -21,8 +21,8 @@ import (
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -105,7 +105,7 @@ func genRowDatas(table *table, count int) ([]string, error) {
 	for i := 0; i < count; i++ {
 		data, err := genRowData(table)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		datas = append(datas, data)
 	}
@@ -118,7 +118,7 @@ func genRowData(table *table) (string, error) {
 	for _, column := range table.columns {
 		data, err := genColumnData(table, column)
 		if err != nil {
-			return "", errors.Trace(err)
+			return "", errors.WithStack(err)
 		}
 		values = append(values, []byte(data)...)
 		values = append(values, ',')
@@ -280,7 +280,7 @@ func execSQL(db *sql.DB, sql string) error {
 
 	_, err := db.Exec(sql)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	return nil
@@ -290,14 +290,14 @@ func createDB(cfg DBConfig) (*sql.DB, error) {
 	dbDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8", cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Name)
 	db, err := sql.Open("mysql", dbDSN)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	return db, nil
 }
 
 func closeDB(db *sql.DB) error {
-	return errors.Trace(db.Close())
+	return errors.WithStack(db.Close())
 }
 
 func createDBs(cfg DBConfig, count int) ([]*sql.DB, error) {
@@ -305,7 +305,7 @@ func createDBs(cfg DBConfig, count int) ([]*sql.DB, error) {
 	for i := 0; i < count; i++ {
 		db, err := createDB(cfg)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 
 		dbs = append(dbs, db)

@@ -16,12 +16,12 @@ package statistics
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
@@ -175,7 +175,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		if col != nil {
 			maskCovered, ranges, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, col)
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, errors.WithStack(err)
 			}
 			sets = append(sets, &exprSet{tp: colType, ID: col.ID, mask: maskCovered, ranges: ranges})
 			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
@@ -188,7 +188,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		if len(idxCols) > 0 {
 			maskCovered, ranges, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, idxCols...)
 			if err != nil {
-				return 0, errors.Trace(err)
+				return 0, errors.WithStack(err)
 			}
 			sets = append(sets, &exprSet{tp: indexType, ID: idxInfo.ID, mask: maskCovered, ranges: ranges})
 		}
@@ -211,7 +211,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			rowCount, err = coll.GetRowCountByIndexRanges(sc, set.ID, set.ranges)
 		}
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 		ret *= rowCount / float64(coll.Count)
 	}
@@ -236,7 +236,7 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 		panic("should never be here")
 	}
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return 0, nil, errors.WithStack(err)
 	}
 	for i := range exprs {
 		for j := range accessConds {

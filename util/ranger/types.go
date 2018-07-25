@@ -18,9 +18,9 @@ import (
 	"math"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 // Range represents a range generated in physical plan building phase.
@@ -98,7 +98,7 @@ func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 	for i := 0; i < len(ran.LowVal); i++ {
 		cmp, err := ran.LowVal[i].CompareDatum(sc, &ran.HighVal[i])
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 		if cmp != 0 {
 			return i, nil

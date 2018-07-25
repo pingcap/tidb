@@ -14,18 +14,19 @@
 package xserver
 
 import (
+	"fmt"
 	"math/rand"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	// For MySQL X Protocol
 	_ "github.com/pingcap/tipb/go-mysqlx"
@@ -69,7 +70,7 @@ func NewServer(cfg *Config) (s *Server, err error) {
 		s.listener, err = net.Listen("tcp", s.cfg.Addr)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	rand.Seed(time.Now().UTC().UnixNano())
 	log.Infof("Server run MySQL Protocol Listen at [%s]", s.cfg.Addr)
@@ -80,7 +81,7 @@ func NewServer(cfg *Config) (s *Server, err error) {
 func (s *Server) Close() {
 	if s.listener != nil {
 		err := s.listener.Close()
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 		s.listener = nil
 	}
 }
@@ -96,11 +97,11 @@ func (s *Server) Run() error {
 				}
 			}
 			log.Errorf("accept error %s", err.Error())
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if s.shouldStopListener() {
 			err = conn.Close()
-			terror.Log(errors.Trace(err))
+			terror.Log(errors.WithStack(err))
 			break
 		}
 		go s.onConn(conn)
@@ -126,9 +127,9 @@ func (s *Server) onConn(c net.Conn) {
 	if err := conn.handshake(); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we use info log level.
-		log.Infof("handshake error %s", errors.ErrorStack(err))
+		log.Infof("handshake error %s", fmt.Sprintf("%+v", err))
 		err := c.Close()
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 		return
 	}
 	conn.Run()

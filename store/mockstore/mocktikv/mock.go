@@ -14,8 +14,8 @@
 package mocktikv
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/pd/pd-client"
+	"github.com/pkg/errors"
 )
 
 // NewTiKVAndPDClient creates a TiKV client and PD client from options.
@@ -29,7 +29,7 @@ func NewTiKVAndPDClient(cluster *Cluster, mvccStore MVCCStore, path string) (*RP
 		var err error
 		mvccStore, err = NewMVCCLevelDB(path)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 	}
 

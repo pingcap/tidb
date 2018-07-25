@@ -17,12 +17,12 @@ import (
 	"container/heap"
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -55,7 +55,7 @@ type SortExec struct {
 func (e *SortExec) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
-	return errors.Trace(e.children[0].Close())
+	return errors.WithStack(e.children[0].Close())
 }
 
 // Open implements the Executor Open interface.
@@ -68,7 +68,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaSort)
 		e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	}
-	return errors.Trace(e.children[0].Open(ctx))
+	return errors.WithStack(e.children[0].Open(ctx))
 }
 
 // Next implements the Executor Next interface.
@@ -77,7 +77,7 @@ func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if !e.fetched {
 		err := e.fetchRowChunks(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		e.initPointers()
 		e.initCompareFuncs()
@@ -88,7 +88,7 @@ func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			e.buildKeyExprsAndTypes()
 			err = e.buildKeyChunks()
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			sort.Slice(e.rowPtrs, e.keyChunksLess)
 		}
@@ -114,7 +114,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		chk := e.children[0].newChunk()
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		rowCount := chk.NumRows()
 		if rowCount == 0 {
@@ -180,7 +180,7 @@ func (e *SortExec) buildKeyChunks() error {
 		childIter := chunk.NewIterator4Chunk(e.rowChunks.GetChunk(chkIdx))
 		err := expression.VectorizedExecute(e.ctx, e.keyExprs, childIter, keyChk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		e.keyChunks.Add(keyChk)
 	}
@@ -291,7 +291,7 @@ func (h *topNChunkHeap) Swap(i, j int) {
 func (e *TopNExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaTopn)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	return errors.Trace(e.SortExec.Open(ctx))
+	return errors.WithStack(e.SortExec.Open(ctx))
 }
 
 // Next implements the Executor Next interface.
@@ -302,11 +302,11 @@ func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		e.Idx = int(e.limit.Offset)
 		err := e.loadChunksUntilTotalLimit(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		err = e.executeTopN(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		e.fetched = true
 	}
@@ -330,7 +330,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		srcChk := e.children[0].newChunk()
 		err := e.children[0].Next(ctx, srcChk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if srcChk.NumRows() == 0 {
 			break
@@ -344,7 +344,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 		e.buildKeyExprsAndTypes()
 		err := e.buildKeyChunks()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -366,19 +366,19 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	for {
 		err := e.children[0].Next(ctx, childRowChk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if childRowChk.NumRows() == 0 {
 			break
 		}
 		err = e.processChildChk(childRowChk, childKeyChk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if e.rowChunks.Len() > len(e.rowPtrs)*topNCompactionFactor {
 			err = e.doCompaction()
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -395,7 +395,7 @@ func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error 
 		childKeyChk.Reset()
 		err := expression.VectorizedExecute(e.ctx, e.keyExprs, chunk.NewIterator4Chunk(childRowChk), childKeyChk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	for i := 0; i < childRowChk.NumRows(); i++ {

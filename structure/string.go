@@ -16,8 +16,8 @@ package structure
 import (
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pkg/errors"
 )
 
 // Set sets the string value of the key.
@@ -36,18 +36,18 @@ func (t *TxStructure) Get(key []byte) ([]byte, error) {
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
-	return value, errors.Trace(err)
+	return value, errors.WithStack(err)
 }
 
 // GetInt64 gets the int64 value of a key.
 func (t *TxStructure) GetInt64(key []byte) (int64, error) {
 	v, err := t.Get(key)
 	if err != nil || v == nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 
 	n, err := strconv.ParseInt(string(v), 10, 64)
-	return n, errors.Trace(err)
+	return n, errors.WithStack(err)
 }
 
 // Inc increments the integer value of a key by step, returns
@@ -62,7 +62,7 @@ func (t *TxStructure) Inc(key []byte, step int64) (int64, error) {
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
-	return n, errors.Trace(err)
+	return n, errors.WithStack(err)
 }
 
 // Clear removes the string value of the key.
@@ -75,5 +75,5 @@ func (t *TxStructure) Clear(key []byte) error {
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }

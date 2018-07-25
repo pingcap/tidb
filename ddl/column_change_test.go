@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -51,7 +51,7 @@ func (s *testColumnChangeSuite) SetUpSuite(c *C) {
 	}
 	err := kv.RunInNewTxn(s.store, true, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return errors.Trace(t.CreateDatabase(s.dbInfo))
+		return errors.WithStack(t.CreateDatabase(s.dbInfo))
 	})
 	c.Check(err, IsNil)
 }
@@ -98,44 +98,44 @@ func (s *testColumnChangeSuite) TestColumnChange(c *C) {
 		var err error
 		err = hookCtx.NewTxn()
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = errors.WithStack(err)
 		}
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			deleteOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = errors.WithStack(err)
 			}
 		case model.StateWriteOnly:
 			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = errors.WithStack(err)
 			}
 			err = s.checkAddWriteOnly(hookCtx, d, deleteOnlyTable, writeOnlyTable, h)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = errors.WithStack(err)
 			}
 		case model.StatePublic:
 			mu.Lock()
 			publicTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = errors.WithStack(err)
 			}
 			err = s.checkAddPublic(hookCtx, d, writeOnlyTable, publicTable)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = errors.WithStack(err)
 			}
 			mu.Unlock()
 		}
 		err = hookCtx.Txn().Commit(context.Background())
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = errors.WithStack(err)
 		}
 	}
 	d.SetHook(tc)
 	defaultValue := int64(3)
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultValue)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 	testCheckJobDone(c, d, job, true)
 	mu.Lock()
 	tb := publicTable
@@ -161,33 +161,33 @@ func (s *testColumnChangeSuite) testAddColumnNoDefault(c *C, ctx sessionctx.Cont
 		var err error
 		err = hookCtx.NewTxn()
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = errors.WithStack(err)
 		}
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			writeOnlyTable, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = errors.WithStack(err)
 			}
 		case model.StatePublic:
 			_, err = getCurrentTable(d, s.dbInfo.ID, tblInfo.ID)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = errors.WithStack(err)
 			}
 			_, err = writeOnlyTable.AddRecord(hookCtx, types.MakeDatums(10, 10), false)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = errors.WithStack(err)
 			}
 		}
 		err = hookCtx.Txn().Commit(context.TODO())
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = errors.WithStack(err)
 		}
 	}
 	d.SetHook(tc)
 	d.start(context.Background(), nil)
 	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, nil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 	testCheckJobDone(c, d, job, true)
 }
 
@@ -205,7 +205,7 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *
 		prevState = job.SchemaState
 		currentTbl, err := getCurrentTable(d, s.dbInfo.ID, tbl.Meta().ID)
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = errors.WithStack(err)
 		}
 		for _, col := range currentTbl.Cols() {
 			if col.ID == dropCol.ID {
@@ -215,7 +215,7 @@ func (s *testColumnChangeSuite) testColumnDrop(c *C, ctx sessionctx.Context, d *
 	}
 	d.SetHook(tc)
 	d.start(context.Background(), nil)
-	c.Assert(errors.ErrorStack(checkErr), Equals, "")
+	c.Assert(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 	testDropColumn(c, ctx, d, s.dbInfo, tbl.Meta(), dropCol.Name.L, false)
 }
 
@@ -223,25 +223,25 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 	// WriteOnlyTable: insert t values (2, 3)
 	err := ctx.NewTxn()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	_, err = writeOnlyTable.AddRecord(ctx, types.MakeDatums(2, 3), false)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = ctx.NewTxn()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(),
 		testutil.RowsWithSep(" ", "1 2 <nil>", "2 3 3"))
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// This test is for RowWithCols when column state is StateWriteOnly.
 	row, err := writeOnlyTable.RowWithCols(ctx, h, writeOnlyTable.WritableCols())
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	got := fmt.Sprintf("%v", row)
 	expect := fmt.Sprintf("%v", []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(nil)})
@@ -251,38 +251,38 @@ func (s *testColumnChangeSuite) checkAddWriteOnly(ctx sessionctx.Context, d *ddl
 	// DeleteOnlyTable: select * from t
 	err = checkResult(ctx, deleteOnlyTable, deleteOnlyTable.WritableCols(), testutil.RowsWithSep(" ", "1 2", "2 3"))
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// WriteOnlyTable: update t set c1 = 2 where c1 = 1
 	h, _, err = writeOnlyTable.Seek(ctx, 0)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = writeOnlyTable.UpdateRecord(ctx, h, types.MakeDatums(1, 2, 3), types.MakeDatums(2, 2, 3), touchedSlice(writeOnlyTable))
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = ctx.NewTxn()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// After we update the first row, its default value is also set.
 	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), testutil.RowsWithSep(" ", "2 2 3", "2 3 3"))
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// DeleteOnlyTable: delete from t where c2 = 2
 	err = deleteOnlyTable.RemoveRecord(ctx, h, types.MakeDatums(2, 2))
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = ctx.NewTxn()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// After delete table has deleted the first row, check the WriteOnly table records.
 	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), testutil.RowsWithSep(" ", "2 3 3"))
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func touchedSlice(t table.Table) []bool {
@@ -297,20 +297,20 @@ func (s *testColumnChangeSuite) checkAddPublic(ctx sessionctx.Context, d *ddl, w
 	// publicTable Insert t values (4, 4, 4)
 	err := ctx.NewTxn()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	h, err := publicTable.AddRecord(ctx, types.MakeDatums(4, 4, 4), false)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = ctx.NewTxn()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// writeOnlyTable update t set c1 = 3 where c1 = 4
 	oldRow, err := writeOnlyTable.RowWithCols(ctx, h, writeOnlyTable.WritableCols())
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if len(oldRow) != 3 {
 		return errors.Errorf("%v", oldRow)
@@ -318,16 +318,16 @@ func (s *testColumnChangeSuite) checkAddPublic(ctx sessionctx.Context, d *ddl, w
 	newRow := types.MakeDatums(3, 4, oldRow[2].GetValue())
 	err = writeOnlyTable.UpdateRecord(ctx, h, oldRow, newRow, touchedSlice(writeOnlyTable))
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = ctx.NewTxn()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// publicTable select * from t, make sure the new c3 value 4 is not overwritten to default value 3.
 	err = checkResult(ctx, publicTable, publicTable.WritableCols(), testutil.RowsWithSep(" ", "2 3 3", "3 4 4"))
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -339,17 +339,17 @@ func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 		var err error
 		tblInfo, err = t.GetTable(schemaID, tableID)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	alloc := autoid.NewAllocator(d.store, schemaID)
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return tbl, err
 }

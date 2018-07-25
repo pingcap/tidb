@@ -14,11 +14,11 @@
 package distsql
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -41,7 +41,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars)
 	if resp == nil {
 		err := errors.New("client returns nil response")
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	if kvReq.Streaming {

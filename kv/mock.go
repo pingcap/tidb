@@ -14,8 +14,8 @@
 package kv
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -204,7 +204,7 @@ func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 			continue
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		m[string(k)] = v
 	}

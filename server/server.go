@@ -43,13 +43,13 @@ import (
 	_ "net/http/pprof"
 
 	"github.com/blacktear23/go-proxyprotocol"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -167,14 +167,14 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			int(cfg.ProxyProtocol.HeaderTimeout))
 		if errProxy != nil {
 			log.Error("ProxyProtocol Networks parameter invalid")
-			return nil, errors.Trace(errProxy)
+			return nil, errors.WithStack(errProxy)
 		}
 		log.Infof("Server is running MySQL Protocol (through PROXY Protocol) at [%s]", s.cfg.Host)
 		s.listener = pplistener
 	}
 
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	// Init rand seed for randomBuf()
@@ -202,7 +202,7 @@ func (s *Server) loadTLSCertificates() {
 
 	tlsCert, err := tls.LoadX509KeyPair(s.cfg.Security.SSLCert, s.cfg.Security.SSLKey)
 	if err != nil {
-		log.Warn(errors.ErrorStack(err))
+		log.Warn(fmt.Sprintf("%+v", err))
 		s.tlsConfig = nil
 		return
 	}
@@ -213,7 +213,7 @@ func (s *Server) loadTLSCertificates() {
 	if len(s.cfg.Security.SSLCA) > 0 {
 		caCert, err := ioutil.ReadFile(s.cfg.Security.SSLCA)
 		if err != nil {
-			log.Warn(errors.ErrorStack(err))
+			log.Warn(fmt.Sprintf("%+v", err))
 		} else {
 			certPool = x509.NewCertPool()
 			if certPool.AppendCertsFromPEM(caCert) {
@@ -254,17 +254,17 @@ func (s *Server) Run() error {
 			}
 
 			log.Errorf("accept error %s", err.Error())
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if s.shouldStopListener() {
 			err = conn.Close()
-			terror.Log(errors.Trace(err))
+			terror.Log(errors.WithStack(err))
 			break
 		}
 		go s.onConn(conn)
 	}
 	err := s.listener.Close()
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	s.listener = nil
 	for {
 		metrics.ServerEventCounter.WithLabelValues(metrics.EventHang).Inc()
@@ -289,12 +289,12 @@ func (s *Server) Close() {
 
 	if s.listener != nil {
 		err := s.listener.Close()
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 		s.listener = nil
 	}
 	if s.statusServer != nil {
 		err := s.statusServer.Close()
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 		s.statusServer = nil
 	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventClose).Inc()
@@ -308,7 +308,7 @@ func (s *Server) onConn(c net.Conn) {
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
 		err = c.Close()
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 		return
 	}
 	log.Infof("con:%d new connection %s", conn.connectionID, c.RemoteAddr().String())

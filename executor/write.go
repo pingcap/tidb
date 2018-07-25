@@ -16,7 +16,6 @@ package executor
 import (
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
@@ -24,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -70,7 +71,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 			// Cast changed fields with respective columns.
 			v, err := table.CastValue(ctx, newData[i], col.ToInfo())
 			if err != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(err)
+				return false, handleChanged, newHandle, 0, errors.WithStack(err)
 			}
 			newData[i] = v
 		}
@@ -79,7 +80,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 			var err error
 			newData[i], err = table.GetColDefaultValue(ctx, col.ToInfo())
 			if err != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(err)
+				return false, handleChanged, newHandle, 0, errors.WithStack(err)
 			}
 		}
 		// Rebase auto increment id if the field is changed.
@@ -89,17 +90,17 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 			}
 			val, errTI := newData[i].ToInt64(sc)
 			if errTI != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(errTI)
+				return false, handleChanged, newHandle, 0, errors.WithStack(errTI)
 			}
 			lastInsertID = uint64(val)
 			err := t.RebaseAutoID(ctx, val, true)
 			if err != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(err)
+				return false, handleChanged, newHandle, 0, errors.WithStack(err)
 			}
 		}
 		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
 		if err != nil {
-			return false, handleChanged, newHandle, 0, errors.Trace(err)
+			return false, handleChanged, newHandle, 0, errors.WithStack(err)
 		}
 		if cmp != 0 {
 			changed = true
@@ -120,7 +121,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 	// Check the not-null constraints.
 	err := table.CheckNotNull(t.Cols(), newData)
 	if err != nil {
-		return false, handleChanged, newHandle, 0, errors.Trace(err)
+		return false, handleChanged, newHandle, 0, errors.WithStack(err)
 	}
 
 	if !changed {
@@ -136,7 +137,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
 			v, errGT := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal)
 			if errGT != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(errGT)
+				return false, handleChanged, newHandle, 0, errors.WithStack(errGT)
 			}
 			newData[i] = v
 			modified[i] = true
@@ -148,13 +149,13 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 		if sc.DupKeyAsWarning {
 			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
 			if err = tables.CheckHandleExists(ctx, t, newHandle); err != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(err)
+				return false, handleChanged, newHandle, 0, errors.WithStack(err)
 			}
 			skipHandleCheck = true
 		}
 		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
-			return false, handleChanged, newHandle, 0, errors.Trace(err)
+			return false, handleChanged, newHandle, 0, errors.WithStack(err)
 		}
 		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
 	} else {
@@ -162,7 +163,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
 	}
 	if err != nil {
-		return false, handleChanged, newHandle, 0, errors.Trace(err)
+		return false, handleChanged, newHandle, 0, errors.WithStack(err)
 	}
 
 	tid := t.Meta().ID
@@ -193,7 +194,11 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumR
 // so we reset the error msg here, and wrap old err with errors.Wrap.
 func resetErrDataTooLong(colName string, rowIdx int, err error) error {
 	newErr := types.ErrDataTooLong.Gen("Data too long for column '%v' at row %v", colName, rowIdx)
-	return errors.Wrap(err, newErr)
+	if err != nil {
+		log.Errorf("%+v", err)
+		return errors.WithStack(newErr)
+	}
+	return nil
 }
 
 func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int {

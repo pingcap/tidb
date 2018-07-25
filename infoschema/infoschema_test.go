@@ -17,7 +17,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 )
 
 func TestT(t *testing.T) {
@@ -101,7 +101,7 @@ func (*testSuite) TestT(c *C) {
 	dbInfos := []*model.DBInfo{dbInfo}
 	err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		meta.NewMeta(txn).CreateDatabase(dbInfo)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	})
 	c.Assert(err, IsNil)
 
@@ -275,7 +275,7 @@ func genGlobalID(store kv.Storage) (int64, error) {
 	err := kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
 		var err error
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	})
-	return globalID, errors.Trace(err)
+	return globalID, errors.WithStack(err)
 }

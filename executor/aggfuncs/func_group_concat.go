@@ -16,9 +16,9 @@ package aggfuncs
 import (
 	"bytes"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 type baseGroupConcat4String struct {
@@ -66,7 +66,7 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, &row)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			if isNull {
 				continue
@@ -117,7 +117,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, &row)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			if isNull {
 				continue

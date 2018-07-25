@@ -14,12 +14,12 @@
 package expression
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -177,7 +177,7 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
 				value, err := EvalBool(s.ctx, []Expression{con}, nil)
-				terror.Log(errors.Trace(err))
+				terror.Log(errors.WithStack(err))
 				if !value {
 					s.setConds2ConstFalse()
 					return nil

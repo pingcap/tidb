@@ -14,13 +14,13 @@
 package tables
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 // VirtualDataSource is used to extract data from the struct in memory.
@@ -54,12 +54,12 @@ func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, col
 	}
 	rows, err := vt.dataSource.GetRows(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	for i, row := range rows {
 		more, err := fn(int64(i), row, cols)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if !more {
 			break

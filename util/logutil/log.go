@@ -22,7 +22,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -259,7 +259,7 @@ func InitLogger(cfg *LogConfig) error {
 
 	if len(cfg.File.Filename) != 0 {
 		if err := initFileLog(&cfg.File, nil); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 
@@ -268,7 +268,7 @@ func InitLogger(cfg *LogConfig) error {
 		tmp := cfg.File
 		tmp.Filename = cfg.SlowQueryFile
 		if err := initFileLog(&tmp, SlowQueryLogger); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		hooks := make(log.LevelHooks)
 		hooks.Add(&contextHook{})

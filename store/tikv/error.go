@@ -14,9 +14,9 @@
 package tikv
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -29,7 +29,7 @@ const mismatchClusterID = "mismatch cluster id"
 
 // TiDB decides whether to retry transaction by checking if error message contains
 // string "try again later" literally.
-// In TiClient we use `errors.Annotate(err, txnRetryableMark)` to direct TiDB to
+// In TiClient we use `errors.Wrap(err, txnRetryableMark)` to direct TiDB to
 // restart a transaction.
 // Note that it should be only used if i) the error occurs inside a transaction
 // and ii) the error is not totally unexpected and hopefully will recover soon.

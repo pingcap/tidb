@@ -16,9 +16,9 @@ package aggregation
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 type bitAndFunction struct {
@@ -40,7 +40,7 @@ func (bf *bitAndFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	a := bf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if !value.IsNull() {
 		if value.Kind() == types.KindUint64 {
@@ -48,7 +48,7 @@ func (bf *bitAndFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 		} else {
 			int64Value, err := value.ToInt64(sc)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() & uint64(int64Value))
 		}

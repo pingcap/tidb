@@ -22,10 +22,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -62,7 +62,7 @@ func batchRawPut(value []byte) {
 				key := fmt.Sprintf("key_%d", k)
 				err = cli.Put([]byte(key), value)
 				if err != nil {
-					log.Fatal(errors.ErrorStack(err))
+					log.Fatal(fmt.Sprintf("%+v", err))
 				}
 			}
 		}(i)
@@ -75,7 +75,7 @@ func main() {
 	log.SetLevel(log.WarnLevel)
 	go func() {
 		err := http.ListenAndServe(":9191", nil)
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 	}()
 
 	value := make([]byte, *valueSize)

@@ -14,9 +14,9 @@
 package expression
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 type columnEvaluator struct {
@@ -47,7 +47,7 @@ func (e *defaultEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chun
 		for i := range e.outputIdxes {
 			err := evalOneColumn(ctx, e.exprs[i], iter, output, e.outputIdxes[i])
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 		return nil
@@ -57,7 +57,7 @@ func (e *defaultEvaluator) run(ctx sessionctx.Context, input, output *chunk.Chun
 		for i := range e.outputIdxes {
 			err := evalOneCell(ctx, e.exprs[i], row, output, e.outputIdxes[i])
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -113,7 +113,7 @@ func (e *EvaluatorSuit) Run(ctx sessionctx.Context, input, output *chunk.Chunk) 
 	if e.defaultEvaluator != nil {
 		err := e.defaultEvaluator.run(ctx, input, output)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 

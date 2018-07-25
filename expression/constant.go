@@ -16,7 +16,6 @@ package expression
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -118,14 +118,14 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ types.Row) (int64, bool, er
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
-			return 0, true, errors.Trace(err)
+			return 0, true, errors.WithStack(err)
 		}
 		if dt.IsNull() {
 			return 0, true, nil
 		}
 		val, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return 0, true, errors.Trace(err)
+			return 0, true, errors.WithStack(err)
 		}
 		c.Value.SetInt64(val)
 	} else {
@@ -135,7 +135,7 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ types.Row) (int64, bool, er
 	}
 	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
 		res, err := c.Value.ToInt64(ctx.GetSessionVars().StmtCtx)
-		return res, err != nil, errors.Trace(err)
+		return res, err != nil, errors.WithStack(err)
 	}
 	return c.Value.GetInt64(), false, nil
 }
@@ -145,14 +145,14 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ types.Row) (float64, bool,
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
-			return 0, true, errors.Trace(err)
+			return 0, true, errors.WithStack(err)
 		}
 		if dt.IsNull() {
 			return 0, true, nil
 		}
 		val, err := dt.ToFloat64(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return 0, true, errors.Trace(err)
+			return 0, true, errors.WithStack(err)
 		}
 		c.Value.SetFloat64(val)
 	} else {
@@ -162,7 +162,7 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ types.Row) (float64, bool,
 	}
 	if c.GetType().Hybrid() || c.Value.Kind() == types.KindBinaryLiteral || c.Value.Kind() == types.KindString {
 		res, err := c.Value.ToFloat64(ctx.GetSessionVars().StmtCtx)
-		return res, err != nil, errors.Trace(err)
+		return res, err != nil, errors.WithStack(err)
 	}
 	return c.Value.GetFloat64(), false, nil
 }
@@ -172,14 +172,14 @@ func (c *Constant) EvalString(ctx sessionctx.Context, _ types.Row) (string, bool
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
-			return "", true, errors.Trace(err)
+			return "", true, errors.WithStack(err)
 		}
 		if dt.IsNull() {
 			return "", true, nil
 		}
 		val, err := dt.ToString()
 		if err != nil {
-			return "", true, errors.Trace(err)
+			return "", true, errors.WithStack(err)
 		}
 		c.Value.SetString(val)
 	} else {
@@ -188,7 +188,7 @@ func (c *Constant) EvalString(ctx sessionctx.Context, _ types.Row) (string, bool
 		}
 	}
 	res, err := c.Value.ToString()
-	return res, err != nil, errors.Trace(err)
+	return res, err != nil, errors.WithStack(err)
 }
 
 // EvalDecimal returns decimal representation of Constant.
@@ -196,7 +196,7 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ types.Row) (*types.MyDe
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
-			return nil, true, errors.Trace(err)
+			return nil, true, errors.WithStack(err)
 		}
 		if dt.IsNull() {
 			return nil, true, nil
@@ -208,7 +208,7 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ types.Row) (*types.MyDe
 		}
 	}
 	res, err := c.Value.ToDecimal(ctx.GetSessionVars().StmtCtx)
-	return res, err != nil, errors.Trace(err)
+	return res, err != nil, errors.WithStack(err)
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
@@ -216,18 +216,18 @@ func (c *Constant) EvalTime(ctx sessionctx.Context, _ types.Row) (val types.Time
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
-			return types.Time{}, true, errors.Trace(err)
+			return types.Time{}, true, errors.WithStack(err)
 		}
 		if dt.IsNull() {
 			return types.Time{}, true, nil
 		}
 		val, err := dt.ToString()
 		if err != nil {
-			return types.Time{}, true, errors.Trace(err)
+			return types.Time{}, true, errors.WithStack(err)
 		}
 		tim, err := types.ParseDatetime(ctx.GetSessionVars().StmtCtx, val)
 		if err != nil {
-			return types.Time{}, true, errors.Trace(err)
+			return types.Time{}, true, errors.WithStack(err)
 		}
 		c.Value.SetMysqlTime(tim)
 	} else {
@@ -243,18 +243,18 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ types.Row) (val types.
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
-			return types.Duration{}, true, errors.Trace(err)
+			return types.Duration{}, true, errors.WithStack(err)
 		}
 		if dt.IsNull() {
 			return types.Duration{}, true, nil
 		}
 		val, err := dt.ToString()
 		if err != nil {
-			return types.Duration{}, true, errors.Trace(err)
+			return types.Duration{}, true, errors.WithStack(err)
 		}
 		dur, err := types.ParseDuration(val, types.MaxFsp)
 		if err != nil {
-			return types.Duration{}, true, errors.Trace(err)
+			return types.Duration{}, true, errors.WithStack(err)
 		}
 		c.Value.SetMysqlDuration(dur)
 	} else {
@@ -270,14 +270,14 @@ func (c *Constant) EvalJSON(ctx sessionctx.Context, _ types.Row) (json.BinaryJSO
 	if c.DeferredExpr != nil {
 		dt, err := c.DeferredExpr.Eval(nil)
 		if err != nil {
-			return json.BinaryJSON{}, true, errors.Trace(err)
+			return json.BinaryJSON{}, true, errors.WithStack(err)
 		}
 		if dt.IsNull() {
 			return json.BinaryJSON{}, true, nil
 		}
 		val, err := dt.ConvertTo(ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeJSON))
 		if err != nil {
-			return json.BinaryJSON{}, true, errors.Trace(err)
+			return json.BinaryJSON{}, true, errors.WithStack(err)
 		}
 		fmt.Println("const eval json", val.GetMysqlJSON().String())
 		c.Value.SetMysqlJSON(val.GetMysqlJSON())
@@ -325,12 +325,12 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 	}
 	_, err := c.Eval(nil)
 	if err != nil {
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 	}
 	c.hashcode = append(c.hashcode, constantFlag)
 	c.hashcode, err = codec.EncodeValue(sc, c.hashcode, c.Value)
 	if err != nil {
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 	}
 	return c.hashcode
 }

@@ -16,8 +16,8 @@ package expression
 import (
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pkg/errors"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -98,7 +98,7 @@ func ExprFromSchema(expr Expression, schema *Schema) bool {
 // If there are more than one result, it will raise ambiguous error.
 func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	col, _, err := s.FindColumnAndIndex(astCol)
-	return col, errors.Trace(err)
+	return col, errors.WithStack(err)
 }
 
 // FindColumnAndIndex finds an Column and its index from schema for a ast.ColumnName.

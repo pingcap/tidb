@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -54,33 +54,33 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 		}
 
 		if col.Flen == 0 {
-			return nil, errors.Trace(errWrongKeyColumn.GenByArgs(ic.Column.Name))
+			return nil, errors.WithStack(errWrongKeyColumn.GenByArgs(ic.Column.Name))
 		}
 
 		// JSON column cannot index.
 		if col.FieldType.Tp == mysql.TypeJSON {
-			return nil, errors.Trace(errJSONUsedAsKey.GenByArgs(col.Name.O))
+			return nil, errors.WithStack(errJSONUsedAsKey.GenByArgs(col.Name.O))
 		}
 
 		// Length must be specified for BLOB and TEXT column indexes.
 		if types.IsTypeBlob(col.FieldType.Tp) && ic.Length == types.UnspecifiedLength {
-			return nil, errors.Trace(errBlobKeyWithoutLength)
+			return nil, errors.WithStack(errBlobKeyWithoutLength)
 		}
 
 		// Length can only be specified for specifiable types.
 		if ic.Length != types.UnspecifiedLength && !types.IsTypePrefixable(col.FieldType.Tp) {
-			return nil, errors.Trace(errIncorrectPrefixKey)
+			return nil, errors.WithStack(errIncorrectPrefixKey)
 		}
 
 		// Key length must be shorter or equal to the column length.
 		if ic.Length != types.UnspecifiedLength &&
 			types.IsTypeChar(col.FieldType.Tp) && col.Flen < ic.Length {
-			return nil, errors.Trace(errIncorrectPrefixKey)
+			return nil, errors.WithStack(errIncorrectPrefixKey)
 		}
 
 		// Specified length must be shorter than the max length for prefix.
 		if ic.Length > maxPrefixLength {
-			return nil, errors.Trace(errTooLongKey)
+			return nil, errors.WithStack(errTooLongKey)
 		}
 
 		// Take care of the sum of length of all index columns.
@@ -116,7 +116,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 
 		// The sum of all lengths must be shorter than the max length for prefix.
 		if sumLength > maxPrefixLength {
-			return nil, errors.Trace(errTooLongKey)
+			return nil, errors.WithStack(errTooLongKey)
 		}
 
 		idxColumns = append(idxColumns, &model.IndexColumn{
@@ -132,7 +132,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 func buildIndexInfo(tblInfo *model.TableInfo, indexName model.CIStr, idxColNames []*ast.IndexColName, state model.SchemaState) (*model.IndexInfo, error) {
 	idxColumns, err := buildIndexColumns(tblInfo.Columns, idxColNames)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	// Create index info.
@@ -179,7 +179,7 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 
 func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
 	if fromIdx := findIndexByName(from.L, tbl.Indices); fromIdx == nil {
-		return false, errors.Trace(infoschema.ErrKeyNotExists.GenByArgs(from.O, tbl.Name))
+		return false, errors.WithStack(infoschema.ErrKeyNotExists.GenByArgs(from.O, tbl.Name))
 	}
 	// Take case-sensitivity into account, if `FromKey` and  `ToKey` are the same, nothing need to be changed
 	if from.O == to.O {
@@ -189,7 +189,7 @@ func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 	// e.g: from `inDex` to `IndEX`. Otherwise, we try to rename an index to another different index which already exists,
 	// that's illegal by rule.
 	if toIdx := findIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
-		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenByArgs(toIdx.Name.O))
+		return false, errors.WithStack(infoschema.ErrKeyNameDuplicate.GenByArgs(toIdx.Name.O))
 	}
 	return false, nil
 }
@@ -198,12 +198,12 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var from, to model.CIStr
 	if err := job.DecodeArgs(&from, &to); err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	// Double check. See function `RenameIndex` in ddl_api.go
@@ -213,13 +213,13 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	idx := findIndexByName(from.L, tblInfo.Indices)
 	idx.Name = to
 	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
@@ -230,7 +230,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 	if job.IsRollingback() {
 		ver, err = onDropIndex(t, job)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 		return ver, nil
 	}
@@ -239,7 +239,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	var (
@@ -251,7 +251,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 	err = job.DecodeArgs(&unique, &indexName, &idxColNames, &indexOption)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
@@ -264,7 +264,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		indexInfo, err = buildIndexInfo(tblInfo, indexName, idxColNames, model.StateNone)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 		if indexOption != nil {
 			indexInfo.Comment = indexOption.Comment
@@ -308,7 +308,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		var tbl table.Table
 		tbl, err = getTable(d.store, schemaID, tblInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 
 		var reorgInfo *reorgInfo
@@ -316,7 +316,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 
 		err = w.runReorgJob(t, reorgInfo, d.lease, func() error {
@@ -333,7 +333,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 			}
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 			w.reorgCtx.cleanNotifyReorgCancel()
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 		w.reorgCtx.cleanNotifyReorgCancel()
@@ -343,7 +343,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		addIndexColumnFlag(tblInfo, indexInfo)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
@@ -351,7 +351,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		err = ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
 	}
 
-	return ver, errors.Trace(err)
+	return ver, errors.WithStack(err)
 }
 
 func convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
@@ -366,27 +366,27 @@ func convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo,
 	job.SchemaState = model.StateDeleteOnly
 	ver, err1 := updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	if err1 != nil {
-		return ver, errors.Trace(err1)
+		return ver, errors.WithStack(err1)
 	}
 
 	if kv.ErrKeyExists.Equal(err) {
 		return ver, kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
 	}
 
-	return ver, errors.Trace(err)
+	return ver, errors.WithStack(err)
 }
 
 func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	var indexName model.CIStr
 	if err = job.DecodeArgs(&indexName); err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+		return ver, errors.WithStack(err)
 	}
 
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
@@ -426,7 +426,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != model.StateNone)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, errors.WithStack(err)
 		}
 
 		// Finish this job.
@@ -440,7 +440,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
-	return ver, errors.Trace(err)
+	return ver, errors.WithStack(err)
 }
 
 const (
@@ -519,7 +519,7 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	idxInfo := w.index.Meta()
 	_, err := tablecodec.DecodeRowWithMap(rawRecord, w.colFieldMap, time.UTC, w.rowMap)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	for j, v := range idxInfo.Columns {
@@ -541,7 +541,7 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 		}
 		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		idxVal[j] = idxColumnVal
 	}
@@ -573,7 +573,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 
 			idxRecord, err1 := w.getIndexRecord(handle, recordKey, rawRow)
 			if err1 != nil {
-				return false, errors.Trace(err1)
+				return false, errors.WithStack(err1)
 			}
 
 			w.idxRecords = append(w.idxRecords, idxRecord)
@@ -586,7 +586,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 		})
 
 	log.Debugf("[ddl] txn %v fetches handle info %v, takes time %v", txn.StartTS(), taskRange, time.Since(startTime))
-	return w.idxRecords, handleOutOfRange, errors.Trace(err)
+	return w.idxRecords, handleOutOfRange, errors.WithStack(err)
 }
 
 func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
@@ -611,13 +611,13 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 		txn.SetOption(kv.Priority, kv.PriorityLow)
 		idxRecords, handleOutOfRange, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		for _, idxRecord := range idxRecords {
 			err := txn.LockKeys(idxRecord.key)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			scanCount++
 
@@ -630,7 +630,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 					continue
 				}
 
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			addedCount++
 		}
@@ -750,10 +750,10 @@ func splitTableRanges(t table.Table, store kv.Storage, startHandle, endHandle in
 	bo := tikv.NewBackoffer(context.Background(), maxSleep)
 	ranges, err := tikv.SplitRegionRanges(bo, s.GetRegionCache(), []kv.KeyRange{kvRange})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if len(ranges) == 0 {
-		return nil, errors.Trace(errInvalidSplitRegionRanges)
+		return nil, errors.WithStack(errInvalidSplitRegionRanges)
 	}
 	return ranges, nil
 }
@@ -761,11 +761,11 @@ func splitTableRanges(t table.Table, store kv.Storage, startHandle, endHandle in
 func decodeHandleRange(keyRange kv.KeyRange) (int64, int64, error) {
 	_, startHandle, err := tablecodec.DecodeRecordKey(keyRange.StartKey)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, 0, errors.WithStack(err)
 	}
 	_, endHandle, err := tablecodec.DecodeRecordKey(keyRange.EndKey)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, 0, errors.WithStack(err)
 	}
 
 	return startHandle, endHandle, nil
@@ -803,7 +803,7 @@ func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAd
 		}
 	}
 
-	return nextHandle, addedCount, errors.Trace(firstErr)
+	return nextHandle, addedCount, errors.WithStack(firstErr)
 }
 
 // handleReorgTasks sends tasks to workers, and waits for all the running workers to return results,
@@ -825,12 +825,12 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	if err != nil {
 		// update the reorg handle that has been processed.
 		err1 := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
-			return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
+			return errors.WithStack(reorgInfo.UpdateHandle(txn, nextHandle))
 		})
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime)
 		log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
 			*totalAddedCount, startHandle, nextHandle, taskAddedCount, err, elapsedTime, err1)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
@@ -849,7 +849,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 	for _, keyRange := range kvRanges {
 		startHandle, endHandle, err := decodeHandleRange(keyRange)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 
 		endKey := t.RecordKey(endHandle)
@@ -872,7 +872,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 	// Wait tasks finish.
 	err := w.handleReorgTasks(reorgInfo, totalAddedCount, workers, batchTasks)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	if len(batchTasks) < len(kvRanges) {
@@ -893,13 +893,13 @@ func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, jo
 	for {
 		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startHandle, endHandle)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		log.Infof("[ddl-reorg] start to reorg index of %v region ranges, handle range:[%v, %v).", len(kvRanges), startHandle, endHandle)
 		remains, err := w.sendRangeTaskToWorkers(t, workers, reorgInfo, &totalAddedCount, kvRanges)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		if len(remains) == 0 {
@@ -907,7 +907,7 @@ func (w *worker) buildKVRangesIndex(t table.Table, workers []*addIndexWorker, jo
 		}
 		startHandle, _, err = decodeHandleRange(remains[0])
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -966,12 +966,12 @@ func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHa
 	snap, err := store.GetSnapshot(ver)
 	snap.SetPriority(kv.PriorityLow)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	firstKey := t.RecordKey(seekHandle)
 	it, err := snap.Seek(firstKey)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	defer it.Close()
 
@@ -983,13 +983,13 @@ func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHa
 		var handle int64
 		handle, err = tablecodec.DecodeRowKey(it.Key())
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		rk := t.RecordKey(handle)
 
 		more, err := fn(handle, rk, it.Value())
 		if !more || err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		err = kv.NextUntil(it, util.RowKeyPrefixFilter(rk))
@@ -997,7 +997,7 @@ func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHa
 			if kv.ErrNotExist.Equal(err) {
 				break
 			}
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 

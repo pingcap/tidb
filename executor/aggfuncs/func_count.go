@@ -4,12 +4,12 @@ import (
 	"encoding/binary"
 	"unsafe"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 type baseCount struct {
@@ -43,7 +43,7 @@ func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalInt(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -65,7 +65,7 @@ func (e *countOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalReal(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -87,7 +87,7 @@ func (e *countOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, row
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalDecimal(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -109,7 +109,7 @@ func (e *countOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalTime(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -131,7 +131,7 @@ func (e *countOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, ro
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalDuration(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -153,7 +153,7 @@ func (e *countOriginal4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalJSON(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -175,7 +175,7 @@ func (e *countOriginal4String) UpdatePartialResult(sctx sessionctx.Context, rows
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalString(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -196,7 +196,7 @@ func (e *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, &row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if isNull {
 			continue
@@ -278,43 +278,43 @@ func (e *countOriginalWithDistinct) evalAndEncode(
 	case types.ETInt:
 		val, isNull, err := arg.EvalInt(sctx, row)
 		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
+			return encodedBytes, isNull, errors.WithStack(err)
 		}
 		encodedBytes = appendInt64(encodedBytes, buf, val)
 	case types.ETReal:
 		val, isNull, err := arg.EvalReal(sctx, row)
 		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
+			return encodedBytes, isNull, errors.WithStack(err)
 		}
 		encodedBytes = appendFloat64(encodedBytes, buf, val)
 	case types.ETDecimal:
 		val, isNull, err := arg.EvalDecimal(sctx, row)
 		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
+			return encodedBytes, isNull, errors.WithStack(err)
 		}
 		encodedBytes = appendDecimal(encodedBytes, buf, val)
 	case types.ETTimestamp, types.ETDatetime:
 		val, isNull, err := arg.EvalTime(sctx, row)
 		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
+			return encodedBytes, isNull, errors.WithStack(err)
 		}
 		encodedBytes = appendTime(encodedBytes, buf, val)
 	case types.ETDuration:
 		val, isNull, err := arg.EvalDuration(sctx, row)
 		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
+			return encodedBytes, isNull, errors.WithStack(err)
 		}
 		encodedBytes = appendDuration(encodedBytes, buf, val)
 	case types.ETJson:
 		val, isNull, err := arg.EvalJSON(sctx, row)
 		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
+			return encodedBytes, isNull, errors.WithStack(err)
 		}
 		encodedBytes = appendJSON(encodedBytes, buf, val)
 	case types.ETString:
 		val, isNull, err := arg.EvalString(sctx, row)
 		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
+			return encodedBytes, isNull, errors.WithStack(err)
 		}
 		encodedBytes = appendString(encodedBytes, buf, val)
 	default:

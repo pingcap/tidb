@@ -16,7 +16,6 @@ package statistics
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/model"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -51,7 +51,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo) (err error) {
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
@@ -83,7 +83,7 @@ func (h *Handle) insertColStats2KV(tableID int64, colInfo *model.ColumnInfo) (er
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(context.Background(), "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
@@ -148,7 +148,7 @@ func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error)
 		_, err = exec.Execute(ctx, "commit")
 	} else {
 		_, err1 := exec.Execute(ctx, "rollback")
-		terror.Log(errors.Trace(err1))
+		terror.Log(errors.WithStack(err1))
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }

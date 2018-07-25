@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
@@ -26,6 +25,7 @@ import (
 	_ "github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -211,7 +211,7 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 
 	mockTbl, err := ddl.MockTableInfo(mock.NewContext(), stmt, 1)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	t.tblInfo = mockTbl
 
@@ -232,7 +232,7 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 func parseTableSQL(table *table, sql string) error {
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	switch node := stmt.(type) {
@@ -242,7 +242,7 @@ func parseTableSQL(table *table, sql string) error {
 		err = errors.Errorf("invalid statement - %v", stmt.Text())
 	}
 
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func parseIndex(table *table, stmt *ast.CreateIndexStmt) error {
@@ -269,7 +269,7 @@ func parseIndexSQL(table *table, sql string) error {
 
 	stmt, err := parser.New().ParseOneStmt(sql, "", "")
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	switch node := stmt.(type) {
@@ -279,5 +279,5 @@ func parseIndexSQL(table *table, sql string) error {
 		err = errors.Errorf("invalid statement - %v", stmt.Text())
 	}
 
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }

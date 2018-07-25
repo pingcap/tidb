@@ -18,13 +18,13 @@ import (
 	"math"
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 // Error instances.
@@ -100,7 +100,7 @@ func rangePointLess(sc *stmtctx.StatementContext, a, b point) (bool, error) {
 	if cmp != 0 {
 		return cmp < 0, nil
 	}
-	return rangePointEqualValueLess(a, b), errors.Trace(err)
+	return rangePointEqualValueLess(a, b), errors.WithStack(err)
 }
 
 func rangePointEqualValueLess(a, b point) bool {
@@ -342,12 +342,12 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
 	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(nil)
 	if err != nil {
-		r.err = errors.Trace(err)
+		r.err = errors.WithStack(err)
 		return fullRange
 	}
 	pattern, err := pdt.ToString()
 	if err != nil {
-		r.err = errors.Trace(err)
+		r.err = errors.WithStack(err)
 		return fullRange
 	}
 	if pattern == "" {
@@ -358,7 +358,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 	lowValue := make([]byte, 0, len(pattern))
 	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(nil)
 	if err != nil {
-		r.err = errors.Trace(err)
+		r.err = errors.WithStack(err)
 		return fullRange
 	}
 	escape := byte(edt.GetInt64())

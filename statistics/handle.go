@@ -19,13 +19,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -121,7 +121,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	sql := fmt.Sprintf("SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %d order by version", lastVersion)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	tables := make([]*Table, 0, len(rows))
@@ -142,7 +142,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl, err := h.tableStatsFromStorage(tableInfo, false)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			log.Debugf("Error occurred when read table stats for table %s. The error message is %s.", tableInfo.Name.O, errors.ErrorStack(err))
+			log.Debugf("Error occurred when read table stats for table %s. The error message is %s.", tableInfo.Name.O, fmt.Sprintf("%+v", err))
 			continue
 		}
 		if tbl == nil {
@@ -210,11 +210,11 @@ func (h *Handle) LoadNeededHistograms() error {
 		}
 		hg, err := h.histogramFromStorage(col.tableID, c.ID, &c.Info.FieldType, c.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		cms, err := h.cmSketchFromStorage(col.tableID, 0, col.columnID)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		tbl.Columns[c.ID] = &Column{Histogram: *hg, Info: c.Info, CMSketch: cms, Count: int64(hg.totalRowCount())}
 		h.UpdateTableStats([]*Table{tbl}, nil)
@@ -242,13 +242,13 @@ func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
 		e := <-h.ddlEventCh
 		if err := h.HandleDDLEvent(e); err != nil {
-			log.Debug("[stats] handle ddl event fail: ", errors.ErrorStack(err))
+			log.Debug("[stats] handle ddl event fail: ", fmt.Sprintf("%+v", err))
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
-		log.Debug("[stats] dump stats delta fail: ", errors.ErrorStack(err))
+		log.Debug("[stats] dump stats delta fail: ", fmt.Sprintf("%+v", err))
 	}
 	if err := h.DumpStatsFeedbackToKV(); err != nil {
-		log.Debug("[stats] dump stats feedback fail: ", errors.ErrorStack(err))
+		log.Debug("[stats] dump stats feedback fail: ", fmt.Sprintf("%+v", err))
 	}
 }

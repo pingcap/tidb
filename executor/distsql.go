@@ -22,7 +22,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/juju/errors"
+	"fmt"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -115,7 +116,7 @@ func closeAll(objs ...Closeable) error {
 			}
 		}
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // zone returns the current timezone name and timezone offset in seconds.
@@ -229,7 +230,7 @@ func rebuildIndexRanges(ctx sessionctx.Context, is *plan.PhysicalIndexScan, idxC
 	for _, cond := range is.AccessCondition {
 		newCond, err1 := expression.SubstituteCorCol2Constant(cond)
 		if err1 != nil {
-			return nil, errors.Trace(err1)
+			return nil, errors.WithStack(err1)
 		}
 		access = append(access, newCond)
 	}
@@ -268,7 +269,7 @@ func (e *IndexReaderExecutor) Close() error {
 	e.ctx.StoreQueryFeedback(e.feedback)
 	err := e.result.Close()
 	e.result = nil
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // Next implements the Executor Next interface.
@@ -277,7 +278,7 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 	if err != nil {
 		e.feedback.Invalidate()
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // Open implements the Executor Open interface.
@@ -286,13 +287,13 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	if e.corColInAccess {
 		e.ranges, err = rebuildIndexRanges(e.ctx, e.plans[0].(*plan.PhysicalIndexScan), e.idxCols, e.colLens)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return e.open(ctx, kvRanges)
 }
@@ -305,7 +306,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 
@@ -319,12 +320,12 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		Build()
 	if err != nil {
 		e.feedback.Invalidate()
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.result, err = distsql.Select(ctx, e.ctx, kvReq, e.retTypes(), e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.result.Fetch(ctx)
 	return nil
@@ -380,19 +381,19 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	if e.corColInAccess {
 		e.ranges, err = rebuildIndexRanges(e.ctx, e.idxPlans[0].(*plan.PhysicalIndexScan), e.idxCols, e.colLens)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = e.open(ctx, kvRanges)
 	if err != nil {
 		e.feedback.Invalidate()
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
@@ -413,14 +414,14 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	if e.corColInIdxSide {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.idxPlans)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 
 	if e.corColInTblSide {
 		e.tableRequest.Executors, _, err = constructDistExec(e.ctx, e.tblPlans)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 
@@ -429,7 +430,7 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	workCh := make(chan *lookupTableTask, 1)
 	err = e.startIndexWorker(ctx, kvRanges, workCh)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.startTableWorker(ctx, workCh)
 	return nil
@@ -446,12 +447,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		Build()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// Since the first read only need handle information. So its returned col is only 1.
 	result, err := distsql.Select(ctx, e.ctx, kvReq, []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, e.feedback)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	result.Fetch(ctx)
 	worker := &indexWorker{
@@ -476,7 +477,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		e.ctx.StoreQueryFeedback(e.feedback)
 		cancel()
 		if err := result.Close(); err != nil {
-			log.Error("close Select result failed:", errors.ErrorStack(err))
+			log.Error("close Select result failed:", fmt.Sprintf("%+v", err))
 		}
 		close(workCh)
 		close(e.resultCh)
@@ -522,7 +523,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 	}, handles)
 	if err != nil {
 		log.Error(err)
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return tableReader, nil
 }
@@ -552,7 +553,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 	for {
 		resultTask, err := e.getResultTask()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if resultTask == nil {
 			return nil
@@ -576,7 +577,7 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 		return nil, nil
 	}
 	if err := <-task.doneCh; err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	// Release the memory usage of last task before we handle a new task.
@@ -617,7 +618,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 				doneCh: doneCh,
 			}
 			if err != nil {
-				err = errors.Trace(err4Panic)
+				err = errors.WithStack(err4Panic)
 			}
 		}
 	}()
@@ -626,7 +627,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		handles, err := w.extractTaskHandles(ctx, chk, result)
 		if err != nil {
 			doneCh := make(chan error, 1)
-			doneCh <- errors.Trace(err)
+			doneCh <- errors.WithStack(err)
 			w.resultCh <- &lookupTableTask{
 				doneCh: doneCh,
 			}
@@ -650,7 +651,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (handles []int64, err error) {
 	handles = make([]int64, 0, w.batchSize)
 	for len(handles) < w.batchSize {
-		err = errors.Trace(idxResult.Next(ctx, chk))
+		err = errors.WithStack(idxResult.Next(ctx, chk))
 		if err != nil {
 			return handles, err
 		}
@@ -726,7 +727,7 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 			return
 		}
 		err := w.executeTask(ctx, task)
-		task.doneCh <- errors.Trace(err)
+		task.doneCh <- errors.WithStack(err)
 	}
 }
 
@@ -736,7 +737,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	tableReader, err := w.buildTblReader(ctx, task.handles)
 	if err != nil {
 		log.Error(err)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	defer terror.Call(tableReader.Close)
 
@@ -751,7 +752,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		err = tableReader.Next(ctx, chk)
 		if err != nil {
 			log.Error(err)
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			break

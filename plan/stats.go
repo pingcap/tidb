@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -93,7 +93,7 @@ func (p *baseLogicalPlan) deriveStats() (*statsInfo, error) {
 	if len(p.children) == 1 {
 		var err error
 		p.stats, err = p.children[0].deriveStats()
-		return p.stats, errors.Trace(err)
+		return p.stats, errors.WithStack(err)
 	}
 
 	profile := &statsInfo{
@@ -141,7 +141,7 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 		if path.isTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			// If there's only point range. Just remove other possible paths.
 			if noIntervalRanges {
@@ -153,7 +153,7 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 		}
 		noIntervalRanges, err := ds.deriveIndexPathStats(path)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		// If there's only point range and this index is unique key. Just remove other possible paths.
 		if noIntervalRanges && path.index.Unique {
@@ -168,7 +168,7 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 func (p *LogicalSelection) deriveStats() (*statsInfo, error) {
 	childProfile, err := p.children[0].deriveStats()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	p.stats = childProfile.scale(selectionFactor)
 	return p.stats, nil
@@ -181,7 +181,7 @@ func (p *LogicalUnionAll) deriveStats() (*statsInfo, error) {
 	for _, child := range p.children {
 		childProfile, err := child.deriveStats()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		p.stats.count += childProfile.count
 		for i := range p.stats.cardinality {
@@ -194,7 +194,7 @@ func (p *LogicalUnionAll) deriveStats() (*statsInfo, error) {
 func (p *LogicalLimit) deriveStats() (*statsInfo, error) {
 	childProfile, err := p.children[0].deriveStats()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	p.stats = &statsInfo{
 		count:       math.Min(float64(p.Count), childProfile.count),
@@ -209,7 +209,7 @@ func (p *LogicalLimit) deriveStats() (*statsInfo, error) {
 func (lt *LogicalTopN) deriveStats() (*statsInfo, error) {
 	childProfile, err := lt.children[0].deriveStats()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	lt.stats = &statsInfo{
 		count:       math.Min(float64(lt.Count), childProfile.count),
@@ -240,7 +240,7 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 func (p *LogicalProjection) deriveStats() (*statsInfo, error) {
 	childProfile, err := p.children[0].deriveStats()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	p.stats = &statsInfo{
 		count:       childProfile.count,
@@ -256,7 +256,7 @@ func (p *LogicalProjection) deriveStats() (*statsInfo, error) {
 func (la *LogicalAggregation) deriveStats() (*statsInfo, error) {
 	childProfile, err := la.children[0].deriveStats()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
 	for _, gbyExpr := range la.GroupByItems {
@@ -286,11 +286,11 @@ func (la *LogicalAggregation) deriveStats() (*statsInfo, error) {
 func (p *LogicalJoin) deriveStats() (*statsInfo, error) {
 	leftProfile, err := p.children[0].deriveStats()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	rightProfile, err := p.children[1].deriveStats()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		p.stats = &statsInfo{
@@ -348,11 +348,11 @@ func (p *LogicalJoin) deriveStats() (*statsInfo, error) {
 func (la *LogicalApply) deriveStats() (*statsInfo, error) {
 	leftProfile, err := la.children[0].deriveStats()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	_, err = la.children[1].deriveStats()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	la.stats = &statsInfo{
 		count:       leftProfile.count,
@@ -384,7 +384,7 @@ func getSingletonStats(len int) *statsInfo {
 func (p *LogicalExists) deriveStats() (*statsInfo, error) {
 	_, err := p.children[0].deriveStats()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	p.stats = getSingletonStats(1)
 	return p.stats, nil
@@ -393,7 +393,7 @@ func (p *LogicalExists) deriveStats() (*statsInfo, error) {
 func (p *LogicalMaxOneRow) deriveStats() (*statsInfo, error) {
 	_, err := p.children[0].deriveStats()
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	p.stats = getSingletonStats(p.Schema().Len())
 	return p.stats, nil

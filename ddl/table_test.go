@@ -16,7 +16,6 @@ package ddl
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -167,12 +167,12 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 		var err1 error
 		tblInfo, err1 = t.GetTable(schemaID, tableID)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return errors.WithStack(err1)
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if tblInfo == nil {
 		return nil, errors.New("table not found")
@@ -180,7 +180,7 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 	alloc := autoid.NewAllocator(d.store, schemaID)
 	tbl, err := table.TableFromMeta(alloc, tblInfo)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return tbl, nil
 }

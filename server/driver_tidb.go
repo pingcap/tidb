@@ -17,7 +17,6 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -69,7 +69,7 @@ func (ts *TiDBStatement) ID() int {
 func (ts *TiDBStatement) Execute(ctx context.Context, args ...interface{}) (rs ResultSet, err error) {
 	tidbRecordset, err := ts.ctx.session.ExecutePreparedStmt(ctx, ts.id, args...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if tidbRecordset == nil {
 		return
@@ -144,7 +144,7 @@ func (ts *TiDBStatement) Close() error {
 	//TODO close at tidb level
 	err := ts.ctx.session.DropPreparedStmt(ts.id)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	delete(ts.ctx.stmts, int(ts.id))
 
@@ -159,12 +159,12 @@ func (ts *TiDBStatement) Close() error {
 func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (QueryCtx, error) {
 	se, err := session.CreateSession(qd.store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	se.SetTLSState(tlsState)
 	err = se.SetCollation(int(collation))
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	se.SetClientCapability(capability)
 	se.SetConnectionID(connID)
@@ -269,7 +269,7 @@ func (tc *TiDBContext) Auth(user *auth.UserIdentity, auth []byte, salt []byte) b
 func (tc *TiDBContext) FieldList(table string) (columns []*ColumnInfo, err error) {
 	fields, err := tc.session.FieldList(table)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	columns = make([]*ColumnInfo, 0, len(fields))
 	for _, f := range fields {

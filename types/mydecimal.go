@@ -17,9 +17,9 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 )
 
 // RoundMode is the type for round mode.
@@ -191,7 +191,7 @@ func (d *MyDecimal) GetDigitsFrac() int8 {
 func (d *MyDecimal) String() string {
 	tmp := *d
 	err := tmp.Round(&tmp, int(tmp.resultFrac), ModeHalfEven)
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	return string(tmp.ToString())
 }
 
@@ -489,7 +489,7 @@ func (d *MyDecimal) Shift(shift int) error {
 		diff := digitsFrac - wordsFrac*digitsPerWord
 		err1 := d.Round(d, digitEnd-point-diff, ModeHalfEven)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return errors.WithStack(err1)
 		}
 		digitEnd -= diff
 		digitsFrac = wordsFrac * digitsPerWord
@@ -1371,7 +1371,7 @@ func writeWord(b []byte, word int32, size int) {
 func (d *MyDecimal) Compare(to *MyDecimal) int {
 	if d.negative == to.negative {
 		cmp, err := doSub(d, to, nil)
-		terror.Log(errors.Trace(err))
+		terror.Log(errors.WithStack(err))
 		return cmp
 	}
 	if d.negative {
@@ -2160,7 +2160,7 @@ func NewDecFromUint(i uint64) *MyDecimal {
 func NewDecFromFloatForTest(f float64) *MyDecimal {
 	dec := new(MyDecimal)
 	err := dec.FromFloat64(f)
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	return dec
 }
 
@@ -2168,7 +2168,7 @@ func NewDecFromFloatForTest(f float64) *MyDecimal {
 func NewDecFromStringForTest(s string) *MyDecimal {
 	dec := new(MyDecimal)
 	err := dec.FromString([]byte(s))
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	return dec
 }
 
@@ -2186,6 +2186,6 @@ func NewMaxOrMinDec(negative bool, prec, frac int) *MyDecimal {
 	str[1+prec-frac] = '.'
 	dec := new(MyDecimal)
 	err := dec.FromString(str)
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	return dec
 }

@@ -16,7 +16,6 @@ package executor
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -113,7 +113,7 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 	// Check column whether is specified only once.
 	err = table.CheckOnce(cols)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	return cols, nil
@@ -180,22 +180,22 @@ func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCoun
 func (e *InsertValues) insertRows(cols []*table.Column, exec func(rows []types.DatumRow) error) (err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	rows := make([]types.DatumRow, len(e.Lists))
 	length := len(e.Lists[0])
 	for i, list := range e.Lists {
 		if err = e.checkValueCount(length, len(list), len(e.GenColumns), i, cols); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		e.rowCount = uint64(i)
 		rows[i], err = e.getRow(cols, list, i)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
-	return errors.Trace(exec(rows))
+	return errors.WithStack(exec(rows))
 }
 
 func (e *InsertValues) handleErr(col *table.Column, rowIdx int, err error) error {
@@ -225,18 +225,18 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 
 	if e.needFillDefaultValues {
 		if err := e.fillDefaultValues(row, hasValue); err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 
 	for i, expr := range list {
 		val, err := expr.Eval(row)
 		if err = e.handleErr(cols[i], rowIdx, err); err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		val, err = table.CastValue(e.ctx, val, cols[i].ToInfo())
 		if err = e.handleErr(cols[i], rowIdx, err); err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 
 		offset := cols[i].Offset
@@ -266,7 +266,7 @@ func (e *InsertValues) fillDefaultValues(row types.DatumRow, hasValue []bool) er
 				row[i] = table.GetZeroValue(c.ToInfo())
 				hasValue[c.Offset] = false
 			} else if e.filterErr(err) != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -287,7 +287,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 	for {
 		err := selectExec.Next(ctx, chk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -298,12 +298,12 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 			e.rowCount++
 			row, err := e.fillRowData(cols, innerRow)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			rows = append(rows, row)
 		}
 		if err := exec(rows); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		rows = rows[:0]
 	}
@@ -316,7 +316,7 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals types.DatumRow) (t
 	for i, v := range vals {
 		casted, err := table.CastValue(e.ctx, v, cols[i].ToInfo())
 		if e.filterErr(err) != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 
 		offset := cols[i].Offset
@@ -330,24 +330,24 @@ func (e *InsertValues) fillRowData(cols []*table.Column, vals types.DatumRow) (t
 func (e *InsertValues) fillGenColData(cols []*table.Column, valLen int, hasValue []bool, row types.DatumRow) (types.DatumRow, error) {
 	err := e.initDefaultValues(row, hasValue)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	for i, expr := range e.GenExprs {
 		var val types.Datum
 		val, err = expr.Eval(row)
 		if e.filterErr(err) != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		val, err = table.CastValue(e.ctx, val, cols[valLen+i].ToInfo())
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		offset := cols[valLen+i].Offset
 		row[offset] = val
 	}
 
 	if err = table.CheckNotNull(e.Table.Cols(), row); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return row, nil
 }
@@ -360,7 +360,7 @@ func (e *InsertValues) filterErr(err error) error {
 		return err
 	}
 	// TODO: should not filter all types of errors here.
-	e.handleWarning(err, fmt.Sprintf("ignore err:%v", errors.ErrorStack(err)))
+	e.handleWarning(err, fmt.Sprintf("ignore err:%v", fmt.Sprintf("%+v", err)))
 	return nil
 }
 
@@ -371,7 +371,7 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 
 	defaultVal, err := table.GetColDefaultValue(e.ctx, col.ToInfo())
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return types.Datum{}, errors.WithStack(err)
 	}
 	if initialized := e.lazilyInitColDefaultValBuf(); initialized {
 		e.colDefaultVals[idx].val = defaultVal
@@ -394,7 +394,7 @@ func (e *InsertValues) initDefaultValues(row types.DatumRow, hasValue []bool) er
 			// Adjust the value if this column has auto increment flag.
 			if mysql.HasAutoIncrementFlag(c.Flag) {
 				if err := e.adjustAutoIncrementDatum(row, i, c); err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 			}
 		} else {
@@ -403,7 +403,7 @@ func (e *InsertValues) initDefaultValues(row types.DatumRow, hasValue []bool) er
 				var err error
 				row[i], err = e.getColDefaultValue(i, c)
 				if e.filterErr(err) != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 			}
 		}
@@ -416,7 +416,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *ta
 	if retryInfo.Retrying {
 		id, err := retryInfo.GetCurrAutoIncrementID()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if mysql.HasUnsignedFlag(c.Flag) {
 			row[i].SetUint64(uint64(id))
@@ -431,14 +431,14 @@ func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *ta
 	if !row[i].IsNull() {
 		recordID, err = row[i].ToInt64(e.ctx.GetSessionVars().StmtCtx)
 		if e.filterErr(err) != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
 		err = e.Table.RebaseAutoID(e.ctx, recordID, true)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		e.ctx.GetSessionVars().InsertID = uint64(recordID)
 		if mysql.HasUnsignedFlag(c.Flag) {
@@ -455,7 +455,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *ta
 	if row[i].IsNull() || e.ctx.GetSessionVars().SQLMode&mysql.ModeNoAutoValueOnZero == 0 {
 		recordID, err = e.Table.AllocAutoID(e.ctx)
 		if e.filterErr(err) != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		// It's compatible with mysql. So it sets last insert id to the first row.
 		if e.rowCount == 0 {
@@ -473,7 +473,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row types.DatumRow, i int, c *ta
 	// the value of row[i] is adjusted by autoid, so we need to cast it again.
 	casted, err := table.CastValue(e.ctx, row[i], c.ToInfo())
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	row[i] = casted
 	return nil
@@ -492,7 +492,7 @@ func (e *InsertValues) batchCheckAndInsert(rows []types.DatumRow, insertOneRow f
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	err := e.batchGetInsertKeys(e.ctx, e.Table, rows)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// append warnings and get no duplicated error rows
 	for i, r := range e.toBeCheckedRows {
@@ -517,7 +517,7 @@ func (e *InsertValues) batchCheckAndInsert(rows []types.DatumRow, insertOneRow f
 		if rows[i] != nil {
 			_, err = insertOneRow(rows[i])
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			if r.handleKey != nil {
 				e.dupKVs[string(r.handleKey.newKV.key)] = r.handleKey.newKV.value

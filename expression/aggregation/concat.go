@@ -17,9 +17,9 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 type concatFunction struct {
@@ -40,13 +40,13 @@ func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row types.
 	sepArg := cf.Args[len(cf.Args)-1]
 	sepDatum, err := sepArg.Eval(row)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if sepDatum.IsNull() {
 		return errors.Errorf("Invalid separator argument.")
 	}
 	cf.separator, err = sepDatum.ToString()
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // Update implements Aggregation interface.
@@ -55,7 +55,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	if !cf.sepInited {
 		err := cf.initSeparator(sc, row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		cf.sepInited = true
 	}
@@ -64,7 +64,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	for i, length := 0, len(cf.Args)-1; i < length; i++ {
 		value, err := cf.Args[i].Eval(row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if value.IsNull() {
 			return nil
@@ -74,7 +74,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	if cf.HasDistinct {
 		d, err := evalCtx.DistinctChecker.Check(datumBuf)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if !d {
 			return nil

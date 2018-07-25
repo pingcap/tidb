@@ -22,8 +22,8 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 // Type returns type of BinaryJSON as string.
@@ -60,7 +60,7 @@ func (bj BinaryJSON) Unquote() (string, error) {
 	case TypeCodeString:
 		s, err := unquoteString(hack.String(bj.GetString()))
 		if err != nil {
-			return "", errors.Trace(err)
+			return "", errors.WithStack(err)
 		}
 		// Remove prefix and suffix '"'.
 		slen := len(s)
@@ -107,7 +107,7 @@ func unquoteString(s string) (string, error) {
 				}
 				char, size, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
 				if err != nil {
-					return "", errors.Trace(err)
+					return "", errors.WithStack(err)
 				}
 				ret.Write(char[0:size])
 				i += 5
@@ -129,12 +129,12 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 	size, err = hex.Decode(char[0:2], s)
 	if err != nil || size != 2 {
 		// The unicode must can be represented in 2 bytes.
-		return char, 0, errors.Trace(err)
+		return char, 0, errors.WithStack(err)
 	}
 	var unicode uint16
 	err = binary.Read(bytes.NewReader(char[0:2]), binary.BigEndian, &unicode)
 	if err != nil {
-		return char, 0, errors.Trace(err)
+		return char, 0, errors.WithStack(err)
 	}
 	size = utf8.RuneLen(rune(unicode))
 	utf8.EncodeRune(char[0:size], rune(unicode))

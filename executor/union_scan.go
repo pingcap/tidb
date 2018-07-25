@@ -16,12 +16,12 @@ package executor
 import (
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -117,7 +117,7 @@ type UnionScanExec struct {
 // Open implements the Executor Open interface.
 func (us *UnionScanExec) Open(ctx context.Context) error {
 	if err := us.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	us.snapshotChunkBuffer = us.newChunk()
 	return nil
@@ -130,7 +130,7 @@ func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	for i, batchSize := 0, us.ctx.GetSessionVars().MaxChunkSize; i < batchSize; i++ {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		// no more data.
 		if row == nil {
@@ -147,7 +147,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) (types.DatumRow, error) 
 	for {
 		snapshotRow, err := us.getSnapshotRow(ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		addedRow := us.getAddedRow()
 		var row types.DatumRow
@@ -160,7 +160,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) (types.DatumRow, error) 
 		} else {
 			isSnapshotRow, err = us.shouldPickFirstRow(snapshotRow, addedRow)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			if isSnapshotRow {
 				row = snapshotRow
@@ -194,7 +194,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (types.DatumRow, er
 	for len(us.snapshotRows) == 0 {
 		err = us.children[0].Next(ctx, us.snapshotChunkBuffer)
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -227,7 +227,7 @@ func (us *UnionScanExec) shouldPickFirstRow(a, b types.DatumRow) (bool, error) {
 	var isFirstRow bool
 	addedCmpSrc, err := us.compare(a, b)
 	if err != nil {
-		return isFirstRow, errors.Trace(err)
+		return isFirstRow, errors.WithStack(err)
 	}
 	// Compare result will never be 0.
 	if us.desc {
@@ -249,7 +249,7 @@ func (us *UnionScanExec) compare(a, b types.DatumRow) (int, error) {
 		bColumn := b[colOff]
 		cmp, err := aColumn.CompareDatum(sc, &bColumn)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 		if cmp != 0 {
 			return cmp, nil
@@ -281,7 +281,7 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 		}
 		matched, err := expression.EvalBool(us.ctx, us.conditions, newData)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if !matched {
 			continue
@@ -294,7 +294,7 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 		sort.Sort(us)
 	}
 	if us.sortErr != nil {
-		return errors.Trace(us.sortErr)
+		return errors.WithStack(us.sortErr)
 	}
 	return nil
 }
@@ -308,7 +308,7 @@ func (us *UnionScanExec) Len() int {
 func (us *UnionScanExec) Less(i, j int) bool {
 	cmp, err := us.compare(us.addedRows[i], us.addedRows[j])
 	if err != nil {
-		us.sortErr = errors.Trace(err)
+		us.sortErr = errors.WithStack(err)
 		return true
 	}
 	return cmp < 0

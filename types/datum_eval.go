@@ -15,8 +15,8 @@ package types
 
 import (
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pkg/errors"
 )
 
 // ComputePlus computes the result of a+b.
@@ -27,22 +27,22 @@ func ComputePlus(a, b Datum) (d Datum, err error) {
 		case KindInt64:
 			r, err1 := AddInt64(a.GetInt64(), b.GetInt64())
 			d.SetInt64(r)
-			return d, errors.Trace(err1)
+			return d, errors.WithStack(err1)
 		case KindUint64:
 			r, err1 := AddInteger(b.GetUint64(), a.GetInt64())
 			d.SetUint64(r)
-			return d, errors.Trace(err1)
+			return d, errors.WithStack(err1)
 		}
 	case KindUint64:
 		switch b.Kind() {
 		case KindInt64:
 			r, err1 := AddInteger(a.GetUint64(), b.GetInt64())
 			d.SetUint64(r)
-			return d, errors.Trace(err1)
+			return d, errors.WithStack(err1)
 		case KindUint64:
 			r, err1 := AddUint64(a.GetUint64(), b.GetUint64())
 			d.SetUint64(r)
-			return d, errors.Trace(err1)
+			return d, errors.WithStack(err1)
 		}
 	case KindFloat64:
 		switch b.Kind() {

@@ -17,7 +17,6 @@ import (
 	goJSON "encoding/json"
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pkg/errors"
 )
 
 // These are byte flags used for `HashCode()`.
@@ -116,7 +116,7 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row types.Row) (bool, e
 	for _, expr := range exprList {
 		data, err := expr.Eval(row)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, errors.WithStack(err)
 		}
 		if data.IsNull() {
 			return false, nil
@@ -124,7 +124,7 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row types.Row) (bool, e
 
 		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, errors.WithStack(err)
 		}
 		if i == 0 {
 			return false, nil
@@ -323,7 +323,7 @@ func ColumnInfos2ColumnsWithDBName(dbName, tblName model.CIStr, colInfos []*mode
 func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
 	bt, err := fc.getFunction(ctx, nil)
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	return &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,

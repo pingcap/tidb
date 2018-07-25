@@ -19,13 +19,13 @@ import (
 	"math"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -108,7 +108,7 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 	key = key[tablePrefixLength:]
 	key, tableID, err = codec.DecodeInt(key)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, 0, errors.WithStack(err)
 	}
 
 	if !hasRecordPrefixSep(key) {
@@ -118,7 +118,7 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 	key = key[recordPrefixSepLength:]
 	key, handle, err = codec.DecodeInt(key)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return 0, 0, errors.WithStack(err)
 	}
 	return
 }
@@ -129,7 +129,7 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 
 	tableID, indexID, isRecord, err := DecodeKeyHead(key)
 	if err != nil {
-		return 0, 0, nil, errors.Trace(err)
+		return 0, 0, nil, errors.WithStack(err)
 	}
 	if isRecord {
 		return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q", k)
@@ -165,7 +165,7 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 	key = key[len(tablePrefix):]
 	key, tableID, err = codec.DecodeInt(key)
 	if err != nil {
-		err = errors.Trace(err)
+		err = errors.WithStack(err)
 		return
 	}
 
@@ -182,7 +182,7 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 
 	key, indexID, err = codec.DecodeInt(key)
 	if err != nil {
-		err = errors.Trace(err)
+		err = errors.WithStack(err)
 		return
 	}
 	return
@@ -196,7 +196,7 @@ func DecodeTableID(key kv.Key) int64 {
 	key = key[len(tablePrefix):]
 	_, tableID, err := codec.DecodeInt(key)
 	// TODO: return error.
-	terror.Log(errors.Trace(err))
+	terror.Log(errors.WithStack(err))
 	return tableID
 }
 
@@ -205,7 +205,7 @@ func DecodeRowKey(key kv.Key) (int64, error) {
 	_, handle, err := DecodeRecordKey(key)
 	// errors.Trace can't be inlined by compiler, let's check error explicitly
 	if err != nil {
-		return handle, errors.Trace(err)
+		return handle, errors.WithStack(err)
 	}
 	return handle, nil
 }
@@ -215,10 +215,10 @@ func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) 
 	var v types.Datum
 	err := flatten(sc, raw, &v)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	b, err := codec.EncodeValue(sc, nil, v)
-	return b, errors.Trace(err)
+	return b, errors.WithStack(err)
 }
 
 // EncodeRow encode row data and column ids into a slice of byte.
@@ -238,7 +238,7 @@ func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, 
 		values[2*i].SetInt64(id)
 		err := flatten(sc, c, &values[2*i+1])
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	if len(values) == 0 {
@@ -256,12 +256,12 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 		if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
 			err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 		v, err := t.ToPackedUint()
 		ret.SetUint64(v)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	case types.KindMysqlDuration:
 		// for mysql time type
 		ret.SetInt64(int64(data.GetMysqlDuration().Duration))
@@ -276,7 +276,7 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		val, err := data.GetBinaryLiteral().ToInt(sc)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		ret.SetUint64(val)
 		return nil
@@ -290,11 +290,11 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
 	_, d, err := codec.DecodeOne(data)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return types.Datum{}, errors.WithStack(err)
 	}
 	colDatum, err := unflatten(d, ft, loc)
 	if err != nil {
-		return types.Datum{}, errors.Trace(err)
+		return types.Datum{}, errors.WithStack(err)
 	}
 	return colDatum, nil
 }
@@ -320,27 +320,27 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 		// Get col id.
 		data, b, err = codec.CutOne(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		_, cid, err := codec.DecodeOne(data)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		// Get col value.
 		data, b, err = codec.CutOne(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		id := cid.GetInt64()
 		ft, ok := cols[id]
 		if ok {
 			_, v, err := codec.DecodeOne(data)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			v, err = unflatten(v, ft, loc)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			row[id] = v
 			cnt++
@@ -379,16 +379,16 @@ func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 		// Get col id.
 		b, data, err = codec.CutOne(data)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		_, cid, err := codec.DecodeOne(b)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		// Get col value.
 		b, data, err = codec.CutOne(data)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		id := cid.GetInt64()
 		offset, ok := colIDs[id]
@@ -406,7 +406,7 @@ func UnflattenDatums(datums []types.Datum, fts []*types.FieldType, loc *time.Loc
 		ft := fts[i]
 		uDatum, err := unflatten(datum, ft, loc)
 		if err != nil {
-			return datums, errors.Trace(err)
+			return datums, errors.WithStack(err)
 		}
 		datums[i] = uDatum
 	}
@@ -434,12 +434,12 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		var err error
 		err = t.FromPackedUint(datum.GetUint64())
 		if err != nil {
-			return datum, errors.Trace(err)
+			return datum, errors.WithStack(err)
 		}
 		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
 			err = t.ConvertTimeZone(time.UTC, loc)
 			if err != nil {
-				return datum, errors.Trace(err)
+				return datum, errors.WithStack(err)
 			}
 		}
 		datum.SetMysqlTime(t)
@@ -459,7 +459,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 	case mysql.TypeSet:
 		set, err := types.ParseSetValue(ft.Elems, datum.GetUint64())
 		if err != nil {
-			return datum, errors.Trace(err)
+			return datum, errors.WithStack(err)
 		}
 		datum.SetValue(set)
 		return datum, nil
@@ -490,7 +490,7 @@ func CutIndexKey(key kv.Key, colIDs []int64) (values map[int64][]byte, b []byte,
 		var val []byte
 		val, b, err = codec.CutOne(b)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		values[id] = val
 	}
@@ -512,7 +512,7 @@ func CutIndexKeyNew(key kv.Key, length int) (values [][]byte, b []byte, err erro
 		var val []byte
 		val, b, err = codec.CutOne(b)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		values = append(values, val)
 	}

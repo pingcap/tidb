@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -556,7 +556,7 @@ func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err err
 		var value string
 		value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		row := types.MakeDatums(v.Name, value)
 		records = append(records, row)
@@ -640,7 +640,7 @@ func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
 func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, "select table_id, count from mysql.stats_meta")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	rowCountMap := make(map[int64]uint64, len(rows))
 	for _, row := range rows {
@@ -664,11 +664,11 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 		is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
 		tbl, err := is.TableByName(schema.Name, tblInfo.Name)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 		autoIncID, err = tbl.Allocator(ctx).NextGlobalAutoID(tblInfo.ID)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 	}
 	return autoIncID, nil
@@ -677,7 +677,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
 	tableRowsMap, err := getRowCountAllTable(ctx)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	checker := privilege.GetPrivilegeManager(ctx)
@@ -701,7 +701,7 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 
 			autoIncID, err := getAutoIncrementID(ctx, schema, table)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			record := types.MakeDatums(
 				catalogVal,             // TABLE_CATALOG
@@ -1167,7 +1167,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 		fullRows = dataForCollationCharacterSetApplicability()
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if len(cols) == len(it.cols) {
 		return
@@ -1190,12 +1190,12 @@ func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 	}
 	rows, err := it.getRows(ctx, cols)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	for i, row := range rows {
 		more, err := fn(int64(i), row, cols)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if !more {
 			break

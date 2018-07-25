@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 func TestT(t *testing.T) {
@@ -60,10 +60,10 @@ func newDomainStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, errors.WithStack(err)
 	}
 	dom, err := session.BootstrapSession(store)
-	return dom, store, errors.Trace(err)
+	return dom, store, errors.WithStack(err)
 }
 
 func (s *testRangerSuite) TestTableRange(c *C) {

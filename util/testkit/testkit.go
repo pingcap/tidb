@@ -18,12 +18,12 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -131,19 +131,19 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (ast.RecordSet, error) 
 		if err == nil && len(rss) > 0 {
 			return rss[0], nil
 		}
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	stmtID, _, _, err := tk.Se.PrepareStmt(sql)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	rs, err := tk.Se.ExecutePreparedStmt(ctx, stmtID, args...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	err = tk.Se.DropPreparedStmt(stmtID)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return rs, nil
 }
@@ -157,7 +157,7 @@ func (tk *TestKit) CheckExecResult(affectedRows, insertID int64) {
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 	res, err := tk.Exec(sql, args...)
-	tk.c.Assert(err, check.IsNil, check.Commentf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err)))
+	tk.c.Assert(err, check.IsNil, check.Commentf("sql:%s, %v, error stack %v", sql, args, fmt.Sprintf("%+v", err)))
 	if res != nil {
 		tk.c.Assert(res.Close(), check.IsNil)
 	}
@@ -168,7 +168,7 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 	comment := check.Commentf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(sql, args...)
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(fmt.Sprintf("%+v", err), check.Equals, "<nil>", comment)
 	tk.c.Assert(rs, check.NotNil, comment)
 	return tk.ResultSetToResult(rs, comment)
 }
@@ -177,9 +177,9 @@ func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
 // It is used to check results of execute statement in binary mode.
 func (tk *TestKit) ResultSetToResult(rs ast.RecordSet, comment check.CommentInterface) *Result {
 	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(fmt.Sprintf("%+v", err), check.Equals, "<nil>", comment)
 	err = rs.Close()
-	tk.c.Assert(errors.ErrorStack(err), check.Equals, "", comment)
+	tk.c.Assert(fmt.Sprintf("%+v", err), check.Equals, "<nil>", comment)
 	sRows := make([][]string, len(rows))
 	for i := range rows {
 		row := rows[i]

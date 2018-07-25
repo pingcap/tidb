@@ -19,12 +19,12 @@ import (
 	"strconv"
 	"unicode"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -103,7 +103,7 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 	yyParse(l, parser)
 
 	if len(l.Errors()) != 0 {
-		return nil, errors.Trace(l.Errors()[0])
+		return nil, errors.WithStack(l.Errors()[0])
 	}
 	for _, stmt := range parser.result {
 		ast.SetFlag(stmt)
@@ -116,7 +116,7 @@ func (parser *Parser) Parse(sql, charset, collation string) ([]ast.StmtNode, err
 func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode, error) {
 	stmts, err := parser.Parse(sql, charset, collation)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if len(stmts) != 1 {
 		return nil, ErrSyntax

@@ -17,9 +17,9 @@ import (
 	"bytes"
 	"context"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pkg/errors"
 )
 
 // DeleteRangeTask is used to delete all keys in a range. After
@@ -60,7 +60,7 @@ func (t *DeleteRangeTask) Execute() error {
 		bo := NewBackoffer(t.ctx, deleteRangeOneRegionMaxBackoff)
 		loc, err := t.store.GetRegionCache().LocateKey(bo, startKey)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		// Delete to the end of the region, except if it's the last region overlapping the range
@@ -80,22 +80,22 @@ func (t *DeleteRangeTask) Execute() error {
 
 		resp, err := t.store.SendReq(bo, req, loc.Region, ReadTimeoutMedium)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if regionErr != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			continue
 		}
 		deleteRangeResp := resp.DeleteRange
 		if deleteRangeResp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return errors.WithStack(ErrBodyMissing)
 		}
 		if err := deleteRangeResp.GetError(); err != "" {
 			return errors.Errorf("unexpected delete range err: %v", err)

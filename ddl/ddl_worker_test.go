@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -288,12 +289,12 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 		} else {
 			errs, err := admin.CancelJobs(txn, test.jobIDs)
 			if err != nil {
-				checkErr = errors.Trace(err)
+				checkErr = errors.WithStack(err)
 				return checkErr
 			}
 			// It only tests cancel one DDL job.
 			if errs[0] != test.cancelRetErrs[0] {
-				checkErr = errors.Trace(errs[0])
+				checkErr = errors.WithStack(errs[0])
 				return checkErr
 			}
 		}
@@ -367,13 +368,13 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 		var err error
 		err = hookCtx.NewTxn()
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = errors.WithStack(err)
 			return
 		}
 		checkCancelState(hookCtx.Txn(), job, test)
 		err = hookCtx.Txn().Commit(context.Background())
 		if err != nil {
-			checkErr = errors.Trace(err)
+			checkErr = errors.WithStack(err)
 			return
 		}
 	}
@@ -387,34 +388,34 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 			Length: -1,
 		}}, nil}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &test.cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 	test = &tests[1]
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &test.cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 	test = &tests[2]
 	// When the job satisfies this test case, the option will be rollback, so the job's schema state is none.
 	cancelState := model.StateNone
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, validArgs, &cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 	test = &tests[3]
 	testCreateIndex(c, ctx, d, dbInfo, tblInfo, false, "idx", "c2")
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 	c.Assert(ctx.Txn().Commit(context.Background()), IsNil)
 
 	// for dropping index
 	idxName := []interface{}{model.NewCIStr("idx")}
 	test = &tests[4]
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, idxName, &test.cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 	test = &tests[5]
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, idxName, &test.cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 	test = &tests[6]
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, idxName, &test.cancelState)
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 	test = &tests[7]
 	testDropIndex(c, ctx, d, dbInfo, tblInfo, "idx")
-	c.Check(errors.ErrorStack(checkErr), Equals, "")
+	c.Check(fmt.Sprintf("%+v", checkErr), Equals, "<nil>")
 
 	// for creating table
 	test = &tests[8]

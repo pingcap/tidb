@@ -14,11 +14,11 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -100,7 +100,7 @@ func (t *mergeJoinInnerTable) init(ctx context.Context, chk4Reader *chunk.Chunk)
 	for i := range t.joinKeys {
 		t.compareFuncs = append(t.compareFuncs, chunk.GetCompareFunc(t.joinKeys[i].RetType))
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
@@ -118,7 +118,7 @@ func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
 		// error happens or no more data.
 		if err != nil || selectedRow == t.curIter.End() {
 			t.firstRow4Key = t.curIter.End()
-			return t.sameKeyRows, errors.Trace(err)
+			return t.sameKeyRows, errors.WithStack(err)
 		}
 		compareResult := compareChunkRow(t.compareFuncs, selectedRow, t.firstRow4Key, t.joinKeys, t.joinKeys)
 		if compareResult == 0 {
@@ -138,7 +138,7 @@ func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
 		// error happens or no more data.
 		if err != nil || t.curResult.NumRows() == 0 {
 			t.curRow = t.curIter.End()
-			return t.curRow, errors.Trace(err)
+			return t.curRow, errors.WithStack(err)
 		}
 		newMemUsage := t.curResult.MemoryUsage()
 		t.memTracker.Consume(newMemUsage - oldMemUsage)
@@ -182,13 +182,13 @@ func (e *MergeJoinExec) Close() error {
 	e.childrenResults = nil
 	e.memTracker = nil
 
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.WithStack(e.baseExecutor.Close())
 }
 
 // Open implements the Executor Open interface.
 func (e *MergeJoinExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	e.prepared = false
@@ -219,12 +219,12 @@ func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhs
 func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 	err := e.innerTable.init(ctx, e.childrenResults[e.outerIdx^1])
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	err = e.fetchNextInnerRows()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// init outer table.
@@ -234,7 +234,7 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 
 	err = e.fetchNextOuterRows(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	e.compareFuncs = e.innerTable.compareFuncs
@@ -247,14 +247,14 @@ func (e *MergeJoinExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.prepared {
 		if err := e.prepare(ctx, chk); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 
 	for chk.NumRows() < e.maxChunkSize {
 		hasMore, err := e.joinToChunk(ctx, chk)
 		if err != nil || !hasMore {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -265,7 +265,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 		if e.outerTable.row == e.outerTable.iter.End() {
 			err = e.fetchNextOuterRows(ctx)
 			if err != nil || e.outerTable.chk.NumRows() == 0 {
-				return false, errors.Trace(err)
+				return false, errors.WithStack(err)
 			}
 		}
 
@@ -276,7 +276,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 
 		if cmpResult > 0 {
 			if err = e.fetchNextInnerRows(); err != nil {
-				return false, errors.Trace(err)
+				return false, errors.WithStack(err)
 			}
 			continue
 		}
@@ -284,7 +284,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 		if cmpResult < 0 {
 			err = e.resultGenerator.emit(e.outerTable.row, nil, chk)
 			if err != nil {
-				return false, errors.Trace(err)
+				return false, errors.WithStack(err)
 			}
 
 			e.outerTable.row = e.outerTable.iter.Next()
@@ -297,7 +297,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 
 		err = e.resultGenerator.emit(e.outerTable.row, e.innerIter4Row, chk)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, errors.WithStack(err)
 		}
 
 		if e.innerIter4Row.Current() == e.innerIter4Row.End() {
@@ -306,7 +306,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 		}
 
 		if chk.NumRows() >= e.maxChunkSize {
-			return true, errors.Trace(err)
+			return true, errors.WithStack(err)
 		}
 	}
 }
@@ -316,7 +316,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 	e.innerRows, err = e.innerTable.rowsWithSameKey()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.innerIter4Row = chunk.NewIterator4Slice(e.innerRows)
 	e.innerIter4Row.Begin()
@@ -329,13 +329,13 @@ func (e *MergeJoinExec) fetchNextInnerRows() (err error) {
 func (e *MergeJoinExec) fetchNextOuterRows(ctx context.Context) (err error) {
 	err = e.outerTable.reader.Next(ctx, e.outerTable.chk)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	e.outerTable.iter.Begin()
 	e.outerTable.selected, err = expression.VectorizedFilter(e.ctx, e.outerTable.filter, e.outerTable.iter, e.outerTable.selected)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.outerTable.row = e.outerTable.iter.Begin()
 	return nil

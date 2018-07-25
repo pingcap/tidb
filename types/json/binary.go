@@ -25,9 +25,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 /*
@@ -250,7 +250,7 @@ func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
 		var err error
 		buf, err = bj.arrayGetElem(i).marshalTo(buf)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	return append(buf, ']'), nil
@@ -268,7 +268,7 @@ func (bj BinaryJSON) marshalObjTo(buf []byte) ([]byte, error) {
 		var err error
 		buf, err = bj.objectGetVal(i).marshalTo(buf)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	return append(buf, '}'), nil
@@ -357,7 +357,7 @@ func (bj BinaryJSON) marshalValueEntryTo(buf []byte, entryOff int) ([]byte, erro
 		var err error
 		buf, err = tmp.marshalTo(buf)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	return buf, nil
@@ -394,13 +394,13 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 	var in interface{}
 	err := decoder.Decode(&in)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	buf := make([]byte, 0, len(data))
 	var typeCode TypeCode
 	typeCode, buf, err = appendBinary(buf, in)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	bj.TypeCode = typeCode
 	bj.Value = buf
@@ -442,7 +442,7 @@ func appendBinary(buf []byte, in interface{}) (TypeCode, []byte, error) {
 	case json.Number:
 		typeCode, buf, err = appendBinaryNumber(buf, x)
 		if err != nil {
-			return typeCode, nil, errors.Trace(err)
+			return typeCode, nil, errors.WithStack(err)
 		}
 	case string:
 		typeCode = TypeCodeString
@@ -454,13 +454,13 @@ func appendBinary(buf []byte, in interface{}) (TypeCode, []byte, error) {
 		typeCode = TypeCodeArray
 		buf, err = appendBinaryArray(buf, x)
 		if err != nil {
-			return typeCode, nil, errors.Trace(err)
+			return typeCode, nil, errors.WithStack(err)
 		}
 	case map[string]interface{}:
 		typeCode = TypeCodeObject
 		buf, err = appendBinaryObject(buf, x)
 		if err != nil {
-			return typeCode, nil, errors.Trace(err)
+			return typeCode, nil, errors.WithStack(err)
 		}
 	default:
 		msg := fmt.Sprintf(unknownTypeErrorMsg, reflect.TypeOf(in))
@@ -494,7 +494,7 @@ func appendBinaryNumber(buf []byte, x json.Number) (TypeCode, []byte, error) {
 		typeCode = TypeCodeFloat64
 		f64, err := x.Float64()
 		if err != nil {
-			return typeCode, nil, errors.Trace(err)
+			return typeCode, nil, errors.WithStack(err)
 		}
 		buf = appendBinaryFloat64(buf, f64)
 	} else {
@@ -504,7 +504,7 @@ func appendBinaryNumber(buf []byte, x json.Number) (TypeCode, []byte, error) {
 			typeCode = TypeCodeFloat64
 			f64, err := x.Float64()
 			if err != nil {
-				return typeCode, nil, errors.Trace(err)
+				return typeCode, nil, errors.WithStack(err)
 			}
 			buf = appendBinaryFloat64(buf, f64)
 		} else {
@@ -547,7 +547,7 @@ func appendBinaryArray(buf []byte, array []interface{}) ([]byte, error) {
 		var err error
 		buf, err = appendBinaryValElem(buf, docOff, valEntryBegin+i*valEntrySize, val)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	docSize := len(buf) - docOff
@@ -561,7 +561,7 @@ func appendBinaryValElem(buf []byte, docOff, valEntryOff int, val interface{}) (
 	elemDocOff := len(buf)
 	typeCode, buf, err = appendBinary(buf, val)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	switch typeCode {
 	case TypeCodeLiteral:
@@ -610,7 +610,7 @@ func appendBinaryObject(buf []byte, x map[string]interface{}) ([]byte, error) {
 		var err error
 		buf, err = appendBinaryValElem(buf, docOff, valEntryBegin+i*valEntrySize, field.val)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	docSize := len(buf) - docOff

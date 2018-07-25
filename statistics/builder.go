@@ -14,10 +14,10 @@
 package statistics
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -56,7 +56,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 	}
 	cmp, err := b.hist.GetUpper(int(b.bucketIdx)).CompareDatum(b.sc, &data)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if cmp == 0 {
 		// The new item has the same value as current bucket value, to ensure that
@@ -103,7 +103,7 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	samples := collector.Samples
 	err := types.SortDatums(sc, samples)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	ndv := collector.FMSketch.NDV()
 	if ndv > count {
@@ -128,7 +128,7 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	for i := int64(1); i < sampleNum; i++ {
 		cmp, err := hg.GetUpper(bucketIdx).CompareDatum(sc, &samples[i])
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		totalCount := float64(i+1) * sampleFactor
 		if cmp == 0 {

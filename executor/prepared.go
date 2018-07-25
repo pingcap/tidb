@@ -18,7 +18,6 @@ import (
 	"sort"
 
 	"fmt"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -115,7 +115,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		stmts, err = parser.New().Parse(e.sqlText, charset, collation)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if len(stmts) != 1 {
 		return ErrPrepareMulti
@@ -128,7 +128,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	stmt.Accept(&extractor)
 	err = plan.Preprocess(e.ctx, stmt, e.is, true)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// The parameter markers are appended in visiting order, which may not
@@ -154,7 +154,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	var p plan.Plan
 	p, err = plan.BuildLogicalPlan(e.ctx, stmt, e.is)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if _, ok := stmt.(*ast.SelectStmt); ok {
 		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
@@ -199,12 +199,12 @@ func (e *ExecuteExec) Build() error {
 		err = e.ctx.ActivePendingTxn()
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	b := newExecutorBuilder(e.ctx, e.is)
 	stmtExec := b.build(e.plan)
 	if b.err != nil {
-		return errors.Trace(b.err)
+		return errors.WithStack(b.err)
 	}
 	e.stmtExec = stmtExec
 	if err = ResetStmtCtx(e.ctx, e.stmt); err != nil {
@@ -227,7 +227,7 @@ func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return errors.Trace(plan.ErrStmtNotFound)
+		return errors.WithStack(plan.ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	delete(vars.PreparedStmts, id)
@@ -244,7 +244,7 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 	is := GetInfoSchema(ctx)
 	execPlan, err := plan.Optimize(ctx, execStmt, is)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	stmt := &ExecStmt{
@@ -345,11 +345,11 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sessVars.ResetPrevAffectedRows()
 	err = sessVars.SetSystemVar("warning_count", fmt.Sprintf("%d", sessVars.StmtCtx.NumWarnings(false)))
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	err = sessVars.SetSystemVar("error_count", fmt.Sprintf("%d", sessVars.StmtCtx.NumWarnings(true)))
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	sessVars.InsertID = 0
 	sessVars.StmtCtx = sc

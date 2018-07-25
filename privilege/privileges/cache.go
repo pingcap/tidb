@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -113,13 +113,13 @@ type MySQLPrivilege struct {
 func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err := p.LoadUserTable(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	err = p.LoadDBTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		log.Warn("mysql.db maybe missing")
 	}
@@ -127,7 +127,7 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err = p.LoadTablesPrivTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		log.Warn("mysql.tables_priv missing")
 	}
@@ -135,7 +135,7 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err = p.LoadColumnsPrivTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		log.Warn("mysql.columns_priv missing")
 	}
@@ -177,7 +177,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	ctx := context.Background()
 	tmp, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	rs := tmp[0]
 	defer terror.Call(rs.Close)
@@ -190,7 +190,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 		chk := rs.NewChunk()
 		err = rs.Next(context.TODO(), chk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			return nil
@@ -199,7 +199,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			err = decodeTableRow(row, fs)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -300,7 +300,7 @@ func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row types.Row, fs []*ast.Resu
 			var err error
 			value.Timestamp, err = row.GetTime(i).Time.GoTime(time.Local)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		case f.ColumnAsName.L == "column_priv":
 			value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
@@ -603,7 +603,7 @@ func (h *Handle) Update(ctx sessionctx.Context) error {
 	var priv MySQLPrivilege
 	err := priv.LoadAll(ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	h.priv.Store(&priv)

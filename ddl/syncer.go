@@ -22,9 +22,9 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -108,7 +108,7 @@ func (s *schemaVersionSyncer) putKV(ctx context.Context, retryCnt int, key, val 
 	var err error
 	for i := 0; i < retryCnt; i++ {
 		if isContextDone(ctx) {
-			return errors.Trace(ctx.Err())
+			return errors.WithStack(ctx.Err())
 		}
 
 		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
@@ -120,7 +120,7 @@ func (s *schemaVersionSyncer) putKV(ctx context.Context, retryCnt int, key, val 
 		log.Warnf("[syncer] put schema version %s failed %v no.%d", val, err, i)
 		time.Sleep(keyOpRetryInterval)
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // Init implements SchemaSyncer.Init interface.
@@ -136,12 +136,12 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 		Then(clientv3.OpPut(DDLGlobalSchemaVersion, InitialVersion)).
 		Commit()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	logPrefix := fmt.Sprintf("[%s] %s", ddlPrompt, s.selfSchemaVerPath)
 	s.session, err = owner.NewSession(ctx, logPrefix, s.etcdCli, owner.NewSessionDefaultRetryCnt, SyncerSessionTTL)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	s.mu.Lock()
@@ -150,7 +150,7 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 
 	err = s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.session.Lease()))
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // Done implements SchemaSyncer.Done interface.
@@ -170,7 +170,7 @@ func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
 	// NewSession's context will affect the exit of the session.
 	session, err := owner.NewSession(ctx, logPrefix, s.etcdCli, owner.NewSessionRetryUnlimited, SyncerSessionTTL)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	s.session = session
 
@@ -179,7 +179,7 @@ func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
 	err = s.putKV(childCtx, putKeyRetryUnlimited, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.session.Lease()))
 
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // GlobalVersionCh implements SchemaSyncer.GlobalVersionCh interface.
@@ -218,7 +218,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, version int
 		clientv3.WithLease(s.session.Lease()))
 
 	metrics.UpdateSelfVersionHistogram.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.
@@ -228,7 +228,7 @@ func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx context.Context, vers
 	err := s.putKV(ctx, putKeyRetryUnlimited, DDLGlobalSchemaVersion, ver)
 
 	metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerUpdateGlobalVersion, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // RemoveSelfVersionPath implements SchemaSyncer.RemoveSelfVersionPath interface.
@@ -249,7 +249,7 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 		}
 		log.Warnf("[syncer] remove schema version path %s failed %v no.%d", s.selfSchemaVerPath, err, i)
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
@@ -273,7 +273,7 @@ func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx context.Context) (int64, 
 		}
 
 		if isContextDone(ctx) {
-			err = errors.Trace(ctx.Err())
+			err = errors.WithStack(ctx.Err())
 			return 0, err
 		}
 
@@ -315,7 +315,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 	for {
 		if isContextDone(ctx) {
 			// ctx is canceled or timeout.
-			err = errors.Trace(ctx.Err())
+			err = errors.WithStack(ctx.Err())
 			return err
 		}
 

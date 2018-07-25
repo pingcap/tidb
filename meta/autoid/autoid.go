@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -88,10 +88,10 @@ func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 		var err1 error
 		m := meta.NewMeta(txn)
 		autoID, err1 = m.GetAutoTableID(alloc.dbID, tableID)
-		return errors.Trace(err1)
+		return errors.WithStack(err1)
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.GlobalAutoID, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return autoID + 1, errors.Trace(err)
+	return autoID + 1, errors.WithStack(err)
 }
 
 // Rebase implements autoid.Allocator Rebase interface.
@@ -119,7 +119,7 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 		m := meta.NewMeta(txn)
 		currentEnd, err1 := m.GetAutoTableID(alloc.dbID, tableID)
 		if err1 != nil {
-			return errors.Trace(err1)
+			return errors.WithStack(err1)
 		}
 		if allocIDs {
 			newBase = mathutil.MaxInt64(currentEnd, requiredBase)
@@ -138,11 +138,11 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 			newEnd = requiredBase
 		}
 		_, err1 = m.GenAutoTableID(alloc.dbID, tableID, newEnd-currentEnd)
-		return errors.Trace(err1)
+		return errors.WithStack(err1)
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDRebase, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	alloc.base, alloc.end = newBase, newEnd
 	return nil
@@ -163,17 +163,17 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 			var err1 error
 			newBase, err1 = m.GetAutoTableID(alloc.dbID, tableID)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return errors.WithStack(err1)
 			}
 			newEnd, err1 = m.GenAutoTableID(alloc.dbID, tableID, step)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return errors.WithStack(err1)
 			}
 			return nil
 		})
 		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.WithStack(err)
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}

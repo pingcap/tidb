@@ -21,10 +21,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 // SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
@@ -48,11 +48,11 @@ func GetSessionSystemVar(s *SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	gVal, ok, err := GetSessionOnlySysVars(s, key)
 	if err != nil || ok {
-		return gVal, errors.Trace(err)
+		return gVal, errors.WithStack(err)
 	}
 	gVal, err = s.GlobalVarsAccessor.GetGlobalSysVar(key)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", errors.WithStack(err)
 	}
 	s.systems[key] = gVal
 	return gVal, nil
@@ -75,7 +75,7 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		conf := config.GetGlobalConfig()
 		j, err := json.MarshalIndent(conf, "", "\t")
 		if err != nil {
-			return "", false, errors.Trace(err)
+			return "", false, errors.WithStack(err)
 		}
 		return string(j), true, nil
 	}
@@ -95,11 +95,11 @@ func GetGlobalSystemVar(s *SessionVars, key string) (string, error) {
 	key = strings.ToLower(key)
 	gVal, ok, err := GetScopeNoneSystemVar(key)
 	if err != nil || ok {
-		return gVal, errors.Trace(err)
+		return gVal, errors.WithStack(err)
 	}
 	gVal, err = s.GlobalVarsAccessor.GetGlobalSysVar(key)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", errors.WithStack(err)
 	}
 	return gVal, nil
 }
@@ -134,11 +134,11 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	var err error
 	sVal, err = value.ToString()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	sVal, err = ValidateSetSystemVar(vars, name, sVal)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return vars.SetSystemVar(name, sVal)
 }
@@ -418,13 +418,13 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 
 	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// TODO: Consider time_zone variable.
 	t1, err := t.Time.GoTime(time.Local)
 	s.SnapshotTS = GoTimeToTS(t1)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // GoTimeToTS converts a Go time to uint64 timestamp.

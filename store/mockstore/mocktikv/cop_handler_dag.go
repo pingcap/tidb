@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -143,7 +143,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	dagReq := new(tipb.DAGRequest)
 	err := proto.Unmarshal(req.Data, dagReq)
 	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.WithStack(err)
 	}
 	sc := flagsToStatementContext(dagReq.Flags)
 
@@ -151,7 +151,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	// consider daylight saving time. If it is not, we can use offset.
 	if dagReq.TimeZoneName != "" {
 		if sc.TimeZone, err = LocCache.getLoc(dagReq.TimeZoneName); err != nil {
-			return nil, nil, nil, errors.Trace(err)
+			return nil, nil, nil, errors.WithStack(err)
 		}
 		dagReq.TimeZoneName = sc.TimeZone.String()
 	} else {
@@ -164,7 +164,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	}
 	e, err := h.buildDAG(ctx, dagReq.Executors)
 	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.WithStack(err)
 	}
 	return ctx, e, dagReq, err
 }
@@ -172,7 +172,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
 	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	return &mockCopStreamClient{
@@ -206,7 +206,7 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
 	}
 
-	return currExec, errors.Trace(err)
+	return currExec, errors.WithStack(err)
 }
 
 func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
@@ -214,7 +214,7 @@ func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (exec
 	for i := 0; i < len(executors); i++ {
 		curr, err := h.buildExec(ctx, executors[i])
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		curr.SetSrcExec(src)
 		src = curr
@@ -227,7 +227,7 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 	ctx.evalCtx.setColumnInfo(columns)
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.TblScan.Desc)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	e := &tableScanExec{
@@ -264,7 +264,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 	}
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	e := &indexScanExec{
@@ -289,12 +289,12 @@ func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*
 	for _, cond := range pbConds {
 		relatedColOffsets, err = extractOffsetsInExpr(cond, ctx.evalCtx.columnInfos, relatedColOffsets)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.fieldTps, pbConds)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	return &selectionExec{
@@ -314,23 +314,23 @@ func (h *rpcHandler) getAggInfo(ctx *dagContext, executor *tipb.Executor) ([]agg
 		var aggExpr aggregation.Aggregation
 		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sc)
 		if err != nil {
-			return nil, nil, nil, errors.Trace(err)
+			return nil, nil, nil, errors.WithStack(err)
 		}
 		aggs = append(aggs, aggExpr)
 		relatedColOffsets, err = extractOffsetsInExpr(expr, ctx.evalCtx.columnInfos, relatedColOffsets)
 		if err != nil {
-			return nil, nil, nil, errors.Trace(err)
+			return nil, nil, nil, errors.WithStack(err)
 		}
 	}
 	for _, item := range executor.Aggregation.GroupBy {
 		relatedColOffsets, err = extractOffsetsInExpr(item, ctx.evalCtx.columnInfos, relatedColOffsets)
 		if err != nil {
-			return nil, nil, nil, errors.Trace(err)
+			return nil, nil, nil, errors.WithStack(err)
 		}
 	}
 	groupBys, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.fieldTps, executor.Aggregation.GetGroupBy())
 	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.WithStack(err)
 	}
 
 	return aggs, groupBys, relatedColOffsets, nil
@@ -339,7 +339,7 @@ func (h *rpcHandler) getAggInfo(ctx *dagContext, executor *tipb.Executor) ([]agg
 func (h *rpcHandler) buildHashAgg(ctx *dagContext, executor *tipb.Executor) (*hashAggExec, error) {
 	aggs, groupBys, relatedColOffsets, err := h.getAggInfo(ctx, executor)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	return &hashAggExec{
@@ -356,7 +356,7 @@ func (h *rpcHandler) buildHashAgg(ctx *dagContext, executor *tipb.Executor) (*ha
 func (h *rpcHandler) buildStreamAgg(ctx *dagContext, executor *tipb.Executor) (*streamAggExec, error) {
 	aggs, groupBys, relatedColOffsets, err := h.getAggInfo(ctx, executor)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	aggCtxs := make([]*aggregation.AggEvaluateContext, 0, len(aggs))
 	for _, agg := range aggs {
@@ -382,7 +382,7 @@ func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 	for i, item := range topN.OrderBy {
 		relatedColOffsets, err = extractOffsetsInExpr(item.Expr, ctx.evalCtx.columnInfos, relatedColOffsets)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		pbConds[i] = item.Expr
 	}
@@ -396,7 +396,7 @@ func (h *rpcHandler) buildTopN(ctx *dagContext, executor *tipb.Executor) (*topNE
 
 	conds, err := convertToExprs(ctx.evalCtx.sc, ctx.evalCtx.fieldTps, pbConds)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	return &topNExec{
@@ -434,7 +434,7 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 	for _, offset := range relatedColOffsets {
 		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.sc.TimeZone)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -565,7 +565,7 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 		row, err := mock.exec.Next(mock.ctx)
 		if err != nil {
 			ran.End, _ = mock.exec.Cursor()
-			return chunk, false, &ran, nil, nil, errors.Trace(err)
+			return chunk, false, &ran, nil, nil, errors.WithStack(err)
 		}
 		if row == nil {
 			finish = true
@@ -711,7 +711,7 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 	if expr.GetTp() == tipb.ExprType_ColumnRef {
 		_, idx, err := codec.DecodeInt(expr.Val)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if !isDuplicated(collector, int(idx)) {
 			collector = append(collector, int(idx))
@@ -722,7 +722,7 @@ func extractOffsetsInExpr(expr *tipb.Expr, columns []*tipb.ColumnInfo, collector
 	for _, child := range expr.Children {
 		collector, err = extractOffsetsInExpr(child, columns, collector)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	return collector, nil

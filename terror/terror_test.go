@@ -18,9 +18,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/juju/errors"
+	"fmt"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 func TestT(t *testing.T) {
@@ -72,10 +73,10 @@ func (s *testTErrorSuite) TestTError(c *C) {
 	c.Assert(sqlErr.Message, Equals, "Duplicate entry '1' for key 'PRIMARY'")
 	c.Assert(sqlErr.Code, Equals, uint16(1062))
 
-	err := errors.Trace(ErrCritical.GenByArgs("test"))
+	err := errors.WithStack(ErrCritical.GenByArgs("test"))
 	c.Assert(ErrCritical.Equal(err), IsTrue)
 
-	err = errors.Trace(ErrCritical)
+	err = errors.WithStack(ErrCritical)
 	c.Assert(ErrCritical.Equal(err), IsTrue)
 }
 
@@ -98,7 +99,7 @@ var predefinedErr = ClassExecutor.New(ErrCode(123), "predefiend error")
 
 func example() error {
 	err := call()
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func call() error {
@@ -108,12 +109,16 @@ func call() error {
 func (s *testTErrorSuite) TestTraceAndLocation(c *C) {
 	defer testleak.AfterTest(c)()
 	err := example()
-	stack := errors.ErrorStack(err)
+	stack := fmt.Sprintf("%+v", err)
 	lines := strings.Split(stack, "\n")
-	c.Assert(len(lines), Equals, 2)
+	c.Assert(len(lines), Equals, 17)
+	var containFile bool
 	for _, v := range lines {
-		c.Assert(strings.Contains(v, "terror_test.go"), IsTrue)
+		if containFile = strings.Contains(v, "terror_test.go"); containFile {
+			break
+		}
 	}
+	c.Assert(containFile, IsTrue)
 }
 
 func (s *testTErrorSuite) TestErrorEqual(c *C) {
@@ -121,10 +126,10 @@ func (s *testTErrorSuite) TestErrorEqual(c *C) {
 	e1 := errors.New("test error")
 	c.Assert(e1, NotNil)
 
-	e2 := errors.Trace(e1)
+	e2 := errors.WithStack(e1)
 	c.Assert(e2, NotNil)
 
-	e3 := errors.Trace(e2)
+	e3 := errors.WithStack(e2)
 	c.Assert(e3, NotNil)
 
 	c.Assert(errors.Cause(e2), Equals, e1)

@@ -16,12 +16,13 @@ package tikv
 import (
 	"time"
 
-	"github.com/juju/errors"
+	"fmt"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -84,7 +85,7 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if ctx == nil {
 			// If the region is not found in cache, it must be out
@@ -99,7 +100,7 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 		s.storeAddr = ctx.Addr
 		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if retry {
 			continue
@@ -107,12 +108,12 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if regionErr != nil {
 			retry, err := s.onRegionError(bo, ctx, regionErr)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			if retry {
 				continue
@@ -124,13 +125,13 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 
 func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, req *tikvrpc.Request, timeout time.Duration) (resp *tikvrpc.Response, retry bool, err error) {
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
-		return nil, false, errors.Trace(e)
+		return nil, false, errors.WithStack(e)
 	}
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
-			return nil, false, errors.Trace(e)
+			return nil, false, errors.WithStack(e)
 		}
 		return nil, true, nil
 	}
@@ -140,17 +141,17 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if grpc.Code(errors.Cause(err)) == codes.Canceled {
 		select {
 		case <-bo.ctx.Done():
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		default:
 			// If we don't cancel, but the error code is Canceled, it must be from grpc remote.
 			// This may happen when tikv is killed and exiting.
 			// Backoff and retry in this case.
-			log.Warn("receive a grpc cancel signal from remote:", errors.ErrorStack(err))
+			log.Warn("receive a grpc cancel signal from remote:", fmt.Sprintf("%+v", err))
 		}
 	}
 
@@ -161,7 +162,7 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
 	err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func regionErrorToLabel(e *errorpb.Error) string {
@@ -198,7 +199,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		}
 
 		if err = bo.Backoff(boType, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
-			return false, errors.Trace(err)
+			return false, errors.WithStack(err)
 		}
 
 		return true, nil
@@ -214,13 +215,13 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 	if staleEpoch := regionErr.GetStaleEpoch(); staleEpoch != nil {
 		log.Debugf("tikv reports `StaleEpoch`, ctx: %v, retry later", ctx)
 		err = s.regionCache.OnRegionStale(ctx, staleEpoch.NewRegions)
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	if regionErr.GetServerIsBusy() != nil {
 		log.Warnf("tikv reports `ServerIsBusy`, reason: %s, ctx: %v, retry later", regionErr.GetServerIsBusy().GetReason(), ctx)
 		err = bo.Backoff(boServerBusy, errors.Errorf("server is busy, ctx: %v", ctx))
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, errors.WithStack(err)
 		}
 		return true, nil
 	}

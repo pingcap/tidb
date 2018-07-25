@@ -17,7 +17,6 @@ import (
 	"math"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
@@ -27,13 +26,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pkg/errors"
 )
 
 // Preprocess resolves table names of the node, and checks some statements validation.
 func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
 	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare, tableAliasInJoin: make([]map[string]interface{}, 0, 0)}
 	node.Accept(&v)
-	return errors.Trace(v.err)
+	return errors.WithStack(v.err)
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -263,7 +263,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
-			p.err = errors.Trace(err)
+			p.err = errors.WithStack(err)
 			return
 		}
 		countPrimaryKey += isPrimary(colDef.Options)
@@ -472,7 +472,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		}
 		desc, err := charset.GetCharsetDesc(cs)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		maxFlen /= desc.Maxlen
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > maxFlen {
@@ -571,7 +571,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
 		currentDB := p.ctx.GetSessionVars().CurrentDB
 		if currentDB == "" {
-			p.err = errors.Trace(ErrNoDB)
+			p.err = errors.WithStack(ErrNoDB)
 			return
 		}
 		tn.Schema = model.NewCIStr(currentDB)
@@ -583,7 +583,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 	table, err := p.is.TableByName(tn.Schema, tn.Name)
 	if err != nil {
-		p.err = errors.Trace(err)
+		p.err = errors.WithStack(err)
 		return
 	}
 	tn.TableInfo = table.Meta()

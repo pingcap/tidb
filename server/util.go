@@ -42,10 +42,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 func parseNullTermString(b []byte) (str []byte, remain []byte) {
@@ -262,7 +262,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte,
 			var err error
 			buffer, err = dumpBinaryDateTime(buffer, row.GetTime(i), nil)
 			if err != nil {
-				return buffer, errors.Trace(err)
+				return buffer, errors.WithStack(err)
 			}
 		case mysql.TypeDuration:
 			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i, 0).Duration)...)

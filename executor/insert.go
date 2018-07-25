@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -39,13 +39,13 @@ type InsertExec struct {
 
 func (e *InsertExec) insertOneRow(row types.DatumRow) (int64, error) {
 	if err := e.checkBatchLimit(); err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
 	h, err := e.Table.AddRecord(e.ctx, row, false)
 	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	if !e.ctx.GetSessionVars().ImportingData {
 		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
@@ -74,17 +74,17 @@ func (e *InsertExec) exec(rows []types.DatumRow) error {
 	if len(e.OnDuplicate) > 0 {
 		err := e.batchUpdateDupRows(rows)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	} else if ignoreErr {
 		err := e.batchCheckAndInsert(rows, e.insertOneRow)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	} else {
 		for _, row := range rows {
 			if _, err := e.insertOneRow(row); err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -118,13 +118,13 @@ func (e *InsertExec) checkBatchLimit() error {
 func (e *InsertExec) batchUpdateDupRows(newRows []types.DatumRow) error {
 	err := e.batchGetInsertKeys(e.ctx, e.Table, newRows)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// Batch get the to-be-updated rows in storage.
 	err = e.initDupOldRowValue(e.ctx, e.Table, newRows)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	for i, r := range e.toBeCheckedRows {
@@ -132,11 +132,11 @@ func (e *InsertExec) batchUpdateDupRows(newRows []types.DatumRow) error {
 			if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
 				handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 				err = e.updateDupRow(r, handle, e.OnDuplicate)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 				continue
 			}
@@ -145,11 +145,11 @@ func (e *InsertExec) batchUpdateDupRows(newRows []types.DatumRow) error {
 			if val, found := e.dupKVs[string(uk.newKV.key)]; found {
 				handle, err := tables.DecodeHandle(val)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 				err = e.updateDupRow(r, handle, e.OnDuplicate)
 				if err != nil {
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 				newRows[i] = nil
 				break
@@ -162,7 +162,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows []types.DatumRow) error {
 		if newRows[i] != nil {
 			newHandle, err := e.insertOneRow(newRows[i])
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			e.fillBackKeys(e.Table, r, newHandle)
 		}
@@ -178,13 +178,13 @@ func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	cols, err := e.getColumns(e.Table.Cols())
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	if len(e.children) > 0 && e.children[0] != nil {
-		return errors.Trace(e.insertRowsFromSelect(ctx, cols, e.exec))
+		return errors.WithStack(e.insertRowsFromSelect(ctx, cols, e.exec))
 	}
-	return errors.Trace(e.insertRows(cols, e.exec))
+	return errors.WithStack(e.insertRows(cols, e.exec))
 }
 
 // Close implements the Executor Close interface.
@@ -208,7 +208,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
 	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// Do update row.
 	updatedRow, handleChanged, newHandle, err := e.doDupRowUpdate(handle, oldRow, row.row, onDuplicate)
@@ -217,7 +217,7 @@ func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate 
 		return nil
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return e.updateDupKeyValues(row, handle, newHandle, handleChanged, updatedRow)
 }
@@ -241,7 +241,7 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow types.DatumRow, newRow 
 	for _, col := range cols {
 		val, err1 := col.Expr.Eval(row4Update)
 		if err1 != nil {
-			return nil, false, 0, errors.Trace(err1)
+			return nil, false, 0, errors.WithStack(err1)
 		}
 		row4Update[col.Col.Index] = val
 		assignFlag[col.Col.Index] = true
@@ -250,11 +250,11 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow types.DatumRow, newRow 
 	newData := row4Update[:len(oldRow)]
 	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
 	if err != nil {
-		return nil, false, 0, errors.Trace(err)
+		return nil, false, 0, errors.WithStack(err)
 	}
 	e.batchInsertRowCount++
 	if err := e.checkBatchLimit(); err != nil {
-		return nil, false, 0, errors.Trace(err)
+		return nil, false, 0, errors.WithStack(err)
 	}
 	if lastInsertID != 0 {
 		e.lastInsertID = lastInsertID
@@ -268,7 +268,7 @@ func (e *InsertExec) updateDupKeyValues(row toBeCheckedRow, oldHandle int64,
 	// There is only one row per update.
 	fillBackKeysInRows, err := e.getKeysNeedCheck(e.ctx, e.Table, []types.DatumRow{updatedRow})
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// Delete old keys and fill back new key-values of the updated row.
 	e.deleteDupKeys(row)

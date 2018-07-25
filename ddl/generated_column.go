@@ -14,9 +14,9 @@
 package ddl
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/table"
+	"github.com/pkg/errors"
 )
 
 // columnGenerationInDDL is a struct for validating generated columns in DDL.
@@ -36,11 +36,11 @@ func verifyColumnGeneration(colName2Generation map[string]columnGenerationInDDL,
 					// A generated column definition can refer to other
 					// generated columns occurring earilier in the table.
 					err := errGeneratedColumnNonPrior.GenByArgs()
-					return errors.Trace(err)
+					return errors.WithStack(err)
 				}
 			} else {
 				err := errBadField.GenByArgs(depCol, "generated column function")
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -148,7 +148,7 @@ func checkModifyGeneratedColumn(originCols []*table.Column, oldCol, newCol *tabl
 			colName = column.Name.L
 		}
 		if err := verifyColumnGeneration(colName2Generation, colName); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil

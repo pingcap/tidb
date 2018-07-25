@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -76,7 +76,7 @@ func (e *baseExecutor) Open(ctx context.Context) error {
 	for _, child := range e.children {
 		err := child.Open(ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -87,7 +87,7 @@ func (e *baseExecutor) Close() error {
 	for _, child := range e.children {
 		err := child.Close()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -235,15 +235,15 @@ type ShowDDLJobQueriesExec struct {
 // Open implements the Executor Open interface.
 func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(), admin.DefNumHistoryJobs)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	e.jobs = append(e.jobs, jobs...)
@@ -276,18 +276,18 @@ func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, chk *chunk.Chunk) erro
 // Open implements the Executor Open interface.
 func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	jobs, err := admin.GetDDLJobs(e.ctx.Txn())
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if e.jobNumber == 0 {
 		e.jobNumber = admin.DefNumHistoryJobs
 	}
 	historyJobs, err := admin.GetHistoryDDLJobs(e.ctx.Txn(), int(e.jobNumber))
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.jobs = append(e.jobs, jobs...)
 	e.jobs = append(e.jobs, historyJobs...)
@@ -354,7 +354,7 @@ type CheckTableExec struct {
 // Open implements the Executor Open interface.
 func (e *CheckTableExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.done = false
 	return nil
@@ -370,7 +370,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	for _, t := range e.tables {
 		tb, err := e.is.TableByName(dbName, t.Name)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 		if tb.Meta().GetPartitionInfo() != nil {
@@ -379,7 +379,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			err = e.doCheckTable(tb)
 		}
 		if err != nil {
-			log.Warnf("%v error:%v", t.Name, errors.ErrorStack(err))
+			log.Warnf("%v error:%v", t.Name, fmt.Sprintf("%+v", err))
 			return errors.Errorf("%v err:%v", t.Name, err)
 		}
 	}
@@ -392,7 +392,7 @@ func (e *CheckTableExec) doCheckPartitionedTable(tbl table.PartitionedTable) err
 		pid := def.ID
 		partition := tbl.GetPartition(pid)
 		if err := e.doCheckTable(partition); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -403,7 +403,7 @@ func (e *CheckTableExec) doCheckTable(tbl table.Table) error {
 		txn := e.ctx.Txn()
 		err := admin.CompareIndexData(e.ctx, txn, tbl, idx)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -426,10 +426,10 @@ type CheckIndexExec struct {
 // Open implements the Executor Open interface.
 func (e *CheckIndexExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if err := e.src.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.done = false
 	return nil
@@ -437,7 +437,7 @@ func (e *CheckIndexExec) Open(ctx context.Context) error {
 
 // Close implements the Executor Close interface.
 func (e *CheckIndexExec) Close() error {
-	return errors.Trace(e.src.Close())
+	return errors.WithStack(e.src.Close())
 }
 
 // Next implements the Executor Next interface.
@@ -449,13 +449,13 @@ func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	chk = e.src.newChunk()
 	for {
 		err := e.src.Next(ctx, chk)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -479,7 +479,7 @@ type SelectLockExec struct {
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
@@ -496,7 +496,7 @@ func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	err := e.children[0].Next(ctx, chk)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// If there's no handle or it's not a `SELECT FOR UPDATE` statement.
 	if len(e.Schema().TblID2Handle) == 0 || e.Lock != ast.SelectLockForUpdate {
@@ -513,7 +513,7 @@ func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			}
 			err = txn.LockKeys(keys...)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -544,7 +544,7 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	for !e.meetFirstBatch {
 		err := e.children[0].Next(ctx, e.childResult)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		batchSize := uint64(e.childResult.NumRows())
 		// no more data.
@@ -568,7 +568,7 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	err := e.children[0].Next(ctx, chk)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	batchSize := uint64(chk.NumRows())
 	// no more data.
@@ -586,7 +586,7 @@ func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 // Open implements the Executor Open interface.
 func (e *LimitExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.childResult = e.children[0].newChunk()
 	e.cursor = 0
@@ -597,7 +597,7 @@ func (e *LimitExec) Open(ctx context.Context) error {
 // Close implements the Executor Close interface.
 func (e *LimitExec) Close() error {
 	e.childResult = nil
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.WithStack(e.baseExecutor.Close())
 }
 
 func init() {
@@ -607,24 +607,24 @@ func init() {
 	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
 		err = sctx.ActivePendingTxn()
 		if err != nil {
-			return rows, errors.Trace(err)
+			return rows, errors.WithStack(err)
 		}
 		e := &executorBuilder{is: is, ctx: sctx}
 		exec := e.build(p)
 		if e.err != nil {
-			return rows, errors.Trace(err)
+			return rows, errors.WithStack(err)
 		}
 		ctx := context.TODO()
 		err = exec.Open(ctx)
 		defer terror.Call(exec.Close)
 		if err != nil {
-			return rows, errors.Trace(err)
+			return rows, errors.WithStack(err)
 		}
 		for {
 			chk := exec.newChunk()
 			err = exec.Next(ctx, chk)
 			if err != nil {
-				return rows, errors.Trace(err)
+				return rows, errors.WithStack(err)
 			}
 			if chk.NumRows() == 0 {
 				return rows, nil
@@ -685,7 +685,7 @@ type SelectionExec struct {
 // Open implements the Executor Open interface.
 func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.childResult = e.children[0].newChunk()
 	e.batched = expression.Vectorizable(e.filters)
@@ -701,7 +701,7 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 func (e *SelectionExec) Close() error {
 	e.childResult = nil
 	e.selected = nil
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.WithStack(e.baseExecutor.Close())
 }
 
 // Next implements the Executor Next interface.
@@ -709,7 +709,7 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
 	if !e.batched {
-		return errors.Trace(e.unBatchedNext(ctx, chk))
+		return errors.WithStack(e.unBatchedNext(ctx, chk))
 	}
 
 	for {
@@ -724,7 +724,7 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		err := e.children[0].Next(ctx, e.childResult)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		// no more data.
 		if e.childResult.NumRows() == 0 {
@@ -732,7 +732,7 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.inputIter, e.selected)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		e.inputRow = e.inputIter.Begin()
 	}
@@ -746,7 +746,7 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 		for ; e.inputRow != e.inputIter.End(); e.inputRow = e.inputIter.Next() {
 			selected, err := expression.EvalBool(e.ctx, e.filters, e.inputRow)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			if selected {
 				chk.AppendRow(e.inputRow)
@@ -756,7 +756,7 @@ func (e *SelectionExec) unBatchedNext(ctx context.Context, chk *chunk.Chunk) err
 		}
 		err := e.children[0].Next(ctx, e.childResult)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		e.inputRow = e.inputIter.Begin()
 		// no more data.
@@ -783,18 +783,18 @@ type TableScanExec struct {
 func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.isVirtualTable {
-		return errors.Trace(e.nextChunk4InfoSchema(ctx, chk))
+		return errors.WithStack(e.nextChunk4InfoSchema(ctx, chk))
 	}
 	handle, found, err := e.nextHandle()
 	if err != nil || !found {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	mutableRow := chunk.MutRowFromTypes(e.retTypes())
 	for chk.NumRows() < e.maxChunkSize {
 		row, err := e.getRow(handle)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		e.seekHandle = handle + 1
 		mutableRow.SetDatums(row...)
@@ -818,7 +818,7 @@ func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chu
 			return true, nil
 		})
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	// no more data.
@@ -836,7 +836,7 @@ func (e *TableScanExec) nextHandle() (handle int64, found bool, err error) {
 	for {
 		handle, found, err = e.t.Seek(e.ctx, e.seekHandle)
 		if err != nil || !found {
-			return 0, false, errors.Trace(err)
+			return 0, false, errors.WithStack(err)
 		}
 		return handle, true, nil
 	}
@@ -849,7 +849,7 @@ func (e *TableScanExec) getRow(handle int64) (types.DatumRow, error) {
 	}
 	row, err := e.t.RowWithCols(e.ctx, handle, columns)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	return row, nil
@@ -873,7 +873,7 @@ type ExistsExec struct {
 // Open implements the Executor Open interface.
 func (e *ExistsExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.childResult = e.children[0].newChunk()
 	e.evaluated = false
@@ -887,7 +887,7 @@ func (e *ExistsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		e.evaluated = true
 		err := e.children[0].Next(ctx, e.childResult)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if e.childResult.NumRows() > 0 {
 			chk.AppendInt64(0, 1)
@@ -901,7 +901,7 @@ func (e *ExistsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 // Close implements the Executor Close interface.
 func (e *ExistsExec) Close() error {
 	e.childResult = nil
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.WithStack(e.baseExecutor.Close())
 }
 
 // MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
@@ -915,7 +915,7 @@ type MaxOneRowExec struct {
 // Open implements the Executor Open interface.
 func (e *MaxOneRowExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	e.evaluated = false
 	return nil
@@ -930,7 +930,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	e.evaluated = true
 	err := e.children[0].Next(ctx, chk)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	if num := chk.NumRows(); num == 0 {
@@ -995,7 +995,7 @@ func (e *UnionExec) waitAllFinished() {
 // Open implements the Executor Open interface.
 func (e *UnionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	for _, child := range e.children {
 		e.childrenResults = append(e.childrenResults, child.newChunk())
@@ -1045,7 +1045,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 			return
 		case result.chk = <-e.resourcePools[childID]:
 		}
-		result.err = errors.Trace(e.children[childID].Next(ctx, result.chk))
+		result.err = errors.WithStack(e.children[childID].Next(ctx, result.chk))
 		if result.err == nil && result.chk.NumRows() == 0 {
 			return
 		}
@@ -1069,7 +1069,7 @@ func (e *UnionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 	if result.err != nil {
-		return errors.Trace(result.err)
+		return errors.WithStack(result.err)
 	}
 
 	chk.SwapColumns(result.chk)
@@ -1086,5 +1086,5 @@ func (e *UnionExec) Close() error {
 		}
 	}
 	e.resourcePools = nil
-	return errors.Trace(e.baseExecutor.Close())
+	return errors.WithStack(e.baseExecutor.Close())
 }

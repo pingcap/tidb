@@ -18,11 +18,11 @@ import (
 	"sort"
 
 	"github.com/cznic/sortutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"github.com/spaolacci/murmur3"
 )
 
@@ -69,7 +69,7 @@ func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
 func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (uint32, error) {
 	bytes, err := codec.EncodeValue(sc, nil, val)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 	return c.QueryBytes(bytes), nil
 }
@@ -160,7 +160,7 @@ func decodeCMSketch(data []byte) (*CMSketch, error) {
 	p := &tipb.CMSketch{}
 	err := p.Unmarshal(data)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if len(p.Rows) == 0 {
 		return nil, nil

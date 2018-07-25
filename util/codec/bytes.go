@@ -18,7 +18,7 @@ import (
 	"runtime"
 	"unsafe"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -152,7 +152,7 @@ func EncodeCompactBytes(b []byte, data []byte) []byte {
 func DecodeCompactBytes(b []byte) ([]byte, []byte, error) {
 	b, n, err := DecodeVarint(b)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, errors.WithStack(err)
 	}
 	if int64(len(b)) < n {
 		return nil, nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)

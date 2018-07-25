@@ -17,13 +17,13 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/perfschema"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pkg/errors"
 )
 
 // Builder builds a new InfoSchema.
@@ -92,7 +92,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		// All types except DropTable.
 		err := b.applyCreateTable(m, roDBInfo, newTableID, alloc)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	return tblIDs, nil
@@ -111,7 +111,7 @@ func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if di == nil {
 		// When we apply an old schema diff, the database may has been dropped already, so we need to fall back to
@@ -159,7 +159,7 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID int64, alloc autoid.Allocator) error {
 	tblInfo, err := m.GetTable(roDBInfo.ID, tableID)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if tblInfo == nil {
 		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
@@ -175,7 +175,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 	}
 	tbl, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	tableNames := b.is.schemaMap[roDBInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
@@ -254,7 +254,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 	for _, di := range dbInfos {
 		err := b.createSchemaTablesForDB(di)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 	}
 	b.createSchemaTablesForPerfSchemaDB()
@@ -277,7 +277,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo) error {
 		var tbl table.Table
 		tbl, err := tables.TableFromMeta(alloc, t)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		schTbls.tables[t.Name.L] = tbl
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]

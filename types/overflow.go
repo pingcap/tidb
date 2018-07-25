@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 // AddUint64 adds uint64 a and b if no overflow, else returns error.
@@ -117,7 +117,7 @@ func MulInt64(a int64, b int64) (int64, error) {
 	}
 
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, errors.WithStack(err)
 	}
 
 	if negative {

@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -117,13 +117,13 @@ func (c *Context) NewTxn() error {
 	if c.txn != nil && c.txn.Valid() {
 		err := c.txn.Commit(c.ctx)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 
 	txn, err := c.Store.Begin()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	c.txn = txn
 	return nil
@@ -131,7 +131,7 @@ func (c *Context) NewTxn() error {
 
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
-	return errors.Trace(c.NewTxn())
+	return errors.WithStack(c.NewTxn())
 }
 
 // ActivePendingTxn implements the sessionctx.Context interface.
@@ -142,7 +142,7 @@ func (c *Context) ActivePendingTxn() error {
 	if c.Store != nil {
 		txn, err := c.Store.Begin()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		c.txn = txn
 	}
@@ -161,7 +161,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		}
 		txn, err := c.Store.BeginWithStartTS(startTS)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		txn.SetCap(membufCap)
 		c.txn = txn

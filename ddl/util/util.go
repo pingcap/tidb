@@ -17,12 +17,12 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -52,7 +52,7 @@ func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRan
 		defer terror.Call(rss[0].Close)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	rs := rss[0]
@@ -61,7 +61,7 @@ func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRan
 	for {
 		err = rs.Next(context.TODO(), chk)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if chk.NumRows() == 0 {
 			break
@@ -70,11 +70,11 @@ func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRan
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			startKey, err := hex.DecodeString(row.GetString(2))
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			endKey, err := hex.DecodeString(row.GetString(3))
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			ranges = append(ranges, DelRangeTask{
 				JobID:     row.GetInt64(0),
@@ -93,12 +93,12 @@ func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 	sql := fmt.Sprintf(recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	sql = fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // UpdateDeleteRange is only for emulator.
@@ -107,5 +107,5 @@ func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, old
 	oldStartKeyHex := hex.EncodeToString(oldStartKey)
 	sql := fmt.Sprintf(updateDeleteRangeSQL, newStartKeyHex, dr.JobID, dr.ElementID, oldStartKeyHex)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }

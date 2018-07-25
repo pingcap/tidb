@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -172,7 +172,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	}
 	err := q.recalculateExpectCount(h)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	expected := float64(q.expected)
 	var rate float64
@@ -280,13 +280,13 @@ func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
 		}
 		updated, err := h.dumpTableStatCountToKV(id, item)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if updated {
 			h.globalMap.update(id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if updated {
 			delete(h.globalMap, id)
@@ -310,7 +310,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	defer func() {
 		err = finishTransaction(context.Background(), exec, err)
@@ -339,7 +339,7 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
@@ -370,13 +370,13 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 		successCount++
 	}
 	h.feedback = h.feedback[successCount:]
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	vals, err := encodeFeedback(fb)
 	if err != nil {
-		log.Debugf("error occurred when encoding feedback, err: ", errors.ErrorStack(err))
+		log.Debugf("error occurred when encoding feedback, err: ", fmt.Sprintf("%+v", err))
 		return nil
 	}
 	var isIndex int64
@@ -393,7 +393,7 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	} else {
 		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // UpdateStatsByLocalFeedback will update statistics by the local feedback.
@@ -471,7 +471,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	sql := "select table_id, hist_id, is_index, feedback from mysql.stats_feedback order by table_id, hist_id, is_index"
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if len(rows) == 0 || err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
 	q := &QueryFeedback{}
@@ -487,7 +487,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		if row.GetInt64(0) == tableID && row.GetInt64(1) == histID && row.GetInt64(2) == isIndex {
 			err = decodeFeedback(row.GetBytes(3), q, cms)
 			if err != nil {
-				log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
+				log.Debugf("decode feedback failed, err: %v", fmt.Sprintf("%+v", err))
 			}
 			continue
 		}
@@ -500,7 +500,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 			}
 			err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 		// initialize new feedback
@@ -533,7 +533,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		}
 		err = decodeFeedback(row.GetBytes(3), q, cms)
 		if err != nil {
-			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
+			log.Debugf("decode feedback failed, err: %v", fmt.Sprintf("%+v", err))
 		}
 	}
 	// Update the NDV of primary key column.
@@ -542,7 +542,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	}
 	// dump the last feedback into kv
 	err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedback, hist *Histogram, cms *CMSketch) (err error) {
@@ -556,7 +556,7 @@ func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedbac
 	hist = UpdateHistogram(hist, q)
 	err = h.SaveStatsToStorage(tableID, -1, isIndex, hist, cms, 0)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	h.mu.Lock()
 	h.mu.ctx.GetSessionVars().BatchDelete = true
@@ -564,7 +564,7 @@ func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedbac
 	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	h.mu.Unlock()
 	q.feedback = q.feedback[:0]
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 const (
@@ -647,7 +647,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 			if needAnalyzeTable(statsTbl, 20*h.Lease, autoAnalyzeRatio) {
 				sql := fmt.Sprintf("analyze table %s", tblName)
 				log.Infof("[stats] auto analyze table %s now", tblName)
-				return errors.Trace(h.execAutoAnalyze(sql))
+				return errors.WithStack(h.execAutoAnalyze(sql))
 			}
 			for _, idx := range tblInfo.Indices {
 				if idx.State != model.StatePublic {
@@ -656,7 +656,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 				if _, ok := statsTbl.Indices[idx.ID]; !ok {
 					sql := fmt.Sprintf("analyze table %s index `%s`", tblName, idx.Name.O)
 					log.Infof("[stats] auto analyze index `%s` for table %s now", idx.Name.O, tblName)
-					return errors.Trace(h.execAutoAnalyze(sql))
+					return errors.WithStack(h.execAutoAnalyze(sql))
 				}
 			}
 		}
@@ -673,5 +673,5 @@ func (h *Handle) execAutoAnalyze(sql string) error {
 	} else {
 		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }

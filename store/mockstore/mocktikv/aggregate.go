@@ -14,11 +14,11 @@
 package mocktikv
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -65,14 +65,14 @@ func (e *hashAggExec) Counts() []int64 {
 func (e *hashAggExec) innerNext(ctx context.Context) (bool, error) {
 	values, err := e.src.Next(ctx)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	if values == nil {
 		return false, nil
 	}
 	err = e.aggregate(values)
 	if err != nil {
-		return false, errors.Trace(err)
+		return false, errors.WithStack(err)
 	}
 	return true, nil
 }
@@ -90,7 +90,7 @@ func (e *hashAggExec) Next(ctx context.Context) (value [][]byte, err error) {
 		for {
 			hasMore, err := e.innerNext(ctx)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			if !hasMore {
 				break
@@ -110,7 +110,7 @@ func (e *hashAggExec) Next(ctx context.Context) (value [][]byte, err error) {
 		for _, result := range partialResults {
 			data, err := codec.EncodeValue(e.evalCtx.sc, nil, result)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			value = append(value, data)
 		}
@@ -131,11 +131,11 @@ func (e *hashAggExec) getGroupKey() ([]byte, [][]byte, error) {
 	for _, item := range e.groupByExprs {
 		v, err := item.Eval(e.row)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		b, err := codec.EncodeValue(e.evalCtx.sc, nil, v)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, errors.WithStack(err)
 		}
 		bufLen += len(b)
 		row = append(row, b)
@@ -151,12 +151,12 @@ func (e *hashAggExec) getGroupKey() ([]byte, [][]byte, error) {
 func (e *hashAggExec) aggregate(value [][]byte) error {
 	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	// Get group key.
 	gk, gbyKeyRow, err := e.getGroupKey()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if _, ok := e.groups[string(gk)]; !ok {
 		e.groups[string(gk)] = struct{}{}
@@ -168,7 +168,7 @@ func (e *hashAggExec) aggregate(value [][]byte) error {
 	for i, agg := range e.aggExprs {
 		err = agg.Update(aggCtxs[i], e.evalCtx.sc, e.row)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -228,7 +228,7 @@ func (e *streamAggExec) getPartialResult() ([][]byte, error) {
 		for _, result := range partialResults {
 			data, err := codec.EncodeValue(e.evalCtx.sc, nil, result)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 			value = append(value, data)
 		}
@@ -239,7 +239,7 @@ func (e *streamAggExec) getPartialResult() ([][]byte, error) {
 	for _, d := range e.currGroupByRow {
 		buf, err := codec.EncodeValue(e.evalCtx.sc, nil, d)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		e.currGroupByValues = append(e.currGroupByValues, buf)
 	}
@@ -260,12 +260,12 @@ func (e *streamAggExec) meetNewGroup(row [][]byte) (bool, error) {
 	for i, item := range e.groupByExprs {
 		d, err := item.Eval(e.row)
 		if err != nil {
-			return false, errors.Trace(err)
+			return false, errors.WithStack(err)
 		}
 		if matched {
 			c, err := d.CompareDatum(e.evalCtx.sc, &e.nextGroupByRow[i])
 			if err != nil {
-				return false, errors.Trace(err)
+				return false, errors.WithStack(err)
 			}
 			matched = c == 0
 		}
@@ -294,7 +294,7 @@ func (e *streamAggExec) Next(ctx context.Context) (retRow [][]byte, err error) {
 	for {
 		values, err := e.src.Next(ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if values == nil {
 			e.executed = true
@@ -307,22 +307,22 @@ func (e *streamAggExec) Next(ctx context.Context) (retRow [][]byte, err error) {
 		e.hasData = true
 		err = e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, values, e.row)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		newGroup, err := e.meetNewGroup(values)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		if newGroup {
 			retRow, err = e.getPartialResult()
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 		}
 		for i, agg := range e.aggExprs {
 			err = agg.Update(e.aggCtxs[i], e.evalCtx.sc, e.row)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return nil, errors.WithStack(err)
 			}
 		}
 		if newGroup {

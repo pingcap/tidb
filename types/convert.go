@@ -22,12 +22,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 func truncateStr(str string, flen int) string {
@@ -144,7 +144,7 @@ func StrToInt(sc *stmtctx.StatementContext, str string) (int64, error) {
 	if err1 != nil {
 		return iVal, ErrOverflow.GenByArgs("BIGINT", validPrefix)
 	}
-	return iVal, errors.Trace(err)
+	return iVal, errors.WithStack(err)
 }
 
 // StrToUint converts a string to an unsigned integer at the best-effortt.
@@ -158,7 +158,7 @@ func StrToUint(sc *stmtctx.StatementContext, str string) (uint64, error) {
 	if err1 != nil {
 		return uVal, ErrOverflow.GenByArgs("BIGINT UNSIGNED", validPrefix)
 	}
-	return uVal, errors.Trace(err)
+	return uVal, errors.WithStack(err)
 }
 
 // StrToDateTime converts str to MySQL DateTime.
@@ -189,7 +189,7 @@ func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duratio
 	if ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}
-	return d, t, true, errors.Trace(err)
+	return d, t, true, errors.WithStack(err)
 }
 
 // NumberToDuration converts number to Duration.
@@ -199,7 +199,7 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 		if number >= 10000000000 { // '2001-00-00 00-00-00'
 			if t, err := ParseDatetimeFromNum(nil, number); err == nil {
 				dur, err1 := t.ConvertToDuration()
-				return dur, errors.Trace(err1)
+				return dur, errors.WithStack(err1)
 			}
 		}
 		dur, err1 := MaxMySQLTime(fsp).ConvertToDuration()
@@ -217,12 +217,12 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 	}
 
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
-		return ZeroDuration, errors.Trace(ErrInvalidTimeFormat.GenByArgs(number))
+		return ZeroDuration, errors.WithStack(ErrInvalidTimeFormat.GenByArgs(number))
 	}
 	t := Time{Time: FromDate(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), Type: mysql.TypeDuration, Fsp: fsp}
 	dur, err := t.ConvertToDuration()
 	if err != nil {
-		return ZeroDuration, errors.Trace(err)
+		return ZeroDuration, errors.WithStack(err)
 	}
 	if neg {
 		dur.Duration = -dur.Duration
@@ -234,7 +234,7 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error) {
 	floatPrefix, err := getValidFloatPrefix(sc, str)
 	if err != nil {
-		return floatPrefix, errors.Trace(err)
+		return floatPrefix, errors.WithStack(err)
 	}
 	return floatStrToIntStr(floatPrefix)
 }
@@ -271,7 +271,7 @@ func floatStrToIntStr(validFloat string) (string, error) {
 	}
 	exp, err := strconv.Atoi(validFloat[eIdx+1:])
 	if err != nil {
-		return validFloat, errors.Trace(err)
+		return validFloat, errors.WithStack(err)
 	}
 	if exp > 0 && int64(intCnt) > (math.MaxInt64-int64(exp)) {
 		// (exp + incCnt) overflows MaxInt64.
@@ -316,9 +316,9 @@ func StrToFloat(sc *stmtctx.StatementContext, str string) (float64, error) {
 				}
 			}
 		}
-		return f, errors.Trace(err1)
+		return f, errors.WithStack(err1)
 	}
-	return f, errors.Trace(err)
+	return f, errors.WithStack(err)
 }
 
 // ConvertJSONToInt casts JSON into int64.
@@ -344,7 +344,7 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j json.BinaryJSON, unsigned 
 		}
 		bound := UnsignedUpperBound[mysql.TypeLonglong]
 		u, err := ConvertFloatToUint(f, bound, mysql.TypeDouble)
-		return int64(u), errors.Trace(err)
+		return int64(u), errors.WithStack(err)
 	case json.TypeCodeString:
 		return StrToInt(sc, hack.String(j.GetString()))
 	}
@@ -367,7 +367,7 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j json.BinaryJSON) (float6
 		return float64(j.GetInt64()), nil
 	case json.TypeCodeUint64:
 		u, err := ConvertIntToUint(j.GetInt64(), UnsignedUpperBound[mysql.TypeLonglong], mysql.TypeLonglong)
-		return float64(u), errors.Trace(err)
+		return float64(u), errors.WithStack(err)
 	case json.TypeCodeFloat64:
 		return j.GetFloat64(), nil
 	case json.TypeCodeString:
@@ -418,7 +418,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string) (valid string, 
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(s) {
-		err = errors.Trace(handleTruncateError(sc))
+		err = errors.WithStack(handleTruncateError(sc))
 	}
 	return valid, err
 }

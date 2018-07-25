@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -30,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/goroutine_pool"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -116,7 +116,7 @@ func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, erro
 		return nil
 	})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	for _, lockKey := range txn.lockKeys {
 		if _, ok := mutations[string(lockKey)]; !ok {
@@ -198,7 +198,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 	groups, firstRegion, err := c.store.regionCache.GroupKeysByRegion(bo, keys)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(action.MetricsTag()).Observe(float64(len(groups)))
@@ -220,7 +220,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 		// primary should be committed/cleanup first
 		err = c.doActionOnBatches(bo, action, batches[:1])
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		batches = batches[1:]
 	}
@@ -236,7 +236,7 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	} else {
 		err = c.doActionOnBatches(bo, action, batches)
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // doActionOnBatches does action to batches in parallel.
@@ -258,7 +258,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 		if e != nil {
 			log.Debugf("con:%d 2PC doActionOnBatches %s failed: %v, tid: %d", c.connID, action, e, c.startTS)
 		}
-		return errors.Trace(e)
+		return errors.WithStack(e)
 	}
 
 	// For prewrite, stop sending other requests after receiving first error.
@@ -305,7 +305,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 			}
 		}
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 func (c *twoPhaseCommitter) keyValueSize(key []byte) int {
@@ -342,23 +342,23 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 	for {
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if regionErr != nil {
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 			err = c.prewriteKeys(bo, batch.keys)
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		prewriteResp := resp.Prewrite
 		if prewriteResp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return errors.WithStack(ErrBodyMissing)
 		}
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
@@ -368,19 +368,19 @@ func (c *twoPhaseCommitter) prewriteSingleBatch(bo *Backoffer, batch batchKeys) 
 		for _, keyErr := range keyErrs {
 			lock, err1 := extractLockFromKeyErr(keyErr)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return errors.WithStack(err1)
 			}
 			log.Debugf("con:%d 2PC prewrite encounters lock: %v", c.connID, lock)
 			locks = append(locks, lock)
 		}
 		ok, err := c.store.lockResolver.ResolveLocks(bo, locks)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		if !ok {
 			err = bo.Backoff(BoTxnLock, errors.Errorf("2PC prewrite lockedKeys: %d", len(locks)))
 			if err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 	}
@@ -447,28 +447,28 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 	// solution is to populate this error and let upper layer drop the connection to the corresponding mysql client.
 	isPrimary := bytes.Equal(batch.keys[0], c.primary())
 	if isPrimary && sender.rpcError != nil {
-		c.setUndeterminedErr(errors.Trace(sender.rpcError))
+		c.setUndeterminedErr(errors.WithStack(sender.rpcError))
 	}
 
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	regionErr, err := resp.GetRegionError()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if regionErr != nil {
 		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		// re-split keys and commit again.
 		err = c.commitKeys(bo, batch.keys)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	commitResp := resp.Commit
 	if commitResp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return errors.WithStack(ErrBodyMissing)
 	}
 	// Here we can make sure tikv has processed the commit primary key request. So
 	// we can clean undetermined error.
@@ -483,11 +483,11 @@ func (c *twoPhaseCommitter) commitSingleBatch(bo *Backoffer, batch batchKeys) er
 			// No secondary key could be rolled back after it's primary key is committed.
 			// There must be a serious bug somewhere.
 			log.Errorf("2PC failed commit key after primary key committed: %v, tid: %d", err, c.startTS)
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		// The transaction maybe rolled back by concurrent transactions.
 		log.Debugf("2PC failed commit primary key: %v, retry later, tid: %d", err, c.startTS)
-		return errors.Annotate(err, txnRetryableMark)
+		return errors.Wrap(err, txnRetryableMark)
 	}
 
 	c.mu.Lock()
@@ -512,24 +512,24 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 	}
 	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	regionErr, err := resp.GetRegionError()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if regionErr != nil {
 		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		err = c.cleanupKeys(bo, batch.keys)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if keyErr := resp.BatchRollback.GetError(); keyErr != nil {
 		err = errors.Errorf("con:%d 2PC cleanup failed: %s", c.connID, keyErr)
 		log.Debugf("2PC failed cleanup key: %v, tid: %d", err, c.startTS)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	return nil
 }
@@ -559,7 +559,7 @@ func (c *twoPhaseCommitter) executeAndWriteFinishBinlog(ctx context.Context) err
 		c.txn.commitTS = c.commitTS
 		c.writeFinishBinlog(binlog.BinlogType_Commit, int64(c.commitTS))
 	}
-	return errors.Trace(err)
+	return errors.WithStack(err)
 }
 
 // execute executes the two-phase commit protocol.
@@ -604,18 +604,18 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	if binlogChan != nil {
 		binlogErr := <-binlogChan
 		if binlogErr != nil {
-			return errors.Trace(binlogErr)
+			return errors.WithStack(binlogErr)
 		}
 	}
 	if err != nil {
 		log.Debugf("con:%d 2PC failed on prewrite: %v, tid: %d", c.connID, err, c.startTS)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	commitTS, err := c.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff).WithVars(c.txn.vars))
 	if err != nil {
 		log.Warnf("con:%d 2PC get commitTS failed: %v, tid: %d", c.connID, err, c.startTS)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	// check commitTS
@@ -623,27 +623,27 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		err = errors.Errorf("con:%d Invalid transaction tso with start_ts=%v while commit_ts=%v",
 			c.connID, c.startTS, commitTS)
 		log.Error(err)
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	c.commitTS = commitTS
 	if err = c.checkSchemaValid(); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	if c.store.oracle.IsExpired(c.startTS, maxTxnTimeUse) {
 		err = errors.Errorf("con:%d txn takes too much time, start: %d, commit: %d", c.connID, c.startTS, c.commitTS)
-		return errors.Annotate(err, txnRetryableMark)
+		return errors.Wrap(err, txnRetryableMark)
 	}
 
 	err = c.commitKeys(NewBackoffer(ctx, CommitMaxBackoff).WithVars(c.txn.vars), c.keys)
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
-			log.Warnf("con:%d 2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", c.connID, err, undeterminedErr, c.startTS)
-			err = errors.Wrap(err, terror.ErrResultUndetermined)
+			log.Warnf("con:%d 2PC commit result undetermined, err: %+v, rpcErr: %v, tid: %v", c.connID, err, undeterminedErr, c.startTS)
+			err = errors.WithStack(terror.ErrResultUndetermined)
 		}
 		if !c.mu.committed {
 			log.Debugf("con:%d 2PC failed on commit: %v, tid: %d", c.connID, err, c.startTS)
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		log.Debugf("con:%d 2PC succeed with error: %v, tid: %d", c.connID, err, c.startTS)
 	}
@@ -659,7 +659,7 @@ func (c *twoPhaseCommitter) checkSchemaValid() error {
 	if ok {
 		err := checker.Check(c.commitTS)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	return nil
@@ -678,7 +678,7 @@ func (c *twoPhaseCommitter) prewriteBinlog() chan error {
 			bin.PrewriteKey = c.keys[0]
 		}
 		err := binInfo.WriteBinlog(c.store.clusterID)
-		ch <- errors.Trace(err)
+		ch <- errors.WithStack(err)
 	}()
 	return ch
 }

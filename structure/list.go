@@ -16,8 +16,8 @@ package structure
 import (
 	"encoding/binary"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pkg/errors"
 )
 
 type listMeta struct {
@@ -57,7 +57,7 @@ func (t *TxStructure) listPush(key []byte, left bool, values ...[]byte) error {
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	index := int64(0)
@@ -72,7 +72,7 @@ func (t *TxStructure) listPush(key []byte, left bool, values ...[]byte) error {
 
 		dataKey := t.encodeListDataKey(key, index)
 		if err = t.readWriter.Set(dataKey, v); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 
@@ -96,7 +96,7 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	index := int64(0)
@@ -113,11 +113,11 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 	var data []byte
 	data, err = t.reader.Get(dataKey)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	if err = t.readWriter.Delete(dataKey); err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	if !meta.IsEmpty() {
@@ -126,14 +126,14 @@ func (t *TxStructure) listPop(key []byte, left bool) ([]byte, error) {
 		err = t.readWriter.Delete(metaKey)
 	}
 
-	return data, errors.Trace(err)
+	return data, errors.WithStack(err)
 }
 
 // LLen gets the length of a list.
 func (t *TxStructure) LLen(key []byte) (int64, error) {
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
-	return meta.RIndex - meta.LIndex, errors.Trace(err)
+	return meta.RIndex - meta.LIndex, errors.WithStack(err)
 }
 
 // LGetAll gets all elements of this list in order from right to left.
@@ -141,7 +141,7 @@ func (t *TxStructure) LGetAll(key []byte) ([][]byte, error) {
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	length := int(meta.RIndex - meta.LIndex)
@@ -149,7 +149,7 @@ func (t *TxStructure) LGetAll(key []byte) ([][]byte, error) {
 	for index := meta.RIndex - 1; index >= meta.LIndex; index-- {
 		e, err := t.reader.Get(t.encodeListDataKey(key, index))
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, errors.WithStack(err)
 		}
 		elements = append(elements, e)
 	}
@@ -161,7 +161,7 @@ func (t *TxStructure) LIndex(key []byte, index int64) ([]byte, error) {
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 
 	index = adjustIndex(index, meta.LIndex, meta.RIndex)
@@ -180,7 +180,7 @@ func (t *TxStructure) LSet(key []byte, index int64, value []byte) error {
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	index = adjustIndex(index, meta.LIndex, meta.RIndex)
@@ -199,13 +199,13 @@ func (t *TxStructure) LClear(key []byte) error {
 	metaKey := t.encodeListMetaKey(key)
 	meta, err := t.loadListMeta(metaKey)
 	if err != nil || meta.IsEmpty() {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	for index := meta.LIndex; index < meta.RIndex; index++ {
 		dataKey := t.encodeListDataKey(key, index)
 		if err = t.readWriter.Delete(dataKey); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 
@@ -217,7 +217,7 @@ func (t *TxStructure) loadListMeta(metaKey []byte) (listMeta, error) {
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	} else if err != nil {
-		return listMeta{}, errors.Trace(err)
+		return listMeta{}, errors.WithStack(err)
 	}
 
 	meta := listMeta{0, 0}

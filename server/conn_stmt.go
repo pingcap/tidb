@@ -40,16 +40,16 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
 func (cc *clientConn) handleStmtPrepare(sql string) error {
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	data := make([]byte, 4, 128)
 
@@ -67,7 +67,7 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 	data = append(data, 0, 0) //TODO support warning count
 
 	if err := cc.writePacket(data); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
 	if len(params) > 0 {
@@ -76,12 +76,12 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 			data = params[i].Dump(data)
 
 			if err := cc.writePacket(data); err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 
 		if err := cc.writeEOF(0); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 
@@ -91,16 +91,16 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 			data = columns[i].Dump(data)
 
 			if err := cc.writePacket(data); err != nil {
-				return errors.Trace(err)
+				return errors.WithStack(err)
 			}
 		}
 
 		if err := cc.writeEOF(0); err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 
 	}
-	return errors.Trace(cc.flush())
+	return errors.WithStack(cc.flush())
 }
 
 func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
@@ -173,15 +173,15 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 		err = parseStmtArgs(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 	}
 	rs, err := stmt.Execute(ctx, args...)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	if rs == nil {
-		return errors.Trace(cc.writeOK())
+		return errors.WithStack(cc.writeOK())
 	}
 
 	// if the client wants to use cursor
@@ -191,12 +191,12 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		stmt.StoreResultSet(rs)
 		err = cc.writeColumnInfo(rs.Columns(), mysql.ServerStatusCursorExists)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.WithStack(err)
 		}
 		// explicitly flush columnInfo to client.
-		return errors.Trace(cc.flush())
+		return errors.WithStack(cc.flush())
 	}
-	return errors.Trace(cc.writeResultset(ctx, rs, true, 0, 0))
+	return errors.WithStack(cc.writeResultset(ctx, rs, true, 0, 0))
 }
 
 // maxFetchSize constants
@@ -222,7 +222,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch_rs")
 	}
 
-	return errors.Trace(cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize)))
+	return errors.WithStack(cc.writeResultset(ctx, rs, true, mysql.ServerStatusCursorExists, int(fetchSize)))
 }
 
 func parseStmtFetchCmd(data []byte) (uint32, uint32, error) {
@@ -490,7 +490,7 @@ func (cc *clientConn) handleStmtClose(data []byte) (err error) {
 	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt != nil {
-		return errors.Trace(stmt.Close())
+		return errors.WithStack(stmt.Close())
 	}
 	return
 }
@@ -544,8 +544,8 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 		return mysql.ErrMalformPacket
 	}
 	if err = cc.writeEOF(0); err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 
-	return errors.Trace(cc.flush())
+	return errors.WithStack(cc.flush())
 }

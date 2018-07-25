@@ -20,12 +20,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
+	"fmt"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -113,7 +114,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 
 	commitData, err := info.Data.Marshal()
 	if err != nil {
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	req := &binlog.WriteBinlogReq{ClusterID: clusterID, Payload: commitData}
 
@@ -139,7 +140,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 
 	if err != nil {
 		if atomic.LoadUint32(&ignoreError) == 1 {
-			log.Errorf("critical error, write binlog fail but error ignored: %s", errors.ErrorStack(err))
+			log.Errorf("critical error, write binlog fail but error ignored: %s", fmt.Sprintf("%+v", err))
 			metrics.CriticalErrorCounter.Add(1)
 			// If error happens once, we'll stop writing binlog.
 			atomic.CompareAndSwapUint32(&skipBinlog, skip, skip+1)

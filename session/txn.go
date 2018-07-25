@@ -14,7 +14,6 @@
 package session
 
 import (
-	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -93,7 +93,7 @@ func (st *TxnState) changePendingToValid(txnCap int) error {
 	txn, err := future.wait()
 	if err != nil {
 		st.Transaction = nil
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
 	txn.SetCap(txnCap)
 	st.Transaction = txn
@@ -120,18 +120,18 @@ func (st *TxnState) Commit(ctx context.Context) error {
 		// If any error happen during StmtCommit, don't commit this transaction.
 		err := st.fail
 		st.fail = nil
-		return errors.Trace(err)
+		return errors.WithStack(err)
 	}
-	return errors.Trace(st.Transaction.Commit(ctx))
+	return errors.WithStack(st.Transaction.Commit(ctx))
 }
 
 // Rollback overrides the Transaction interface.
 func (st *TxnState) Rollback() error {
 	if st.fail != nil {
-		log.Error(errors.Trace(st.fail))
+		log.Error(errors.WithStack(st.fail))
 		st.fail = nil
 	}
-	return errors.Trace(st.Transaction.Rollback())
+	return errors.WithStack(st.Transaction.Rollback())
 }
 
 // Get overrides the Transaction interface.
@@ -141,7 +141,7 @@ func (st *TxnState) Get(k kv.Key) ([]byte, error) {
 		val, err = st.Transaction.Get(k)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	if len(val) == 0 {
 		return nil, kv.ErrNotExist
@@ -163,11 +163,11 @@ func (st *TxnState) Delete(k kv.Key) error {
 func (st *TxnState) Seek(k kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.Seek(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	retrieverIt, err := st.Transaction.Seek(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, false)
 }
@@ -176,11 +176,11 @@ func (st *TxnState) Seek(k kv.Key) (kv.Iterator, error) {
 func (st *TxnState) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.SeekReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	retrieverIt, err := st.Transaction.SeekReverse(k)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.WithStack(err)
 	}
 	return kv.NewUnionIter(bufferIt, retrieverIt, true)
 }
@@ -266,12 +266,12 @@ func (s *session) StmtCommit() {
 		// 	return errors.New("mock stmt commit error")
 		// }
 		if len(v) == 0 {
-			return errors.Trace(st.Transaction.Delete(k))
+			return errors.WithStack(st.Transaction.Delete(k))
 		}
-		return errors.Trace(st.Transaction.Set(k, v))
+		return errors.WithStack(st.Transaction.Set(k, v))
 	})
 	if err != nil {
-		s.txn.fail = errors.Trace(err)
+		s.txn.fail = errors.WithStack(err)
 		return
 	}
 
