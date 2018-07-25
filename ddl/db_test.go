@@ -581,10 +581,11 @@ func (s *testDBSuite) TestAddMultiColumnsIndex(c *C) {
 	s.tk.MustExec("admin check table test")
 }
 
-func (s *testDBSuite) TestAddIndex(c *C) {
+func (s *testDBSuite) TestAddIndex9(c *C) {
 	s.testAddIndex(c, false, "create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
 	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range (c2) (
+			      partition p0 values less than (3440),
 			      partition p1 values less than (61440),
 			      partition p2 values less than (122880),
 			      partition p3 values less than (204800),
@@ -594,6 +595,8 @@ func (s *testDBSuite) TestAddIndex(c *C) {
 func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL string) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
+	// TODO: Support delete operation, then uncomment here.
+	// s.tk.MustExec("set @@tidb_enable_table_partition = 1")
 	s.tk.MustExec("drop table if exists test_add_index")
 	s.tk.MustExec(createTableSQL)
 
@@ -676,7 +679,7 @@ LOOP:
 	for _, key := range keys {
 		expectedRows = append(expectedRows, []interface{}{key})
 	}
-	rows := s.mustQuery(c, fmt.Sprintf("select c1 from test_add_index where c3 >= %d", start))
+	rows := s.mustQuery(c, fmt.Sprintf("select c1 from test_add_index where c3 >= %d order by c1", start))
 	matchRows(c, rows, expectedRows)
 
 	// test index range
@@ -688,6 +691,7 @@ LOOP:
 
 	if testPartition {
 		s.tk.MustExec("admin check table test_add_index")
+		return
 	}
 
 	// TODO: Support explain in future.

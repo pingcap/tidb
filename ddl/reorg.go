@@ -319,7 +319,7 @@ func getTableRange(d *ddlCtx, tblInfo *model.TableInfo, partitionID int64, snaps
 		return 0, 0, errors.Trace(err)
 	}
 	if endHandle < startHandle || emptyTable {
-		log.Warnf("[ddl-reorg] get table range %s endHandle < startHandle partition %d [%d %d]", tblInfo, partitionID, endHandle, startHandle)
+		log.Infof("[ddl-reorg] get table range %v endHandle < startHandle partition %d [%d %d]", tblInfo, partitionID, endHandle, startHandle)
 		endHandle = startHandle
 	}
 	return

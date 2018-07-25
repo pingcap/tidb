@@ -993,6 +993,8 @@ func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgI
 }
 
 // updateReorgInfo will find the next partition according to current reorgInfo.
+// If no more partitions, or table t is not a partitioned table, returns true to
+// indicate that the reorganize work is finished.
 func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) {
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
@@ -1016,7 +1018,7 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) 
 	}
 	log.Infof("[ddl-reorg] job %v update reorgInfo partition %d range [%d %d]", reorg.Job.ID, pid, start, end)
 	reorg.StartHandle, reorg.EndHandle, reorg.PartitionID = start, end, pid
-	return false, errors.Trace(err)
+	return false, nil
 }
 
 // findNextPartitionID finds the next partition ID in the PartitionDefinition array.

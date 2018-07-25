@@ -720,17 +720,17 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle, part
 	return errors.Trace(err)
 }
 
-// RemoveDDLReorgHandle removes the job reorganization handle.
+// RemoveDDLReorgHandle removes the job reorganization related handles.
 func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
 	err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID))
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID)); err != nil {
-		log.Warn(err)
+		log.Warn("remove ddl reorg end handle error:", err)
 	}
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobPartitionID(job.ID)); err != nil {
-		log.Warn(err)
+		log.Warn("remove ddl reorg partition id error:", err)
 	}
 	return nil
 }
