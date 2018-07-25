@@ -332,14 +332,14 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	var batchs []batch
+	var batches []batch
 	// split the keys by size and RegionVerID
 	for regionID, groupKeys := range groups {
-		batchs = appendBatchs(batchs, regionID, groupKeys, keyToValue, rawBatchPutSize)
+		batches = appendBatches(batches, regionID, groupKeys, keyToValue, rawBatchPutSize)
 	}
 	bo, cancel := bo.Fork()
-	ch := make(chan error, len(batchs))
-	for _, batch := range batchs {
+	ch := make(chan error, len(batches))
+	for _, batch := range batches {
 		rawKVClientGP.Go(func() {
 			singleBatchBackoffer, singleBatchCancel := bo.Fork()
 			defer singleBatchCancel()
@@ -347,7 +347,7 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 		})
 	}
 	err = nil
-	for i := 0; i < len(batchs); i++ {
+	for i := 0; i < len(batches); i++ {
 		if e := <-ch; e != nil {
 			cancel()
 			// catch the first error
@@ -359,7 +359,7 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 	return errors.Trace(err)
 }
 
-func appendBatchs(batchs []batch, regionID RegionVerID, groupKeys [][]byte, keyToValue map[string][]byte, limit int) []batch {
+func appendBatches(batches []batch, regionID RegionVerID, groupKeys [][]byte, keyToValue map[string][]byte, limit int) []batch {
 	var start, end int
 	for start = 0; start < len(groupKeys); {
 		size := 0
@@ -373,10 +373,10 @@ func appendBatchs(batchs []batch, regionID RegionVerID, groupKeys [][]byte, keyT
 			size += len(key)
 			size += len(value)
 		}
-		batchs = append(batchs, batch{regionID: regionID, keys: keys, values: values})
+		batches = append(batches, batch{regionID: regionID, keys: keys, values: values})
 		start = end
 	}
-	return batchs
+	return batches
 }
 
 func (c *RawKVClient) doBatchPut(bo *Backoffer, batch batch) error {
