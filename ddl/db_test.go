@@ -485,7 +485,7 @@ LOOP:
 	}
 
 	ctx := s.s.(sessionctx.Context)
-	idx := tables.NewIndex(t.Meta().ID, c3IdxInfo)
+	idx := tables.NewIndex(t.Meta().ID, t.Meta(), c3IdxInfo)
 	checkDelRangeDone(c, ctx, idx)
 
 	s.mustExec(c, "drop table t1")
@@ -795,7 +795,7 @@ LOOP:
 	}
 	c.Assert(nidx, IsNil)
 
-	idx := tables.NewIndex(t.Meta().ID, c3idx.Meta())
+	idx := tables.NewIndex(t.Meta().ID, t.Meta(), c3idx.Meta())
 	checkDelRangeDone(c, ctx, idx)
 	s.tk.MustExec("drop table test_drop_index")
 }
