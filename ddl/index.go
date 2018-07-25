@@ -123,7 +123,6 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 			Name:   col.Name,
 			Offset: col.Offset,
 			Length: ic.Length,
-			Tp:     &col.FieldType,
 		})
 	}
 
@@ -653,7 +652,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	result := &addIndexResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
 	lastLogCount := 0
 	startTime := time.Now()
-	index := tables.NewIndex(task.partitionID, w.indexInfo)
+	index := tables.NewIndex(task.partitionID, w.table.Meta(), w.indexInfo)
 
 	for {
 		addedCount := 0
