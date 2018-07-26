@@ -581,7 +581,7 @@ func (s *testDBSuite) TestAddMultiColumnsIndex(c *C) {
 	s.tk.MustExec("admin check table test")
 }
 
-func (s *testDBSuite) TestAddIndex9(c *C) {
+func (s *testDBSuite) TestAddIndex(c *C) {
 	s.testAddIndex(c, false, "create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
 	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range (c2) (
