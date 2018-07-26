@@ -240,19 +240,19 @@ func (b *baseBuiltinFunc) Clone() builtinFunc {
 type baseBuiltinCastFunc struct {
 	baseBuiltinFunc
 
-	// inUnionAll indicates whether cast is in union context.
-	inUnionAll bool
+	// inUnion indicates whether cast is in union context.
+	inUnion bool
 }
 
 func (b *baseBuiltinCastFunc) cloneFrom(from *baseBuiltinCastFunc) {
 	b.baseBuiltinFunc.cloneFrom(&from.baseBuiltinFunc)
-	b.inUnionAll = from.inUnionAll
+	b.inUnion = from.inUnion
 }
 
 func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnionAll bool) baseBuiltinCastFunc {
 	return baseBuiltinCastFunc{
 		baseBuiltinFunc: builtinFunc,
-		inUnionAll:      inUnionAll,
+		inUnion:         inUnionAll,
 	}
 }
 
