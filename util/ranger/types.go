@@ -68,7 +68,7 @@ func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
 			return false
 		}
 
-		if a.IsNull() && b.IsNull() {
+		if a.IsNull() {
 			return false
 		}
 	}
