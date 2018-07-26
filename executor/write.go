@@ -52,7 +52,7 @@ const (
 //     3. newHandle (int64) : if handleChanged == true, the newHandle means the new handle after update.
 //     4. lastInsertID (uint64) : the lastInsertID should be set by the newData.
 //     5. err (error) : error in the update.
-func updateRecord(ctx sessionctx.Context, h int64, oldData, newData types.DatumRow, modified []bool, t table.Table,
+func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
 	onDup bool) (bool, bool, int64, uint64, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
