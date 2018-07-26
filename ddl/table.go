@@ -203,7 +203,8 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfo(t, job, schemaID)
+	var tblInfo *model.TableInfo
+	tblInfo, err = getTableInfo(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
