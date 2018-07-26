@@ -122,7 +122,6 @@ func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			return nil
 		}
 	}
-	return nil
 }
 
 // buildAvg builds the AggFunc implementation for function "AVG".
