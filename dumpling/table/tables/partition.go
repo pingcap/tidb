@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
 )
@@ -153,7 +154,7 @@ func (t *PartitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 	partitionExprs := t.partitionExpr.UpperBounds
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		var ret int64
-		ret, _, err = partitionExprs[i].EvalInt(ctx, types.DatumRow(r))
+		ret, _, err = partitionExprs[i].EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 		if err != nil {
 			return true // Break the search.
 		}

@@ -511,11 +511,10 @@ func (b *builtinValuesIntSig) Clone() builtinFunc {
 // evalInt evals a builtinValuesIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesIntSig) evalInt(_ types.Row) (int64, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return 0, true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return 0, true, nil
@@ -540,11 +539,10 @@ func (b *builtinValuesRealSig) Clone() builtinFunc {
 // evalReal evals a builtinValuesRealSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesRealSig) evalReal(_ types.Row) (float64, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return 0, true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return 0, true, nil
@@ -569,11 +567,10 @@ func (b *builtinValuesDecimalSig) Clone() builtinFunc {
 // evalDecimal evals a builtinValuesDecimalSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesDecimalSig) evalDecimal(_ types.Row) (*types.MyDecimal, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return nil, true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return nil, true, nil
@@ -598,11 +595,10 @@ func (b *builtinValuesStringSig) Clone() builtinFunc {
 // evalString evals a builtinValuesStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesStringSig) evalString(_ types.Row) (string, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return "", true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return "", true, nil
@@ -627,11 +623,10 @@ func (b *builtinValuesTimeSig) Clone() builtinFunc {
 // evalTime evals a builtinValuesTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesTimeSig) evalTime(_ types.Row) (types.Time, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return types.Time{}, true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return types.Time{}, true, nil
@@ -656,11 +651,10 @@ func (b *builtinValuesDurationSig) Clone() builtinFunc {
 // evalDuration evals a builtinValuesDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesDurationSig) evalDuration(_ types.Row) (types.Duration, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return types.Duration{}, true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return types.Duration{}, true, nil
@@ -686,11 +680,10 @@ func (b *builtinValuesJSONSig) Clone() builtinFunc {
 // evalJSON evals a builtinValuesJSONSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesJSONSig) evalJSON(_ types.Row) (json.BinaryJSON, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return json.BinaryJSON{}, true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return json.BinaryJSON{}, true, nil
