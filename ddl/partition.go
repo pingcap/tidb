@@ -288,10 +288,11 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, expr ast.Expr
 	if len(constraints) == 0 {
 		return nil
 	}
-	//Save the table constraint into the slice.
-	uniKeys, multipleKeys, priKeys := buildPartitioningKeysConstraints(tblInfo, constraints)
 
-	// Parse partitioning key.
+	// Save the column names in the table constraint in slice.
+	uniKeys, multipleKeys, priKeys := saveConstraintsColumnNames(tblInfo, constraints)
+
+	// Parse partitioning key, save the column names in the partitioning key to slice.
 	buf := new(bytes.Buffer)
 	expr.Format(buf)
 	var partkeys []string
@@ -326,7 +327,8 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, expr ast.Expr
 	return nil
 }
 
-func buildPartitioningKeysConstraints(tblInfo *model.TableInfo, constraints []*ast.Constraint) ([]string, []string, []string) {
+// saveConstraintsColumnNames save the column names in the table constraint in slice.
+func saveConstraintsColumnNames(tblInfo *model.TableInfo, constraints []*ast.Constraint) ([]string, []string, []string) {
 	var uniKeys, multipleKeys, priKeys []string
 	for _, v := range constraints {
 		if v.Tp == ast.ConstraintUniq {
