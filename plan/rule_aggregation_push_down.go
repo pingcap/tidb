@@ -169,7 +169,7 @@ func (a *aggregationOptimizer) checkValidJoin(join *LogicalJoin) bool {
 
 // decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
 // there are no differences between partial mode and complete mode, so we can confuse them.
-func (a *aggregationOptimizer) decompose(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc, schema *expression.Schema, id int) ([]*aggregation.AggFuncDesc, *expression.Schema) {
+func (a *aggregationOptimizer) decompose(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc, schema *expression.Schema) ([]*aggregation.AggFuncDesc, *expression.Schema) {
 	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
 	result := []*aggregation.AggFuncDesc{aggFunc.Clone()}
 	for _, aggFunc := range result {
@@ -252,7 +252,7 @@ func (a *aggregationOptimizer) makeNewAgg(ctx sessionctx.Context, aggFuncs []*ag
 	schema := expression.NewSchema(make([]*expression.Column, 0, aggLen)...)
 	for _, aggFunc := range aggFuncs {
 		var newFuncs []*aggregation.AggFuncDesc
-		newFuncs, schema = a.decompose(ctx, aggFunc, schema, agg.ID())
+		newFuncs, schema = a.decompose(ctx, aggFunc, schema)
 		newAggFuncDescs = append(newAggFuncDescs, newFuncs...)
 	}
 	for _, gbyCol := range gbyCols {

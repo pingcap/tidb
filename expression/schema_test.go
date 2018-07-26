@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/model"
 )
 
 // generateKeys4Schema will generate keys for a given schema. Used only in this file.
@@ -27,6 +28,26 @@ func generateKeys4Schema(schema *Schema) {
 		keys = append(keys, []*Column{schema.Columns[i]})
 	}
 	schema.Keys = keys
+}
+
+// generateSchema will generate a schema for test. Used only in this file.
+func (s *testEvalSuite) generateSchema(colCount int, dbName, tblName string) *Schema {
+	cols := make([]*Column, 0, colCount)
+	for i := 0; i < colCount; i++ {
+		cols = append(cols, &Column{
+			Position: s.allocColID(),
+			DBName:   model.NewCIStr(dbName),
+			TblName:  model.NewCIStr(tblName),
+			ColName:  model.NewCIStr(fmt.Sprintf("C%v", i)),
+		})
+		if i >= 2 {
+			cols[i].DBName = model.NewCIStr("")
+		}
+		if i >= 3 {
+			cols[i].TblName = model.NewCIStr("")
+		}
+	}
+	return NewSchema(cols...)
 }
 
 func (s *testEvalSuite) TestSchemaString(c *C) {

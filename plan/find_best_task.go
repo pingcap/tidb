@@ -337,14 +337,6 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	}
 	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
-	names1 := make([]string, 0, len(is.Columns))
-	names2 := make([]string, 0, len(is.Index.Columns))
-	for _, c := range is.Columns {
-		names1 = append(names1, c.Name.L)
-	}
-	for _, c := range is.Index.Columns {
-		names2 = append(names2, c.Name.L)
-	}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// If it's parent requires single read task, return max cost.
 		if prop.taskTp == copSingleReadTaskType {
@@ -411,7 +403,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	return task, nil
 }
 
-// TODO: refactor this part.
+// TODO: refactor this part, we should not call Clone in fact.
 func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, 0, len(idx.Columns))
 	for _, col := range idx.Columns {
