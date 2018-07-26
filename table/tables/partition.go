@@ -215,11 +215,17 @@ func (t *PartitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
 	if old != new {
-		err = t.GetPartition(old).RemoveRecord(ctx, h, currData)
+		_, err = t.GetPartition(new).AddRecord(ctx, newData, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		_, err = t.GetPartition(new).AddRecord(ctx, newData, false)
+		// UpdateRecord should be side effect free, but there're two steps here.
+		// What would happen if step1 succeed but step2 meets error? It's hard
+		// to rollback.
+		// So this special order is chosen: errors such as 'Key Already Exists'
+		// will generally happen during step1, and unlikely to happen in
+		// step2.
+		err = t.GetPartition(old).RemoveRecord(ctx, h, currData)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -228,4 +234,15 @@ func (t *PartitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 
 	tbl := t.GetPartition(new)
 	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
+}
+
+// CheckHandleExists check whether recordID key exists. if not exists, return nil,
+// otherwise return kv.ErrKeyExists error.
+func (t *PartitionedTable) CheckHandleExists(ctx sessionctx.Context, handle int64, data []types.Datum) error {
+	info := t.Meta().GetPartitionInfo()
+	pid, err := t.locatePartition(ctx, info, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return CheckHandleExists(ctx, t.GetPartition(pid), handle)
 }
