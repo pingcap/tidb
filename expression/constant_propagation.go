@@ -31,13 +31,34 @@ var eqFuncNameMap = map[string]bool{
 	ast.EQ: true,
 }
 
-// inEqFuncNameMap stores all the in-equal operators that can be propagated.
-var inEqFuncNameMap = map[string]bool{
-	ast.LT: true,
-	ast.GT: true,
-	ast.LE: true,
-	ast.GE: true,
-	ast.NE: true,
+// nonDeterministicFuncNameMap stores all the non-deterministic operators that cannot be propagated.
+var nonDeterministicFuncNameMap = map[string]bool{
+	ast.Rand:                     true,
+	ast.Now:                      true,
+	ast.Curdate:                  true,
+	ast.CurrentDate:              true,
+	ast.CurrentTime:              true,
+	ast.CurrentTimestamp:         true,
+	ast.Curtime:                  true,
+	ast.LocalTime:                true,
+	ast.LocalTimestamp:           true,
+	ast.Sysdate:                  true,
+	ast.MasterPosWait:            true,
+	ast.AnyValue:                 true,
+	ast.Sleep:                    true,
+	ast.UUID:                     true,
+	ast.UUIDShort:                true,
+	ast.Encrypt:                  true,
+	ast.RandomBytes:              true,
+	ast.PasswordFunc:             true,
+	ast.GetLock:                  true,
+	ast.ReleaseLock:              true,
+	ast.ReleaseAllLocks:          true,
+	ast.ValidatePasswordStrength: true,
+	ast.AesDecrypt:               true,
+	ast.AesEncrypt:               true,
+	ast.FoundRows:                true,
+	ast.RowCount:                 true,
 }
 
 type multiEqualSet struct {
@@ -72,46 +93,6 @@ type propagateConstantSolver struct {
 	ctx        sessionctx.Context
 }
 
-// propagateInEQ propagates all in-equal conditions.
-// e.g. For expression a = b and b = c and c = d and c < 1 , we can get extra a < 1 and b < 1 and d < 1.
-// We maintain a unionSet representing the equivalent for every two columns.
-func (s *propagateConstantSolver) propagateInEQ() {
-	s.unionSet = &multiEqualSet{}
-	s.unionSet.init(len(s.columns))
-	for i := range s.conditions {
-		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
-			lCol, lOk := fun.GetArgs()[0].(*Column)
-			rCol, rOk := fun.GetArgs()[1].(*Column)
-			if lOk && rOk {
-				lID := s.getColID(lCol)
-				rID := s.getColID(rCol)
-				s.unionSet.addRelation(lID, rID)
-			}
-		}
-	}
-	condsLen := len(s.conditions)
-	for i := 0; i < condsLen; i++ {
-		cond := s.conditions[i]
-		col, con := s.validPropagateCond(cond, inEqFuncNameMap)
-		if col == nil {
-			continue
-		}
-		id := s.getColID(col)
-		for j := range s.columns {
-			if id != j && s.unionSet.findRoot(id) == s.unionSet.findRoot(j) {
-				funName := cond.(*ScalarFunction).FuncName.L
-				var newExpr Expression
-				if _, ok := cond.(*ScalarFunction).GetArgs()[0].(*Column); ok {
-					newExpr = NewFunctionInternal(s.ctx, funName, cond.GetType(), s.columns[j], con)
-				} else {
-					newExpr = NewFunctionInternal(s.ctx, funName, cond.GetType(), con, s.columns[j])
-				}
-				s.conditions = append(s.conditions, newExpr)
-			}
-		}
-	}
-}
-
 // propagateEQ propagates equal expression multiple times. An example runs as following:
 // a = d & b * 2 = c & c = d + 2 & b = 1 & a = 4, we pick eq cond b = 1 and a = 4
 // d = 4 & 2 = c & c = d + 2 & b = 1 & a = 4, we propagate b = 1 and a = 4 and pick eq cond c = 2 and d = 4
@@ -138,6 +119,42 @@ func (s *propagateConstantSolver) propagateEQ() {
 	}
 }
 
+// propagateOthers propagates all deterministic conditions.
+// e.g. For expression a = b and b = c and c = d and c < 1 , we can get extra a < 1 and b < 1 and d < 1.
+// However, for a = b and a < rand(), we cannot propagate a < rand() to b < rand() because rand() is non-deterministic
+// We maintain a unionSet representing the equivalent for every two columns.
+func (s *propagateConstantSolver) propagateOthers() {
+	s.unionSet = &multiEqualSet{}
+	s.unionSet.init(len(s.columns))
+	for i := range s.conditions {
+		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
+			lCol, lOk := fun.GetArgs()[0].(*Column)
+			rCol, rOk := fun.GetArgs()[1].(*Column)
+			if lOk && rOk {
+				lID := s.getColID(lCol)
+				rID := s.getColID(rCol)
+				s.unionSet.addRelation(lID, rID)
+			}
+		}
+	}
+
+	condsLen := len(s.conditions)
+	for j, colj := range s.columns {
+		for k, colk := range s.columns {
+			if j == k || s.unionSet.findRoot(j) != s.unionSet.findRoot(k) {
+				continue
+			}
+			for i := 0; i < condsLen; i++ {
+				cond := s.conditions[i]
+				replaced, _, newExpr := s.tryToReplaceCond(colj, colk, cond)
+				if replaced {
+					s.conditions = append(s.conditions, newExpr)
+				}
+			}
+		}
+	}
+}
+
 // validPropagateCond checks if the cond is an expression like [column op constant] and op is in the funNameMap.
 func (s *propagateConstantSolver) validPropagateCond(cond Expression, funNameMap map[string]bool) (*Column, *Constant) {
 	if eq, ok := cond.(*ScalarFunction); ok {
@@ -156,6 +173,49 @@ func (s *propagateConstantSolver) validPropagateCond(cond Expression, funNameMap
 		}
 	}
 	return nil, nil
+}
+
+// tryToReplaceCond aims to replace all occurances of column 'src' and try to replace it with 'tgt' in 'cond'
+// It returns
+//  bool: if a replacement happened
+//  bool: if 'cond' contains non-deterministic expression
+//  Expression: the replaced expression, or original 'cond' if the replacement is not happened
+func (s *propagateConstantSolver) tryToReplaceCond(src *Column, tgt *Column, cond Expression) (bool, bool, Expression) {
+	replaced := false
+	var r *ScalarFunction
+	if funct, ok := cond.(*ScalarFunction); ok {
+		if _, isNonDeterminisitc := nonDeterministicFuncNameMap[funct.FuncName.L]; isNonDeterminisitc {
+			return false, true, cond
+		}
+		if _, isEq := eqFuncNameMap[funct.FuncName.L]; isEq {
+			return false, false, cond
+		}
+		for idx, expr := range funct.GetArgs() {
+			if src.Equal(nil, expr) {
+				replaced = true
+				if r == nil {
+					r = funct.Clone().(*ScalarFunction)
+				}
+				r.GetArgs()[idx] = tgt
+			} else {
+				subReplaced, isNonDeterminisitic, subExpr := s.tryToReplaceCond(src, tgt, expr)
+				if isNonDeterminisitic {
+					return false, true, cond
+				} else if subReplaced {
+					replaced = true
+					if r == nil {
+						r = funct.Clone().(*ScalarFunction)
+					}
+					r.GetArgs()[idx] = subExpr
+				}
+			}
+		}
+	}
+	if replaced {
+		return true, false, r
+	} else {
+		return false, false, cond
+	}
 }
 
 func (s *propagateConstantSolver) setConds2ConstFalse() {
@@ -228,7 +288,7 @@ func (s *propagateConstantSolver) solve(conditions []Expression) []Expression {
 		return conditions
 	}
 	s.propagateEQ()
-	s.propagateInEQ()
+	s.propagateOthers()
 	for i, cond := range s.conditions {
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
 			dnfItems := SplitDNFItems(cond)
@@ -255,7 +315,7 @@ func (s *propagateConstantSolver) insertCol(col *Column) {
 	}
 }
 
-// PropagateConstant propagate constant values of equality predicates and inequality predicates in a condition.
+// PropagateConstant propagate constant values of deterministic predicates in a condition.
 func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
 	solver := &propagateConstantSolver{
 		colMapper: make(map[string]int),

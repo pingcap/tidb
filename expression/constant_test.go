@@ -113,6 +113,35 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			},
 			result: "0",
 		},
+		{
+			conditions: []Expression{
+				newFunction(ast.EQ, newColumn(0), newColumn(1)),
+				newFunction(ast.In, newColumn(0), newLonglong(1), newLonglong(2)),
+				newFunction(ast.In, newColumn(1), newLonglong(3), newLonglong(4)),
+			},
+			result: "eq(test.t.0, test.t.1), in(test.t.0, 1, 2), in(test.t.0, 3, 4), in(test.t.1, 1, 2), in(test.t.1, 3, 4)",
+		},
+		{
+			conditions: []Expression{
+				newFunction(ast.EQ, newColumn(0), newColumn(1)),
+				newFunction(ast.LE, newFunction(ast.Mul, newColumn(0), newColumn(0)), newLonglong(50)),
+			},
+			result: "eq(test.t.0, test.t.1), le(mul(test.t.0, test.t.0), 50), le(mul(test.t.1, test.t.1), 50)",
+		},
+		{
+			conditions: []Expression{
+				newFunction(ast.EQ, newColumn(0), newColumn(1)),
+				newFunction(ast.LE, newColumn(0), newFunction(ast.Plus, newColumn(1), newLonglong(1))),
+			},
+			result: "eq(test.t.0, test.t.1), le(test.t.0, plus(test.t.0, 1)), le(test.t.0, plus(test.t.1, 1)), le(test.t.1, plus(test.t.1, 1))",
+		},
+		{
+			conditions: []Expression{
+				newFunction(ast.EQ, newColumn(0), newColumn(1)),
+				newFunction(ast.LE, newColumn(0), newFunction(ast.Rand)),
+			},
+			result: "eq(test.t.0, test.t.1), le(cast(test.t.0), rand())",
+		},
 	}
 	for _, tt := range tests {
 		ctx := mock.NewContext()
