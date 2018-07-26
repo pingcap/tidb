@@ -236,9 +236,11 @@ func (b *baseBuiltinFunc) Clone() builtinFunc {
 	panic("you should not call this method.")
 }
 
-// baseBuiltinCastFunc will be contained in every struct that implement cast builtinFunc
+// baseBuiltinCastFunc will be contained in every struct that implement cast builtinFunc.
 type baseBuiltinCastFunc struct {
 	baseBuiltinFunc
+
+	// inUnionAll indicates whether cast is in union context.
 	inUnionAll bool
 }
 
