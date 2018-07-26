@@ -249,10 +249,10 @@ func (b *baseBuiltinCastFunc) cloneFrom(from *baseBuiltinCastFunc) {
 	b.inUnion = from.inUnion
 }
 
-func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnionAll bool) baseBuiltinCastFunc {
+func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuiltinCastFunc {
 	return baseBuiltinCastFunc{
 		baseBuiltinFunc: builtinFunc,
-		inUnion:         inUnionAll,
+		inUnion:         inUnion,
 	}
 }
 

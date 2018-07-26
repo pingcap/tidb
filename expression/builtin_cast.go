@@ -454,7 +454,7 @@ func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull b
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+	if !mysql.HasUnsignedFlag(b.tp.Flag) {
 		res = float64(val)
 	} else {
 		var uVal uint64
@@ -479,7 +479,7 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
+	if !mysql.HasUnsignedFlag(b.tp.Flag) {
 		res = types.NewDecFromInt(val)
 	} else {
 		var uVal uint64
@@ -1639,6 +1639,7 @@ func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, 0
 	types.SetBinChsClnFlag(tp)
+	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
 	return BuildCastFunction(ctx, expr, tp)
 }
 
@@ -1652,6 +1653,7 @@ func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 	tp := types.NewFieldType(mysql.TypeDouble)
 	tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 	types.SetBinChsClnFlag(tp)
+	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
 	return BuildCastFunction(ctx, expr, tp)
 }
 
@@ -1665,6 +1667,7 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
 	tp.Flen, tp.Decimal = expr.GetType().Flen, types.UnspecifiedLength
 	types.SetBinChsClnFlag(tp)
+	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
 	return BuildCastFunction(ctx, expr, tp)
 }
 

@@ -2936,4 +2936,14 @@ func (s *testSuite) TestUnionAutoSignedCast(c *C) {
 		Check(testkit.Rows("1 18446744073709551615", "2 1"))
 	tk.MustQuery("select dd from t2 union all select dd from t2").
 		Check(testkit.Rows("1", "1"))
+
+	tk.MustExec("drop table if exists t3,t4")
+	tk.MustExec("create table t3 (id int, v int)")
+	tk.MustExec("create table t4 (id int, v double unsigned)")
+	tk.MustExec("insert into t3 values (1, -1)")
+	tk.MustExec("insert into t4 values (2, 1)")
+	tk.MustQuery("select id, v from t3 union select id, v from t4 order by id").
+		Check(testkit.Rows("1 -1", "2 1"))
+	tk.MustQuery("select id, v from t4 union select id, v from t3 order by id").
+		Check(testkit.Rows("1 0", "2 1"))
 }
