@@ -411,12 +411,15 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	return task, nil
 }
 
+// TODO: refactor this part.
 func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, 0, len(idx.Columns))
 	for _, col := range idx.Columns {
 		colFound := is.dataSourceSchema.FindColumnByName(col.Name.L)
 		if colFound == nil {
 			colFound = &expression.Column{ColName: col.Name, Position: is.ctx.GetSessionVars().AllocPlanColumnID()}
+		} else {
+			colFound = colFound.Clone().(*expression.Column)
 		}
 		indexCols = append(indexCols, colFound)
 	}
