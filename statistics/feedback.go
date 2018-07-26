@@ -132,7 +132,7 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 }
 
 func (q *QueryFeedback) decodeIntValues() *QueryFeedback {
-	nq := &QueryFeedback{hist: q.hist}
+	nq := &QueryFeedback{}
 	nq.feedback = make([]feedback, 0, len(q.feedback))
 	for _, fb := range q.feedback {
 		_, lowInt, err := codec.DecodeInt(fb.lower.GetBytes())
@@ -560,16 +560,14 @@ func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
 }
 
 // UpdateCMSketch updates the CMSketch by feedback.
-func UpdateCMSketch(c *CMSketch, feedback *QueryFeedback) *CMSketch {
-	if c == nil {
-		return nil
+func UpdateCMSketch(c *CMSketch, feedbacks []feedback) *CMSketch {
+	if c == nil || len(feedbacks) == 0 {
+		return c
 	}
 	newCMSketch := c.copy()
-	for _, fb := range feedback.feedback {
-		if bytes.Compare(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) >= 0 {
-			h1, h2 := murmur3.Sum128(fb.lower.GetBytes())
-			newCMSketch.setValue(h1, h2, uint32(fb.count))
-		}
+	for _, fb := range feedbacks {
+		h1, h2 := murmur3.Sum128(fb.lower.GetBytes())
+		newCMSketch.setValue(h1, h2, uint32(fb.count))
 	}
 	return newCMSketch
 }
@@ -746,4 +744,17 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	}
 	q.expected = int64(expected)
 	return nil
+}
+
+// splitFeedback splits the feedbacks into equality feedbacks and range feedbacks.
+func splitFeedbackByQueryType(feedbacks []feedback) ([]feedback, []feedback) {
+	var eqFB, ranFB []feedback
+	for _, fb := range feedbacks {
+		if bytes.Compare(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) >= 0 {
+			eqFB = append(eqFB, fb)
+		} else {
+			ranFB = append(ranFB, fb)
+		}
+	}
+	return eqFB, ranFB
 }

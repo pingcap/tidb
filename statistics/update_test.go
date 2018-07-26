@@ -701,7 +701,8 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
 		"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n"+
-		"num: 3\tlower_bound: 3\tupper_bound: 9223372036854775807\trepeats: 0")
+		"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n"+
+		"num: 4\tlower_bound: 3\tupper_bound: 9223372036854775807\trepeats: 0")
 
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	low, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
@@ -711,5 +712,5 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
 		"num: 2\tlower_bound: \tupper_bound: 2\trepeats: 0\n"+
-		"num: 7\tlower_bound: 3\tupper_bound: 6\trepeats: 0")
+		"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0")
 }

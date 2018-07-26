@@ -420,8 +420,9 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				continue
 			}
 			newIdx := *idx
-			newIdx.Histogram = *UpdateHistogram(&idx.Histogram, fb)
-			newIdx.CMSketch = UpdateCMSketch(idx.CMSketch, fb)
+			eqFB, ranFB := splitFeedbackByQueryType(fb.feedback)
+			newIdx.CMSketch = UpdateCMSketch(idx.CMSketch, eqFB)
+			newIdx.Histogram = *UpdateHistogram(&idx.Histogram, &QueryFeedback{feedback: ranFB})
 			newTblStats.Indices[fb.hist.ID] = &newIdx
 		} else {
 			col, ok := tblStats.Columns[fb.hist.ID]
@@ -429,8 +430,11 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				continue
 			}
 			newCol := *col
-			fb = fb.decodeIntValues()
-			newCol.Histogram = *UpdateHistogram(&col.Histogram, fb)
+			// only use the range query to update primary key
+			_, ranFB := splitFeedbackByQueryType(fb.feedback)
+			newFB := &QueryFeedback{feedback: ranFB}
+			newFB = newFB.decodeIntValues()
+			newCol.Histogram = *UpdateHistogram(&col.Histogram, newFB)
 			newTblStats.Columns[fb.hist.ID] = &newCol
 		}
 		h.UpdateTableStats([]*Table{newTblStats}, nil)
