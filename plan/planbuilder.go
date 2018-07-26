@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -919,21 +918,6 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		table:     tableInfo.Name.L,
 	})
 
-	columnByName := make(map[string]*table.Column, len(insertPlan.Table.Cols()))
-	for _, col := range insertPlan.Table.Cols() {
-		columnByName[col.Name.L] = col
-	}
-
-	// Check insert.Columns contains generated columns or not.
-	// It's for INSERT INTO t (...) VALUES (...)
-	for _, col := range insert.Columns {
-		column, ok := columnByName[col.Name.L]
-		if ok && column.IsGenerated() {
-			b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
-			return nil
-		}
-	}
-
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
 
@@ -948,130 +932,37 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		return n
 	}
 
-	cols := insertPlan.Table.Cols()
-	maxValuesItemLength := 0 // the max length of items in VALUES list.
-	for _, valuesItem := range insert.Lists {
-		exprList := make([]expression.Expression, 0, len(valuesItem))
-		for i, valueItem := range valuesItem {
-			var expr expression.Expression
-			var err error
-			if dft, ok := valueItem.(*ast.DefaultExpr); ok {
-				if dft.Name != nil {
-					expr, err = b.findDefaultValue(cols, dft.Name)
-				} else {
-					expr, err = b.getDefaultValue(cols[i])
-				}
-			} else if val, ok := valueItem.(*ast.ValueExpr); ok {
-				expr = &expression.Constant{
-					Value:   val.Datum,
-					RetType: &val.Type,
-				}
-			} else {
-				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, true, checkRefColumn)
-			}
-			if err != nil {
-				b.err = errors.Trace(err)
-			}
-			exprList = append(exprList, expr)
-		}
-		if len(valuesItem) > maxValuesItemLength {
-			maxValuesItemLength = len(valuesItem)
-		}
-		insertPlan.Lists = append(insertPlan.Lists, exprList)
-	}
-
-	// It's for INSERT INTO t VALUES (...)
-	if len(insert.Columns) == 0 {
-		// The length of VALUES list maybe exceed table width,
-		// we ignore this here but do checking in executor.
-		var effectiveValuesLen int
-		if maxValuesItemLength <= len(tableInfo.Columns) {
-			effectiveValuesLen = maxValuesItemLength
-		} else {
-			effectiveValuesLen = len(tableInfo.Columns)
-		}
-		for i := 0; i < effectiveValuesLen; i++ {
-			col := tableInfo.Columns[i]
-			if col.IsGenerated() {
-				b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
-				return nil
-			}
-		}
-	}
-
-	for _, assign := range insert.Setlist {
-		col, err := insertPlan.tableSchema.FindColumn(assign.Column)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
-		}
-		if col == nil {
-			b.err = errors.Errorf("Can't find column %s", assign.Column)
-			return nil
-		}
-
-		// Check whether the column to be updated is the generated column.
-		if columnByName[assign.Column.Name.L].IsGenerated() {
-			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
-			return nil
-		}
-
-		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, true, checkRefColumn)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
-		}
-		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
-			Col:  col,
-			Expr: expr,
-		})
-	}
-
-	insertPlan.Schema4OnDuplicate = insertPlan.tableSchema
-	if insert.Select != nil {
-		selectPlan := b.build(insert.Select)
+	if len(insert.Setlist) > 0 {
+		// Branch for `INSERT ... SET ...`.
+		b.buildSetValuesOfInsert(insert, insertPlan, mockTablePlan, checkRefColumn)
 		if b.err != nil {
 			return nil
 		}
-
-		numInsertCols := mathutil.Min(selectPlan.Schema().Len(), len(tableInfo.Columns))
-		// If the column to be inserted in the insert table is a generated
-		// column, raises a "ErrBadGeneratedColumn" error here.
-		for _, col := range tableInfo.Columns[:numInsertCols] {
-			if col.IsGenerated() {
-				b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, tableInfo.Name.O)
-				return nil
-			}
-		}
-
-		insertPlan.SelectPlan, b.err = doOptimize(b.optFlag, selectPlan.(LogicalPlan))
+	} else if len(insert.Lists) > 0 {
+		// Branch for `INSERT ... VALUES ...`.
+		b.buildValuesListOfInsert(insert, insertPlan, mockTablePlan, checkRefColumn)
 		if b.err != nil {
 			return nil
 		}
-
-		insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, insertPlan.SelectPlan.Schema())
+	} else {
+		// Branch for `INSERT ... SELECT ...`.
+		b.buildSelectPlanOfInsert(insert, insertPlan)
+		if b.err != nil {
+			return nil
+		}
 	}
 
 	mockTablePlan.SetSchema(insertPlan.Schema4OnDuplicate)
-	onDupCols := make(map[string]struct{}, len(insert.OnDuplicate))
-	for _, assign := range insert.OnDuplicate {
-		// Check whether the column to be updated exists in the source table.
-		col, err := insertPlan.tableSchema.FindColumn(assign.Column)
-		if err != nil {
-			b.err = errors.Trace(err)
-			return nil
-		} else if col == nil {
-			b.err = ErrUnknownColumn.GenByArgs(assign.Column.OrigColName(), "field list")
-			return nil
-		}
-
-		// Check whether the column to be updated is the generated column.
-		column := columnByName[assign.Column.Name.L]
-		if column.IsGenerated() {
-			b.err = ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tableInfo.Name.O)
-			return nil
-		}
-
+	columnByName := make(map[string]*table.Column, len(insertPlan.Table.Cols()))
+	for _, col := range insertPlan.Table.Cols() {
+		columnByName[col.Name.L] = col
+	}
+	onDupColSet, dupCols, err := insertPlan.validateOnDup(insert.OnDuplicate, columnByName, tableInfo)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	for i, assign := range insert.OnDuplicate {
 		// Construct the function which calculates the assign value of the column.
 		expr, err := b.rewriteInsertOnDuplicateUpdate(assign.Expr, mockTablePlan, insertPlan)
 		if err != nil {
@@ -1080,15 +971,14 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 		}
 
 		insertPlan.OnDuplicate = append(insertPlan.OnDuplicate, &expression.Assignment{
-			Col:  col,
+			Col:  dupCols[i],
 			Expr: expr,
 		})
-		onDupCols[column.Name.L] = struct{}{}
 	}
 
 	// Calculate generated columns.
 	mockTablePlan.schema = insertPlan.tableSchema
-	insertPlan.GenCols = b.resolveGeneratedColumns(insertPlan.Table.Cols(), onDupCols, mockTablePlan)
+	insertPlan.GenCols = b.resolveGeneratedColumns(insertPlan.Table.Cols(), onDupColSet, mockTablePlan)
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
@@ -1096,6 +986,202 @@ func (b *planBuilder) buildInsert(insert *ast.InsertStmt) Plan {
 
 	insertPlan.ResolveIndices()
 	return insertPlan
+}
+
+func (p *Insert) validateOnDup(onDup []*ast.Assignment, colMap map[string]*table.Column, tblInfo *model.TableInfo) (map[string]struct{}, []*expression.Column, error) {
+	onDupColSet := make(map[string]struct{}, len(onDup))
+	dupCols := make([]*expression.Column, 0, len(onDup))
+	for _, assign := range onDup {
+		// Check whether the column to be updated exists in the source table.
+		col, err := p.tableSchema.FindColumn(assign.Column)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		} else if col == nil {
+			return nil, nil, ErrUnknownColumn.GenByArgs(assign.Column.OrigColName(), "field list")
+		}
+
+		// Check whether the column to be updated is the generated column.
+		column := colMap[assign.Column.Name.L]
+		if column.IsGenerated() {
+			return nil, nil, ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tblInfo.Name.O)
+		}
+		onDupColSet[column.Name.L] = struct{}{}
+		dupCols = append(dupCols, col)
+	}
+	return onDupColSet, dupCols, nil
+}
+
+func (b *planBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert) (affectedValuesCols []*table.Column) {
+	if len(insertStmt.Columns) > 0 {
+		// This branch is for the following scenarios:
+		// 1. `INSERT INTO tbl_name (col_name [, col_name] ...) {VALUES | VALUE} (value_list) [, (value_list)] ...`,
+		// 2. `INSERT INTO tbl_name (col_name [, col_name] ...) SELECT ...`.
+		colName := make([]string, 0, len(insertStmt.Columns))
+		for _, col := range insertStmt.Columns {
+			colName = append(colName, col.Name.O)
+		}
+		affectedValuesCols, b.err = table.FindCols(insertPlan.Table.Cols(), colName, insertPlan.Table.Meta().PKIsHandle)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return
+		}
+
+	} else if len(insertStmt.Setlist) == 0 {
+		// This branch is for the following scenarios:
+		// 1. `INSERT INTO tbl_name {VALUES | VALUE} (value_list) [, (value_list)] ...`,
+		// 2. `INSERT INTO tbl_name SELECT ...`.
+		affectedValuesCols = insertPlan.Table.Cols()
+	}
+	return
+}
+
+func (b *planBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual,
+	checkRefColumn func(n ast.Node) ast.Node) {
+	tableInfo := insertPlan.Table.Meta()
+	colNames := make([]string, 0, len(insert.Setlist))
+	exprCols := make([]*expression.Column, 0, len(insert.Setlist))
+	for _, assign := range insert.Setlist {
+		exprCol, err := insertPlan.tableSchema.FindColumn(assign.Column)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return
+		}
+		if exprCol == nil {
+			b.err = errors.Errorf("Can't find column %s", assign.Column)
+			return
+		}
+		colNames = append(colNames, assign.Column.Name.L)
+		exprCols = append(exprCols, exprCol)
+	}
+
+	// Check whether the column to be updated is the generated column.
+	tCols, err := table.FindCols(insertPlan.Table.Cols(), colNames, tableInfo.PKIsHandle)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return
+	}
+	for _, tCol := range tCols {
+		if tCol.IsGenerated() {
+			b.err = ErrBadGeneratedColumn.GenByArgs(tCol.Name.O, tableInfo.Name.O)
+			return
+		}
+	}
+
+	for i, assign := range insert.Setlist {
+		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, true, checkRefColumn)
+		if err != nil {
+			b.err = errors.Trace(err)
+		}
+		insertPlan.SetList = append(insertPlan.SetList, &expression.Assignment{
+			Col:  exprCols[i],
+			Expr: expr,
+		})
+	}
+	insertPlan.Schema4OnDuplicate = insertPlan.tableSchema
+}
+
+func (b *planBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual,
+	checkRefColumn func(n ast.Node) ast.Node) {
+	affectedValuesCols := b.getAffectCols(insert, insertPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return
+	}
+
+	// If the value_list and col_list is empty and we have generated column, we can still write to this table.
+	// i.e. insert into t values(); can be executed successfully if t have generated column.
+	if len(insert.Columns) > 0 || len(insert.Lists[0]) > 0 {
+		// If value_list is not empty or the col_list is not empty, length of value_list should be the same with col_list's.
+		if len(insert.Lists[0]) != len(affectedValuesCols) {
+			b.err = ErrWrongValueCountOnRow.GenByArgs(1)
+			return
+		}
+		// No generated column is allowed.
+		for _, col := range affectedValuesCols {
+			if col.IsGenerated() {
+				b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+				return
+			}
+		}
+	}
+
+	totalTableCols := insertPlan.Table.Cols()
+	for i, valuesItem := range insert.Lists {
+		// The length of the all the value_list should be the same.
+		// "insert into t values (), ()" is valid.
+		// "insert into t values (), (1)" is not valid.
+		// "insert into t values (1), ()" is not valid.
+		// "insert into t values (1,2), (1)" is not valid.
+		if i > 0 && len(insert.Lists[i-1]) != len(insert.Lists[i]) {
+			b.err = ErrWrongValueCountOnRow.GenByArgs(i + 1)
+			return
+		}
+		exprList := make([]expression.Expression, 0, len(valuesItem))
+		for j, valueItem := range valuesItem {
+			var expr expression.Expression
+			var err error
+			switch x := valueItem.(type) {
+			case *ast.DefaultExpr:
+				if x.Name != nil {
+					expr, err = b.findDefaultValue(totalTableCols, x.Name)
+				} else {
+					expr, err = b.getDefaultValue(affectedValuesCols[j])
+				}
+			case *ast.ValueExpr:
+				expr = &expression.Constant{
+					Value:   x.Datum,
+					RetType: &x.Type,
+				}
+			default:
+				expr, _, err = b.rewriteWithPreprocess(valueItem, mockTablePlan, nil, true, checkRefColumn)
+			}
+			if err != nil {
+				b.err = errors.Trace(err)
+			}
+			exprList = append(exprList, expr)
+		}
+		insertPlan.Lists = append(insertPlan.Lists, exprList)
+	}
+	insertPlan.Schema4OnDuplicate = insertPlan.tableSchema
+}
+
+func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan *Insert) {
+	affectedValuesCols := b.getAffectCols(insert, insertPlan)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return
+	}
+	selectPlan := b.build(insert.Select)
+	if b.err != nil {
+		return
+	}
+
+	// Check that the length of select' row is equal to the col list.
+	if selectPlan.Schema().Len() != len(affectedValuesCols) {
+		b.err = ErrWrongValueCountOnRow.GenByArgs(1)
+		return
+	}
+
+	// Check to guarantee that there's no generated column.
+	// This check should be done after the above one to make its behavior compatible with MySQL.
+	// For example, table t has two columns, namely a and b, and b is a generated column.
+	// "insert into t (b) select * from t" will raise an error that the column count is not matched.
+	// "insert into t select * from t" will raise an error that there's a generated column in the column list.
+	// If we do this check before the above one, "insert into t (b) select * from t" will raise an error
+	// that there's a generated column in the column list.
+	for _, col := range affectedValuesCols {
+		if col.IsGenerated() {
+			b.err = ErrBadGeneratedColumn.GenByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+			return
+		}
+	}
+
+	insertPlan.SelectPlan, b.err = doOptimize(b.optFlag, selectPlan.(LogicalPlan))
+	if b.err != nil {
+		return
+	}
+
+	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, insertPlan.SelectPlan.Schema())
 }
 
 func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) Plan {

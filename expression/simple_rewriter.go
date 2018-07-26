@@ -397,23 +397,23 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 	exprs := sr.popN(lLen + 1)
 	leftExpr := exprs[0]
 	elems := exprs[1:]
-	l := GetRowLen(leftExpr)
+	l, leftFt := GetRowLen(leftExpr), leftExpr.GetType()
 	for i := 0; i < lLen; i++ {
 		if l != GetRowLen(elems[i]) {
 			sr.err = ErrOperandColumns.GenByArgs(l)
 			return
 		}
 	}
-	leftIsNull := leftExpr.GetType().Tp == mysql.TypeNull
+	leftIsNull := leftFt.Tp == mysql.TypeNull
 	if leftIsNull {
 		sr.push(Null.Clone())
 		return
 	}
-	leftEt := leftExpr.GetType().EvalType()
+	leftEt := leftFt.EvalType()
 	if leftEt == types.ETInt {
 		for i := 0; i < len(elems); i++ {
 			if c, ok := elems[i].(*Constant); ok {
-				elems[i] = RefineConstantArg(sr.ctx, c, opcode.EQ)
+				elems[i], _ = RefineComparedConstant(sr.ctx, mysql.HasUnsignedFlag(leftFt.Flag), c, opcode.EQ)
 			}
 		}
 	}

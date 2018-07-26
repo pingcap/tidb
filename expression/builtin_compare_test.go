@@ -43,8 +43,8 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"a <= '1.1'", "le(a, 1)"},
 		{"a > 1.1", "gt(a, 1)"},
 		{"a >= '1.1'", "ge(a, 2)"},
-		{"a = '1.1'", "eq(cast(a), 1.1)"},
-		{"a <=> '1.1'", "nulleq(cast(a), 1.1)"},
+		{"a = '1.1'", "0"},
+		{"a <=> '1.1'", "0"},
 		{"a != '1.1'", "ne(cast(a), 1.1)"},
 		{"'1' < a", "lt(1, a)"},
 		{"'1' <= a", "le(1, a)"},
@@ -57,9 +57,14 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"'1.1' <= a", "le(2, a)"},
 		{"'1.1' > a", "gt(2, a)"},
 		{"'1.1' >= a", "ge(1, a)"},
-		{"'1.1' = a", "eq(1.1, cast(a))"},
-		{"'1.1' <=> a", "nulleq(1.1, cast(a))"},
+		{"'1.1' = a", "0"},
+		{"'1.1' <=> a", "0"},
 		{"'1.1' != a", "ne(1.1, cast(a))"},
+		{"'123456789123456711111189' = a", "0"},
+		{"123456789123456789.12345 = a", "0"},
+		// This cast can not be eliminated,
+		// since convert "aaaa" to int will cause DataTruncate error.
+		{"'aaaa'=a", "eq(cast(aaaa), cast(a))"},
 	}
 
 	for _, t := range tests {
