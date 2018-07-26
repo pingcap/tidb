@@ -76,7 +76,7 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row types.Row) (
 		return res, err != nil, errors.Trace(err)
 	}
 	// If sql_mode 'pad_char_to_full_length' is no set, the right trailing spaces should be removed for type 'CHAR'.
-	// See: #7085 for more details
+	// See: #7085(https://github.com/pingcap/tidb/issues/7085) for more details
 	if !ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
 		res = strings.TrimRight(res, " ")
 	} else if resLen < col.RetType.Flen {
@@ -248,7 +248,7 @@ func (col *Column) EvalString(ctx sessionctx.Context, row types.Row) (string, bo
 			return res, err != nil, errors.Trace(err)
 		}
 		// If sql_mode 'pad_char_to_full_length' is no set, the right trailing spaces should be removed for type 'CHAR'.
-		// See: #7085 for more details
+		// See: #7085(https://github.com/pingcap/tidb/issues/7085) for more details
 		if !ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
 			res = strings.TrimRight(res, " ")
 		} else if resLen < col.RetType.Flen {
