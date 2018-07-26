@@ -567,6 +567,10 @@ func (d *Datum) compareBytes(sc *stmtctx.StatementContext, b []byte) (int, error
 
 func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (int, error) {
 	switch d.k {
+	case KindNull, KindMinNotNull:
+		return -1, nil
+	case KindMaxValue:
+		return 1, nil
 	case KindMysqlDecimal:
 		return d.GetMysqlDecimal().Compare(dec), nil
 	case KindString, KindBytes:
@@ -574,11 +578,11 @@ func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal
 		err := sc.HandleTruncate(dDec.FromString(d.GetBytes()))
 		return dDec.Compare(dec), errors.Trace(err)
 	default:
-		fVal, err := dec.ToFloat64()
+		dVal, err := d.ConvertTo(sc, NewFieldType(mysql.TypeNewDecimal))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return d.compareFloat64(sc, fVal)
+		return dVal.GetMysqlDecimal().Compare(dec), nil
 	}
 }
 
@@ -1573,7 +1577,7 @@ func (d *Datum) ToMysqlJSON() (j json.BinaryJSON, err error) {
 }
 
 func invalidConv(d *Datum, tp byte) (Datum, error) {
-	return Datum{}, errors.Errorf("cannot convert datum from %s to type %s.", TypeStr(d.Kind()), TypeStr(tp))
+	return Datum{}, errors.Errorf("cannot convert datum from %s to type %s.", KindStr(d.Kind()), TypeStr(tp))
 }
 
 func (d *Datum) convergeType(hasUint, hasDecimal, hasFloat *bool) (x Datum) {

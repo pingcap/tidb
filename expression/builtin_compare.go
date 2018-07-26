@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tipb/go-tipb"
@@ -1023,81 +1024,130 @@ func isTemporalColumn(expr Expression) bool {
 }
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
-func tryToConvertConstantInt(ctx sessionctx.Context, con *Constant) *Constant {
+func tryToConvertConstantInt(ctx sessionctx.Context, isUnsigned bool, con *Constant) (_ *Constant, isAlwaysFalse bool) {
 	if con.GetType().EvalType() == types.ETInt {
-		return con
+		return con, false
 	}
 	dt, err := con.Eval(nil)
 	if err != nil {
-		return con
+		return con, false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	i64, err := dt.ToInt64(sc)
+	fieldType := types.NewFieldType(mysql.TypeLonglong)
+	if isUnsigned {
+		fieldType.Flag |= mysql.UnsignedFlag
+	}
+	dt, err = dt.ConvertTo(sc, fieldType)
 	if err != nil {
-		return con
+		return con, terror.ErrorEqual(err, types.ErrOverflow)
 	}
 	return &Constant{
-		Value:        types.NewIntDatum(i64),
-		RetType:      types.NewFieldType(mysql.TypeLonglong),
+		Value:        dt,
+		RetType:      fieldType,
 		DeferredExpr: con.DeferredExpr,
-	}
+	}, false
 }
 
-// RefineConstantArg changes the constant argument to it's ceiling or flooring result by the given op.
-func RefineConstantArg(ctx sessionctx.Context, con *Constant, op opcode.Op) *Constant {
+// RefineComparedConstant changes an non-integer constant argument to its ceiling or floor result by the given op.
+// isAlwaysFalse indicates whether the int column "con" is false.
+func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Constant, op opcode.Op) (_ *Constant, isAlwaysFalse bool) {
 	dt, err := con.Eval(nil)
 	if err != nil {
-		return con
+		return con, false
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	i64, err := dt.ToInt64(sc)
-	if err != nil {
-		return con
+	intFieldType := types.NewFieldType(mysql.TypeLonglong)
+	if isUnsigned {
+		intFieldType.Flag |= mysql.UnsignedFlag
 	}
-	datumInt := types.NewIntDatum(i64)
-	c, err := datumInt.CompareDatum(sc, &con.Value)
+	var intDatum types.Datum
+	intDatum, err = dt.ConvertTo(sc, intFieldType)
 	if err != nil {
-		return con
+		return con, terror.ErrorEqual(err, types.ErrOverflow)
+	}
+	c, err := intDatum.CompareDatum(sc, &con.Value)
+	if err != nil {
+		return con, false
 	}
 	if c == 0 {
 		return &Constant{
-			Value:        datumInt,
-			RetType:      types.NewFieldType(mysql.TypeLonglong),
+			Value:        intDatum,
+			RetType:      intFieldType,
 			DeferredExpr: con.DeferredExpr,
-		}
+		}, false
 	}
 	switch op {
 	case opcode.LT, opcode.GE:
 		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
-			return tryToConvertConstantInt(ctx, resultCon)
+			return tryToConvertConstantInt(ctx, isUnsigned, resultCon)
 		}
 	case opcode.LE, opcode.GT:
 		resultExpr := NewFunctionInternal(ctx, ast.Floor, types.NewFieldType(mysql.TypeUnspecified), con)
 		if resultCon, ok := resultExpr.(*Constant); ok {
-			return tryToConvertConstantInt(ctx, resultCon)
+			return tryToConvertConstantInt(ctx, isUnsigned, resultCon)
+		}
+	case opcode.NullEQ, opcode.EQ:
+		switch con.RetType.EvalType() {
+		// An integer value equals or null-equals to a float value contains
+		// non-zero decimal digits is definite false.
+		// e.g:
+		//   1. "integer  =  1.1" is definite false.
+		//   2. "integer <=> 1.1" is definite false.
+		case types.ETReal, types.ETDecimal:
+			return con, true
+		case types.ETString:
+			// We try to convert the string constant to double,
+			// if the double result equals to the int result, we can return the int result,
+			// otherwise, the compare function must be false.
+			var doubleDatum types.Datum
+			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
+			if err != nil {
+				return con, false
+			}
+			if c, err = doubleDatum.CompareDatum(sc, &intDatum); err != nil {
+				return con, false
+			}
+			if c != 0 {
+				return con, true
+			}
+			return &Constant{
+				Value:        intDatum,
+				RetType:      intFieldType,
+				DeferredExpr: con.DeferredExpr,
+			}, false
 		}
 	}
-	// TODO: argInt = 1.1 should be false forever.
-	return con
+	return con, false
 }
 
-// refineArgs rewrite the arguments if one of them is int expression and another one is non-int constant.
-// Like a < 1.1 will be changed to a < 2.
+// refineArgs rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
+// `non-int constant <cmp> int column`. e.g. `a < 1.1` will be rewritten to `a < 2`.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
-	arg0IsInt := args[0].GetType().EvalType() == types.ETInt
-	arg1IsInt := args[1].GetType().EvalType() == types.ETInt
+	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
+	arg0IsInt := arg0Type.EvalType() == types.ETInt
+	arg1IsInt := arg1Type.EvalType() == types.ETInt
 	arg0, arg0IsCon := args[0].(*Constant)
 	arg1, arg1IsCon := args[1].(*Constant)
+	isAlways, finalArg0, finalArg1 := false, args[0], args[1]
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		arg1 = RefineConstantArg(ctx, arg1, c.op)
-		return []Expression{args[0], arg1}
+		finalArg1, isAlways = RefineComparedConstant(ctx, mysql.HasUnsignedFlag(arg0Type.Flag), arg1, c.op)
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		arg0 = RefineConstantArg(ctx, arg0, symmetricOp[c.op])
-		return []Expression{arg0, args[1]}
+		finalArg0, isAlways = RefineComparedConstant(ctx, mysql.HasUnsignedFlag(arg1Type.Flag), arg0, symmetricOp[c.op])
+	}
+	if !isAlways {
+		return []Expression{finalArg0, finalArg1}
+	}
+	switch c.op {
+	case opcode.LT, opcode.LE:
+		// This will always be true.
+		return []Expression{Zero.Clone(), One.Clone()}
+	case opcode.EQ, opcode.NullEQ, opcode.GT, opcode.GE:
+		// This will always be false.
+		return []Expression{One.Clone(), Zero.Clone()}
 	}
 	return args
 }
