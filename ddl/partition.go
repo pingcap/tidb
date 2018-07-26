@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -279,4 +280,94 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 		partitionIDs = append(partitionIDs, def.ID)
 	}
 	return partitionIDs
+}
+
+// checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
+func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, expr ast.ExprNode, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
+	// Returns directly if there is no constraint in the partition table.
+	if len(constraints) == 0 {
+		return nil
+	}
+	//Save the table constraint into the slice.
+	uniKeys, multipleKeys, priKeys := buildPartitioningKeysConstraints(tblInfo, constraints)
+
+	// Parse partitioning key.
+	buf := new(bytes.Buffer)
+	expr.Format(buf)
+	var partkeys []string
+	e, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cols := expression.ExtractColumns(e)
+	for _, col := range cols {
+		partkeys = append(partkeys, col.ColName.L)
+	}
+
+	switch expr.(type) {
+	case *ast.ColumnNameExpr, *ast.FuncCallExpr:
+		// Only one column name expression.
+		if checkConstraintIncludePartKey(partkeys, priKeys, false) || checkConstraintIncludePartKey(partkeys, multipleKeys, false) {
+			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs("PRIMARY KEY")
+		}
+	default:
+		// Other expression, with multiple column names.
+		if checkConstraintIncludePartKey(partkeys, priKeys, true) || checkConstraintIncludePartKey(partkeys, multipleKeys, true) {
+			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs("PRIMARY KEY")
+		}
+
+	}
+	// Range partitioning key can only contain one unique key.
+	if len(uniKeys) > 0 {
+		if len(uniKeys) > 1 || !strings.Contains(partkeys[0], uniKeys[0]) {
+			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs("UNIQUE INDEX")
+		}
+	}
+	return nil
+}
+
+func buildPartitioningKeysConstraints(tblInfo *model.TableInfo, constraints []*ast.Constraint) ([]string, []string, []string) {
+	var uniKeys, multipleKeys, priKeys []string
+	for _, v := range constraints {
+		if v.Tp == ast.ConstraintUniq {
+			for _, key := range v.Keys {
+				if len(v.Keys) > 1 {
+					multipleKeys = append(multipleKeys, key.Column.Name.L)
+				}
+			}
+		}
+	}
+	for _, col := range tblInfo.Cols() {
+		if mysql.HasUniKeyFlag(col.Flag) {
+			uniKeys = append(uniKeys, col.Name.L)
+		}
+
+		if mysql.HasPriKeyFlag(col.Flag) {
+			priKeys = append(priKeys, col.Name.L)
+		}
+	}
+	return uniKeys, multipleKeys, priKeys
+}
+
+// checkConstraintIncludePartKey checks that the partitioning key is included in the constraint.
+func checkConstraintIncludePartKey(partkeys []string, Constraints []string, multipleColumn bool) bool {
+	count := 0
+	if len(Constraints) > 0 {
+		for _, pk := range partkeys {
+			for _, con := range Constraints {
+				if pk == con {
+					count++
+				}
+			}
+		}
+		//Checks that the constraint is equal to all fields in the partitioning key.
+		if multipleColumn && count != len(partkeys) {
+			return true
+		}
+		// Checks to include at least one partitioning key in the constraint.
+		if count < 1 {
+			return true
+		}
+	}
+	return false
 }
