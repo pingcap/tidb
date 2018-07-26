@@ -946,7 +946,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 				aggDesc.Mode = aggregation.Partial2Mode
 			}
 		}
-		aggFunc := aggDesc.GetAggFunc()
+		aggFunc := aggDesc.GetAggFunc(b.ctx)
 		e.AggFuncs = append(e.AggFuncs, aggFunc)
 		if e.defaultVal != nil {
 			value := aggFunc.GetDefaultValue()
@@ -978,14 +978,14 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	}
 	newAggFuncs := make([]aggfuncs.AggFunc, 0, len(v.AggFuncs))
 	for i, aggDesc := range v.AggFuncs {
-		aggFunc := aggDesc.GetAggFunc()
+		aggFunc := aggDesc.GetAggFunc(b.ctx)
 		e.AggFuncs = append(e.AggFuncs, aggFunc)
 		if e.defaultVal != nil {
 			value := aggFunc.GetDefaultValue()
 			e.defaultVal.AppendDatum(i, &value)
 		}
 		// For new aggregate evaluation framework.
-		newAggFunc := aggfuncs.Build(aggDesc, i)
+		newAggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
 		if newAggFunc != nil {
 			newAggFuncs = append(newAggFuncs, newAggFunc)
 		}

@@ -86,7 +86,7 @@ func (lm *locCache) getLoc(name string) (*time.Location, error) {
 	}
 
 	lm.RUnlock()
-	return nil, errors.New(fmt.Sprintf("invalid name for timezone %s", name))
+	return nil, fmt.Errorf("invalid name for timezone %s", name)
 }
 
 type dagContext struct {
