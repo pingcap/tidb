@@ -842,7 +842,7 @@ func (e *TableScanExec) nextHandle() (handle int64, found bool, err error) {
 	}
 }
 
-func (e *TableScanExec) getRow(handle int64) (types.DatumRow, error) {
+func (e *TableScanExec) getRow(handle int64) ([]types.Datum, error) {
 	columns := make([]*table.Column, e.schema.Len())
 	for i, v := range e.columns {
 		columns[i] = table.ToColumn(v)
