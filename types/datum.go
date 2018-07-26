@@ -1853,3 +1853,12 @@ func DatumsToString(datums []Datum, handleNULL bool) (string, error) {
 func CopyDatum(datum Datum) Datum {
 	return *datum.Copy()
 }
+
+// CopyRow deep copies a Datum slice.
+func CopyRow(dr []Datum) []Datum {
+	c := make([]Datum, len(dr))
+	for i, d := range dr {
+		c[i] = *d.Copy()
+	}
+	return c
+}
