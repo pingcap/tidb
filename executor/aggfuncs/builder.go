@@ -97,7 +97,31 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildSum builds the AggFunc implementation for function "SUM".
 func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return nil
+	base := baseSumAggFunc{
+		baseAggFunc: baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		switch aggFuncDesc.Args[0].GetType().Tp {
+		case mysql.TypeFloat, mysql.TypeDouble:
+			if aggFuncDesc.HasDistinct {
+				return &sum4DistinctFloat64{base}
+			}
+			return &sum4Float64{base}
+		case mysql.TypeNewDecimal:
+			if aggFuncDesc.HasDistinct {
+				return &sum4DistinctDecimal{base}
+			}
+			return &sum4Decimal{base}
+		default:
+			return nil
+		}
+	}
 }
 
 // buildAvg builds the AggFunc implementation for function "AVG".

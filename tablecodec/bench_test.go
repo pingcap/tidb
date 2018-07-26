@@ -40,3 +40,10 @@ func BenchmarkEncodeRowKeyWithPrefixNex(b *testing.B) {
 		sk.PrefixNext()
 	}
 }
+
+func BenchmarkDecodeRowKey(b *testing.B) {
+	rowKey := EncodeRowKeyWithHandle(100, 100)
+	for i := 0; i < b.N; i++ {
+		DecodeRowKey(rowKey)
+	}
+}
