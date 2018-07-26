@@ -148,35 +148,6 @@ func (e *InsertValues) fillValueList() error {
 	return nil
 }
 
-func (e *InsertValues) checkValueCount(insertValueCount, valueCount, genColsCount, num int, cols []*table.Column) error {
-	// TODO: This check should be done in plan builder.
-	if insertValueCount != valueCount {
-		// "insert into t values (), ()" is valid.
-		// "insert into t values (), (1)" is not valid.
-		// "insert into t values (1), ()" is not valid.
-		// "insert into t values (1,2), (1)" is not valid.
-		// So the value count must be same for all insert list.
-		return ErrWrongValueCountOnRow.GenByArgs(num + 1)
-	}
-	if valueCount == 0 && len(e.Columns) > 0 {
-		// "insert into t (c1) values ()" is not valid.
-		return ErrWrongValueCountOnRow.GenByArgs(num + 1)
-	} else if valueCount > 0 {
-		explicitSetLen := 0
-		if len(e.Columns) != 0 {
-			explicitSetLen = len(e.Columns)
-		} else {
-			explicitSetLen = len(e.SetList)
-		}
-		if explicitSetLen > 0 && valueCount+genColsCount != len(cols) {
-			return ErrWrongValueCountOnRow.GenByArgs(num + 1)
-		} else if explicitSetLen == 0 && valueCount != len(cols) {
-			return ErrWrongValueCountOnRow.GenByArgs(num + 1)
-		}
-	}
-	return nil
-}
-
 func (e *InsertValues) insertRows(cols []*table.Column, exec func(rows []types.DatumRow) error) (err error) {
 	// process `insert|replace ... set x=y...`
 	if err = e.fillValueList(); err != nil {
@@ -184,11 +155,7 @@ func (e *InsertValues) insertRows(cols []*table.Column, exec func(rows []types.D
 	}
 
 	rows := make([]types.DatumRow, len(e.Lists))
-	length := len(e.Lists[0])
 	for i, list := range e.Lists {
-		if err = e.checkValueCount(length, len(list), len(e.GenColumns), i, cols); err != nil {
-			return errors.Trace(err)
-		}
 		e.rowCount = uint64(i)
 		rows[i], err = e.getRow(cols, list, i)
 		if err != nil {
@@ -277,9 +244,6 @@ func (e *InsertValues) fillDefaultValues(row types.DatumRow, hasValue []bool) er
 func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.Column, exec func(rows []types.DatumRow) error) error {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
-	if selectExec.Schema().Len() != len(cols) {
-		return ErrWrongValueCountOnRow.GenByArgs(1)
-	}
 	fields := selectExec.retTypes()
 	chk := selectExec.newChunk()
 	iter := chunk.NewIterator4Chunk(chk)
