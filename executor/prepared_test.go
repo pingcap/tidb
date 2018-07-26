@@ -14,6 +14,9 @@
 package executor_test
 
 import (
+	"math"
+	"strings"
+
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
@@ -21,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
-	"math"
-	"strings"
 )
 
 func (s *testSuite) TestPrepared(c *C) {
