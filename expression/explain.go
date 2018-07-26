@@ -61,6 +61,8 @@ func (expr *Constant) format(dt types.Datum) string {
 }
 
 // ExplainExpressionList generates explain information for a list of expressions.
+// needSort will be true if the exprs should keep its order. In some scenarios, the expr's order may not be valid
+// when executing multiple times. So we add this to make its explain result stable.
 func ExplainExpressionList(exprs []Expression, needSort bool) []byte {
 	buffer := bytes.NewBufferString("")
 	if needSort {
