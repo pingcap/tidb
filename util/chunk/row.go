@@ -31,6 +31,11 @@ type Row struct {
 	idx int
 }
 
+// IsEmpty returns true if the Row is empty.
+func (r Row) IsEmpty() bool {
+	return r == Row{}
+}
+
 // Idx returns the row index of Chunk.
 func (r Row) Idx() int {
 	return r.idx
@@ -132,8 +137,8 @@ func (r Row) GetJSON(colIdx int) json.BinaryJSON {
 // GetDatumRow converts chunk.Row to types.DatumRow.
 // Keep in mind that GetDatumRow has a reference to r.c, which is a chunk,
 // this function works only if the underlying chunk is valid or unchanged.
-func (r Row) GetDatumRow(fields []*types.FieldType) types.DatumRow {
-	datumRow := make(types.DatumRow, 0, r.c.NumCols())
+func (r Row) GetDatumRow(fields []*types.FieldType) []types.Datum {
+	datumRow := make([]types.Datum, 0, r.c.NumCols())
 	for colIdx := 0; colIdx < r.c.NumCols(); colIdx++ {
 		datum := r.GetDatum(colIdx, fields[colIdx])
 		datumRow = append(datumRow, datum)

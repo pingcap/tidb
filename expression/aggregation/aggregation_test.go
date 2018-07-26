@@ -89,7 +89,7 @@ func (s *testAggFuncSuit) TestAvg(c *C) {
 }
 
 func (s *testAggFuncSuit) TestAvgFinalMode(c *C) {
-	rows := make([]types.DatumRow, 0, 100)
+	rows := make([][]types.Datum, 0, 100)
 	for i := 1; i <= 100; i++ {
 		rows = append(rows, types.MakeDatums(i, types.NewDecFromInt(int64(i*i))))
 	}
@@ -99,7 +99,7 @@ func (s *testAggFuncSuit) TestAvgFinalMode(c *C) {
 	}
 	sumCol := &expression.Column{
 		Index:   1,
-		RetType: types.NewFieldType(mysql.TypeDecimal),
+		RetType: types.NewFieldType(mysql.TypeNewDecimal),
 	}
 	aggFunc := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{cntCol, sumCol}, false)
 	aggFunc.Mode = FinalMode
@@ -107,7 +107,7 @@ func (s *testAggFuncSuit) TestAvgFinalMode(c *C) {
 	evalCtx := avgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	for _, row := range rows {
-		err := avgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+		err := avgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, chunk.MutRowFromDatums(row).ToRow())
 		c.Assert(err, IsNil)
 	}
 	result := avgFunc.GetResult(evalCtx)
