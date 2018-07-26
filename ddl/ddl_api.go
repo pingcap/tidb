@@ -837,27 +837,27 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 
 	if pi != nil {
-		if err := checkPartitionNameUnique(tbInfo, pi); err != nil {
+		if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
 			return errors.Trace(err)
 		}
 
-		if err := checkCreatePartitionValue(pi); err != nil {
+		if err = checkCreatePartitionValue(pi); err != nil {
 			return errors.Trace(err)
 		}
 
-		if err := checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
+		if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
 			return errors.Trace(err)
 		}
 
-		if err := checkPartitionFuncValid(s.Partition.Expr); err != nil {
+		if err = checkPartitionFuncValid(s.Partition.Expr); err != nil {
 			return errors.Trace(err)
 		}
 
-		if err := checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
+		if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
 			return errors.Trace(err)
 		}
 
-		if err := checkRangePartitioningKeysConstraints(ctx, s.Partition.Expr, tbInfo, newConstraints); err != nil {
+		if err = checkRangePartitioningKeysConstraints(ctx, s.Partition.Expr, tbInfo, newConstraints); err != nil {
 			return errors.Trace(err)
 		}
 		tbInfo.Partition = pi
