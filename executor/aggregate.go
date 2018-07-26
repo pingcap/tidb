@@ -180,13 +180,13 @@ type HashAggIntermData struct {
 }
 
 // ToRows converts HashAggInterData to DatumRows.
-func (d *HashAggIntermData) ToRows(sc *stmtctx.StatementContext, rows []types.DatumRow, aggFuncs []aggregation.Aggregation, maxChunkSize int) (_ []types.DatumRow, reachEnd bool) {
+func (d *HashAggIntermData) ToRows(sc *stmtctx.StatementContext, rows [][]types.Datum, aggFuncs []aggregation.Aggregation, maxChunkSize int) (_ [][]types.Datum, reachEnd bool) {
 	if len(rows) == maxChunkSize {
 		return rows, false
 	}
 	for ; d.cursor < len(d.groupKeys); d.cursor++ {
 		groupKey := d.groupKeys[d.cursor]
-		row := make(types.DatumRow, 0, len(aggFuncs)*2)
+		row := make([]types.Datum, 0, len(aggFuncs)*2)
 		aggCtxs := d.groupCtxMap[string(groupKey)]
 		for i, f := range aggFuncs {
 			for _, d := range f.GetPartialResult(aggCtxs[i]) {
@@ -455,26 +455,26 @@ func (w *HashAggFinalWorker) consumeIntermData(sc *stmtctx.StatementContext) (er
 	var (
 		input                *HashAggIntermData
 		ok                   bool
-		intermDataRowsBuffer []types.DatumRow
+		intermDataRowsBuffer [][]types.Datum
 	)
 	for {
 		if input, ok = w.getPartialInput(); !ok {
 			return nil
 		}
 		if intermDataRowsBuffer == nil {
-			intermDataRowsBuffer = make([]types.DatumRow, 0, w.maxChunkSize)
+			intermDataRowsBuffer = make([][]types.Datum, 0, w.maxChunkSize)
 		}
 		// Consume input in batches, size of every batch is less than w.maxChunkSize.
 		for reachEnd := false; !reachEnd; {
 			intermDataRowsBuffer, reachEnd = input.ToRows(sc, intermDataRowsBuffer[:0], w.aggFuncs, w.maxChunkSize)
 			for _, row := range intermDataRowsBuffer {
-				groupKey := row.GetBytes(row.Len() - 1)
+				groupKey := row[len(row)-1].GetBytes()
 				if len(w.groupSet.Get(groupKey, w.groupVals[:0])) == 0 {
 					w.groupSet.Put(groupKey, []byte{})
 				}
 				aggEvalCtxs := w.getContext(sc, groupKey, w.aggCtxsMap)
 				for i, af := range w.aggFuncs {
-					if err = af.Update(aggEvalCtxs[i], sc, row); err != nil {
+					if err = af.Update(aggEvalCtxs[i], sc, chunk.MutRowFromDatums(row).ToRow()); err != nil {
 						return errors.Trace(err)
 					}
 				}
