@@ -86,7 +86,7 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		isWriteSep = false
 		for _, arg := range e.args {
-			v, isNull, err = arg.EvalString(sctx, row)
+			v, isNull, err = arg.EvalString(sctx, &row)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -135,7 +135,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	for _, row := range rowsInGroup {
 		p.valsBuf.Reset()
 		for _, arg := range e.args {
-			v, isNull, err = arg.EvalString(sctx, row)
+			v, isNull, err = arg.EvalString(sctx, &row)
 			if err != nil {
 				return errors.Trace(err)
 			}

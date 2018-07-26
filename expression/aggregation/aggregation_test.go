@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -30,15 +31,15 @@ var _ = Suite(&testAggFuncSuit{})
 
 type testAggFuncSuit struct {
 	ctx     sessionctx.Context
-	rows    []types.DatumRow
-	nullRow types.DatumRow
+	rows    []chunk.Row
+	nullRow chunk.Row
 }
 
-func generateRowData() []types.DatumRow {
-	rows := make([]types.DatumRow, 0, 5050)
+func generateRowData() []chunk.Row {
+	rows := make([]chunk.Row, 0, 5050)
 	for i := 1; i <= 100; i++ {
 		for j := 0; j < i; j++ {
-			rows = append(rows, types.MakeDatums(i))
+			rows = append(rows, chunk.MutRowFromDatums(types.MakeDatums(i)).ToRow())
 		}
 	}
 	return rows
@@ -48,7 +49,7 @@ func (s *testAggFuncSuit) SetUpSuite(c *C) {
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	s.rows = generateRowData()
-	s.nullRow = []types.Datum{{}}
+	s.nullRow = chunk.MutRowFromDatums([]types.Datum{{}}).ToRow()
 }
 
 func (s *testAggFuncSuit) TestAvg(c *C) {
@@ -167,8 +168,8 @@ func (s *testAggFuncSuit) TestBitAnd(c *C) {
 	result := bitAndFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(math.MaxUint64))
 
-	row := types.MakeDatums(1)
-	err := bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row := chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err := bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitAndFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
@@ -178,20 +179,20 @@ func (s *testAggFuncSuit) TestBitAnd(c *C) {
 	result = bitAndFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
 
-	row = types.MakeDatums(1)
-	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitAndFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
 
-	row = types.MakeDatums(3)
-	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(3)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitAndFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
 
-	row = types.MakeDatums(2)
-	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(2)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitAndFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(0))
@@ -208,24 +209,24 @@ func (s *testAggFuncSuit) TestBitAnd(c *C) {
 	var dec types.MyDecimal
 	err = dec.FromString([]byte("1.234"))
 	c.Assert(err, IsNil)
-	row = types.MakeDatums(&dec)
-	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitAndFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
 
 	err = dec.FromString([]byte("3.012"))
 	c.Assert(err, IsNil)
-	row = types.MakeDatums(&dec)
-	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitAndFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
 
 	err = dec.FromString([]byte("2.12345678"))
 	c.Assert(err, IsNil)
-	row = types.MakeDatums(&dec)
-	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitAndFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitAndFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(0))
@@ -243,8 +244,8 @@ func (s *testAggFuncSuit) TestBitOr(c *C) {
 	result := bitOrFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(0))
 
-	row := types.MakeDatums(1)
-	err := bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row := chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err := bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitOrFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
@@ -254,20 +255,20 @@ func (s *testAggFuncSuit) TestBitOr(c *C) {
 	result = bitOrFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
 
-	row = types.MakeDatums(1)
-	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitOrFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
 
-	row = types.MakeDatums(3)
-	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(3)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitOrFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(3))
 
-	row = types.MakeDatums(2)
-	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(2)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitOrFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(3))
@@ -284,32 +285,32 @@ func (s *testAggFuncSuit) TestBitOr(c *C) {
 	var dec types.MyDecimal
 	err = dec.FromString([]byte("12.234"))
 	c.Assert(err, IsNil)
-	row = types.MakeDatums(&dec)
-	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitOrFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(12))
 
 	err = dec.FromString([]byte("1.012"))
 	c.Assert(err, IsNil)
-	row = types.MakeDatums(&dec)
-	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitOrFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(13))
 	err = dec.FromString([]byte("15.12345678"))
 	c.Assert(err, IsNil)
 
-	row = types.MakeDatums(&dec)
-	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitOrFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(15))
 
 	err = dec.FromString([]byte("16.00"))
 	c.Assert(err, IsNil)
-	row = types.MakeDatums(&dec)
-	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitOrFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitOrFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(31))
@@ -327,8 +328,8 @@ func (s *testAggFuncSuit) TestBitXor(c *C) {
 	result := bitXorFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(0))
 
-	row := types.MakeDatums(1)
-	err := bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row := chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err := bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitXorFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
@@ -338,20 +339,20 @@ func (s *testAggFuncSuit) TestBitXor(c *C) {
 	result = bitXorFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
 
-	row = types.MakeDatums(1)
-	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitXorFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(0))
 
-	row = types.MakeDatums(3)
-	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(3)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitXorFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(3))
 
-	row = types.MakeDatums(2)
-	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(2)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitXorFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
@@ -368,24 +369,24 @@ func (s *testAggFuncSuit) TestBitXor(c *C) {
 	var dec types.MyDecimal
 	err = dec.FromString([]byte("1.234"))
 	c.Assert(err, IsNil)
-	row = types.MakeDatums(&dec)
-	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitXorFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
 
 	err = dec.FromString([]byte("1.012"))
 	c.Assert(err, IsNil)
-	row = types.MakeDatums(&dec)
-	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitXorFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(0))
 
 	err = dec.FromString([]byte("2.12345678"))
 	c.Assert(err, IsNil)
-	row = types.MakeDatums(&dec)
-	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(&dec)).ToRow()
+	err = bitXorFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = bitXorFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(2))
@@ -404,7 +405,7 @@ func (s *testAggFuncSuit) TestCount(c *C) {
 	c.Assert(result.GetInt64(), Equals, int64(0))
 
 	for _, row := range s.rows {
-		err := countFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+		err := countFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 		c.Assert(err, IsNil)
 	}
 	result = countFunc.GetResult(evalCtx)
@@ -420,7 +421,7 @@ func (s *testAggFuncSuit) TestCount(c *C) {
 	evalCtx = distinctCountFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	for _, row := range s.rows {
-		err := distinctCountFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+		err := distinctCountFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 		c.Assert(err, IsNil)
 	}
 	result = distinctCountFunc.GetResult(evalCtx)
@@ -443,20 +444,20 @@ func (s *testAggFuncSuit) TestConcat(c *C) {
 	result := concatFunc.GetResult(evalCtx)
 	c.Assert(result.IsNull(), IsTrue)
 
-	row := types.MakeDatums(1, "x")
-	err := concatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row := chunk.MutRowFromDatums(types.MakeDatums(1, "x"))
+	err := concatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = concatFunc.GetResult(evalCtx)
 	c.Assert(result.GetString(), Equals, "1")
 
-	row[0].SetInt64(2)
-	err = concatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row.SetDatum(0, types.NewIntDatum(2))
+	err = concatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = concatFunc.GetResult(evalCtx)
 	c.Assert(result.GetString(), Equals, "1x2")
 
-	row[0].SetNull()
-	err = concatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row.SetDatum(0, types.NewDatum(nil))
+	err = concatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = concatFunc.GetResult(evalCtx)
 	c.Assert(result.GetString(), Equals, "1x2")
@@ -466,14 +467,14 @@ func (s *testAggFuncSuit) TestConcat(c *C) {
 	distinctConcatFunc := NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, true).GetAggFunc(ctx)
 	evalCtx = distinctConcatFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
-	row[0].SetInt64(1)
-	err = distinctConcatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row.SetDatum(0, types.NewIntDatum(1))
+	err = distinctConcatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = distinctConcatFunc.GetResult(evalCtx)
 	c.Assert(result.GetString(), Equals, "1")
 
-	row[0].SetInt64(1)
-	err = distinctConcatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row.SetDatum(0, types.NewIntDatum(1))
+	err = distinctConcatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = distinctConcatFunc.GetResult(evalCtx)
 	c.Assert(result.GetString(), Equals, "1")
@@ -489,14 +490,14 @@ func (s *testAggFuncSuit) TestFirstRow(c *C) {
 	firstRowFunc := NewAggFuncDesc(s.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false).GetAggFunc(ctx)
 	evalCtx := firstRowFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
-	row := types.MakeDatums(1)
-	err := firstRowFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row := chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
+	err := firstRowFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result := firstRowFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
 
-	row = types.MakeDatums(2)
-	err = firstRowFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row = chunk.MutRowFromDatums(types.MakeDatums(2)).ToRow()
+	err = firstRowFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 	c.Assert(err, IsNil)
 	result = firstRowFunc.GetResult(evalCtx)
 	c.Assert(result.GetUint64(), Equals, uint64(1))
@@ -521,42 +522,42 @@ func (s *testAggFuncSuit) TestMaxMin(c *C) {
 	result = minFunc.GetResult(minEvalCtx)
 	c.Assert(result.IsNull(), IsTrue)
 
-	row := types.MakeDatums(2)
-	err := maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row := chunk.MutRowFromDatums(types.MakeDatums(2))
+	err := maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = maxFunc.GetResult(maxEvalCtx)
 	c.Assert(result.GetInt64(), Equals, int64(2))
-	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = minFunc.GetResult(minEvalCtx)
 	c.Assert(result.GetInt64(), Equals, int64(2))
 
-	row[0].SetInt64(3)
-	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row.SetDatum(0, types.NewIntDatum(3))
+	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = maxFunc.GetResult(maxEvalCtx)
 	c.Assert(result.GetInt64(), Equals, int64(3))
-	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = minFunc.GetResult(minEvalCtx)
 	c.Assert(result.GetInt64(), Equals, int64(2))
 
-	row[0].SetInt64(1)
-	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row.SetDatum(0, types.NewIntDatum(1))
+	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = maxFunc.GetResult(maxEvalCtx)
 	c.Assert(result.GetInt64(), Equals, int64(3))
-	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = minFunc.GetResult(minEvalCtx)
 	c.Assert(result.GetInt64(), Equals, int64(1))
 
-	row[0].SetNull()
-	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	row.SetDatum(0, types.NewDatum(nil))
+	err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = maxFunc.GetResult(maxEvalCtx)
 	c.Assert(result.GetInt64(), Equals, int64(3))
-	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, types.DatumRow(row))
+	err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
 	c.Assert(err, IsNil)
 	result = minFunc.GetResult(minEvalCtx)
 	c.Assert(result.GetInt64(), Equals, int64(1))
