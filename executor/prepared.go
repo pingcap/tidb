@@ -126,6 +126,11 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
+
+	if len(extractor.markers) > math.MaxUint16 {
+		return ErrPsManyParam
+	}
+
 	err = plan.Preprocess(e.ctx, stmt, e.is, true)
 	if err != nil {
 		return errors.Trace(err)
