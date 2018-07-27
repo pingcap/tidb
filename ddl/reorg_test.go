@@ -128,7 +128,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		var err1 error
 		info, err1 = getReorgInfo(d.ddlCtx, t, job, nil)
 		c.Assert(err1, IsNil)
-		err1 = info.UpdateHandle(txn, 1, 0, 0)
+		err1 = info.UpdateReorgMeta(txn, 1, 0, 0)
 		c.Assert(err1, IsNil)
 		return nil
 	})

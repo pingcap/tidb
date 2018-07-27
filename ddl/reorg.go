@@ -382,7 +382,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	return &info, errors.Trace(err)
 }
 
-func (r *reorgInfo) UpdateHandle(txn kv.Transaction, startHandle, endHandle, partitionID int64) error {
+func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle, partitionID int64) error {
 	t := meta.NewMeta(txn)
 	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, partitionID))
 }
