@@ -360,13 +360,13 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			}
 		}
 
-		// primary key should not be null
+		// Primary key should not be null.
 		if mysql.HasPriKeyFlag(col.Flag) && hasDefaultValue && col.DefaultValue == nil {
 			return nil, nil, types.ErrInvalidDefault.GenByArgs(col.Name)
 		}
-		// set primary key flag for outer primary key constraint.
-		// such as: create table t1 (id int , age int, primary key(id))
-		if !mysql.HasPriKeyFlag(col.Flag) && outPriKeyConstraint != nil && outPriKeyConstraint.Tp == ast.ConstraintPrimaryKey {
+		// Set primary key flag for outer primary key constraint.
+		// Such as: create table t1 (id int , age int, primary key(id))
+		if !mysql.HasPriKeyFlag(col.Flag) && outPriKeyConstraint != nil {
 			for _, key := range outPriKeyConstraint.Keys {
 				if key.Column.Name.L != col.Name.L {
 					continue
@@ -375,7 +375,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				break
 			}
 		}
-		// primary key should not be null
+		// Primary key should not be null.
 		if mysql.HasPriKeyFlag(col.Flag) && hasNullFlag {
 			return nil, nil, ErrPrimaryCantHaveNull
 		}
@@ -507,7 +507,7 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 		}
 		return nil
 	}
-	// primary key default null is invalid
+	// Primary key default null is invalid.
 	if mysql.HasPriKeyFlag(c.Flag) {
 		return ErrPrimaryCantHaveNull
 	}
