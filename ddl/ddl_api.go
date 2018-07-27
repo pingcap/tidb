@@ -173,6 +173,7 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 	constraints []*ast.Constraint) ([]*table.Column, []*ast.Constraint, error) {
 	var cols []*table.Column
 	colMap := map[string]*table.Column{}
+	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 	var outPriKeyConstraint *ast.Constraint
 	for _, v := range constraints {
 		if v.Tp == ast.ConstraintPrimaryKey {
@@ -236,6 +237,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	return nil
 }
 
+// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
 	err := setCharsetCollationFlenDecimal(colDef.Tp)
@@ -270,6 +272,7 @@ func isExplicitTimeStamp() bool {
 }
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
+// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
 	var constraints = make([]*ast.Constraint, 0)
 	col := table.ToColumn(&model.ColumnInfo{
@@ -361,8 +364,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		if mysql.HasPriKeyFlag(col.Flag) && hasDefaultValue && col.DefaultValue == nil {
 			return nil, nil, types.ErrInvalidDefault.GenByArgs(col.Name)
 		}
-		// set primary key flag for outer primary key constraint
-		// such as: create table t1 (id int , age int, primary key(id));
+		// set primary key flag for outer primary key constraint.
+		// such as: create table t1 (id int , age int, primary key(id))
 		if !mysql.HasPriKeyFlag(col.Flag) && outPriKeyConstraint != nil && outPriKeyConstraint.Tp == ast.ConstraintPrimaryKey {
 			for _, key := range outPriKeyConstraint.Keys {
 				if key.Column.Name.L != col.Name.L {
