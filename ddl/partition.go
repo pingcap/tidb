@@ -318,7 +318,9 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, expr ast.Expr
 		}
 
 	}
+
 	// Range partitioning key can only contain one unique key.
+	// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
 	if len(uniKeys) > 0 {
 		if len(uniKeys) > 1 || !strings.Contains(partkeys[0], uniKeys[0]) {
 			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs("UNIQUE INDEX")

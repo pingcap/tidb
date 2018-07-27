@@ -584,7 +584,7 @@ func (s *testDBSuite) TestAddMultiColumnsIndex(c *C) {
 func (s *testDBSuite) TestAddIndex(c *C) {
 	s.testAddIndex(c, false, "create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
 	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
-			      partition by range (c2) (
+			      partition by range (c1) (
 			      partition p0 values less than (3440),
 			      partition p1 values less than (61440),
 			      partition p2 values less than (122880),
@@ -2846,27 +2846,6 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
 	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
-	s.tk.MustExec("drop table if exists Part1;")
-	s.tk.MustExec(`create table Part1 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null
-	);`)
-
-	s.tk.MustExec("drop table if exists Part1;")
-	s.tk.MustExec(`create table Part1 (
-		col1 int not null,
-		col2 date not null,
-		col3 int not null,
-		col4 int not null,
-		unique key (col1, col2)
-	)
-	partition by range( col1 + col2 ) (
-	partition p1 values less than (11),
-	partition p2 values less than (15)
-	);`)
-
 	s.tk.MustExec("drop table if exists Part1;")
 	s.tk.MustExec(`create table Part1 (
 		col1 int not null,
