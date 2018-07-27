@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type countFunction struct {
@@ -24,7 +25,7 @@ type countFunction struct {
 }
 
 // Update implements Aggregation interface.
-func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	var datumBuf []types.Datum
 	if cf.HasDistinct {
 		datumBuf = make([]types.Datum, 0, len(cf.Args))

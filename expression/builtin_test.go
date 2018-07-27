@@ -24,10 +24,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-func evalBuiltinFunc(f builtinFunc, row types.Row) (d types.Datum, err error) {
+func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	var (
 		res    interface{}
 		isNull bool
@@ -104,13 +105,13 @@ func (s *testEvaluatorSuite) TestIsNullFunc(c *C) {
 	fc := funcs[ast.IsNull]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
 	c.Assert(err, IsNil)
-	v, err := evalBuiltinFunc(f, nil)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(0))
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(err, IsNil)
-	v, err = evalBuiltinFunc(f, nil)
+	v, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }
@@ -121,14 +122,14 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 	lock := funcs[ast.GetLock]
 	f, err := lock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil, 1)))
 	c.Assert(err, IsNil)
-	v, err := evalBuiltinFunc(f, nil)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 
 	releaseLock := funcs[ast.ReleaseLock]
 	f, err = releaseLock.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1)))
 	c.Assert(err, IsNil)
-	v, err = evalBuiltinFunc(f, nil)
+	v, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetInt64(), Equals, int64(1))
 }
