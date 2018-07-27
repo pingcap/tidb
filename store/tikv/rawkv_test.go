@@ -133,19 +133,26 @@ func (s *testRawKVSuite) TestSimple(c *C) {
 }
 
 func (s *testRawKVSuite) TestBatchPut(c *C) {
-	testNum := 100
-	testKeys := make([][]byte, 0, testNum)
-	testValues := make([][]byte, 0, testNum)
-	err := s.split(c, "", fmt.Sprint("key", testNum/2))
-	c.Assert(err, IsNil)
-	for i := 0; i < testNum; i++ {
+	testNum := 0
+	testKeys := make([][]byte, 0)
+	testValues := make([][]byte, 0)
+	countOfBatch := 0
+	size := 0
+	for i := 0; countOfBatch < 4; i++ {
 		key := fmt.Sprint("key", i)
+		size += len(key)
 		testKeys = append(testKeys, []byte(key))
 		value := fmt.Sprint("value", i)
+		size += len(value)
 		testValues = append(testValues, []byte(value))
-
 		s.mustNotExist(c, []byte(key))
+		if size/rawBatchPutSize-countOfBatch > 0 {
+			countOfBatch++
+		}
+		testNum = i
 	}
+	err := s.split(c, "", fmt.Sprint("key", testNum/2))
+	c.Assert(err, IsNil)
 	s.mustBatchPut(c, testKeys, testValues)
 	for i := 0; i < testNum; i++ {
 		s.mustGet(c, testKeys[i], testValues[i])
