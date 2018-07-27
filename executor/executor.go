@@ -350,7 +350,7 @@ type CheckTableExec struct {
 	done   bool
 	is     infoschema.InfoSchema
 
-	GenExprs map[string]expression.Expression
+	genExprs map[string]expression.Expression
 }
 
 // Open implements the Executor Open interface.
@@ -402,7 +402,7 @@ func (e *CheckTableExec) doCheckPartitionedTable(tbl table.PartitionedTable) err
 func (e *CheckTableExec) doCheckTable(tbl table.Table) error {
 	for _, idx := range tbl.Indices() {
 		txn := e.ctx.Txn()
-		err := admin.CompareIndexData(e.ctx, txn, tbl, idx, e.GenExprs)
+		err := admin.CompareIndexData(e.ctx, txn, tbl, idx, e.genExprs)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -494,7 +494,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	return ret
 }
 
-func (b *planBuilder) buildAdminCheckTable(as *ast.AdminStmt) Plan {
+func (b *planBuilder) buildAdminCheckTable(as *ast.AdminStmt) *CheckTable {
 	p := &CheckTable{Tables: as.Tables}
 	p.GenExprs = make(map[string]expression.Expression)
 
