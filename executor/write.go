@@ -53,7 +53,7 @@ const (
 //     4. lastInsertID (uint64) : the lastInsertID should be set by the newData.
 //     5. err (error) : error in the update.
 func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
-	onDup bool) (bool, bool, int64, uint64, error) {
+	onDup, checkReplenish bool) (bool, bool, int64, uint64, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
@@ -61,6 +61,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	var onUpdateSpecified = make(map[int]bool)
 	var newHandle int64
 	var lastInsertID uint64
+	var oldDataAllNull = true
 
 	// We can iterate on public columns not writable columns,
 	// because all of them are sorted by their `Offset`, which
@@ -82,8 +83,15 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 				return false, handleChanged, newHandle, 0, errors.Trace(err)
 			}
 		}
+
+		oldDataNull := oldData[i].IsNull()
+
+		if checkReplenish && oldDataAllNull && !oldDataNull {
+			oldDataAllNull = false
+		}
+
 		// Rebase auto increment id if the field is changed.
-		if mysql.HasAutoIncrementFlag(col.Flag) {
+		if mysql.HasAutoIncrementFlag(col.Flag) && !(checkReplenish && oldDataAllNull) {
 			if newData[i].IsNull() {
 				return false, handleChanged, newHandle, 0, table.ErrColumnCantNull.GenByArgs(col.Name)
 			}
@@ -115,6 +123,11 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			}
 			modified[i] = false
 		}
+	}
+
+	// If it's a replenish column by join and all data values is nil, all update to this part should be ignore.
+	if checkReplenish && oldDataAllNull {
+		return false, false, newHandle, 0, nil
 	}
 
 	// Check the not-null constraints.

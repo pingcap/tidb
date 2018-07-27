@@ -2913,7 +2913,7 @@ func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
 func (s *testSuite) TestIndexJoinTableDualPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists a")
 	tk.MustExec("create table a (f1 int, f2 varchar(32), primary key (f1))")
 	tk.MustExec("insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c')")
 	tk.MustQuery("select a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
@@ -2958,4 +2958,46 @@ func (s *testSuite) TestUnionAutoSignedCast(c *C) {
 		Check(testkit.Rows("1 1", "2 -1"))
 	tk.MustQuery("select id, v from t5 union select id, v from t7 union select id, v from t6 order by id").
 		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
+}
+
+func (s *testSuite) TestUpdateJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(k int, v int)")
+	tk.MustExec("create table t2(k int, v int)")
+	tk.MustExec("create table t3(id int auto_increment, k int, v int, primary key(id))")
+	tk.MustExec("insert into t1 values (1, 0)")
+
+	// test auto_increment & none-null column in right table of update left join.
+	tk.MustExec("update t1 left join t3 on t1.k = t3.k set t1.v = 1")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select id, k, v from t3").Check(testkit.Rows())
+
+	// test left join and right no records but update no records part.
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t1.v = t2.v, t2.v = 3") // exchange to t2.v = 3, t1.v = t2.v..will got a bug.
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 <nil>"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+
+	// test right join and left no records but update no records part.
+	tk.MustExec("update t2 right join t1 on t2.k = t1.k set t2.v = 4, t1.v = 0")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 0"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+
+	// test left join and update right data.
+	tk.MustExec("insert t2 values (1, 10)")
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t2.v = 11")
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows("1 11"))
+
+	// test join same table multiple times, update right record and not insert no exists record.
+	tk.MustExec("update t1 t11 left join t2 on t11.k = t2.k left join t1 t12 on t2.v = t12.k set t12.v = 233, t11.v = 111")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 111"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows("1 11"))
+
+	// test left join and left all null record's update.
+	tk.MustExec("delete from t1")
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t1 values (null, null)")
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t1.v = 1")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("<nil> 1"))
 }

@@ -63,6 +63,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 			offset := getTableOffset(schema, col)
 			end := offset + len(tbl.WritableCols())
 			handle := row[col.Index].GetInt64()
+			_, checkReplenish := schema.ReplenishCols[col.ToIdentifier()]
 			oldData := row[offset:end]
 			newTableData := newData[offset:end]
 			flags := assignFlag[offset:end]
@@ -72,7 +73,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 				continue
 			}
 			// Update row
-			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
+			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false, checkReplenish)
 			if err1 == nil {
 				if changed {
 					e.updatedRowKeys[id][handle] = struct{}{}

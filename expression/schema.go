@@ -37,7 +37,8 @@ type Schema struct {
 	Columns []*Column
 	Keys    []KeyInfo
 	// TblID2Handle stores the tables' handle column information if we need handle in execution phase.
-	TblID2Handle map[int64][]*Column
+	TblID2Handle  map[int64][]*Column
+	ReplenishCols map[ColumnIdentifier]struct{}
 }
 
 // String implements fmt.Stringer interface.
@@ -83,6 +84,12 @@ func (s *Schema) Clone() *Schema {
 			if !inColumns {
 				schema.TblID2Handle[id] = append(schema.TblID2Handle[id], col.Clone().(*Column))
 			}
+		}
+	}
+	if schema.ReplenishCols != nil {
+		schema.ReplenishCols = make(map[ColumnIdentifier]struct{}, len(schema.ReplenishCols))
+		for colID := range s.ReplenishCols {
+			schema.ReplenishCols[colID] = struct{}{}
 		}
 	}
 	return schema
