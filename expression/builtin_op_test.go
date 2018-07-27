@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -47,7 +48,7 @@ func (s *testEvaluatorSuite) TestUnary(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.UnaryMinus, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr == false {
 			c.Assert(err, IsNil)
 			if !t.overflow {
@@ -97,7 +98,7 @@ func (s *testEvaluatorSuite) TestLogicAnd(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.LogicAnd, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -137,7 +138,7 @@ func (s *testEvaluatorSuite) TestLeftShift(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.LeftShift, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -170,7 +171,7 @@ func (s *testEvaluatorSuite) TestRightShift(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.RightShift, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -210,7 +211,7 @@ func (s *testEvaluatorSuite) TestBitXor(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Xor, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -257,7 +258,7 @@ func (s *testEvaluatorSuite) TestBitOr(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Or, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -311,7 +312,7 @@ func (s *testEvaluatorSuite) TestLogicOr(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.LogicOr, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -351,7 +352,7 @@ func (s *testEvaluatorSuite) TestBitAnd(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.And, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -398,7 +399,7 @@ func (s *testEvaluatorSuite) TestBitNeg(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.BitNeg, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -448,7 +449,7 @@ func (s *testEvaluatorSuite) TestUnaryNot(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.UnaryNot, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -525,7 +526,7 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(isTrueSig, NotNil)
 
-		isTrue, err := evalBuiltinFunc(isTrueSig, nil)
+		isTrue, err := evalBuiltinFunc(isTrueSig, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isTrue, testutil.DatumEquals, types.NewDatum(tc.isTrue))
 	}
@@ -535,7 +536,7 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(isFalseSig, NotNil)
 
-		isFalse, err := evalBuiltinFunc(isFalseSig, nil)
+		isFalse, err := evalBuiltinFunc(isFalseSig, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isFalse, testutil.DatumEquals, types.NewDatum(tc.isFalse))
 	}
