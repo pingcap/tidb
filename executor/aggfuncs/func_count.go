@@ -41,7 +41,7 @@ func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalInt(sctx, &row)
+		_, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -63,7 +63,7 @@ func (e *countOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalReal(sctx, &row)
+		_, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -85,7 +85,7 @@ func (e *countOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, row
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalDecimal(sctx, &row)
+		_, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -107,7 +107,7 @@ func (e *countOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalTime(sctx, &row)
+		_, isNull, err := e.args[0].EvalTime(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -129,7 +129,7 @@ func (e *countOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, ro
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalDuration(sctx, &row)
+		_, isNull, err := e.args[0].EvalDuration(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -151,7 +151,7 @@ func (e *countOriginal4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalJSON(sctx, &row)
+		_, isNull, err := e.args[0].EvalJSON(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -173,7 +173,7 @@ func (e *countOriginal4String) UpdatePartialResult(sctx sessionctx.Context, rows
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalString(sctx, &row)
+		_, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -194,7 +194,7 @@ type countPartial struct {
 func (e *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4Count)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalInt(sctx, &row)
+		input, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -249,7 +249,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 		encodedBytes = encodedBytes[:0]
 
 		for i := 0; i < len(e.args) && !hasNull; i++ {
-			encodedBytes, isNull, err = e.evalAndEncode(sctx, e.args[i], &row, buf, encodedBytes)
+			encodedBytes, isNull, err = e.evalAndEncode(sctx, e.args[i], row, buf, encodedBytes)
 			if err != nil {
 				return
 			}
@@ -272,7 +272,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 // evalAndEncode eval one row with an expression and encode value to bytes.
 func (e *countOriginalWithDistinct) evalAndEncode(
 	sctx sessionctx.Context, arg expression.Expression,
-	row types.Row, buf, encodedBytes []byte,
+	row chunk.Row, buf, encodedBytes []byte,
 ) ([]byte, bool, error) {
 	switch tp := arg.GetType().EvalType(); tp {
 	case types.ETInt:

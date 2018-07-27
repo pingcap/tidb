@@ -59,7 +59,7 @@ type tableCommon struct {
 	meta            *model.TableInfo
 	alloc           autoid.Allocator
 
-	// Both of them are generated using partitionID.
+	// recordPrefix and indexPrefix are generated using partitionID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
 }
@@ -203,6 +203,11 @@ func (t *tableCommon) DeletableIndices() []table.Index {
 // Meta implements table.Table Meta interface.
 func (t *tableCommon) Meta() *model.TableInfo {
 	return t.meta
+}
+
+// GetID implements table.Table GetID interface.
+func (t *tableCommon) GetID() int64 {
+	return t.meta.ID
 }
 
 // Cols implements table.Table Cols interface.

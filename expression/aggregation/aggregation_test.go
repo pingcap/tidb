@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -46,6 +47,7 @@ func generateRowData() []chunk.Row {
 
 func (s *testAggFuncSuit) SetUpSuite(c *C) {
 	s.ctx = mock.NewContext()
+	s.ctx.GetSessionVars().GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	s.rows = generateRowData()
 	s.nullRow = chunk.MutRowFromDatums([]types.Datum{{}}).ToRow()
 }
@@ -55,7 +57,8 @@ func (s *testAggFuncSuit) TestAvg(c *C) {
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	avgFunc := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	avgFunc := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, false).GetAggFunc(ctx)
 	evalCtx := avgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := avgFunc.GetResult(evalCtx)
@@ -73,7 +76,7 @@ func (s *testAggFuncSuit) TestAvg(c *C) {
 	result = avgFunc.GetResult(evalCtx)
 	c.Assert(result.GetMysqlDecimal().Compare(needed) == 0, IsTrue)
 
-	distinctAvgFunc := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, true).GetAggFunc()
+	distinctAvgFunc := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, true).GetAggFunc(ctx)
 	evalCtx = distinctAvgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 	for _, row := range s.rows {
 		err := distinctAvgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
@@ -93,6 +96,7 @@ func (s *testAggFuncSuit) TestAvgFinalMode(c *C) {
 	for i := 1; i <= 100; i++ {
 		rows = append(rows, types.MakeDatums(i, types.NewDecFromInt(int64(i*i))))
 	}
+	ctx := mock.NewContext()
 	cntCol := &expression.Column{
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
@@ -103,7 +107,7 @@ func (s *testAggFuncSuit) TestAvgFinalMode(c *C) {
 	}
 	aggFunc := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{cntCol, sumCol}, false)
 	aggFunc.Mode = FinalMode
-	avgFunc := aggFunc.GetAggFunc()
+	avgFunc := aggFunc.GetAggFunc(ctx)
 	evalCtx := avgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	for _, row := range rows {
@@ -120,7 +124,8 @@ func (s *testAggFuncSuit) TestSum(c *C) {
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	sumFunc := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	sumFunc := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false).GetAggFunc(ctx)
 	evalCtx := sumFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := sumFunc.GetResult(evalCtx)
@@ -140,7 +145,7 @@ func (s *testAggFuncSuit) TestSum(c *C) {
 	partialResult := sumFunc.GetPartialResult(evalCtx)
 	c.Assert(partialResult[0].GetMysqlDecimal().Compare(needed) == 0, IsTrue)
 
-	distinctSumFunc := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, true).GetAggFunc()
+	distinctSumFunc := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, true).GetAggFunc(ctx)
 	evalCtx = distinctSumFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 	for _, row := range s.rows {
 		err := distinctSumFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
@@ -156,7 +161,8 @@ func (s *testAggFuncSuit) TestBitAnd(c *C) {
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	bitAndFunc := NewAggFuncDesc(s.ctx, ast.AggFuncBitAnd, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	bitAndFunc := NewAggFuncDesc(s.ctx, ast.AggFuncBitAnd, []expression.Expression{col}, false).GetAggFunc(ctx)
 	evalCtx := bitAndFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := bitAndFunc.GetResult(evalCtx)
@@ -231,7 +237,8 @@ func (s *testAggFuncSuit) TestBitOr(c *C) {
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	bitOrFunc := NewAggFuncDesc(s.ctx, ast.AggFuncBitOr, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	bitOrFunc := NewAggFuncDesc(s.ctx, ast.AggFuncBitOr, []expression.Expression{col}, false).GetAggFunc(ctx)
 	evalCtx := bitOrFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := bitOrFunc.GetResult(evalCtx)
@@ -314,7 +321,8 @@ func (s *testAggFuncSuit) TestBitXor(c *C) {
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	bitXorFunc := NewAggFuncDesc(s.ctx, ast.AggFuncBitXor, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	bitXorFunc := NewAggFuncDesc(s.ctx, ast.AggFuncBitXor, []expression.Expression{col}, false).GetAggFunc(ctx)
 	evalCtx := bitXorFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := bitXorFunc.GetResult(evalCtx)
@@ -389,7 +397,8 @@ func (s *testAggFuncSuit) TestCount(c *C) {
 		Index:   0,
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
-	countFunc := NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	countFunc := NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, false).GetAggFunc(ctx)
 	evalCtx := countFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := countFunc.GetResult(evalCtx)
@@ -408,7 +417,7 @@ func (s *testAggFuncSuit) TestCount(c *C) {
 	partialResult := countFunc.GetPartialResult(evalCtx)
 	c.Assert(partialResult[0].GetInt64(), Equals, int64(5050))
 
-	distinctCountFunc := NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, true).GetAggFunc()
+	distinctCountFunc := NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, true).GetAggFunc(ctx)
 	evalCtx = distinctCountFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	for _, row := range s.rows {
@@ -428,7 +437,8 @@ func (s *testAggFuncSuit) TestConcat(c *C) {
 		Index:   1,
 		RetType: types.NewFieldType(mysql.TypeVarchar),
 	}
-	concatFunc := NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	concatFunc := NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, false).GetAggFunc(ctx)
 	evalCtx := concatFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := concatFunc.GetResult(evalCtx)
@@ -454,7 +464,7 @@ func (s *testAggFuncSuit) TestConcat(c *C) {
 	partialResult := concatFunc.GetPartialResult(evalCtx)
 	c.Assert(partialResult[0].GetString(), Equals, "1x2")
 
-	distinctConcatFunc := NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, true).GetAggFunc()
+	distinctConcatFunc := NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, true).GetAggFunc(ctx)
 	evalCtx = distinctConcatFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	row.SetDatum(0, types.NewIntDatum(1))
@@ -476,7 +486,8 @@ func (s *testAggFuncSuit) TestFirstRow(c *C) {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 
-	firstRowFunc := NewAggFuncDesc(s.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	firstRowFunc := NewAggFuncDesc(s.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false).GetAggFunc(ctx)
 	evalCtx := firstRowFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	row := chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
@@ -500,8 +511,9 @@ func (s *testAggFuncSuit) TestMaxMin(c *C) {
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 
-	maxFunc := NewAggFuncDesc(s.ctx, ast.AggFuncMax, []expression.Expression{col}, false).GetAggFunc()
-	minFunc := NewAggFuncDesc(s.ctx, ast.AggFuncMin, []expression.Expression{col}, false).GetAggFunc()
+	ctx := mock.NewContext()
+	maxFunc := NewAggFuncDesc(s.ctx, ast.AggFuncMax, []expression.Expression{col}, false).GetAggFunc(ctx)
+	minFunc := NewAggFuncDesc(s.ctx, ast.AggFuncMin, []expression.Expression{col}, false).GetAggFunc(ctx)
 	maxEvalCtx := maxFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 	minEvalCtx := minFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 

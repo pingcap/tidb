@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -176,7 +177,7 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 		var ok bool
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
-				value, err := EvalBool(s.ctx, []Expression{con}, nil)
+				value, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
 				terror.Log(errors.Trace(err))
 				if !value {
 					s.setConds2ConstFalse()

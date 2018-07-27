@@ -207,6 +207,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
+		// The reasonable range of 'group_concat_max_len' is 4~18446744073709551615(64-bit platforms)
+		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len for details
 		if val < 4 {
 			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
 			return "4", nil
