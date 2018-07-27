@@ -15,8 +15,8 @@ package tikv
 
 import (
 	"bytes"
-
 	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"golang.org/x/net/context"
@@ -137,7 +137,7 @@ func (s *testRawKVSuite) TestBatchPut(c *C) {
 	testKeys := make([][]byte, 0, testNum)
 	testValues := make([][]byte, 0, testNum)
 	err := s.split(c, "", fmt.Sprint("key", testNum/2))
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
 	for i := 0; i < testNum; i++ {
 		key := fmt.Sprint("key", i)
 		testKeys = append(testKeys, []byte(key))
