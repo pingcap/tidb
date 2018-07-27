@@ -27,13 +27,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Aggregation stands for aggregate functions.
 type Aggregation interface {
 	// Update during executing.
-	Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error
+	Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error
 
 	// GetPartialResult will called by coprocessor to get partial results. For avg function, partial results will return
 	// sum and count values at the same time.
@@ -153,7 +154,7 @@ func (af *aggFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEv
 	evalCtx.Value.SetNull()
 }
 
-func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row types.Row) error {
+func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	a := af.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {

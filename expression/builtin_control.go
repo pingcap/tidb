@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -220,7 +221,7 @@ func (b *builtinCaseWhenIntSig) Clone() builtinFunc {
 
 // evalInt evals a builtinCaseWhenIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenIntSig) evalInt(row types.Row) (ret int64, isNull bool, err error) {
+func (b *builtinCaseWhenIntSig) evalInt(row chunk.Row) (ret int64, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -256,7 +257,7 @@ func (b *builtinCaseWhenRealSig) Clone() builtinFunc {
 
 // evalReal evals a builtinCaseWhenRealSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenRealSig) evalReal(row types.Row) (ret float64, isNull bool, err error) {
+func (b *builtinCaseWhenRealSig) evalReal(row chunk.Row) (ret float64, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -292,7 +293,7 @@ func (b *builtinCaseWhenDecimalSig) Clone() builtinFunc {
 
 // evalDecimal evals a builtinCaseWhenDecimalSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenDecimalSig) evalDecimal(row types.Row) (ret *types.MyDecimal, isNull bool, err error) {
+func (b *builtinCaseWhenDecimalSig) evalDecimal(row chunk.Row) (ret *types.MyDecimal, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -328,7 +329,7 @@ func (b *builtinCaseWhenStringSig) Clone() builtinFunc {
 
 // evalString evals a builtinCaseWhenStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenStringSig) evalString(row types.Row) (ret string, isNull bool, err error) {
+func (b *builtinCaseWhenStringSig) evalString(row chunk.Row) (ret string, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -364,7 +365,7 @@ func (b *builtinCaseWhenTimeSig) Clone() builtinFunc {
 
 // evalTime evals a builtinCaseWhenTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenTimeSig) evalTime(row types.Row) (ret types.Time, isNull bool, err error) {
+func (b *builtinCaseWhenTimeSig) evalTime(row chunk.Row) (ret types.Time, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -400,7 +401,7 @@ func (b *builtinCaseWhenDurationSig) Clone() builtinFunc {
 
 // evalDuration evals a builtinCaseWhenDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/case.html
-func (b *builtinCaseWhenDurationSig) evalDuration(row types.Row) (ret types.Duration, isNull bool, err error) {
+func (b *builtinCaseWhenDurationSig) evalDuration(row chunk.Row) (ret types.Duration, isNull bool, err error) {
 	var condition int64
 	args, l := b.getArgs(), len(b.getArgs())
 	for i := 0; i < l-1; i += 2 {
@@ -474,7 +475,7 @@ func (b *builtinIfIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfIntSig) evalInt(row types.Row) (ret int64, isNull bool, err error) {
+func (b *builtinIfIntSig) evalInt(row chunk.Row) (ret int64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return 0, true, errors.Trace(err)
@@ -497,7 +498,7 @@ func (b *builtinIfRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfRealSig) evalReal(row types.Row) (ret float64, isNull bool, err error) {
+func (b *builtinIfRealSig) evalReal(row chunk.Row) (ret float64, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return 0, true, errors.Trace(err)
@@ -520,7 +521,7 @@ func (b *builtinIfDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfDecimalSig) evalDecimal(row types.Row) (ret *types.MyDecimal, isNull bool, err error) {
+func (b *builtinIfDecimalSig) evalDecimal(row chunk.Row) (ret *types.MyDecimal, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return nil, true, errors.Trace(err)
@@ -543,7 +544,7 @@ func (b *builtinIfStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfStringSig) evalString(row types.Row) (ret string, isNull bool, err error) {
+func (b *builtinIfStringSig) evalString(row chunk.Row) (ret string, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return "", true, errors.Trace(err)
@@ -566,7 +567,7 @@ func (b *builtinIfTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfTimeSig) evalTime(row types.Row) (ret types.Time, isNull bool, err error) {
+func (b *builtinIfTimeSig) evalTime(row chunk.Row) (ret types.Time, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return ret, true, errors.Trace(err)
@@ -589,7 +590,7 @@ func (b *builtinIfDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfDurationSig) evalDuration(row types.Row) (ret types.Duration, isNull bool, err error) {
+func (b *builtinIfDurationSig) evalDuration(row chunk.Row) (ret types.Duration, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return ret, true, errors.Trace(err)
@@ -612,7 +613,7 @@ func (b *builtinIfJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfJSONSig) evalJSON(row types.Row) (ret json.BinaryJSON, isNull bool, err error) {
+func (b *builtinIfJSONSig) evalJSON(row chunk.Row) (ret json.BinaryJSON, isNull bool, err error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return ret, true, errors.Trace(err)
@@ -689,7 +690,7 @@ func (b *builtinIfNullIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullIntSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinIfNullIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg0, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if !isNull || err != nil {
 		return arg0, err != nil, errors.Trace(err)
@@ -708,7 +709,7 @@ func (b *builtinIfNullRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullRealSig) evalReal(row types.Row) (float64, bool, error) {
+func (b *builtinIfNullRealSig) evalReal(row chunk.Row) (float64, bool, error) {
 	arg0, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if !isNull || err != nil {
 		return arg0, err != nil, errors.Trace(err)
@@ -727,7 +728,7 @@ func (b *builtinIfNullDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinIfNullDecimalSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if !isNull || err != nil {
 		return arg0, err != nil, errors.Trace(err)
@@ -746,7 +747,7 @@ func (b *builtinIfNullStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullStringSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinIfNullStringSig) evalString(row chunk.Row) (string, bool, error) {
 	arg0, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if !isNull || err != nil {
 		return arg0, err != nil, errors.Trace(err)
@@ -765,7 +766,7 @@ func (b *builtinIfNullTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullTimeSig) evalTime(row types.Row) (types.Time, bool, error) {
+func (b *builtinIfNullTimeSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	arg0, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if !isNull || err != nil {
 		return arg0, err != nil, errors.Trace(err)
@@ -784,7 +785,7 @@ func (b *builtinIfNullDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullDurationSig) evalDuration(row types.Row) (types.Duration, bool, error) {
+func (b *builtinIfNullDurationSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	arg0, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if !isNull || err != nil {
 		return arg0, err != nil, errors.Trace(err)
@@ -803,7 +804,7 @@ func (b *builtinIfNullJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinIfNullJSONSig) evalJSON(row types.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinIfNullJSONSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
 	arg0, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if !isNull {
 		return arg0, err != nil, errors.Trace(err)
