@@ -132,10 +132,12 @@ func (s *testRawKVSuite) TestSimple(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testRawKVSuite) TestBatch(c *C) {
-	testNum := 3
+func (s *testRawKVSuite) TestBatchPut(c *C) {
+	testNum := 100
 	testKeys := make([][]byte, 0, testNum)
 	testValues := make([][]byte, 0, testNum)
+	err := s.split(c, "", fmt.Sprint("key", testNum/2))
+	c.Assert(err, NotNil)
 	for i := 0; i < testNum; i++ {
 		key := fmt.Sprint("key", i)
 		testKeys = append(testKeys, []byte(key))

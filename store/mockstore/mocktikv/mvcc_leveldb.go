@@ -900,7 +900,11 @@ func (mvcc *MVCCLevelDB) RawBatchPut(keys, values [][]byte) {
 
 	batch := &leveldb.Batch{}
 	for i, key := range keys {
-		batch.Put(key, values[i])
+		value := values[i]
+		if value == nil {
+			value = []byte{}
+		}
+		batch.Put(key, value)
 	}
 	terror.Log(mvcc.db.Write(batch, nil))
 }

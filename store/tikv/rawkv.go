@@ -360,21 +360,25 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 }
 
 func appendBatches(batches []batch, regionID RegionVerID, groupKeys [][]byte, keyToValue map[string][]byte, limit int) []batch {
-	var start, end int
-	for start = 0; start < len(groupKeys); {
-		size := 0
-		var keys [][]byte
-		var values [][]byte
-		for end = start; end < len(groupKeys) && size < limit; end++ {
-			key := groupKeys[end]
+	var start, size int
+	var keys, values [][]byte
+	for start = 0; start < len(groupKeys); start++ {
+		if size < limit {
+			key := groupKeys[start]
 			value := keyToValue[string(key)]
 			keys = append(keys, key)
 			values = append(values, value)
 			size += len(key)
 			size += len(value)
+		} else {
+			batches = append(batches, batch{regionID: regionID, keys: keys, values: values})
+			keys = make([][]byte, 0)
+			values = make([][]byte, 0)
+			size = 0
 		}
+	}
+	if len(keys) != 0 {
 		batches = append(batches, batch{regionID: regionID, keys: keys, values: values})
-		start = end
 	}
 	return batches
 }
