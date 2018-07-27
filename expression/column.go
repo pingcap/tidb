@@ -140,6 +140,12 @@ func (col *CorrelatedColumn) ResolveIndices(_ *Schema) Expression {
 func (col *CorrelatedColumn) resolveIndices(_ *Schema) {
 }
 
+// ColumnIdentifier represents a identifier of column.
+type ColumnIdentifier struct {
+	FromID   int
+	Position int
+}
+
 // Column represents a column.
 type Column struct {
 	FromID      int
@@ -161,6 +167,11 @@ type Column struct {
 	Index int
 
 	hashcode []byte
+}
+
+// ToIdentifier return the identifier of column.
+func (col *Column) ToIdentifier() ColumnIdentifier {
+	return ColumnIdentifier{FromID: col.FromID, Position: col.Position}
 }
 
 // Equal implements Expression interface.
