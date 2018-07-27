@@ -477,6 +477,7 @@ type reorgIndexTask struct {
 	partitionID int64
 	startHandle int64
 	endHandle   int64
+	// endIncluded indicates whether the range include the endHandle.
 	// When the last handle is math.MaxInt64, set endIncluded to true to
 	// tell worker backfilling index of endHandle.
 	endIncluded bool
@@ -770,11 +771,11 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up adding index in table with disperse handle.
-func splitTableRanges(t table.Table, store kv.Storage, startHandle, endHandle, partitionID int64) ([]kv.KeyRange, error) {
-	startRecordKey := tablecodec.EncodeRowKeyWithHandle(partitionID, startHandle)
-	endRecordKey := tablecodec.EncodeRowKeyWithHandle(partitionID, endHandle).Next()
+func splitTableRanges(t table.Table, store kv.Storage, startHandle, endHandle int64) ([]kv.KeyRange, error) {
+	startRecordKey := t.RecordKey(startHandle)
+	endRecordKey := t.RecordKey(endHandle).Next()
 
-	log.Infof("[ddl-reorg] split partition %v range [%v, %v] from PD", partitionID, startHandle, endHandle)
+	log.Infof("[ddl-reorg] split partition %v range [%v, %v] from PD", t.GetID(), startHandle, endHandle)
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {
@@ -928,7 +929,7 @@ func (w *worker) buildIndexForReorgInfo(t table.Table, workers []*addIndexWorker
 
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
 	for {
-		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startHandle, endHandle, reorgInfo.PartitionID)
+		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startHandle, endHandle)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1012,7 +1013,7 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) 
 		return true, nil
 	}
 
-	start, end, err := getTableRange(reorg.d, t.Meta(), pid, reorg.Job.SnapshotVer)
+	start, end, err := getTableRange(reorg.d, t, reorg.Job.SnapshotVer)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

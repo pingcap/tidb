@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
@@ -214,7 +215,7 @@ type DDL interface {
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
-	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo, id int64) (int64, bool, error)
+	GetTableMaxRowID(startTS uint64, tbl table.Table) (int64, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(interface{})
 }
