@@ -257,9 +257,16 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	for _, t := range tables {
 		now := types.CurrentTime(mysql.TypeDatetime)
 		e.appendRow([]interface{}{t.Meta().Name.O, "InnoDB", 10, "Compact", 100, 100, 100, 100, 100, 100, 100,
-			now, now, now, "utf8_general_ci", "", "", t.Meta().Comment})
+			model.TSConvert2Time(t.Meta().UpdateTS).String(), now, now, "utf8_general_ci", "", ifPartitioned(t.Meta()), t.Meta().Comment})
 	}
 	return nil
+}
+
+func ifPartitioned(tb *model.TableInfo) string {
+	if tb.GetPartitionInfo() != nil {
+		return "partitioned"
+	}
+	return ""
 }
 
 func (e *ShowExec) fetchShowColumns() error {
