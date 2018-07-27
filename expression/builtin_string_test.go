@@ -1269,9 +1269,9 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 
 func (s *testEvaluatorSuite) TestRpadSig(c *C) {
 	colTypes := []*types.FieldType{
-		&types.FieldType{Tp: mysql.TypeVarchar},
-		&types.FieldType{Tp: mysql.TypeLonglong},
-		&types.FieldType{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeLonglong},
+		{Tp: mysql.TypeVarchar},
 	}
 	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
 
