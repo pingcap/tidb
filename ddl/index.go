@@ -1018,7 +1018,12 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) 
 	}
 	log.Infof("[ddl-reorg] job %v update reorgInfo partition %d range [%d %d]", reorg.Job.ID, pid, start, end)
 	reorg.StartHandle, reorg.EndHandle, reorg.PartitionID = start, end, pid
-	return false, nil
+
+	// Write the reorg info to store so the whole reorganize process can recover from panic.
+	err = kv.RunInNewTxn(reorg.d.store, true, func(txn kv.Transaction) error {
+		return errors.Trace(reorg.UpdateReorgMeta(txn, reorg.StartHandle, reorg.EndHandle, reorg.PartitionID))
+	})
+	return false, errors.Trace(err)
 }
 
 // findNextPartitionID finds the next partition ID in the PartitionDefinition array.
