@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -172,7 +173,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 			allConstant = allConstant && ok
 		}
 		if allConstant {
-			val, err := x.Eval(nil)
+			val, err := x.Eval(chunk.Row{})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
