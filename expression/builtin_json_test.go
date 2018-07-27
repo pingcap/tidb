@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -41,7 +42,7 @@ func (s *testEvaluatorSuite) TestJSONType(c *C) {
 	for _, t := range dtbl {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(f, nil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
@@ -70,7 +71,7 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 	for _, t := range dtbl {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(f, nil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
@@ -93,7 +94,7 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 		args := types.MakeDatums(t.Input...)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(f, nil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 		if t.Success {
 			c.Assert(err, IsNil)
 			switch x := t.Expected.(type) {
@@ -140,7 +141,7 @@ func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 		f, err = t.fc.getFunction(s.ctx, s.datumsToConstants(args))
 		if t.BuildSuccess {
 			c.Assert(err, IsNil)
-			d, err = evalBuiltinFunc(f, nil)
+			d, err = evalBuiltinFunc(f, chunk.Row{})
 			if t.Success {
 				c.Assert(err, IsNil)
 				switch x := t.Expected.(type) {
@@ -175,7 +176,7 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 		args := types.MakeDatums(t.Input...)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(f, nil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 
 		switch x := t.Expected.(type) {
@@ -203,7 +204,7 @@ func (s *testEvaluatorSuite) TestJSONArray(c *C) {
 		args := types.MakeDatums(t.Input...)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(f, nil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 
 		j1, err := json.ParseBinaryFromString(t.Expected)
@@ -238,7 +239,7 @@ func (s *testEvaluatorSuite) TestJSONObject(c *C) {
 		f, err = fc.getFunction(s.ctx, s.datumsToConstants(args))
 		if t.BuildSuccess {
 			c.Assert(err, IsNil)
-			d, err = evalBuiltinFunc(f, nil)
+			d, err = evalBuiltinFunc(f, chunk.Row{})
 			if t.Success {
 				c.Assert(err, IsNil)
 				switch x := t.Expected.(type) {
@@ -288,7 +289,7 @@ func (s *testEvaluatorSuite) TestJSONORemove(c *C) {
 		args := types.MakeDatums(t.Input...)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(f, nil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 
 		if t.Success {
 			c.Assert(err, IsNil)
