@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -187,7 +188,7 @@ func (s *builtinArithmeticPlusIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticPlusIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
+func (s *builtinArithmeticPlusIntSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -239,7 +240,7 @@ func (s *builtinArithmeticPlusDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticPlusDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
+func (s *builtinArithmeticPlusDecimalSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	a, isNull, err := s.args[0].EvalDecimal(s.ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
@@ -266,7 +267,7 @@ func (s *builtinArithmeticPlusRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticPlusRealSig) evalReal(row types.Row) (float64, bool, error) {
+func (s *builtinArithmeticPlusRealSig) evalReal(row chunk.Row) (float64, bool, error) {
 	a, isNull, err := s.args[0].EvalReal(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -326,7 +327,7 @@ func (s *builtinArithmeticMinusRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticMinusRealSig) evalReal(row types.Row) (float64, bool, error) {
+func (s *builtinArithmeticMinusRealSig) evalReal(row chunk.Row) (float64, bool, error) {
 	a, isNull, err := s.args[0].EvalReal(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -351,7 +352,7 @@ func (s *builtinArithmeticMinusDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticMinusDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
+func (s *builtinArithmeticMinusDecimalSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	a, isNull, err := s.args[0].EvalDecimal(s.ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
@@ -378,7 +379,7 @@ func (s *builtinArithmeticMinusIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticMinusIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
+func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -497,7 +498,7 @@ func (s *builtinArithmeticMultiplyIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticMultiplyRealSig) evalReal(row types.Row) (float64, bool, error) {
+func (s *builtinArithmeticMultiplyRealSig) evalReal(row chunk.Row) (float64, bool, error) {
 	a, isNull, err := s.args[0].EvalReal(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -513,7 +514,7 @@ func (s *builtinArithmeticMultiplyRealSig) evalReal(row types.Row) (float64, boo
 	return result, false, nil
 }
 
-func (s *builtinArithmeticMultiplyDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
+func (s *builtinArithmeticMultiplyDecimalSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	a, isNull, err := s.args[0].EvalDecimal(s.ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
@@ -530,7 +531,7 @@ func (s *builtinArithmeticMultiplyDecimalSig) evalDecimal(row types.Row) (*types
 	return c, false, nil
 }
 
-func (s *builtinArithmeticMultiplyIntUnsignedSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
+func (s *builtinArithmeticMultiplyIntUnsignedSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -548,7 +549,7 @@ func (s *builtinArithmeticMultiplyIntUnsignedSig) evalInt(row types.Row) (val in
 	return int64(result), false, nil
 }
 
-func (s *builtinArithmeticMultiplyIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
+func (s *builtinArithmeticMultiplyIntSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	a, isNull, err := s.args[0].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -604,7 +605,7 @@ func (s *builtinArithmeticDivideDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticDivideRealSig) evalReal(row types.Row) (float64, bool, error) {
+func (s *builtinArithmeticDivideRealSig) evalReal(row chunk.Row) (float64, bool, error) {
 	a, isNull, err := s.args[0].EvalReal(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -623,7 +624,7 @@ func (s *builtinArithmeticDivideRealSig) evalReal(row types.Row) (float64, bool,
 	return result, false, nil
 }
 
-func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
+func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	a, isNull, err := s.args[0].EvalDecimal(s.ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
@@ -690,7 +691,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticIntDivideIntSig) evalInt(row types.Row) (int64, bool, error) {
+func (s *builtinArithmeticIntDivideIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -728,7 +729,7 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row types.Row) (int64, bool, 
 	return ret, err != nil, errors.Trace(err)
 }
 
-func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row types.Row) (int64, bool, error) {
+func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 	a, isNull, err := s.args[0].EvalDecimal(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -824,7 +825,7 @@ func (s *builtinArithmeticModRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticModRealSig) evalReal(row types.Row) (float64, bool, error) {
+func (s *builtinArithmeticModRealSig) evalReal(row chunk.Row) (float64, bool, error) {
 	b, isNull, err := s.args[1].EvalReal(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -852,7 +853,7 @@ func (s *builtinArithmeticModDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticModDecimalSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
+func (s *builtinArithmeticModDecimalSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	a, isNull, err := s.args[0].EvalDecimal(s.ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, errors.Trace(err)
@@ -879,7 +880,7 @@ func (s *builtinArithmeticModIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (s *builtinArithmeticModIntSig) evalInt(row types.Row) (val int64, isNull bool, err error) {
+func (s *builtinArithmeticModIntSig) evalInt(row chunk.Row) (val int64, isNull bool, err error) {
 	b, isNull, err := s.args[1].EvalInt(s.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
