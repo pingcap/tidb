@@ -173,7 +173,7 @@ func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sessionctx.Context) error {
 }
 
 func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
-	decodeTableRow func(types.Row, []*ast.ResultField) error) error {
+	decodeTableRow func(chunk.Row, []*ast.ResultField) error) error {
 	ctx := context.Background()
 	tmp, err := sctx.(sqlexec.SQLExecutor).Execute(ctx, sql)
 	if err != nil {
@@ -205,7 +205,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	}
 }
 
-func (p *MySQLPrivilege) decodeUserTableRow(row types.Row, fs []*ast.ResultField) error {
+func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value userRecord
 	for i, f := range fs {
 		switch {
@@ -231,7 +231,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row types.Row, fs []*ast.ResultField
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeDBTableRow(row types.Row, fs []*ast.ResultField) error {
+func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value dbRecord
 	for i, f := range fs {
 		switch {
@@ -258,7 +258,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row types.Row, fs []*ast.ResultField) 
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeTablesPrivTableRow(row types.Row, fs []*ast.ResultField) error {
+func (p *MySQLPrivilege) decodeTablesPrivTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value tablesPrivRecord
 	for i, f := range fs {
 		switch {
@@ -281,7 +281,7 @@ func (p *MySQLPrivilege) decodeTablesPrivTableRow(row types.Row, fs []*ast.Resul
 	return nil
 }
 
-func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row types.Row, fs []*ast.ResultField) error {
+func (p *MySQLPrivilege) decodeColumnsPrivTableRow(row chunk.Row, fs []*ast.ResultField) error {
 	var value columnsPrivRecord
 	for i, f := range fs {
 		switch {

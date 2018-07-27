@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
 )
 
@@ -81,7 +82,7 @@ func (b *builtinDatabaseSig) Clone() builtinFunc {
 
 // evalString evals a builtinDatabaseSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
-func (b *builtinDatabaseSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinDatabaseSig) evalString(row chunk.Row) (string, bool, error) {
 	currentDB := b.ctx.GetSessionVars().CurrentDB
 	return currentDB, currentDB == "", nil
 }
@@ -113,7 +114,7 @@ func (b *builtinFoundRowsSig) Clone() builtinFunc {
 // evalInt evals a builtinFoundRowsSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_found-rows
 // TODO: SQL_CALC_FOUND_ROWS and LIMIT not support for now, We will finish in another PR.
-func (b *builtinFoundRowsSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinFoundRowsSig) evalInt(row chunk.Row) (int64, bool, error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return 0, true, errors.Errorf("Missing session variable when eval builtin")
@@ -148,7 +149,7 @@ func (b *builtinCurrentUserSig) Clone() builtinFunc {
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 // TODO: The value of CURRENT_USER() can differ from the value of USER(). We will finish this after we support grant tables.
-func (b *builtinCurrentUserSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinCurrentUserSig) evalString(row chunk.Row) (string, bool, error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil || data.User == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
@@ -183,7 +184,7 @@ func (b *builtinUserSig) Clone() builtinFunc {
 
 // eval evals a builtinUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
-func (b *builtinUserSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinUserSig) evalString(row chunk.Row) (string, bool, error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil || data.User == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
@@ -216,7 +217,7 @@ func (b *builtinConnectionIDSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinConnectionIDSig) evalInt(_ types.Row) (int64, bool, error) {
+func (b *builtinConnectionIDSig) evalInt(_ chunk.Row) (int64, bool, error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil {
 		return 0, true, errors.Errorf("Missing session variable when evalue builtin")
@@ -260,7 +261,7 @@ func (b *builtinLastInsertIDSig) Clone() builtinFunc {
 
 // evalInt evals LAST_INSERT_ID().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
-func (b *builtinLastInsertIDSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
+func (b *builtinLastInsertIDSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	res = int64(b.ctx.GetSessionVars().PrevLastInsertID)
 	return res, false, nil
 }
@@ -277,7 +278,7 @@ func (b *builtinLastInsertIDWithIDSig) Clone() builtinFunc {
 
 // evalInt evals LAST_INSERT_ID(expr).
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
-func (b *builtinLastInsertIDWithIDSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
+func (b *builtinLastInsertIDWithIDSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -313,7 +314,7 @@ func (b *builtinVersionSig) Clone() builtinFunc {
 
 // evalString evals a builtinVersionSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_version
-func (b *builtinVersionSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinVersionSig) evalString(row chunk.Row) (string, bool, error) {
 	return mysql.ServerVersion, false, nil
 }
 
@@ -343,7 +344,7 @@ func (b *builtinTiDBVersionSig) Clone() builtinFunc {
 
 // evalString evals a builtinTiDBVersionSig.
 // This will show git hash and build time for tidb-server.
-func (b *builtinTiDBVersionSig) evalString(_ types.Row) (string, bool, error) {
+func (b *builtinTiDBVersionSig) evalString(_ chunk.Row) (string, bool, error) {
 	return printer.GetTiDBInfo(), false, nil
 }
 
@@ -371,7 +372,7 @@ func (b *builtinTiDBIsDDLOwnerSig) Clone() builtinFunc {
 }
 
 // evalInt evals a builtinTiDBIsDDLOwnerSig.
-func (b *builtinTiDBIsDDLOwnerSig) evalInt(_ types.Row) (res int64, isNull bool, err error) {
+func (b *builtinTiDBIsDDLOwnerSig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
 	ddlOwnerChecker := b.ctx.DDLOwnerChecker()
 	if ddlOwnerChecker.IsOwner() {
 		res = 1
@@ -437,7 +438,7 @@ func (b *builtinRowCountSig) Clone() builtinFunc {
 
 // evalInt evals ROW_COUNT().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count.
-func (b *builtinRowCountSig) evalInt(_ types.Row) (res int64, isNull bool, err error) {
+func (b *builtinRowCountSig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
 	res = int64(b.ctx.GetSessionVars().PrevAffectedRows)
 	return res, false, nil
 }

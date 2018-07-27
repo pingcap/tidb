@@ -314,8 +314,22 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
 	if !ran.HighExclude {
 		high = []byte(kv.Key(high).PrefixNext())
+	}
+
+	var hasNull bool
+	for _, highVal := range ran.HighVal {
+		if highVal.IsNull() {
+			hasNull = true
+			break
+		}
+	}
+
+	if hasNull {
+		// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
+		high = []byte(kv.Key(high).Next())
 	}
 	return low, high, nil
 }

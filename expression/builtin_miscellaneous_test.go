@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -49,7 +50,7 @@ func (s *testEvaluatorSuite) TestInetAton(c *C) {
 	for _, t := range dtbl {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
 		c.Assert(err, IsNil)
-		d, err := evalBuiltinFunc(f, nil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
 	}
@@ -77,14 +78,14 @@ func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
 		ip := types.NewStringDatum(test.ip)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
 		c.Assert(err, IsNil)
-		result, err := evalBuiltinFunc(f, nil)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
 	// test NULL input for is_ipv4
 	var argNull types.Datum
 	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, nil)
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(0))
 }
@@ -94,7 +95,7 @@ func (s *testEvaluatorSuite) TestUUID(c *C) {
 
 	f, err := newFunctionForTest(s.ctx, ast.UUID)
 	c.Assert(err, IsNil)
-	d, err := f.Eval(nil)
+	d, err := f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	parts := strings.Split(d.GetString(), "-")
 	c.Assert(len(parts), Equals, 5)
@@ -133,7 +134,7 @@ func (s *testEvaluatorSuite) TestAnyValue(c *C) {
 		fc := funcs[ast.AnyValue]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.arg)))
 		c.Assert(err, IsNil)
-		r, err := evalBuiltinFunc(f, nil)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(t.ret))
 	}
@@ -155,14 +156,14 @@ func (s *testEvaluatorSuite) TestIsIPv6(c *C) {
 		ip := types.NewStringDatum(test.ip)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
 		c.Assert(err, IsNil)
-		result, err := evalBuiltinFunc(f, nil)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
 	// test NULL input for is_ipv6
 	var argNull types.Datum
 	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, nil)
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(0))
 }
@@ -184,14 +185,14 @@ func (s *testEvaluatorSuite) TestInetNtoa(c *C) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
 		c.Assert(err, IsNil)
-		result, err := evalBuiltinFunc(f, nil)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, nil)
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r.IsNull(), IsTrue)
 }
@@ -221,14 +222,14 @@ func (s *testEvaluatorSuite) TestInet6NtoA(c *C) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
 		c.Assert(err, IsNil)
-		result, err := evalBuiltinFunc(f, nil)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, nil)
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r.IsNull(), IsTrue)
 }
@@ -251,14 +252,14 @@ func (s *testEvaluatorSuite) TestInet6AtoN(c *C) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
 		c.Assert(err, IsNil)
-		result, err := evalBuiltinFunc(f, nil)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, nil)
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r.IsNull(), IsTrue)
 }
@@ -279,14 +280,14 @@ func (s *testEvaluatorSuite) TestIsIPv4Mapped(c *C) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
 		c.Assert(err, IsNil)
-		result, err := evalBuiltinFunc(f, nil)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, nil)
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(int64(0)))
 }
@@ -308,14 +309,14 @@ func (s *testEvaluatorSuite) TestIsIPv4Compat(c *C) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{ip}))
 		c.Assert(err, IsNil)
-		result, err := evalBuiltinFunc(f, nil)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, nil)
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(0))
 }
