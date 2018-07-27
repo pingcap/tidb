@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -434,7 +435,7 @@ func (b *builtinCastIntAsIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastIntAsIntSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
+func (b *builtinCastIntAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	return b.args[0].EvalInt(b.ctx, row)
 }
 
@@ -448,7 +449,7 @@ func (b *builtinCastIntAsRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastIntAsRealSig) evalReal(row types.Row) (res float64, isNull bool, err error) {
+func (b *builtinCastIntAsRealSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -473,7 +474,7 @@ func (b *builtinCastIntAsDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastIntAsDecimalSig) evalDecimal(row types.Row) (res *types.MyDecimal, isNull bool, err error) {
+func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -502,7 +503,7 @@ func (b *builtinCastIntAsStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastIntAsStringSig) evalString(row types.Row) (res string, isNull bool, err error) {
+func (b *builtinCastIntAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -531,7 +532,7 @@ func (b *builtinCastIntAsTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastIntAsTimeSig) evalTime(row types.Row) (res types.Time, isNull bool, err error) {
+func (b *builtinCastIntAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -557,7 +558,7 @@ func (b *builtinCastIntAsDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastIntAsDurationSig) evalDuration(row types.Row) (res types.Duration, isNull bool, err error) {
+func (b *builtinCastIntAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -582,7 +583,7 @@ func (b *builtinCastIntAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastIntAsJSONSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCastIntAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -607,7 +608,7 @@ func (b *builtinCastRealAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastRealAsJSONSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCastRealAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	// FIXME: `select json_type(cast(1111.11 as json))` should return `DECIMAL`, we return `DOUBLE` now.
 	return json.CreateBinary(val), isNull, errors.Trace(err)
@@ -623,7 +624,7 @@ func (b *builtinCastDecimalAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDecimalAsJSONSig) evalJSON(row types.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinCastDecimalAsJSONSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
 		return json.BinaryJSON{}, true, errors.Trace(err)
@@ -646,7 +647,7 @@ func (b *builtinCastStringAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastStringAsJSONSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCastStringAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -669,7 +670,7 @@ func (b *builtinCastDurationAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDurationAsJSONSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCastDurationAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -688,7 +689,7 @@ func (b *builtinCastTimeAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastTimeAsJSONSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCastTimeAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -709,7 +710,7 @@ func (b *builtinCastRealAsRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastRealAsRealSig) evalReal(row types.Row) (res float64, isNull bool, err error) {
+func (b *builtinCastRealAsRealSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
 	return b.args[0].EvalReal(b.ctx, row)
 }
 
@@ -723,7 +724,7 @@ func (b *builtinCastRealAsIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastRealAsIntSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
+func (b *builtinCastRealAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -748,7 +749,7 @@ func (b *builtinCastRealAsDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastRealAsDecimalSig) evalDecimal(row types.Row) (res *types.MyDecimal, isNull bool, err error) {
+func (b *builtinCastRealAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -772,7 +773,7 @@ func (b *builtinCastRealAsStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastRealAsStringSig) evalString(row types.Row) (res string, isNull bool, err error) {
+func (b *builtinCastRealAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -791,7 +792,7 @@ func (b *builtinCastRealAsTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastRealAsTimeSig) evalTime(row types.Row) (types.Time, bool, error) {
+func (b *builtinCastRealAsTimeSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
@@ -818,7 +819,7 @@ func (b *builtinCastRealAsDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastRealAsDurationSig) evalDuration(row types.Row) (res types.Duration, isNull bool, err error) {
+func (b *builtinCastRealAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -837,7 +838,7 @@ func (b *builtinCastDecimalAsDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDecimalAsDecimalSig) evalDecimal(row types.Row) (res *types.MyDecimal, isNull bool, err error) {
+func (b *builtinCastDecimalAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	evalDecimal, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -859,7 +860,7 @@ func (b *builtinCastDecimalAsIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDecimalAsIntSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
+func (b *builtinCastDecimalAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -898,7 +899,7 @@ func (b *builtinCastDecimalAsStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDecimalAsStringSig) evalString(row types.Row) (res string, isNull bool, err error) {
+func (b *builtinCastDecimalAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -918,7 +919,7 @@ func (b *builtinCastDecimalAsRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDecimalAsRealSig) evalReal(row types.Row) (res float64, isNull bool, err error) {
+func (b *builtinCastDecimalAsRealSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -937,7 +938,7 @@ func (b *builtinCastDecimalAsTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDecimalAsTimeSig) evalTime(row types.Row) (res types.Time, isNull bool, err error) {
+func (b *builtinCastDecimalAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -964,7 +965,7 @@ func (b *builtinCastDecimalAsDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDecimalAsDurationSig) evalDuration(row types.Row) (res types.Duration, isNull bool, err error) {
+func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
 		return res, false, errors.Trace(err)
@@ -990,7 +991,7 @@ func (b *builtinCastStringAsStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastStringAsStringSig) evalString(row types.Row) (res string, isNull bool, err error) {
+func (b *builtinCastStringAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1034,7 +1035,7 @@ func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string
 	return
 }
 
-func (b *builtinCastStringAsIntSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
+func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	if b.args[0].GetType().Hybrid() || IsBinaryLiteral(b.args[0]) {
 		return b.args[0].EvalInt(b.ctx, row)
 	}
@@ -1080,7 +1081,7 @@ func (b *builtinCastStringAsRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastStringAsRealSig) evalReal(row types.Row) (res float64, isNull bool, err error) {
+func (b *builtinCastStringAsRealSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
 	if IsBinaryLiteral(b.args[0]) {
 		return b.args[0].EvalReal(b.ctx, row)
 	}
@@ -1107,7 +1108,7 @@ func (b *builtinCastStringAsDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastStringAsDecimalSig) evalDecimal(row types.Row) (res *types.MyDecimal, isNull bool, err error) {
+func (b *builtinCastStringAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	if IsBinaryLiteral(b.args[0]) {
 		return b.args[0].EvalDecimal(b.ctx, row)
 	}
@@ -1135,7 +1136,7 @@ func (b *builtinCastStringAsTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastStringAsTimeSig) evalTime(row types.Row) (res types.Time, isNull bool, err error) {
+func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1162,7 +1163,7 @@ func (b *builtinCastStringAsDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastStringAsDurationSig) evalDuration(row types.Row) (res types.Duration, isNull bool, err error) {
+func (b *builtinCastStringAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1189,7 +1190,7 @@ func (b *builtinCastTimeAsTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastTimeAsTimeSig) evalTime(row types.Row) (res types.Time, isNull bool, err error) {
+func (b *builtinCastTimeAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1218,7 +1219,7 @@ func (b *builtinCastTimeAsIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastTimeAsIntSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
+func (b *builtinCastTimeAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1242,7 +1243,7 @@ func (b *builtinCastTimeAsRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastTimeAsRealSig) evalReal(row types.Row) (res float64, isNull bool, err error) {
+func (b *builtinCastTimeAsRealSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1261,7 +1262,7 @@ func (b *builtinCastTimeAsDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastTimeAsDecimalSig) evalDecimal(row types.Row) (res *types.MyDecimal, isNull bool, err error) {
+func (b *builtinCastTimeAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1281,7 +1282,7 @@ func (b *builtinCastTimeAsStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastTimeAsStringSig) evalString(row types.Row) (res string, isNull bool, err error) {
+func (b *builtinCastTimeAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1301,7 +1302,7 @@ func (b *builtinCastTimeAsDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastTimeAsDurationSig) evalDuration(row types.Row) (res types.Duration, isNull bool, err error) {
+func (b *builtinCastTimeAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1324,7 +1325,7 @@ func (b *builtinCastDurationAsDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDurationAsDurationSig) evalDuration(row types.Row) (res types.Duration, isNull bool, err error) {
+func (b *builtinCastDurationAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1343,7 +1344,7 @@ func (b *builtinCastDurationAsIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDurationAsIntSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
+func (b *builtinCastDurationAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1366,7 +1367,7 @@ func (b *builtinCastDurationAsRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDurationAsRealSig) evalReal(row types.Row) (res float64, isNull bool, err error) {
+func (b *builtinCastDurationAsRealSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1385,7 +1386,7 @@ func (b *builtinCastDurationAsDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDurationAsDecimalSig) evalDecimal(row types.Row) (res *types.MyDecimal, isNull bool, err error) {
+func (b *builtinCastDurationAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1405,7 +1406,7 @@ func (b *builtinCastDurationAsStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDurationAsStringSig) evalString(row types.Row) (res string, isNull bool, err error) {
+func (b *builtinCastDurationAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1425,7 +1426,7 @@ func (b *builtinCastDurationAsTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastDurationAsTimeSig) evalTime(row types.Row) (res types.Time, isNull bool, err error) {
+func (b *builtinCastDurationAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1449,7 +1450,7 @@ func (b *builtinCastJSONAsJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastJSONAsJSONSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinCastJSONAsJSONSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	return b.args[0].EvalJSON(b.ctx, row)
 }
 
@@ -1463,7 +1464,7 @@ func (b *builtinCastJSONAsIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastJSONAsIntSig) evalInt(row types.Row) (res int64, isNull bool, err error) {
+func (b *builtinCastJSONAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1483,7 +1484,7 @@ func (b *builtinCastJSONAsRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastJSONAsRealSig) evalReal(row types.Row) (res float64, isNull bool, err error) {
+func (b *builtinCastJSONAsRealSig) evalReal(row chunk.Row) (res float64, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1503,7 +1504,7 @@ func (b *builtinCastJSONAsDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastJSONAsDecimalSig) evalDecimal(row types.Row) (res *types.MyDecimal, isNull bool, err error) {
+func (b *builtinCastJSONAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDecimal, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1527,7 +1528,7 @@ func (b *builtinCastJSONAsStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastJSONAsStringSig) evalString(row types.Row) (res string, isNull bool, err error) {
+func (b *builtinCastJSONAsStringSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1545,7 +1546,7 @@ func (b *builtinCastJSONAsTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastJSONAsTimeSig) evalTime(row types.Row) (res types.Time, isNull bool, err error) {
+func (b *builtinCastJSONAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -1576,7 +1577,7 @@ func (b *builtinCastJSONAsDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinCastJSONAsDurationSig) evalDuration(row types.Row) (res types.Duration, isNull bool, err error) {
+func (b *builtinCastJSONAsDurationSig) evalDuration(row chunk.Row) (res types.Duration, isNull bool, err error) {
 	val, isNull, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)

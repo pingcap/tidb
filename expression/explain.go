@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // ExplainInfo implements the Expression interface.
@@ -41,7 +42,7 @@ func (expr *Column) ExplainInfo() string {
 
 // ExplainInfo implements the Expression interface.
 func (expr *Constant) ExplainInfo() string {
-	dt, err := expr.Eval(nil)
+	dt, err := expr.Eval(chunk.Row{})
 	if err != nil {
 		return "not recognized const vanue"
 	}
