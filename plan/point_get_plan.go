@@ -14,6 +14,9 @@
 package plan
 
 import (
+	"bytes"
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -26,16 +29,18 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-// PointSelectPlan is a fast plan for point select.
-type PointSelectPlan struct {
+// PointGetPlan is a fast plan for simple point get.
+// When we detect that the statement has a unique equal access condition, this plan is used.
+// This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
+type PointGetPlan struct {
 	basePlan
 	schema      *expression.Schema
 	TblInfo     *model.TableInfo
 	IndexInfo   *model.IndexInfo
 	Handle      int64
 	IndexValues []types.Datum
+	expr        expression.Expression
 	ctx         sessionctx.Context
-	stats       *statsInfo
 }
 
 type nameValuePair struct {
@@ -44,60 +49,69 @@ type nameValuePair struct {
 }
 
 // Schema implements the Plan interface.
-func (fp *PointSelectPlan) Schema() *expression.Schema {
-	return fp.schema
+func (p *PointGetPlan) Schema() *expression.Schema {
+	return p.schema
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 // current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
-func (fp *PointSelectPlan) attach2Task(...task) task {
+func (p *PointGetPlan) attach2Task(...task) task {
 	return nil
 }
 
 // ToPB converts physical plan to tipb executor.
-func (fp *PointSelectPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
+func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	return nil, nil
 }
 
 // ExplainInfo returns operator information to be explained.
-func (fp *PointSelectPlan) ExplainInfo() string {
-	return "Point_Select"
+func (p *PointGetPlan) ExplainInfo() string {
+	buffer := bytes.NewBufferString("")
+	tblName := p.TblInfo.Name.O
+	fmt.Fprintf(buffer, "table:%s", tblName)
+	if p.IndexInfo != nil {
+		fmt.Fprintf(buffer, ", index:")
+		for i, col := range p.IndexInfo.Columns {
+			buffer.WriteString(col.Name.O)
+			if i < len(p.IndexInfo.Columns) - 1 {
+				buffer.WriteString(" ")
+			}
+		}
+	} else {
+		fmt.Fprintf(buffer, ", handle:%d", p.Handle)
+	}
+	return buffer.String()
 }
 
 // getChildReqProps gets the required property by child index.
-func (fp *PointSelectPlan) getChildReqProps(idx int) *requiredProp {
+func (p *PointGetPlan) getChildReqProps(idx int) *requiredProp {
 	return nil
 }
 
-// StatsInfo will return the statsInfo for this plan.
-func (fp *PointSelectPlan) statsInfo() *statsInfo {
-	return fp.stats
-}
-
 // StatsCount will return the the count of statsInfo for this plan.
-func (fp *PointSelectPlan) StatsCount() float64 {
-	return fp.stats.count
+func (p *PointGetPlan) StatsCount() float64 {
+	return p.stats.count
 }
 
 // Children gets all the children.
-func (fp *PointSelectPlan) Children() []PhysicalPlan {
+func (p *PointGetPlan) Children() []PhysicalPlan {
 	return nil
 }
 
 // SetChildren sets the children for the plan.
-func (fp *PointSelectPlan) SetChildren(...PhysicalPlan) {}
+func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
-func (fp *PointSelectPlan) ResolveIndices() {}
+func (p *PointGetPlan) ResolveIndices() {}
 
 func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	if PreparedPlanCacheEnabled {
-		// plan cache not supported yet.
+		// Do not support plan cache.
 		return nil
 	}
 	switch x := node.(type) {
 	case *ast.SelectStmt:
-		fp := tryFastSelectPlan(ctx, x)
+		fp := tryPointGetPlan(ctx, x)
 		if fp != nil {
 			if checkFastPlanPrivilege(ctx, fp, mysql.SelectPriv) != nil {
 				return nil
@@ -112,7 +126,14 @@ func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	return nil
 }
 
-func tryFastSelectPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointSelectPlan {
+// tryPointGetPlan determine if the SelectStmt can use a PointGetPlan.
+// Returns nil if not applicable.
+// To use the PointGetPlan the following rules must be satisfied:
+// 1. No group-by, having, order by, limit clause.
+// 2. It must be a single table select.
+// 3. All the columns must be public and generated.
+// 4. The condition is an access path that the range is a unique key.
+func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetPlan {
 	if selStmt.GroupBy != nil || selStmt.Having != nil || selStmt.OrderBy != nil || selStmt.Limit != nil ||
 		selStmt.LockTp != ast.SelectLockNone {
 		return nil
@@ -142,7 +163,10 @@ func tryFastSelectPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointSe
 	}
 	handleDatum := findPKHandle(tbl, pairs)
 	if handleDatum.Kind() == types.KindInt64 {
-		schema := buildSchemaFromFields(ctx, tbl, selStmt.Fields.Fields)
+		if len(pairs) != 1 {
+			return nil
+		}
+		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, selStmt.Fields.Fields)
 		if schema == nil {
 			return nil
 		}
@@ -161,7 +185,7 @@ func tryFastSelectPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointSe
 		if idxValues == nil {
 			continue
 		}
-		schema := buildSchemaFromFields(ctx, tbl, selStmt.Fields.Fields)
+		schema := buildSchemaFromFields(ctx, tblName.Schema, tbl, selStmt.Fields.Fields)
 		if schema == nil {
 			return nil
 		}
@@ -173,9 +197,9 @@ func tryFastSelectPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointSe
 	return nil
 }
 
-func newPointSelectPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *PointSelectPlan {
-	p := &PointSelectPlan{
-		basePlan: newBasePlan(ctx, "Point_Select"),
+func newPointSelectPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *PointGetPlan {
+	p := &PointGetPlan{
+		basePlan: newBasePlan(ctx, "Point_Get"),
 		schema:   schema,
 		TblInfo:  tbl,
 	}
@@ -183,7 +207,7 @@ func newPointSelectPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *
 	return p
 }
 
-func checkFastPlanPrivilege(ctx sessionctx.Context, fastPlan *PointSelectPlan, checkTypes ...mysql.PrivilegeType) error {
+func checkFastPlanPrivilege(ctx sessionctx.Context, fastPlan *PointGetPlan, checkTypes ...mysql.PrivilegeType) error {
 	pm := privilege.GetPrivilegeManager(ctx)
 	if pm == nil {
 		return nil
@@ -197,8 +221,10 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, fastPlan *PointSelectPlan, c
 	return nil
 }
 
-func buildSchemaFromFields(ctx sessionctx.Context, tbl *model.TableInfo, fields []*ast.SelectField) *expression.Schema {
-	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+func buildSchemaFromFields(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo, fields []*ast.SelectField) *expression.Schema {
+	if dbName.L == "" {
+		dbName = model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
 	columns := make([]*expression.Column, 0, len(tbl.Columns)+1)
 	if len(fields) == 1 && fields[0].WildCard != nil {
 		for _, col := range tbl.Columns {
@@ -257,6 +283,7 @@ func getSingleTableName(tableRefs *ast.TableRefsClause) *ast.TableName {
 	return tblName
 }
 
+// getNameValuePairs extracts `column = constant/paramMarker` conditions from expr as name value pairs.
 func getNameValuePairs(nvPairs []nameValuePair, expr ast.ExprNode) []nameValuePair {
 	binOp, ok := expr.(*ast.BinaryOperationExpr)
 	if !ok {
@@ -346,23 +373,24 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 		OrderBy: updateStmt.Order,
 		Limit:   updateStmt.Limit,
 	}
-	fastSelect := tryFastSelectPlan(ctx, selStmt)
+	fastSelect := tryPointGetPlan(ctx, selStmt)
 	if fastSelect == nil {
 		return nil
 	}
+	checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.UpdatePriv)
 	orderedList := buildOrderedList(ctx, fastSelect, updateStmt.List)
 	if orderedList == nil {
 		return nil
 	}
-	udpatePlan := &Update{
+	updatePlan := &Update{
 		SelectPlan:  fastSelect,
 		OrderedList: orderedList,
 	}
-	udpatePlan.SetSchema(fastSelect.schema)
-	return udpatePlan
+	updatePlan.SetSchema(fastSelect.schema)
+	return updatePlan
 }
 
-func buildOrderedList(ctx sessionctx.Context, fastSelect *PointSelectPlan, list []*ast.Assignment) []*expression.Assignment {
+func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*ast.Assignment) []*expression.Assignment {
 	orderedList := make([]*expression.Assignment, 0, len(list))
 	for _, assign := range list {
 		col, err := fastSelect.schema.FindColumn(assign.Column)
@@ -397,7 +425,7 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 		OrderBy: delStmt.Order,
 		Limit:   delStmt.Limit,
 	}
-	fastSelect := tryFastSelectPlan(ctx, selStmt)
+	fastSelect := tryPointGetPlan(ctx, selStmt)
 	if fastSelect == nil {
 		return nil
 	}

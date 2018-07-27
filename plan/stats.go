@@ -69,10 +69,6 @@ func newSimpleStats(rowCount float64) *statsInfo {
 	return &statsInfo{count: rowCount}
 }
 
-func (p *basePhysicalPlan) statsInfo() *statsInfo {
-	return p.stats
-}
-
 func (p *basePhysicalPlan) StatsCount() float64 {
 	return p.stats.count
 }

@@ -30,8 +30,8 @@ import (
 	"golang.org/x/net/context"
 )
 
-func (b *executorBuilder) buildPointSelect(p *plan.PointSelectPlan) Executor {
-	return &PointSelectExecutor{
+func (b *executorBuilder) buildPointSelect(p *plan.PointGetPlan) Executor {
+	return &PointGetExecutor{
 		ctx:     b.ctx,
 		schema:  p.Schema(),
 		tblInfo: p.TblInfo,
@@ -42,8 +42,8 @@ func (b *executorBuilder) buildPointSelect(p *plan.PointSelectPlan) Executor {
 	}
 }
 
-// PointSelectExecutor executes point select query.
-type PointSelectExecutor struct {
+// PointGetExecutor executes point select query.
+type PointGetExecutor struct {
 	ctx      sessionctx.Context
 	schema   *expression.Schema
 	tps      []*types.FieldType
@@ -57,53 +57,32 @@ type PointSelectExecutor struct {
 }
 
 // Open implements the Executor interface.
-func (e *PointSelectExecutor) Open(context.Context) error {
+func (e *PointGetExecutor) Open(context.Context) error {
 	return nil
 }
 
 // Close implements the Executor interface.
-func (e *PointSelectExecutor) Close() error {
+func (e *PointGetExecutor) Close() error {
 	return nil
 }
 
 // Next implements the Executor interface.
-func (e *PointSelectExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil
 	}
 	e.done = true
-	snapshot, err1 := e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
-	if err1 != nil {
-		return errors.Trace(err1)
+	var err error
+	e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.startTS})
+	if err != nil {
+		return errors.Trace(err)
 	}
-	e.snapshot = snapshot
 	if e.idxInfo != nil {
-		for i := range e.idxVals {
-			colInfo := e.tblInfo.Columns[e.idxInfo.Columns[i].Offset]
-			casted, err := table.CastValue(e.ctx, e.idxVals[i], colInfo)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			e.idxVals[i] = casted
-		}
-		encodedIdxVals, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
+		e.handle, err = e.getHandleFromIndexKey()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		idxKey := tablecodec.EncodeIndexSeekKey(e.tblInfo.ID, e.idxInfo.ID, encodedIdxVals)
-		handleVal, err := e.get(idxKey)
-		if err != nil && !kv.ErrNotExist.Equal(err) {
-			return errors.Trace(err)
-		}
-		if len(handleVal) == 0 {
-			return nil
-		}
-		h, err := tables.DecodeHandle(handleVal)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.handle = h
 	}
 	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)
 	val, err := e.get(key)
@@ -113,11 +92,51 @@ func (e *PointSelectExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 	if len(val) == 0 {
 		return nil
 	}
+	return e.decodeRowValToChunk(val, chk)
+}
+
+func (e *PointGetExecutor) getHandleFromIndexKey() (int64, error) {
+	for i := range e.idxVals {
+		colInfo := e.tblInfo.Columns[e.idxInfo.Columns[i].Offset]
+		casted, err := table.CastValue(e.ctx, e.idxVals[i], colInfo)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		e.idxVals[i] = casted
+	}
+	encodedIdxVals, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	idxKey := tablecodec.EncodeIndexSeekKey(e.tblInfo.ID, e.idxInfo.ID, encodedIdxVals)
+	handleVal, err := e.get(idxKey)
+	if err != nil && !kv.ErrNotExist.Equal(err) {
+		return 0, errors.Trace(err)
+	}
+	if len(handleVal) == 0 {
+		return 0, nil
+	}
+	h, err := tables.DecodeHandle(handleVal)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return h, nil
+}
+
+func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
+	txn := e.ctx.Txn()
+	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
+		return txn.Get(key)
+	}
+	return e.snapshot.Get(key)
+}
+
+func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) error {
 	colIDs := make(map[int64]int)
 	for i, col := range e.schema.Columns {
 		colIDs[col.ID] = i
 	}
-	colVals, err := tablecodec.CutRowNew(val, colIDs)
+	colVals, err := tablecodec.CutRowNew(rowVal, colIDs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -149,14 +168,6 @@ func (e *PointSelectExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 	return nil
 }
 
-func (e *PointSelectExecutor) get(key kv.Key) (val []byte, err error) {
-	txn := e.ctx.Txn()
-	if txn != nil && txn.Valid() && !txn.IsReadOnly() {
-		return txn.Get(key)
-	}
-	return e.snapshot.Get(key)
-}
-
 func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	for _, col := range tbl.Columns {
 		if col.ID == colID {
@@ -167,11 +178,11 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 }
 
 // Schema implements the Executor interface.
-func (e *PointSelectExecutor) Schema() *expression.Schema {
+func (e *PointGetExecutor) Schema() *expression.Schema {
 	return e.schema
 }
 
-func (e *PointSelectExecutor) retTypes() []*types.FieldType {
+func (e *PointGetExecutor) retTypes() []*types.FieldType {
 	if e.tps == nil {
 		e.tps = make([]*types.FieldType, e.schema.Len())
 		for i := range e.schema.Columns {
@@ -181,6 +192,6 @@ func (e *PointSelectExecutor) retTypes() []*types.FieldType {
 	return e.tps
 }
 
-func (e *PointSelectExecutor) newChunk() *chunk.Chunk {
+func (e *PointGetExecutor) newChunk() *chunk.Chunk {
 	return chunk.NewChunkWithCapacity(e.retTypes(), 1)
 }

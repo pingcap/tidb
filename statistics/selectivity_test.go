@@ -203,19 +203,6 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 	}
 }
 
-func (s *testSelectivitySuite) TestPseudoSelectivity(c *C) {
-	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t, t1")
-	testKit.MustExec("create table t(a int, b int, unique key idx(a,b))")
-	testKit.MustQuery("explain select * from t where a = 1 and b = 1").Check(testkit.Rows(
-		"Point_Select_1 1.00 root Point_Select"))
-
-	testKit.MustExec("create table t1(a int, b int, primary key(a))")
-	testKit.MustQuery("explain select b from t1 where a = 1").Check(testkit.Rows(
-		"Point_Select_1 1.00 root Point_Select"))
-}
-
 // TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
 // consists several columns, and the first column has small NDV.
 func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
