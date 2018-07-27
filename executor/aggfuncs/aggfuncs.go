@@ -55,6 +55,11 @@ var (
 	_ AggFunc = (*avgPartial4Float64)(nil)
 	_ AggFunc = (*avgOriginal4DistinctFloat64)(nil)
 
+	_ AggFunc = (*sum4DistinctFloat64)(nil)
+	_ AggFunc = (*sum4DistinctDecimal)(nil)
+	_ AggFunc = (*sum4Decimal)(nil)
+	_ AggFunc = (*sum4Float64)(nil)
+
 	// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
 	_ AggFunc = (*groupConcatDistinct)(nil)
 	_ AggFunc = (*groupConcat)(nil)

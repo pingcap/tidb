@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // EvalSubquery evaluates incorrelated subqueries once.
@@ -49,7 +50,7 @@ func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	return newExpr.Eval(nil)
+	return newExpr.Eval(chunk.Row{})
 }
 
 func (b *planBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
@@ -972,7 +973,8 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		}
 	}
 	args := er.ctxStack[stkLen-lLen-1:]
-	leftEt, leftIsNull := args[0].GetType().EvalType(), args[0].GetType().Tp == mysql.TypeNull
+	leftFt := args[0].GetType()
+	leftEt, leftIsNull := leftFt.EvalType(), leftFt.Tp == mysql.TypeNull
 	if leftIsNull {
 		er.ctxStack = er.ctxStack[:stkLen-lLen-1]
 		er.ctxStack = append(er.ctxStack, expression.Null.Clone())
@@ -981,7 +983,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 	if leftEt == types.ETInt {
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
-				args[i] = expression.RefineConstantArg(er.ctx, c, opcode.EQ)
+				args[i], _ = expression.RefineComparedConstant(er.ctx, mysql.HasUnsignedFlag(leftFt.Flag), c, opcode.EQ)
 			}
 		}
 	}

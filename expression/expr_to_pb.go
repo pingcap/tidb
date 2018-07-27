@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
@@ -101,7 +102,7 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 
 func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	ft := expr.GetType()
-	d, err := expr.Eval(nil)
+	d, err := expr.Eval(chunk.Row{})
 	if err != nil {
 		log.Errorf("Fail to eval constant, err: %s", err.Error())
 		return nil

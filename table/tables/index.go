@@ -100,15 +100,18 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 // index is the data structure for index data in the KV store.
 type index struct {
 	idxInfo *model.IndexInfo
+	tblInfo *model.TableInfo
 	prefix  kv.Key
 }
 
 // NewIndex builds a new Index object.
 // id may be partition or table ID, depends on whether the table is a PartitionedTable.
-func NewIndex(id int64, indexInfo *model.IndexInfo) table.Index {
+func NewIndex(id int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
 	index := &index{
 		idxInfo: indexInfo,
-		prefix:  tablecodec.EncodeTableIndexPrefix(id, indexInfo.ID),
+		tblInfo: tblInfo,
+		// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
+		prefix: tablecodec.EncodeTableIndexPrefix(id, indexInfo.ID),
 	}
 	return index
 }
@@ -132,7 +135,8 @@ func (c *index) truncateIndexValuesIfNeeded(indexedValues []types.Datum) []types
 		v := &indexedValues[i]
 		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
 			ic := c.idxInfo.Columns[i]
-			if ic.Tp.Charset == charset.CharsetUTF8 || ic.Tp.Charset == charset.CharsetUTF8MB4 {
+			colCharset := c.tblInfo.Columns[ic.Offset].Charset
+			if colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4 {
 				val := v.GetBytes()
 				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(val) > ic.Length {
 					rs := bytes.Runes(val)

@@ -215,9 +215,8 @@ type DDL interface {
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
-	// GetTableMaxRowID gets table max row ID.
-	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (int64, bool, error)
-
+	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
+	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo, id int64) (int64, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(interface{})
 }
@@ -229,7 +228,7 @@ type ddl struct {
 	quitCh     chan struct{}
 
 	*ddlCtx
-	workers []*worker
+	workers map[workerType]*worker
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -238,7 +237,6 @@ type ddlCtx struct {
 	store        kv.Storage
 	ownerManager owner.Manager
 	schemaSyncer SchemaSyncer
-	ddlJobCh     chan struct{}
 	ddlJobDoneCh chan struct{}
 	ddlEventCh   chan<- *util.Event
 	lease        time.Duration // lease is schema lease.
@@ -319,7 +317,6 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		uuid:         id,
 		store:        store,
 		lease:        lease,
-		ddlJobCh:     make(chan struct{}, 1),
 		ddlJobDoneCh: make(chan struct{}, 1),
 		ownerManager: manager,
 		schemaSyncer: syncer,
@@ -361,20 +358,20 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		err := d.ownerManager.CampaignOwner(ctx)
 		terror.Log(errors.Trace(err))
 
-		d.workers = make([]*worker, 1)
-		// TODO: Add addIdxWorker.
-		d.workers[0] = newWorker(generalWorker, 0, d.store, ctxPool)
+		d.workers = make(map[workerType]*worker, 2)
+		d.workers[generalWorker] = newWorker(generalWorker, 0, d.store, ctxPool)
+		d.workers[addIdxWorker] = newWorker(addIdxWorker, 1, d.store, ctxPool)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			go worker.start(d.ddlCtx)
 			// TODO: Add the type of DDL worker.
 			metrics.DDLCounter.WithLabelValues(metrics.CreateDDLWorker).Inc()
+
+			// When the start function is called, we will send a fake job to let worker
+			// checks owner firstly and try to find whether a job exists and run.
+			asyncNotify(worker.ddlJobCh)
 		}
 	}
-
-	// For every start, we will send a fake job to let worker
-	// check owner firstly and try to find whether a job exists and run.
-	asyncNotify(d.ddlJobCh)
 }
 
 func (d *ddl) close() {
@@ -420,16 +417,15 @@ func (d *ddl) genGlobalID() (int64, error) {
 		globalID, err = meta.NewMeta(txn).GenGlobalID()
 		return errors.Trace(err)
 	})
+
 	return globalID, errors.Trace(err)
 }
 
-// generalWorker returns the first worker. The ddl structure has only one worker before we implement the parallel worker.
+// generalWorker returns the general worker.
 // It's used for testing.
+// TODO: Remove this function.
 func (d *ddl) generalWorker() *worker {
-	if len(d.workers) == 0 {
-		return nil
-	}
-	return d.workers[0]
+	return d.workers[generalWorker]
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.
@@ -451,6 +447,19 @@ func checkJobMaxInterval(job *model.Job) time.Duration {
 	return 1 * time.Second
 }
 
+func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
+	// If the workers don't run, we needn't to notify workers.
+	if !RunWorker {
+		return
+	}
+
+	if jobTp == model.ActionAddIndex {
+		asyncNotify(d.workers[addIdxWorker].ddlJobCh)
+	} else {
+		asyncNotify(d.workers[generalWorker].ddlJobCh)
+	}
+}
+
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// For every DDL, we must commit current transaction.
 	if err := ctx.NewTxn(); err != nil {
@@ -465,7 +474,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
-	asyncNotify(d.ddlJobCh)
+	d.asyncNotifyWorker(job.Type)
 	log.Infof("[ddl] start DDL job %s, Query:%s", job, job.Query)
 
 	var historyJob *model.Job
