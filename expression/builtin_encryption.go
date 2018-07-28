@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
 )
 
@@ -99,7 +100,7 @@ func (b *builtinAesDecryptSig) Clone() builtinFunc {
 
 // evalString evals AES_DECRYPT(crypt_str, key_key).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
-func (b *builtinAesDecryptSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 	// According to doc: If either function argument is NULL, the function returns NULL.
 	cryptStr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -147,7 +148,7 @@ func (b *builtinAesEncryptSig) Clone() builtinFunc {
 
 // evalString evals AES_ENCRYPT(str, key_str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
-func (b *builtinAesEncryptSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinAesEncryptSig) evalString(row chunk.Row) (string, bool, error) {
 	// According to doc: If either function argument is NULL, the function returns NULL.
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -242,7 +243,7 @@ func (b *builtinPasswordSig) Clone() builtinFunc {
 
 // evalString evals a builtinPasswordSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-func (b *builtinPasswordSig) evalString(row types.Row) (d string, isNull bool, err error) {
+func (b *builtinPasswordSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
 	pass, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", err != nil, errors.Trace(err)
@@ -286,7 +287,7 @@ func (b *builtinRandomBytesSig) Clone() builtinFunc {
 
 // evalString evals RANDOM_BYTES(len).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_random-bytes
-func (b *builtinRandomBytesSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinRandomBytesSig) evalString(row chunk.Row) (string, bool, error) {
 	len, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
@@ -329,7 +330,7 @@ func (b *builtinMD5Sig) Clone() builtinFunc {
 
 // evalString evals a builtinMD5Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_md5
-func (b *builtinMD5Sig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinMD5Sig) evalString(row chunk.Row) (string, bool, error) {
 	arg, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
@@ -366,7 +367,7 @@ func (b *builtinSHA1Sig) Clone() builtinFunc {
 // evalString evals SHA1(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha1
 // The value is returned as a string of 40 hexadecimal digits, or NULL if the argument was NULL.
-func (b *builtinSHA1Sig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinSHA1Sig) evalString(row chunk.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
@@ -414,7 +415,7 @@ const (
 
 // evalString evals SHA2(str, hash_length).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha2
-func (b *builtinSHA2Sig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinSHA2Sig) evalString(row chunk.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
@@ -505,7 +506,7 @@ func (b *builtinCompressSig) Clone() builtinFunc {
 
 // evalString evals COMPRESS(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
-func (b *builtinCompressSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinCompressSig) evalString(row chunk.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
@@ -567,7 +568,7 @@ func (b *builtinUncompressSig) Clone() builtinFunc {
 
 // evalString evals UNCOMPRESS(compressed_string).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
-func (b *builtinUncompressSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinUncompressSig) evalString(row chunk.Row) (string, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	payload, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -615,7 +616,7 @@ func (b *builtinUncompressedLengthSig) Clone() builtinFunc {
 
 // evalInt evals UNCOMPRESSED_LENGTH(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompressed-length
-func (b *builtinUncompressedLengthSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinUncompressedLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	sc := b.ctx.GetSessionVars().StmtCtx
 	payload, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {

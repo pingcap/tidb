@@ -155,7 +155,7 @@ type RecordSet interface {
 }
 
 // RowToDatums converts row to datum slice.
-func RowToDatums(row types.Row, fields []*ResultField) []types.Datum {
+func RowToDatums(row chunk.Row, fields []*ResultField) []types.Datum {
 	datums := make([]types.Datum, len(fields))
 	for i, f := range fields {
 		datums[i] = row.GetDatum(i, &f.Column.FieldType)

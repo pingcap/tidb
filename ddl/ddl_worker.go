@@ -38,20 +38,24 @@ var RunWorker = true
 type workerType byte
 
 const (
-	// generalWorker is the worker who handles all DDL worker now.
-	// TODO: update the comments when we support the addIdxWorker.
+	// generalWorker is the worker who handles all DDL statements except “add index”.
 	generalWorker workerType = 0
-	addIdxWorker  workerType = 1
+	// addIdxWorker is the worker who handles the operation of adding indexes.
+	addIdxWorker workerType = 1
+	// waitDependencyJobInterval is the interval when the dependency job doesn't be done.
+	waitDependencyJobInterval = 200 * time.Millisecond
+	// noneDependencyJob means a job has no dependency-job.
+	noneDependencyJob = 0
 )
 
 // worker is used for handling DDL jobs.
-// Now we have two kinds of workers, but we only use the generalWorker.
-// TODO: update the comments when we support the addIdxWorker.
+// Now we have two kinds of workers.
 type worker struct {
-	id     int
-	tp     workerType
-	quitCh chan struct{}
-	wg     sync.WaitGroup
+	id       int
+	tp       workerType
+	ddlJobCh chan struct{}
+	quitCh   chan struct{}
+	wg       sync.WaitGroup
 
 	reorgCtx        *reorgCtx // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
@@ -61,6 +65,7 @@ func newWorker(tp workerType, id int, store kv.Storage, ctxPool *pools.ResourceP
 	worker := &worker{
 		id:       id,
 		tp:       tp,
+		ddlJobCh: make(chan struct{}, 1),
 		quitCh:   make(chan struct{}),
 		reorgCtx: &reorgCtx{notifyCancelReorgJob: 0},
 	}
@@ -74,17 +79,21 @@ func newWorker(tp workerType, id int, store kv.Storage, ctxPool *pools.ResourceP
 	return worker
 }
 
-func (w *worker) String() string {
+func (w *worker) typeStr() string {
 	var str string
 	switch w.tp {
 	case generalWorker:
 		str = "general"
 	case addIdxWorker:
-		str = "add index"
+		str = model.AddIndexStr
 	default:
 		str = "unknow"
 	}
-	return fmt.Sprintf("%d, tp %s", w.id, str)
+	return str
+}
+
+func (w *worker) String() string {
+	return fmt.Sprintf("%d, tp %s", w.id, w.typeStr())
 }
 
 func (w *worker) close() {
@@ -118,23 +127,18 @@ func (w *worker) start(d *ddlCtx) {
 		}
 	}()
 
-	// shouldCleanJobs is used to determine whether to clean up the job in adding index queue.
-	shouldCleanJobs := true
 	for {
 		select {
 		case <-ticker.C:
 			log.Debugf("[ddl] worker %s waits %s to check DDL status again", w, checkTime)
-		case <-d.ddlJobCh:
+		case <-w.ddlJobCh:
 		case <-w.quitCh:
 			return
 		}
 
-		err := w.handleDDLJobQueue(d, shouldCleanJobs)
+		err := w.handleDDLJobQueue(d)
 		if err != nil {
 			log.Errorf("[ddl] worker %s handles DDL job err %v", w, errors.ErrorStack(err))
-		} else if shouldCleanJobs {
-			log.Infof("[ddl] worker %s cleans jobs in the adding index queue finished.", w)
-			shouldCleanJobs = false
 		}
 	}
 }
@@ -149,10 +153,20 @@ func asyncNotify(ch chan struct{}) {
 // buildJobDependence sets the curjob's dependency-ID.
 // The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
 func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
-	jobs, err := t.GetAllDDLJobs()
+	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
+	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
+	var jobs []*model.Job
+	var err error
+	switch curJob.Type {
+	case model.ActionAddIndex:
+		jobs, err = t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
+	default:
+		jobs, err = t.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	for _, job := range jobs {
 		if curJob.ID < job.ID {
 			continue
@@ -162,6 +176,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 			return errors.Trace(err)
 		}
 		if isDependent {
+			log.Infof("[ddl] current DDL job %v depends on job %v", curJob, job)
 			curJob.DependencyID = job.ID
 			break
 		}
@@ -175,14 +190,18 @@ func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	job.Version = currentVersion
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		t := newMetaWithQueueTp(txn, job.Type.String())
 		var err error
 		job.ID, err = t.GenGlobalID()
 		if err != nil {
 			return errors.Trace(err)
 		}
 		job.StartTS = txn.StartTS()
+		if err = buildJobDependence(t, job); err != nil {
+			return errors.Trace(err)
+		}
 		err = t.EnQueueDDLJob(job)
+
 		return errors.Trace(err)
 	})
 	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -205,7 +224,7 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 
 // getFirstDDLJob gets the first DDL job form DDL queue.
 func (w *worker) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
-	job, err := t.GetDDLJob(0)
+	job, err := t.GetDDLJobByIdx(0)
 	return job, errors.Trace(err)
 }
 
@@ -282,40 +301,60 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	return errors.Trace(err)
 }
 
+func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
+	if job.DependencyID == noneDependencyJob {
+		return true, nil
+	}
+
+	historyJob, err := t.GetHistoryDDLJob(job.DependencyID)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if historyJob == nil {
+		return false, nil
+	}
+	log.Infof("[ddl] current DDL job %v dependent job ID %d is finished", job, job.DependencyID)
+	job.DependencyID = noneDependencyJob
+	return true, nil
+}
+
+func newMetaWithQueueTp(txn kv.Transaction, tp string) *meta.Meta {
+	if tp == model.AddIndexStr {
+		return meta.NewMeta(txn, meta.AddIndexJobListKey)
+	}
+	return meta.NewMeta(txn)
+}
+
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
-// shouldCleanJobs is used to determine whether to clean up the job in adding index queue.
-func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
+func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
+	waitDependencyJobCnt := 0
 	for {
 		if isChanClosed(w.quitCh) {
 			return nil
 		}
-
-		waitTime := 2 * d.lease
 
 		var (
 			job       *model.Job
 			schemaVer int64
 			runJobErr error
 		)
+		waitTime := 2 * d.lease
 		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 			// We are not owner, return and retry checking later.
 			if !d.isOwner() {
 				return nil
 			}
 
-			// It's used for clean up the job in adding index queue before we support adding index queue.
-			// TODO: Remove this logic after we support the adding index queue.
-			if shouldCleanJobs {
-				return errors.Trace(w.cleanAddIndexQueueJobs(d, txn))
-			}
-
 			var err error
-			t := meta.NewMeta(txn)
+			t := newMetaWithQueueTp(txn, w.typeStr())
 			// We become the owner. Get the first job and run it.
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
 				return errors.Trace(err)
+			}
+			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
+				return errors.Trace(err1)
 			}
 
 			if once {
@@ -362,6 +401,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
 			// No job now, return and retry getting later.
 			return nil
 		}
+		w.waitDependencyJobFinished(job, &waitDependencyJobCnt)
 
 		d.mu.RLock()
 		d.mu.hook.OnJobUpdated(job)
@@ -376,6 +416,21 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx, shouldCleanJobs bool) error {
 		if job.IsSynced() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
+	}
+}
+
+// waitDependencyJobFinished waits for the dependency-job to be finished.
+// If the dependency job isn't finished yet, we'd better wait a moment.
+func (w *worker) waitDependencyJobFinished(job *model.Job, cnt *int) {
+	if job.DependencyID != noneDependencyJob {
+		intervalCnt := int(3 * time.Second / waitDependencyJobInterval)
+		if *cnt%intervalCnt == 0 {
+			log.Infof("[ddl] worker %s job %d needs to wait dependency job %d, sleeps a while:%v then retries it.", w, job.ID, job.DependencyID, waitDependencyJobInterval)
+		}
+		time.Sleep(waitDependencyJobInterval)
+		*cnt++
+	} else {
+		*cnt = 0
 	}
 }
 
@@ -440,7 +495,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropForeignKey:
 		ver, err = onDropForeignKey(t, job)
 	case model.ActionTruncateTable:
-		ver, err = onTruncateTable(d, t, job)
+		ver, err = onTruncateTable(t, job)
 	case model.ActionRebaseAutoID:
 		ver, err = onRebaseAutoID(d.store, t, job)
 	case model.ActionRenameTable:
@@ -585,69 +640,6 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	}
 	err = t.SetSchemaDiff(diff)
 	return schemaVersion, errors.Trace(err)
-}
-
-// cleanAddIndexQueueJobs cleans jobs in adding index queue.
-// It's only done once after the worker become the owner.
-// TODO: Remove this logic after we support the adding index queue.
-func (w *worker) cleanAddIndexQueueJobs(d *ddlCtx, txn kv.Transaction) error {
-	startTime := time.Now()
-	m := meta.NewMeta(txn)
-	m.SetJobListKey(meta.AddIndexJobListKey)
-	for {
-		job, err := w.getFirstDDLJob(m)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if job == nil {
-			log.Infof("[ddl] cleaning jobs in the adding index queue takes time %v.", time.Since(startTime))
-			return nil
-		}
-		log.Infof("[ddl] cleaning job %v in the adding index queue.", job)
-
-		// The types of these jobs must be ActionAddIndex.
-		if job.SchemaState == model.StatePublic || job.SchemaState == model.StateNone {
-			if job.SchemaState == model.StateNone {
-				job.State = model.JobStateCancelled
-			} else {
-				binloginfo.SetDDLBinlog(d.binlogCli, txn, job.ID, job.Query)
-				job.State = model.JobStateSynced
-			}
-			err = w.finishDDLJob(m, job)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-
-		// When the job not in "none" and "public" state, we need to rollback it.
-		schemaID := job.SchemaID
-		tblInfo, err := getTableInfo(m, job, schemaID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		var indexName model.CIStr
-		var unique bool
-		err = job.DecodeArgs(&unique, &indexName)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
-		_, err = convert2RollbackJob(m, job, tblInfo, indexInfo, nil)
-		if err == nil {
-			_, err = m.DeQueueDDLJob()
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// Put the job to the default job list.
-		m.SetJobListKey(meta.DefaultJobListKey)
-		err = m.EnQueueDDLJob(job)
-		m.SetJobListKey(meta.AddIndexJobListKey)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 }
 
 func isChanClosed(quitCh chan struct{}) bool {

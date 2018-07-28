@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
@@ -112,7 +113,7 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*CMSke
 	return decodeCMSketch(rows[0].GetBytes(0))
 }
 
-func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo) error {
+func (h *Handle) indexStatsFromStorage(row chunk.Row, table *Table, tableInfo *model.TableInfo) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -151,7 +152,7 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 	return nil
 }
 
-func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo, loadAll bool) error {
+func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *model.TableInfo, loadAll bool) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -216,6 +217,12 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				Count:     int64(hg.totalRowCount()),
 				ErrorRate: errorRate,
 			}
+			break
+		}
+		if col.TotColSize != totColSize {
+			newCol := *col
+			newCol.TotColSize = totColSize
+			col = &newCol
 		}
 		break
 	}
@@ -477,7 +484,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index,
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		selectivity = float64(idx.CMSketch.queryBytes(bytes)) / float64(coll.Count)
+		selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(coll.Count)
 		// use histogram to estimate the range condition
 		if rangePosition != len(ran.LowVal) {
 			rang := ranger.Range{

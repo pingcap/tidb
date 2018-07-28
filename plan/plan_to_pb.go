@@ -122,7 +122,7 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, model.NewExtraHandleColInfo())
 		} else {
-			columns = append(columns, tableColumns[col.Position])
+			columns = append(columns, model.FindColumnInfo(tableColumns, col.ColName.L))
 		}
 	}
 	idxExec := &tipb.IndexScan{
