@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type concatFunction struct {
@@ -43,7 +44,7 @@ func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datu
 	}
 }
 
-func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row types.Row) error {
+func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row chunk.Row) error {
 	sepArg := cf.Args[len(cf.Args)-1]
 	sepDatum, err := sepArg.Eval(row)
 	if err != nil {
@@ -57,7 +58,7 @@ func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row types.
 }
 
 // Update implements Aggregation interface.
-func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	datumBuf := make([]types.Datum, 0, len(cf.Args))
 	if !cf.sepInited {
 		err := cf.initSeparator(sc, row)

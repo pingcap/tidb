@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	log "github.com/sirupsen/logrus"
 )
@@ -41,12 +42,12 @@ func (col *CorrelatedColumn) Clone() Expression {
 }
 
 // Eval implements Expression interface.
-func (col *CorrelatedColumn) Eval(row types.Row) (types.Datum, error) {
+func (col *CorrelatedColumn) Eval(row chunk.Row) (types.Datum, error) {
 	return *col.Data, nil
 }
 
 // EvalInt returns int representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalInt(ctx sessionctx.Context, row types.Row) (int64, bool, error) {
+func (col *CorrelatedColumn) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
 	if col.Data.IsNull() {
 		return 0, true, nil
 	}
@@ -58,7 +59,7 @@ func (col *CorrelatedColumn) EvalInt(ctx sessionctx.Context, row types.Row) (int
 }
 
 // EvalReal returns real representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalReal(ctx sessionctx.Context, row types.Row) (float64, bool, error) {
+func (col *CorrelatedColumn) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
 	if col.Data.IsNull() {
 		return 0, true, nil
 	}
@@ -66,7 +67,7 @@ func (col *CorrelatedColumn) EvalReal(ctx sessionctx.Context, row types.Row) (fl
 }
 
 // EvalString returns string representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row types.Row) (string, bool, error) {
+func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
 	if col.Data.IsNull() {
 		return "", true, nil
 	}
@@ -79,7 +80,7 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row types.Row) (
 }
 
 // EvalDecimal returns decimal representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalDecimal(ctx sessionctx.Context, row types.Row) (*types.MyDecimal, bool, error) {
+func (col *CorrelatedColumn) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
 	if col.Data.IsNull() {
 		return nil, true, nil
 	}
@@ -87,7 +88,7 @@ func (col *CorrelatedColumn) EvalDecimal(ctx sessionctx.Context, row types.Row) 
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalTime(ctx sessionctx.Context, row types.Row) (types.Time, bool, error) {
+func (col *CorrelatedColumn) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
 	if col.Data.IsNull() {
 		return types.Time{}, true, nil
 	}
@@ -95,7 +96,7 @@ func (col *CorrelatedColumn) EvalTime(ctx sessionctx.Context, row types.Row) (ty
 }
 
 // EvalDuration returns Duration representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalDuration(ctx sessionctx.Context, row types.Row) (types.Duration, bool, error) {
+func (col *CorrelatedColumn) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
 	if col.Data.IsNull() {
 		return types.Duration{}, true, nil
 	}
@@ -103,7 +104,7 @@ func (col *CorrelatedColumn) EvalDuration(ctx sessionctx.Context, row types.Row)
 }
 
 // EvalJSON returns JSON representation of CorrelatedColumn.
-func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row types.Row) (json.BinaryJSON, bool, error) {
+func (col *CorrelatedColumn) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
 	if col.Data.IsNull() {
 		return json.BinaryJSON{}, true, nil
 	}
@@ -193,12 +194,12 @@ func (col *Column) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (col *Column) Eval(row types.Row) (types.Datum, error) {
+func (col *Column) Eval(row chunk.Row) (types.Datum, error) {
 	return row.GetDatum(col.Index, col.RetType), nil
 }
 
 // EvalInt returns int representation of Column.
-func (col *Column) EvalInt(ctx sessionctx.Context, row types.Row) (int64, bool, error) {
+func (col *Column) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
 	if col.GetType().Hybrid() {
 		val := row.GetDatum(col.Index, col.RetType)
 		if val.IsNull() {
@@ -214,7 +215,7 @@ func (col *Column) EvalInt(ctx sessionctx.Context, row types.Row) (int64, bool, 
 }
 
 // EvalReal returns real representation of Column.
-func (col *Column) EvalReal(ctx sessionctx.Context, row types.Row) (float64, bool, error) {
+func (col *Column) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
 	if row.IsNull(col.Index) {
 		return 0, true, nil
 	}
@@ -225,7 +226,7 @@ func (col *Column) EvalReal(ctx sessionctx.Context, row types.Row) (float64, boo
 }
 
 // EvalString returns string representation of Column.
-func (col *Column) EvalString(ctx sessionctx.Context, row types.Row) (string, bool, error) {
+func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
 	if row.IsNull(col.Index) {
 		return "", true, nil
 	}
@@ -252,7 +253,7 @@ func (col *Column) EvalString(ctx sessionctx.Context, row types.Row) (string, bo
 }
 
 // EvalDecimal returns decimal representation of Column.
-func (col *Column) EvalDecimal(ctx sessionctx.Context, row types.Row) (*types.MyDecimal, bool, error) {
+func (col *Column) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
 	if row.IsNull(col.Index) {
 		return nil, true, nil
 	}
@@ -260,7 +261,7 @@ func (col *Column) EvalDecimal(ctx sessionctx.Context, row types.Row) (*types.My
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Column.
-func (col *Column) EvalTime(ctx sessionctx.Context, row types.Row) (types.Time, bool, error) {
+func (col *Column) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
 	if row.IsNull(col.Index) {
 		return types.Time{}, true, nil
 	}
@@ -268,7 +269,7 @@ func (col *Column) EvalTime(ctx sessionctx.Context, row types.Row) (types.Time, 
 }
 
 // EvalDuration returns Duration representation of Column.
-func (col *Column) EvalDuration(ctx sessionctx.Context, row types.Row) (types.Duration, bool, error) {
+func (col *Column) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
 	if row.IsNull(col.Index) {
 		return types.Duration{}, true, nil
 	}
@@ -277,7 +278,7 @@ func (col *Column) EvalDuration(ctx sessionctx.Context, row types.Row) (types.Du
 }
 
 // EvalJSON returns JSON representation of Column.
-func (col *Column) EvalJSON(ctx sessionctx.Context, row types.Row) (json.BinaryJSON, bool, error) {
+func (col *Column) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
 	if row.IsNull(col.Index) {
 		return json.BinaryJSON{}, true, nil
 	}
