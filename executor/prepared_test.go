@@ -14,6 +14,9 @@
 package executor_test
 
 import (
+	"math"
+	"strings"
+
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
@@ -266,4 +269,29 @@ func (s *testSuite) TestPreparedNameResolver(c *C) {
 
 	_, err = tk.Exec("prepare stmt from '(select * FROM t) union all (select * FROM t) order by a limit ?'")
 	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'order clause'")
+}
+
+func (s *testSuite) TestPrepareMaxParamCountCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v int)")
+	normalSQL, normalParams := generateBatchSQL(math.MaxUint16)
+	_, err := tk.Exec(normalSQL, normalParams...)
+	c.Assert(err, IsNil)
+
+	bigSQL, bigParams := generateBatchSQL(math.MaxUint16 + 2)
+	_, err = tk.Exec(bigSQL, bigParams...)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1390]Prepared statement contains too many placeholders")
+}
+
+func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
+	params := make([]interface{}, 0, paramCount)
+	placeholders := make([]string, 0, paramCount)
+	for i := 0; i < paramCount; i++ {
+		params = append(params, i)
+		placeholders = append(placeholders, "(?)")
+	}
+	return "insert into t values " + strings.Join(placeholders, ","), params
 }
