@@ -40,8 +40,8 @@ type Plan interface {
 
 	context() sessionctx.Context
 
-	// StatsInfo will return the statsInfo for this plan.
-	StatsInfo() *statsInfo
+	// statsInfo will return the statsInfo for this plan.
+	statsInfo() *statsInfo
 }
 
 // taskType is the type of execution task.
@@ -91,7 +91,7 @@ func (p *requiredProp) enforceProperty(tsk task, ctx sessionctx.Context) task {
 	}
 	tsk = finishCopTask(ctx, tsk)
 	sortReqProp := &requiredProp{taskTp: rootTaskType, cols: p.cols, expectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx, tsk.plan().StatsInfo(), sortReqProp)
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx, tsk.plan().statsInfo(), sortReqProp)
 	for _, col := range p.cols {
 		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
 	}
@@ -229,6 +229,9 @@ type PhysicalPlan interface {
 	// getChildReqProps gets the required property by child index.
 	getChildReqProps(idx int) *requiredProp
 
+	// StatsCount returns the count of statsInfo for this plan.
+	StatsCount() float64
+
 	// Get all the children.
 	Children() []PhysicalPlan
 
@@ -349,8 +352,8 @@ func (p *basePlan) ID() int {
 	return p.id
 }
 
-// StatsInfo implements the Plan interface.
-func (p *basePlan) StatsInfo() *statsInfo {
+// statsInfo implements the Plan interface.
+func (p *basePlan) statsInfo() *statsInfo {
 	return p.stats
 }
 
