@@ -111,19 +111,17 @@ func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	case aggregation.DedupMode:
 		return nil
 	default:
-		switch aggFuncDesc.Args[0].GetType().Tp {
-		case mysql.TypeFloat, mysql.TypeDouble:
-			if aggFuncDesc.HasDistinct {
-				return &sum4DistinctFloat64{base}
-			}
-			return &sum4Float64{base}
-		case mysql.TypeNewDecimal:
+		switch aggFuncDesc.RetTp.EvalType() {
+		case types.ETDecimal:
 			if aggFuncDesc.HasDistinct {
 				return &sum4DistinctDecimal{base}
 			}
 			return &sum4Decimal{base}
 		default:
-			return nil
+			if aggFuncDesc.HasDistinct {
+				return &sum4DistinctFloat64{base}
+			}
+			return &sum4Float64{base}
 		}
 	}
 }
@@ -143,13 +141,13 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// Build avg functions which consume the original data and update their
 	// partial results.
 	case aggregation.CompleteMode, aggregation.Partial1Mode:
-		switch aggFuncDesc.Args[0].GetType().Tp {
-		case mysql.TypeNewDecimal:
+		switch aggFuncDesc.RetTp.EvalType() {
+		case types.ETDecimal:
 			if aggFuncDesc.HasDistinct {
 				return &avgOriginal4DistinctDecimal{base}
 			}
 			return &avgOriginal4Decimal{baseAvgDecimal{base}}
-		case mysql.TypeFloat, mysql.TypeDouble:
+		default:
 			if aggFuncDesc.HasDistinct {
 				return &avgOriginal4DistinctFloat64{base}
 			}
@@ -249,14 +247,6 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 
 // buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
 func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	// TODO: There might be different kind of types of the args,
-	// we should add CastAsString upon every arg after cast can be pushed down to coprocessor.
-	// And this check can be removed at that time.
-	for _, arg := range aggFuncDesc.Args {
-		if arg.GetType().EvalType() != types.ETString {
-			return nil
-		}
-	}
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
@@ -291,39 +281,27 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 
 // buildBitOr builds the AggFunc implementation for function "BIT_OR".
 func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	switch aggFuncDesc.Args[0].GetType().EvalType() {
-	case types.ETInt:
-		base := baseAggFunc{
-			args:    aggFuncDesc.Args,
-			ordinal: ordinal,
-		}
-		return &bitOrUint64{baseBitAggFunc{base}}
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
 	}
-	return nil
+	return &bitOrUint64{baseBitAggFunc{base}}
 }
 
 // buildBitXor builds the AggFunc implementation for function "BIT_XOR".
 func buildBitXor(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	switch aggFuncDesc.Args[0].GetType().EvalType() {
-	case types.ETInt:
-		base := baseAggFunc{
-			args:    aggFuncDesc.Args,
-			ordinal: ordinal,
-		}
-		return &bitXorUint64{baseBitAggFunc{base}}
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
 	}
-	return nil
+	return &bitXorUint64{baseBitAggFunc{base}}
 }
 
 // buildBitAnd builds the AggFunc implementation for function "BIT_AND".
 func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	switch aggFuncDesc.Args[0].GetType().EvalType() {
-	case types.ETInt:
-		base := baseAggFunc{
-			args:    aggFuncDesc.Args,
-			ordinal: ordinal,
-		}
-		return &bitAndUint64{baseBitAggFunc{base}}
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
 	}
-	return nil
+	return &bitAndUint64{baseBitAggFunc{base}}
 }
