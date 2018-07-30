@@ -314,4 +314,57 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@time_zone;")
 	result.Check(testkit.Rows("SYSTEM"))
 
+	tk.MustExec("set @@global.max_connections=100001")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '100001'"))
+	result = tk.MustQuery("select @@global.max_connections;")
+	result.Check(testkit.Rows("100000"))
+
+	tk.MustExec("set @@global.max_connections=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '-1'"))
+	result = tk.MustQuery("select @@global.max_connections;")
+	result.Check(testkit.Rows("1"))
+
+	_, err = tk.Exec("set @@global.max_connections='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.max_connect_errors=18446744073709551615")
+
+	tk.MustExec("set @@global.max_connect_errors=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connect_errors value: '-1'"))
+	result = tk.MustQuery("select @@global.max_connect_errors;")
+	result.Check(testkit.Rows("1"))
+
+	_, err = tk.Exec("set @@global.max_connect_errors=18446744073709551616")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.max_connections=100001")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '100001'"))
+	result = tk.MustQuery("select @@global.max_connections;")
+	result.Check(testkit.Rows("100000"))
+
+	tk.MustExec("set @@global.max_connections=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '-1'"))
+	result = tk.MustQuery("select @@global.max_connections;")
+	result.Check(testkit.Rows("1"))
+
+	_, err = tk.Exec("set @@global.max_connections='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@max_sort_length=1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '1'"))
+	result = tk.MustQuery("select @@max_sort_length;")
+	result.Check(testkit.Rows("4"))
+
+	tk.MustExec("set @@max_sort_length=-100")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '-100'"))
+	result = tk.MustQuery("select @@max_sort_length;")
+	result.Check(testkit.Rows("4"))
+
+	tk.MustExec("set @@max_sort_length=8388609")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '8388609'"))
+	result = tk.MustQuery("select @@max_sort_length;")
+	result.Check(testkit.Rows("8388608"))
+
+	_, err = tk.Exec("set @@max_sort_length='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 }

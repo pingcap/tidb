@@ -127,7 +127,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, "rand_seed2", ""},
 	{ScopeGlobal, "validate_password_number_count", "1"},
 	{ScopeSession, "gtid_next", ""},
-	{ScopeGlobal | ScopeSession, "sql_select_limit", "18446744073709551615"},
+	{ScopeGlobal | ScopeSession, SQLSelectLimit, "18446744073709551615"},
 	{ScopeGlobal, "ndb_show_foreign_key_mock_tables", ""},
 	{ScopeNone, "multi_range_count", "256"},
 	{ScopeGlobal | ScopeSession, DefaultWeekFormat, "0"},
@@ -135,7 +135,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "slave_transaction_retries", "10"},
 	{ScopeGlobal | ScopeSession, "default_storage_engine", "InnoDB"},
 	{ScopeNone, "ft_query_expansion_limit", "20"},
-	{ScopeGlobal, "max_connect_errors", "100"},
+	{ScopeGlobal, MaxConnectErrors, "100"},
 	{ScopeGlobal, "sync_binlog", "0"},
 	{ScopeNone, "max_digest_length", "1024"},
 	{ScopeNone, "innodb_force_load_corrupted", "OFF"},
@@ -145,7 +145,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_backward_compatible_user_definitions", ""},
 	{ScopeNone, "lc_messages_dir", "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/"},
 	{ScopeGlobal, "ft_boolean_syntax", "+ -><()~*:\"\"&|"},
-	{ScopeGlobal, "table_definition_cache", "1400"},
+	{ScopeGlobal, "table_definition_cache", "-1"},
 	{ScopeNone, SkipNameResolve, "0"},
 	{ScopeNone, "performance_schema_max_file_handles", "32768"},
 	{ScopeSession, "transaction_allow_batching", ""},
@@ -744,6 +744,12 @@ const (
 	WarningCount = "warning_count"
 	// ErrorCount is the name for 'error_count' system variable.
 	ErrorCount = "error_count"
+	// SQLSelectLimit is the name for 'sql_select_limit' system variable.
+	SQLSelectLimit = "sql_select_limit"
+	// MaxConnectErrors is the name for 'max_connect_errors' system variable.
+	MaxConnectErrors = "max_connect_errors"
+	// TableDefinitionCache is the name for 'table_definition_cache' system variable.
+	TableDefinitionCache = "table_definition_cache"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
