@@ -80,11 +80,27 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 		Type:     model.ActionCreateSchema,
 		RowCount: 0,
 	}
+	job1 := &model.Job{
+		SchemaID: dbInfo2.ID,
+		Type:     model.ActionAddIndex,
+		RowCount: 0,
+	}
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
 	info, err := GetDDLInfo(txn)
 	c.Assert(err, IsNil)
-	c.Assert(info.Job, DeepEquals, job)
+	c.Assert(info.Jobs, HasLen, 1)
+	c.Assert(info.Jobs[0], DeepEquals, job)
+	c.Assert(info.ReorgHandle, Equals, int64(0))
+	// Two jobs.
+	t = meta.NewMeta(txn, meta.AddIndexJobListKey)
+	err = t.EnQueueDDLJob(job1)
+	c.Assert(err, IsNil)
+	info, err = GetDDLInfo(txn)
+	c.Assert(err, IsNil)
+	c.Assert(info.Jobs, HasLen, 2)
+	c.Assert(info.Jobs[0], DeepEquals, job)
+	c.Assert(info.Jobs[1], DeepEquals, job1)
 	c.Assert(info.ReorgHandle, Equals, int64(0))
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
