@@ -38,7 +38,7 @@ type Schema struct {
 	Keys    []KeyInfo
 	// TblID2Handle stores the tables' handle column information if we need handle in execution phase.
 	TblID2Handle  map[int64][]*Column
-	ReplenishCols map[ColumnIdentifier]struct{}
+	ReplenishCols map[int]struct{}
 }
 
 // String implements fmt.Stringer interface.

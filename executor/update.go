@@ -39,7 +39,7 @@ type UpdateExec struct {
 	newRowsData   [][]types.Datum // The new values to be set.
 	fetched       bool
 	cursor        int
-	replenishCols map[expression.ColumnIdentifier]struct{}
+	replenishCols map[int]struct{}
 }
 
 func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
@@ -64,7 +64,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 			offset := getTableOffset(schema, col)
 			end := offset + len(tbl.WritableCols())
 			handle := row[col.Index].GetInt64()
-			_, checkReplenish := e.replenishCols[col.ToIdentifier()]
+			_, checkReplenish := e.replenishCols[col.Position]
 			oldData := row[offset:end]
 			newTableData := newData[offset:end]
 			flags := assignFlag[offset:end]

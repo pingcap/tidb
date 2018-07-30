@@ -1248,8 +1248,8 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 }
 
 // resolveSubJoins resolve sub-join's replenish column info.
-func resolveSubJoins(selectPlan plan.PhysicalPlan) map[expression.ColumnIdentifier]struct{} {
-	var replenishCols map[expression.ColumnIdentifier]struct{}
+func resolveSubJoins(selectPlan plan.PhysicalPlan) map[int]struct{} {
+	var replenishCols map[int]struct{}
 	for _, child := range selectPlan.Children() {
 		subReplenishCols := resolveSubJoins(child)
 		if subReplenishCols == nil {
@@ -1292,11 +1292,11 @@ func resolveSubJoins(selectPlan plan.PhysicalPlan) map[expression.ColumnIdentifi
 	}
 
 	if replenishCols == nil {
-		replenishCols = make(map[expression.ColumnIdentifier]struct{})
+		replenishCols = make(map[int]struct{})
 	}
 	for _, cols := range replenishChild.Schema().TblID2Handle {
 		for _, col := range cols {
-			replenishCols[col.ToIdentifier()] = struct{}{}
+			replenishCols[col.Position] = struct{}{}
 			fmt.Println(col.TblName.O, col.ColName.O, "------")
 		}
 	}
