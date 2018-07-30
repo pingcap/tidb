@@ -340,10 +340,11 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 	bo, cancel := bo.Fork()
 	ch := make(chan error, len(batches))
 	for _, batch := range batches {
+		batch1 := batch
 		rawKVClientGP.Go(func() {
 			singleBatchBackoffer, singleBatchCancel := bo.Fork()
 			defer singleBatchCancel()
-			ch <- c.doBatchPut(singleBatchBackoffer, batch)
+			ch <- c.doBatchPut(singleBatchBackoffer, batch1)
 		})
 	}
 
