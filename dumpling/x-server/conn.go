@@ -68,7 +68,7 @@ func (cc *clientConn) Run() {
 				default:
 				}
 			}
-			log.Warnf("con:%d dispatch error: %s, %s", cc.connectionID, cc, err)
+			log.Warnf("con:%d dispatch error: %s", cc.connectionID, err)
 			cc.writeError(err)
 			return
 		}
