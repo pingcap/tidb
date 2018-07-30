@@ -951,11 +951,11 @@ func (w *worker) buildIndexForReorgInfo(t table.Table, workers []*addIndexWorker
 	return nil
 }
 
-// addTableIndex adds index into table.
+// addPhysicalTableIndex adds index into table.
 // How to add index in reorganization state?
 // Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
 // The handle range is split from PD regions now. Each worker deal with a region table key range one time.
-// Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
+// Each handle range by eestimation, concurrent processing needs to perform after the handle range has been acquired.
 // The operation flow is as follows:
 //	1. Open numbers of defaultWorkers goroutines.
 //	2. Split table key range from PD regions.
@@ -963,7 +963,7 @@ func (w *worker) buildIndexForReorgInfo(t table.Table, workers []*addIndexWorker
 //	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+func (w *worker) addPhysicalTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
 	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
@@ -977,26 +977,39 @@ func (w *worker) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgI
 		go idxWorkers[i].run(reorgInfo.d)
 	}
 	defer closeAddIndexWorkers(idxWorkers)
+	err := w.buildIndexForReorgInfo(t, idxWorkers, job, reorgInfo)
+	return errors.Trace(err)
+}
 
-	finish := false
-	for !finish {
-		err := w.buildIndexForReorgInfo(t, idxWorkers, job, reorgInfo)
-		if err != nil {
-			return errors.Trace(err)
+func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *reorgInfo) error {
+	var err error
+	if tbl, ok := t.(table.PartitionedTable); ok {
+		var finish bool
+		for !finish {
+			p := tbl.GetPartition(reorgInfo.PartitionID)
+			if p == nil {
+				log.Fatalf("Can not find partition id %d", reorgInfo.PartitionID)
+				return nil
+			}
+			err = w.addPhysicalTableIndex(p, idx, reorgInfo)
+			if err != nil {
+				break
+			}
+			finish, err = w.updateReorgInfo(tbl, reorgInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
-
-		finish, err = w.updateReorgInfo(t, reorgInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	} else {
+		err = w.addPhysicalTableIndex(t, idx, reorgInfo)
 	}
-	return nil
+	return errors.Trace(err)
 }
 
 // updateReorgInfo will find the next partition according to current reorgInfo.
 // If no more partitions, or table t is not a partitioned table, returns true to
 // indicate that the reorganize work is finished.
-func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) {
+func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
 		return true, nil
@@ -1013,7 +1026,7 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) 
 		return true, nil
 	}
 
-	start, end, err := getTableRange(reorg.d, t, reorg.Job.SnapshotVer)
+	start, end, err := getTableRange(reorg.d, t.GetPartition(pid), reorg.Job.SnapshotVer)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
