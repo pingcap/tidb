@@ -180,13 +180,13 @@ type HashAggIntermData struct {
 }
 
 // ToRows converts HashAggInterData to DatumRows.
-func (d *HashAggIntermData) ToRows(sc *stmtctx.StatementContext, rows []types.DatumRow, aggFuncs []aggregation.Aggregation, maxChunkSize int) (_ []types.DatumRow, reachEnd bool) {
+func (d *HashAggIntermData) ToRows(sc *stmtctx.StatementContext, rows [][]types.Datum, aggFuncs []aggregation.Aggregation, maxChunkSize int) (_ [][]types.Datum, reachEnd bool) {
 	if len(rows) == maxChunkSize {
 		return rows, false
 	}
 	for ; d.cursor < len(d.groupKeys); d.cursor++ {
 		groupKey := d.groupKeys[d.cursor]
-		row := make(types.DatumRow, 0, len(aggFuncs)*2)
+		row := make([]types.Datum, 0, len(aggFuncs)*2)
 		aggCtxs := d.groupCtxMap[string(groupKey)]
 		for i, f := range aggFuncs {
 			for _, d := range f.GetPartialResult(aggCtxs[i]) {
@@ -238,7 +238,7 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 		e.initForUnparallelExec()
 		return nil
 	}
-	e.initForParallelExec()
+	e.initForParallelExec(e.ctx)
 	return nil
 }
 
@@ -253,7 +253,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.childResult = e.children[0].newChunk()
 }
 
-func (e *HashAggExec) initForParallelExec() {
+func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	sessionVars := e.ctx.GetSessionVars()
 	finalConcurrency := sessionVars.HashAggFinalConcurrency
 	partialConcurrency := sessionVars.HashAggPartialConcurrency
@@ -280,7 +280,7 @@ func (e *HashAggExec) initForParallelExec() {
 		// so we need to clone the AggFuncs to avoid data race on these variables.
 		newAggFuncs := make([]aggregation.Aggregation, len(e.AggFuncs))
 		for i := range newAggFuncs {
-			newAggFuncs[i] = e.AggFuncs[i].Clone()
+			newAggFuncs[i] = e.AggFuncs[i].Clone(ctx)
 		}
 		w := HashAggPartialWorker{
 			baseHashAggWorker: newBaseHashAggWorker(e.finishCh, newAggFuncs, e.maxChunkSize),
@@ -303,7 +303,7 @@ func (e *HashAggExec) initForParallelExec() {
 	// Init final workers.
 	for i := 0; i < finalConcurrency; i++ {
 		e.finalWorkers[i] = HashAggFinalWorker{
-			baseHashAggWorker:   newBaseHashAggWorker(e.finishCh, e.newFinalAggFuncs(), e.maxChunkSize),
+			baseHashAggWorker:   newBaseHashAggWorker(e.finishCh, e.newFinalAggFuncs(ctx), e.maxChunkSize),
 			aggCtxsMap:          make(aggCtxsMapper, 0),
 			groupSet:            mvmap.NewMVMap(),
 			groupVals:           make([][]byte, 0, 8),
@@ -317,12 +317,12 @@ func (e *HashAggExec) initForParallelExec() {
 	}
 }
 
-func (e *HashAggExec) newFinalAggFuncs() (newAggFuncs []aggregation.Aggregation) {
+func (e *HashAggExec) newFinalAggFuncs(ctx sessionctx.Context) (newAggFuncs []aggregation.Aggregation) {
 	newAggFuncs = make([]aggregation.Aggregation, 0, len(e.AggFuncs))
 	idx := 0
 	for _, af := range e.AggFuncs {
 		var aggFunc aggregation.Aggregation
-		idx, aggFunc = af.GetFinalAggFunc(idx)
+		idx, aggFunc = af.GetFinalAggFunc(ctx, idx)
 		newAggFuncs = append(newAggFuncs, aggFunc)
 	}
 	return newAggFuncs
@@ -376,7 +376,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 		}
 		aggEvalCtxs := w.getContext(sc, groupKey, w.aggCtxsMap)
 		for i, af := range w.aggFuncs {
-			if err = af.Update(aggEvalCtxs[i], sc, &row); err != nil {
+			if err = af.Update(aggEvalCtxs[i], sc, row); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -455,26 +455,26 @@ func (w *HashAggFinalWorker) consumeIntermData(sc *stmtctx.StatementContext) (er
 	var (
 		input                *HashAggIntermData
 		ok                   bool
-		intermDataRowsBuffer []types.DatumRow
+		intermDataRowsBuffer [][]types.Datum
 	)
 	for {
 		if input, ok = w.getPartialInput(); !ok {
 			return nil
 		}
 		if intermDataRowsBuffer == nil {
-			intermDataRowsBuffer = make([]types.DatumRow, 0, w.maxChunkSize)
+			intermDataRowsBuffer = make([][]types.Datum, 0, w.maxChunkSize)
 		}
 		// Consume input in batches, size of every batch is less than w.maxChunkSize.
 		for reachEnd := false; !reachEnd; {
 			intermDataRowsBuffer, reachEnd = input.ToRows(sc, intermDataRowsBuffer[:0], w.aggFuncs, w.maxChunkSize)
 			for _, row := range intermDataRowsBuffer {
-				groupKey := row.GetBytes(row.Len() - 1)
+				groupKey := row[len(row)-1].GetBytes()
 				if len(w.groupSet.Get(groupKey, w.groupVals[:0])) == 0 {
 					w.groupSet.Put(groupKey, []byte{})
 				}
 				aggEvalCtxs := w.getContext(sc, groupKey, w.aggCtxsMap)
 				for i, af := range w.aggFuncs {
-					if err = af.Update(aggEvalCtxs[i], sc, row); err != nil {
+					if err = af.Update(aggEvalCtxs[i], sc, chunk.MutRowFromDatums(row).ToRow()); err != nil {
 						return errors.Trace(err)
 					}
 				}

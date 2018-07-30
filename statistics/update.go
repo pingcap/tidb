@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -340,6 +340,9 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 		}
 		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d)", id, histID, deltaColSize))
 	}
+	if len(values) == 0 {
+		return nil
+	}
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
 	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
@@ -364,7 +367,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	vals, err := encodeFeedback(fb)
 	if err != nil {
-		log.Debugf("error occurred when encoding feedback, err: ", errors.ErrorStack(err))
+		log.Debugf("error occurred when encoding feedback, err: %s", errors.ErrorStack(err))
 		return nil
 	}
 	var isIndex int64
@@ -467,7 +470,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		return errors.Trace(err)
 	}
 
-	var groupedRows [][]types.Row
+	var groupedRows [][]chunk.Row
 	preIdx := 0
 	tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
 	for i := 1; i < len(rows); i++ {
@@ -490,7 +493,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 
 // handleSingleHistogramUpdate updates the Histogram and CM Sketch using these feedbacks. All the feedbacks for
 // the same index or column are gathered in `rows`.
-func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []types.Row) (err error) {
+func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []chunk.Row) (err error) {
 	tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
 	defer func() {
 		if err == nil {

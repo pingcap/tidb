@@ -2087,7 +2087,14 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 		}
 		idxTo = 0
 
-		wordsIntTo = digitsToWords(prec1-frac1) - start1
+		digitsIntTo = prec1 - frac1 - start1*digitsPerWord
+		if digitsIntTo < 0 {
+			/* If leading zeroes in the fractional part were earlier stripped */
+			wordsIntTo = digitsIntTo / digitsPerWord
+		} else {
+			wordsIntTo = digitsToWords(digitsIntTo)
+		}
+
 		wordsFracTo = digitsToWords(int(to.digitsFrac))
 		err = nil
 		if wordsIntTo == 0 && wordsFracTo == 0 {

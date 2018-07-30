@@ -73,7 +73,7 @@ func (e *DeleteExec) matchingDeletingTable(tableID int64, col *expression.Column
 	return false
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column, row types.DatumRow) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, handleCol *expression.Column, row []types.Datum) error {
 	end := len(row)
 	if handleIsExtra(handleCol) {
 		end--
@@ -163,11 +163,11 @@ func (e *DeleteExec) getColPosInfos(schema *expression.Schema) []tblColPosInfo {
 	return colPosInfos
 }
 
-func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []tblColPosInfo, joinedRow types.DatumRow) {
+func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []tblColPosInfo, joinedRow []types.Datum) {
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
 		if tblRowMap[info.tblID] == nil {
-			tblRowMap[info.tblID] = make(map[int64]types.DatumRow)
+			tblRowMap[info.tblID] = make(map[int64][]types.Datum)
 		}
 		handle := joinedRow[info.handleIndex].GetInt64()
 		// tblRowMap[info.tblID][handle] hold the row datas binding to this table and this handle.
@@ -218,7 +218,7 @@ func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, data types.DatumRow) error {
+func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, data []types.Datum) error {
 	err := t.RemoveRecord(ctx, h, data)
 	if err != nil {
 		return errors.Trace(err)
@@ -256,4 +256,4 @@ type tblColPosInfo struct {
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.
 // the key in map[int64]Row is the joined table handle, which represent a unique reference row.
 // the value in map[int64]Row is the deleting row.
-type tableRowMapType map[int64]map[int64]types.DatumRow
+type tableRowMapType map[int64]map[int64][]types.Datum
