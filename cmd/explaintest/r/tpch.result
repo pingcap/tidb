@@ -252,7 +252,7 @@ limit 10;
 id	count	task	operator info
 Projection_14	10.00	root	tpch.lineitem.l_orderkey, 7_col_0, tpch.orders.o_orderdate, tpch.orders.o_shippriority
 └─TopN_17	10.00	root	7_col_0:desc, tpch.orders.o_orderdate:asc, offset:0, count:10
-  └─HashAgg_20	40227041.09	root	group by:tpch.lineitem.l_orderkey, tpch.orders.o_orderdate, tpch.orders.o_shippriority, funcs:sum(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))), firstrow(tpch.orders.o_orderdate), firstrow(tpch.orders.o_shippriority), firstrow(tpch.lineitem.l_orderkey)
+  └─HashAgg_20	40256361.71	root	group by:tpch.lineitem.l_orderkey, tpch.orders.o_orderdate, tpch.orders.o_shippriority, funcs:sum(mul(tpch.lineitem.l_extendedprice, minus(1, tpch.lineitem.l_discount))), firstrow(tpch.orders.o_orderdate), firstrow(tpch.orders.o_shippriority), firstrow(tpch.lineitem.l_orderkey)
     └─IndexJoin_26	91515927.49	root	inner join, inner:IndexLookUp_25, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey
       ├─HashRightJoin_46	22592975.51	root	inner join, inner:TableReader_52, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
       │ ├─TableReader_52	1498236.00	root	data:Selection_51
@@ -261,9 +261,9 @@ Projection_14	10.00	root	tpch.lineitem.l_orderkey, 7_col_0, tpch.orders.o_orderd
       │ └─TableReader_49	36870000.00	root	data:Selection_48
       │   └─Selection_48	36870000.00	cop	lt(tpch.orders.o_orderdate, 1995-03-13 00:00:00.000000)
       │     └─TableScan_47	75000000.00	cop	table:orders, range:[-inf,+inf], keep order:false
-      └─IndexLookUp_25	162945114.27	root	
+      └─IndexLookUp_25	163063881.42	root	
         ├─IndexScan_22	1.00	cop	table:lineitem, index:L_ORDERKEY, L_LINENUMBER, range: decided by [tpch.orders.o_orderkey], keep order:false
-        └─Selection_24	162945114.27	cop	gt(tpch.lineitem.l_shipdate, 1995-03-13 00:00:00.000000)
+        └─Selection_24	163063881.42	cop	gt(tpch.lineitem.l_shipdate, 1995-03-13 00:00:00.000000)
           └─TableScan_23	1.00	cop	table:lineitem, keep order:false
 /*
 Q4 Order Priority Checking Query
@@ -921,13 +921,13 @@ p_brand,
 p_type,
 p_size;
 id	count	task	operator info
-Sort_13	14.41	root	supplier_cnt:desc, tpch.part.p_brand:asc, tpch.part.p_type:asc, tpch.part.p_size:asc
-└─Projection_14	14.41	root	tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size, 9_col_0
-  └─HashAgg_17	14.41	root	group by:tpch.part.p_brand, tpch.part.p_size, tpch.part.p_type, funcs:count(distinct tpch.partsupp.ps_suppkey), firstrow(tpch.part.p_brand), firstrow(tpch.part.p_type), firstrow(tpch.part.p_size)
-    └─HashLeftJoin_22	3863988.24	root	anti semi join, inner:TableReader_46, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
-      ├─IndexJoin_26	4829985.30	root	inner join, inner:IndexReader_25, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
-      │ ├─TableReader_41	1200618.43	root	data:Selection_40
-      │ │ └─Selection_40	1200618.43	cop	in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39), ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92))
+Sort_13	15.00	root	supplier_cnt:desc, tpch.part.p_brand:asc, tpch.part.p_type:asc, tpch.part.p_size:asc
+└─Projection_14	15.00	root	tpch.part.p_brand, tpch.part.p_type, tpch.part.p_size, 9_col_0
+  └─HashAgg_17	15.00	root	group by:tpch.part.p_brand, tpch.part.p_size, tpch.part.p_type, funcs:count(distinct tpch.partsupp.ps_suppkey), firstrow(tpch.part.p_brand), firstrow(tpch.part.p_type), firstrow(tpch.part.p_size)
+    └─HashLeftJoin_22	4022816.68	root	anti semi join, inner:TableReader_46, equal:[eq(tpch.partsupp.ps_suppkey, tpch.supplier.s_suppkey)]
+      ├─IndexJoin_26	5028520.85	root	inner join, inner:IndexReader_25, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
+      │ ├─TableReader_41	1249969.60	root	data:Selection_40
+      │ │ └─Selection_40	1249969.60	cop	in(tpch.part.p_size, 48, 19, 12, 4, 41, 7, 21, 39), ne(tpch.part.p_brand, "Brand#34"), not(like(tpch.part.p_type, "LARGE BRUSHED%", 92))
       │ │   └─TableScan_39	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
       │ └─IndexReader_25	1.00	root	index:IndexScan_24
       │   └─IndexScan_24	1.00	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [tpch.part.p_partkey], keep order:false
