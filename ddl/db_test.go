@@ -2846,8 +2846,8 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
 	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
-	s.tk.MustExec("drop table if exists p1;")
-	s.tk.MustExec(`create table p1 (
+	s.tk.MustExec("drop table if exists part1;")
+	s.tk.MustExec(`create table part1 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
@@ -2859,8 +2859,8 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p2 values less than (15)
 	);`)
 
-	s.tk.MustExec("drop table if exists p2;")
-	s.tk.MustExec(`create table p2 (
+	s.tk.MustExec("drop table if exists part2;")
+	s.tk.MustExec(`create table part2 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
@@ -2873,8 +2873,8 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p2 values less than (15)
 	);`)
 
-	s.tk.MustExec("drop table if exists p3;")
-	s.tk.MustExec(`create table p3 (
+	s.tk.MustExec("drop table if exists part3;")
+	s.tk.MustExec(`create table part3 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
@@ -2886,8 +2886,8 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p2 values less than (15)
 	);`)
 
-	s.tk.MustExec("drop table if exists p4;")
-	s.tk.MustExec(`create table p4 (
+	s.tk.MustExec("drop table if exists part4;")
+	s.tk.MustExec(`create table part4 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
@@ -2900,8 +2900,8 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p2 values less than (15)
 	);`)
 
-	s.tk.MustExec("drop table if exists p5;")
-	s.tk.MustExec(`create table p5 (
+	s.tk.MustExec("drop table if exists part5;")
+	s.tk.MustExec(`create table part5 (
 		col1 int not null,
 		col2 date not null,
 		col3 int not null,
