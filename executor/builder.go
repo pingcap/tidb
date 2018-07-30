@@ -1297,7 +1297,6 @@ func resolveSubJoins(selectPlan plan.PhysicalPlan) map[int]struct{} {
 	for _, cols := range replenishChild.Schema().TblID2Handle {
 		for _, col := range cols {
 			replenishCols[col.Position] = struct{}{}
-			fmt.Println(col.TblName.O, col.ColName.O, "------")
 		}
 	}
 	return replenishCols
