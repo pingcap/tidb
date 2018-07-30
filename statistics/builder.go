@@ -156,10 +156,10 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 
 // AnalyzeResult is used to represent analyze result.
 type AnalyzeResult struct {
-	TableID int64
-	Hist    []*Histogram
-	Cms     []*CMSketch
-	Count   int64
-	IsIndex int
-	Err     error
+	PhysicalID int64
+	Hist       []*Histogram
+	Cms        []*CMSketch
+	Count      int64
+	IsIndex    int
+	Err        error
 }
