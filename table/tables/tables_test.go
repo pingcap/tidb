@@ -395,3 +395,30 @@ PARTITION BY RANGE ( id ) (
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
 }
+
+// TestPartitionGetID tests Partition.GetID().
+func (ts *testSuite) TestPartitionGetID(c *C) {
+	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
+PARTITION BY RANGE ( id ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+)`
+
+	_, err := ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "Drop table if exists test.t1;")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), createTable1)
+	c.Assert(err, IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbInfo := tb.Meta()
+	ps := tbInfo.GetPartitionInfo()
+	c.Assert(ps, NotNil)
+	for _, pd := range ps.Definitions {
+		p := tb.(table.PartitionedTable).GetPartition(pd.ID)
+		c.Assert(p, NotNil)
+		c.Assert(pd.ID, Equals, p.GetID())
+	}
+}

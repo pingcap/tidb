@@ -132,13 +132,13 @@ func (s *testStateChangeSuite) TestTwoStates(c *C) {
 	testInfo.sqlInfos[0].sql = "insert into t (c1, c2, c3, c4) value(2, 'b', 'N', '2017-07-02')"
 	testInfo.sqlInfos[1].sql = "insert into t (c1, c2, c3, d3, c4) value(3, 'b', 'N', 'a', '2017-07-03')"
 	unknownColErr := errors.New("unknown column d3")
-	testInfo.sqlInfos[1].cases[0].expectedErr = unknownColErr
-	testInfo.sqlInfos[1].cases[1].expectedErr = unknownColErr
-	testInfo.sqlInfos[1].cases[2].expectedErr = unknownColErr
-	testInfo.sqlInfos[1].cases[3].expectedErr = unknownColErr
+	testInfo.sqlInfos[1].cases[0].expectedCompileErr = unknownColErr
+	testInfo.sqlInfos[1].cases[1].expectedCompileErr = unknownColErr
+	testInfo.sqlInfos[1].cases[2].expectedCompileErr = unknownColErr
+	testInfo.sqlInfos[1].cases[3].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[2].sql = "update t set c2 = 'c2_update'"
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')'"
-	testInfo.sqlInfos[3].cases[4].expectedErr = errors.New("Column count doesn't match value count at row 1")
+	testInfo.sqlInfos[3].cases[4].expectedCompileErr = errors.New("Column count doesn't match value count at row 1")
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
 	s.test(c, "", alterTableSQL, testInfo)
 	// TODO: Add more DDL statements.
@@ -227,10 +227,11 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 }
 
 type stateCase struct {
-	session     session.Session
-	rawStmt     ast.StmtNode
-	stmt        ast.Statement
-	expectedErr error
+	session            session.Session
+	rawStmt            ast.StmtNode
+	stmt               ast.Statement
+	expectedExecErr    error
+	expectedCompileErr error
 }
 
 type sqlInfo struct {
@@ -299,6 +300,13 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 			return errors.Trace(err)
 		}
 		c.stmt, err = compiler.Compile(ctx, c.rawStmt)
+		if c.expectedCompileErr != nil {
+			if err == nil {
+				err = errors.Errorf("expected error %s but got nil", c.expectedCompileErr)
+			} else if strings.Contains(err.Error(), c.expectedCompileErr.Error()) {
+				err = nil
+			}
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -309,11 +317,14 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 func (t *testExecInfo) execSQL(idx int) error {
 	for _, sqlInfo := range t.sqlInfos {
 		c := sqlInfo.cases[idx]
+		if c.expectedCompileErr != nil {
+			continue
+		}
 		_, err := c.stmt.Exec(context.TODO())
-		if c.expectedErr != nil {
+		if c.expectedExecErr != nil {
 			if err == nil {
-				err = errors.Errorf("expected error %s but got nil", c.expectedErr)
-			} else if strings.Contains(err.Error(), c.expectedErr.Error()) {
+				err = errors.Errorf("expected error %s but got nil", c.expectedExecErr)
+			} else if strings.Contains(err.Error(), c.expectedExecErr.Error()) {
 				err = nil
 			}
 		}

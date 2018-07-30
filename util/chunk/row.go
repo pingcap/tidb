@@ -23,12 +23,15 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-var _ types.Row = Row{}
-
 // Row represents a row of data, can be used to assess values.
 type Row struct {
 	c   *Chunk
 	idx int
+}
+
+// IsEmpty returns true if the Row is empty.
+func (r Row) IsEmpty() bool {
+	return r == Row{}
 }
 
 // Idx returns the row index of Chunk.
@@ -132,8 +135,8 @@ func (r Row) GetJSON(colIdx int) json.BinaryJSON {
 // GetDatumRow converts chunk.Row to types.DatumRow.
 // Keep in mind that GetDatumRow has a reference to r.c, which is a chunk,
 // this function works only if the underlying chunk is valid or unchanged.
-func (r Row) GetDatumRow(fields []*types.FieldType) types.DatumRow {
-	datumRow := make(types.DatumRow, 0, r.c.NumCols())
+func (r Row) GetDatumRow(fields []*types.FieldType) []types.Datum {
+	datumRow := make([]types.Datum, 0, r.c.NumCols())
 	for colIdx := 0; colIdx < r.c.NumCols(); colIdx++ {
 		datum := r.GetDatum(colIdx, fields[colIdx])
 		datumRow = append(datumRow, datum)
@@ -141,7 +144,7 @@ func (r Row) GetDatumRow(fields []*types.FieldType) types.DatumRow {
 	return datumRow
 }
 
-// GetDatum implements the types.Row interface.
+// GetDatum implements the chunk.Row interface.
 func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	var d types.Datum
 	switch tp.Tp {
@@ -206,7 +209,7 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	return d
 }
 
-// IsNull implements the types.Row interface.
+// IsNull returns if the datum in the chunk.Row is null.
 func (r Row) IsNull(colIdx int) bool {
 	return r.c.columns[colIdx].isNull(r.idx)
 }

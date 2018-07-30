@@ -1277,6 +1277,10 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
 }
 
+func (it *infoschemaTable) GetID() int64 {
+	return it.meta.ID
+}
+
 // Seek is the first method called for table scan, we lazy initialize it here.
 func (it *infoschemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp

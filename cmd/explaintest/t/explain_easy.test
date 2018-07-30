@@ -51,3 +51,10 @@ create table t(a int primary key, b int, c int, index idx(b));
 explain select t.c in (select count(*) from t s ignore index(idx), t t1 where s.a = t.a and s.a = t1.a) from t;
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
+
+drop table if exists t;
+create table t(a int unsigned);
+explain select t.a = '123455' from t;
+explain select t.a > '123455' from t;
+explain select t.a != '123455' from t;
+explain select t.a = 12345678912345678998789678687678.111 from t;
