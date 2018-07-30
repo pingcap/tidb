@@ -1093,7 +1093,8 @@ PARTITION BY RANGE ( id ) (
 	tk.CheckExecResult(5, 0)
 
 	tk.MustExec("admin check table t")
-	tk.MustExec(`delete from t ;`)
+	tk.MustExec(`delete from t;`)
+	tk.CheckExecResult(14, 0)
 }
 
 func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
