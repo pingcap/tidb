@@ -14,6 +14,7 @@
 package statistics_test
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"runtime/pprof"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -152,7 +154,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "a >= 1 and b > 1 and a < 2",
-			selectivity: 0.01783264746,
+			selectivity: 0.01817558299,
 		},
 		{
 			exprs:       "a >= 1 and c > 1 and a < 2",
@@ -168,7 +170,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "b > 1",
-			selectivity: 0.96296296296,
+			selectivity: 0.98148148148,
 		},
 		{
 			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
@@ -212,6 +214,59 @@ func (s *testSelectivitySuite) TestPseudoSelectivity(c *C) {
 		"TableScan_5   cop table:t1, range:[1,1], keep order:false 1.00",
 		"TableReader_6 Projection_4  root data:TableScan_5 1.00",
 		"Projection_4  TableReader_6 root test.t1.b 1.00"))
+}
+
+func getRange(start, end int64) []*ranger.NewRange {
+	ran := &ranger.NewRange{
+		LowVal:  []types.Datum{types.NewIntDatum(start)},
+		HighVal: []types.Datum{types.NewIntDatum(end)},
+	}
+	return []*ranger.NewRange{ran}
+}
+
+func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
+	testKit.MustExec("analyze table t")
+	for i := 0; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	h := s.dom.StatsHandle()
+	h.DumpStatsDeltaToKV()
+	testKit.MustExec("analyze table t")
+	for i := 0; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
+	}
+	h.DumpStatsDeltaToKV()
+	c.Assert(h.Update(s.dom.InfoSchema()), IsNil)
+	table, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl := h.GetTableStats(table.Meta())
+
+	sc := &stmtctx.StatementContext{}
+	colID := table.Meta().Columns[0].ID
+	count, err := statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(30, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 2.0)
+
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 4.2)
+
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, math.MaxInt64))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 4.2)
+
+	idxID := table.Meta().Indices[0].ID
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(30, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.2)
+
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 2.2)
 }
 
 func BenchmarkSelectivity(b *testing.B) {

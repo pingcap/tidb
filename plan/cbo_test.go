@@ -496,8 +496,8 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	plan.RatioOfPseudoEstimate = 10.0
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
 		"TableScan_5 Selection_6  cop table:t, range:[-inf,+inf], keep order:false 80.00",
-		"Selection_6  TableScan_5 cop le(test.t.a, 5), le(test.t.b, 5) 28.80",
-		"TableReader_7   root data:Selection_6 28.80",
+		"Selection_6  TableScan_5 cop le(test.t.a, 5), le(test.t.b, 5) 35.91",
+		"TableReader_7   root data:Selection_6 35.91",
 	))
 	plan.RatioOfPseudoEstimate = 0.7
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
@@ -607,16 +607,16 @@ func (s *testAnalyzeSuite) TestLimit(c *C) {
 	}
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t use index(idx) where a > 1 and b > 1 and c > 1 limit 1").Check(testkit.Rows(
-		"IndexScan_13 Selection_15  cop table:t, index:a, b, range:(1 +inf,+inf +inf], keep order:false 1.56",
-		"Selection_15  IndexScan_13 cop gt(test.t.b, 1) 1.25",
-		"TableScan_14 Selection_16  cop table:t, keep order:false 1.25",
+		"IndexScan_13 Selection_15  cop table:t, index:a, b, range:(1 +inf,+inf +inf], keep order:false 1.10",
+		"Selection_15  IndexScan_13 cop gt(test.t.b, 1) 1.00",
+		"TableScan_14 Selection_16  cop table:t, keep order:false 1.00",
 		"Selection_16 Limit_17 TableScan_14 cop gt(test.t.c, 1) 1.00",
 		"Limit_17  Selection_16 cop offset:0, count:1 1.00",
 		"IndexLookUp_18 Limit_9  root index:Selection_15, table:Limit_17 1.00",
 		"Limit_9  IndexLookUp_18 root offset:0, count:1 1.00",
 	))
 	testKit.MustQuery("explain select * from t where a > 1 and c > 1 limit 1").Check(testkit.Rows(
-		"TableScan_11 Selection_12  cop table:t, range:(1,+inf], keep order:false 1.25",
+		"TableScan_11 Selection_12  cop table:t, range:(1,+inf], keep order:false 1.11",
 		"Selection_12 Limit_15 TableScan_11 cop gt(test.t.c, 1) 1.00",
 		"Limit_15  Selection_12 cop offset:0, count:1 1.00",
 		"TableReader_16 Limit_8  root data:Limit_15 1.00",

@@ -37,6 +37,8 @@ const (
 	pseudoEqualRate   = 1000
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 40
+
+	outOfRangeBetweenRate = 100
 )
 
 // Table represents statistics for a table.
@@ -327,7 +329,7 @@ func (t *Table) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID
 		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(t.Count)), nil
 	}
 	c := t.Columns[colID]
-	result, err := c.getColumnRowCount(sc, intRanges)
+	result, err := c.getColumnRowCount(sc, intRanges, t.ModifyCount)
 	result *= c.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -338,7 +340,7 @@ func (t *Table) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, colID in
 		return getPseudoRowCountByColumnRanges(sc, float64(t.Count), colRanges, 0)
 	}
 	c := t.Columns[colID]
-	result, err := c.getColumnRowCount(sc, colRanges)
+	result, err := c.getColumnRowCount(sc, colRanges, t.ModifyCount)
 	result *= c.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
@@ -353,7 +355,7 @@ func (t *Table) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idxID int
 		}
 		return getPseudoRowCountByIndexRanges(sc, indexRanges, float64(t.Count), colsLen)
 	}
-	result, err := idx.getRowCount(sc, indexRanges)
+	result, err := idx.getRowCount(sc, indexRanges, t.ModifyCount)
 	result *= idx.getIncreaseFactor(t.Count)
 	return result, errors.Trace(err)
 }
