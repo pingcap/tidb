@@ -76,7 +76,7 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row chunk.Row) (
 	if col.GetType().Tp != mysql.TypeString {
 		return res, err != nil, errors.Trace(err)
 	}
-	// If sql_mode 'pad_char_to_full_length' is no set, the right trailing spaces should be removed for type 'CHAR'.
+	// If 'pad_char_to_full_length' is not set in 'sql_mode' system variable, the right trailing spaces should be removed for type 'CHAR'.
 	// See: #7085(https://github.com/pingcap/tidb/issues/7085) for more details
 	if !ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
 		res = strings.TrimRight(res, " ")
@@ -245,7 +245,7 @@ func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bo
 		if col.GetType().Tp != mysql.TypeString {
 			return res, err != nil, errors.Trace(err)
 		}
-		// If sql_mode 'pad_char_to_full_length' is no set, the right trailing spaces should be removed for type 'CHAR'.
+		// If 'pad_char_to_full_length' is not set in 'sql_mode' system variable, the right trailing spaces should be removed for type 'CHAR'.
 		// See: #7085(https://github.com/pingcap/tidb/issues/7085) for more details
 		if !ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
 			res = strings.TrimRight(res, " ")
