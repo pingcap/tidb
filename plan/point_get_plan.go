@@ -73,7 +73,7 @@ func (p *PointGetPlan) ExplainInfo() string {
 		fmt.Fprintf(buffer, ", index:")
 		for i, col := range p.IndexInfo.Columns {
 			buffer.WriteString(col.Name.O)
-			if i < len(p.IndexInfo.Columns) - 1 {
+			if i < len(p.IndexInfo.Columns)-1 {
 				buffer.WriteString(" ")
 			}
 		}
@@ -90,7 +90,13 @@ func (p *PointGetPlan) getChildReqProps(idx int) *requiredProp {
 
 // StatsCount will return the the count of statsInfo for this plan.
 func (p *PointGetPlan) StatsCount() float64 {
-	return p.stats.count
+	return 1
+}
+
+// StatsCount will return the the count of statsInfo for this plan.
+func (p *PointGetPlan) statsInfo() *statsInfo {
+	p.stats.count = 1
+	return p.stats
 }
 
 // Children gets all the children.
@@ -118,8 +124,6 @@ func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 			}
 			return fp
 		}
-	case *ast.UpdateStmt:
-		return tryUpdatePointPlan(ctx, x)
 	case *ast.DeleteStmt:
 		return tryDeletePointPlan(ctx, x)
 	}
@@ -170,7 +174,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if schema == nil {
 			return nil
 		}
-		p := newPointSelectPlan(ctx, schema, tbl)
+		p := newPointGetPlan(ctx, schema, tbl)
 		p.Handle = handleDatum.GetInt64()
 		return p
 	}
@@ -189,7 +193,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if schema == nil {
 			return nil
 		}
-		p := newPointSelectPlan(ctx, schema, tbl)
+		p := newPointGetPlan(ctx, schema, tbl)
 		p.IndexInfo = idxInfo
 		p.IndexValues = idxValues
 		return p
@@ -197,13 +201,12 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	return nil
 }
 
-func newPointSelectPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *PointGetPlan {
+func newPointGetPlan(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *PointGetPlan {
 	p := &PointGetPlan{
 		basePlan: newBasePlan(ctx, "Point_Get"),
 		schema:   schema,
 		TblInfo:  tbl,
 	}
-	p.stats = &statsInfo{count: 1}
 	return p
 }
 
@@ -365,55 +368,6 @@ func findInPairs(colName string, pairs []nameValuePair) int {
 	return -1
 }
 
-func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan {
-	selStmt := &ast.SelectStmt{
-		Fields:  &ast.FieldList{},
-		From:    updateStmt.TableRefs,
-		Where:   updateStmt.Where,
-		OrderBy: updateStmt.Order,
-		Limit:   updateStmt.Limit,
-	}
-	fastSelect := tryPointGetPlan(ctx, selStmt)
-	if fastSelect == nil {
-		return nil
-	}
-	checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.UpdatePriv)
-	orderedList := buildOrderedList(ctx, fastSelect, updateStmt.List)
-	if orderedList == nil {
-		return nil
-	}
-	updatePlan := &Update{
-		SelectPlan:  fastSelect,
-		OrderedList: orderedList,
-	}
-	updatePlan.SetSchema(fastSelect.schema)
-	return updatePlan
-}
-
-func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*ast.Assignment) []*expression.Assignment {
-	orderedList := make([]*expression.Assignment, 0, len(list))
-	for _, assign := range list {
-		col, err := fastSelect.schema.FindColumn(assign.Column)
-		if err != nil {
-			return nil
-		}
-		if col == nil {
-			return nil
-		}
-		newAssign := &expression.Assignment{
-			Col: col,
-		}
-		expr, err := expression.RewriteSimpleExpr(ctx, fastSelect.TblInfo, assign.Expr)
-		if err != nil {
-			return nil
-		}
-		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
-		newAssign.Expr = expr.ResolveIndices(fastSelect.schema)
-		orderedList = append(orderedList, newAssign)
-	}
-	return orderedList
-}
-
 func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	if delStmt.IsMultiTable {
 		return nil
@@ -450,7 +404,6 @@ func findCol(tbl *model.TableInfo, colName *ast.ColumnName) *model.ColumnInfo {
 
 func colInfoToColumn(db model.CIStr, tblName model.CIStr, col *model.ColumnInfo, idx int) *expression.Column {
 	return &expression.Column{
-		FromID:      1,
 		ColName:     col.Name,
 		OrigTblName: tblName,
 		DBName:      db,

@@ -30,7 +30,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-func (b *executorBuilder) buildPointSelect(p *plan.PointGetPlan) Executor {
+func (b *executorBuilder) buildPointGet(p *plan.PointGetPlan) Executor {
 	return &PointGetExecutor{
 		ctx:     b.ctx,
 		schema:  p.Schema(),
@@ -132,7 +132,7 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 }
 
 func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) error {
-	colIDs := make(map[int64]int)
+	colIDs := make(map[int64]int, e.schema.Len())
 	for i, col := range e.schema.Columns {
 		colIDs[col.ID] = i
 	}

@@ -14,14 +14,14 @@
 package executor_test
 
 import (
-	"github.com/pingcap/tidb/util/testkit"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
 func (s *testSuite) TestPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d)")
+	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
 	tk.MustExec("insert point values (1, 1, 'a')")
 	tk.MustExec("insert point values (2, 2, 'b')")
 	tk.MustQuery("select * from point where id = 1 and c = 0").Check(testkit.Rows())

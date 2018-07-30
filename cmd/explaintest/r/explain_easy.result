@@ -50,7 +50,8 @@ IndexJoin_11	4166.67	root	left outer join, inner:IndexLookUp_10, outer key:test.
   └─TableScan_9	10.00	cop	table:t2, keep order:false, stats:pseudo
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
-Point_Select_1	1.00	root	Point_Select
+TableReader_5	1.00	root	data:TableScan_4
+└─TableScan_4	1.00	cop	table:t1, range:[1,1], keep order:false, stats:pseudo
 explain delete from t1 where t1.c2 = 1;
 id	count	task	operator info
 IndexLookUp_9	10.00	root	

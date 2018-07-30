@@ -92,7 +92,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	case *plan.Explain:
 		return b.buildExplain(v)
 	case *plan.PointGetPlan:
-		return b.buildPointSelect(v)
+		return b.buildPointGet(v)
 	case *plan.Insert:
 		return b.buildInsert(v)
 	case *plan.LoadData:
