@@ -161,6 +161,7 @@ type Job struct {
 	Version int64 `json:"version"`
 
 	// ReorgMeta is meta info of ddl reorganization.
+	// This field is depreciated.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
 }
 
