@@ -189,11 +189,11 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		if !r.IsNull(colIdx) {
 			d.SetMysqlDecimal(r.GetMyDecimal(colIdx))
 			d.SetLength(tp.Flen)
-			// If tp.Decimal is unspecified(-1),
-			// we should set it to the real fraction length of the decimal value,
-			// if not, the d.Frac will be set to MAX_UINT16 which will cause unexpected BadNumber error
+			// If tp.Decimal is unspecified(-1), we should set it to the real
+			// fraction length of the decimal value, if not, the d.Frac will
+			// be set to MAX_UINT16 which will cause unexpected BadNumber error
 			// when encoding.
-			if tp.Decimal == -1 {
+			if tp.Decimal == types.UnspecifiedLength {
 				d.SetFrac(d.Frac())
 			} else {
 				d.SetFrac(tp.Decimal)
