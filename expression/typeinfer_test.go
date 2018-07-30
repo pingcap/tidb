@@ -15,7 +15,6 @@ package expression_test
 
 import (
 	"math"
-	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -40,11 +39,6 @@ type typeInferTestCase struct {
 	flag    uint
 	flen    int
 	decimal int
-}
-
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
 }
 
 type testInferTypeSuite struct {
