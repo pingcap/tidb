@@ -263,7 +263,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		// Update the bound if necessary.
 		res, err := bkt.lower.CompareDatum(nil, ran.lower)
 		if err != nil {
-			log.Debugf("compare datum %v with %v failed, err: %v", bkt.lower, ran.lower, errors.ErrorStack(err))
+			log.Debugf("decode feedback lower bound \"%v\" to integer failed: %v", bkt.lower.GetBytes(), err)
 			continue
 		}
 		if res > 0 {
@@ -271,7 +271,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		}
 		res, err = bkt.upper.CompareDatum(nil, ran.upper)
 		if err != nil {
-			log.Debugf("compare datum %v with %v failed, err: %v", bkt.upper, ran.upper, errors.ErrorStack(err))
+			log.Debugf("decode feedback lower bound \"%v\" to integer failed: %v", bkt.lower.GetBytes(), err)
 			continue
 		}
 		if res < 0 {
