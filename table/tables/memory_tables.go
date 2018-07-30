@@ -139,6 +139,11 @@ func (t *MemoryTable) Meta() *model.TableInfo {
 	return t.meta
 }
 
+// GetID implements table.Table GetID interface.
+func (t *MemoryTable) GetID() int64 {
+	return t.meta.ID
+}
+
 // Cols implements table.Table Cols interface.
 func (t *MemoryTable) Cols() []*table.Column {
 	return t.Columns

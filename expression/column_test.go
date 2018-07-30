@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -47,7 +48,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 
 	intCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeLonglong)},
 		Data: &intDatum}
-	intVal, isNull, err := intCorCol.EvalInt(s.ctx, nil)
+	intVal, isNull, err := intCorCol.EvalInt(s.ctx, chunk.Row{})
 	c.Assert(intVal, Equals, int64(1))
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
@@ -55,7 +56,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	realDatum := types.NewFloat64Datum(1.2)
 	realCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeDouble)},
 		Data: &realDatum}
-	realVal, isNull, err := realCorCol.EvalReal(s.ctx, nil)
+	realVal, isNull, err := realCorCol.EvalReal(s.ctx, chunk.Row{})
 	c.Assert(realVal, Equals, float64(1.2))
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
@@ -63,7 +64,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	decimalDatum := types.NewDecimalDatum(types.NewDecFromStringForTest("1.2"))
 	decimalCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeNewDecimal)},
 		Data: &decimalDatum}
-	decVal, isNull, err := decimalCorCol.EvalDecimal(s.ctx, nil)
+	decVal, isNull, err := decimalCorCol.EvalDecimal(s.ctx, chunk.Row{})
 	c.Assert(decVal.Compare(types.NewDecFromStringForTest("1.2")), Equals, 0)
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
@@ -71,14 +72,14 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	stringDatum := types.NewStringDatum("abc")
 	stringCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeVarchar)},
 		Data: &stringDatum}
-	strVal, isNull, err := stringCorCol.EvalString(s.ctx, nil)
+	strVal, isNull, err := stringCorCol.EvalString(s.ctx, chunk.Row{})
 	c.Assert(strVal, Equals, "abc")
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
 
 	durationCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeDuration)},
 		Data: &durationDatum}
-	durationVal, isNull, err := durationCorCol.EvalDuration(s.ctx, nil)
+	durationVal, isNull, err := durationCorCol.EvalDuration(s.ctx, chunk.Row{})
 	c.Assert(durationVal.Compare(duration), Equals, 0)
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
@@ -86,7 +87,7 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 	timeDatum := types.NewTimeDatum(tm)
 	timeCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeDatetime)},
 		Data: &timeDatum}
-	timeVal, isNull, err := timeCorCol.EvalTime(s.ctx, nil)
+	timeVal, isNull, err := timeCorCol.EvalTime(s.ctx, chunk.Row{})
 	c.Assert(timeVal.Compare(tm), Equals, 0)
 	c.Assert(isNull, IsFalse)
 	c.Assert(err, IsNil)
