@@ -137,12 +137,12 @@ func (q *QueryFeedback) decodeIntValues() *QueryFeedback {
 	for _, fb := range q.feedback {
 		_, lowInt, err := codec.DecodeInt(fb.lower.GetBytes())
 		if err != nil {
-			log.Debugf("decode int value failed: ", err)
+			log.Debugf("decode feedback lower bound \"%v\" to integer failed: %v", fb.lower.GetBytes(), err)
 			continue
 		}
 		_, highInt, err := codec.DecodeInt(fb.upper.GetBytes())
 		if err != nil {
-			log.Debugf("decode int value failed: ", err)
+			log.Debugf("decode feedback upper bound \"%v\" to integer failed: %v", fb.upper.GetBytes(), err)
 			continue
 		}
 		low, high := types.NewIntDatum(lowInt), types.NewIntDatum(highInt)
@@ -263,7 +263,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		// Update the bound if necessary.
 		res, err := bkt.lower.CompareDatum(nil, ran.lower)
 		if err != nil {
-			log.Debugf("decode feedback lower bound \"%v\" to integer failed: %v", bkt.lower.GetBytes(), err)
+			log.Debugf("compare datum %v with %v failed, err: %v", bkt.lower, ran.lower, errors.ErrorStack(err))
 			continue
 		}
 		if res > 0 {
@@ -271,7 +271,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		}
 		res, err = bkt.upper.CompareDatum(nil, ran.upper)
 		if err != nil {
-			log.Debugf("decode feedback lower bound \"%v\" to integer failed: %v", bkt.upper.GetBytes(), err)
+			log.Debugf("compare datum %v with %v failed, err: %v", bkt.upper, ran.upper, errors.ErrorStack(err))
 			continue
 		}
 		if res < 0 {
