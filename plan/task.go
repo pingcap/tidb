@@ -407,8 +407,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
 			partialSchema.Append(&expression.Column{
-				FromID:   p.ID(),
-				Position: partialCursor,
+				Position: p.ctx.GetSessionVars().AllocPlanColumnID(),
 				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
 				RetType:  ft,
 			})
@@ -417,8 +416,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 		}
 		if aggregation.NeedValue(finalAggFunc.Name) {
 			partialSchema.Append(&expression.Column{
-				FromID:   p.ID(),
-				Position: partialCursor,
+				Position: p.ctx.GetSessionVars().AllocPlanColumnID(),
 				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
 				RetType:  finalSchema.Columns[i].GetType(),
 			})
@@ -435,8 +433,7 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	groupByItems := make([]expression.Expression, 0, len(p.GroupByItems))
 	for i, gbyExpr := range p.GroupByItems {
 		gbyCol := &expression.Column{
-			FromID:   p.ID(),
-			Position: partialCursor + i,
+			Position: p.ctx.GetSessionVars().AllocPlanColumnID(),
 			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor+i)),
 			RetType:  gbyExpr.GetType(),
 		}

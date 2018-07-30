@@ -114,7 +114,7 @@ func (t *tester) Run() error {
 		if t.resultFD != nil {
 			err = t.resultFD.Close()
 			if err != nil {
-				log.Errorf("result fd close error", err)
+				log.Errorf("result fd close error %v", err)
 			}
 		}
 	}()

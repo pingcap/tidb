@@ -59,14 +59,13 @@ func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Colum
 	for i, col := range tblCols {
 		if col.Name.L == nodeColName.Name.Name.L {
 			return &Column{
-				FromID:      1,
 				ColName:     col.Name,
 				OrigTblName: sr.tbl.Name,
 				DBName:      model.NewCIStr(sr.ctx.GetSessionVars().CurrentDB),
 				TblName:     sr.tbl.Name,
 				RetType:     &col.FieldType,
 				ID:          col.ID,
-				Position:    col.Offset,
+				Position:    sr.ctx.GetSessionVars().AllocPlanColumnID(),
 				Index:       i,
 			}, nil
 		}
