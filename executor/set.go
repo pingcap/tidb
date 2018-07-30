@@ -54,7 +54,7 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		// Variable is case insensitive, we use lower case.
 		if v.Name == ast.SetNames {
 			// This is set charset stmt.
-			dt, err := v.Expr.(*expression.Constant).Eval(nil)
+			dt, err := v.Expr.(*expression.Constant).Eval(chunk.Row{})
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -72,7 +72,7 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
-			value, err := v.Expr.Eval(nil)
+			value, err := v.Expr.Eval(chunk.Row{})
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -246,7 +246,7 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		}
 		return
 	}
-	value, err = v.Expr.Eval(nil)
+	value, err = v.Expr.Eval(chunk.Row{})
 	return value, errors.Trace(err)
 }
 

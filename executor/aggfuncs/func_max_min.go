@@ -17,7 +17,9 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 type partialResult4MaxMinInt struct {
@@ -45,6 +47,26 @@ type partialResult4MaxMinFloat32 struct {
 
 type partialResult4MaxMinFloat64 struct {
 	val    float64
+	isNull bool
+}
+
+type partialResult4Time struct {
+	val    types.Time
+	isNull bool
+}
+
+type partialResult4MaxMinDuration struct {
+	val    types.Duration
+	isNull bool
+}
+
+type partialResult4MaxMinString struct {
+	val    string
+	isNull bool
+}
+
+type partialResult4MaxMinJSON struct {
+	val    json.BinaryJSON
 	isNull bool
 }
 
@@ -290,8 +312,204 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 			continue
 		}
 		cmp := input.Compare(&p.val)
-		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
+		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 			p.val = *input
+		}
+	}
+	return nil
+}
+
+type maxMin4String struct {
+	baseMaxMinAggFunc
+}
+
+func (e *maxMin4String) AllocPartialResult() PartialResult {
+	p := new(partialResult4MaxMinString)
+	p.isNull = true
+	return PartialResult(p)
+}
+
+func (e *maxMin4String) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4MaxMinString)(pr)
+	p.isNull = true
+}
+
+func (e *maxMin4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4MaxMinString)(pr)
+	if p.isNull {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendString(e.ordinal, p.val)
+	return nil
+}
+
+func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	p := (*partialResult4MaxMinString)(pr)
+	for _, row := range rowsInGroup {
+		input, isNull, err := e.args[0].EvalString(sctx, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull {
+			continue
+		}
+		if p.isNull {
+			// The string returned by `EvalString` may be referenced to an underlying buffer,
+			// for example ‘Chunk’, which could be reset and reused multiply times.
+			// We have to deep copy that string to avoid some potential risks
+			// when the content of that underlying buffer changed.
+			p.val = stringutil.Copy(input)
+			p.isNull = false
+			continue
+		}
+		cmp := types.CompareString(input, p.val)
+		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
+			p.val = stringutil.Copy(input)
+		}
+	}
+	return nil
+}
+
+type maxMin4Time struct {
+	baseMaxMinAggFunc
+}
+
+func (e *maxMin4Time) AllocPartialResult() PartialResult {
+	p := new(partialResult4Time)
+	p.isNull = true
+	return PartialResult(p)
+}
+
+func (e *maxMin4Time) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4Time)(pr)
+	p.isNull = true
+}
+
+func (e *maxMin4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4Time)(pr)
+	if p.isNull {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendTime(e.ordinal, p.val)
+	return nil
+}
+
+func (e *maxMin4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	p := (*partialResult4Time)(pr)
+	for _, row := range rowsInGroup {
+		input, isNull, err := e.args[0].EvalTime(sctx, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull {
+			continue
+		}
+		if p.isNull {
+			p.val = input
+			p.isNull = false
+			continue
+		}
+		cmp := input.Compare(p.val)
+		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
+			p.val = input
+		}
+	}
+	return nil
+}
+
+type maxMin4Duration struct {
+	baseMaxMinAggFunc
+}
+
+func (e *maxMin4Duration) AllocPartialResult() PartialResult {
+	p := new(partialResult4MaxMinDuration)
+	p.isNull = true
+	return PartialResult(p)
+}
+
+func (e *maxMin4Duration) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4MaxMinDuration)(pr)
+	p.isNull = true
+}
+
+func (e *maxMin4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4MaxMinDuration)(pr)
+	if p.isNull {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendDuration(e.ordinal, p.val)
+	return nil
+}
+
+func (e *maxMin4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	p := (*partialResult4MaxMinDuration)(pr)
+	for _, row := range rowsInGroup {
+		input, isNull, err := e.args[0].EvalDuration(sctx, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull {
+			continue
+		}
+		if p.isNull {
+			p.val = input
+			p.isNull = false
+			continue
+		}
+		cmp := input.Compare(p.val)
+		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
+			p.val = input
+		}
+	}
+	return nil
+}
+
+type maxMin4JSON struct {
+	baseMaxMinAggFunc
+}
+
+func (e *maxMin4JSON) AllocPartialResult() PartialResult {
+	p := new(partialResult4MaxMinJSON)
+	p.isNull = true
+	return PartialResult(p)
+}
+
+func (e *maxMin4JSON) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4MaxMinJSON)(pr)
+	p.isNull = true
+}
+
+func (e *maxMin4JSON) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4MaxMinJSON)(pr)
+	if p.isNull {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendJSON(e.ordinal, p.val)
+	return nil
+}
+
+func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+	p := (*partialResult4MaxMinJSON)(pr)
+	for _, row := range rowsInGroup {
+		input, isNull, err := e.args[0].EvalJSON(sctx, row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if isNull {
+			continue
+		}
+		if p.isNull {
+			p.val = input
+			p.isNull = false
+			continue
+		}
+		cmp := json.CompareBinary(input, p.val)
+		if e.isMax && cmp > 1 || !e.isMax && cmp < -1 {
+			p.val = input
 		}
 	}
 	return nil

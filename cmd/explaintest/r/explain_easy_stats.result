@@ -28,7 +28,7 @@ TableReader_5	1999.00	root	data:TableScan_4
 explain select * from t1 order by c2;
 id	count	task	operator info
 IndexLookUp_13	1999.00	root	
-├─IndexScan_11	1999.00	cop	table:t1, index:c2, range:[<nil>,+inf], keep order:true
+├─IndexScan_11	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:true
 └─TableScan_12	1999.00	cop	table:t1, keep order:false
 explain select * from t2 order by c2;
 id	count	task	operator info
@@ -47,12 +47,12 @@ explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	count	task	operator info
 Projection_6	2481.25	root	test.t1.c1, test.t1.c2, test.t1.c3, test.t2.c1, test.t2.c2
 └─MergeJoin_7	2481.25	root	left outer join, left key:test.t1.c2, right key:test.t2.c1
-  ├─IndexLookUp_17	1998.00	root	
-  │ ├─Selection_16	1998.00	cop	gt(test.t1.c1, 1)
-  │ │ └─IndexScan_14	1999.00	cop	table:t1, index:c2, range:[<nil>,+inf], keep order:true
-  │ └─TableScan_15	1998.00	cop	table:t1, keep order:false
+  ├─IndexLookUp_17	1999.00	root	
+  │ ├─Selection_16	1999.00	cop	gt(test.t1.c1, 1)
+  │ │ └─IndexScan_14	1999.00	cop	table:t1, index:c2, range:[NULL,+inf], keep order:true
+  │ └─TableScan_15	1999.00	cop	table:t1, keep order:false
   └─IndexLookUp_21	1985.00	root	
-    ├─IndexScan_19	1985.00	cop	table:t2, index:c1, range:[<nil>,+inf], keep order:true
+    ├─IndexScan_19	1985.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true
     └─TableScan_20	1985.00	cop	table:t2, keep order:false
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
@@ -67,8 +67,8 @@ explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	1985.00	root	cast(join_agg_0)
 └─IndexJoin_14	1985.00	root	inner join, inner:TableReader_13, outer key:b.c2, inner key:a.c1
-  ├─TableReader_13	1999.00	root	data:TableScan_12
-  │ └─TableScan_12	1999.00	cop	table:a, range:[-inf,+inf], keep order:false
+  ├─TableReader_13	1.00	root	data:TableScan_12
+  │ └─TableScan_12	1.00	cop	table:a, range: decided by [b.c2], keep order:false
   └─HashAgg_21	1985.00	root	group by:col_2, funcs:count(col_0), firstrow(col_1)
     └─TableReader_22	1985.00	root	data:HashAgg_17
       └─HashAgg_17	1985.00	cop	group by:b.c2, funcs:count(b.c2), firstrow(b.c2)

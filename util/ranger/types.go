@@ -67,6 +67,10 @@ func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
 		if cmp != 0 {
 			return false
 		}
+
+		if a.IsNull() {
+			return false
+		}
 	}
 	return !ran.LowExclude && !ran.HighExclude
 }
@@ -110,7 +114,7 @@ func (ran *Range) PrefixEqualLen(sc *stmtctx.StatementContext) (int, error) {
 func formatDatum(d types.Datum, isLeftSide bool) string {
 	switch d.Kind() {
 	case types.KindNull:
-		return "<nil>"
+		return "NULL"
 	case types.KindMinNotNull:
 		return "-inf"
 	case types.KindMaxValue:
@@ -130,6 +134,9 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 		if d.GetUint64() == math.MaxUint64 && !isLeftSide {
 			return "+inf"
 		}
+	case types.KindString, types.KindBytes, types.KindMysqlEnum, types.KindMysqlSet,
+		types.KindMysqlJSON, types.KindBinaryLiteral, types.KindMysqlBit:
+		return fmt.Sprintf("\"%v\"", d.GetValue())
 	}
 	return fmt.Sprintf("%v", d.GetValue())
 }

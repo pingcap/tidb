@@ -2663,7 +2663,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	tk.MustExec(`insert into t2 values(1, 1.1, "2017-08-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
 
 	result = tk.MustQuery("select coalesce(NULL, a), coalesce(NULL, b, a), coalesce(c, NULL, a, b), coalesce(d, NULL), coalesce(d, c), coalesce(NULL, NULL, e, 1), coalesce(f), coalesce(1, a, b, c, d, e, f) from t2")
-	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef 21 1", time.Now().In(tk.Se.GetSessionVars().GetTimeZone()).Format("2006-01-02"))))
+	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef 21 1", time.Now().In(tk.Se.GetSessionVars().Location()).Format("2006-01-02"))))
 
 	// nullif
 	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
@@ -2693,7 +2693,7 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result.Check(testkit.Rows(
 		"Projection_3 10000.00 root eq(test.t.a, test.t.a)",
 		"└─TableReader_5 10000.00 root data:TableScan_4",
-		"  └─TableScan_4 10000.00 cop table:t, range:[-inf,+inf], keep order:false",
+		"  └─TableScan_4 10000.00 cop table:t, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
 
 	// for interval
@@ -2727,8 +2727,23 @@ func (s *testIntegrationSuite) TestCompareBuiltin(c *C) {
 	result = tk.MustQuery(`select least(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), least(cast("2017-01-01" as date), "123", null)`)
 	result.Check(testkit.Rows("123 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|invalid time format: '123'", "Warning|1292|invalid time format: '234'", "Warning|1292|invalid time format: '123'"))
-
 	tk.MustQuery(`select 1 < 17666000000000000000, 1 > 17666000000000000000, 1 = 17666000000000000000`).Check(testkit.Rows("1 0 0"))
+
+	tk.MustExec("drop table if exists t")
+	// insert value at utc timezone
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t(a timestamp)")
+	tk.MustExec("insert into t value('1991-05-06 04:59:28')")
+	// check daylight saving time in Asia/Shanghai
+	tk.MustExec("set time_zone='Asia/Shanghai'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1991-05-06 13:59:28"))
+	// insert an nonexistent time
+	tk.MustExec("set time_zone = 'America/Los_Angeles'")
+	_, err := tk.Exec("insert into t value('2011-03-13 02:00:00')")
+	c.Assert(err, NotNil)
+	// reset timezone to a +8 offset
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1991-05-06 12:59:28"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint unsigned)")
@@ -2839,6 +2854,20 @@ func (s *testIntegrationSuite) TestAggregationBuiltinBitAnd(c *C) {
 	result.Check(testkit.Rows("0"))
 	result = tk.MustQuery("select a, bit_and(a) from t group by a order by a desc")
 	result.Check(testkit.Rows("7 7", "5 5", "3 3", "2 2", "<nil> 18446744073709551615"))
+}
+
+func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(100))")
+	tk.MustExec("insert into t values('hello'), ('hello')")
+	result := tk.MustQuery("select group_concat(a) from t")
+	result.Check(testkit.Rows("hello,hello"))
+
+	tk.MustExec("set @@group_concat_max_len=7")
+	result = tk.MustQuery("select group_concat(a) from t")
+	result.Check(testkit.Rows("hello,h"))
 }
 
 func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
@@ -3385,4 +3414,18 @@ func (s *testIntegrationSuite) TestTwoDecimalTruncate(c *C) {
 	res.Check(testkit.Rows("123.12345 123.1"))
 	res = tk.MustQuery("select 2.00000000000000000000000000000001 * 1.000000000000000000000000000000000000000000002")
 	res.Check(testkit.Rows("2.000000000000000000000000000000"))
+}
+
+func (s *testIntegrationSuite) TestPrefixIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer s.cleanEnv(c)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t1 (
+  			name varchar(12) DEFAULT NULL,
+  			KEY pname (name(12))
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
+
+	tk.MustExec("insert into t1 values('借款策略集_网页');")
+	res := tk.MustQuery("select * from t1 where name = '借款策略集_网页';")
+	res.Check(testkit.Rows("借款策略集_网页"))
 }

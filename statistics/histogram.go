@@ -198,15 +198,18 @@ func isAnalyzed(flag int64) bool {
 }
 
 // SaveStatsToStorage saves the stats to storage.
-func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch, isAnalyzed int64) error {
+func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg *Histogram, cms *CMSketch, isAnalyzed int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(ctx, "begin")
+	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		err = finishTransaction(context.Background(), exec, err)
+	}()
 	txn := h.mu.ctx.Txn()
 	version := txn.StartTS()
 	var sql string
@@ -218,11 +221,11 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 	}
 	_, err = exec.Execute(ctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	data, err := encodeCMSketch(cms)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	flag := 0
 	if isAnalyzed == 1 {
@@ -232,12 +235,12 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, data, hg.TotColSize, curStatsVersion, flag)
 	_, err = exec.Execute(ctx, replaceSQL)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	deleteSQL := fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, hg.ID)
 	_, err = exec.Execute(ctx, deleteSQL)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	sc := h.mu.ctx.GetSessionVars().StmtCtx
 	for i := range hg.Buckets {
@@ -248,43 +251,40 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count int64, isIndex int, hg 
 		var upperBound types.Datum
 		upperBound, err = hg.GetUpper(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 		var lowerBound types.Datum
 		lowerBound, err = hg.GetLower(i).ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 		insertSQL := fmt.Sprintf("insert into mysql.stats_buckets(table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound) values(%d, %d, %d, %d, %d, %d, X'%X', X'%X')", tableID, isIndex, hg.ID, i, count, hg.Buckets[i].Repeat, lowerBound.GetBytes(), upperBound.GetBytes())
 		_, err = exec.Execute(ctx, insertSQL)
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 	}
-	_, err = exec.Execute(ctx, "commit")
-	return errors.Trace(err)
+	return
 }
 
 // SaveMetaToStorage will save stats_meta to storage.
-func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) error {
+func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64) (err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	ctx := context.TODO()
 	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.Execute(ctx, "begin")
+	_, err = exec.Execute(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
 	var sql string
 	version := h.mu.ctx.Txn().StartTS()
 	sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values (%d, %d, %d, %d)", version, tableID, count, modifyCount)
-	if _, err = exec.Execute(ctx, sql); err != nil {
-		_, err1 := exec.Execute(ctx, "rollback")
-		terror.Log(errors.Trace(err1))
-		return errors.Trace(err)
-	}
-	_, err = exec.Execute(ctx, "commit")
-	return errors.Trace(err)
+	_, err = exec.Execute(ctx, sql)
+	return
 }
 
 func (h *Handle) histogramFromStorage(tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64) (*Histogram, error) {
@@ -605,6 +605,10 @@ func (hg *Histogram) popFirstBucket() {
 	hg.Bounds = c
 }
 
+func (hg *Histogram) isIndexHist() bool {
+	return hg.tp.Tp == mysql.TypeBlob
+}
+
 // MergeHistograms merges two histograms.
 func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram, bucketSize int) (*Histogram, error) {
 	if lh.Len() == 0 {
@@ -665,6 +669,15 @@ func (hg *Histogram) AvgCountPerValue(totalCount int64) float64 {
 	return float64(totalCount) / curNDV
 }
 
+func (hg *Histogram) outOfRange(val types.Datum) bool {
+	if hg.Bounds == nil {
+		return true
+	}
+	len := hg.Bounds.NumRows()
+	return chunk.Compare(hg.Bounds.GetRow(0), 0, &val) > 0 ||
+		chunk.Compare(hg.Bounds.GetRow(len-1), 0, &val) < 0
+}
+
 // ErrorRate is the error rate of estimate row count by bucket and cm sketch.
 type ErrorRate struct {
 	ErrorTotal float64
@@ -676,9 +689,9 @@ type ErrorRate struct {
 // then the column is not pseudo.
 const MaxErrorRate = 0.25
 
-// IsPseudo is true when the total of query is zero or the average error
+// NotAccurate is true when the total of query is zero or the average error
 // rate is greater than MaxErrorRate.
-func (e *ErrorRate) IsPseudo() bool {
+func (e *ErrorRate) NotAccurate() bool {
 	if e.QueryTotal == 0 {
 		return true
 	}
@@ -712,19 +725,22 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum) (f
 	if val.IsNull() {
 		return float64(c.NullCount), nil
 	}
-	if c.CMSketch != nil {
-		count, err := c.CMSketch.queryValue(sc, val)
-		return float64(count), errors.Trace(err)
-	}
 	// all the values is null
 	if c.Histogram.Bounds == nil {
 		return 0.0, nil
+	}
+	if c.NDV > 0 && c.outOfRange(val) {
+		return c.totalRowCount() / (float64(c.NDV)), nil
+	}
+	if c.CMSketch != nil {
+		count, err := c.CMSketch.queryValue(sc, val)
+		return float64(count), errors.Trace(err)
 	}
 	return c.Histogram.equalRowCount(val), nil
 }
 
 // getColumnRowCount estimates the row count by a slice of Range.
-func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range) (float64, error) {
+func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, modifyCount int64) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
 		cmp, err := rg.LowVal[0].CompareDatum(sc, &rg.HighVal[0])
@@ -745,6 +761,9 @@ func (c *Column) getColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		}
 		// the interval case.
 		cnt := c.betweenRowCount(rg.LowVal[0], rg.HighVal[0])
+		if c.outOfRange(rg.LowVal[0]) || c.outOfRange(rg.HighVal[0]) {
+			cnt += float64(modifyCount) / outOfRangeBetweenRate
+		}
 		if rg.LowExclude {
 			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0])
 			if err != nil {
@@ -783,13 +802,17 @@ func (idx *Index) String() string {
 }
 
 func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte) float64 {
-	if idx.CMSketch != nil {
-		return float64(idx.CMSketch.queryBytes(b))
+	val := types.NewBytesDatum(b)
+	if idx.NDV > 0 && idx.outOfRange(val) {
+		return idx.totalRowCount() / (float64(idx.NDV))
 	}
-	return idx.Histogram.equalRowCount(types.NewBytesDatum(b))
+	if idx.CMSketch != nil {
+		return float64(idx.CMSketch.QueryBytes(b))
+	}
+	return idx.Histogram.equalRowCount(val)
 }
 
-func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.Range) (float64, error) {
+func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*ranger.Range, modifyCount int64) (float64, error) {
 	totalCount := float64(0)
 	for _, indexRange := range indexRanges {
 		lb, err := codec.EncodeKey(sc, nil, indexRange.LowVal...)
@@ -816,6 +839,9 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		l := types.NewBytesDatum(lb)
 		r := types.NewBytesDatum(rb)
 		totalCount += idx.betweenRowCount(l, r)
+		if idx.outOfRange(l) || idx.outOfRange(r) {
+			totalCount += float64(modifyCount) / outOfRangeBetweenRate
+		}
 	}
 	if totalCount > idx.totalRowCount() {
 		totalCount = idx.totalRowCount()

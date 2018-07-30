@@ -17,7 +17,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -376,6 +375,9 @@ func (s *testSuite) TestGroupConcatAggr(c *C) {
 
 	result = tk.MustQuery("select id, group_concat(name SEPARATOR '') from test group by id order by id")
 	result.Check(testkit.Rows("1 102030", "2 20", "3 200500"))
+
+	result = tk.MustQuery("select id, group_concat(name SEPARATOR '123') from test group by id order by id")
+	result.Check(testkit.Rows("1 101232012330", "2 20", "3 200123500"))
 }
 
 func (s *testSuite) TestSelectDistinct(c *C) {
@@ -548,22 +550,6 @@ func (s *testSuite) TestAggEliminator(c *C) {
 	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
 	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
-}
-
-func (s *testSuite) TestIssue5663(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
-	planCahche := tk.Se.GetSessionVars().PlanCacheEnabled
-	defer func() {
-		tk.Se.GetSessionVars().PlanCacheEnabled = planCahche
-	}()
-
-	tk.Se.GetSessionVars().PlanCacheEnabled = true
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1 (i int unsigned, primary key(i));")
-	tk.MustExec("insert into t1 values (1),(2),(3);")
-	tk.MustQuery("select group_concat(i) from t1 where i > 1;").Check(testkit.Rows("2,3"))
-	tk.MustQuery("select group_concat(i) from t1 where i > 1;").Check(testkit.Rows("2,3"))
 }
 
 func (s *testSuite) TestMaxMinFloatScalaFunc(c *C) {

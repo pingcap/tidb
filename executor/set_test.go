@@ -17,7 +17,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 	"golang.org/x/net/context"
 )
 
@@ -88,16 +90,16 @@ func (s *testSuite) TestSetVar(c *C) {
 	// Set default
 	// {ScopeGlobal | ScopeSession, "low_priority_updates", "OFF"},
 	// For global var
-	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("0"))
 	tk.MustExec(`set @@global.low_priority_updates="ON";`)
-	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("1"))
 	tk.MustExec(`set @@global.low_priority_updates=DEFAULT;`) // It will be set to compiled-in default value.
-	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("0"))
 	// For session
-	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("0"))
 	tk.MustExec(`set @@global.low_priority_updates="ON";`)
 	tk.MustExec(`set @@session.low_priority_updates=DEFAULT;`) // It will be set to global var value.
-	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("1"))
 
 	// For mysql jdbc driver issue.
 	tk.MustQuery(`select @@session.tx_read_only;`).Check(testkit.Rows("0"))
@@ -212,15 +214,18 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
 	tk.MustExec("set global avoid_temporal_upgrade = on")
-	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.avoid_temporal_upgrade = off")
-	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("off"))
+	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("0"))
 	tk.MustExec("set session sql_log_bin = on")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 	tk.MustExec("set sql_log_bin = off")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("off"))
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("0"))
 	tk.MustExec("set @@sql_log_bin = on")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_general_log = 1")
+	tk.MustExec("set @@tidb_general_log = 0")
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
@@ -246,4 +251,67 @@ func (s *testSuite) TestSetCharset(c *C) {
 
 	// Issue 1523
 	tk.MustExec(`SET NAMES binary`)
+}
+
+func (s *testSuite) TestValidateSetVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	_, err = tk.Exec("set global tidb_distsql_scan_concurrency=-1;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency='fff';")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency=-1;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	_, err = tk.Exec("set @@tidb_batch_delete='ok';")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	tk.MustExec("set @@tidb_batch_delete='On';")
+	tk.MustExec("set @@tidb_batch_delete='oFf';")
+	tk.MustExec("set @@tidb_batch_delete=1;")
+	tk.MustExec("set @@tidb_batch_delete=0;")
+
+	_, err = tk.Exec("set @@tidb_batch_delete=3;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	_, err = tk.Exec("set @@tidb_mem_quota_mergejoin='tidb';")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+
+	tk.MustExec("set @@group_concat_max_len=1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
+	result := tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("4"))
+
+	_, err = tk.Exec("set @@group_concat_max_len = 18446744073709551616")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	// Test illegal type
+	_, err = tk.Exec("set @@group_concat_max_len='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@default_week_format=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect default_week_format value: '-1'"))
+	result = tk.MustQuery("select @@default_week_format;")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@default_week_format=9")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect default_week_format value: '9'"))
+	result = tk.MustQuery("select @@default_week_format;")
+	result.Check(testkit.Rows("7"))
+
+	_, err = tk.Exec("set @@error_count = 0")
+	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue)
+
+	_, err = tk.Exec("set @@warning_count = 0")
+	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue)
+
+	tk.MustExec("set time_zone='SySTeM'")
+	result = tk.MustQuery("select @@time_zone;")
+	result.Check(testkit.Rows("SYSTEM"))
+
 }

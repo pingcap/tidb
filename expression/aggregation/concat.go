@@ -17,15 +17,23 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type concatFunction struct {
 	aggFunction
 	separator string
 	sepInited bool
+	maxLen    uint64
+	// According to MySQL, a 'group_concat' function generates exactly one 'truncated' warning during its life time, no matter
+	// how many group actually truncated. 'truncated' acts as a sentinel to indicate whether this warning has already been
+	// generated.
+	truncated bool
 }
 
 func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datum) {
@@ -36,7 +44,7 @@ func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datu
 	}
 }
 
-func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row types.Row) error {
+func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row chunk.Row) error {
 	sepArg := cf.Args[len(cf.Args)-1]
 	sepDatum, err := sepArg.Eval(row)
 	if err != nil {
@@ -50,7 +58,7 @@ func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row types.
 }
 
 // Update implements Aggregation interface.
-func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	datumBuf := make([]types.Datum, 0, len(cf.Args))
 	if !cf.sepInited {
 		err := cf.initSeparator(sc, row)
@@ -66,7 +74,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if value.GetValue() == nil {
+		if value.IsNull() {
 			return nil
 		}
 		datumBuf = append(datumBuf, value)
@@ -88,7 +96,17 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	for _, val := range datumBuf {
 		cf.writeValue(evalCtx, val)
 	}
-	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
+	if cf.maxLen > 0 && uint64(evalCtx.Buffer.Len()) > cf.maxLen {
+		i := mathutil.MaxInt
+		if uint64(i) > cf.maxLen {
+			i = int(cf.maxLen)
+		}
+		evalCtx.Buffer.Truncate(i)
+		if !cf.truncated {
+			sc.AppendWarning(expression.ErrCutValueGroupConcat)
+		}
+		cf.truncated = true
+	}
 	return nil
 }
 

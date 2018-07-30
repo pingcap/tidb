@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"io"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -97,17 +99,19 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 
 // index is the data structure for index data in the KV store.
 type index struct {
-	tblInfo *model.TableInfo
 	idxInfo *model.IndexInfo
+	tblInfo *model.TableInfo
 	prefix  kv.Key
 }
 
 // NewIndex builds a new Index object.
-func NewIndex(tableInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+// id may be partition or table ID, depends on whether the table is a PartitionedTable.
+func NewIndex(id int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
 	index := &index{
-		tblInfo: tableInfo,
 		idxInfo: indexInfo,
-		prefix:  tablecodec.EncodeTableIndexPrefix(tableInfo.ID, indexInfo.ID),
+		tblInfo: tblInfo,
+		// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
+		prefix: tablecodec.EncodeTableIndexPrefix(id, indexInfo.ID),
 	}
 	return index
 }
@@ -123,6 +127,33 @@ func (c *index) getIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	}
 
 	return make([]byte, 0, defaultCap)
+}
+
+// truncateIndexValuesIfNeeded truncate the index values that be created that use only the leading part of column values.
+func (c *index) truncateIndexValuesIfNeeded(indexedValues []types.Datum) []types.Datum {
+	for i := 0; i < len(indexedValues); i++ {
+		v := &indexedValues[i]
+		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+			ic := c.idxInfo.Columns[i]
+			colCharset := c.tblInfo.Columns[ic.Offset].Charset
+			if colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4 {
+				val := v.GetBytes()
+				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(val) > ic.Length {
+					rs := bytes.Runes(val)
+					truncateStr := string(rs[:ic.Length])
+					// truncate value and limit its length
+					v.SetString(truncateStr)
+				}
+			} else {
+				if ic.Length != types.UnspecifiedLength && len(v.GetBytes()) > ic.Length {
+					// truncate value and limit its length
+					v.SetBytes(v.GetBytes()[:ic.Length])
+				}
+			}
+		}
+	}
+
+	return indexedValues
 }
 
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the
@@ -144,16 +175,7 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 
 	// For string columns, indexes can be created that use only the leading part of column values,
 	// using col_name(length) syntax to specify an index prefix length.
-	for i := 0; i < len(indexedValues); i++ {
-		v := &indexedValues[i]
-		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
-			ic := c.idxInfo.Columns[i]
-			if ic.Length != types.UnspecifiedLength && len(v.GetBytes()) > ic.Length {
-				// truncate value and limit its length
-				v.SetBytes(v.GetBytes()[:ic.Length])
-			}
-		}
-	}
+	indexedValues = c.truncateIndexValuesIfNeeded(indexedValues)
 	key = c.getIndexKeyBuf(buf, len(c.prefix)+len(indexedValues)*9+9)
 	key = append(key, []byte(c.prefix)...)
 	key, err = codec.EncodeKey(sc, key, indexedValues...)
@@ -242,6 +264,7 @@ func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
+
 	it, err := r.Seek(key)
 	if err != nil {
 		return nil, false, errors.Trace(err)

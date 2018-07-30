@@ -301,9 +301,6 @@ type DataSource struct {
 	// relevantIndices means the indices match the push down conditions
 	relevantIndices []bool
 
-	// statsAfterSelect is the statsInfo for dataSource and selection.
-	statsAfterSelect *statsInfo
-
 	statisticTable *statistics.Table
 
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
@@ -443,7 +440,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		if ok && !ds.statisticTable.Pseudo {
 			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
 		} else {
-			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerCount()
+			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
 		}
 	}
 	if path.indexFilters != nil {
@@ -452,7 +449,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 			selectivity = selectionFactor
 		}
-		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.statsAfterSelect.count)
+		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.count)
 	}
 	// Check whether there's only point query.
 	noIntervalRanges := true

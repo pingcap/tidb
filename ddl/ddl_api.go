@@ -831,7 +831,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	pi, err := buildTablePartitionInfo(ctx, d, s, cols)
+	pi, err := buildTablePartitionInfo(ctx, d, s)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -842,6 +842,18 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			return errors.Trace(err)
 		}
 		err = checkCreatePartitionValue(pi)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = checkAddPartitionTooManyPartitions(len(pi.Definitions))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = checkPartitionFuncValid(s.Partition.Expr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = checkPartitionFuncType(ctx, s, cols, tbInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1217,6 +1229,11 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 	partInfo, err := buildPartitionInfo(meta, d, spec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = checkAddPartitionTooManyPartitions(len(meta.Partition.Definitions) + len(partInfo.Definitions))
 	if err != nil {
 		return errors.Trace(err)
 	}

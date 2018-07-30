@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 const (
@@ -206,8 +207,8 @@ type SessionVars struct {
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
 
-	// PlanCacheEnabled stores the global config "plan-cache-enabled", and it will be only updated in tests.
-	PlanCacheEnabled bool
+	// PlanColumnID is the unique id for column when building plan.
+	PlanColumnID int
 
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
@@ -251,7 +252,7 @@ type SessionVars struct {
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-	CurrInsertValues interface{}
+	CurrInsertValues chunk.Row
 
 	// Per-connection time zones. Each client that connects has its own time zone setting, given by the session time_zone variable.
 	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
@@ -341,7 +342,6 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableStreaming = "0"
 	}
-	vars.PlanCacheEnabled = config.GetGlobalConfig().PlanCache.Enabled
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 	return vars
 }
@@ -356,6 +356,12 @@ func (s *SessionVars) CleanBuffers() {
 	if !s.ImportingData {
 		s.GetWriteStmtBufs().clean()
 	}
+}
+
+// AllocPlanColumnID allocates column id for planner.
+func (s *SessionVars) AllocPlanColumnID() int {
+	s.PlanColumnID++
+	return s.PlanColumnID
 }
 
 // GetCharsetInfo gets charset and collation for current context.
@@ -411,8 +417,8 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
-// GetTimeZone returns the value of time_zone session variable.
-func (s *SessionVars) GetTimeZone() *time.Location {
+// Location returns the value of time_zone session variable. If it is nil, then return time.Local.
+func (s *SessionVars) Location() *time.Location {
 	loc := s.TimeZone
 	if loc == nil {
 		loc = time.Local
@@ -549,8 +555,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableTablePartition:
 		s.EnableTablePartition = TiDBOptOn(val)
 	case TiDBDDLReorgWorkerCount:
-		workerCnt := tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
-		SetDDLReorgWorkerCounter(int32(workerCnt))
+		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	}
 	s.systems[name] = val
 	return nil

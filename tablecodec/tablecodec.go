@@ -42,9 +42,11 @@ var (
 )
 
 const (
-	idLen           = 8
-	prefixLen       = 1 + idLen /*tableID*/ + 2
-	recordRowKeyLen = prefixLen + idLen /*handle*/
+	idLen                 = 8
+	prefixLen             = 1 + idLen /*tableID*/ + 2
+	recordRowKeyLen       = prefixLen + idLen /*handle*/
+	tablePrefixLength     = 1
+	recordPrefixSepLength = 2
 )
 
 // TableSplitKeyLen is the length of key 't{table_id}' which is used for table split.
@@ -84,25 +86,36 @@ func EncodeRecordKey(recordPrefix kv.Key, h int64) kv.Key {
 	return buf
 }
 
+func hasTablePrefix(key kv.Key) bool {
+	return key[0] == tablePrefix[0]
+}
+
+func hasRecordPrefixSep(key kv.Key) bool {
+	return key[0] == recordPrefixSep[0] && key[1] == recordPrefixSep[1]
+}
+
 // DecodeRecordKey decodes the key and gets the tableID, handle.
 func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
+	if len(key) <= prefixLen {
+		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", key)
+	}
+
 	k := key
-	if !key.HasPrefix(tablePrefix) {
+	if !hasTablePrefix(key) {
 		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
 	}
 
-	key = key[len(tablePrefix):]
+	key = key[tablePrefixLength:]
 	key, tableID, err = codec.DecodeInt(key)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
-	if !key.HasPrefix(recordPrefixSep) {
+	if !hasRecordPrefixSep(key) {
 		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
 	}
 
-	key = key[len(recordPrefixSep):]
-
+	key = key[recordPrefixSepLength:]
 	key, handle, err = codec.DecodeInt(key)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -189,8 +202,11 @@ func DecodeTableID(key kv.Key) int64 {
 
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (int64, error) {
-	_, handle, err := DecodeRecordKey(key)
-	return handle, errors.Trace(err)
+	if len(key) != recordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
+		return 0, errInvalidKey.Gen("invalid key - %q", key)
+	}
+	u := binary.BigEndian.Uint64(key[prefixLen:])
+	return codec.DecodeCmpUintToInt(u), nil
 }
 
 // EncodeValue encodes a go value to bytes.

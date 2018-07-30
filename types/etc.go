@@ -87,7 +87,7 @@ func IsTemporalWithDate(tp byte) bool {
 // IsBinaryStr returns a boolean indicating
 // whether the field type is a binary string type.
 func IsBinaryStr(ft *FieldType) bool {
-	if ft.Collate == charset.CollationBin && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeUnspecified(ft.Tp)) {
+	if ft.Collate == charset.CollationBin && IsString(ft) {
 		return true
 	}
 	return false
@@ -96,10 +96,16 @@ func IsBinaryStr(ft *FieldType) bool {
 // IsNonBinaryStr returns a boolean indicating
 // whether the field type is a non-binary string type.
 func IsNonBinaryStr(ft *FieldType) bool {
-	if ft.Collate != charset.CollationBin && (IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeUnspecified(ft.Tp)) {
+	if ft.Collate != charset.CollationBin && IsString(ft) {
 		return true
 	}
 	return false
+}
+
+// IsString returns a boolean indicating
+// whether the field type is a string type.
+func IsString(ft *FieldType) bool {
+	return IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeUnspecified(ft.Tp)
 }
 
 var type2Str = map[byte]string{
@@ -132,9 +138,36 @@ var type2Str = map[byte]string{
 	mysql.TypeYear:       "year",
 }
 
+var kind2Str = map[byte]string{
+	KindNull:          "null",
+	KindInt64:         "bigint",
+	KindUint64:        "unsigned bigint",
+	KindFloat32:       "float",
+	KindFloat64:       "double",
+	KindString:        "char",
+	KindBytes:         "bytes",
+	KindBinaryLiteral: "bit/hex literal",
+	KindMysqlDecimal:  "decimal",
+	KindMysqlDuration: "time",
+	KindMysqlEnum:     "enum",
+	KindMysqlBit:      "bit",
+	KindMysqlSet:      "set",
+	KindMysqlTime:     "datetime",
+	KindInterface:     "interface",
+	KindMinNotNull:    "min_not_null",
+	KindMaxValue:      "max_value",
+	KindRaw:           "raw",
+	KindMysqlJSON:     "json",
+}
+
 // TypeStr converts tp to a string.
 func TypeStr(tp byte) (r string) {
 	return type2Str[tp]
+}
+
+// KindStr converts kind to a string.
+func KindStr(kind byte) (r string) {
+	return kind2Str[kind]
 }
 
 // TypeToStr converts a field to a string.

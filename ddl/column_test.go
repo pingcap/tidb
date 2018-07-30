@@ -61,8 +61,8 @@ func (s *testColumnSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
-func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	colName string, pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
+func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string,
+	pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
 	col := &model.ColumnInfo{
 		Name:               model.NewCIStr(colName),
 		Offset:             len(tblInfo.Columns),
@@ -79,7 +79,12 @@ func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col, pos, 0},
 	}
+	return job
+}
 
+func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	colName string, pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
+	job := buildCreateColumnJob(dbInfo, tblInfo, colName, pos, defaultValue)
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
@@ -87,14 +92,18 @@ func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo
 	return job
 }
 
-func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
-	job := &model.Job{
+func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
+	return &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionDropColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{model.NewCIStr(colName)},
 	}
+}
+
+func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
+	job := buildDropColumnJob(dbInfo, tblInfo, colName)
 	err := d.doDDLJob(ctx, job)
 	if isError {
 		c.Assert(err, NotNil)
@@ -275,7 +284,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 	}
 	colMap := make(map[int64]*types.FieldType)
 	colMap[col.ID] = &col.FieldType
-	rowMap, err := tablecodec.DecodeRow(data, colMap, ctx.GetSessionVars().GetTimeZone())
+	rowMap, err := tablecodec.DecodeRow(data, colMap, ctx.GetSessionVars().Location())
 	if err != nil {
 		return errors.Trace(err)
 	}

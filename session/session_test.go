@@ -38,10 +38,10 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -110,18 +110,11 @@ func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogR
 }
 
 func (s *testSessionSuite) TestForCoverage(c *C) {
-	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
-
 	// Just for test coverage.
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	planCache := tk.Se.GetSessionVars().PlanCacheEnabled
-	defer func() {
-		tk.Se.GetSessionVars().PlanCacheEnabled = planCache
-	}()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
 	tk.MustExec("insert t values ()")
-	tk.Se.GetSessionVars().PlanCacheEnabled = true
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values ()")
 
@@ -1587,7 +1580,7 @@ func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
 	tk.MustExec("alter table t drop column b")
 	tk1.MustExec("execute stmt using @a, @a")
 	_, err := tk1.Exec("commit")
-	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, plan.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
@@ -1603,7 +1596,7 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 	// When tk1 commit, it will find schema already changed.
 	tk1.MustExec("insert into t values (4, 4)")
 	_, err := tk1.Exec("commit")
-	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrWrongValueCountOnRow), IsTrue)
 }
 
 func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
@@ -2119,4 +2112,51 @@ func (s *testSessionSuite) TestDisableTxnAutoRetry(c *C) {
 
 	tk1.MustExec("update no_retry set id = 7")
 	tk1.MustExec("commit")
+}
+
+// For issue #7034
+func (s *testSessionSuite) TestSetGroupConcatMaxLen(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// Normal case
+	tk.MustExec("set global group_concat_max_len = 100")
+	tk.MustExec("set @@session.group_concat_max_len = 50")
+	result := tk.MustQuery("show global variables  where variable_name='group_concat_max_len';")
+	result.Check(testkit.Rows("group_concat_max_len 100"))
+
+	result = tk.MustQuery("show session variables  where variable_name='group_concat_max_len';")
+	result.Check(testkit.Rows("group_concat_max_len 50"))
+
+	result = tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("50"))
+
+	result = tk.MustQuery("select @@global.group_concat_max_len;")
+	result.Check(testkit.Rows("100"))
+
+	result = tk.MustQuery("select @@session.group_concat_max_len;")
+	result.Check(testkit.Rows("50"))
+
+	tk.MustExec("set @@group_concat_max_len = 1024")
+
+	result = tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("1024"))
+
+	result = tk.MustQuery("select @@global.group_concat_max_len;")
+	result.Check(testkit.Rows("100"))
+
+	result = tk.MustQuery("select @@session.group_concat_max_len;")
+	result.Check(testkit.Rows("1024"))
+
+	// Test value out of range
+	tk.MustExec("set @@group_concat_max_len=1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
+	result = tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("4"))
+
+	_, err := tk.Exec("set @@group_concat_max_len = 18446744073709551616")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	// Test illegal type
+	_, err = tk.Exec("set @@group_concat_max_len='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 }

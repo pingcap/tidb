@@ -321,7 +321,7 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
 	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
 	newKeyOff := make([]int, 0, len(keyOff2IdxOff))
-	newOtherConds := make([]expression.Expression, 0, len(p.OtherConditions)+len(p.EqualConditions))
+	newOtherConds := make([]expression.Expression, len(p.OtherConditions), len(p.OtherConditions)+len(p.EqualConditions))
 	copy(newOtherConds, p.OtherConditions)
 	for keyOff, idxOff := range keyOff2IdxOff {
 		if keyOff2IdxOff[keyOff] < 0 {
@@ -390,7 +390,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 			keyOff2IdxOff[i] = 0
 		}
 		if pkMatched {
-			innerPlan := x.forceToTableScan(pkCol)
+			innerPlan := p.constructInnerTableScan(x, pkCol, outerJoinKeys)
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
 			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, keyOff2IdxOff)
@@ -421,10 +421,92 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		}
 	}
 	if bestIndexInfo != nil {
-		innerPlan := x.forceToIndexScan(bestIndexInfo, remainedOfBest)
+		innerPlan := p.constructInnerIndexScan(x, bestIndexInfo, remainedOfBest, outerJoinKeys)
 		return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, rangesOfBest, keyOff2IdxOff)
 	}
 	return nil
+}
+
+// constructInnerTableScan is specially used to construct the inner plan for PhysicalIndexJoin.
+func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column) PhysicalPlan {
+	var ranges []*ranger.Range
+	if pk != nil {
+		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
+	} else {
+		ranges = ranger.FullIntRange(false)
+	}
+	ts := PhysicalTableScan{
+		Table:           ds.tableInfo,
+		Columns:         ds.Columns,
+		TableAsName:     ds.TableAsName,
+		DBName:          ds.DBName,
+		filterCondition: ds.pushedDownConds,
+		Ranges:          ranges,
+		rangeDecidedBy:  outerJoinKeys,
+	}.init(ds.ctx)
+	ts.SetSchema(ds.schema)
+
+	var rowCount float64
+	pkHist, ok := ds.statisticTable.Columns[pk.ID]
+	if ok && !ds.statisticTable.Pseudo {
+		rowCount = pkHist.AvgCountPerValue(ds.statisticTable.Count)
+	} else {
+		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
+	}
+
+	ts.stats = newSimpleStats(rowCount)
+	ts.stats.usePseudoStats = ds.statisticTable.Pseudo
+
+	copTask := &copTask{
+		tablePlan:         ts,
+		indexPlanFinished: true,
+	}
+	ts.addPushedDownSelection(copTask, ds.stats)
+	t := finishCopTask(ds.ctx, copTask)
+	return t.plan()
+}
+
+// constructInnerIndexScan is specially used to construct the inner plan for PhysicalIndexJoin.
+func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, remainedConds []expression.Expression, outerJoinKeys []*expression.Column) PhysicalPlan {
+	is := PhysicalIndexScan{
+		Table:            ds.tableInfo,
+		TableAsName:      ds.TableAsName,
+		DBName:           ds.DBName,
+		Columns:          ds.Columns,
+		Index:            idx,
+		dataSourceSchema: ds.schema,
+		KeepOrder:        false,
+		Ranges:           ranger.FullRange(),
+		rangeDecidedBy:   outerJoinKeys,
+	}.init(ds.ctx)
+	is.filterCondition = remainedConds
+
+	var rowCount float64
+	idxHist, ok := ds.statisticTable.Indices[idx.ID]
+	if ok && !ds.statisticTable.Pseudo {
+		rowCount = idxHist.AvgCountPerValue(ds.statisticTable.Count)
+	} else {
+		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
+	}
+	is.stats = newSimpleStats(rowCount)
+	is.stats.usePseudoStats = ds.statisticTable.Pseudo
+
+	cop := &copTask{
+		indexPlan: is,
+	}
+	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
+		// On this way, it's double read case.
+		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
+		ts.SetSchema(is.dataSourceSchema)
+		cop.tablePlan = ts
+	}
+
+	is.initSchema(ds.id, idx, cop.tablePlan != nil)
+	indexConds, tblConds := splitIndexFilterConditions(remainedConds, idx.Columns, ds.tableInfo)
+	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
+	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
+	t := finishCopTask(ds.ctx, cop)
+	return t.plan()
 }
 
 // buildRangeForIndexJoin checks whether this index can be used for building index join and return the range if this index is ok.

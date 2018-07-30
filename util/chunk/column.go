@@ -21,8 +21,7 @@ import (
 )
 
 func (c *column) appendDuration(dur types.Duration) {
-	*(*types.Duration)(unsafe.Pointer(&c.elemBuf[0])) = dur
-	c.finishAppendFixed()
+	c.appendInt64(int64(dur.Duration))
 }
 
 func (c *column) appendMyDecimal(dec *types.MyDecimal) {

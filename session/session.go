@@ -277,6 +277,9 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
+	if s.txn.IsReadOnly() {
+		return nil
+	}
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
@@ -541,7 +544,7 @@ func (s *session) sysSessionPool() *pools.ResourcePool {
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
-func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]types.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	var span opentracing.Span
 	ctx := context.TODO()
 	span, ctx = opentracing.StartSpanFromContext(ctx, "session.ExecRestrictedSQL")
@@ -562,7 +565,7 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]type
 	}
 
 	var (
-		rows   []types.Row
+		rows   []chunk.Row
 		fields []*ast.ResultField
 	)
 	// Execute all recordset, take out the first one as result.
@@ -615,8 +618,8 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	}
 }
 
-func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) {
-	var rows []types.Row
+func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]chunk.Row, error) {
+	var rows []chunk.Row
 	for {
 		chk := rs.NewChunk()
 		err := rs.Next(ctx, chk)
@@ -689,16 +692,22 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
-func (s *session) SetGlobalSysVar(name string, value string) error {
+func (s *session) SetGlobalSysVar(name, value string) error {
 	if name == variable.SQLModeVar {
 		value = mysql.FormatSQLModeStr(value)
 		if _, err := mysql.GetSQLMode(value); err != nil {
 			return errors.Trace(err)
 		}
 	}
+	var sVal string
+	var err error
+	sVal, err = variable.ValidateSetSystemVar(s.sessionVars, name, value)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	sql := fmt.Sprintf(`REPLACE %s.%s VALUES ('%s', '%s');`,
-		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), value)
-	_, _, err := s.ExecRestrictedSQL(s, sql)
+		mysql.SystemDB, mysql.GlobalVariablesTable, strings.ToLower(name), sVal)
+	_, _, err = s.ExecRestrictedSQL(s, sql)
 	return errors.Trace(err)
 }
 
@@ -767,86 +776,45 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 	}
 
 	s.PrepareTxnCtx(ctx)
-	var (
-		cacheKey         kvcache.Key
-		cacheValue       kvcache.Value
-		hitCache         = false
-		connID           = s.sessionVars.ConnectionID
-		planCacheEnabled = s.sessionVars.PlanCacheEnabled // Its value is read from the global configuration, and it will be only updated in tests.
-	)
-
-	if planCacheEnabled {
-		schemaVersion := domain.GetDomain(s).InfoSchema().SchemaMetaVersion()
-		readOnly := s.Txn() == nil || s.Txn().IsReadOnly()
-
-		cacheKey = plan.NewSQLCacheKey(s.sessionVars, sql, schemaVersion, readOnly)
-		cacheValue, hitCache = plan.GlobalPlanCache.Get(cacheKey)
+	connID := s.sessionVars.ConnectionID
+	err = s.loadCommonGlobalVariablesIfNeeded()
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
-	if hitCache {
-		metrics.PlanCacheCounter.WithLabelValues("select").Inc()
-		stmtNode := cacheValue.(*plan.SQLCacheValue).StmtNode
-		stmt := &executor.ExecStmt{
-			InfoSchema: executor.GetInfoSchema(s),
-			Plan:       cacheValue.(*plan.SQLCacheValue).Plan,
-			Expensive:  cacheValue.(*plan.SQLCacheValue).Expensive,
-			Text:       stmtNode.Text(),
-			StmtNode:   stmtNode,
-			Ctx:        s,
-		}
+	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
+	// Step1: Compile query string to abstract syntax trees(ASTs).
+	startTS := time.Now()
+	stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	if err != nil {
+		s.rollbackOnError(ctx)
+		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
+		return nil, errors.Trace(err)
+	}
+	metrics.SessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
+
+	compiler := executor.Compiler{Ctx: s}
+	for _, stmtNode := range stmtNodes {
 		s.PrepareTxnCtx(ctx)
-		if err = executor.ResetStmtCtx(s, stmtNode); err != nil {
-			return nil, errors.Trace(err)
-		}
-		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		err = s.loadCommonGlobalVariablesIfNeeded()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
 
-		charsetInfo, collation := s.sessionVars.GetCharsetInfo()
-
-		// Step1: Compile query string to abstract syntax trees(ASTs).
-		startTS := time.Now()
-		stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
+		startTS = time.Now()
+		// Some executions are done in compile stage, so we reset them before compile.
+		if err := executor.ResetStmtCtx(s, stmtNode); err != nil {
+			return nil, errors.Trace(err)
+		}
+		stmt, err := compiler.Compile(ctx, stmtNode)
 		if err != nil {
 			s.rollbackOnError(ctx)
-			log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
+			log.Warnf("con:%d compile error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
-		metrics.SessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
+		metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
 
-		compiler := executor.Compiler{Ctx: s}
-		for _, stmtNode := range stmtNodes {
-			s.PrepareTxnCtx(ctx)
-
-			// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
-			startTS = time.Now()
-			// Some executions are done in compile stage, so we reset them before compile.
-			if err := executor.ResetStmtCtx(s, stmtNode); err != nil {
-				return nil, errors.Trace(err)
-			}
-			stmt, err := compiler.Compile(ctx, stmtNode)
-			if err != nil {
-				s.rollbackOnError(ctx)
-				log.Warnf("con:%d compile error:\n%v\n%s", connID, err, sql)
-				return nil, errors.Trace(err)
-			}
-			metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
-
-			// Step3: Cache the physical plan if possible.
-			if planCacheEnabled && stmt.Cacheable && len(stmtNodes) == 1 && !s.GetSessionVars().StmtCtx.HistogramsNotLoad() {
-				plan.GlobalPlanCache.Put(cacheKey, plan.NewSQLCacheValue(stmtNode, stmt.Plan, stmt.Expensive))
-			}
-
-			// Step4: Execute the physical plan.
-			if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
-				return nil, errors.Trace(err)
-			}
+		// Step3: Execute the physical plan.
+		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 
@@ -996,7 +964,13 @@ func (s *session) NewTxn() error {
 	txn.SetCap(s.getMembufCap())
 	txn.SetVars(s.sessionVars.KVVars)
 	s.txn.changeInvalidToValid(txn)
-	s.sessionVars.TxnCtx.StartTS = txn.StartTS()
+	is := domain.GetDomain(s).InfoSchema()
+	s.sessionVars.TxnCtx = &variable.TransactionContext{
+		InfoSchema:    is,
+		SchemaVersion: is.SchemaMetaVersion(),
+		CreateTime:    time.Now(),
+		StartTS:       txn.StartTS(),
+	}
 	return nil
 }
 

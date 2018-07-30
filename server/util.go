@@ -45,6 +45,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 )
 
@@ -226,7 +227,7 @@ func dumpBinaryDateTime(data []byte, t types.Time, loc *time.Location) ([]byte, 
 	return data, nil
 }
 
-func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, error) {
+func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
 	buffer = append(buffer, mysql.OKHeader)
 	nullBitmapOff := len(buffer)
 	numBytes4Null := (len(columns) + 7 + 2) / 8
@@ -265,7 +266,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte,
 				return buffer, errors.Trace(err)
 			}
 		case mysql.TypeDuration:
-			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i).Duration)...)
+			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i, 0).Duration)...)
 		case mysql.TypeEnum:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetEnum(i).String()))
 		case mysql.TypeSet:
@@ -279,7 +280,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte,
 	return buffer, nil
 }
 
-func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, error) {
+func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
 	tmp := make([]byte, 0, 20)
 	for i, col := range columns {
 		if row.IsNull(i) {
@@ -319,7 +320,8 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row types.Row) ([]byte, e
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetTime(i).String()))
 		case mysql.TypeDuration:
-			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetDuration(i).String()))
+			dur := row.GetDuration(i, int(col.Decimal))
+			buffer = dumpLengthEncodedString(buffer, hack.Slice(dur.String()))
 		case mysql.TypeEnum:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetEnum(i).String()))
 		case mysql.TypeSet:

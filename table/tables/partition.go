@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
 )
@@ -46,6 +47,12 @@ var _ table.PartitionedTable = &PartitionedTable{}
 // Partition also implements the table.Table interface.
 type Partition struct {
 	tableCommon
+	ID int64
+}
+
+// GetID implements table.Table GetID interface.
+func (p *Partition) GetID() int64 {
+	return p.ID
 }
 
 // PartitionedTable implements the table.PartitionedTable interface.
@@ -53,6 +60,32 @@ type Partition struct {
 type PartitionedTable struct {
 	Table
 	partitionExpr *PartitionExpr
+	partitions    map[int64]*Partition
+}
+
+func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, error) {
+	partitionExpr, err := generatePartitionExpr(tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	partitions := make(map[int64]*Partition)
+	pi := tblInfo.GetPartitionInfo()
+	for _, p := range pi.Definitions {
+		var t Partition
+		err = initTableCommonWithIndices(&t.tableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		t.ID = p.ID
+		partitions[p.ID] = &t
+	}
+
+	return &PartitionedTable{
+		Table:         *tbl,
+		partitionExpr: partitionExpr,
+		partitions:    partitions,
+	}, nil
 }
 
 // PartitionExpr is the partition definition expressions.
@@ -128,7 +161,7 @@ func (t *PartitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 	partitionExprs := t.partitionExpr.UpperBounds
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		var ret int64
-		ret, _, err = partitionExprs[i].EvalInt(ctx, types.DatumRow(r))
+		ret, _, err = partitionExprs[i].EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 		if err != nil {
 			return true // Break the search.
 		}
@@ -146,13 +179,7 @@ func (t *PartitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 
 // GetPartition returns a Table, which is actually a Partition.
 func (t *PartitionedTable) GetPartition(pid int64) table.Table {
-	var ret Partition
-	// Make a shallow copy, change ID to partition ID.
-	ret.tableCommon = t.tableCommon
-	ret.partitionID = pid
-	ret.recordPrefix = tablecodec.GenTableRecordPrefix(pid)
-	ret.indexPrefix = tablecodec.GenTableIndexPrefix(pid)
-	return &ret
+	return t.partitions[pid]
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
@@ -165,4 +192,16 @@ func (t *PartitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, sk
 
 	tbl := t.GetPartition(pid)
 	return tbl.AddRecord(ctx, r, skipHandleCheck)
+}
+
+// RemoveRecord implements table.Table RemoveRecord interface.
+func (t *PartitionedTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
+	partitionInfo := t.meta.GetPartitionInfo()
+	pid, err := t.locatePartition(ctx, partitionInfo, r)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tbl := t.GetPartition(pid)
+	return tbl.RemoveRecord(ctx, h, r)
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
 )
@@ -152,7 +153,7 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		vars.PreparedParams = make([]interface{}, len(e.UsingVars))
 	}
 	for i, usingVar := range e.UsingVars {
-		val, err := usingVar.Eval(nil)
+		val, err := usingVar.Eval(chunk.Row{})
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -439,7 +440,7 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 // operator id, task type, operator info, and the estemated row count.
 func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
-	count := string(strconv.AppendFloat([]byte{}, p.StatsInfo().count, 'f', 2, 64))
+	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().count, 'f', 2, 64))
 	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
 	e.Rows = append(e.Rows, row)
 }

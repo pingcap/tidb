@@ -221,4 +221,6 @@ var (
 	ProcessGeneralLog      uint32
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128
+	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
+	DDLSlowOprThreshold uint32 = 300
 )

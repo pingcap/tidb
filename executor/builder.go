@@ -91,6 +91,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExecute(v)
 	case *plan.Explain:
 		return b.buildExplain(v)
+	case *plan.PointGetPlan:
+		return b.buildPointGet(v)
 	case *plan.Insert:
 		return b.buildInsert(v)
 	case *plan.LoadData:
@@ -618,6 +620,7 @@ func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 	return e
 }
 
+// buildExplain builds a explain executor. `e.rows` collects final result to `ExplainExec`.
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	e := &ExplainExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -945,7 +948,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 				aggDesc.Mode = aggregation.Partial2Mode
 			}
 		}
-		aggFunc := aggDesc.GetAggFunc()
+		aggFunc := aggDesc.GetAggFunc(b.ctx)
 		e.AggFuncs = append(e.AggFuncs, aggFunc)
 		if e.defaultVal != nil {
 			value := aggFunc.GetDefaultValue()
@@ -977,14 +980,14 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	}
 	newAggFuncs := make([]aggfuncs.AggFunc, 0, len(v.AggFuncs))
 	for i, aggDesc := range v.AggFuncs {
-		aggFunc := aggDesc.GetAggFunc()
+		aggFunc := aggDesc.GetAggFunc(b.ctx)
 		e.AggFuncs = append(e.AggFuncs, aggFunc)
 		if e.defaultVal != nil {
 			value := aggFunc.GetDefaultValue()
 			e.defaultVal.AppendDatum(i, &value)
 		}
 		// For new aggregate evaluation framework.
-		newAggFunc := aggfuncs.Build(aggDesc, i)
+		newAggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
 		if newAggFunc != nil {
 			newAggFuncs = append(newAggFuncs, newAggFunc)
 		}
@@ -1029,7 +1032,7 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	// If the calculation row count for this Projection operator is smaller
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
-	if v.StatsInfo().Count() < int64(b.ctx.GetSessionVars().MaxChunkSize) {
+	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
 	return e
@@ -1231,6 +1234,7 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 }
 
 func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) *AnalyzeIndexExec {
+	_, offset := zone(b.ctx)
 	e := &AnalyzeIndexExec{
 		ctx:         b.ctx,
 		tblInfo:     task.TableInfo,
@@ -1240,7 +1244,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			StartTs:        math.MaxUint64,
 			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
-			TimeZoneOffset: timeZoneOffset(b.ctx),
+			TimeZoneOffset: offset,
 		},
 	}
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
@@ -1261,6 +1265,8 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		keepOrder = true
 		cols = append([]*model.ColumnInfo{task.PKInfo}, cols...)
 	}
+
+	_, offset := zone(b.ctx)
 	e := &AnalyzeColumnsExec{
 		ctx:         b.ctx,
 		tblInfo:     task.TableInfo,
@@ -1272,7 +1278,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			StartTs:        math.MaxUint64,
 			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
-			TimeZoneOffset: timeZoneOffset(b.ctx),
+			TimeZoneOffset: offset,
 		},
 	}
 	depth := int32(defaultCMSketchDepth)
@@ -1336,7 +1342,7 @@ func constructDistExec(sctx sessionctx.Context, plans []plan.PhysicalPlan) ([]*t
 func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	dagReq = &tipb.DAGRequest{}
 	dagReq.StartTs = b.getStartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset(b.ctx)
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = zone(b.ctx)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
@@ -1479,7 +1485,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, ts.Hist, ts.StatsInfo().Count(), ts.Desc)
+		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
 	collect := e.feedback.CollectFeedback(len(ts.Ranges))
 	e.dagPB.CollectRangeCounts = &collect
@@ -1491,6 +1497,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 	return e, nil
 }
 
+// buildTableReader builds a table reader executor. It first build a no range table reader,
+// and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableReaderExecutor {
 	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
@@ -1528,10 +1536,13 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		colLens:        is.IdxColLens,
 		plans:          v.IndexPlans,
 	}
+	if isPartition, partitionID := is.IsPartition(); isPartition {
+		e.tableID = partitionID
+	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
+		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
 	collect := e.feedback.CollectFeedback(len(is.Ranges))
 	e.dagPB.CollectRangeCounts = &collect
@@ -1574,6 +1585,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 
+	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
+
 	e := &IndexLookUpExecutor{
 		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:             indexReq,
@@ -1583,7 +1596,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		keepOrder:         is.KeepOrder,
 		desc:              is.Desc,
 		tableRequest:      tableReq,
-		columns:           is.Columns,
+		columns:           ts.Columns,
 		indexStreaming:    indexStreaming,
 		tableStreaming:    tableStreaming,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
@@ -1595,10 +1608,14 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 	}
+	if isPartition, partitionID := ts.IsPartition(); isPartition {
+		e.tableID = partitionID
+	}
+
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
+		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
 	// do not collect the feedback for table request.
 	collectTable := false
