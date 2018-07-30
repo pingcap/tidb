@@ -359,26 +359,6 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				// TODO: Support this type.
 			}
 		}
-
-		// Primary key should not be null.
-		if mysql.HasPriKeyFlag(col.Flag) && hasDefaultValue && col.DefaultValue == nil {
-			return nil, nil, types.ErrInvalidDefault.GenByArgs(col.Name)
-		}
-		// Set primary key flag for outer primary key constraint.
-		// Such as: create table t1 (id int , age int, primary key(id))
-		if !mysql.HasPriKeyFlag(col.Flag) && outPriKeyConstraint != nil {
-			for _, key := range outPriKeyConstraint.Keys {
-				if key.Column.Name.L != col.Name.L {
-					continue
-				}
-				col.Flag |= mysql.PriKeyFlag
-				break
-			}
-		}
-		// Primary key should not be null.
-		if mysql.HasPriKeyFlag(col.Flag) && hasNullFlag {
-			return nil, nil, ErrPrimaryCantHaveNull
-		}
 	}
 
 	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
@@ -399,7 +379,11 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		col.Flag &= ^mysql.BinaryFlag
 		col.Flag |= mysql.ZerofillFlag
 	}
-	err := checkDefaultValue(ctx, col, hasDefaultValue)
+	err := checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	err = checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -517,6 +501,30 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 		return types.ErrInvalidDefault.GenByArgs(c.Name)
 	}
 
+	return nil
+}
+
+// checkPriKeyConstraint check all parts of a PRIMARY KEY must be NOT NULL
+func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool, outPriKeyConstraint *ast.Constraint) error {
+	// Primary key should not be null.
+	if mysql.HasPriKeyFlag(col.Flag) && hasDefaultValue && col.DefaultValue == nil {
+		return types.ErrInvalidDefault.GenByArgs(col.Name)
+	}
+	// Set primary key flag for outer primary key constraint.
+	// Such as: create table t1 (id int , age int, primary key(id))
+	if !mysql.HasPriKeyFlag(col.Flag) && outPriKeyConstraint != nil {
+		for _, key := range outPriKeyConstraint.Keys {
+			if key.Column.Name.L != col.Name.L {
+				continue
+			}
+			col.Flag |= mysql.PriKeyFlag
+			break
+		}
+	}
+	// Primary key should not be null.
+	if mysql.HasPriKeyFlag(col.Flag) && hasNullFlag {
+		return ErrPrimaryCantHaveNull
+	}
 	return nil
 }
 
