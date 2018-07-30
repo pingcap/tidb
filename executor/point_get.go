@@ -83,16 +83,16 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
-		handleVal, err := e.get(idxKey)
-		if err != nil && !kv.ErrNotExist.Equal(err) {
-			return errors.Trace(err)
+		handleVal, err1 := e.get(idxKey)
+		if err1 != nil && !kv.ErrNotExist.Equal(err1) {
+			return errors.Trace(err1)
 		}
 		if len(handleVal) == 0 {
 			return nil
 		}
-		e.handle, err = tables.DecodeHandle(handleVal)
-		if err != nil {
-			return errors.Trace(err)
+		e.handle, err1 = tables.DecodeHandle(handleVal)
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 	}
 	key := tablecodec.EncodeRowKeyWithHandle(e.tblInfo.ID, e.handle)
