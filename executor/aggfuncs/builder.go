@@ -15,17 +15,22 @@ package aggfuncs
 
 import (
 	"fmt"
+	"strconv"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // Build is used to build a specific AggFunc implementation according to the
 // input aggFuncDesc.
-func Build(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	switch aggFuncDesc.Name {
 	case ast.AggFuncCount:
 		return buildCount(aggFuncDesc, ordinal)
@@ -40,7 +45,7 @@ func Build(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	case ast.AggFuncMin:
 		return buildMaxMin(aggFuncDesc, ordinal, false)
 	case ast.AggFuncGroupConcat:
-		return buildGroupConcat(aggFuncDesc, ordinal)
+		return buildGroupConcat(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncBitOr:
 		return buildBitOr(aggFuncDesc, ordinal)
 	case ast.AggFuncBitXor:
@@ -244,7 +249,7 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 }
 
 // buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
-func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// TODO: There might be different kind of types of the args,
 	// we should add CastAsString upon every arg after cast can be pushed down to coprocessor.
 	// And this check can be removed at that time.
@@ -263,15 +268,25 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 		}
 		// The last arg is promised to be a not-null string constant, so the error can be ignored.
 		c, _ := aggFuncDesc.Args[len(aggFuncDesc.Args)-1].(*expression.Constant)
-		sep, _, err := c.EvalString(nil, nil)
+		sep, _, err := c.EvalString(nil, chunk.Row{})
 		// This err should never happen.
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))
 		}
-		if aggFuncDesc.HasDistinct {
-			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
+		var s string
+		s, err = variable.GetSessionSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
+		if err != nil {
+			panic(fmt.Sprintf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
 		}
-		return &groupConcat{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
+		maxLen, err := strconv.ParseUint(s, 10, 64)
+		// Should never happen
+		if err != nil {
+			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))
+		}
+		if aggFuncDesc.HasDistinct {
+			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen}}
+		}
+		return &groupConcat{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen}}
 	}
 }
 

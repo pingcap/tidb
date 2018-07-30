@@ -714,11 +714,11 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.getRowCount(sc, ranges)
+		expected, err = idx.getRowCount(sc, ranges, t.ModifyCount)
 		expected *= idx.getIncreaseFactor(t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.getColumnRowCount(sc, ranges)
+		expected, err = c.getColumnRowCount(sc, ranges, t.ModifyCount)
 		expected *= c.getIncreaseFactor(t.Count)
 	}
 	if err != nil {
