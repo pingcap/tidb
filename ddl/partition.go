@@ -285,7 +285,7 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 // checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
 func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
 	// Returns directly if there is no constraint in the partition table.
-	if tblInfo.Partition.Type != model.PartitionTypeRange || len(constraints) == 0 {
+	if s.Partition.Tp != model.PartitionTypeRange || len(constraints) == 0 {
 		return nil
 	}
 
