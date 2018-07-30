@@ -308,58 +308,60 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, expr ast.Expr
 	// Checks that the partitioning key is included in the constraint.
 	// Here consColNames[0] saves Multiple keys, consColNames[1] saves Primary keys.
 	if !checkConstraintIncludePartKey(partkeys, consColNames[0]) || !checkConstraintIncludePartKey(partkeys, consColNames[1]) {
-		return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs("PRIMARY KEY")
+		return ErrUniqueKeyNeedAllFieldsInPf
 	}
 
-	if len(consColNames[2]) > 0 {
-		// Every unique key on the table must use every column in the table's partitioning expression.
-		//  Here consColNames[2] saves Unique key.
-		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
-		_, ok := consColNames[2][partkeys[0]]
-		if len(consColNames[2]) > 1 || len(partkeys) > 1 || !ok {
-			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs("UNIQUE INDEX")
-		}
+	// Every unique key on the table must use every column in the table's partitioning expression.
+	//  Here consColNames[2] saves Unique key.
+	// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
+	if len(consColNames[2]) == 0 {
+		return nil
+	}
+	_, ok := consColNames[2][partkeys[0]]
+	if len(consColNames[2]) > 1 || len(partkeys) > 1 || !ok {
+		return ErrUniqueKeyNeedAllFieldsInPf
 	}
 	return nil
 }
 
 // saveConstraintsColumnNames Save the column names in table constraints to []map[string]struct{}.
 func saveConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constraint) []map[string]struct{} {
-	constraints := make([]map[string]struct{}, 3)
-	constraints[0] = make(map[string]struct{})
+	multipleKeys := make(map[string]struct{})
 	for _, v := range cons {
 		if v.Tp == ast.ConstraintUniq {
 			for _, key := range v.Keys {
 				if len(v.Keys) > 1 {
-					// Multiple keys.
-					constraints[0][key.Column.Name.L] = struct{}{}
+					multipleKeys[key.Column.Name.L] = struct{}{}
 				}
 			}
 		}
 	}
 
-	constraints[1] = make(map[string]struct{})
-	constraints[2] = make(map[string]struct{})
+	uniKeys := make(map[string]struct{})
+	priKeys := make(map[string]struct{})
 	for _, col := range tblInfo.Cols() {
 		if mysql.HasPriKeyFlag(col.Flag) {
-			// Primary keys.
-			constraints[1][col.Name.L] = struct{}{}
+			priKeys[col.Name.L] = struct{}{}
 		}
 		if mysql.HasUniKeyFlag(col.Flag) {
-			// Unique key.
-			constraints[2][col.Name.L] = struct{}{}
+			uniKeys[col.Name.L] = struct{}{}
 		}
 	}
-	return constraints
+	return []map[string]struct{}{
+		multipleKeys,
+		priKeys,
+		uniKeys,
+	}
 }
 
 // checkConstraintIncludePartKey checks that the partitioning key is included in the constraint.
 func checkConstraintIncludePartKey(partkeys []string, constraints map[string]struct{}) bool {
-	if len(constraints) > 0 {
-		for _, pk := range partkeys {
-			if _, ok := constraints[pk]; !ok {
-				return false
-			}
+	if len(constraints) == 0 {
+		return true
+	}
+	for _, pk := range partkeys {
+		if _, ok := constraints[pk]; !ok {
+			return false
 		}
 	}
 	return true
