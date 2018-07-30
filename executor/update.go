@@ -35,13 +35,13 @@ type UpdateExec struct {
 	updatedRowKeys map[int64]map[int64]struct{}
 	tblID2table    map[int64]table.Table
 
-	rows        []types.DatumRow // The rows fetched from TableExec.
-	newRowsData []types.DatumRow // The new values to be set.
+	rows        [][]types.Datum // The rows fetched from TableExec.
+	newRowsData [][]types.Datum // The new values to be set.
 	fetched     bool
 	cursor      int
 }
 
-func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
+func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 	assignFlag, err := e.getUpdateColumns(schema.Len())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -89,7 +89,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) (types.DatumRow, error) {
 		}
 	}
 	e.cursor++
-	return types.DatumRow{}, nil
+	return []types.Datum{}, nil
 }
 
 // Next implements the Executor Next interface.
@@ -160,10 +160,10 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 	return errors.Trace(err)
 }
 
-func (e *UpdateExec) composeNewRow(rowIdx int, oldRow types.DatumRow) (types.DatumRow, error) {
-	newRowData := oldRow.Copy()
+func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Datum, error) {
+	newRowData := types.CopyRow(oldRow)
 	for _, assign := range e.OrderedList {
-		val, err := assign.Expr.Eval(newRowData)
+		val, err := assign.Expr.Eval(chunk.MutRowFromDatums(newRowData).ToRow())
 
 		if err1 := e.handleErr(assign.Col.ColName, rowIdx, err); err1 != nil {
 			return nil, errors.Trace(err1)

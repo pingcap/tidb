@@ -158,6 +158,11 @@ func (vt *VirtualTable) Meta() *model.TableInfo {
 	return vt.dataSource.Meta()
 }
 
+// GetID implements table.Table GetID interface.
+func (vt *VirtualTable) GetID() int64 {
+	return vt.dataSource.Meta().ID
+}
+
 // Seek implements table.Table Type interface.
 func (vt *VirtualTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp

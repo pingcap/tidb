@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/twinj/uuid"
 )
 
@@ -101,7 +102,7 @@ func (b *builtinSleepSig) Clone() builtinFunc {
 
 // evalInt evals a builtinSleepSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
-func (b *builtinSleepSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
 		return 0, isNull, errors.Trace(err)
@@ -161,7 +162,7 @@ func (b *builtinLockSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
 // The lock function will do nothing.
 // Warning: get_lock() function is parsed but ignored.
-func (b *builtinLockSig) evalInt(_ types.Row) (int64, bool, error) {
+func (b *builtinLockSig) evalInt(_ chunk.Row) (int64, bool, error) {
 	return 1, false, nil
 }
 
@@ -193,7 +194,7 @@ func (b *builtinReleaseLockSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
 // The release lock function will do nothing.
 // Warning: release_lock() function is parsed but ignored.
-func (b *builtinReleaseLockSig) evalInt(_ types.Row) (int64, bool, error) {
+func (b *builtinReleaseLockSig) evalInt(_ chunk.Row) (int64, bool, error) {
 	return 1, false, nil
 }
 
@@ -246,7 +247,7 @@ func (b *builtinDecimalAnyValueSig) Clone() builtinFunc {
 
 // evalDecimal evals a builtinDecimalAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinDecimalAnyValueSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinDecimalAnyValueSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	return b.args[0].EvalDecimal(b.ctx, row)
 }
 
@@ -262,7 +263,7 @@ func (b *builtinDurationAnyValueSig) Clone() builtinFunc {
 
 // evalDuration evals a builtinDurationAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinDurationAnyValueSig) evalDuration(row types.Row) (types.Duration, bool, error) {
+func (b *builtinDurationAnyValueSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	return b.args[0].EvalDuration(b.ctx, row)
 }
 
@@ -278,7 +279,7 @@ func (b *builtinIntAnyValueSig) Clone() builtinFunc {
 
 // evalInt evals a builtinIntAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinIntAnyValueSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinIntAnyValueSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return b.args[0].EvalInt(b.ctx, row)
 }
 
@@ -294,7 +295,7 @@ func (b *builtinJSONAnyValueSig) Clone() builtinFunc {
 
 // evalJSON evals a builtinJSONAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinJSONAnyValueSig) evalJSON(row types.Row) (json.BinaryJSON, bool, error) {
+func (b *builtinJSONAnyValueSig) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
 	return b.args[0].EvalJSON(b.ctx, row)
 }
 
@@ -310,7 +311,7 @@ func (b *builtinRealAnyValueSig) Clone() builtinFunc {
 
 // evalReal evals a builtinRealAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinRealAnyValueSig) evalReal(row types.Row) (float64, bool, error) {
+func (b *builtinRealAnyValueSig) evalReal(row chunk.Row) (float64, bool, error) {
 	return b.args[0].EvalReal(b.ctx, row)
 }
 
@@ -326,7 +327,7 @@ func (b *builtinStringAnyValueSig) Clone() builtinFunc {
 
 // evalString evals a builtinStringAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinStringAnyValueSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinStringAnyValueSig) evalString(row chunk.Row) (string, bool, error) {
 	return b.args[0].EvalString(b.ctx, row)
 }
 
@@ -342,7 +343,7 @@ func (b *builtinTimeAnyValueSig) Clone() builtinFunc {
 
 // evalTime evals a builtinTimeAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinTimeAnyValueSig) evalTime(row types.Row) (types.Time, bool, error) {
+func (b *builtinTimeAnyValueSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	return b.args[0].EvalTime(b.ctx, row)
 }
 
@@ -381,7 +382,7 @@ func (b *builtinInetAtonSig) Clone() builtinFunc {
 
 // evalInt evals a builtinInetAtonSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-aton
-func (b *builtinInetAtonSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInetAtonSig) evalInt(row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
 		return 0, true, errors.Trace(err)
@@ -454,7 +455,7 @@ func (b *builtinInetNtoaSig) Clone() builtinFunc {
 
 // evalString evals a builtinInetNtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-ntoa
-func (b *builtinInetNtoaSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinInetNtoaSig) evalString(row chunk.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil || isNull {
 		return "", true, errors.Trace(err)
@@ -503,7 +504,7 @@ func (b *builtinInet6AtonSig) Clone() builtinFunc {
 
 // evalString evals a builtinInet6AtonSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-aton
-func (b *builtinInet6AtonSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinInet6AtonSig) evalString(row chunk.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
 		return "", true, errors.Trace(err)
@@ -571,7 +572,7 @@ func (b *builtinInet6NtoaSig) Clone() builtinFunc {
 
 // evalString evals a builtinInet6NtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
-func (b *builtinInet6NtoaSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinInet6NtoaSig) evalString(row chunk.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
 		return "", true, errors.Trace(err)
@@ -622,7 +623,7 @@ func (b *builtinIsIPv4Sig) Clone() builtinFunc {
 
 // evalInt evals a builtinIsIPv4Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
-func (b *builtinIsIPv4Sig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinIsIPv4Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
 		return 0, err != nil, errors.Trace(err)
@@ -686,7 +687,7 @@ func (b *builtinIsIPv4CompatSig) Clone() builtinFunc {
 
 // evalInt evals Is_IPv4_Compat
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
-func (b *builtinIsIPv4CompatSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinIsIPv4CompatSig) evalInt(row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
 		return 0, err != nil, errors.Trace(err)
@@ -731,7 +732,7 @@ func (b *builtinIsIPv4MappedSig) Clone() builtinFunc {
 
 // evalInt evals Is_IPv4_Mapped
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
-func (b *builtinIsIPv4MappedSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinIsIPv4MappedSig) evalInt(row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
 		return 0, err != nil, errors.Trace(err)
@@ -776,7 +777,7 @@ func (b *builtinIsIPv6Sig) Clone() builtinFunc {
 
 // evalInt evals a builtinIsIPv6Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv6
-func (b *builtinIsIPv6Sig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinIsIPv6Sig) evalInt(row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if err != nil || isNull {
 		return 0, err != nil, errors.Trace(err)
@@ -846,7 +847,7 @@ func (b *builtinUUIDSig) Clone() builtinFunc {
 
 // evalString evals a builtinUUIDSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid
-func (b *builtinUUIDSig) evalString(_ types.Row) (d string, isNull bool, err error) {
+func (b *builtinUUIDSig) evalString(_ chunk.Row) (d string, isNull bool, err error) {
 	return uuid.NewV1().String(), false, nil
 }
 

@@ -596,7 +596,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	}
 
 	// Feedback from limit executor may not be accurate.
-	testKit.MustQuery("select * from t where t.a <= 2 limit 1")
+	testKit.MustQuery("select * from t where t.a <= 5 limit 1")
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	feedback := h.GetQueryFeedback()
 	c.Assert(len(feedback), Equals, 0)
@@ -619,6 +619,16 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		feedback := h.GetQueryFeedback()
 		c.Assert(len(feedback), Equals, 0)
 	}
+
+	// Test that the outdated feedback won't cause panic.
+	statistics.FeedbackProbability = 1
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+	}
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	testKit.MustExec("drop table t")
+	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
 }
 
 func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {
