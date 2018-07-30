@@ -2856,6 +2856,20 @@ func (s *testIntegrationSuite) TestAggregationBuiltinBitAnd(c *C) {
 	result.Check(testkit.Rows("7 7", "5 5", "3 3", "2 2", "<nil> 18446744073709551615"))
 }
 
+func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
+	defer s.cleanEnv(c)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(100))")
+	tk.MustExec("insert into t values('hello'), ('hello')")
+	result := tk.MustQuery("select group_concat(a) from t")
+	result.Check(testkit.Rows("hello,hello"))
+
+	tk.MustExec("set @@group_concat_max_len=7")
+	result = tk.MustQuery("select group_concat(a) from t")
+	result.Check(testkit.Rows("hello,h"))
+}
+
 func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
