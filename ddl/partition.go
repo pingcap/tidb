@@ -326,6 +326,7 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, expr ast.Expr
 // saveConstraintsColumnNames Save the column names in table constraints to []map[string]struct{}.
 func saveConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constraint) []map[string]struct{} {
 	constraints := make([]map[string]struct{}, 3)
+	constraints[0] = make(map[string]struct{})
 	for _, v := range cons {
 		if v.Tp == ast.ConstraintUniq {
 			for _, key := range v.Keys {
@@ -337,6 +338,8 @@ func saveConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constraint
 		}
 	}
 
+	constraints[1] = make(map[string]struct{})
+	constraints[2] = make(map[string]struct{})
 	for _, col := range tblInfo.Cols() {
 		if mysql.HasPriKeyFlag(col.Flag) {
 			// Primary keys.
