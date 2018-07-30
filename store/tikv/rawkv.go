@@ -363,7 +363,7 @@ func appendBatches(batches []batch, regionID RegionVerID, groupKeys [][]byte, ke
 	var start, size int
 	var keys, values [][]byte
 	for start = 0; start < len(groupKeys); start++ {
-		if size >= limit && len(keys) > 0 {
+		if size >= limit {
 			batches = append(batches, batch{regionID: regionID, keys: keys, values: values})
 			keys = make([][]byte, 0)
 			values = make([][]byte, 0)
