@@ -560,12 +560,12 @@ func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
 }
 
 // UpdateCMSketch updates the CMSketch by feedback.
-func UpdateCMSketch(c *CMSketch, feedbacks []feedback) *CMSketch {
-	if c == nil || len(feedbacks) == 0 {
+func UpdateCMSketch(c *CMSketch, eqFeedbacks []feedback) *CMSketch {
+	if c == nil || len(eqFeedbacks) == 0 {
 		return c
 	}
 	newCMSketch := c.copy()
-	for _, fb := range feedbacks {
+	for _, fb := range eqFeedbacks {
 		h1, h2 := murmur3.Sum128(fb.lower.GetBytes())
 		newCMSketch.setValue(h1, h2, uint32(fb.count))
 	}
