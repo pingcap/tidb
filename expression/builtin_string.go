@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1761,7 +1762,7 @@ func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar("max_allowed_packet")
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1889,7 +1890,7 @@ func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
 
-	valStr, _ := ctx.GetSessionVars().GetSystemVar("max_allowed_packet")
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
 	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
 	if err != nil {
 		return nil, errors.Trace(err)
