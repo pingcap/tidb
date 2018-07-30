@@ -609,9 +609,17 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	return plan4Agg
 }
 
-// joinFieldType finds the type which can carry the given types.
-func joinFieldType(a, b *types.FieldType) *types.FieldType {
+// unionJoinFieldType finds the type which can carry the given types in Union.
+func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
+	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
+	if a.Tp == mysql.TypeNewDecimal {
+		// The decimal type will be unsigned only when all the decimals to be united are unsigned.
+		resultTp.Flag &= b.Flag & mysql.UnsignedFlag
+	} else {
+		// Non-decimal results will be unsigned when the first SQL statement result in the union is unsigned.
+		resultTp.Flag |= a.Flag & mysql.UnsignedFlag
+	}
 	resultTp.Decimal = mathutil.Max(a.Decimal, b.Decimal)
 	// `Flen - Decimal` is the fraction before '.'
 	resultTp.Flen = mathutil.Max(a.Flen-a.Decimal, b.Flen-b.Decimal) + resultTp.Decimal
@@ -632,7 +640,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			if j == 0 {
 				resultTp = childTp
 			} else {
-				resultTp = joinFieldType(resultTp, childTp)
+				resultTp = unionJoinFieldType(resultTp, childTp)
 			}
 		}
 		unionSchema.Columns[i] = col.Clone().(*expression.Column)
@@ -647,7 +655,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			dstType := unionSchema.Columns[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
-				exprs[i] = expression.BuildCastFunction(b.ctx, srcCol, dstType)
+				exprs[i] = expression.BuildCastFunction4Union(b.ctx, srcCol, dstType)
 				needProjection = true
 			} else {
 				exprs[i] = srcCol

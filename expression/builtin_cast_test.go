@@ -97,6 +97,8 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	lastWarn := warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue)
 
+	originFlag := tp1.Flag
+	tp1.Flag |= mysql.UnsignedFlag
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
@@ -105,6 +107,14 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(types.ErrCastNegIntAsUnsigned, lastWarn.Err), IsTrue)
+	tp1.Flag = originFlag
+
+	previousWarnings := len(sc.GetWarnings())
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.GetInt64() == -1, IsTrue)
+	c.Assert(len(sc.GetWarnings()) == previousWarnings, IsTrue)
 
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(chunk.Row{})
@@ -276,7 +286,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}
 	for i, t := range castToDecCases {
 		args := []Expression{t.before}
-		decFunc := newBaseBuiltinFunc(ctx, args)
+		decFunc := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), false)
 		decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
 		switch i {
 		case 0:
@@ -360,7 +370,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeNewDecimal)
 		tp.Flen, tp.Decimal = t.flen, t.decimal
-		decFunc := newBaseBuiltinFunc(ctx, args)
+		decFunc := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), false)
 		decFunc.tp = tp
 		switch i {
 		case 0:
@@ -428,7 +438,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}
 	for i, t := range castToIntCases {
 		args := []Expression{t.before}
-		intFunc := newBaseBuiltinFunc(ctx, args)
+		intFunc := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), false)
 		switch i {
 		case 0:
 			sig = &builtinCastStringAsIntSig{intFunc}
@@ -494,7 +504,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}
 	for i, t := range castToRealCases {
 		args := []Expression{t.before}
-		realFunc := newBaseBuiltinFunc(ctx, args)
+		realFunc := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), false)
 		switch i {
 		case 0:
 			sig = &builtinCastStringAsRealSig{realFunc}
@@ -1005,7 +1015,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 
 	// test hybridType case.
 	args = []Expression{&Constant{Value: types.NewDatum(types.Enum{Name: "a", Value: 0}), RetType: types.NewFieldType(mysql.TypeEnum)}}
-	sig = &builtinCastStringAsIntSig{newBaseBuiltinFunc(ctx, args)}
+	sig = &builtinCastStringAsIntSig{newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), false)}
 	iRes, isNull, err := sig.evalInt(chunk.Row{})
 	c.Assert(isNull, Equals, false)
 	c.Assert(err, IsNil)
