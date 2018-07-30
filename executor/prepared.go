@@ -126,6 +126,13 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
+
+	// Prepare parameters should NOT over 2 bytes(MaxUint16)
+	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
+	if len(extractor.markers) > math.MaxUint16 {
+		return ErrPsManyParam
+	}
+
 	err = plan.Preprocess(e.ctx, stmt, e.is, true)
 	if err != nil {
 		return errors.Trace(err)

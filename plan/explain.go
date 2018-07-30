@@ -132,12 +132,12 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalUnionScan) ExplainInfo() string {
-	return string(expression.ExplainExpressionList(p.Conditions))
+	return string(expression.SortedExplainExpressionList(p.Conditions))
 }
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalSelection) ExplainInfo() string {
-	return string(expression.ExplainExpressionList(p.Conditions))
+	return string(expression.SortedExplainExpressionList(p.Conditions))
 }
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -176,7 +176,7 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	if len(p.GroupByItems) > 0 {
 		fmt.Fprintf(buffer, "group by:%s, ",
-			expression.ExplainExpressionList(p.GroupByItems))
+			expression.SortedExplainExpressionList(p.GroupByItems))
 	}
 	if len(p.AggFuncs) > 0 {
 		buffer.WriteString("funcs:")
@@ -210,15 +210,15 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 	}
 	if len(p.LeftConditions) > 0 {
 		fmt.Fprintf(buffer, ", left cond:%s",
-			expression.ExplainExpressionList(p.LeftConditions))
+			expression.SortedExplainExpressionList(p.LeftConditions))
 	}
 	if len(p.RightConditions) > 0 {
 		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.ExplainExpressionList(p.RightConditions))
+			expression.SortedExplainExpressionList(p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.ExplainExpressionList(p.OtherConditions))
+			expression.SortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }
@@ -235,11 +235,11 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 	}
 	if len(p.RightConditions) > 0 {
 		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.ExplainExpressionList(p.RightConditions))
+			expression.SortedExplainExpressionList(p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.ExplainExpressionList(p.OtherConditions))
+			expression.SortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }
@@ -260,11 +260,11 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 	}
 	if len(p.RightConditions) > 0 {
 		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.ExplainExpressionList(p.RightConditions))
+			expression.SortedExplainExpressionList(p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.ExplainExpressionList(p.OtherConditions))
+			expression.SortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }

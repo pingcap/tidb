@@ -321,7 +321,7 @@ func (p *LogicalJoin) constructIndexJoin(prop *requiredProp, innerJoinKeys, oute
 	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
 	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
 	newKeyOff := make([]int, 0, len(keyOff2IdxOff))
-	newOtherConds := make([]expression.Expression, 0, len(p.OtherConditions)+len(p.EqualConditions))
+	newOtherConds := make([]expression.Expression, len(p.OtherConditions), len(p.OtherConditions)+len(p.EqualConditions))
 	copy(newOtherConds, p.OtherConditions)
 	for keyOff, idxOff := range keyOff2IdxOff {
 		if keyOff2IdxOff[keyOff] < 0 {

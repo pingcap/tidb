@@ -340,6 +340,9 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 		}
 		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d)", id, histID, deltaColSize))
 	}
+	if len(values) == 0 {
+		return nil
+	}
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
 	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
@@ -364,7 +367,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	vals, err := encodeFeedback(fb)
 	if err != nil {
-		log.Debugf("error occurred when encoding feedback, err: ", errors.ErrorStack(err))
+		log.Debugf("error occurred when encoding feedback, err: %s", errors.ErrorStack(err))
 		return nil
 	}
 	var isIndex int64
