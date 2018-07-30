@@ -86,12 +86,6 @@ func (s *Schema) Clone() *Schema {
 			}
 		}
 	}
-	if schema.ReplenishCols != nil {
-		schema.ReplenishCols = make(map[ColumnIdentifier]struct{}, len(schema.ReplenishCols))
-		for colID := range s.ReplenishCols {
-			schema.ReplenishCols[colID] = struct{}{}
-		}
-	}
 	return schema
 }
 

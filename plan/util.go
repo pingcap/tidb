@@ -124,21 +124,6 @@ func buildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 		newSchema := join.Children()[0].Schema().Clone()
 		newSchema.Append(join.Schema().Columns[join.Schema().Len()-1])
 		return newSchema
-	case LeftOuterJoin, RightOuterJoin:
-		newScheme := expression.MergeSchema(join.Children()[0].Schema(), join.Children()[1].Schema())
-		newScheme.ReplenishCols = make(map[expression.ColumnIdentifier]struct{})
-		var replenishChild PhysicalPlan
-		if joinType == LeftOuterJoin {
-			replenishChild = join.Children()[1]
-		} else {
-			replenishChild = join.Children()[0]
-		}
-		for _, cols := range replenishChild.Schema().TblID2Handle {
-			for _, col := range cols {
-				newScheme.ReplenishCols[col.ToIdentifier()] = struct{}{}
-			}
-		}
-		return newScheme
 	}
 	return expression.MergeSchema(join.Children()[0].Schema(), join.Children()[1].Schema())
 }

@@ -2963,11 +2963,13 @@ func (s *testSuite) TestUnionAutoSignedCast(c *C) {
 func (s *testSuite) TestUpdateJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("drop table if exists t1, t2, t3, t4")
 	tk.MustExec("create table t1(k int, v int)")
 	tk.MustExec("create table t2(k int, v int)")
 	tk.MustExec("create table t3(id int auto_increment, k int, v int, primary key(id))")
+	tk.MustExec("create table t4(k int ,v int)")
 	tk.MustExec("insert into t1 values (1, 0)")
+	tk.MustExec("insert into t4 values (3, 3)")
 
 	// test auto_increment & none-null column in right table of update left join.
 	tk.MustExec("update t1 left join t3 on t1.k = t3.k set t1.v = 1")
@@ -2983,6 +2985,12 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustExec("update t2 right join t1 on t2.k = t1.k set t2.v = 4, t1.v = 0")
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 0"))
 	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+
+	// test left + right join update
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k right join t4 on t4.k = t2.k set t1.v = 4, t2.v = 4, t4.v = 4")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 0"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+	tk.MustQuery("select k, v from t4").Check(testkit.Rows("3 4"))
 
 	// test left join and update right data.
 	tk.MustExec("insert t2 values (1, 10)")

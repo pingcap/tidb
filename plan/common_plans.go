@@ -341,6 +341,8 @@ type Update struct {
 	OrderedList []*expression.Assignment
 
 	SelectPlan PhysicalPlan
+
+	ReplenishCols map[expression.ColumnIdentifier]struct{}
 }
 
 // Delete represents a delete plan.

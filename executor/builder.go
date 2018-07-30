@@ -1236,13 +1236,71 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
+	replenishCols := resolveSubJoins(v.SelectPlan)
 	updateExec := &UpdateExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
-		SelectExec:   selExec,
-		OrderedList:  v.OrderedList,
-		tblID2table:  tblID2table,
+		baseExecutor:  newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
+		SelectExec:    selExec,
+		OrderedList:   v.OrderedList,
+		tblID2table:   tblID2table,
+		replenishCols: replenishCols,
 	}
 	return updateExec
+}
+
+// resolveSubJoins resolve sub-join's replenish column info.
+func resolveSubJoins(selectPlan plan.PhysicalPlan) map[expression.ColumnIdentifier]struct{} {
+	var replenishCols map[expression.ColumnIdentifier]struct{}
+	for _, child := range selectPlan.Children() {
+		subReplenishCols := resolveSubJoins(child)
+		if subReplenishCols == nil {
+			continue
+		}
+		if replenishCols == nil {
+			replenishCols = subReplenishCols
+			continue
+		}
+		for key, value := range subReplenishCols {
+			replenishCols[key] = value
+		}
+	}
+
+	var joinType plan.JoinType
+	switch p := selectPlan.(type) {
+	case *plan.PhysicalHashJoin:
+		joinType = p.JoinType
+		break
+	case *plan.PhysicalIndexJoin:
+		joinType = p.JoinType
+		break
+	case *plan.PhysicalMergeJoin:
+		joinType = p.JoinType
+		break
+	default:
+		return nil
+	}
+
+	var replenishChild plan.PhysicalPlan
+	switch joinType {
+	case plan.LeftOuterJoin:
+		replenishChild = selectPlan.Children()[1]
+		break
+	case plan.RightOuterJoin:
+		replenishChild = selectPlan.Children()[0]
+		break
+	default:
+		return nil
+	}
+
+	if replenishCols == nil {
+		replenishCols = make(map[expression.ColumnIdentifier]struct{})
+	}
+	for _, cols := range replenishChild.Schema().TblID2Handle {
+		for _, col := range cols {
+			replenishCols[col.ToIdentifier()] = struct{}{}
+			fmt.Println(col.TblName.O, col.ColName.O, "------")
+		}
+	}
+	return replenishCols
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {

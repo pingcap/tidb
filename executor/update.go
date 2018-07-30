@@ -35,10 +35,11 @@ type UpdateExec struct {
 	updatedRowKeys map[int64]map[int64]struct{}
 	tblID2table    map[int64]table.Table
 
-	rows        [][]types.Datum // The rows fetched from TableExec.
-	newRowsData [][]types.Datum // The new values to be set.
-	fetched     bool
-	cursor      int
+	rows          [][]types.Datum // The rows fetched from TableExec.
+	newRowsData   [][]types.Datum // The new values to be set.
+	fetched       bool
+	cursor        int
+	replenishCols map[expression.ColumnIdentifier]struct{}
 }
 
 func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
@@ -63,7 +64,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 			offset := getTableOffset(schema, col)
 			end := offset + len(tbl.WritableCols())
 			handle := row[col.Index].GetInt64()
-			_, checkReplenish := schema.ReplenishCols[col.ToIdentifier()]
+			_, checkReplenish := e.replenishCols[col.ToIdentifier()]
 			oldData := row[offset:end]
 			newTableData := newData[offset:end]
 			flags := assignFlag[offset:end]
