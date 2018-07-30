@@ -105,7 +105,7 @@ func (e *maxMin4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partial
 func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinInt)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalInt(sctx, &row)
+		input, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -153,7 +153,7 @@ func (e *maxMin4Uint) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 func (e *maxMin4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinUint)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalInt(sctx, &row)
+		input, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -203,7 +203,7 @@ func (e *maxMin4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinFloat32)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, &row)
+		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -252,7 +252,7 @@ func (e *maxMin4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinFloat64)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, &row)
+		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -299,7 +299,7 @@ func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinDecimal)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, &row)
+		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -347,7 +347,7 @@ func (e *maxMin4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Part
 func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinString)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalString(sctx, &row)
+		input, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -399,7 +399,7 @@ func (e *maxMin4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 func (e *maxMin4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4Time)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalTime(sctx, &row)
+		input, isNull, err := e.args[0].EvalTime(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -447,7 +447,7 @@ func (e *maxMin4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Pa
 func (e *maxMin4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinDuration)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDuration(sctx, &row)
+		input, isNull, err := e.args[0].EvalDuration(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -495,7 +495,7 @@ func (e *maxMin4JSON) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partia
 func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinJSON)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalJSON(sctx, &row)
+		input, isNull, err := e.args[0].EvalJSON(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -20,10 +20,13 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
@@ -524,15 +527,18 @@ func (s *testSuite) TestShow2(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
 	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-
 	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,,Yes,1"))
 
 	tk.MustQuery("show tables").Check(testkit.Rows("t"))
 	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE"))
-
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	create_time := model.TSConvert2Time(tblInfo.Meta().UpdateTS).String()
 	r := tk.MustQuery("show table status from test like 't'")
 	timeStr := time.Now().Format("2006-01-02 15:04:05")
-	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", timeStr, timeStr, timeStr)))
+	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", create_time, timeStr, timeStr)))
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
 
@@ -564,6 +570,7 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint);`)
 
@@ -584,4 +591,16 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 		c.Assert(row.GetInt64(2), Equals, int64(10))
 		c.Assert(row.GetString(3), Equals, "Compact")
 	}
+	tk.MustExec(`drop table if exists tp;`)
+	tk.MustExec(`create table tp (a int)
+ 		partition by range(a)
+ 		( partition p0 values less than (10),
+		  partition p1 values less than (20),
+    	  partition p2 values less than (maxvalue)
+  		);`)
+	rs, err = tk.Exec("show table status from test like 'tp';")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rows[0].GetString(16), Equals, "partitioned")
 }
