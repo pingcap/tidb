@@ -53,6 +53,7 @@ func (s *testEvaluatorSuite) TearDownSuite(c *C) {
 }
 
 func (s *testEvaluatorSuite) SetUpTest(c *C) {
+	s.ctx.GetSessionVars().PlanColumnID = 0
 	testleak.BeforeTest()
 }
 
