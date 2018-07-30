@@ -1659,7 +1659,7 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
 
-func (s *testSuite) TestPointGet(c *C) {
+func (s *testSuite) TestIsPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(sessionctx.Context)
