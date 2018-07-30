@@ -283,9 +283,9 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 }
 
 // checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
-func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, expr ast.ExprNode, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
+func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
 	// Returns directly if there is no constraint in the partition table.
-	if len(constraints) == 0 {
+	if tblInfo.Partition.Type != model.PartitionTypeRange || len(constraints) == 0 {
 		return nil
 	}
 
@@ -294,7 +294,7 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, expr ast.Expr
 
 	// Parse partitioning key, save the column names in the partitioning key to slice.
 	buf := new(bytes.Buffer)
-	expr.Format(buf)
+	s.Partition.Expr.Format(buf)
 	var partkeys []string
 	e, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
 	if err != nil {
@@ -306,25 +306,25 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, expr ast.Expr
 	}
 
 	// Checks that the partitioning key is included in the constraint.
-	// Here consColNames[0] saves Multiple keys, consColNames[1] saves Primary keys.
+	// Here consColNames[0] save Multiple keys, consColNames[1] save Primary keys.
 	if !checkConstraintIncludePartKey(partkeys, consColNames[0]) || !checkConstraintIncludePartKey(partkeys, consColNames[1]) {
 		return ErrUniqueKeyNeedAllFieldsInPf
 	}
 
 	// Every unique key on the table must use every column in the table's partitioning expression.
-	//  Here consColNames[2] saves Unique key.
+	// Here consColNames[2] saves Unique key.
 	// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
 	if len(consColNames[2]) == 0 {
 		return nil
 	}
 	_, ok := consColNames[2][partkeys[0]]
-	if len(consColNames[2]) > 1 || len(partkeys) > 1 || !ok {
+	if !ok || len(consColNames[2]) > 1 || len(partkeys) > 1 {
 		return ErrUniqueKeyNeedAllFieldsInPf
 	}
 	return nil
 }
 
-// saveConstraintsColumnNames Save the column names in table constraints to []map[string]struct{}.
+// saveConstraintsColumnNames saves the column names in table constraints to []map[string]struct{}.
 func saveConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constraint) []map[string]struct{} {
 	multipleKeys := make(map[string]struct{})
 	for _, v := range cons {
