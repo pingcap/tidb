@@ -35,11 +35,11 @@ type UpdateExec struct {
 	updatedRowKeys map[int64]map[int64]struct{}
 	tblID2table    map[int64]table.Table
 
-	rows          [][]types.Datum // The rows fetched from TableExec.
-	newRowsData   [][]types.Datum // The new values to be set.
-	fetched       bool
-	cursor        int
-	replenishCols map[int]struct{}
+	rows         [][]types.Datum // The rows fetched from TableExec.
+	newRowsData  [][]types.Datum // The new values to be set.
+	fetched      bool
+	cursor       int
+	replenishTbl map[string]ColumnIndexRange
 }
 
 func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
@@ -64,7 +64,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 			offset := getTableOffset(schema, col)
 			end := offset + len(tbl.WritableCols())
 			handle := row[col.Index].GetInt64()
-			_, checkReplenish := e.replenishCols[col.Position]
+			_, checkReplenish := e.replenishTbl[col.DBName.O+"-"+col.TblName.O]
 			oldData := row[offset:end]
 			newTableData := newData[offset:end]
 			flags := assignFlag[offset:end]
@@ -165,6 +165,10 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Datum, error) {
 	newRowData := types.CopyRow(oldRow)
 	for _, assign := range e.OrderedList {
+		colRange, isReplenish := e.replenishTbl[assign.Col.DBName.O+"-"+assign.Col.TblName.O]
+		if isReplenish && allNullDatums(oldRow, colRange) {
+			continue
+		}
 		val, err := assign.Expr.Eval(chunk.MutRowFromDatums(newRowData).ToRow())
 
 		if err1 := e.handleErr(assign.Col.ColName, rowIdx, err); err1 != nil {
@@ -173,6 +177,15 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Da
 		newRowData[assign.Col.Index] = val
 	}
 	return newRowData, nil
+}
+
+func allNullDatums(datums []types.Datum, colRange ColumnIndexRange) bool {
+	for i := colRange.start; i < colRange.end; i++ {
+		if !datums[i].IsNull() {
+			return false
+		}
+	}
+	return true
 }
 
 // Close implements the Executor Close interface.

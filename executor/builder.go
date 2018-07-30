@@ -1236,34 +1236,25 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	replenishCols := resolveSubJoins(v.SelectPlan)
+	replenishTbl := resolveReplenishTbl(v.Schema(), v.SelectPlan, tblID2table)
 	updateExec := &UpdateExec{
-		baseExecutor:  newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
-		SelectExec:    selExec,
-		OrderedList:   v.OrderedList,
-		tblID2table:   tblID2table,
-		replenishCols: replenishCols,
+		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
+		SelectExec:   selExec,
+		OrderedList:  v.OrderedList,
+		tblID2table:  tblID2table,
+		replenishTbl: replenishTbl,
 	}
 	return updateExec
 }
 
-// resolveSubJoins resolve sub-join's replenish column info.
-func resolveSubJoins(selectPlan plan.PhysicalPlan) map[int]struct{} {
-	var replenishCols map[int]struct{}
-	for _, child := range selectPlan.Children() {
-		subReplenishCols := resolveSubJoins(child)
-		if subReplenishCols == nil {
-			continue
-		}
-		if replenishCols == nil {
-			replenishCols = subReplenishCols
-			continue
-		}
-		for key, value := range subReplenishCols {
-			replenishCols[key] = value
-		}
-	}
+// ColumnIndexRange represents an index range in datum rows.
+type ColumnIndexRange struct {
+	start, end int
+}
 
+// resolveReplenishTbl resolve sub-join's replenish column info.
+func resolveReplenishTbl(schema *expression.Schema, selectPlan plan.PhysicalPlan, tblID2Table map[int64]table.Table) map[string]ColumnIndexRange {
+	// find join.
 	var joinType plan.JoinType
 	switch p := selectPlan.(type) {
 	case *plan.PhysicalHashJoin:
@@ -1276,9 +1267,11 @@ func resolveSubJoins(selectPlan plan.PhysicalPlan) map[int]struct{} {
 		joinType = p.JoinType
 		break
 	default:
+		// no join return quickly.
 		return nil
 	}
 
+	// find outer join.
 	var replenishChild plan.PhysicalPlan
 	switch joinType {
 	case plan.LeftOuterJoin:
@@ -1288,18 +1281,39 @@ func resolveSubJoins(selectPlan plan.PhysicalPlan) map[int]struct{} {
 		replenishChild = selectPlan.Children()[0]
 		break
 	default:
+		// no outer join return quickly.
 		return nil
 	}
 
-	if replenishCols == nil {
-		replenishCols = make(map[int]struct{})
-	}
-	for _, cols := range replenishChild.Schema().TblID2Handle {
-		for _, col := range cols {
-			replenishCols[col.Position] = struct{}{}
+	// recurse join children.
+	var replenishTbl map[string]ColumnIndexRange
+	for _, child := range selectPlan.Children() {
+		subReplenishTbl := resolveReplenishTbl(schema, child, tblID2Table)
+		if subReplenishTbl == nil {
+			continue
+		}
+		if replenishTbl == nil {
+			replenishTbl = subReplenishTbl
+			continue
+		}
+		for key, value := range subReplenishTbl {
+			replenishTbl[key] = value
 		}
 	}
-	return replenishCols
+
+	// make replenish table.
+	if replenishTbl == nil {
+		replenishTbl = make(map[string]ColumnIndexRange)
+	}
+	for tblID, cols := range replenishChild.Schema().TblID2Handle {
+		tbl := tblID2Table[tblID]
+		for _, rowCol := range cols {
+			offset := getTableOffset(schema, rowCol)
+			end := offset + len(tbl.WritableCols())
+			replenishTbl[rowCol.DBName.O+"-"+rowCol.TblName.O] = ColumnIndexRange{offset, end}
+		}
+	}
+	return replenishTbl
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {

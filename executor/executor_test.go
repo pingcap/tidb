@@ -2977,7 +2977,12 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustQuery("select id, k, v from t3").Check(testkit.Rows())
 
 	// test left join and right no records but update no records part.
-	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t1.v = t2.v, t2.v = 3") // exchange to t2.v = 3, t1.v = t2.v..will got a bug.
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t1.v = t2.v, t2.v = 3")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 <nil>"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+
+	// test set right table and ref right old value in left one.
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t2.v = 3, t1.v = t2.v")
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 <nil>"))
 	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
 
