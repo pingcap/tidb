@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
@@ -121,6 +122,8 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		if row == nil {
 			break
 		}
+
+		// TODO(zz-jason): return chunk-encoded data according the "encode type".
 		data := dummySlice
 		for _, offset := range dagReq.OutputOffsets {
 			data = append(data, row[offset]...)
@@ -583,6 +586,67 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 	warnings := mock.dagCtx.evalCtx.sc.GetWarnings()
 	mock.dagCtx.evalCtx.sc.SetWarnings(nil)
 	return chunk, finish, &ran, mock.exec.Counts(), warnings, nil
+}
+
+func (h *rpcHandler) buildSelectResponse(dagReq *tipb.DAGRequest, err error, rows [][][]byte, colTypes []*types.FieldType, counts []int64, warnings []stmtctx.SQLWarn, loc *time.Location) *tipb.SelectResponse {
+	selResp := &tipb.SelectResponse{
+		Error:        toPBError(err),
+		OutputCounts: counts,
+	}
+	for i := range warnings {
+		selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i].Err))
+	}
+
+	if err != nil {
+		return selResp
+	}
+
+	switch dagReq.EncodeType {
+	case tipb.EncodeType_TypeArrow:
+		h.encodeDefault(rows, dagReq.OutputOffsets, selResp)
+	case tipb.EncodeType_TypeDefault:
+		h.encodeArrow(rows, colTypes, dagReq.OutputOffsets, selResp, loc)
+	default:
+		return nil
+	}
+	return selResp
+}
+
+func (h *rpcHandler) encodeDefault(rows [][][]byte, colOrdinal []uint32, selResp *tipb.SelectResponse) {
+	var chunks []tipb.Chunk
+	for i := range rows {
+		requestedRow := dummySlice
+		for _, ordinal := range colOrdinal {
+			requestedRow = append(requestedRow, rows[i][ordinal]...)
+		}
+		chunks = appendRow(chunks, requestedRow, i)
+	}
+	selResp.Chunks = chunks
+}
+
+func (h *rpcHandler) encodeArrow(rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, selResp *tipb.SelectResponse, loc *time.Location) error {
+	rowBatchData := make([]byte, 0, 1024)
+	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
+	for _, ordinal := range colOrdinal {
+		respColTypes = append(respColTypes, colTypes[ordinal])
+	}
+	chk := chunk.NewChunkWithCapacity(respColTypes, 32)
+	encoder := chunk.NewCodec(respColTypes)
+	for i := range rows {
+		for j, ordinal := range colOrdinal {
+			colDatum, err := tablecodec.DecodeColumnValue(rows[i][ordinal], colTypes[ordinal], loc)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			chk.AppendDatum(j, &colDatum)
+		}
+		if i%rowsPerChunk == 0 {
+			selResp.RowBatchData = append(selResp.RowBatchData, encoder.Encode(chk)...)
+			chk.Reset()
+		}
+	}
+	selResp.RowBatchData = rowBatchData
+	return nil
 }
 
 func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []stmtctx.SQLWarn) *coprocessor.Response {
