@@ -771,6 +771,7 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up adding index in table with disperse handle.
+// The `t` should be a non-partitioned table or a partition.
 func splitTableRanges(t table.Table, store kv.Storage, startHandle, endHandle int64) ([]kv.KeyRange, error) {
 	startRecordKey := t.RecordKey(startHandle)
 	endRecordKey := t.RecordKey(endHandle).Next()
@@ -951,11 +952,13 @@ func (w *worker) buildIndexForReorgInfo(t table.Table, workers []*addIndexWorker
 	return nil
 }
 
-// addPhysicalTableIndex adds index into table.
+// addPhysicalTableIndex handles the add index reorganization state for a non-partitioned table or a partition.
+// For a partitioned table, it should be handled partition by partition.
+//
 // How to add index in reorganization state?
 // Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
 // The handle range is split from PD regions now. Each worker deal with a region table key range one time.
-// Each handle range by eestimation, concurrent processing needs to perform after the handle range has been acquired.
+// Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
 // The operation flow is as follows:
 //	1. Open numbers of defaultWorkers goroutines.
 //	2. Split table key range from PD regions.
@@ -981,6 +984,7 @@ func (w *worker) addPhysicalTableIndex(t table.Table, indexInfo *model.IndexInfo
 	return errors.Trace(err)
 }
 
+// addTableIndex handles the add index reorganization state for a table.
 func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *reorgInfo) error {
 	var err error
 	if tbl, ok := t.(table.PartitionedTable); ok {
@@ -988,8 +992,7 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 		for !finish {
 			p := tbl.GetPartition(reorgInfo.PartitionID)
 			if p == nil {
-				log.Fatalf("Can not find partition id %d", reorgInfo.PartitionID)
-				return nil
+				return errors.Errorf("Can not find partition id %d for table %d", reorgInfo.PartitionID, t.Meta().ID)
 			}
 			err = w.addPhysicalTableIndex(p, idx, reorgInfo)
 			if err != nil {
