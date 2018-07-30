@@ -60,6 +60,7 @@ type logicalOptRule interface {
 // The node must be prepared first.
 func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
+	ctx.GetSessionVars().PlanColumnID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
@@ -91,6 +92,7 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 // BuildLogicalPlan used to build logical plan from ast.Node.
 func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
+	ctx.GetSessionVars().PlanColumnID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
