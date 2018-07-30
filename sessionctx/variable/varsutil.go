@@ -307,7 +307,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, nil
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenByArgs(name)
-	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
+	case GeneralLog, TiDBGeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode,
 		PseudoSlaveMode, LowPriorityUpdates, SkipNameResolve, ForeignKeyChecks, SQLSafeUpdates:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "1", nil
@@ -331,8 +331,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBDistSQLScanConcurrency,
 		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
 		TiDBBackoffLockFast, TiDBMaxChunkSize,
-		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel,
-		TiDBGeneralLog:
+		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel:
 		v, err := strconv.Atoi(value)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenByArgs(name)
