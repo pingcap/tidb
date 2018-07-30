@@ -395,8 +395,8 @@ func (h *rpcHandler) handleKvRawBatchPut(req *kvrpcpb.RawBatchPutRequest) *kvrpc
 			Error: "not implemented",
 		}
 	}
-	keys := make([][]byte, len(req.Pairs))
-	values := make([][]byte, len(req.Pairs))
+	keys := make([][]byte, 0, len(req.Pairs))
+	values := make([][]byte, 0, len(req.Pairs))
 	for _, pair := range req.Pairs {
 		keys = append(keys, pair.Key)
 		values = append(values, pair.Value)
