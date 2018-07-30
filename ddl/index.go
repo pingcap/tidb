@@ -1004,7 +1004,7 @@ func (w *worker) updateReorgInfo(t table.Table, reorg *reorgInfo) (bool, error) 
 	pid, err := findNextPartitionID(reorg.PartitionID, pi.Definitions)
 	if err != nil {
 		// Fatal error, should not run here.
-		log.Error("[ddl-reorg] update reorg fail, %v error stack: %s", t, errors.ErrorStack(err))
+		log.Errorf("[ddl-reorg] update reorg fail, %v error stack: %s", t, errors.ErrorStack(err))
 		return false, errors.Trace(err)
 	}
 	if pid == 0 {
