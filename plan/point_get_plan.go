@@ -234,7 +234,7 @@ func buildSchemaFromFields(ctx sessionctx.Context, dbName model.CIStr, tbl *mode
 	columns := make([]*expression.Column, 0, len(tbl.Columns)+1)
 	if len(fields) == 1 && fields[0].WildCard != nil {
 		for _, col := range tbl.Columns {
-			columns = append(columns, colInfoToColumn(dbName, tbl.Name, col, len(columns)))
+			columns = append(columns, colInfoToColumn(dbName, tbl.Name, col.Name, col, len(columns)))
 		}
 		return expression.NewSchema(columns...)
 	}
@@ -248,21 +248,25 @@ func buildSchemaFromFields(ctx sessionctx.Context, dbName model.CIStr, tbl *mode
 			if col == nil {
 				return nil
 			}
-			columns = append(columns, colInfoToColumn(dbName, tbl.Name, col, len(columns)))
+			asName := col.Name
+			if field.AsName.L != "" {
+				asName = field.AsName
+			}
+			columns = append(columns, colInfoToColumn(dbName, tbl.Name, asName, col, len(columns)))
 		}
 		return expression.NewSchema(columns...)
 	}
 	// fields len is 0 for update and delete.
 	var handleCol *expression.Column
 	for _, col := range tbl.Columns {
-		column := colInfoToColumn(dbName, tbl.Name, col, len(columns))
+		column := colInfoToColumn(dbName, tbl.Name, col.Name, col, len(columns))
 		if tbl.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
 			handleCol = column
 		}
 		columns = append(columns, column)
 	}
 	if handleCol == nil {
-		handleCol = colInfoToColumn(dbName, tbl.Name, model.NewExtraHandleColInfo(), len(columns))
+		handleCol = colInfoToColumn(dbName, tbl.Name, model.ExtraHandleName, model.NewExtraHandleColInfo(), len(columns))
 		columns = append(columns, handleCol)
 	}
 	schema := expression.NewSchema(columns...)
@@ -405,9 +409,9 @@ func findCol(tbl *model.TableInfo, colName *ast.ColumnName) *model.ColumnInfo {
 	return nil
 }
 
-func colInfoToColumn(db model.CIStr, tblName model.CIStr, col *model.ColumnInfo, idx int) *expression.Column {
+func colInfoToColumn(db model.CIStr, tblName model.CIStr, asName model.CIStr, col *model.ColumnInfo, idx int) *expression.Column {
 	return &expression.Column{
-		ColName:     col.Name,
+		ColName:     asName,
 		OrigTblName: tblName,
 		DBName:      db,
 		TblName:     tblName,

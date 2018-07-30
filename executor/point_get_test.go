@@ -26,6 +26,10 @@ func (s *testSuite) TestPointGet(c *C) {
 	tk.MustExec("insert point values (2, 2, 'b')")
 	tk.MustQuery("select * from point where id = 1 and c = 0").Check(testkit.Rows())
 	tk.MustQuery("select * from point where id < 0 and c = 1 and d = 'b'").Check(testkit.Rows())
+	result, err := tk.Exec("select id as ident from point where id = 1")
+	c.Assert(err, IsNil)
+	fields := result.Fields()
+	c.Assert(fields[0].ColumnAsName.O, Equals, "ident")
 
 	tk.MustExec("CREATE TABLE tab3(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
 	tk.MustExec("CREATE UNIQUE INDEX idx_tab3_0 ON tab3 (col4);")
