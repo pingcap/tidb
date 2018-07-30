@@ -187,8 +187,6 @@ type LogicalPlan interface {
 	// deriveStats derives statistic info between plans.
 	deriveStats() (*statsInfo, error)
 
-	cardinality() float64
-
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
 	// Please make sure that children's method is called though we may not need its return value,
@@ -327,20 +325,6 @@ func (p *baseLogicalPlan) extractCorrelatedCols() []*expression.CorrelatedColumn
 		corCols = append(corCols, child.extractCorrelatedCols()...)
 	}
 	return corCols
-}
-
-func (p *DataSource) cardinality() float64 {
-	if p.statsAfterSelect == nil {
-		return math.MaxFloat64
-	}
-	return p.statsAfterSelect.count
-}
-
-func (p *baseLogicalPlan) cardinality() float64 {
-	if p.stats == nil {
-		return math.MaxFloat64
-	}
-	return p.stats.count
 }
 
 // PruneColumns implements LogicalPlan interface.
