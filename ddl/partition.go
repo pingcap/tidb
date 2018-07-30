@@ -289,8 +289,8 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, expr ast.Expr
 		return nil
 	}
 
-	// Save the column names in the table constraint in map.
-	uniKeys, multipleKeys, priKeys := saveConstraintsColumnNames(tblInfo, constraints)
+	// Save the column names in table constraints to []map[string]struct{}.
+	consColNames := saveConstraintsColumnNames(tblInfo, constraints)
 
 	// Parse partitioning key, save the column names in the partitioning key to slice.
 	buf := new(bytes.Buffer)
@@ -305,72 +305,59 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, expr ast.Expr
 		partkeys = append(partkeys, col.ColName.L)
 	}
 
-	switch expr.(type) {
-	case *ast.ColumnNameExpr:
-		// Only one column name expression.
-		if checkConstraintIncludePartKey(partkeys, priKeys, false) || checkConstraintIncludePartKey(partkeys, multipleKeys, false) {
-			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs("PRIMARY KEY")
-		}
-	default:
-		// Other expression, with multiple column names.
-		if checkConstraintIncludePartKey(partkeys, priKeys, true) || checkConstraintIncludePartKey(partkeys, multipleKeys, true) {
-			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs("PRIMARY KEY")
-		}
-
+	// Checks that the partitioning key is included in the constraint.
+	// Here consColNames[0] saves Multiple keys, consColNames[1] saves Primary keys.
+	if !checkConstraintIncludePartKey(partkeys, consColNames[0]) || !checkConstraintIncludePartKey(partkeys, consColNames[1]) {
+		return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs("PRIMARY KEY")
 	}
 
-	// Every unique key on the table must use every column in the table's partitioning expression
-	// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
-	if len(uniKeys) > 0 {
-		_, ok := uniKeys[partkeys[0]]
-		if len(uniKeys) > 1 || len(partkeys) > 1 || !ok {
+	if len(consColNames[2]) > 0 {
+		// Every unique key on the table must use every column in the table's partitioning expression.
+		//  Here consColNames[2] saves Unique key.
+		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
+		_, ok := consColNames[2][partkeys[0]]
+		if len(consColNames[2]) > 1 || len(partkeys) > 1 || !ok {
 			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs("UNIQUE INDEX")
 		}
 	}
 	return nil
 }
 
-// saveConstraintsColumnNames save the column names in the table constraint in map.
-func saveConstraintsColumnNames(tblInfo *model.TableInfo, constraints []*ast.Constraint) (map[string]struct{}, map[string]struct{}, map[string]struct{}) {
-	multipleKeys := make(map[string]struct{})
-	for _, v := range constraints {
+// saveConstraintsColumnNames Save the column names in table constraints to []map[string]struct{}.
+func saveConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constraint) []map[string]struct{} {
+	constraints := make([]map[string]struct{}, 3)
+	for _, v := range cons {
 		if v.Tp == ast.ConstraintUniq {
 			for _, key := range v.Keys {
 				if len(v.Keys) > 1 {
-					multipleKeys[key.Column.Name.L] = struct{}{}
+					// Multiple keys.
+					constraints[0][key.Column.Name.L] = struct{}{}
 				}
 			}
 		}
 	}
 
-	uniKeys := make(map[string]struct{})
-	priKeys := make(map[string]struct{})
 	for _, col := range tblInfo.Cols() {
-		if mysql.HasUniKeyFlag(col.Flag) {
-			uniKeys[col.Name.L] = struct{}{}
-		}
 		if mysql.HasPriKeyFlag(col.Flag) {
-			priKeys[col.Name.L] = struct{}{}
+			// Primary keys.
+			constraints[1][col.Name.L] = struct{}{}
+		}
+		if mysql.HasUniKeyFlag(col.Flag) {
+			// Unique key.
+			constraints[2][col.Name.L] = struct{}{}
 		}
 	}
-	return uniKeys, multipleKeys, priKeys
+	return constraints
 }
 
 // checkConstraintIncludePartKey checks that the partitioning key is included in the constraint.
-func checkConstraintIncludePartKey(partkeys []string, constraints map[string]struct{}, multipleColumn bool) bool {
-	count := 0
+func checkConstraintIncludePartKey(partkeys []string, constraints map[string]struct{}) bool {
 	if len(constraints) > 0 {
 		for _, pk := range partkeys {
-			if _, ok := constraints[pk]; ok {
-				count++
+			if _, ok := constraints[pk]; !ok {
+				return false
 			}
 		}
-		if multipleColumn && count != len(partkeys) {
-			return true
-		}
-		if count < 1 {
-			return true
-		}
 	}
-	return false
+	return true
 }
