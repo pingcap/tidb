@@ -162,32 +162,32 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 	return nil
 }
 
-func checkIntegerSystemVar(name, value string, lower int64, upper uint64, vars *SessionVars) (string, error) {
+func checkIntegerSystemVar(name, value string, min int64, max uint64, vars *SessionVars) (string, error) {
 	if value[0] == '-' {
 		val, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
-		if val < lower {
+		if val < min {
 			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return fmt.Sprintf("%d", lower), nil
+			return fmt.Sprintf("%d", min), nil
 		}
-		if val > 0 && uint64(val) > upper {
+		if val > 0 && uint64(val) > max {
 			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return fmt.Sprintf("%d", upper), nil
+			return fmt.Sprintf("%d", max), nil
 		}
 	} else {
 		val, err := strconv.ParseUint(value, 10, 64)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
-		if val < uint64(lower) {
+		if val < uint64(min) {
 			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return fmt.Sprintf("%d", lower), nil
+			return fmt.Sprintf("%d", min), nil
 		}
-		if val > 0 && val > upper {
+		if val > 0 && val > max {
 			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return fmt.Sprintf("%d", upper), nil
+			return fmt.Sprintf("%d", max), nil
 		}
 	}
 	return value, nil
@@ -246,18 +246,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case MaxUserConnections:
 		return checkIntegerSystemVar(name, value, 0, 4294967295, vars)
 	case OldPasswords:
-		val, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < 0 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "0", nil
-		}
-		if val > 2 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "2", nil
-		}
+		return checkIntegerSystemVar(name, value, 0, 2, vars)
 	case SessionTrackGtids:
 		if strings.EqualFold(value, "OFF") || value == "0" {
 			return "OFF", nil

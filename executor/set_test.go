@@ -378,11 +378,24 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@global.table_definition_cache;")
 	result.Check(testkit.Rows("400"))
 
-	tk.MustExec("set @@max_sort_length=524289")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '8388608'"))
-	result = tk.MustQuery("select @@max_sort_length;")
+	tk.MustExec("set @@global.table_definition_cache=524289")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect table_definition_cache value: '524289'"))
+	result = tk.MustQuery("select @@global.table_definition_cache;")
 	result.Check(testkit.Rows("524288"))
 
-	_, err = tk.Exec("set @@max_sort_length='hello'")
+	_, err = tk.Exec("set @@global.table_definition_cache='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@old_passwords=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect old_passwords value: '-1'"))
+	result = tk.MustQuery("select @@old_passwords;")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@old_passwords=3")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect old_passwords value: '3'"))
+	result = tk.MustQuery("select @@old_passwords;")
+	result.Check(testkit.Rows("2"))
+
+	_, err = tk.Exec("set @@old_passwords='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 }
