@@ -79,7 +79,18 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 	if e.idxInfo != nil {
-		e.handle, err = e.getHandleFromIndexKey()
+		idxKey, err1 := e.encodeIndexKey()
+		if err1 != nil {
+			return errors.Trace(err1)
+		}
+		handleVal, err := e.get(idxKey)
+		if err != nil && !kv.ErrNotExist.Equal(err) {
+			return errors.Trace(err)
+		}
+		if len(handleVal) == 0 {
+			return nil
+		}
+		e.handle, err = tables.DecodeHandle(handleVal)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -90,37 +101,29 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 	if len(val) == 0 {
+		if e.idxInfo != nil {
+			return kv.ErrNotExist.Gen("inconsistent extra index %s, handle %d not found in table",
+				e.idxInfo.Name.O, e.handle)
+		}
 		return nil
 	}
 	return e.decodeRowValToChunk(val, chk)
 }
 
-func (e *PointGetExecutor) getHandleFromIndexKey() (int64, error) {
+func (e *PointGetExecutor) encodeIndexKey() ([]byte, error) {
 	for i := range e.idxVals {
 		colInfo := e.tblInfo.Columns[e.idxInfo.Columns[i].Offset]
 		casted, err := table.CastValue(e.ctx, e.idxVals[i], colInfo)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		e.idxVals[i] = casted
 	}
 	encodedIdxVals, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	idxKey := tablecodec.EncodeIndexSeekKey(e.tblInfo.ID, e.idxInfo.ID, encodedIdxVals)
-	handleVal, err := e.get(idxKey)
-	if err != nil && !kv.ErrNotExist.Equal(err) {
-		return 0, errors.Trace(err)
-	}
-	if len(handleVal) == 0 {
-		return 0, nil
-	}
-	h, err := tables.DecodeHandle(handleVal)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return h, nil
+	return tablecodec.EncodeIndexSeekKey(e.tblInfo.ID, e.idxInfo.ID, encodedIdxVals), nil
 }
 
 func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {

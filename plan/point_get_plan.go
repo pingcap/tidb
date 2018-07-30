@@ -95,6 +95,9 @@ func (p *PointGetPlan) StatsCount() float64 {
 
 // StatsCount will return the the count of statsInfo for this plan.
 func (p *PointGetPlan) statsInfo() *statsInfo {
+	if p.stats == nil {
+		p.stats = &statsInfo{}
+	}
 	p.stats.count = 1
 	return p.stats
 }

@@ -26,4 +26,9 @@ func (s *testSuite) TestPointGet(c *C) {
 	tk.MustExec("insert point values (2, 2, 'b')")
 	tk.MustQuery("select * from point where id = 1 and c = 0").Check(testkit.Rows())
 	tk.MustQuery("select * from point where id < 0 and c = 1 and d = 'b'").Check(testkit.Rows())
+
+	tk.MustExec("CREATE TABLE tab3(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
+	tk.MustExec("CREATE UNIQUE INDEX idx_tab3_0 ON tab3 (col4);")
+	tk.MustExec("INSERT INTO tab3 VALUES(0,854,111.96,'mguub',711,966.36,'snwlo');")
+	tk.MustQuery("SELECT ALL * FROM tab3 WHERE col4 = 85;").Check(testkit.Rows())
 }
