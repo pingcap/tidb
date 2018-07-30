@@ -367,4 +367,22 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 
 	_, err = tk.Exec("set @@max_sort_length='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.table_definition_cache=399")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect table_definition_cache value: '399'"))
+	result = tk.MustQuery("select @@global.table_definition_cache;")
+	result.Check(testkit.Rows("400"))
+
+	tk.MustExec("set @@global.table_definition_cache=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect table_definition_cache value: '-1'"))
+	result = tk.MustQuery("select @@global.table_definition_cache;")
+	result.Check(testkit.Rows("400"))
+
+	tk.MustExec("set @@max_sort_length=524289")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '8388608'"))
+	result = tk.MustQuery("select @@max_sort_length;")
+	result.Check(testkit.Rows("524288"))
+
+	_, err = tk.Exec("set @@max_sort_length='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 }

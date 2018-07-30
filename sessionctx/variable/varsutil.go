@@ -278,7 +278,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, nil
 	case TableDefinitionCache:
-
+		return checkIntegerSystemVar(name, value, 400, 524288, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil

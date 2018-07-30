@@ -145,7 +145,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_backward_compatible_user_definitions", ""},
 	{ScopeNone, "lc_messages_dir", "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/"},
 	{ScopeGlobal, "ft_boolean_syntax", "+ -><()~*:\"\"&|"},
-	{ScopeGlobal, "table_definition_cache", "-1"},
+	{ScopeGlobal, TableDefinitionCache, "-1"},
 	{ScopeNone, SkipNameResolve, "0"},
 	{ScopeNone, "performance_schema_max_file_handles", "32768"},
 	{ScopeSession, "transaction_allow_batching", ""},
