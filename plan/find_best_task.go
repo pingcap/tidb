@@ -344,7 +344,12 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 			return invalidTask, nil
 		}
 		// On this way, it's double read case.
-		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
+		ts := PhysicalTableScan{
+			Columns:     ds.Columns,
+			Table:       is.Table,
+			isPartition: ds.isPartition,
+			partitionID: ds.partitionID,
+		}.init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
 	} else if prop.taskTp == copDoubleReadTaskType {
