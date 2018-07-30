@@ -15,6 +15,7 @@ package plan
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -162,6 +163,8 @@ type LogicalPlan interface {
 
 	// deriveStats derives statistic info between plans.
 	deriveStats() (*statsInfo, error)
+
+	cardinality() float64
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
@@ -318,6 +321,20 @@ type basePlan struct {
 	id    int
 	ctx   sessionctx.Context
 	stats *statsInfo
+}
+
+func (p *DataSource) cardinality() float64 {
+	if p.statsAfterSelect == nil {
+		return math.MaxFloat64
+	}
+	return p.statsAfterSelect.count
+}
+
+func (p *basePlan) cardinality() float64 {
+	if p.stats == nil {
+		return math.MaxFloat64
+	}
+	return p.stats.count
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
