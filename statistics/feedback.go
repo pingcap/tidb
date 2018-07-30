@@ -271,7 +271,7 @@ func buildBucketFeedback(h *Histogram, feedback *QueryFeedback) (map[int]*Bucket
 		}
 		res, err = bkt.upper.CompareDatum(nil, ran.upper)
 		if err != nil {
-			log.Debugf("decode feedback lower bound \"%v\" to integer failed: %v", bkt.lower.GetBytes(), err)
+			log.Debugf("decode feedback lower bound \"%v\" to integer failed: %v", bkt.upper.GetBytes(), err)
 			continue
 		}
 		if res < 0 {
@@ -750,6 +750,7 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 func splitFeedbackByQueryType(feedbacks []feedback) ([]feedback, []feedback) {
 	var eqFB, ranFB []feedback
 	for _, fb := range feedbacks {
+		// Use `>=` here because sometimes the lower is equal to upper.
 		if bytes.Compare(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) >= 0 {
 			eqFB = append(eqFB, fb)
 		} else {
