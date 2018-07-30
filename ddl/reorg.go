@@ -305,7 +305,7 @@ func getTableRange(d *ddlCtx, tbl table.Table, snapshotVer uint64) (startHandle,
 	startHandle = math.MinInt64
 	endHandle = math.MaxInt64
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(d.store, tbl.GetID(), snapshotVer, math.MinInt64,
+	err = iterateSnapshotRows(d.store, tbl, snapshotVer, math.MinInt64,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			startHandle = h
 			return false, nil

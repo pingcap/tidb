@@ -463,7 +463,7 @@ type addIndexWorker struct {
 	sessCtx     sessionctx.Context
 	taskCh      chan *reorgIndexTask
 	resultCh    chan *addIndexResult
-	indexInfo   *model.IndexInfo
+	index       table.Index
 	table       table.Table
 	colFieldMap map[int64]*types.FieldType
 	closed      bool
@@ -491,6 +491,7 @@ type addIndexResult struct {
 }
 
 func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.Table, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
+	index := tables.NewIndex(t.GetID(), t.Meta(), indexInfo)
 	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
@@ -498,7 +499,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		sessCtx:     sessCtx,
 		taskCh:      make(chan *reorgIndexTask, 1),
 		resultCh:    make(chan *addIndexResult, 1),
-		indexInfo:   indexInfo,
+		index:       index,
 		table:       t,
 		colFieldMap: colFieldMap,
 
@@ -515,10 +516,10 @@ func (w *addIndexWorker) close() {
 }
 
 // getIndexRecord gets index columns values from raw binary value row.
-func (w *addIndexWorker) getIndexRecord(index table.Index, handle int64, recordKey []byte, rawRecord []byte) (*indexRecord, error) {
+func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecord []byte) (*indexRecord, error) {
 	t := w.table
 	cols := t.Cols()
-	idxInfo := index.Meta()
+	idxInfo := w.index.Meta()
 	_, err := tablecodec.DecodeRowWithMap(rawRecord, w.colFieldMap, time.UTC, w.rowMap)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -575,7 +576,7 @@ func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) 
 // 2. Next handle of entry that we need to process.
 // 3. Boolean indicates whether the task is done.
 // 4. error occurs in fetchRowColVals. nil if no error occurs.
-func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, index table.Index, taskRange reorgIndexTask) ([]*indexRecord, int64, bool, error) {
+func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*indexRecord, int64, bool, error) {
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
@@ -583,7 +584,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, index table.Index, 
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
-	err := iterateSnapshotRows(w.sessCtx.GetStore(), taskRange.partitionID, txn.StartTS(), taskRange.startHandle,
+	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			w.logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in fetchRowColVals", 0)
@@ -599,7 +600,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, index table.Index, 
 				return false, nil
 			}
 
-			idxRecord, err1 := w.getIndexRecord(index, handle, recordKey, rawRow)
+			idxRecord, err1 := w.getIndexRecord(handle, recordKey, rawRow)
 			if err1 != nil {
 				return false, errors.Trace(err1)
 			}
@@ -635,7 +636,7 @@ func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
-func (w *addIndexWorker) backfillIndexInTxn(index table.Index, handleRange reorgIndexTask) (nextHandle int64, taskDone bool, addedCount, scanCount int, errInTxn error) {
+func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, taskDone bool, addedCount, scanCount int, errInTxn error) {
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		addedCount = 0
@@ -645,7 +646,7 @@ func (w *addIndexWorker) backfillIndexInTxn(index table.Index, handleRange reorg
 			idxRecords []*indexRecord
 			err        error
 		)
-		idxRecords, nextHandle, taskDone, err = w.fetchRowColVals(txn, index, handleRange)
+		idxRecords, nextHandle, taskDone, err = w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -659,7 +660,7 @@ func (w *addIndexWorker) backfillIndexInTxn(index table.Index, handleRange reorg
 
 			// Create the index.
 			// TODO: backfill unique-key will check constraint every row, we can speed up this case by using batch check.
-			handle, err := index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
+			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
 					// Index already exists, skip it.
@@ -684,11 +685,10 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	result := &addIndexResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
 	lastLogCount := 0
 	startTime := time.Now()
-	index := tables.NewIndex(task.partitionID, w.table.Meta(), w.indexInfo)
 
 	for {
 		addedCount := 0
-		nextHandle, taskDone, addedCount, scanCount, err := w.backfillIndexInTxn(index, handleRange)
+		nextHandle, taskDone, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
 		if err == nil {
 			// Because reorgIndexTask may run a long time,
 			// we should check whether this ddl job is still runnable.
@@ -1074,7 +1074,7 @@ func allocateIndexID(tblInfo *model.TableInfo) int64 {
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h int64, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotRows(store kv.Storage, partitionID int64, version uint64, seekHandle int64, fn recordIterFunc) error {
+func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
 	ver := kv.Version{Ver: version}
 
 	snap, err := store.GetSnapshot(ver)
@@ -1082,16 +1082,15 @@ func iterateSnapshotRows(store kv.Storage, partitionID int64, version uint64, se
 	if err != nil {
 		return errors.Trace(err)
 	}
-	firstKey := tablecodec.EncodeRowKeyWithHandle(partitionID, seekHandle)
+	firstKey := t.RecordKey(seekHandle)
 	it, err := snap.Seek(firstKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer it.Close()
 
-	recordPrefix := tablecodec.GenTableRecordPrefix(partitionID)
 	for it.Valid() {
-		if !it.Key().HasPrefix(recordPrefix) {
+		if !it.Key().HasPrefix(t.RecordPrefix()) {
 			break
 		}
 
@@ -1100,7 +1099,7 @@ func iterateSnapshotRows(store kv.Storage, partitionID int64, version uint64, se
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rk := tablecodec.EncodeRecordKey(recordPrefix, handle)
+		rk := t.RecordKey(handle)
 
 		more, err := fn(handle, rk, it.Value())
 		if !more || err != nil {
