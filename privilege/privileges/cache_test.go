@@ -261,3 +261,40 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	err = p.LoadAll(se)
 	c.Assert(err, IsNil)
 }
+
+func (s *testCacheSuite) TestSortUserTable(c *C) {
+	var p privileges.MySQLPrivilege
+	p.User = []privileges.UserRecord{
+		{Host: "%", User: "root"},
+		{Host: "%", User: "jeffrey"},
+		{Host: "localhost", User: "root"},
+		{Host: "localhost", User: ""},
+	}
+	p.SortUserTable()
+	result := []privileges.UserRecord{
+		{Host: "localhost", User: "root"},
+		{Host: "localhost", User: ""},
+		{Host: "%", User: "jeffrey"},
+		{Host: "%", User: "root"},
+	}
+	checkUserRecord(p.User, result, c)
+
+	p.User = []privileges.UserRecord{
+		{Host: "%", User: "jeffrey"},
+		{Host: "h1.example.net", User: ""},
+	}
+	p.SortUserTable()
+	result = []privileges.UserRecord{
+		{Host: "h1.example.net", User: ""},
+		{Host: "%", User: "jeffrey"},
+	}
+	checkUserRecord(p.User, result, c)
+}
+
+func checkUserRecord(x, y []privileges.UserRecord, c *C) {
+	c.Assert(len(x), Equals, len(y))
+	for i := 0; i < len(x); i++ {
+		c.Assert(x[i].User, Equals, y[i].User)
+		c.Assert(x[i].Host, Equals, y[i].Host)
+	}
+}
