@@ -440,7 +440,7 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 // operator id, task type, operator info, and the estemated row count.
 func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
-	count := string(strconv.AppendFloat([]byte{}, p.StatsInfo().count, 'f', 2, 64))
+	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().count, 'f', 2, 64))
 	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
 	e.Rows = append(e.Rows, row)
 }

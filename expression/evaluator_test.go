@@ -47,16 +47,19 @@ func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
 }
 
 func (s *testEvaluatorSuite) SetUpTest(c *C) {
+	s.ctx.GetSessionVars().PlanColumnID = 0
 	testleak.BeforeTest()
 }
 
 func (s *testEvaluatorSuite) TearDownTest(c *C) {
+	s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 	testleak.AfterTest(c)()
 }
 
