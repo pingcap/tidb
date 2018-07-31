@@ -62,7 +62,7 @@ func (d *ddl) generalWorker() *worker {
 	return d.workers[generalWorker]
 }
 
-// restartWorkers is like the function fo d.start. But it won't initialize the "workers" and create a new worker.
+// restartWorkers is like the function of d.start. But it won't initialize the "workers" and create a new worker.
 // It only starts the original workers.
 func (d *ddl) restartWorkers(ctx context.Context) {
 	d.quitCh = make(chan struct{})
