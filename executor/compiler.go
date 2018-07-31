@@ -103,7 +103,7 @@ func isExpensiveQuery(p plan.Plan) bool {
 
 func isPhysicalPlanExpensive(p plan.PhysicalPlan) bool {
 	expensiveRowThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
-	if p.StatsInfo().Count() > expensiveRowThreshold {
+	if int64(p.StatsCount()) > expensiveRowThreshold {
 		return true
 	}
 
