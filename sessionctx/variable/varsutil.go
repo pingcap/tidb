@@ -202,6 +202,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, UnknownSystemVar.GenByArgs(name)
 	}
 	switch name {
+	case ConnectTimeout:
+		return checkIntegerSystemVar(name, value, 2, 31536000, vars)
 	case DefaultWeekFormat:
 		return checkIntegerSystemVar(name, value, 0, 7, vars)
 	case DelayKeyWrite:
@@ -268,6 +270,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, nil
 	case TableDefinitionCache:
 		return checkIntegerSystemVar(name, value, 400, 524288, vars)
+	case TmpTableSize:
+		return checkIntegerSystemVar(name, value, 1024, 18446744073709551615, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil

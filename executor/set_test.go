@@ -398,4 +398,43 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 
 	_, err = tk.Exec("set @@old_passwords='hello'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@tmp_table_size=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tmp_table_size value: '-1'"))
+	result = tk.MustQuery("select @@tmp_table_size;")
+	result.Check(testkit.Rows("1024"))
+
+	tk.MustExec("set @@tmp_table_size=1020")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tmp_table_size value: '1020'"))
+	result = tk.MustQuery("select @@tmp_table_size;")
+	result.Check(testkit.Rows("1024"))
+
+	tk.MustExec("set @@tmp_table_size=167772161")
+	result = tk.MustQuery("select @@tmp_table_size;")
+	result.Check(testkit.Rows("167772161"))
+
+	tk.MustExec("set @@tmp_table_size=18446744073709551615")
+	result = tk.MustQuery("select @@tmp_table_size;")
+	result.Check(testkit.Rows("18446744073709551615"))
+
+	_, err = tk.Exec("set @@tmp_table_size=18446744073709551616")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	_, err = tk.Exec("set @@tmp_table_size='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.connect_timeout=1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect connect_timeout value: '1'"))
+	result = tk.MustQuery("select @@global.connect_timeout;")
+	result.Check(testkit.Rows("2"))
+
+	tk.MustExec("set @@global.connect_timeout=31536000")
+	result = tk.MustQuery("select @@global.connect_timeout;")
+	result.Check(testkit.Rows("31536000"))
+
+	tk.MustExec("set @@global.connect_timeout=31536001")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect connect_timeout value: '31536001'"))
+	result = tk.MustQuery("select @@global.connect_timeout;")
+	result.Check(testkit.Rows("31536000"))
+
 }

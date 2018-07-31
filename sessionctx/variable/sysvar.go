@@ -153,7 +153,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_max_statement_classes", "168"},
 	{ScopeGlobal, "server_id", "0"},
 	{ScopeGlobal, "innodb_flushing_avg_loops", "30"},
-	{ScopeGlobal | ScopeSession, "tmp_table_size", "16777216"},
+	{ScopeGlobal | ScopeSession, TmpTableSize, "16777216"},
 	{ScopeGlobal, "innodb_max_purge_lag", "0"},
 	{ScopeGlobal | ScopeSession, "preload_buffer_size", "32768"},
 	{ScopeGlobal, "slave_checkpoint_period", "300"},
@@ -162,7 +162,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_flush_log_at_timeout", "1"},
 	{ScopeGlobal, "innodb_max_undo_log_size", ""},
 	{ScopeGlobal | ScopeSession, "range_alloc_block_size", "4096"},
-	{ScopeGlobal, "connect_timeout", "10"},
+	{ScopeGlobal, ConnectTimeout, "10"},
 	{ScopeGlobal | ScopeSession, "collation_server", "latin1_swedish_ci"},
 	{ScopeNone, "have_rtree_keys", "YES"},
 	{ScopeGlobal, "innodb_old_blocks_pct", "37"},
@@ -750,6 +750,10 @@ const (
 	MaxConnectErrors = "max_connect_errors"
 	// TableDefinitionCache is the name for 'table_definition_cache' system variable.
 	TableDefinitionCache = "table_definition_cache"
+	// TmpTableSize is the name for 'tmp_table_size' system variable.
+	TmpTableSize = "tmp_table_size"
+	// ConnectTimeout is the name for 'connect_timeout' system variable.
+	ConnectTimeout = "connect_timeout"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
