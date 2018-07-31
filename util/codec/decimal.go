@@ -36,6 +36,10 @@ func EncodeDecimal(b []byte, dec *types.MyDecimal, precision, frac int) []byte {
 
 // DecodeDecimal decodes bytes to decimal.
 func DecodeDecimal(b []byte) ([]byte, *types.MyDecimal, error) {
+	// gofail: var errorInDecodeDecimal bool
+	// if errorInDecodeDecimal {
+	//	 return b, nil, errors.New("gofail error")
+	// }
 	if len(b) < 3 {
 		return b, nil, errors.New("insufficient bytes to decode value")
 	}

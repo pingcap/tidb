@@ -619,6 +619,8 @@ func (s *testMyDecimalSuite) TestMul(c *C) {
 		{"123", "0.01", "1.23", nil},
 		{"123", "0", "0", nil},
 		{"1" + strings.Repeat("0", 60), "1" + strings.Repeat("0", 60), "0", ErrOverflow},
+		{"0.5999991229316", "0.918755041726043", "0.5512522192246113614062276588", nil},
+		{"0.5999991229317", "0.918755041726042", "0.5512522192247026369112773314", nil},
 	}
 	for _, tt := range tests {
 		var a, b, product MyDecimal
