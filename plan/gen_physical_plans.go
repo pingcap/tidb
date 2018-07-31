@@ -385,22 +385,29 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) ([]PhysicalPlan, boo
 			plans = append(plans, join...)
 		}
 	case InnerJoin:
-		join := p.getIndexJoinByOuterIdx(prop, 0)
-		if join != nil {
-			// If the plan is not nil and matches the hint, return it directly.
-			if leftOuter {
-				return join, true
-			}
-			plans = append(plans, join...)
+		lhsCardinality := p.Children()[0].statsInfo().Count()
+		rhsCardinality := p.Children()[1].statsInfo().Count()
+
+		leftJoins := p.getIndexJoinByOuterIdx(prop, 0)
+		if leftOuter && leftJoins != nil {
+			return leftJoins, true
 		}
-		join = p.getIndexJoinByOuterIdx(prop, 1)
-		if join != nil {
-			// If the plan is not nil and matches the hint, return it directly.
-			if rightOuter {
-				return join, true
-			}
-			plans = append(plans, join...)
+
+		rightJoins := p.getIndexJoinByOuterIdx(prop, 1)
+		if rightOuter && rightJoins != nil {
+			return rightJoins, true
 		}
+
+		if leftJoins != nil && lhsCardinality < rhsCardinality {
+			return leftJoins, leftOuter
+		}
+
+		if rightJoins != nil && rhsCardinality < lhsCardinality {
+			return rightJoins, rightOuter
+		}
+
+		plans = append(plans, leftJoins...)
+		plans = append(plans, rightJoins...)
 	}
 	return plans, false
 }
