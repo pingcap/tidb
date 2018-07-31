@@ -336,10 +336,12 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 	case decimalFlag:
 		var dec *types.MyDecimal
 		b, dec, err = DecodeDecimal(b)
-		precision, frac := dec.PrecisionAndFrac()
-		d.SetMysqlDecimal(dec)
-		d.SetLength(precision)
-		d.SetFrac(frac)
+		if err == nil {
+			precision, frac := dec.PrecisionAndFrac()
+			d.SetMysqlDecimal(dec)
+			d.SetLength(precision)
+			d.SetFrac(frac)
+		}
 	case durationFlag:
 		var r int64
 		b, r, err = DecodeInt(b)

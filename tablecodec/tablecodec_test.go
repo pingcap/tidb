@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	gofail "github.com/coreos/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -276,6 +277,16 @@ func (s *testTableCodecSuite) TestCutKey(c *C) {
 	}
 	_, handleVal, _ := codec.DecodeOne(handleBytes)
 	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
+}
+
+func (s *testTableCodecSuite) TestDecodeBadDecical(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal")
+	dec := types.NewDecFromStringForTest("0.111")
+	b := codec.EncodeDecimal(nil, dec, 0, 0)
+	// Expect no panic.
+	_, _, err := codec.DecodeOne(b)
+	c.Assert(err, NotNil)
 }
 
 func (s *testTableCodecSuite) TestIndexKey(c *C) {

@@ -85,6 +85,24 @@ func add(a, b, carry int32) (int32, int32) {
 	return sum, carry
 }
 
+// add2 adds a and b and carry, returns the sum and new carry.
+// It is only used in DecimalMul.
+func add2(a, b, carry int32) (int32, int32) {
+	sum := int64(a) + int64(b) + int64(carry)
+	if sum >= wordBase {
+		carry = 1
+		sum -= wordBase
+	} else {
+		carry = 0
+	}
+
+	if sum >= wordBase {
+		sum -= wordBase
+		carry++
+	}
+	return int32(sum), carry
+}
+
 // sub subtracts b and carry from a, returns the diff and new carry.
 func sub(a, b, carry int32) (int32, int32) {
 	diff := a - b - carry
@@ -1777,7 +1795,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 			p := int64(from1.wordBuf[idx1]) * int64(from2.wordBuf[idx2])
 			hi = int32(p / wordBase)
 			lo = int32(p - int64(hi)*wordBase)
-			to.wordBuf[idxTo], carry = add(to.wordBuf[idxTo], lo, carry)
+			to.wordBuf[idxTo], carry = add2(to.wordBuf[idxTo], lo, carry)
 			carry += hi
 			idx2--
 			idxTo--
@@ -1786,7 +1804,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 			if idxTo < 0 {
 				return ErrOverflow
 			}
-			to.wordBuf[idxTo], carry = add(to.wordBuf[idxTo], 0, carry)
+			to.wordBuf[idxTo], carry = add2(to.wordBuf[idxTo], 0, carry)
 		}
 		for idxTo--; carry > 0; idxTo-- {
 			if idxTo < 0 {
