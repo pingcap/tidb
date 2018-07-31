@@ -33,7 +33,7 @@ var (
 
 	GetSchemaDiff    = "get_schema_diff"
 	SetSchemaDiff    = "set_schema_diff"
-	GetDDLJob        = "get_ddl_job"
+	GetDDLJobByIdx   = "get_ddl_job"
 	UpdateDDLJob     = "update_ddl_job"
 	GetHistoryDDLJob = "get_history_ddl_job"
 

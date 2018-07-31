@@ -121,7 +121,7 @@ type DDLServerInfo struct {
 	Lease      string `json:"lease"`
 }
 
-// ServerVersionInfo is the server version and git_hash
+// ServerVersionInfo is the server version and git_hash.
 type ServerVersionInfo struct {
 	Version string `json:"version"`
 	GitHash string `json:"git_hash"`

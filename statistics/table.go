@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
@@ -37,14 +38,15 @@ const (
 	pseudoEqualRate   = 1000
 	pseudoLessRate    = 3
 	pseudoBetweenRate = 40
+
+	outOfRangeBetweenRate = 100
 )
 
 // Table represents statistics for a table.
 type Table struct {
 	HistColl
-	ModifyCount int64 // Total modify count in a table.
-	Version     uint64
-	PKIsHandle  bool
+	Version    uint64
+	PKIsHandle bool
 }
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
@@ -57,6 +59,7 @@ type HistColl struct {
 	colName2ID  map[string]int64 // map column name to column id
 	Pseudo      bool
 	Count       int64
+	ModifyCount int64 // Total modify count in a table.
 }
 
 func (t *Table) copy() *Table {
@@ -69,6 +72,7 @@ func (t *Table) copy() *Table {
 		colName2Idx: make(map[string]int64),
 		colName2ID:  make(map[string]int64),
 		Pseudo:      t.Pseudo,
+		ModifyCount: t.ModifyCount,
 	}
 	for id, col := range t.Columns {
 		newHistColl.Columns[id] = col
@@ -83,9 +87,8 @@ func (t *Table) copy() *Table {
 		newHistColl.colName2ID[name] = id
 	}
 	nt := &Table{
-		HistColl:    newHistColl,
-		ModifyCount: t.ModifyCount,
-		Version:     t.Version,
+		HistColl: newHistColl,
+		Version:  t.Version,
 	}
 	return nt
 }
@@ -112,7 +115,7 @@ func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*CMSke
 	return decodeCMSketch(rows[0].GetBytes(0))
 }
 
-func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo) error {
+func (h *Handle) indexStatsFromStorage(row chunk.Row, table *Table, tableInfo *model.TableInfo) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -151,7 +154,7 @@ func (h *Handle) indexStatsFromStorage(row types.Row, table *Table, tableInfo *m
 	return nil
 }
 
-func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *model.TableInfo, loadAll bool) error {
+func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *model.TableInfo, loadAll bool) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -216,6 +219,12 @@ func (h *Handle) columnStatsFromStorage(row types.Row, table *Table, tableInfo *
 				Count:     int64(hg.totalRowCount()),
 				ErrorRate: errorRate,
 			}
+			break
+		}
+		if col.TotColSize != totColSize {
+			newCol := *col
+			newCol.TotColSize = totColSize
+			col = &newCol
 		}
 		break
 	}
@@ -399,7 +408,7 @@ func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext,
 		return getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.Count)), nil
 	}
 	c := coll.Columns[colID]
-	result, err := c.getColumnRowCount(sc, intRanges)
+	result, err := c.getColumnRowCount(sc, intRanges, coll.ModifyCount)
 	result *= c.getIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
@@ -411,7 +420,7 @@ func (coll *HistColl) GetRowCountByColumnRanges(sc *stmtctx.StatementContext, co
 		return getPseudoRowCountByColumnRanges(sc, float64(coll.Count), colRanges, 0)
 	}
 	c := coll.Columns[colID]
-	result, err := c.getColumnRowCount(sc, colRanges)
+	result, err := c.getColumnRowCount(sc, colRanges, coll.ModifyCount)
 	result *= c.getIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
 }
@@ -429,9 +438,9 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	var result float64
 	var err error
 	if idx.CMSketch != nil && idx.statsVer == version1 {
-		result, err = coll.getIndexRowCount(sc, idx, indexRanges)
+		result, err = coll.getIndexRowCount(sc, idx, indexRanges, coll.ModifyCount)
 	} else {
-		result, err = idx.getRowCount(sc, indexRanges)
+		result, err = idx.getRowCount(sc, indexRanges, coll.ModifyCount)
 	}
 	result *= idx.getIncreaseFactor(coll.Count)
 	return result, errors.Trace(err)
@@ -458,13 +467,13 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 	return len(ran.LowVal)
 }
 
-func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index, indexRanges []*ranger.Range) (float64, error) {
+func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index, indexRanges []*ranger.Range, modifyCount int64) (float64, error) {
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
 		rangePosition := getOrdinalOfRangeCond(sc, ran)
 		// first one is range, just use the previous way to estimate
 		if rangePosition == 0 {
-			count, err := idx.getRowCount(sc, []*ranger.Range{ran})
+			count, err := idx.getRowCount(sc, []*ranger.Range{ran}, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -477,7 +486,20 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index,
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(coll.Count)
+		val := types.NewBytesDatum(bytes)
+		if idx.outOfRange(val) {
+			// When the value is out of range, we could not found this value in the CM Sketch,
+			// so we use heuristic methods to estimate the selectivity.
+			if idx.NDV > 0 && len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal) {
+				// for equality queries
+				selectivity = 1.0 / float64(idx.NDV)
+			} else {
+				// for range queries
+				selectivity = float64(modifyCount) / outOfRangeBetweenRate / idx.totalRowCount()
+			}
+		} else {
+			selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.totalRowCount())
+		}
 		// use histogram to estimate the range condition
 		if rangePosition != len(ran.LowVal) {
 			rang := ranger.Range{
@@ -498,9 +520,9 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index,
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity = selectivity * count / float64(coll.Count)
+			selectivity = selectivity * count / float64(idx.totalRowCount())
 		}
-		totalCount += selectivity * float64(coll.Count)
+		totalCount += selectivity * float64(idx.totalRowCount())
 	}
 	if totalCount > idx.totalRowCount() {
 		totalCount = idx.totalRowCount()

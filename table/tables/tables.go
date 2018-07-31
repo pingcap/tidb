@@ -59,7 +59,7 @@ type tableCommon struct {
 	meta            *model.TableInfo
 	alloc           autoid.Allocator
 
-	// Both of them are generated using partitionID.
+	// recordPrefix and indexPrefix are generated using partitionID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
 }
@@ -163,7 +163,7 @@ func initTableIndices(t *tableCommon) error {
 		}
 
 		// Use partition ID for index, because tableCommon may be table or partition.
-		idx := NewIndex(t.partitionID, idxInfo)
+		idx := NewIndex(t.partitionID, tblInfo, idxInfo)
 		t.indices = append(t.indices, idx)
 	}
 	return nil
@@ -203,6 +203,11 @@ func (t *tableCommon) DeletableIndices() []table.Index {
 // Meta implements table.Table Meta interface.
 func (t *tableCommon) Meta() *model.TableInfo {
 	return t.meta
+}
+
+// GetID implements table.Table GetID interface.
+func (t *tableCommon) GetID() int64 {
+	return t.meta.ID
 }
 
 // Cols implements table.Table Cols interface.
@@ -709,14 +714,14 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
-			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS, h, rec)
+			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS(), h, rec)
 			return errors.Trace(err)
 		}
 		if err = v.Delete(ctx.GetSessionVars().StmtCtx, ctx.Txn(), vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
-				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), ctx.Txn().StartTS, h)
+				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), ctx.Txn().StartTS(), h)
 				continue
 			}
 			return errors.Trace(err)

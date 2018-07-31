@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -86,45 +87,45 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 		Type:    mysql.TypeLonglong,
 		Decimal: mysql.NotFixedDec,
 	}}
-	bs, err := dumpTextRow(nil, columns, types.DatumRow{types.NewIntDatum(10)})
+	bs, err := dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(10)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "10")
 
-	bs, err = dumpTextRow(nil, columns, types.DatumRow{types.NewUintDatum(11)})
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(11)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11")
 
 	columns[0].Type = mysql.TypeFloat
 	columns[0].Decimal = 1
 	f32 := types.NewFloat32Datum(1.2)
-	bs, err = dumpTextRow(nil, columns, types.DatumRow{f32})
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f32}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "1.2")
 
 	columns[0].Decimal = 2
-	bs, err = dumpTextRow(nil, columns, types.DatumRow{f32})
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f32}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "1.20")
 
 	f64 := types.NewFloat64Datum(2.2)
 	columns[0].Type = mysql.TypeDouble
 	columns[0].Decimal = 1
-	bs, err = dumpTextRow(nil, columns, types.DatumRow{f64})
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f64}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "2.2")
 
 	columns[0].Decimal = 2
-	bs, err = dumpTextRow(nil, columns, types.DatumRow{f64})
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{f64}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "2.20")
 
 	columns[0].Type = mysql.TypeBlob
-	bs, err = dumpTextRow(nil, columns, types.DatumRow{types.NewBytesDatum([]byte("foo"))})
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewBytesDatum([]byte("foo"))}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "foo")
 
 	columns[0].Type = mysql.TypeVarchar
-	bs, err = dumpTextRow(nil, columns, types.DatumRow{types.NewStringDatum("bar")})
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("bar")}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "bar")
 
@@ -134,7 +135,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	d.SetMysqlTime(time)
 	columns[0].Type = mysql.TypeDatetime
-	bs, err = dumpTextRow(nil, columns, types.DatumRow{d})
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "2017-01-06 00:00:00")
 
@@ -142,13 +143,14 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration
-	bs, err = dumpTextRow(nil, columns, types.DatumRow{d})
+	columns[0].Decimal = 0
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "11:30:45")
 
 	d.SetMysqlDecimal(types.NewDecFromStringForTest("1.23"))
 	columns[0].Type = mysql.TypeNewDecimal
-	bs, err = dumpTextRow(nil, columns, types.DatumRow{d})
+	bs, err = dumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{d}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "1.23")
 }

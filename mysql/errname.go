@@ -316,7 +316,7 @@ var MySQLErrName = map[uint16]string{
 	ErrUnknownTimeZone:                          "Unknown or incorrect time zone: '%-.64s'",
 	ErrWarnInvalidTimestamp:                     "Invalid TIMESTAMP value in column '%s' at row %d",
 	ErrInvalidCharacterString:                   "Invalid %s character string: '%.64s'",
-	ErrWarnAllowedPacketOverflowed:              "Result of %s() was larger than maxAllowedPacket (%d) - truncated",
+	ErrWarnAllowedPacketOverflowed:              "Result of %s() was larger than max_allowed_packet (%d) - truncated",
 	ErrConflictingDeclarations:                  "Conflicting declarations: '%s%s' and '%s%s'",
 	ErrSpNoRecursiveCreate:                      "Can't create a %s from within another stored routine",
 	ErrSpAlreadyExists:                          "%s %s already exists",

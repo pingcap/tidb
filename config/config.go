@@ -58,16 +58,17 @@ type Config struct {
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 
-	Log               Log               `toml:"log" json:"log"`
-	Security          Security          `toml:"security" json:"security"`
-	Status            Status            `toml:"status" json:"status"`
-	Performance       Performance       `toml:"performance" json:"performance"`
-	XProtocol         XProtocol         `toml:"xprotocol" json:"xprotocol"`
-	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
-	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
-	TiKVClient        TiKVClient        `toml:"tikv-client" json:"tikv-client"`
-	Binlog            Binlog            `toml:"binlog" json:"binlog"`
+	Log                 Log               `toml:"log" json:"log"`
+	Security            Security          `toml:"security" json:"security"`
+	Status              Status            `toml:"status" json:"status"`
+	Performance         Performance       `toml:"performance" json:"performance"`
+	XProtocol           XProtocol         `toml:"xprotocol" json:"xprotocol"`
+	PreparedPlanCache   PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing         OpenTracing       `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Binlog              Binlog            `toml:"binlog" json:"binlog"`
+	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 }
 
 // Log is the log section of config.
