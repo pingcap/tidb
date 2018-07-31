@@ -309,6 +309,12 @@ func (s *testSuite) TestAggregation(c *C) {
 	result = tk.MustQuery("select t.id, count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), group_concat(95) from t left join s on t.id = s.id")
 	result.Check(testkit.Rows("1 1 95 95.0000 95 95 95 95 95 95"))
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
+
+	// test agg bit col
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a bit(1))")
+	tk.MustExec("insert into t value(1), (0)")
+	result = tk.MustQuery("select cast(a as signed), cast(max(a) as signed),  cast(min(a) as signed) from t group by 1")
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {
