@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"math"
 	"sort"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/codec"
-	"unicode/utf8"
 )
 
 func validInterval(sc *stmtctx.StatementContext, low, high point) (bool, error) {
