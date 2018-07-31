@@ -1713,6 +1713,24 @@ func (s *testSuite) TestUpdateSelect(c *C) {
 	tk.MustExec("admin check table msg")
 }
 
+func (s *testSuite) TestUpdateDelete(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE ttt (id bigint(20) NOT NULL, host varchar(30) NOT NULL, PRIMARY KEY (id), UNIQUE KEY i_host (host));")
+	tk.MustExec("insert into ttt values (7,7),(8,8),(9,9);")
+
+	tk.MustExec("begin")
+	tk.MustExec("update ttt set id = 0, host='7' where id = 7 limit 1;")
+	tk.MustExec("delete from ttt where id = 0 limit 1;")
+	tk.MustExec("update ttt set id = 0, host='9' where id = 9 limit 1;")
+	tk.MustExec("delete from ttt where id = 0 limit 1;")
+	tk.MustExec("update ttt set id = 0, host='8' where id = 8 limit 1;")
+	tk.MustExec("delete from ttt where id = 0 limit 1;")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table ttt;")
+	tk.MustExec("drop table ttt")
+}
+
 func (s *testSuite) TestUpdateAffectRowCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
