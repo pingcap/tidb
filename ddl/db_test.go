@@ -3016,6 +3016,22 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	partition p2 values less than (15)
 	);`
 	s.testErrorCode(c, sql7, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
+
+	s.tk.MustExec("drop table if exists part6;")
+	sql8 := `create table part6 (
+		col1 int not null,
+		col2 date not null,
+		col3 int not null,
+		col4 int not null,
+		col5 int not null,
+		unique key(col1, col2),
+		unique key(col1, col3)
+	)
+	partition by range( col1 + col2 ) (
+	partition p1 values less than (11),
+  	partition p2 values less than (15)
+	);`
+	s.testErrorCode(c, sql8, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 }
 
 func (s *testDBSuite) TestPartitionAddIndex(c *C) {

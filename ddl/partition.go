@@ -33,6 +33,8 @@ import (
 
 const (
 	partitionMaxValue = "MAXVALUE"
+	primarykey        = "PRIMARY KEY"
+	uniqueIndex       = "UNIQUE INDEX"
 )
 
 // buildTablePartitionInfo builds partition info and checks for some errors.
@@ -285,14 +287,14 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 // checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
 func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
 	// Returns directly if there is no constraint in the partition table.
-	if s.Partition.Tp != model.PartitionTypeRange || len(constraints) == 0 {
+	if len(constraints) == 0 {
 		return nil
 	}
 
-	// Save the column names in table constraints to []map[string]struct{}.
-	consColNames := saveConstraintsColumnNames(tblInfo, constraints)
+	// Extract the column names in table constraints to []map[string]struct{}.
+	consColNames := extractConstraintsColumnNames(tblInfo, constraints)
 
-	// Parse partitioning key, save the column names in the partitioning key to slice.
+	// Parse partitioning key, extract the column names in the partitioning key to slice.
 	buf := new(bytes.Buffer)
 	s.Partition.Expr.Format(buf)
 	var partkeys []string
@@ -306,32 +308,37 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.Create
 	}
 
 	// Checks that the partitioning key is included in the constraint.
-	// Here consColNames[0] save Multiple keys, consColNames[1] save Primary keys.
-	if !checkConstraintIncludePartKey(partkeys, consColNames[0]) || !checkConstraintIncludePartKey(partkeys, consColNames[1]) {
-		return ErrUniqueKeyNeedAllFieldsInPf
-	}
-
-	// Every unique key on the table must use every column in the table's partitioning expression.
-	// Here consColNames[2] saves Unique key.
-	// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
-	if len(consColNames[2]) == 0 {
-		return nil
-	}
-	_, ok := consColNames[2][partkeys[0]]
-	if !ok || len(consColNames[2]) > 1 || len(partkeys) > 1 {
-		return ErrUniqueKeyNeedAllFieldsInPf
+	for i, con := range consColNames {
+		if !checkConstraintIncludePartKey(partkeys, con) {
+			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs(primarykey)
+		}
+		// Every unique key on the table must use every column in the table's partitioning expression.
+		// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
+		if len(consColNames)-1 == i {
+			if len(con) == 0 {
+				return nil
+			}
+			if len(con) > 1 || len(partkeys) > 1 || !checkConstraintIncludePartKey(partkeys, con) {
+				return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs(uniqueIndex)
+			}
+		}
 	}
 	return nil
 }
 
-// saveConstraintsColumnNames saves the column names in table constraints to []map[string]struct{}.
-func saveConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constraint) []map[string]struct{} {
-	multipleKeys := make(map[string]struct{})
+// extractConstraintsColumnNames extract the column names in table constraints to []map[string]struct{}.
+func extractConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constraint) []map[string]struct{} {
+	var constraints []map[string]struct{}
 	for _, v := range cons {
 		if v.Tp == ast.ConstraintUniq {
-			for _, key := range v.Keys {
+			multipleKeys := make(map[string]struct{})
+			for i, key := range v.Keys {
 				if len(v.Keys) > 1 {
 					multipleKeys[key.Column.Name.L] = struct{}{}
+				}
+				if i == 0 {
+					// Extract every unique key
+					constraints = append(constraints, multipleKeys)
 				}
 			}
 		}
@@ -347,11 +354,9 @@ func saveConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constraint
 			uniKeys[col.Name.L] = struct{}{}
 		}
 	}
-	return []map[string]struct{}{
-		multipleKeys,
-		priKeys,
-		uniKeys,
-	}
+	constraints = append(constraints, priKeys)
+	constraints = append(constraints, uniKeys)
+	return constraints
 }
 
 // checkConstraintIncludePartKey checks that the partitioning key is included in the constraint.
