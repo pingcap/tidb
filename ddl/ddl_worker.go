@@ -135,7 +135,7 @@ func (w *worker) start(d *ddlCtx) {
 	for {
 		select {
 		case <-ticker.C:
-			log.Debugf("[ddl-%s] waits %s to check DDL status again", w, checkTime)
+			log.Debugf("[ddl-%s] wait %s to check DDL status again", w, checkTime)
 		case <-w.ddlJobCh:
 		case <-w.quitCh:
 			return
@@ -143,7 +143,7 @@ func (w *worker) start(d *ddlCtx) {
 
 		err := w.handleDDLJobQueue(d)
 		if err != nil {
-			log.Errorf("[ddl-%s] handles DDL job err %v", w, errors.ErrorStack(err))
+			log.Errorf("[ddl-%s] handle DDL job err %v", w, errors.ErrorStack(err))
 		}
 	}
 }
