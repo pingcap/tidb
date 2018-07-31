@@ -173,8 +173,16 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 	constraints []*ast.Constraint) ([]*table.Column, []*ast.Constraint, error) {
 	var cols []*table.Column
 	colMap := map[string]*table.Column{}
+	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
+	var outPriKeyConstraint *ast.Constraint
+	for _, v := range constraints {
+		if v.Tp == ast.ConstraintPrimaryKey {
+			outPriKeyConstraint = v
+			break
+		}
+	}
 	for i, colDef := range colDefs {
-		col, cts, err := buildColumnAndConstraint(ctx, i, colDef)
+		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -229,13 +237,14 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	return nil
 }
 
+// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
-	colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
+	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
 	err := setCharsetCollationFlenDecimal(colDef.Tp)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	col, cts, err := columnDefToCol(ctx, offset, colDef)
+	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -263,7 +272,8 @@ func isExplicitTimeStamp() bool {
 }
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
-func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
+// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
+func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
 	var constraints = make([]*ast.Constraint, 0)
 	col := table.ToColumn(&model.ColumnInfo{
 		Offset:    offset,
@@ -282,6 +292,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 
 	setOnUpdateNow := false
 	hasDefaultValue := false
+	hasNullFlag := false
 	if colDef.Options != nil {
 		length := types.UnspecifiedLength
 
@@ -299,6 +310,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 			case ast.ColumnOptionNull:
 				col.Flag &= ^mysql.NotNullFlag
 				removeOnUpdateNowFlag(col)
+				hasNullFlag = true
 			case ast.ColumnOptionAutoIncrement:
 				col.Flag |= mysql.AutoIncrementFlag
 			case ast.ColumnOptionPrimaryKey:
@@ -367,7 +379,11 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 		col.Flag &= ^mysql.BinaryFlag
 		col.Flag |= mysql.ZerofillFlag
 	}
-	err := checkDefaultValue(ctx, col, hasDefaultValue)
+	err := checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	err = checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -475,12 +491,40 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 		}
 		return nil
 	}
+	// Primary key default null is invalid.
+	if mysql.HasPriKeyFlag(c.Flag) {
+		return ErrPrimaryCantHaveNull
+	}
 
 	// Set not null but default null is invalid.
 	if mysql.HasNotNullFlag(c.Flag) {
 		return types.ErrInvalidDefault.GenByArgs(c.Name)
 	}
 
+	return nil
+}
+
+// checkPriKeyConstraint check all parts of a PRIMARY KEY must be NOT NULL
+func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool, outPriKeyConstraint *ast.Constraint) error {
+	// Primary key should not be null.
+	if mysql.HasPriKeyFlag(col.Flag) && hasDefaultValue && col.DefaultValue == nil {
+		return types.ErrInvalidDefault.GenByArgs(col.Name)
+	}
+	// Set primary key flag for outer primary key constraint.
+	// Such as: create table t1 (id int , age int, primary key(id))
+	if !mysql.HasPriKeyFlag(col.Flag) && outPriKeyConstraint != nil {
+		for _, key := range outPriKeyConstraint.Keys {
+			if key.Column.Name.L != col.Name.L {
+				continue
+			}
+			col.Flag |= mysql.PriKeyFlag
+			break
+		}
+	}
+	// Primary key should not be null.
+	if mysql.HasPriKeyFlag(col.Flag) && hasNullFlag {
+		return ErrPrimaryCantHaveNull
+	}
 	return nil
 }
 
@@ -1180,7 +1224,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// Ingore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
-	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn)
+	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}

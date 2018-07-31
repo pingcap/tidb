@@ -236,6 +236,26 @@ func (b *baseBuiltinFunc) Clone() builtinFunc {
 	panic("you should not call this method.")
 }
 
+// baseBuiltinCastFunc will be contained in every struct that implement cast builtinFunc.
+type baseBuiltinCastFunc struct {
+	baseBuiltinFunc
+
+	// inUnion indicates whether cast is in union context.
+	inUnion bool
+}
+
+func (b *baseBuiltinCastFunc) cloneFrom(from *baseBuiltinCastFunc) {
+	b.baseBuiltinFunc.cloneFrom(&from.baseBuiltinFunc)
+	b.inUnion = from.inUnion
+}
+
+func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuiltinCastFunc {
+	return baseBuiltinCastFunc{
+		baseBuiltinFunc: builtinFunc,
+		inUnion:         inUnion,
+	}
+}
+
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	// evalInt evaluates int result of builtinFunc by given row.
