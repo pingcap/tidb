@@ -136,19 +136,18 @@ func (c *index) truncateIndexValuesIfNeeded(indexedValues []types.Datum) []types
 		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
 			ic := c.idxInfo.Columns[i]
 			colCharset := c.tblInfo.Columns[ic.Offset].Charset
-			if colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4 {
-				val := v.GetBytes()
-				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(val) > ic.Length {
-					rs := bytes.Runes(val)
+			colValue := v.GetBytes()
+			isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+			if isUTF8Charset {
+				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(colValue) > ic.Length {
+					rs := bytes.Runes(colValue)
 					truncateStr := string(rs[:ic.Length])
 					// truncate value and limit its length
 					v.SetString(truncateStr)
 				}
-			} else {
-				if ic.Length != types.UnspecifiedLength && len(v.GetBytes()) > ic.Length {
-					// truncate value and limit its length
-					v.SetBytes(v.GetBytes()[:ic.Length])
-				}
+			} else if ic.Length != types.UnspecifiedLength && len(colValue) > ic.Length {
+				// truncate value and limit its length
+				v.SetBytes(colValue[:ic.Length])
 			}
 		}
 	}
