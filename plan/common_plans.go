@@ -355,14 +355,14 @@ type Delete struct {
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	PhysicalID int64
+	PhysicalID int64 // PhysicalID is the partition id for a partitioned table, otherwise, it is the table id.
 	PKInfo     *model.ColumnInfo
 	ColsInfo   []*model.ColumnInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
-	PhysicalID int64
+	PhysicalID int64 // PhysicalID is the partition id for a partitioned table, otherwise, it is the table id.
 	IndexInfo  *model.IndexInfo
 }
 

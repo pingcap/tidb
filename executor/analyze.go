@@ -142,7 +142,7 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 // AnalyzeIndexExec represents analyze index push down executor.
 type AnalyzeIndexExec struct {
 	ctx         sessionctx.Context
-	physicalID  int64
+	physicalID  int64 // physicalID is the partition id for a partitioned table, otherwise, it is the table id.
 	idxInfo     *model.IndexInfo
 	concurrency int
 	priority    int
@@ -229,7 +229,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 // AnalyzeColumnsExec represents Analyze columns push down executor.
 type AnalyzeColumnsExec struct {
 	ctx           sessionctx.Context
-	physicalID    int64
+	physicalID    int64 // physicalID is the partition id for a partitioned table, otherwise, it is the table id.
 	colsInfo      []*model.ColumnInfo
 	pkInfo        *model.ColumnInfo
 	concurrency   int
