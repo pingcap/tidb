@@ -857,9 +857,9 @@ func (b *executorBuilder) wrapCastForAggArgs(funcs []*aggregation.AggFuncDesc) {
 // are columns or constants, we do not need to build the `proj`.
 func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, src Executor) Executor {
 	hasScalarFunc := false
-	// If the mode if Partial2Mode or CompleteMode, we do not need to wrap cast upon the args,
+	// If the mode is FinalMode, we do not need to wrap cast upon the args,
 	// since the types of the args are already the expected.
-	if len(aggFuncs) > 0 && (aggFuncs[0].Mode == aggregation.Partial1Mode || aggFuncs[0].Mode == aggregation.CompleteMode) {
+	if len(aggFuncs) > 0 && aggFuncs[0].Mode != aggregation.FinalMode {
 		b.wrapCastForAggArgs(aggFuncs)
 	}
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
