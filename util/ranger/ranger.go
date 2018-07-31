@@ -430,19 +430,18 @@ func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) {
 	// In case of UTF8, prefix should be cut by characters rather than bytes
 	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
 		colCharset := tp.Charset
-		if colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4 {
-			val := v.GetBytes()
-			if length != types.UnspecifiedLength && utf8.RuneCount(val) > length {
-				rs := bytes.Runes(val)
+		colValue := v.GetBytes()
+		isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+		if isUTF8Charset {
+			if length != types.UnspecifiedLength && utf8.RuneCount(colValue) > length {
+				rs := bytes.Runes(colValue)
 				truncateStr := string(rs[:length])
 				// truncate value and limit its length
 				v.SetString(truncateStr)
 			}
-		} else {
-			if length != types.UnspecifiedLength && len(v.GetBytes()) > length {
-				// truncate value and limit its length
-				v.SetBytes(v.GetBytes()[:length])
-			}
+		} else if length != types.UnspecifiedLength && len(colValue) > length {
+			// truncate value and limit its length
+			v.SetBytes(colValue[:length])
 		}
 	}
 }
