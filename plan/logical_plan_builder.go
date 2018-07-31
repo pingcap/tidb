@@ -615,8 +615,8 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
-	if a.Tp == mysql.TypeNewDecimal {
-		// The decimal type will be unsigned only when all the decimals to be united are unsigned.
+	if resultTp.Tp == mysql.TypeNewDecimal {
+		// The decimal result type will be unsigned only when all the decimals to be united are unsigned.
 		resultTp.Flag &= b.Flag & mysql.UnsignedFlag
 	} else {
 		// Non-decimal results will be unsigned when the first SQL statement result in the union is unsigned.
