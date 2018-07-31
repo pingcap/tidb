@@ -187,6 +187,17 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongNameForIndex)
 	sql = "create table t2(c1.c2 blob default null);"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
+	sql = "create table t2 (id int default null primary key , age int);"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "create table t2 (id int null primary key , age int);"
+	s.testErrorCode(c, sql, tmysql.ErrPrimaryCantHaveNull)
+	sql = "create table t2 (id int default null, age int, primary key(id));"
+	s.testErrorCode(c, sql, tmysql.ErrPrimaryCantHaveNull)
+	sql = "create table t2 (id int null, age int, primary key(id));"
+	s.testErrorCode(c, sql, tmysql.ErrPrimaryCantHaveNull)
+
+	sql = "create table t2 (id int primary key , age int);"
+	s.tk.MustExec(sql)
 
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
