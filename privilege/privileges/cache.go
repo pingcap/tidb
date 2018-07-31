@@ -193,12 +193,12 @@ func (s sortedUserRecord) Less(i, j int) bool {
 	return x.User < y.User
 }
 
-// compareHost compares two host string using some special rule, return value 1, 0, -1 means > = <.
+// compareHost compares two host string using some special rules, return value 1, 0, -1 means > = <.
 func compareHost(x, y string) int {
 	// The more-specific, the smaller it is.
 	// The pattern '%' means “any host” and is least specific.
-	if y == "%" {
-		if x == "%" {
+	if y == `%` {
+		if x == `%` {
 			return 0
 		}
 		return -1
@@ -212,8 +212,8 @@ func compareHost(x, y string) int {
 		return -1
 	}
 
-	if strings.HasSuffix(y, "%") {
-		if !strings.HasSuffix(x, "%") {
+	if strings.HasSuffix(y, `%`) {
+		if !strings.HasSuffix(x, `%`) {
 			return -1
 		}
 		return 0

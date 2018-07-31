@@ -265,8 +265,8 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 func (s *testCacheSuite) TestSortUserTable(c *C) {
 	var p privileges.MySQLPrivilege
 	p.User = []privileges.UserRecord{
-		{Host: "%", User: "root"},
-		{Host: "%", User: "jeffrey"},
+		{Host: `%`, User: "root"},
+		{Host: `%`, User: "jeffrey"},
 		{Host: "localhost", User: "root"},
 		{Host: "localhost", User: ""},
 	}
@@ -274,19 +274,19 @@ func (s *testCacheSuite) TestSortUserTable(c *C) {
 	result := []privileges.UserRecord{
 		{Host: "localhost", User: "root"},
 		{Host: "localhost", User: ""},
-		{Host: "%", User: "jeffrey"},
-		{Host: "%", User: "root"},
+		{Host: `%`, User: "jeffrey"},
+		{Host: `%`, User: "root"},
 	}
 	checkUserRecord(p.User, result, c)
 
 	p.User = []privileges.UserRecord{
-		{Host: "%", User: "jeffrey"},
+		{Host: `%`, User: "jeffrey"},
 		{Host: "h1.example.net", User: ""},
 	}
 	p.SortUserTable()
 	result = []privileges.UserRecord{
 		{Host: "h1.example.net", User: ""},
-		{Host: "%", User: "jeffrey"},
+		{Host: `%`, User: "jeffrey"},
 	}
 	checkUserRecord(p.User, result, c)
 }
