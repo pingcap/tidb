@@ -1049,6 +1049,54 @@ func (s *testSuite) TestDelete(c *C) {
 	tk.CheckExecResult(1, 0)
 }
 
+func (s *testSuite) TestPartitionedTableDelete(c *C) {
+	createTable := `CREATE TABLE test.t (id int not null default 1, name varchar(255), index(id))
+PARTITION BY RANGE ( id ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+)`
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(createTable)
+	for i := 1; i < 21; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d, "hello")`, i))
+	}
+
+	tk.MustExec(`delete from t where id = 2 limit 1;`)
+	tk.CheckExecResult(1, 0)
+
+	// Test delete with false condition
+	tk.MustExec(`delete from t where 0;`)
+	tk.CheckExecResult(0, 0)
+
+	tk.MustExec("insert into t values (2, 'abc')")
+	tk.MustExec(`delete from t where t.id = 2 limit 1`)
+	tk.CheckExecResult(1, 0)
+
+	// Test delete ignore
+	tk.MustExec("insert into t values (2, 'abc')")
+	_, err := tk.Exec("delete from t where id = (select '2a')")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("delete ignore from t where id = (select '2a')")
+	c.Assert(err, IsNil)
+	tk.CheckExecResult(1, 0)
+	r := tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
+
+	// Test delete without using index, involve multiple partitions.
+	tk.MustExec("delete from t ignore index(id) where id >= 13 and id <= 17")
+	tk.CheckExecResult(5, 0)
+
+	tk.MustExec("admin check table t")
+	tk.MustExec(`delete from t;`)
+	tk.CheckExecResult(14, 0)
+}
+
 func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3")

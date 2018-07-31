@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // Build is used to build a specific AggFunc implementation according to the
@@ -257,7 +258,7 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 		}
 		// The last arg is promised to be a not-null string constant, so the error can be ignored.
 		c, _ := aggFuncDesc.Args[len(aggFuncDesc.Args)-1].(*expression.Constant)
-		sep, _, err := c.EvalString(nil, nil)
+		sep, _, err := c.EvalString(nil, chunk.Row{})
 		// This err should never happen.
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))

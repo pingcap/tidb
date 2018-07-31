@@ -70,6 +70,7 @@ func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.
 		if mysql.HasNotNullFlag(tp.Flag) && endPoint.value.Kind() == types.KindNull {
 			continue
 		}
+
 		ran := &Range{
 			LowVal:      []types.Datum{startPoint.value},
 			LowExclude:  startPoint.excl,

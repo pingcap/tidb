@@ -213,9 +213,8 @@ type DDL interface {
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
-	// GetTableMaxRowID gets table max row ID.
-	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo) (int64, bool, error)
-
+	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
+	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo, id int64) (int64, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(interface{})
 }
@@ -358,13 +357,12 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		terror.Log(errors.Trace(err))
 
 		d.workers = make(map[workerType]*worker, 2)
-		d.workers[generalWorker] = newWorker(generalWorker, 0, d.store, ctxPool)
-		d.workers[addIdxWorker] = newWorker(addIdxWorker, 1, d.store, ctxPool)
+		d.workers[generalWorker] = newWorker(generalWorker, d.store, ctxPool)
+		d.workers[addIdxWorker] = newWorker(addIdxWorker, d.store, ctxPool)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			go worker.start(d.ddlCtx)
-			// TODO: Add the type of DDL worker.
-			metrics.DDLCounter.WithLabelValues(metrics.CreateDDLWorker).Inc()
+			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDLWorker, worker.String())).Inc()
 
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
@@ -418,13 +416,6 @@ func (d *ddl) genGlobalID() (int64, error) {
 	})
 
 	return globalID, errors.Trace(err)
-}
-
-// generalWorker returns the general worker.
-// It's used for testing.
-// TODO: Remove this function.
-func (d *ddl) generalWorker() *worker {
-	return d.workers[generalWorker]
 }
 
 // SchemaSyncer implements DDL.SchemaSyncer interface.

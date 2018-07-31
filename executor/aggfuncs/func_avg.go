@@ -69,7 +69,7 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	p := (*partialResult4AvgDecimal)(pr)
 	newSum := new(types.MyDecimal)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, &row)
+		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -95,7 +95,7 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	p := (*partialResult4AvgDecimal)(pr)
 	newSum := new(types.MyDecimal)
 	for _, row := range rowsInGroup {
-		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, &row)
+		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -103,7 +103,7 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 			continue
 		}
 
-		inputCount, isNull, err := e.args[0].EvalInt(sctx, &row)
+		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -148,7 +148,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	newSum := new(types.MyDecimal)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, &row)
+		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -225,7 +225,7 @@ type avgOriginal4Float64 struct {
 func (e *avgOriginal4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgFloat64)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, &row)
+		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -246,7 +246,7 @@ type avgPartial4Float64 struct {
 func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgFloat64)(pr)
 	for _, row := range rowsInGroup {
-		inputSum, isNull, err := e.args[1].EvalReal(sctx, &row)
+		inputSum, isNull, err := e.args[1].EvalReal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -254,7 +254,7 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 			continue
 		}
 
-		inputCount, isNull, err := e.args[0].EvalInt(sctx, &row)
+		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -294,7 +294,7 @@ func (e *avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, &row)
+		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
