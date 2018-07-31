@@ -314,7 +314,8 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a bit(1))")
 	tk.MustExec("insert into t value(1), (0)")
-	result = tk.MustQuery("select cast(a as signed), cast(max(a) as signed),  cast(min(a) as signed) from t group by 1")
+	result = tk.MustQuery("select cast(a as signed) as idx, cast(max(a) as signed),  cast(min(a) as signed) from t group by 1 order by idx")
+	result.Check(testkit.Rows("0 0 0", "1 1 1"))
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {
