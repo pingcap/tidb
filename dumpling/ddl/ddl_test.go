@@ -56,6 +56,11 @@ func (d *ddl) SetInterceptoror(i Interceptor) {
 	d.mu.interceptor = i
 }
 
+// generalWorker returns the general worker.
+func (d *ddl) generalWorker() *worker {
+	return d.workers[generalWorker]
+}
+
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	logLevel := os.Getenv("log_level")
