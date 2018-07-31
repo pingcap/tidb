@@ -2066,6 +2066,9 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	}.init(b.ctx)
 	updt.SetSchema(p.Schema())
 	updt.SelectPlan, b.err = doOptimize(b.optFlag, p)
+	if b.err != nil {
+		return nil
+	}
 	updt.ResolveIndices()
 	return updt
 }
