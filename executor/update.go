@@ -168,7 +168,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Da
 	newRowData := types.CopyRow(oldRow)
 	for _, assign := range e.OrderedList {
 		colRange, assignNoMatchFillCol := e.noMatchFillCols.findColRange(assign.Col.Index)
-		if assignNoMatchFillCol && allNullDatums(oldRow, colRange) {
+		if assignNoMatchFillCol && isAllNull(oldRow, colRange) {
 			continue
 		}
 		val, err := assign.Expr.Eval(chunk.MutRowFromDatums(newRowData).ToRow())
@@ -181,7 +181,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Da
 	return newRowData, nil
 }
 
-func allNullDatums(datums []types.Datum, colRange ColumnIndexRange) bool {
+func isAllNull(datums []types.Datum, colRange ColumnIndexRange) bool {
 	for i := colRange.start; i < colRange.end; i++ {
 		if !datums[i].IsNull() {
 			return false
