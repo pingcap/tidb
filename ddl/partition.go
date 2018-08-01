@@ -308,19 +308,11 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.Create
 	}
 
 	// Checks that the partitioning key is included in the constraint.
-	for i, con := range consColNames {
-		if !checkConstraintIncludePartKey(partkeys, con) {
-			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs(primarykey)
-		}
+	for _, con := range consColNames {
 		// Every unique key on the table must use every column in the table's partitioning expression.
 		// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
-		if len(consColNames)-1 == i {
-			if len(con) == 0 {
-				return nil
-			}
-			if len(con) > 1 || len(partkeys) > 1 || !checkConstraintIncludePartKey(partkeys, con) {
-				return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs(uniqueIndex)
-			}
+		if !checkConstraintIncludePartKey(partkeys, con) {
+			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs(primarykey)
 		}
 	}
 	return nil
@@ -337,33 +329,37 @@ func extractConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constra
 					multipleKeys[key.Column.Name.L] = struct{}{}
 				}
 				if i == 0 {
-					// Extract every unique key
-					constraints = append(constraints, multipleKeys)
+					// Extract every multiple key.
+					if len(multipleKeys) != 0 {
+						constraints = append(constraints, multipleKeys)
+					}
 				}
 			}
 		}
 	}
 
-	uniKeys := make(map[string]struct{})
 	priKeys := make(map[string]struct{})
 	for _, col := range tblInfo.Cols() {
+		uniKeys := make(map[string]struct{})
+		if mysql.HasUniKeyFlag(col.Flag) {
+			uniKeys[col.Name.L] = struct{}{}
+			// Extract every unique key.
+			constraints = append(constraints, uniKeys)
+		}
+
 		if mysql.HasPriKeyFlag(col.Flag) {
 			priKeys[col.Name.L] = struct{}{}
 		}
-		if mysql.HasUniKeyFlag(col.Flag) {
-			uniKeys[col.Name.L] = struct{}{}
-		}
 	}
-	constraints = append(constraints, priKeys)
-	constraints = append(constraints, uniKeys)
+
+	if len(priKeys) != 0 {
+		constraints = append(constraints, priKeys)
+	}
 	return constraints
 }
 
 // checkConstraintIncludePartKey checks that the partitioning key is included in the constraint.
 func checkConstraintIncludePartKey(partkeys []string, constraints map[string]struct{}) bool {
-	if len(constraints) == 0 {
-		return true
-	}
 	for _, pk := range partkeys {
 		if _, ok := constraints[pk]; !ok {
 			return false
