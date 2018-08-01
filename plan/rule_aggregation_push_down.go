@@ -175,7 +175,7 @@ func (a *aggregationOptimizer) decompose(ctx sessionctx.Context, aggFunc *aggreg
 	for _, aggFunc := range result {
 		schema.Append(&expression.Column{
 			ColName:  model.NewCIStr(fmt.Sprintf("join_agg_%d", schema.Len())), // useless but for debug
-			Position: ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  aggFunc.RetTp,
 		})
 	}

@@ -2228,7 +2228,7 @@ func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bo
 	tbl := ctx.tbl
 	curVer, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.Meta(), tbl.Meta().ID)
+	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl)
 	c.Assert(err, IsNil)
 	return maxID, emptyTable
 }
