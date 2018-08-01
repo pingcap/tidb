@@ -176,6 +176,9 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	}
 
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
+	if fieldType.Tp == mysql.TypeBit {
+		evalType = types.ETString
+	}
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
@@ -215,6 +218,9 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 	}
 
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
+	if fieldType.Tp == mysql.TypeBit {
+		evalType = types.ETString
+	}
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
