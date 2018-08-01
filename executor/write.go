@@ -162,7 +162,11 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 
 	tid := t.Meta().ID
 	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, tid, h, nil)
-	ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, h, newData)
+	if handleChanged {
+		ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, newHandle, newData)
+	} else {
+		ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, h, newData)
+	}
 
 	if onDup {
 		sc.AddAffectedRows(2)
