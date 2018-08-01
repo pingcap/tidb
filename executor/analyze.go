@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"runtime"
 	"strconv"
 
 	"github.com/juju/errors"
@@ -112,6 +113,14 @@ type analyzeTask struct {
 }
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("analyzeWorker panic stack is:\n%s", buf)
+		}
+	}()
 	for task := range taskCh {
 		switch task.taskType {
 		case colTask:
