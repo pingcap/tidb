@@ -2115,6 +2115,45 @@ func (s *testDBSuite) TestYearTypeCreateTable(c *C) {
 	c.Assert(mysql.HasUnsignedFlag(yearCol.Flag), IsFalse)
 }
 
+func (s *testDBSuite) TestCheckColumnCantHaveDefaultValue(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test;")
+	s.tk.MustExec("drop table if exists text_default_text;")
+	s.testErrorCode(c, "create table text_default_text(c1 text not null default '');", tmysql.ErrBlobCantHaveDefault)
+	s.testErrorCode(c, "create table text_default_text(c1 text not null default 'scds');", tmysql.ErrBlobCantHaveDefault)
+
+	s.tk.MustExec("drop table if exists text_default_json;")
+	s.testErrorCode(c, "create table text_default_json(c1 json not null default '');", tmysql.ErrBlobCantHaveDefault)
+	s.testErrorCode(c, "create table text_default_json(c1 json not null default 'dfew555');", tmysql.ErrBlobCantHaveDefault)
+
+	s.tk.MustExec("drop table if exists text_default_blob;")
+	s.testErrorCode(c, "create table text_default_blob(c1 blob not null default '');", tmysql.ErrBlobCantHaveDefault)
+	s.testErrorCode(c, "create table text_default_blob(c1 blob not null default 'scds54');", tmysql.ErrBlobCantHaveDefault)
+
+	s.tk.MustExec("set sql_mode='';")
+	s.tk.MustExec("drop table if exists text_default_text;")
+	s.tk.MustExec("create table text_default_text(c1 text not null default '');")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_text"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
+
+	s.tk.MustExec("drop table if exists text_default_blob;")
+	s.tk.MustExec("create table text_default_blob(c1 blob not null default '');")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_blob"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
+
+	s.tk.MustExec("drop table if exists text_default_json;")
+	s.tk.MustExec("create table text_default_json(c1 json not null default '');")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_json"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, `null`)
+}
+
 func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("drop database if exists varchar_test;")
