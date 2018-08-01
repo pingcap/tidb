@@ -386,7 +386,7 @@ func ignoreNullDefaultValuesForColumns(ctx sessionctx.Context, col *table.Column
 		if col.Tp == mysql.TypeBlob || col.Tp == mysql.TypeLongBlob && value == "" {
 			hasDefaultValue = false
 		}
-		// In non-strict SQL mode, the json default value is empty, and then initialize it as an empty array.
+		// In non-strict SQL mode, if the column type is json and the default value is null, it is initialized to an empty array.
 		if col.Tp == mysql.TypeJSON && value == "" {
 			col.DefaultValue = `null`
 			hasDefaultValue = true
