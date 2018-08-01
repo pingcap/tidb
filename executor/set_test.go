@@ -223,6 +223,9 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("0"))
 	tk.MustExec("set @@sql_log_bin = on")
 	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_general_log = 1")
+	tk.MustExec("set @@tidb_general_log = 0")
 }
 
 func (s *testSuite) TestSetCharset(c *C) {

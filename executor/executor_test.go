@@ -1659,7 +1659,7 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
 
-func (s *testSuite) TestPointGet(c *C) {
+func (s *testSuite) TestIsPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(sessionctx.Context)
@@ -2946,4 +2946,16 @@ func (s *testSuite) TestUnionAutoSignedCast(c *C) {
 		Check(testkit.Rows("1 -1", "2 1"))
 	tk.MustQuery("select id, v from t4 union select id, v from t3 order by id").
 		Check(testkit.Rows("1 0", "2 1"))
+
+	tk.MustExec("drop table if exists t5,t6,t7")
+	tk.MustExec("create table t5 (id int, v bigint unsigned)")
+	tk.MustExec("create table t6 (id int, v decimal)")
+	tk.MustExec("create table t7 (id int, v bigint)")
+	tk.MustExec("insert into t5 values (1, 1)")
+	tk.MustExec("insert into t6 values (2, -1)")
+	tk.MustExec("insert into t7 values (3, -1)")
+	tk.MustQuery("select id, v from t5 union select id, v from t6 order by id").
+		Check(testkit.Rows("1 1", "2 -1"))
+	tk.MustQuery("select id, v from t5 union select id, v from t7 union select id, v from t6 order by id").
+		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
 }

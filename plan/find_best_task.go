@@ -344,7 +344,12 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 			return invalidTask, nil
 		}
 		// On this way, it's double read case.
-		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
+		ts := PhysicalTableScan{
+			Columns:     ds.Columns,
+			Table:       is.Table,
+			isPartition: ds.isPartition,
+			partitionID: ds.partitionID,
+		}.init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
 	} else if prop.taskTp == copDoubleReadTaskType {
@@ -410,7 +415,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	for _, col := range idx.Columns {
 		colFound := is.dataSourceSchema.FindColumnByName(col.Name.L)
 		if colFound == nil {
-			colFound = &expression.Column{ColName: col.Name, Position: is.ctx.GetSessionVars().AllocPlanColumnID()}
+			colFound = &expression.Column{ColName: col.Name, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()}
 		} else {
 			colFound = colFound.Clone().(*expression.Column)
 		}
@@ -427,7 +432,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, ColName: model.ExtraHandleName, Position: is.ctx.GetSessionVars().AllocPlanColumnID()})
+		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, ColName: model.ExtraHandleName, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 }

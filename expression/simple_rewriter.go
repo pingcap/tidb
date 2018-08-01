@@ -41,7 +41,12 @@ func ParseSimpleExpr(ctx sessionctx.Context, exprStr string, tableInfo *model.Ta
 		return nil, errors.Trace(err)
 	}
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	rewriter := &simpleRewriter{tbl: tableInfo, ctx: ctx}
+	return RewriteSimpleExpr(ctx, tableInfo, expr)
+}
+
+// RewriteSimpleExpr rewrites simple ast.ExprNode to expression.Expression.
+func RewriteSimpleExpr(ctx sessionctx.Context, tbl *model.TableInfo, expr ast.ExprNode) (Expression, error) {
+	rewriter := &simpleRewriter{tbl: tbl, ctx: ctx}
 	expr.Accept(rewriter)
 	if rewriter.err != nil {
 		return nil, errors.Trace(rewriter.err)
@@ -60,7 +65,7 @@ func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Colum
 				TblName:     sr.tbl.Name,
 				RetType:     &col.FieldType,
 				ID:          col.ID,
-				Position:    sr.ctx.GetSessionVars().AllocPlanColumnID(),
+				UniqueID:    sr.ctx.GetSessionVars().AllocPlanColumnID(),
 				Index:       i,
 			}, nil
 		}

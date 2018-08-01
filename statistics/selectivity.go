@@ -268,14 +268,14 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 		}
 		if bestCount == 0 {
 			break
-		} else {
-			// update the mask, remove the bit that sets[bestID].mask has.
-			mask &^= sets[bestID].mask
-
-			newBlocks = append(newBlocks, sets[bestID])
-			// remove the chosen one
-			sets = append(sets[:bestID], sets[bestID+1:]...)
 		}
+
+		// update the mask, remove the bit that sets[bestID].mask has.
+		mask &^= sets[bestID].mask
+
+		newBlocks = append(newBlocks, sets[bestID])
+		// remove the chosen one
+		sets = append(sets[:bestID], sets[bestID+1:]...)
 	}
 	return
 }
