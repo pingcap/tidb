@@ -35,7 +35,7 @@ func (s *testEvalSuite) generateSchema(colCount int, dbName, tblName string) *Sc
 	cols := make([]*Column, 0, colCount)
 	for i := 0; i < colCount; i++ {
 		cols = append(cols, &Column{
-			Position: s.allocColID(),
+			UniqueID: s.allocColID(),
 			DBName:   model.NewCIStr(dbName),
 			TblName:  model.NewCIStr(tblName),
 			ColName:  model.NewCIStr(fmt.Sprintf("C%v", i)),
@@ -60,7 +60,7 @@ func (s *testEvalSuite) TestSchemaString(c *C) {
 func (s *testEvalSuite) TestSchemaRetrieveColumn(c *C) {
 	schema := s.generateSchema(5, "T", "B")
 	colOutSchema := &Column{
-		Position: 100,
+		UniqueID: 100,
 	}
 	for _, col := range schema.Columns {
 		c.Assert(schema.RetrieveColumn(col), Equals, col)
@@ -72,7 +72,7 @@ func (s *testEvalSuite) TestSchemaIsUniqueKey(c *C) {
 	schema := s.generateSchema(5, "T", "B")
 	generateKeys4Schema(schema)
 	colOutSchema := &Column{
-		Position: 100,
+		UniqueID: 100,
 	}
 	for i, col := range schema.Columns {
 		if i < len(schema.Columns)-1 {
@@ -87,7 +87,7 @@ func (s *testEvalSuite) TestSchemaIsUniqueKey(c *C) {
 func (s *testEvalSuite) TestSchemaContains(c *C) {
 	schema := s.generateSchema(5, "T", "B")
 	colOutSchema := &Column{
-		Position: 100,
+		UniqueID: 100,
 	}
 	for _, col := range schema.Columns {
 		c.Assert(schema.Contains(col), Equals, true)
@@ -98,7 +98,7 @@ func (s *testEvalSuite) TestSchemaContains(c *C) {
 func (s *testEvalSuite) TestSchemaColumnsIndices(c *C) {
 	schema := s.generateSchema(5, "T", "B")
 	colOutSchema := &Column{
-		Position: 100,
+		UniqueID: 100,
 	}
 	for i := 0; i < len(schema.Columns)-1; i++ {
 		colIndices := schema.ColumnsIndices([]*Column{schema.Columns[i], schema.Columns[i+1]})
@@ -131,13 +131,13 @@ func (s *testEvalSuite) TestSchemaMergeSchema(c *C) {
 
 	schema := MergeSchema(lSchema, rSchema)
 	for i := 0; i < len(lSchema.Columns); i++ {
-		c.Assert(schema.Columns[i].Position, Equals, lSchema.Columns[i].Position)
+		c.Assert(schema.Columns[i].UniqueID, Equals, lSchema.Columns[i].UniqueID)
 		c.Assert(schema.Columns[i].DBName, Equals, lSchema.Columns[i].DBName)
 		c.Assert(schema.Columns[i].TblName, Equals, lSchema.Columns[i].TblName)
 		c.Assert(schema.Columns[i].ColName, Equals, lSchema.Columns[i].ColName)
 	}
 	for i := 0; i < len(rSchema.Columns); i++ {
-		c.Assert(schema.Columns[i+len(lSchema.Columns)].Position, Equals, rSchema.Columns[i].Position)
+		c.Assert(schema.Columns[i+len(lSchema.Columns)].UniqueID, Equals, rSchema.Columns[i].UniqueID)
 		c.Assert(schema.Columns[i+len(lSchema.Columns)].DBName, Equals, rSchema.Columns[i].DBName)
 		c.Assert(schema.Columns[i+len(lSchema.Columns)].TblName, Equals, rSchema.Columns[i].TblName)
 		c.Assert(schema.Columns[i+len(lSchema.Columns)].ColName, Equals, rSchema.Columns[i].ColName)
