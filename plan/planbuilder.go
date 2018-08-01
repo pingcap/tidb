@@ -201,7 +201,7 @@ func (b *planBuilder) buildDo(v *ast.DoStmt) Plan {
 		}
 		p.Exprs = append(p.Exprs, expr)
 		schema.Append(&expression.Column{
-			Position: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  expr.GetType(),
 		})
 	}
@@ -402,7 +402,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 			if idxCol.Name.L == col.Name.L {
 				columns = append(columns, col)
 				schema.Append(&expression.Column{
-					Position: b.ctx.GetSessionVars().AllocPlanColumnID(),
+					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 					RetType:  &col.FieldType,
 				})
 			}
@@ -508,7 +508,7 @@ func (b *planBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 				TblName:  tn.Name,
 				DBName:   tn.Schema,
 				RetType:  &col.FieldType,
-				Position: b.ctx.GetSessionVars().AllocPlanColumnID(),
+				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 				ID:       col.ID})
 		}
 		schema.Append(&expression.Column{
@@ -516,7 +516,7 @@ func (b *planBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 			TblName:  tn.Name,
 			DBName:   tn.Schema,
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			Position: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:       -1,
 		})
 	}
@@ -564,15 +564,31 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	return
 }
 
+func getPhysicalIDs(tblInfo *model.TableInfo) []int64 {
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		ids := make([]int64, 0, len(pi.Definitions))
+		for _, def := range pi.Definitions {
+			ids = append(ids, def.ID)
+		}
+		return ids
+	}
+	return []int64{tblInfo.ID}
+}
+
 func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
+		physicalIDs := getPhysicalIDs(tbl.TableInfo)
 		for _, idx := range idxInfo {
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tbl.TableInfo, IndexInfo: idx})
+			for _, id := range physicalIDs {
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalID: id, IndexInfo: idx})
+			}
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
-			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{TableInfo: tbl.TableInfo, PKInfo: pkInfo, ColsInfo: colInfo})
+			for _, id := range physicalIDs {
+				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PhysicalID: id, PKInfo: pkInfo, ColsInfo: colInfo})
+			}
 		}
 	}
 	return p
@@ -581,13 +597,16 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
 	tblInfo := as.TableNames[0].TableInfo
+	physicalIDs := getPhysicalIDs(tblInfo)
 	for _, idxName := range as.IndexNames {
 		idx := findIndexByName(tblInfo.Indices, idxName)
 		if idx == nil || idx.State != model.StatePublic {
 			b.err = ErrAnalyzeMissIndex.GenByArgs(idxName.O, tblInfo.Name.O)
 			break
 		}
-		p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
+		for _, id := range physicalIDs {
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalID: id, IndexInfo: idx})
+		}
 	}
 	return p
 }
@@ -595,9 +614,12 @@ func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) Plan {
 func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
 	p := &Analyze{}
 	tblInfo := as.TableNames[0].TableInfo
+	physicalIDs := getPhysicalIDs(tblInfo)
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{TableInfo: tblInfo, IndexInfo: idx})
+			for _, id := range physicalIDs {
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalID: id, IndexInfo: idx})
+			}
 		}
 	}
 	return p
@@ -742,7 +764,7 @@ func (b *planBuilder) buildShow(show *ast.ShowStmt) Plan {
 		p.SetSchema(buildShowSchema(show))
 	}
 	for _, col := range p.schema.Columns {
-		col.Position = b.ctx.GetSessionVars().AllocPlanColumnID()
+		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 	}
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(p.schema)
@@ -1479,7 +1501,7 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		names = []string{"Query_ID", "Duration", "Query"}
 		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
 	case ast.ShowMasterStatus:
-		names = []string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
+		names = []string{"File", "UniqueID", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowPrivileges:
 		names = []string{"Privilege", "Context", "Comment"}

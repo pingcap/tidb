@@ -106,7 +106,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
 			schema4Agg.Append(&expression.Column{
 				ColName:     model.NewCIStr(fmt.Sprintf("%d_col_%d", plan4Agg.id, position)),
-				Position:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+				UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
 				IsAggOrSubq: true,
 				RetType:     newFunc.RetTp,
 			})
@@ -144,6 +144,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 			b.err = ErrUnsupportedType.GenByArgs(v)
 		}
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 		if v, ok := p.(*DataSource); ok {
@@ -266,11 +267,13 @@ func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
 
 	leftPlan := b.buildResultSetNode(joinNode.Left)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 
 	rightPlan := b.buildResultSetNode(joinNode.Right)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	joinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin || b.inStraightJoin}.init(b.ctx)
@@ -462,12 +465,11 @@ func (b *planBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 				ret, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil || ret {
 					continue
-				} else {
-					// If there is condition which is always false, return dual plan directly.
-					dual := LogicalTableDual{}.init(b.ctx)
-					dual.SetSchema(p.Schema())
-					return dual
 				}
+				// If there is condition which is always false, return dual plan directly.
+				dual := LogicalTableDual{}.init(b.ctx)
+				dual.SetSchema(p.Schema())
+				return dual
 			}
 			expressions = append(expressions, item)
 		}
@@ -552,7 +554,7 @@ func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 		colName = b.buildProjectionFieldNameFromExpressions(field)
 	}
 	return &expression.Column{
-		Position:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
 		TblName:     tblName,
 		OrigTblName: origTblName,
 		ColName:     colName,
@@ -613,8 +615,8 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 	resultTp := types.NewFieldType(types.MergeFieldType(a.Tp, b.Tp))
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
-	if a.Tp == mysql.TypeNewDecimal {
-		// The decimal type will be unsigned only when all the decimals to be united are unsigned.
+	if resultTp.Tp == mysql.TypeNewDecimal {
+		// The decimal result type will be unsigned only when all the decimals to be united are unsigned.
 		resultTp.Flag &= b.Flag & mysql.UnsignedFlag
 	} else {
 		// Non-decimal results will be unsigned when the first SQL statement result in the union is unsigned.
@@ -666,7 +668,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
 			if childID == 0 {
 				for _, col := range unionSchema.Columns {
-					col.Position = b.ctx.GetSessionVars().AllocPlanColumnID()
+					col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 				}
 			}
 			proj.SetChildren(child)
@@ -1623,16 +1625,19 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		p = b.buildTableDual()
 	}
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	originalFields := sel.Fields.Fields
 	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	if sel.GroupBy != nil {
 		p, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
@@ -1647,6 +1652,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
@@ -1657,6 +1663,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if hasAgg {
 		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 		var aggIndexMap map[int]int
@@ -1665,36 +1672,42 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 			totalMap[k] = aggIndexMap[v]
 		}
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	var oldLen int
 	p, oldLen = b.buildProjection(p, sel.Fields.Fields, totalMap)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	if sel.Having != nil {
 		b.curClause = havingClause
 		p = b.buildSelection(p, sel.Having.Expr, havingMap)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.Distinct {
 		p = b.buildDistinct(p, oldLen)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.OrderBy != nil {
 		p = b.buildSort(p, sel.OrderBy.Items, orderMap)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.Limit != nil {
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
@@ -1704,7 +1717,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		proj.SetChildren(p)
 		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
 		for _, col := range schema.Columns {
-			col.Position = b.ctx.GetSessionVars().AllocPlanColumnID()
+			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 		}
 		proj.SetSchema(schema)
 		return proj
@@ -1724,7 +1737,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 		TblName:  ds.tableInfo.Name,
 		ColName:  model.ExtraHandleName,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		Position: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 	}
 }
@@ -1806,7 +1819,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	for _, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		newCol := &expression.Column{
-			Position: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			DBName:   dbName,
 			TblName:  tableInfo.Name,
 			ColName:  col.Name,
@@ -1950,7 +1963,7 @@ out:
 	newCol := &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeTiny),
 		ColName:  model.NewCIStr("exists_col"),
-		Position: b.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 	}
 	exists.SetSchema(expression.NewSchema(newCol))
 	return exists
@@ -1975,7 +1988,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			ColName:     model.NewCIStr(fmt.Sprintf("%d_aux_0", joinPlan.id)),
 			RetType:     types.NewFieldType(mysql.TypeTiny),
 			IsAggOrSubq: true,
-			Position:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
 		})
 		joinPlan.SetSchema(newSchema)
 		if not {
@@ -2025,6 +2038,7 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 
@@ -2041,23 +2055,27 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.OrderBy != nil {
 		p = b.buildSort(p, sel.OrderBy.Items, nil)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.Limit != nil {
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	orderedList, np := b.buildUpdateLists(tableList, update.List, p)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	p = np
@@ -2067,6 +2085,10 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	}.init(b.ctx)
 	updt.SetSchema(p.Schema())
 	updt.SelectPlan, b.err = doOptimize(b.optFlag, p)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	updt.ResolveIndices()
 	return updt
 }
@@ -2198,24 +2220,28 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) Plan {
 	}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.OrderBy != nil {
 		p = b.buildSort(p, sel.OrderBy.Items, nil)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.Limit != nil {
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
@@ -2231,6 +2257,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) Plan {
 	}.init(b.ctx)
 	del.SelectPlan, b.err = doOptimize(b.optFlag, p)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	del.SetSchema(expression.NewSchema())
