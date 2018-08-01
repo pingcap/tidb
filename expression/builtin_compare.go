@@ -1090,17 +1090,17 @@ func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Consta
 		}
 	case opcode.NullEQ, opcode.EQ:
 		switch con.RetType.EvalType() {
-		// An integer value equals or null-equals to a float value contains
-		// non-zero decimal digits is definite false.
-		// e.g:
-		//   1. "integer  =  1.1" is definite false.
-		//   2. "integer <=> 1.1" is definite false.
+		// An integer value equal or not equal to a float value which contains
+		// non-zero decimal digits is definitely false.
+		// e.g.,
+		//   1. "integer  =  1.1" is definitely false.
+		//   2. "integer <=> 1.1" is definitely false.
 		case types.ETReal, types.ETDecimal:
 			return con, true
 		case types.ETString:
-			// We try to convert the string constant to double,
-			// if the double result equals to the int result, we can return the int result,
-			// otherwise, the compare function must be false.
+			// We try to convert the string constant to double.
+			// If the double result equals the int result, we can return the int result;
+			// otherwise, the compare function will be false.
 			var doubleDatum types.Datum
 			doubleDatum, err = dt.ConvertTo(sc, types.NewFieldType(mysql.TypeDouble))
 			if err != nil {
@@ -1122,8 +1122,8 @@ func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Consta
 	return con, false
 }
 
-// refineArgs rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
-// `non-int constant <cmp> int column`. e.g. `a < 1.1` will be rewritten to `a < 2`.
+// refineArgs will rewrite the arguments if the compare expression is `int column <cmp> non-int constant` or
+// `non-int constant <cmp> int column`. E.g., `a < 1.1` will be rewritten to `a < 2`.
 func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Expression) []Expression {
 	arg0Type, arg1Type := args[0].GetType(), args[1].GetType()
 	arg0IsInt := arg0Type.EvalType() == types.ETInt
