@@ -15,17 +15,22 @@ package aggfuncs
 
 import (
 	"fmt"
+	"strconv"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // Build is used to build a specific AggFunc implementation according to the
 // input aggFuncDesc.
-func Build(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	switch aggFuncDesc.Name {
 	case ast.AggFuncCount:
 		return buildCount(aggFuncDesc, ordinal)
@@ -40,7 +45,7 @@ func Build(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	case ast.AggFuncMin:
 		return buildMaxMin(aggFuncDesc, ordinal, false)
 	case ast.AggFuncGroupConcat:
-		return buildGroupConcat(aggFuncDesc, ordinal)
+		return buildGroupConcat(ctx, aggFuncDesc, ordinal)
 	case ast.AggFuncBitOr:
 		return buildBitOr(aggFuncDesc, ordinal)
 	case ast.AggFuncBitXor:
@@ -97,7 +102,29 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildSum builds the AggFunc implementation for function "SUM".
 func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	return nil
+	base := baseSumAggFunc{
+		baseAggFunc: baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		switch aggFuncDesc.RetTp.EvalType() {
+		case types.ETDecimal:
+			if aggFuncDesc.HasDistinct {
+				return &sum4DistinctDecimal{base}
+			}
+			return &sum4Decimal{base}
+		default:
+			if aggFuncDesc.HasDistinct {
+				return &sum4DistinctFloat64{base}
+			}
+			return &sum4Float64{base}
+		}
+	}
 }
 
 // buildAvg builds the AggFunc implementation for function "AVG".
@@ -115,13 +142,13 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// Build avg functions which consume the original data and update their
 	// partial results.
 	case aggregation.CompleteMode, aggregation.Partial1Mode:
-		switch aggFuncDesc.Args[0].GetType().Tp {
-		case mysql.TypeNewDecimal:
+		switch aggFuncDesc.RetTp.EvalType() {
+		case types.ETDecimal:
 			if aggFuncDesc.HasDistinct {
 				return &avgOriginal4DistinctDecimal{base}
 			}
 			return &avgOriginal4Decimal{baseAvgDecimal{base}}
-		case mysql.TypeFloat, mysql.TypeDouble:
+		default:
 			if aggFuncDesc.HasDistinct {
 				return &avgOriginal4DistinctFloat64{base}
 			}
@@ -220,15 +247,7 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 }
 
 // buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
-func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	// TODO: There might be different kind of types of the args,
-	// we should add CastAsString upon every arg after cast can be pushed down to coprocessor.
-	// And this check can be removed at that time.
-	for _, arg := range aggFuncDesc.Args {
-		if arg.GetType().EvalType() != types.ETString {
-			return nil
-		}
-	}
+func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
@@ -239,53 +258,51 @@ func buildGroupConcat(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc
 		}
 		// The last arg is promised to be a not-null string constant, so the error can be ignored.
 		c, _ := aggFuncDesc.Args[len(aggFuncDesc.Args)-1].(*expression.Constant)
-		sep, _, err := c.EvalString(nil, nil)
+		sep, _, err := c.EvalString(nil, chunk.Row{})
 		// This err should never happen.
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))
 		}
-		if aggFuncDesc.HasDistinct {
-			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
+		var s string
+		s, err = variable.GetSessionSystemVar(ctx.GetSessionVars(), variable.GroupConcatMaxLen)
+		if err != nil {
+			panic(fmt.Sprintf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen))
 		}
-		return &groupConcat{baseGroupConcat4String{baseAggFunc: base, sep: sep}}
+		maxLen, err := strconv.ParseUint(s, 10, 64)
+		// Should never happen
+		if err != nil {
+			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))
+		}
+		if aggFuncDesc.HasDistinct {
+			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen}}
+		}
+		return &groupConcat{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen}}
 	}
 }
 
 // buildBitOr builds the AggFunc implementation for function "BIT_OR".
 func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	switch aggFuncDesc.Args[0].GetType().EvalType() {
-	case types.ETInt:
-		base := baseAggFunc{
-			args:    aggFuncDesc.Args,
-			ordinal: ordinal,
-		}
-		return &bitOrUint64{baseBitAggFunc{base}}
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
 	}
-	return nil
+	return &bitOrUint64{baseBitAggFunc{base}}
 }
 
 // buildBitXor builds the AggFunc implementation for function "BIT_XOR".
 func buildBitXor(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	switch aggFuncDesc.Args[0].GetType().EvalType() {
-	case types.ETInt:
-		base := baseAggFunc{
-			args:    aggFuncDesc.Args,
-			ordinal: ordinal,
-		}
-		return &bitXorUint64{baseBitAggFunc{base}}
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
 	}
-	return nil
+	return &bitXorUint64{baseBitAggFunc{base}}
 }
 
 // buildBitAnd builds the AggFunc implementation for function "BIT_AND".
 func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	switch aggFuncDesc.Args[0].GetType().EvalType() {
-	case types.ETInt:
-		base := baseAggFunc{
-			args:    aggFuncDesc.Args,
-			ordinal: ordinal,
-		}
-		return &bitAndUint64{baseBitAggFunc{base}}
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
 	}
-	return nil
+	return &bitAndUint64{baseBitAggFunc{base}}
 }
