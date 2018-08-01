@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -112,13 +113,18 @@ type analyzeTask struct {
 	colExec  *AnalyzeColumnsExec
 }
 
-func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
+func (e *AnalyzeExec) analyzeWorker(taskCh chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
 			log.Errorf("analyzeWorker panic stack is:\n%s", buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			// Close the receive channel. When the caller sends to a closed channel, it will
+			// also panic, and the panic should be catched. If we don't do this, the caller
+			// will hang forever.
+			close(taskCh)
 		}
 	}()
 	for task := range taskCh {
