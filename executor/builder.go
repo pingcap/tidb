@@ -1249,8 +1249,8 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 
 // cols2Handle represents an mapper from column index to handle index.
 type cols2Handle struct {
-	start, end    int // Represent the ordinal range [start, end) of the consecutive columns.
-	handleOrdinal int // Represents the ordinal of the handle column.
+	start, end    int32 // Represent the ordinal range [start, end) of the consecutive columns.
+	handleOrdinal int32 // Represents the ordinal of the handle column.
 }
 
 // cols2HandleSlice attaches the methods of sort.Interface to []cols2Handle sorting in increasing order.
@@ -1272,7 +1272,7 @@ func (c cols2HandleSlice) Less(i, j int) bool {
 }
 
 // findHandle finds the ordinal of the corresponding handle column.
-func (c cols2HandleSlice) findHandle(ordinal int) (int, bool) {
+func (c cols2HandleSlice) findHandle(ordinal int32) (int32, bool) {
 	if c == nil || len(c) == 0 {
 		return 0, false
 	}
@@ -1297,7 +1297,7 @@ func buildColumns2Handle(schema *expression.Schema, tblID2Table map[int64]table.
 		for _, handleCol := range handleCols {
 			offset := getTableOffset(schema, handleCol)
 			end := offset + len(tbl.WritableCols())
-			cols2Handles = append(cols2Handles, cols2Handle{offset, end, handleCol.Index})
+			cols2Handles = append(cols2Handles, cols2Handle{int32(offset), int32(end), int32(handleCol.Index)})
 		}
 	}
 	sort.Sort(cols2Handles)

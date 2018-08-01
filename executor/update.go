@@ -179,7 +179,7 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Datum, error) {
 	newRowData := types.CopyRow(oldRow)
 	for _, assign := range e.OrderedList {
-		handleIdx, handleFound := e.columns2Handle.findHandle(assign.Col.Index)
+		handleIdx, handleFound := e.columns2Handle.findHandle(int32(assign.Col.Index))
 		if handleFound && e.canNotUpdate(oldRow[handleIdx]) {
 			continue
 		}
