@@ -315,7 +315,9 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("CREATE TABLE `t` (`a` bit(1) NOT NULL, PRIMARY KEY (`a`))")
 	tk.MustExec("insert into t value(1), (0)")
 	tk.MustQuery("select a from t group by 1")
-	tk.MustQuery("select max(a) from t group by a")
+	// This result is compatible with MySQL, the readable result is shown in the next case.
+	result = tk.MustQuery("select max(a) from t group by a")
+	result.Check(testkit.Rows(string([]byte{0x0}), string([]byte{0x1})))
 	result = tk.MustQuery("select cast(a as signed) as idx, cast(max(a) as signed),  cast(min(a) as signed) from t group by 1 order by idx")
 	result.Check(testkit.Rows("0 0 0", "1 1 1"))
 }
