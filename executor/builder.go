@@ -1236,135 +1236,75 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	noMatchFillCols := resolveNoMatchFillCols(v.Schema(), v.SelectPlan, tblID2table)
-	sort.Sort(noMatchFillCols)
+	columns2Handle := buildColumns2Handle(v.Schema(), tblID2table)
+	sort.Sort(columns2Handle)
 	updateExec := &UpdateExec{
-		baseExecutor:    newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
-		SelectExec:      selExec,
-		OrderedList:     v.OrderedList,
-		tblID2table:     tblID2table,
-		noMatchFillCols: noMatchFillCols.foldDuplicate(),
+		baseExecutor:   newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
+		SelectExec:     selExec,
+		OrderedList:    v.OrderedList,
+		tblID2table:    tblID2table,
+		columns2Handle: columns2Handle,
 	}
 	return updateExec
 }
 
-// ColumnIndexRange represents an index range in datum rows.
-type ColumnIndexRange struct {
+// Columns2HandleEntry represents an mapper from column index to handle index.
+type Columns2HandleEntry struct {
 	start, end int
+	handleIdx  int
 }
 
-// ColumnIndexRanges attaches the methods of sort.Interface to []ColumnIndexRange sorting in increasing order.
-type ColumnIndexRanges []ColumnIndexRange
+// Columns2Handle attaches the methods of sort.Interface to []Columns2HandleEntry sorting in increasing order.
+type Columns2Handle []Columns2HandleEntry
 
 // Len implements sort.Interface#Len.
-func (c ColumnIndexRanges) Len() int {
+func (c Columns2Handle) Len() int {
 	return len(c)
 }
 
 // Len implements sort.Interface#Swap.
-func (c ColumnIndexRanges) Swap(i, j int) {
+func (c Columns2Handle) Swap(i, j int) {
 	c[i], c[j] = c[j], c[i]
 }
 
 // Len implements sort.Interface#Less.
-// let ranges first sort by `start` increasing order, and sort by `end` decreasing order if `start` are equal.
-// so in foldDuplicate can fold duplicate range by this order.
-func (c ColumnIndexRanges) Less(i, j int) bool {
+// let ranges first sort by `start` increasing order, and sort by `end` increasing order if `start` are equal.
+func (c Columns2Handle) Less(i, j int) bool {
 	if c[i].start == c[j].start {
-		return c[i].end > c[j].end
+		return c[i].end < c[i].end
 	}
 	return c[i].start < c[j].start
 }
 
-// foldDuplicate removes the duplicate ranges.
+// findHandle find the range hit by given column index.
 // c must be sorted use sort.Sort.
-func (c ColumnIndexRanges) foldDuplicate() ColumnIndexRanges {
-	ranges := make(ColumnIndexRanges, 0)
-	for i := 0; i < len(c); {
-		ranges = append(ranges, c[i])
-		j := i + 1
-		for ; j < len(c); j++ {
-			if c[i].end < c[j].end {
-				break
-			}
-		}
-		i = j
-	}
-	return ranges
-}
-
-// findColRange find the range hit by given column index.
-// c must be sorted use sort.Sort.
-func (c ColumnIndexRanges) findColRange(colIndex int) (ColumnIndexRange, bool) {
+func (c Columns2Handle) findHandle(colIndex int) (int, bool) {
 	if c == nil || len(c) == 0 {
-		return ColumnIndexRange{}, false
+		return 0, false
 	}
 	biggerOne := sort.Search(len(c), func(i int) bool { return c[i].start > colIndex })
 	if biggerOne == 0 {
-		return ColumnIndexRange{}, false
+		return 0, false
 	}
 	if c[biggerOne-1].start <= colIndex && colIndex < c[biggerOne-1].end {
-		return c[biggerOne-1], true
+		return c[biggerOne-1].handleIdx, true
 	}
-	return ColumnIndexRange{}, false
+	return 0, false
 }
 
-// resolveNoMatchFillCols resolve sub-join's need `fill if no match` columns.
-// and build a sorted-range index, so later will use this index to ignore assign and updateRecord call.
-func resolveNoMatchFillCols(schema *expression.Schema, selectPlan plan.PhysicalPlan, tblID2Table map[int64]table.Table) ColumnIndexRanges {
-	// find join.
-	var joinType plan.JoinType
-	switch p := selectPlan.(type) {
-	case *plan.PhysicalHashJoin:
-		joinType = p.JoinType
-	case *plan.PhysicalIndexJoin:
-		joinType = p.JoinType
-	case *plan.PhysicalMergeJoin:
-		joinType = p.JoinType
-	default:
-		// no join return quickly.
-		return nil
-	}
-
-	// find outer join.
-	var child plan.PhysicalPlan
-	switch joinType {
-	case plan.LeftOuterJoin:
-		child = selectPlan.Children()[1]
-	case plan.RightOuterJoin:
-		child = selectPlan.Children()[0]
-	default:
-		// no outer join return quickly.
-		return nil
-	}
-
-	// recurse join children.
-	var noMatchFillCols ColumnIndexRanges
-	for _, child := range selectPlan.Children() {
-		subNoMatchFillCols := resolveNoMatchFillCols(schema, child, tblID2Table)
-		if subNoMatchFillCols == nil {
-			continue
-		}
-		if noMatchFillCols == nil {
-			noMatchFillCols = subNoMatchFillCols
-			continue
-		}
-		noMatchFillCols = append(noMatchFillCols, subNoMatchFillCols...)
-	}
-
-	// make replenish table.
-	if noMatchFillCols == nil {
-		noMatchFillCols = make(ColumnIndexRanges, 0)
-	}
-	for tblID, cols := range child.Schema().TblID2Handle {
+// buildColumns2Handle build columns to handle mapping.
+//
+func buildColumns2Handle(schema *expression.Schema, tblID2Table map[int64]table.Table) Columns2Handle {
+	var cols2Handle Columns2Handle
+	for tblID, handleCols := range schema.TblID2Handle {
 		tbl := tblID2Table[tblID]
-		for _, rowCol := range cols {
-			offset := getTableOffset(schema, rowCol)
+		for _, handleCol := range handleCols {
+			offset := getTableOffset(schema, handleCol)
 			end := offset + len(tbl.WritableCols())
-			noMatchFillCols = append(noMatchFillCols, ColumnIndexRange{offset, end})
+			cols2Handle = append(cols2Handle, Columns2HandleEntry{offset, end, handleCol.Index})
 		}
 	}
-	return noMatchFillCols
+	return cols2Handle
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {

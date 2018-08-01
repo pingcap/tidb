@@ -35,13 +35,11 @@ type UpdateExec struct {
 	updatedRowKeys map[int64]map[int64]struct{}
 	tblID2table    map[int64]table.Table
 
-	rows        [][]types.Datum // The rows fetched from TableExec.
-	newRowsData [][]types.Datum // The new values to be set.
-	fetched     bool
-	cursor      int
-	// noMatchFillCols is a sort range index to mark columns maybe filled when no match.
-	// update to those columns need be ignore.
-	noMatchFillCols ColumnIndexRanges
+	rows           [][]types.Datum // The rows fetched from TableExec.
+	newRowsData    [][]types.Datum // The new values to be set.
+	fetched        bool
+	cursor         int
+	columns2Handle Columns2Handle
 }
 
 func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
@@ -65,19 +63,18 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 		for _, col := range cols {
 			offset := getTableOffset(schema, col)
 			end := offset + len(tbl.WritableCols())
+			handleDatum := row[col.Index]
+			// handleDatum is nil only when outer join fill no matched columns.
+			if handleDatum.IsNull() {
+				continue
+			}
 			handle := row[col.Index].GetInt64()
-			_, updateNoMatchFillCols := e.noMatchFillCols.findColRange(col.Index)
 			oldData := row[offset:end]
 			newTableData := newData[offset:end]
 			flags := assignFlag[offset:end]
 			_, ok := e.updatedRowKeys[id][handle]
 			if ok {
 				// Each matched row is updated once, even if it matches the conditions multiple times.
-				continue
-			}
-
-			// If it's a replenish column by join and all data values is nil, all update to this part should be ignore.
-			if updateNoMatchFillCols && isAllNull(oldData, 0, len(oldData)) {
 				continue
 			}
 
@@ -173,8 +170,9 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Datum, error) {
 	newRowData := types.CopyRow(oldRow)
 	for _, assign := range e.OrderedList {
-		colRange, assignNoMatchFillCol := e.noMatchFillCols.findColRange(assign.Col.Index)
-		if assignNoMatchFillCol && isAllNull(oldRow, colRange.start, colRange.end) {
+		handleIdx, handleFound := e.columns2Handle.findHandle(assign.Col.Index)
+		// handleDatum is nil only when outer join fill no matched columns.
+		if handleFound && oldRow[handleIdx].IsNull() {
 			continue
 		}
 		val, err := assign.Expr.Eval(chunk.MutRowFromDatums(newRowData).ToRow())
@@ -185,15 +183,6 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Da
 		newRowData[assign.Col.Index] = val
 	}
 	return newRowData, nil
-}
-
-func isAllNull(datums []types.Datum, start, end int) bool {
-	for i := start; i < end; i++ {
-		if !datums[i].IsNull() {
-			return false
-		}
-	}
-	return true
 }
 
 // Close implements the Executor Close interface.

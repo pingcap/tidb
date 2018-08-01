@@ -2963,11 +2963,12 @@ func (s *testSuite) TestUnionAutoSignedCast(c *C) {
 func (s *testSuite) TestUpdateJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2, t3, t4")
+	tk.MustExec("drop table if exists t1, t2, t3, t4, t5")
 	tk.MustExec("create table t1(k int, v int)")
 	tk.MustExec("create table t2(k int, v int)")
 	tk.MustExec("create table t3(id int auto_increment, k int, v int, primary key(id))")
-	tk.MustExec("create table t4(k int ,v int)")
+	tk.MustExec("create table t4(k int, v int)")
+	tk.MustExec("create table t5(k int, v int, primary key(k))")
 	tk.MustExec("insert into t1 values (1, 0)")
 	tk.MustExec("insert into t4 values (3, 3)")
 
@@ -3013,4 +3014,11 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustExec("insert into t1 values (null, null)")
 	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t1.v = 1")
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("<nil> 1"))
+
+	// test left join a table with primary key.
+	tk.MustExec("insert t5 values(0, 0)")
+	tk.MustExec("update t1 left join t5 on t1.k = t5.k set t1.v = 2")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("<nil> 2"))
+	tk.MustQuery("select k, v from t5").Check(testkit.Rows("0 0"))
+
 }
