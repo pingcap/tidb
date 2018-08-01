@@ -75,8 +75,14 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 				// Each matched row is updated once, even if it matches the conditions multiple times.
 				continue
 			}
+
+			// If it's a replenish column by join and all data values is nil, all update to this part should be ignore.
+			if updateNoMatchFillCols && isAllNull(oldData, 0, len(oldData)) {
+				continue
+			}
+
 			// Update row
-			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false, updateNoMatchFillCols)
+			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
 			if err1 == nil {
 				if changed {
 					e.updatedRowKeys[id][handle] = struct{}{}
@@ -168,7 +174,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Da
 	newRowData := types.CopyRow(oldRow)
 	for _, assign := range e.OrderedList {
 		colRange, assignNoMatchFillCol := e.noMatchFillCols.findColRange(assign.Col.Index)
-		if assignNoMatchFillCol && isAllNull(oldRow, colRange) {
+		if assignNoMatchFillCol && isAllNull(oldRow, colRange.start, colRange.end) {
 			continue
 		}
 		val, err := assign.Expr.Eval(chunk.MutRowFromDatums(newRowData).ToRow())
@@ -181,8 +187,8 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Da
 	return newRowData, nil
 }
 
-func isAllNull(datums []types.Datum, colRange ColumnIndexRange) bool {
-	for i := colRange.start; i < colRange.end; i++ {
+func isAllNull(datums []types.Datum, start, end int) bool {
+	for i := start; i < end; i++ {
 		if !datums[i].IsNull() {
 			return false
 		}

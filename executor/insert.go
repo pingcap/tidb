@@ -248,7 +248,7 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow [
 	}
 
 	newData := row4Update[:len(oldRow)]
-	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true, false)
+	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
 	}
