@@ -91,6 +91,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExecute(v)
 	case *plan.Explain:
 		return b.buildExplain(v)
+	case *plan.PointGetPlan:
+		return b.buildPointGet(v)
 	case *plan.Insert:
 		return b.buildInsert(v)
 	case *plan.LoadData:
@@ -825,11 +827,43 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	return e
 }
 
+// wrapCastForAggArgs wraps the args of an aggregate function with a cast function.
+func (b *executorBuilder) wrapCastForAggArgs(funcs []*aggregation.AggFuncDesc) {
+	for _, f := range funcs {
+		// We do not need to wrap cast upon these functions,
+		// since the EvalXXX method called by the arg is determined by the corresponding arg type.
+		if f.Name == ast.AggFuncCount || f.Name == ast.AggFuncMin || f.Name == ast.AggFuncMax || f.Name == ast.AggFuncFirstRow {
+			continue
+		}
+		var castFunc func(ctx sessionctx.Context, expr expression.Expression) expression.Expression
+		switch retTp := f.RetTp; retTp.EvalType() {
+		case types.ETInt:
+			castFunc = expression.WrapWithCastAsInt
+		case types.ETReal:
+			castFunc = expression.WrapWithCastAsReal
+		case types.ETString:
+			castFunc = expression.WrapWithCastAsString
+		case types.ETDecimal:
+			castFunc = expression.WrapWithCastAsDecimal
+		default:
+			panic("should never happen in executorBuilder.wrapCastForAggArgs")
+		}
+		for i := range f.Args {
+			f.Args[i] = castFunc(b.ctx, f.Args[i])
+		}
+	}
+}
+
 // buildProjBelowAgg builds a ProjectionExec below AggregationExec.
 // If all the args of `aggFuncs`, and all the item of `groupByItems`
 // are columns or constants, we do not need to build the `proj`.
 func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, src Executor) Executor {
 	hasScalarFunc := false
+	// If the mode is FinalMode, we do not need to wrap cast upon the args,
+	// since the types of the args are already the expected.
+	if len(aggFuncs) > 0 && aggFuncs[0].Mode != aggregation.FinalMode {
+		b.wrapCastForAggArgs(aggFuncs)
+	}
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		f := aggFuncs[i]
 		for _, arg := range f.Args {
@@ -1030,7 +1064,7 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	// If the calculation row count for this Projection operator is smaller
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
-	if v.StatsInfo().Count() < int64(b.ctx.GetSessionVars().MaxChunkSize) {
+	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
 	return e
@@ -1235,7 +1269,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 	_, offset := zone(b.ctx)
 	e := &AnalyzeIndexExec{
 		ctx:         b.ctx,
-		tblInfo:     task.TableInfo,
+		physicalID:  task.PhysicalID,
 		idxInfo:     task.IndexInfo,
 		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -1267,7 +1301,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 	_, offset := zone(b.ctx)
 	e := &AnalyzeColumnsExec{
 		ctx:         b.ctx,
-		tblInfo:     task.TableInfo,
+		physicalID:  task.PhysicalID,
 		colsInfo:    task.ColsInfo,
 		pkInfo:      task.PKInfo,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency,
@@ -1285,7 +1319,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		BucketSize:    maxBucketSize,
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
-		ColumnsInfo:   model.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+		ColumnsInfo:   model.ColumnsToProto(cols, task.PKInfo != nil),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
@@ -1483,7 +1517,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, ts.Hist, ts.StatsInfo().Count(), ts.Desc)
+		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
 	collect := e.feedback.CollectFeedback(len(ts.Ranges))
 	e.dagPB.CollectRangeCounts = &collect
@@ -1540,7 +1574,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
+		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
 	collect := e.feedback.CollectFeedback(len(is.Ranges))
 	e.dagPB.CollectRangeCounts = &collect
@@ -1606,10 +1640,14 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 	}
+	if isPartition, partitionID := ts.IsPartition(); isPartition {
+		e.tableID = partitionID
+	}
+
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
+		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
 	// do not collect the feedback for table request.
 	collectTable := false

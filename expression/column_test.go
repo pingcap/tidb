@@ -25,10 +25,10 @@ import (
 func (s *testEvaluatorSuite) TestColumn(c *C) {
 	defer testleak.AfterTest(c)()
 
-	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: 0, Position: 0}
+	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), UniqueID: 1}
 
 	c.Assert(col.Equal(nil, col), IsTrue)
-	c.Assert(col.Equal(nil, &Column{FromID: 1}), IsFalse)
+	c.Assert(col.Equal(nil, &Column{}), IsFalse)
 	c.Assert(col.IsCorrelated(), IsFalse)
 	c.Assert(col.Equal(nil, col.Decorrelate(nil)), IsTrue)
 
@@ -38,8 +38,8 @@ func (s *testEvaluatorSuite) TestColumn(c *C) {
 
 	intDatum := types.NewIntDatum(1)
 	corCol := &CorrelatedColumn{Column: *col, Data: &intDatum}
-	invalidCorCol := &CorrelatedColumn{Column: Column{FromID: 1}}
-	schema := NewSchema(&Column{FromID: 0, Position: 0})
+	invalidCorCol := &CorrelatedColumn{Column: Column{}}
+	schema := NewSchema(&Column{UniqueID: 1})
 	c.Assert(corCol.Equal(nil, corCol), IsTrue)
 	c.Assert(corCol.Equal(nil, invalidCorCol), IsFalse)
 	c.Assert(corCol.IsCorrelated(), IsTrue)
@@ -97,16 +97,14 @@ func (s *testEvaluatorSuite) TestColumnHashCode(c *C) {
 	defer testleak.AfterTest(c)()
 
 	col1 := &Column{
-		FromID:   1,
-		Position: 12,
+		UniqueID: 12,
 	}
-	c.Assert(col1.HashCode(nil), DeepEquals, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc})
+	c.Assert(col1.HashCode(nil), DeepEquals, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc})
 
 	col2 := &Column{
-		FromID:   11,
-		Position: 2,
+		UniqueID: 2,
 	}
-	c.Assert(col2.HashCode(nil), DeepEquals, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xb, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2})
+	c.Assert(col2.HashCode(nil), DeepEquals, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2})
 }
 
 func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
@@ -114,7 +112,7 @@ func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
 
 	cols := make([]*Column, 0, 5)
 	for i := 0; i < 5; i++ {
-		cols = append(cols, &Column{FromID: i})
+		cols = append(cols, &Column{UniqueID: i})
 	}
 
 	exprs := Column2Exprs(cols)

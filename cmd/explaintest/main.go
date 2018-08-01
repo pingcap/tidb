@@ -114,7 +114,7 @@ func (t *tester) Run() error {
 		if t.resultFD != nil {
 			err = t.resultFD.Close()
 			if err != nil {
-				log.Errorf("result fd close error", err)
+				log.Errorf("result fd close error %v", err)
 			}
 		}
 	}()
@@ -691,9 +691,8 @@ func main() {
 		tr := newTester(t)
 		if err = tr.Run(); err != nil {
 			log.Fatalf("run test [%s] err: %v", t, err)
-		} else {
-			log.Infof("run test [%s] ok", t)
 		}
+		log.Infof("run test [%s] ok", t)
 	}
 
 	println("\nGreat, All tests passed")
