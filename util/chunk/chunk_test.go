@@ -234,6 +234,11 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 		cmpRes := json.CompareBinary(jsonElem, jsonObj)
 		c.Assert(cmpRes, check.Equals, 0)
 	}
+	chk := NewChunkWithCapacity(fieldTypes[:1], 1)
+	chk.AppendFloat32(0, 1.0)
+	chk.TruncateTo(0)
+	chk.AppendNull(0)
+	c.Assert(chk.GetRow(0).IsNull(0), check.IsTrue)
 }
 
 // newChunk creates a new chunk and initialize columns with element length.
