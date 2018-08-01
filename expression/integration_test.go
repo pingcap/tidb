@@ -3311,6 +3311,11 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustExec("insert into t values('a', 'a'), ('a     ', 'a     ');")
 	tk.MustQuery(`select a, b, char_length(a), char_length(b) from t;`).Check(testutil.RowsWithSep("|",
 		"a|a|1|1", "a|a     |1|6"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (s1 binary(3));")
+	tk.MustExec("insert into t1 values (0x61), (0x6120), (0x612020);")
+	tk.MustQuery(`select hex(s1) from t1;`).Check(testkit.Rows("610000", "612000", "612020"))
 }
 
 func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {

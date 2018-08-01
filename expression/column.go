@@ -73,7 +73,7 @@ func (col *CorrelatedColumn) EvalString(ctx sessionctx.Context, row chunk.Row) (
 	}
 	res, err := col.Data.ToString()
 	resLen := len([]rune(res))
-	if col.GetType().Tp != mysql.TypeString {
+	if col.GetType().Tp != mysql.TypeString || mysql.HasBinaryFlag(col.GetType().Flag) {
 		return res, err != nil, errors.Trace(err)
 	}
 	// If 'pad_char_to_full_length' is not set in 'sql_mode' system variable, the right trailing spaces should be removed for type 'CHAR'.
@@ -242,7 +242,7 @@ func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bo
 		}
 		res, err := val.ToString()
 		resLen := len([]rune(res))
-		if col.GetType().Tp != mysql.TypeString {
+		if col.GetType().Tp != mysql.TypeString || mysql.HasBinaryFlag(col.GetType().Flag) {
 			return res, err != nil, errors.Trace(err)
 		}
 		// If 'pad_char_to_full_length' is not set in 'sql_mode' system variable, the right trailing spaces should be removed for type 'CHAR'.
@@ -257,7 +257,7 @@ func (col *Column) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bo
 
 	}
 	val := row.GetString(col.Index)
-	if col.GetType().Tp != mysql.TypeString {
+	if col.GetType().Tp != mysql.TypeString || mysql.HasBinaryFlag(col.GetType().Flag) {
 		return val, false, nil
 	}
 	if !ctx.GetSessionVars().StmtCtx.PadCharToFullLength {
