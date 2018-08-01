@@ -1247,66 +1247,65 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 	return updateExec
 }
 
-// Columns2HandleEntry represents an mapper from column index to handle index.
-type Columns2HandleEntry struct {
-	start, end int
-	handleIdx  int
+// cols2Handle represents an mapper from column index to handle index.
+type cols2Handle struct {
+	start, end    int // Represent the ordinal range [start, end) of the consecutive columns.
+	handleOrdinal int // Represents the ordinal of the handle column.
 }
 
-// Columns2Handle attaches the methods of sort.Interface to []Columns2HandleEntry sorting in increasing order.
-type Columns2Handle []Columns2HandleEntry
+// cols2HandleSlice attaches the methods of sort.Interface to []cols2Handle sorting in increasing order.
+type cols2HandleSlice []cols2Handle
 
 // Len implements sort.Interface#Len.
-func (c Columns2Handle) Len() int {
+func (c cols2HandleSlice) Len() int {
 	return len(c)
 }
 
 // Len implements sort.Interface#Swap.
-func (c Columns2Handle) Swap(i, j int) {
+func (c cols2HandleSlice) Swap(i, j int) {
 	c[i], c[j] = c[j], c[i]
 }
 
 // Len implements sort.Interface#Less.
 // let ranges first sorted by `start` increasing order, and then sorted by `end` increasing order if `start` are equal.
-func (c Columns2Handle) Less(i, j int) bool {
+func (c cols2HandleSlice) Less(i, j int) bool {
 	if c[i].start == c[j].start {
 		return c[i].end < c[i].end
 	}
 	return c[i].start < c[j].start
 }
 
-// findHandle finds the range hit by given column index.
-// c must be sorted using sort.Sort.
-func (c Columns2Handle) findHandle(colIndex int) (int, bool) {
+// findHandle finds the ordinal of the corresponding handle column.
+func (c cols2HandleSlice) findHandle(ordinal int) (int, bool) {
 	if c == nil || len(c) == 0 {
 		return 0, false
 	}
-	biggerOne := sort.Search(len(c), func(i int) bool { return c[i].start > colIndex })
+	biggerOne := sort.Search(len(c), func(i int) bool { return c[i].start > ordinal })
 	if biggerOne == 0 {
 		return 0, false
 	}
-	if c[biggerOne-1].start <= colIndex && colIndex < c[biggerOne-1].end {
-		return c[biggerOne-1].handleIdx, true
+	if ordinal < c[biggerOne-1].end {
+		return c[biggerOne-1].handleOrdinal, true
 	}
 	return 0, false
 }
 
 // buildColumns2Handle build columns to handle mapping.
-func buildColumns2Handle(schema *expression.Schema, tblID2Table map[int64]table.Table) Columns2Handle {
+func buildColumns2Handle(schema *expression.Schema, tblID2Table map[int64]table.Table) cols2HandleSlice {
 	if len(schema.TblID2Handle) < 2 {
 		return nil
 	}
-	var cols2Handle Columns2Handle
+	var cols2Handles cols2HandleSlice
 	for tblID, handleCols := range schema.TblID2Handle {
 		tbl := tblID2Table[tblID]
 		for _, handleCol := range handleCols {
 			offset := getTableOffset(schema, handleCol)
 			end := offset + len(tbl.WritableCols())
-			cols2Handle = append(cols2Handle, Columns2HandleEntry{offset, end, handleCol.Index})
+			cols2Handles = append(cols2Handles, cols2Handle{offset, end, handleCol.Index})
 		}
 	}
-	sort.Sort(cols2Handle)
-	return cols2Handle
+	sort.Sort(cols2Handles)
+	return cols2Handles
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {

@@ -2968,7 +2968,7 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustExec("create table t2(k int, v int)")
 	tk.MustExec("create table t3(id int auto_increment, k int, v int, primary key(id))")
 	tk.MustExec("create table t4(k int, v int)")
-	tk.MustExec("create table t5(k int, v int, primary key(k))")
+	tk.MustExec("create table t5(v int, k int, primary key(k))")
 	tk.MustExec("insert into t1 values (1, 0)")
 	tk.MustExec("insert into t4 values (3, 3)")
 

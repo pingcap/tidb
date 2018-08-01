@@ -39,7 +39,7 @@ type UpdateExec struct {
 	newRowsData    [][]types.Datum // The new values to be set.
 	fetched        bool
 	cursor         int
-	columns2Handle Columns2Handle
+	columns2Handle cols2HandleSlice
 }
 
 func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
@@ -64,8 +64,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 			offset := getTableOffset(schema, col)
 			end := offset + len(tbl.WritableCols())
 			handleDatum := row[col.Index]
-			// handleDatum is nil only when outer join fill no matched columns.
-			if handleDatum.IsNull() {
+			if e.canNotUpdate(handleDatum) {
 				continue
 			}
 			handle := row[col.Index].GetInt64()
@@ -97,6 +96,16 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 	}
 	e.cursor++
 	return []types.Datum{}, nil
+}
+
+// canNotUpdate checks the handle of a record to decide whether that record
+// can not be updated. The handle is NULL only when it is the inner side of an
+// outer join: the outer row can not match any inner rows, and in this scenario
+// the inner handle field is filled with a NULL value.
+//
+// This fixes: https://github.com/pingcap/tidb/issues/7176.
+func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
+	return handle.IsNull()
 }
 
 // Next implements the Executor Next interface.
@@ -171,8 +180,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Da
 	newRowData := types.CopyRow(oldRow)
 	for _, assign := range e.OrderedList {
 		handleIdx, handleFound := e.columns2Handle.findHandle(assign.Col.Index)
-		// handleDatum is nil only when outer join fill no matched columns.
-		if handleFound && oldRow[handleIdx].IsNull() {
+		if handleFound && e.canNotUpdate(oldRow[handleIdx]) {
 			continue
 		}
 		val, err := assign.Expr.Eval(chunk.MutRowFromDatums(newRowData).ToRow())
