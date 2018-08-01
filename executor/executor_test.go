@@ -2972,50 +2972,50 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustExec("insert into t1 values (1, 0)")
 	tk.MustExec("insert into t4 values (3, 3)")
 
-	// test auto_increment & none-null column in right table of update left join.
+	// test the case that the table with auto_increment or none-null columns as the right table of left join.
 	tk.MustExec("update t1 left join t3 on t1.k = t3.k set t1.v = 1")
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select id, k, v from t3").Check(testkit.Rows())
 
-	// test left join and right no records but update no records part.
+	// test left join and the case that the right table has no matching record but has updated the right table columns.
 	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t1.v = t2.v, t2.v = 3")
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 <nil>"))
 	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
 
-	// test set right table and ref right old value in left one.
+	// test the case that the update operation in the left table references data in the right table while data of the right table columns is modified.
 	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t2.v = 3, t1.v = t2.v")
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 <nil>"))
 	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
 
-	// test right join and left no records but update no records part.
+	// test right join and the case that the left table has no matching record but has updated the left table columns.
 	tk.MustExec("update t2 right join t1 on t2.k = t1.k set t2.v = 4, t1.v = 0")
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 0"))
 	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
 
-	// test left + right join update
+	// test the case of right join and left join at the same time.
 	tk.MustExec("update t1 left join t2 on t1.k = t2.k right join t4 on t4.k = t2.k set t1.v = 4, t2.v = 4, t4.v = 4")
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 0"))
 	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
 	tk.MustQuery("select k, v from t4").Check(testkit.Rows("3 4"))
 
-	// test left join and update right data.
+	// test normal left join and the case that the right table has matching rows.
 	tk.MustExec("insert t2 values (1, 10)")
 	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t2.v = 11")
 	tk.MustQuery("select k, v from t2").Check(testkit.Rows("1 11"))
 
-	// test join same table multiple times, update right record and not insert no exists record.
+	// test the case of continuously joining the same table and updating the unmatching records.
 	tk.MustExec("update t1 t11 left join t2 on t11.k = t2.k left join t1 t12 on t2.v = t12.k set t12.v = 233, t11.v = 111")
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 111"))
 	tk.MustQuery("select k, v from t2").Check(testkit.Rows("1 11"))
 
-	// test left join and left all null record's update.
+	// test the left join case that the left table has records but all records are null.
 	tk.MustExec("delete from t1")
 	tk.MustExec("delete from t2")
 	tk.MustExec("insert into t1 values (null, null)")
 	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t1.v = 1")
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("<nil> 1"))
 
-	// test left join a table with primary key.
+	// test the case that the right table of left join has an primary key.
 	tk.MustExec("insert t5 values(0, 0)")
 	tk.MustExec("update t1 left join t5 on t1.k = t5.k set t1.v = 2")
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("<nil> 2"))

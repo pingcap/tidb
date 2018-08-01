@@ -1237,7 +1237,6 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		return nil
 	}
 	columns2Handle := buildColumns2Handle(v.Schema(), tblID2table)
-	sort.Sort(columns2Handle)
 	updateExec := &UpdateExec{
 		baseExecutor:   newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
 		SelectExec:     selExec,
@@ -1268,7 +1267,7 @@ func (c Columns2Handle) Swap(i, j int) {
 }
 
 // Len implements sort.Interface#Less.
-// let ranges first sort by `start` increasing order, and sort by `end` increasing order if `start` are equal.
+// let ranges first sorted by `start` increasing order, and then sorted by `end` increasing order if `start` are equal.
 func (c Columns2Handle) Less(i, j int) bool {
 	if c[i].start == c[j].start {
 		return c[i].end < c[i].end
@@ -1276,8 +1275,8 @@ func (c Columns2Handle) Less(i, j int) bool {
 	return c[i].start < c[j].start
 }
 
-// findHandle find the range hit by given column index.
-// c must be sorted use sort.Sort.
+// findHandle finds the range hit by given column index.
+// c must be sorted using sort.Sort.
 func (c Columns2Handle) findHandle(colIndex int) (int, bool) {
 	if c == nil || len(c) == 0 {
 		return 0, false
@@ -1293,8 +1292,10 @@ func (c Columns2Handle) findHandle(colIndex int) (int, bool) {
 }
 
 // buildColumns2Handle build columns to handle mapping.
-//
 func buildColumns2Handle(schema *expression.Schema, tblID2Table map[int64]table.Table) Columns2Handle {
+	if len(schema.TblID2Handle) < 2 {
+		return nil
+	}
 	var cols2Handle Columns2Handle
 	for tblID, handleCols := range schema.TblID2Handle {
 		tbl := tblID2Table[tblID]
@@ -1304,6 +1305,7 @@ func buildColumns2Handle(schema *expression.Schema, tblID2Table map[int64]table.
 			cols2Handle = append(cols2Handle, Columns2HandleEntry{offset, end, handleCol.Index})
 		}
 	}
+	sort.Sort(cols2Handle)
 	return cols2Handle
 }
 
