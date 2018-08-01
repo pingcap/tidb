@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"math"
 	"sort"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -70,6 +72,7 @@ func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.
 		if mysql.HasNotNullFlag(tp.Flag) && endPoint.value.Kind() == types.KindNull {
 			continue
 		}
+
 		ran := &Range{
 			LowVal:      []types.Datum{startPoint.value},
 			LowExclude:  startPoint.excl,
@@ -326,7 +329,7 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 
 	// Take prefix index into consideration.
 	if hasPrefix(lengths) {
-		fixPrefixColRange(ranges, lengths)
+		fixPrefixColRange(ranges, lengths, newTp)
 	}
 
 	if len(ranges) > 0 && len(ranges[0].LowVal) < len(cols) {
@@ -409,23 +412,37 @@ func hasPrefix(lengths []int) bool {
 	return false
 }
 
-func fixPrefixColRange(ranges []*Range, lengths []int) {
+func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) {
 	for _, ran := range ranges {
 		for i := 0; i < len(ran.LowVal); i++ {
-			fixRangeDatum(&ran.LowVal[i], lengths[i])
+			fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
 		}
 		ran.LowExclude = false
 		for i := 0; i < len(ran.HighVal); i++ {
-			fixRangeDatum(&ran.HighVal[i], lengths[i])
+			fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
 		}
 		ran.HighExclude = false
 	}
 }
 
-func fixRangeDatum(v *types.Datum, length int) {
+func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) {
 	// If this column is prefix and the prefix length is smaller than the range, cut it.
-	if length != types.UnspecifiedLength && length < len(v.GetBytes()) {
-		v.SetBytes(v.GetBytes()[:length])
+	// In case of UTF8, prefix should be cut by characters rather than bytes
+	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+		colCharset := tp.Charset
+		colValue := v.GetBytes()
+		isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+		if isUTF8Charset {
+			if length != types.UnspecifiedLength && utf8.RuneCount(colValue) > length {
+				rs := bytes.Runes(colValue)
+				truncateStr := string(rs[:length])
+				// truncate value and limit its length
+				v.SetString(truncateStr)
+			}
+		} else if length != types.UnspecifiedLength && len(colValue) > length {
+			// truncate value and limit its length
+			v.SetBytes(colValue[:length])
+		}
 	}
 }
 
@@ -437,11 +454,14 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		newTp := types.NewFieldType(mysql.TypeLonglong)
 		newTp.Flag = tp.Flag
+		newTp.Charset = tp.Charset
 		return newTp
 	// To avoid data truncate error.
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
-		return types.NewFieldType(tp.Tp)
+		newTp := types.NewFieldType(tp.Tp)
+		newTp.Charset = tp.Charset
+		return newTp
 	default:
 		return tp
 	}

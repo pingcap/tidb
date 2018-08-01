@@ -187,6 +187,17 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongNameForIndex)
 	sql = "create table t2(c1.c2 blob default null);"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
+	sql = "create table t2 (id int default null primary key , age int);"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "create table t2 (id int null primary key , age int);"
+	s.testErrorCode(c, sql, tmysql.ErrPrimaryCantHaveNull)
+	sql = "create table t2 (id int default null, age int, primary key(id));"
+	s.testErrorCode(c, sql, tmysql.ErrPrimaryCantHaveNull)
+	sql = "create table t2 (id int null, age int, primary key(id));"
+	s.testErrorCode(c, sql, tmysql.ErrPrimaryCantHaveNull)
+
+	sql = "create table t2 (id int primary key , age int);"
+	s.tk.MustExec(sql)
 
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
@@ -485,7 +496,7 @@ LOOP:
 	}
 
 	ctx := s.s.(sessionctx.Context)
-	idx := tables.NewIndex(t.Meta().ID, c3IdxInfo)
+	idx := tables.NewIndex(t.Meta().ID, t.Meta(), c3IdxInfo)
 	checkDelRangeDone(c, ctx, idx)
 
 	s.mustExec(c, "drop table t1")
@@ -582,9 +593,23 @@ func (s *testDBSuite) TestAddMultiColumnsIndex(c *C) {
 }
 
 func (s *testDBSuite) TestAddIndex(c *C) {
+	s.testAddIndex(c, false, "create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
+			      partition by range (c2) (
+			      partition p0 values less than (3440),
+			      partition p1 values less than (61440),
+			      partition p2 values less than (122880),
+			      partition p3 values less than (204800),
+			      partition p4 values less than maxvalue)`)
+}
+
+func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL string) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+	// TODO: Support delete operation, then uncomment here.
+	// s.tk.MustExec("set @@tidb_enable_table_partition = 1")
+	s.tk.MustExec("drop table if exists test_add_index")
+	s.tk.MustExec(createTableSQL)
 
 	done := make(chan error, 1)
 	start := -10
@@ -665,7 +690,7 @@ LOOP:
 	for _, key := range keys {
 		expectedRows = append(expectedRows, []interface{}{key})
 	}
-	rows := s.mustQuery(c, fmt.Sprintf("select c1 from test_add_index where c3 >= %d", start))
+	rows := s.mustQuery(c, fmt.Sprintf("select c1 from test_add_index where c3 >= %d order by c1", start))
 	matchRows(c, rows, expectedRows)
 
 	// test index range
@@ -673,6 +698,11 @@ LOOP:
 		index := rand.Intn(len(keys) - 3)
 		rows := s.mustQuery(c, "select c1 from test_add_index where c3 >= ? limit 3", keys[index])
 		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
+	}
+
+	if testPartition {
+		s.tk.MustExec("admin check table test_add_index")
+		return
 	}
 
 	// TODO: Support explain in future.
@@ -795,7 +825,7 @@ LOOP:
 	}
 	c.Assert(nidx, IsNil)
 
-	idx := tables.NewIndex(t.Meta().ID, c3idx.Meta())
+	idx := tables.NewIndex(t.Meta().ID, t.Meta(), c3idx.Meta())
 	checkDelRangeDone(c, ctx, idx)
 	s.tk.MustExec("drop table test_drop_index")
 }
@@ -1666,15 +1696,35 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	);`)
 	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
 
-	// TODO: This SQL should return ErrPartitionFunctionIsNotAllowed: ERROR 1564 (HY000): This partition function is not allowed
-	_, err = s.tk.Exec(`create TABLE t9 (
+	sql9 := `create TABLE t9 (
 	col1 int
 	)
 	partition by range( case when col1 > 0 then 10 else 20 end ) (
 		partition p0 values less than (2),
 		partition p1 values less than (6)
-	);`)
-	c.Assert(err, IsNil)
+	);`
+	s.testErrorCode(c, sql9, tmysql.ErrPartitionFunctionIsNotAllowed)
+
+	s.testErrorCode(c, `create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
+
+	s.tk.MustExec(`create TABLE t11 (c1 int,c2 int) partition by range(c1 div c2 ) (partition p0 values less than (2));`)
+	s.tk.MustExec(`create TABLE t12 (c1 int,c2 int) partition by range(c1 + c2 ) (partition p0 values less than (2));`)
+	s.tk.MustExec(`create TABLE t13 (c1 int,c2 int) partition by range(c1 - c2 ) (partition p0 values less than (2));`)
+	s.tk.MustExec(`create TABLE t14 (c1 int,c2 int) partition by range(c1 * c2 ) (partition p0 values less than (2));`)
+	s.tk.MustExec(`create TABLE t15 (c1 int,c2 int) partition by range( abs(c1) ) (partition p0 values less than (2));`)
+	s.tk.MustExec(`create TABLE t16 (c1 int) partition by range( c1) (partition p0 values less than (10));`)
+
+	s.testErrorCode(c, `create TABLE t17 (c1 int,c2 float) partition by range(c1 + c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFuncNotAllowed)
+	s.testErrorCode(c, `create TABLE t18 (c1 int,c2 float) partition by range( floor(c2) ) (partition p0 values less than (2));`, tmysql.ErrPartitionFuncNotAllowed)
+	s.tk.MustExec(`create TABLE t19 (c1 int,c2 float) partition by range( floor(c1) ) (partition p0 values less than (2));`)
+
+	s.tk.MustExec(`create TABLE t20 (c1 int,c2 bit(10)) partition by range(c2) (partition p0 values less than (10));`)
+	s.tk.MustExec(`create TABLE t21 (c1 int,c2 year) partition by range( c2 ) (partition p0 values less than (2000));`)
+
+	s.testErrorCode(c, `create TABLE t24 (c1 float) partition by range( c1 ) (partition p0 values less than (2000));`, tmysql.ErrFieldTypeNotAllowedAsPartitionField)
+
+	// test check order. The sql below have 2 problem: 1. ErrFieldTypeNotAllowedAsPartitionField  2. ErrPartitionMaxvalue , mysql will return ErrPartitionMaxvalue.
+	s.testErrorCode(c, `create TABLE t25 (c1 float) partition by range( c1 ) (partition p1 values less than maxvalue,partition p0 values less than (2000));`, tmysql.ErrPartitionMaxvalue)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
@@ -2179,7 +2229,7 @@ func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bo
 	tbl := ctx.tbl
 	curVer, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.Meta())
+	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl)
 	c.Assert(err, IsNil)
 	return maxID, emptyTable
 }
@@ -2671,4 +2721,164 @@ func (s *testDBSuite) TestAddPartitionTooManyPartitions(c *C) {
    	partition p1025 values less than (1025)
 	);`
 	s.testErrorCode(c, sql3, tmysql.ErrTooManyPartitions)
+}
+
+func checkPartitionDelRangeDone(c *C, s *testDBSuite, partitionPrefix kv.Key) bool {
+	hasOldPartitionData := true
+	for i := 0; i < waitForCleanDataRound; i++ {
+		err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+			it, err := txn.Seek(partitionPrefix)
+			if err != nil {
+				return err
+			}
+			if !it.Valid() {
+				hasOldPartitionData = false
+			} else {
+				hasOldPartitionData = it.Key().HasPrefix(partitionPrefix)
+			}
+			it.Close()
+			return nil
+		})
+		c.Assert(err, IsNil)
+		if !hasOldPartitionData {
+			break
+		}
+		time.Sleep(waitForCleanDataInterval)
+	}
+	return hasOldPartitionData
+}
+
+func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test;")
+	// Test truncate common table.
+	s.tk.MustExec("drop table if exists t1;")
+	s.tk.MustExec("create table t1 (id int(11));")
+	for i := 0; i < 100; i++ {
+		s.mustExec(c, "insert into t1 values (?)", i)
+	}
+	result := s.tk.MustQuery("select count(*) from t1;")
+	result.Check(testkit.Rows("100"))
+	s.tk.MustExec("truncate table t1;")
+	result = s.tk.MustQuery("select count(*) from t1")
+	result.Check(testkit.Rows("0"))
+
+	// Test drop common table.
+	s.tk.MustExec("drop table if exists t2;")
+	s.tk.MustExec("create table t2 (id int(11));")
+	for i := 0; i < 100; i++ {
+		s.mustExec(c, "insert into t2 values (?)", i)
+	}
+	result = s.tk.MustQuery("select count(*) from t2;")
+	result.Check(testkit.Rows("100"))
+	s.tk.MustExec("drop table t2;")
+	s.testErrorCode(c, "select * from t2;", tmysql.ErrNoSuchTable)
+
+	// Test truncate table partition.
+	s.tk.MustExec("drop table if exists t3;")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
+	s.tk.MustExec(`create table t3(
+		id int, name varchar(50), 
+		purchased date
+	)
+	partition by range( year(purchased) ) (
+    	partition p0 values less than (1990),
+    	partition p1 values less than (1995),
+    	partition p2 values less than (2000),
+    	partition p3 values less than (2005),
+    	partition p4 values less than (2010),
+    	partition p5 values less than (2015)
+   	);`)
+	s.tk.MustExec(`insert into t3 values
+	(1, 'desk organiser', '2003-10-15'),
+	(2, 'alarm clock', '1997-11-05'),
+	(3, 'chair', '2009-03-10'),
+	(4, 'bookcase', '1989-01-10'),
+	(5, 'exercise bike', '2014-05-09'),
+	(6, 'sofa', '1987-06-05'),
+	(7, 'espresso maker', '2011-11-22'),
+	(8, 'aquarium', '1992-08-04'),
+	(9, 'study desk', '2006-09-16'),
+	(10, 'lava lamp', '1998-12-25');`)
+	result = s.tk.MustQuery("select count(*) from t3;")
+	result.Check(testkit.Rows("10"))
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	// Only one partition id test is taken here.
+	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
+	s.tk.MustExec("truncate table t3;")
+	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+	hasOldPartitionData := checkPartitionDelRangeDone(c, s, partitionPrefix)
+	c.Assert(hasOldPartitionData, IsFalse)
+
+	// Test drop table partition.
+	s.tk.MustExec("drop table if exists t4;")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
+	s.tk.MustExec(`create table t4(
+		id int, name varchar(50), 
+		purchased date
+	)
+	partition by range( year(purchased) ) (
+    	partition p0 values less than (1990),
+    	partition p1 values less than (1995),
+    	partition p2 values less than (2000),
+    	partition p3 values less than (2005),
+    	partition p4 values less than (2010),
+    	partition p5 values less than (2015)
+   	);`)
+	s.tk.MustExec(`insert into t4 values
+	(1, 'desk organiser', '2003-10-15'),
+	(2, 'alarm clock', '1997-11-05'),
+	(3, 'chair', '2009-03-10'),
+	(4, 'bookcase', '1989-01-10'),
+	(5, 'exercise bike', '2014-05-09'),
+	(6, 'sofa', '1987-06-05'),
+	(7, 'espresso maker', '2011-11-22'),
+	(8, 'aquarium', '1992-08-04'),
+	(9, 'study desk', '2006-09-16'),
+	(10, 'lava lamp', '1998-12-25');`)
+	result = s.tk.MustQuery("select count(*) from t4; ")
+	result.Check(testkit.Rows("10"))
+	is = domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	c.Assert(err, IsNil)
+	// Only one partition id test is taken here.
+	oldPID = oldTblInfo.Meta().Partition.Definitions[1].ID
+	s.tk.MustExec("drop table t4;")
+	partitionPrefix = tablecodec.EncodeTablePrefix(oldPID)
+	hasOldPartitionData = checkPartitionDelRangeDone(c, s, partitionPrefix)
+	c.Assert(hasOldPartitionData, IsFalse)
+	s.testErrorCode(c, "select * from t4;", tmysql.ErrNoSuchTable)
+}
+
+func (s *testDBSuite) TestPartitionAddIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_table_partition = 1")
+	tk.MustExec(`create table partition_add_idx (
+	id int not null,
+	hired date not null
+	)
+	partition by range( year(hired) ) (
+	partition p1 values less than (1991),
+	partition p3 values less than (2001),
+	partition p4 values less than (2004),
+	partition p5 values less than (2008),
+	partition p6 values less than (2012),
+	partition p7 values less than (2018)
+	);`)
+	for i := 0; i < 500; i++ {
+		tk.MustExec(fmt.Sprintf("insert into partition_add_idx values (%d, '%d-01-01')", i, 1988+rand.Intn(30)))
+	}
+
+	tk.MustExec("alter table partition_add_idx add index idx1 (hired)")
+	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
+
+	tk.MustQuery("select count(hired) from partition_add_idx use index(idx1)").Check(testkit.Rows("500"))
+	tk.MustQuery("select count(id) from partition_add_idx use index(idx2)").Check(testkit.Rows("500"))
+
+	tk.MustExec("admin check table partition_add_idx")
+	tk.MustExec("drop table partition_add_idx")
 }

@@ -58,16 +58,17 @@ type Config struct {
 	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
 	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 
-	Log               Log               `toml:"log" json:"log"`
-	Security          Security          `toml:"security" json:"security"`
-	Status            Status            `toml:"status" json:"status"`
-	Performance       Performance       `toml:"performance" json:"performance"`
-	XProtocol         XProtocol         `toml:"xprotocol" json:"xprotocol"`
-	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
-	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
-	TiKVClient        TiKVClient        `toml:"tikv-client" json:"tikv-client"`
-	Binlog            Binlog            `toml:"binlog" json:"binlog"`
+	Log                 Log               `toml:"log" json:"log"`
+	Security            Security          `toml:"security" json:"security"`
+	Status              Status            `toml:"status" json:"status"`
+	Performance         Performance       `toml:"performance" json:"performance"`
+	XProtocol           XProtocol         `toml:"xprotocol" json:"xprotocol"`
+	PreparedPlanCache   PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing         OpenTracing       `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Binlog              Binlog            `toml:"binlog" json:"binlog"`
+	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 }
 
 // Log is the log section of config.
@@ -223,6 +224,12 @@ type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
 	// with each tikv-server.
 	GrpcConnectionCount uint `toml:"grpc-connection-count" json:"grpc-connection-count"`
+	// After a duration of this time in seconds if the client doesn't see any activity it pings
+	// the server to see if the transport is still alive.
+	GrpcKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
+	// After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
+	// and if no activity is seen even after that the connection is closed.
+	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
 }
@@ -301,8 +308,10 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount: 16,
-		CommitTimeout:       "41s",
+		GrpcConnectionCount:  16,
+		GrpcKeepAliveTime:    10,
+		GrpcKeepAliveTimeout: 3,
+		CommitTimeout:        "41s",
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

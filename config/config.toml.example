@@ -44,6 +44,10 @@ enable-streaming = false
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
 
+# Make "kill query" behavior compatible with MySQL. It's not recommend to
+# turn on this option when TiDB server is behand a proxy.
+compatible-kill-query = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -209,6 +213,14 @@ local-agent-host-port = ""
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
 grpc-connection-count = 16
+
+# After a duration of this time in seconds if the client doesn't see any activity it pings
+# the server to see if the transport is still alive.
+grpc-keepalive-time = 10
+
+# After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
+# and if no activity is seen even after that the connection is closed.
+grpc-keepalive-timeout = 3
 
 # max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"

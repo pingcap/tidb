@@ -95,6 +95,8 @@ func convertToPbPairs(pairs []Pair) []*kvrpcpb.KvPair {
 	return kvPairs
 }
 
+// rpcHandler mocks tikv's side handler behavior. In general, you may assume
+// TiKV just translate the logic from Go to Rust.
 type rpcHandler struct {
 	cluster   *Cluster
 	mvccStore MVCCStore
@@ -386,6 +388,23 @@ func (h *rpcHandler) handleKvRawPut(req *kvrpcpb.RawPutRequest) *kvrpcpb.RawPutR
 	return &kvrpcpb.RawPutResponse{}
 }
 
+func (h *rpcHandler) handleKvRawBatchPut(req *kvrpcpb.RawBatchPutRequest) *kvrpcpb.RawBatchPutResponse {
+	rawKV, ok := h.mvccStore.(RawKV)
+	if !ok {
+		return &kvrpcpb.RawBatchPutResponse{
+			Error: "not implemented",
+		}
+	}
+	keys := make([][]byte, 0, len(req.Pairs))
+	values := make([][]byte, 0, len(req.Pairs))
+	for _, pair := range req.Pairs {
+		keys = append(keys, pair.Key)
+		values = append(values, pair.Value)
+	}
+	rawKV.RawBatchPut(keys, values)
+	return &kvrpcpb.RawBatchPutResponse{}
+}
+
 func (h *rpcHandler) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.RawDeleteResponse {
 	rawKV, ok := h.mvccStore.(RawKV)
 	if !ok {
@@ -435,7 +454,8 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 	return &kvrpcpb.SplitRegionResponse{}
 }
 
-// RPCClient sends kv RPC calls to mock cluster.
+// RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
+// a rpc client at tikv's side.
 type RPCClient struct {
 	Cluster       *Cluster
 	MvccStore     MVCCStore
@@ -612,6 +632,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.RawPut = handler.handleKvRawPut(r)
+	case tikvrpc.CmdRawBatchPut:
+		r := req.RawBatchPut
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.RawBatchPut = &kvrpcpb.RawBatchPutResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.RawBatchPut = handler.handleKvRawBatchPut(r)
 	case tikvrpc.CmdRawDelete:
 		r := req.RawDelete
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {

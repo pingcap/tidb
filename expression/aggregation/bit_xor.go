@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type bitXorFunction struct {
@@ -34,7 +35,7 @@ func (bf *bitXorFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *Ag
 }
 
 // Update implements Aggregation interface.
-func (bf *bitXorFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (bf *bitXorFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	a := bf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {

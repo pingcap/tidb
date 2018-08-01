@@ -52,6 +52,9 @@ const (
 	ActionDropTablePartition ActionType = 20
 )
 
+// AddIndexStr is a string related to the operation of "add index".
+const AddIndexStr = "add index"
+
 var actionMap = map[ActionType]string{
 	ActionCreateSchema:       "create schema",
 	ActionDropSchema:         "drop schema",
@@ -59,7 +62,7 @@ var actionMap = map[ActionType]string{
 	ActionDropTable:          "drop table",
 	ActionAddColumn:          "add column",
 	ActionDropColumn:         "drop column",
-	ActionAddIndex:           "add index",
+	ActionAddIndex:           AddIndexStr,
 	ActionDropIndex:          "drop index",
 	ActionAddForeignKey:      "add foreign key",
 	ActionDropForeignKey:     "drop foreign key",
@@ -158,6 +161,7 @@ type Job struct {
 	Version int64 `json:"version"`
 
 	// ReorgMeta is meta info of ddl reorganization.
+	// This field is depreciated.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
 }
 
@@ -271,6 +275,7 @@ func (job *Job) IsDependentOn(other *Job) (bool, error) {
 		return isDependent, errors.Trace(err)
 	}
 
+	// TODO: If a job is ActionRenameTable, we need to check table name.
 	if other.TableID == job.TableID {
 		return true, nil
 	}

@@ -41,7 +41,12 @@ func ParseSimpleExpr(ctx sessionctx.Context, exprStr string, tableInfo *model.Ta
 		return nil, errors.Trace(err)
 	}
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	rewriter := &simpleRewriter{tbl: tableInfo, ctx: ctx}
+	return RewriteSimpleExpr(ctx, tableInfo, expr)
+}
+
+// RewriteSimpleExpr rewrites simple ast.ExprNode to expression.Expression.
+func RewriteSimpleExpr(ctx sessionctx.Context, tbl *model.TableInfo, expr ast.ExprNode) (Expression, error) {
+	rewriter := &simpleRewriter{tbl: tbl, ctx: ctx}
 	expr.Accept(rewriter)
 	if rewriter.err != nil {
 		return nil, errors.Trace(rewriter.err)
@@ -54,14 +59,13 @@ func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Colum
 	for i, col := range tblCols {
 		if col.Name.L == nodeColName.Name.Name.L {
 			return &Column{
-				FromID:      1,
 				ColName:     col.Name,
 				OrigTblName: sr.tbl.Name,
 				DBName:      model.NewCIStr(sr.ctx.GetSessionVars().CurrentDB),
 				TblName:     sr.tbl.Name,
 				RetType:     &col.FieldType,
 				ID:          col.ID,
-				Position:    col.Offset,
+				UniqueID:    sr.ctx.GetSessionVars().AllocPlanColumnID(),
 				Index:       i,
 			}, nil
 		}
@@ -398,23 +402,23 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 	exprs := sr.popN(lLen + 1)
 	leftExpr := exprs[0]
 	elems := exprs[1:]
-	l := GetRowLen(leftExpr)
+	l, leftFt := GetRowLen(leftExpr), leftExpr.GetType()
 	for i := 0; i < lLen; i++ {
 		if l != GetRowLen(elems[i]) {
 			sr.err = ErrOperandColumns.GenByArgs(l)
 			return
 		}
 	}
-	leftIsNull := leftExpr.GetType().Tp == mysql.TypeNull
+	leftIsNull := leftFt.Tp == mysql.TypeNull
 	if leftIsNull {
 		sr.push(Null.Clone())
 		return
 	}
-	leftEt := leftExpr.GetType().EvalType()
+	leftEt := leftFt.EvalType()
 	if leftEt == types.ETInt {
 		for i := 0; i < len(elems); i++ {
 			if c, ok := elems[i].(*Constant); ok {
-				elems[i] = RefineConstantArg(sr.ctx, c, opcode.EQ)
+				elems[i], _ = RefineComparedConstant(sr.ctx, mysql.HasUnsignedFlag(leftFt.Flag), c, opcode.EQ)
 			}
 		}
 	}

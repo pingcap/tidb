@@ -69,21 +69,24 @@ func testCreateSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo
 	return job
 }
 
-func testDropSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
-	job := &model.Job{
+func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
+	return &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
+}
+
+func testDropSchema(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
+	job := buildDropSchemaJob(dbInfo)
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
-
 	ver := getSchemaVer(c, ctx)
 	return job, ver
 }
 
 func isDDLJobDone(c *C, t *meta.Meta) bool {
-	job, err := t.GetDDLJob(0)
+	job, err := t.GetDDLJobByIdx(0)
 	c.Assert(err, IsNil)
 	if job == nil {
 		return true
@@ -226,7 +229,7 @@ LOOP:
 		select {
 		case <-ticker.C:
 			d.Stop()
-			d.start(context.Background(), nil)
+			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
 			c.Assert(err, IsNil)
