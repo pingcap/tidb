@@ -331,7 +331,6 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 				// In non-strict SQL mode, if the column type is json and the default value is null, it is initialized to an empty array.
 				if col.Tp == mysql.TypeJSON && value == "" {
 					col.DefaultValue = `null`
-					hasDefaultValue = true
 				}
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
@@ -1438,7 +1437,6 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			col.DefaultValue = value
 			if col.Tp == mysql.TypeJSON && value == "" {
 				col.DefaultValue = `null`
-				hasDefaultValue = true
 			}
 		case ast.ColumnOptionComment:
 			err := setColumnComment(ctx, col, opt)
