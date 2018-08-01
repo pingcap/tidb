@@ -414,6 +414,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			eqFB, ranFB := splitFeedbackByQueryType(fb.feedback)
 			newIdx.CMSketch = UpdateCMSketch(idx.CMSketch, eqFB)
 			newIdx.Histogram = *UpdateHistogram(&idx.Histogram, &QueryFeedback{feedback: ranFB})
+			newIdx.Histogram.PreCalculateScalar()
 			newTblStats.Indices[fb.hist.ID] = &newIdx
 		} else {
 			col, ok := tblStats.Columns[fb.hist.ID]
