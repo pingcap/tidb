@@ -35,11 +35,13 @@ type UpdateExec struct {
 	updatedRowKeys map[int64]map[int64]struct{}
 	tblID2table    map[int64]table.Table
 
-	rows         [][]types.Datum // The rows fetched from TableExec.
-	newRowsData  [][]types.Datum // The new values to be set.
-	fetched      bool
-	cursor       int
-	replenishTbl map[string]ColumnIndexRange
+	rows        [][]types.Datum // The rows fetched from TableExec.
+	newRowsData [][]types.Datum // The new values to be set.
+	fetched     bool
+	cursor      int
+	// noMatchFillCols is a sort range index to mark columns maybe filled when no match.
+	// update to those columns need be ignore.
+	noMatchFillCols ColumnIndexRanges
 }
 
 func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
@@ -64,7 +66,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 			offset := getTableOffset(schema, col)
 			end := offset + len(tbl.WritableCols())
 			handle := row[col.Index].GetInt64()
-			_, checkReplenish := e.replenishTbl[col.DBName.O+"-"+col.TblName.O]
+			_, updateNoMatchFillCols := e.noMatchFillCols.findColRange(col.Index)
 			oldData := row[offset:end]
 			newTableData := newData[offset:end]
 			flags := assignFlag[offset:end]
@@ -74,7 +76,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 				continue
 			}
 			// Update row
-			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false, checkReplenish)
+			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false, updateNoMatchFillCols)
 			if err1 == nil {
 				if changed {
 					e.updatedRowKeys[id][handle] = struct{}{}
@@ -165,8 +167,8 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Datum, error) {
 	newRowData := types.CopyRow(oldRow)
 	for _, assign := range e.OrderedList {
-		colRange, isReplenish := e.replenishTbl[assign.Col.DBName.O+"-"+assign.Col.TblName.O]
-		if isReplenish && allNullDatums(oldRow, colRange) {
+		colRange, assignNoMatchFillCol := e.noMatchFillCols.findColRange(assign.Col.Index)
+		if assignNoMatchFillCol && allNullDatums(oldRow, colRange) {
 			continue
 		}
 		val, err := assign.Expr.Eval(chunk.MutRowFromDatums(newRowData).ToRow())

@@ -1236,13 +1236,14 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	replenishTbl := resolveReplenishTbl(v.Schema(), v.SelectPlan, tblID2table)
+	noMatchFillCols := resolveNoMatchFillCols(v.Schema(), v.SelectPlan, tblID2table)
+	sort.Sort(noMatchFillCols)
 	updateExec := &UpdateExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
-		SelectExec:   selExec,
-		OrderedList:  v.OrderedList,
-		tblID2table:  tblID2table,
-		replenishTbl: replenishTbl,
+		baseExecutor:    newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
+		SelectExec:      selExec,
+		OrderedList:     v.OrderedList,
+		tblID2table:     tblID2table,
+		noMatchFillCols: noMatchFillCols.foldDuplicate(),
 	}
 	return updateExec
 }
@@ -1252,68 +1253,118 @@ type ColumnIndexRange struct {
 	start, end int
 }
 
-// resolveReplenishTbl resolve sub-join's replenish column info.
-func resolveReplenishTbl(schema *expression.Schema, selectPlan plan.PhysicalPlan, tblID2Table map[int64]table.Table) map[string]ColumnIndexRange {
+// ColumnIndexRanges attaches the methods of sort.Interface to []ColumnIndexRange sorting in increasing order.
+type ColumnIndexRanges []ColumnIndexRange
+
+// Len implements sort.Interface#Len.
+func (c ColumnIndexRanges) Len() int {
+	return len(c)
+}
+
+// Len implements sort.Interface#Swap.
+func (c ColumnIndexRanges) Swap(i, j int) {
+	c[i], c[j] = c[j], c[i]
+}
+
+// Len implements sort.Interface#Less.
+// let ranges first sort by `start` increasing order, and sort by `end` decreasing order if `start` are equal.
+// so in foldDuplicate can fold duplicate range by this order.
+func (c ColumnIndexRanges) Less(i, j int) bool {
+	if c[i].start == c[j].start {
+		return c[i].end > c[j].end
+	}
+	return c[i].start < c[j].start
+}
+
+// foldDuplicate removes the duplicate ranges.
+// c must be sorted use sort.Sort.
+func (c ColumnIndexRanges) foldDuplicate() ColumnIndexRanges {
+	ranges := make(ColumnIndexRanges, 0)
+	for i := 0; i < len(c); {
+		ranges = append(ranges, c[i])
+		j := i + 1
+		for ; j < len(c); j++ {
+			if c[i].end < c[j].end {
+				break
+			}
+		}
+		i = j
+	}
+	return ranges
+}
+
+// findColRange find the range hit by given column index.
+// c must be sorted use sort.Sort.
+func (c ColumnIndexRanges) findColRange(colIndex int) (ColumnIndexRange, bool) {
+	if c == nil || len(c) == 0 {
+		return ColumnIndexRange{}, false
+	}
+	biggerOne := sort.Search(len(c), func(i int) bool { return c[i].start > colIndex })
+	if biggerOne == 0 {
+		return ColumnIndexRange{}, false
+	}
+	if c[biggerOne-1].start <= colIndex && colIndex < c[biggerOne-1].end {
+		return c[biggerOne-1], true
+	}
+	return ColumnIndexRange{}, false
+}
+
+// resolveNoMatchFillCols resolve sub-join's need `fill if no match` columns.
+// and build a sorted-range index, so later will use this index to ignore assign and updateRecord call.
+func resolveNoMatchFillCols(schema *expression.Schema, selectPlan plan.PhysicalPlan, tblID2Table map[int64]table.Table) ColumnIndexRanges {
 	// find join.
 	var joinType plan.JoinType
 	switch p := selectPlan.(type) {
 	case *plan.PhysicalHashJoin:
 		joinType = p.JoinType
-		break
 	case *plan.PhysicalIndexJoin:
 		joinType = p.JoinType
-		break
 	case *plan.PhysicalMergeJoin:
 		joinType = p.JoinType
-		break
 	default:
 		// no join return quickly.
 		return nil
 	}
 
 	// find outer join.
-	var replenishChild plan.PhysicalPlan
+	var child plan.PhysicalPlan
 	switch joinType {
 	case plan.LeftOuterJoin:
-		replenishChild = selectPlan.Children()[1]
-		break
+		child = selectPlan.Children()[1]
 	case plan.RightOuterJoin:
-		replenishChild = selectPlan.Children()[0]
-		break
+		child = selectPlan.Children()[0]
 	default:
 		// no outer join return quickly.
 		return nil
 	}
 
 	// recurse join children.
-	var replenishTbl map[string]ColumnIndexRange
+	var noMatchFillCols ColumnIndexRanges
 	for _, child := range selectPlan.Children() {
-		subReplenishTbl := resolveReplenishTbl(schema, child, tblID2Table)
-		if subReplenishTbl == nil {
+		subNoMatchFillCols := resolveNoMatchFillCols(schema, child, tblID2Table)
+		if subNoMatchFillCols == nil {
 			continue
 		}
-		if replenishTbl == nil {
-			replenishTbl = subReplenishTbl
+		if noMatchFillCols == nil {
+			noMatchFillCols = subNoMatchFillCols
 			continue
 		}
-		for key, value := range subReplenishTbl {
-			replenishTbl[key] = value
-		}
+		noMatchFillCols = append(noMatchFillCols, subNoMatchFillCols...)
 	}
 
 	// make replenish table.
-	if replenishTbl == nil {
-		replenishTbl = make(map[string]ColumnIndexRange)
+	if noMatchFillCols == nil {
+		noMatchFillCols = make(ColumnIndexRanges, 0)
 	}
-	for tblID, cols := range replenishChild.Schema().TblID2Handle {
+	for tblID, cols := range child.Schema().TblID2Handle {
 		tbl := tblID2Table[tblID]
 		for _, rowCol := range cols {
 			offset := getTableOffset(schema, rowCol)
 			end := offset + len(tbl.WritableCols())
-			replenishTbl[rowCol.DBName.O+"-"+rowCol.TblName.O] = ColumnIndexRange{offset, end}
+			noMatchFillCols = append(noMatchFillCols, ColumnIndexRange{offset, end})
 		}
 	}
-	return replenishTbl
+	return noMatchFillCols
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
