@@ -41,11 +41,13 @@ type AnalyzeExec struct {
 	tasks []*analyzeTask
 }
 
+// MaxBucketSize is the maximum number of bucket that a histogram could contain.
+var MaxBucketSize = int64(256)
+
 const (
 	maxSampleSize        = 10000
 	maxRegionSampleSize  = 1000
 	maxSketchSize        = 10000
-	maxBucketSize        = 256
 	defaultCMSketchDepth = 5
 	defaultCMSketchWidth = 2048
 )
@@ -193,7 +195,7 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), maxBucketSize)
+		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), int(MaxBucketSize))
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -322,7 +324,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		}
 		sc := e.ctx.GetSessionVars().StmtCtx
 		if e.pkInfo != nil {
-			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), maxBucketSize)
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), int(MaxBucketSize))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -348,7 +350,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 				return nil, nil, errors.Trace(err)
 			}
 		}
-		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i], &col.FieldType)
+		hg, err := statistics.BuildColumn(e.ctx, MaxBucketSize, col.ID, collectors[i], &col.FieldType)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
