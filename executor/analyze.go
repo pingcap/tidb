@@ -68,10 +68,13 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	close(taskCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	for i := 0; i < len(e.tasks); i++ {
+	for i, panicCnt := 0, 0; i < len(e.tasks) && panicCnt < concurrency; i++ {
 		result := <-resultCh
 		if result.Err != nil {
 			err = result.Err
+			if errors.Trace(err) == analyzeWorkerPanic {
+				panicCnt++
+			}
 			log.Error(errors.ErrorStack(err))
 			continue
 		}
@@ -113,7 +116,9 @@ type analyzeTask struct {
 	colExec  *AnalyzeColumnsExec
 }
 
-func (e *AnalyzeExec) analyzeWorker(taskCh chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
+var analyzeWorkerPanic = errors.New("analyze worker panic")
+
+func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -121,10 +126,9 @@ func (e *AnalyzeExec) analyzeWorker(taskCh chan *analyzeTask, resultCh chan<- st
 			buf = buf[:stackSize]
 			log.Errorf("analyzeWorker panic stack is:\n%s", buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
-			// Close the receive channel. When the caller sends to a closed channel, it will
-			// also panic, and the panic should be catched. If we don't do this, the caller
-			// will hang forever.
-			close(taskCh)
+			resultCh <- statistics.AnalyzeResult{
+				Err: analyzeWorkerPanic,
+			}
 		}
 	}()
 	for task := range taskCh {
