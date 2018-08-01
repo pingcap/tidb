@@ -406,7 +406,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	// Create a column and append it to the schema of that aggregation.
 	colMaxOrMin := &expression.Column{
 		ColName:  model.NewCIStr("agg_Col_0"),
-		Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  funcMaxOrMin.RetTp,
 	}
 	schema := expression.NewSchema(colMaxOrMin)
@@ -425,7 +425,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	funcSum := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncSum, []expression.Expression{funcIsNull}, false)
 	colSum := &expression.Column{
 		ColName:  model.NewCIStr("agg_col_sum"),
-		Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  funcSum.RetTp,
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcSum)
@@ -435,7 +435,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 		funcCount := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{funcIsNull}, false)
 		colCount := &expression.Column{
 			ColName:  model.NewCIStr("agg_col_cnt"),
-			Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  funcCount.RetTp,
 		}
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcCount)
@@ -473,7 +473,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
 		ColName:     model.NewCIStr("aux_col"),
-		Position:    er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID:    er.ctx.GetSessionVars().AllocPlanColumnID(),
 		IsAggOrSubq: true,
 		RetType:     cond.GetType(),
 	})
@@ -493,12 +493,12 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
-		Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
 	}
 	count := &expression.Column{
 		ColName:  model.NewCIStr("col_count"),
-		Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
 	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
@@ -519,12 +519,12 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
-		Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
 	}
 	count := &expression.Column{
 		ColName:  model.NewCIStr("col_count"),
-		Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
 	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
