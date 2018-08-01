@@ -416,7 +416,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 	}{
 		{
 			sql:  "analyze table t3",
-			best: "Analyze{Index(t3.a),Table(t3.b)}",
+			best: "Analyze{Index(a),Table(b)}",
 		},
 		// Test analyze full table.
 		{
@@ -448,7 +448,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		// Test analyze all index.
 		{
 			sql:  "analyze table t2 index",
-			best: "Analyze{Index(t2.a),Index(t2.b)}",
+			best: "Analyze{Index(a),Index(b)}",
 		},
 		// TODO: Refine these tests in the future.
 		//{

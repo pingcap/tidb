@@ -1269,7 +1269,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 	_, offset := zone(b.ctx)
 	e := &AnalyzeIndexExec{
 		ctx:         b.ctx,
-		tblInfo:     task.TableInfo,
+		physicalID:  task.PhysicalID,
 		idxInfo:     task.IndexInfo,
 		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -1301,7 +1301,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 	_, offset := zone(b.ctx)
 	e := &AnalyzeColumnsExec{
 		ctx:         b.ctx,
-		tblInfo:     task.TableInfo,
+		physicalID:  task.PhysicalID,
 		colsInfo:    task.ColsInfo,
 		pkInfo:      task.PKInfo,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency,
@@ -1319,7 +1319,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		BucketSize:    maxBucketSize,
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
-		ColumnsInfo:   model.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+		ColumnsInfo:   model.ColumnsToProto(cols, task.PKInfo != nil),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
