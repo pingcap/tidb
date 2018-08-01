@@ -385,8 +385,8 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) ([]PhysicalPlan, boo
 			plans = append(plans, join...)
 		}
 	case InnerJoin:
-		lhsCardinality := p.Children()[0].statsInfo().Count()
-		rhsCardinality := p.Children()[1].statsInfo().Count()
+		lhsCardinality := p.Children()[0].StatsInfo().Count()
+		rhsCardinality := p.Children()[1].StatsInfo().Count()
 
 		leftJoins := p.getIndexJoinByOuterIdx(prop, 0)
 		if leftOuter && leftJoins != nil {

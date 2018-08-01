@@ -38,6 +38,9 @@ type Plan interface {
 	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() sessionctx.Context
+
+	// StatsInfo will return the statsInfo for this plan.
+	StatsInfo() *statsInfo
 }
 
 // taskType is the type of execution task.
@@ -205,9 +208,6 @@ type PhysicalPlan interface {
 	// getChildReqProps gets the required property by child index.
 	getChildReqProps(idx int) *requiredProp
 
-	// StatsInfo will return the statsInfo for this plan.
-	StatsInfo() *statsInfo
-
 	// Get all the children.
 	Children() []PhysicalPlan
 
@@ -268,6 +268,10 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	case *LogicalMaxOneRow, *LogicalExists:
 		p.maxOneRow = true
 	}
+}
+
+func (p *DataSource) StatsInfo() *statsInfo {
+	return p.statsAfterSelect
 }
 
 func newBasePlan(ctx sessionctx.Context, tp string) basePlan {
