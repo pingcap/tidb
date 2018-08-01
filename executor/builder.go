@@ -1269,9 +1269,6 @@ func (c cols2HandleSlice) Swap(i, j int) {
 // Len implements sort.Interface#Less.
 // let ranges first sorted by `start` increasing order, and then sorted by `end` increasing order if `start` are equal.
 func (c cols2HandleSlice) Less(i, j int) bool {
-	if c[i].start == c[j].start {
-		return c[i].end < c[i].end
-	}
 	return c[i].start < c[j].start
 }
 
