@@ -194,7 +194,7 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	p.Exprs = append(p.Exprs, expr)
 
 	col := &expression.Column{
-		Position: p.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
 		ColName:  model.NewCIStr(expr.String()),
 		RetType:  expr.GetType(),
 	}
