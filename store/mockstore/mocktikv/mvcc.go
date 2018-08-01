@@ -439,6 +439,7 @@ type RawKV interface {
 	RawGet(key []byte) []byte
 	RawScan(startKey, endKey []byte, limit int) []Pair
 	RawPut(key, value []byte)
+	RawBatchPut(keys, values [][]byte)
 	RawDelete(key []byte)
 	RawDeleteRange(startKey, endKey []byte)
 }
