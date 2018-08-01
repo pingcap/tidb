@@ -1090,7 +1090,7 @@ func RefineComparedConstant(ctx sessionctx.Context, isUnsigned bool, con *Consta
 		}
 	case opcode.NullEQ, opcode.EQ:
 		switch con.RetType.EvalType() {
-		// An integer value equal or not equal to a float value which contains
+		// An integer value equal or NULL-safe equal to a float value which contains
 		// non-zero decimal digits is definitely false.
 		// e.g.,
 		//   1. "integer  =  1.1" is definitely false.
