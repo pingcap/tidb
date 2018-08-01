@@ -726,6 +726,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 		}
 
 		for _, idxRecord := range idxRecords {
+			scanCount++
 			// The index is already exists, we skip it, no needs to backfill it.
 			// The following update, delete, insert on these rows, TiDB can handle it correctly.
 			if idxRecord.skip {
@@ -738,7 +739,6 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 			if err != nil {
 				return errors.Trace(err)
 			}
-			scanCount++
 
 			// Create the index.
 			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
