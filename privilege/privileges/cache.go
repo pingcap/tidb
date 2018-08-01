@@ -212,9 +212,21 @@ func compareHost(x, y string) int {
 		return -1
 	}
 
-	if strings.HasSuffix(y, `%`) {
-		if !strings.HasSuffix(x, `%`) {
+	// One of them end with `%`.
+	xEnd := strings.HasSuffix(x, `%`)
+	yEnd := strings.HasSuffix(y, `%`)
+	if xEnd || yEnd {
+		switch {
+		case !xEnd && yEnd:
 			return -1
+		case xEnd && !yEnd:
+			return 1
+		case xEnd && yEnd:
+			// 192.168.199.% smaller than 192.168.%
+			// A not very accurate comparison, compare them by length.
+			if len(x) > len(y) {
+				return -1
+			}
 		}
 		return 0
 	}
