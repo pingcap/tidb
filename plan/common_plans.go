@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/sirupsen/logrus"
 )
 
 // ShowDDL is for showing DDL information.
@@ -233,7 +232,6 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		logrus.Warnf("ranges: %v", is.Ranges)
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error
@@ -241,7 +239,6 @@ func (e *Execute) rebuildRange(p Plan) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		logrus.Warnf("ranges: %v", is.Ranges)
 	case PhysicalPlan:
 		var err error
 		for _, child := range x.Children() {
