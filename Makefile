@@ -1,9 +1,11 @@
+PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
 
 # Ensure GOPATH is set before running build process.
 ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
+FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1 } }'
 
 CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
@@ -18,9 +20,10 @@ GOVERALLS := goveralls
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGES  := $$(go list ./...| grep -vE "vendor")
-FILES     := $$(find . -name "*.go" | grep -vE "vendor")
-TOPDIRS   := $$(ls -d */ | grep -vE "vendor")
+PACKAGE_LIST  := go list ./...| grep -vE "vendor"
+PACKAGES  := $$($(PACKAGE_LIST))
+PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
+FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go" | grep -vE "vendor")
 
 GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail enable)
 GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail disable)
@@ -71,30 +74,68 @@ parserlib: parser/parser.go
 parser/parser.go: parser/parser.y
 	make parser
 
-check: fmt errcheck lint vet
+# This is how tools.json is generated
+tool-install:
+	@which retool >/dev/null || go get github.com/twitchtv/retool
+
+	# This tool can run other checks in a standardized way
+	retool add gopkg.in/alecthomas/gometalinter.v2 v2.0.5
+
+	# check spelling
+	# misspell works with gometalinter
+	retool add github.com/client9/misspell/cmd/misspell v0.3.4
+	# goword adds additional capability to checking comments
+	retool add github.com/chzchzchz/goword a9744cb52b033fe5c269df48eeef2c954526cd79
+
+	# checks correctness
+	retool add github.com/gordonklaus/ineffassign 7bae11eba15a3285c75e388f77eb6357a2d73ee2
+	retool add honnef.co/go/tools/cmd/megacheck master
+	retool add github.com/dnephin/govet 4a96d43e39d340b63daa8bc5576985aa599885f6
+
+	# slow checks
+	retool add github.com/kisielk/errcheck v1.1.0
+	retool add github.com/securego/gosec/cmd/gosec 1.0.0
+
+	# linter
+	retool add github.com/mgechev/revive 7773f47324c2bf1c8f7a5500aff2b6c01d3ed73b
+
+check-setup:
+	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
+	@retool sync
+
+check: check-setup fmt lint vet
+
+# These need to be fixed before they can be ran regularly
+check-fail: goword check-static check-slow
 
 fmt:
 	@echo "gofmt (simplify)"
-	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "vendor|parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@gofmt -s -l -w $(FILES) 2>&1 | grep -v "vendor|parser/parser.go" | $(FAIL_ON_STDOUT)
 
 goword:
-	go get github.com/chzchzchz/goword
-	@echo "goword"
-	@ goword $(FILES) | awk '{print} END{if(NR>0) {exit 1}}'
+	retool do goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-errcheck:
-	go get github.com/kisielk/errcheck
-	@echo "errcheck"
-	@ GOPATH=$(GOPATH) errcheck -exclude errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+check-static:
+	@ # vet and fmt have problems with vendor when ran through metalinter
+	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all --deadline 120s \
+	  --enable misspell \
+	  --enable megacheck \
+	  --enable ineffassign \
+ 	  $$($(PACKAGE_DIRECTORIES))
+
+check-slow:
+	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all \
+	  --enable errcheck \
+	  $$($(PACKAGE_DIRECTORIES))
+	CGO_ENABLED=0 retool do gosec $$($(PACKAGE_DIRECTORIES))
 
 lint:
-	go get github.com/mgechev/revive
 	@echo "linting"
-	CGO_ENABLED=0 revive -formatter friendly -config revive.toml $(PACKAGES)
+	@CGO_ENABLED=0 retool do revive -formatter friendly -config revive.toml $(PACKAGES)
 
 vet:
 	@echo "vet"
-	@ go tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
+	@retool do govet -all -shadow $$($(PACKAGE_DIRECTORIES)) 2>&1 | $(FAIL_ON_STDOUT)
 
 clean:
 	$(GO) clean -i ./...
