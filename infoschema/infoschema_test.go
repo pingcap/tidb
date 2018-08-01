@@ -262,6 +262,7 @@ func (*testSuite) TestInfoTables(c *C) {
 		"OPTIMIZER_TRACE",
 		"TABLESPACES",
 		"COLLATION_CHARACTER_SET_APPLICABILITY",
+		"PROCESSLIST",
 	}
 	for _, t := range info_tables {
 		tb, err1 := is.TableByName(model.NewCIStr(infoschema.Name), model.NewCIStr(t))
