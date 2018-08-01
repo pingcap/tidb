@@ -291,13 +291,13 @@ func (s *testCacheSuite) TestSortUserTable(c *C) {
 	checkUserRecord(p.User, result, c)
 
 	p.User = []privileges.UserRecord{
-		{Host: "192.168.%", User: "xxx"},
+		{Host: `192.168.%`, User: "xxx"},
 		{Host: `192.168.199.%`, User: "xxx"},
 	}
 	p.SortUserTable()
 	result = []privileges.UserRecord{
 		{Host: `192.168.199.%`, User: "xxx"},
-		{Host: "192.168.%", User: "xxx"},
+		{Host: `192.168.%`, User: "xxx"},
 	}
 	checkUserRecord(p.User, result, c)
 }
