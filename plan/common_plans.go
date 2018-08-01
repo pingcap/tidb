@@ -213,7 +213,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		var pkCol *expression.Column
 		if ts.Table.PKIsHandle {
 			if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-				pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
+				pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
 			}
 		}
 		if pkCol != nil {
