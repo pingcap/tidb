@@ -458,4 +458,5 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`drop table if exists test`)
 	tk.MustExec(`create table test ( b json , c int as (JSON_EXTRACT(b,'$.d')) , index idxc(c));`)
 	tk.MustExec(`INSERT INTO test set b='{"d": 100}';`)
+	tk.MustExec(`admin check table test;`)
 }

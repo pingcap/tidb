@@ -498,7 +498,7 @@ func (b *planBuilder) buildAdminCheckTable(as *ast.AdminStmt) *CheckTable {
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	for _, tbl := range p.Tables {
 		tableInfo := tbl.TableInfo
-		schema := expression.TableInfo2SchemaWithDBName(tbl.Schema, tableInfo)
+		schema := expression.TableInfo2SchemaWithDBName(b.ctx, tbl.Schema, tableInfo)
 		table, ok := b.is.TableByID(tableInfo.ID)
 		if !ok {
 			b.err = infoschema.ErrTableNotExists.GenByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)

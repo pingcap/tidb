@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -647,7 +648,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 // genExprs use to calculate generated column value.
 func fillGenColData(sessCtx sessionctx.Context, rowMap map[int64]types.Datum, t table.Table, cols []*table.Column, genExprs map[string]expression.Expression) error {
 	tableInfo := t.Meta()
-	row := make(types.DatumRow, len(t.Cols()))
+	row := make([]types.Datum, len(t.Cols()))
 	for _, col := range t.Cols() {
 		ri, ok := rowMap[col.ID]
 		if ok {
@@ -663,7 +664,7 @@ func fillGenColData(sessCtx sessionctx.Context, rowMap map[int64]types.Datum, t 
 		genColumnName := model.GetTableColumnID(tableInfo, col.ColumnInfo)
 		if expr, ok := genExprs[genColumnName]; ok {
 			var val types.Datum
-			val, err = expr.Eval(row)
+			val, err = expr.Eval(chunk.MutRowFromDatums(row).ToRow())
 			if err != nil {
 				return errors.Trace(err)
 			}
