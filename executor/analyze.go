@@ -14,12 +14,14 @@
 package executor
 
 import (
+	"runtime"
 	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -66,10 +68,13 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	close(taskCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	for i := 0; i < len(e.tasks); i++ {
+	for i, panicCnt := 0, 0; i < len(e.tasks) && panicCnt < concurrency; i++ {
 		result := <-resultCh
 		if result.Err != nil {
 			err = result.Err
+			if errors.Trace(err) == analyzeWorkerPanic {
+				panicCnt++
+			}
 			log.Error(errors.ErrorStack(err))
 			continue
 		}
@@ -111,7 +116,21 @@ type analyzeTask struct {
 	colExec  *AnalyzeColumnsExec
 }
 
+var analyzeWorkerPanic = errors.New("analyze worker panic")
+
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("analyzeWorker panic stack is:\n%s", buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			resultCh <- statistics.AnalyzeResult{
+				Err: analyzeWorkerPanic,
+			}
+		}
+	}()
 	for task := range taskCh {
 		switch task.taskType {
 		case colTask:
