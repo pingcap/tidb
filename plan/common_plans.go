@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/sirupsen/logrus"
 )
 
 // ShowDDL is for showing DDL information.
@@ -228,17 +229,19 @@ func (e *Execute) rebuildRange(p Plan) error {
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error
-		is.Ranges, err = e.buildRangeForIndexScan(sctx, is, x.schema)
+		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		logrus.Warnf("ranges: %v", is.Ranges)
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error
-		is.Ranges, err = e.buildRangeForIndexScan(sctx, is, x.schema)
+		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		logrus.Warnf("ranges: %v", is.Ranges)
 	case PhysicalPlan:
 		var err error
 		for _, child := range x.Children() {
@@ -251,8 +254,8 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
-func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan, schema *expression.Schema) ([]*ranger.Range, error) {
-	idxCols, colLengths := expression.IndexInfo2Cols(schema.Columns, is.Index)
+func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
+	idxCols, colLengths := expression.IndexInfo2Cols(is.schema.Columns, is.Index)
 	ranges := ranger.FullRange()
 	if len(idxCols) > 0 {
 		var err error
