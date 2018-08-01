@@ -1835,6 +1835,84 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+	}
+
+	tests := []struct {
+		args           string
+		expect         string
+		isNil          bool
+		getErr         bool
+		maxAllowPacket uint64
+	}{
+		{"abc", "YWJj", false, false, 16},
+		{"abc", "", true, false, 15},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrLw==",
+			false,
+			false,
+			356,
+		},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"",
+			true,
+			false,
+			355,
+		},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv",
+			false,
+			false,
+			1036,
+		},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"",
+			true,
+			false,
+			1035,
+		},
+	}
+
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+	}
+
+	warningCount := 0
+
+	for _, test := range tests {
+		resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: base64NeededEncodedLength(len(test.args))}
+		base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+		toBase64 := &builtinToBase64Sig{base, test.maxAllowPacket}
+
+		input := chunk.NewChunkWithCapacity(colTypes, 1)
+		input.AppendString(0, test.args)
+		res, isNull, err := toBase64.evalString(input.GetRow(0))
+		if test.getErr {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+		}
+		if test.isNil {
+			c.Assert(isNull, IsTrue)
+			warningCount += 1
+		} else {
+			c.Assert(isNull, IsFalse)
+		}
+		c.Assert(res, Equals, test.expect)
+	}
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, warningCount)
+	for _, warn := range warnings {
+		c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, warn.Err), IsTrue)
+	}
+}
+
 func (s *testEvaluatorSuite) TestStringRight(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Right]
