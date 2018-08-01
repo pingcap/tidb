@@ -129,13 +129,14 @@ func (c *index) getIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	return make([]byte, 0, defaultCap)
 }
 
-// truncateIndexValuesIfNeeded truncate the index values that be created that use only the leading part of column values.
-func (c *index) truncateIndexValuesIfNeeded(indexedValues []types.Datum) []types.Datum {
+// TruncateIndexValuesIfNeeded truncate the index values that be created that use only the leading part of column values.
+func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) []types.Datum {
 	for i := 0; i < len(indexedValues); i++ {
 		v := &indexedValues[i]
 		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
-			ic := c.idxInfo.Columns[i]
-			colCharset := c.tblInfo.Columns[ic.Offset].Charset
+			originKind := v.Kind()
+			ic := idxInfo.Columns[i]
+			colCharset := tblInfo.Columns[ic.Offset].Charset
 			if colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4 {
 				val := v.GetBytes()
 				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(val) > ic.Length {
@@ -150,7 +151,16 @@ func (c *index) truncateIndexValuesIfNeeded(indexedValues []types.Datum) []types
 					v.SetBytes(v.GetBytes()[:ic.Length])
 				}
 			}
+			// Restore the orginal datum kind. Otherwise the admin check table will fail.
+			if originKind != v.Kind() {
+				if originKind == types.KindString {
+					v.SetString(v.GetString())
+				} else if originKind == types.KindBytes {
+					v.SetBytes(v.GetBytes())
+				}
+			}
 		}
+
 	}
 
 	return indexedValues
@@ -175,7 +185,7 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 
 	// For string columns, indexes can be created that use only the leading part of column values,
 	// using col_name(length) syntax to specify an index prefix length.
-	indexedValues = c.truncateIndexValuesIfNeeded(indexedValues)
+	indexedValues = TruncateIndexValuesIfNeeded(c.tblInfo, c.idxInfo, indexedValues)
 	key = c.getIndexKeyBuf(buf, len(c.prefix)+len(indexedValues)*9+9)
 	key = append(key, []byte(c.prefix)...)
 	key, err = codec.EncodeKey(sc, key, indexedValues...)

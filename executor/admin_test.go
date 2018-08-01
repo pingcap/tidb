@@ -453,4 +453,14 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into test values (%d, %d);", i, i))
 	}
 	tk.MustExec(`admin check table test;`)
+
+	// Test prefix index.
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (
+  			ID CHAR(32) NOT NULL,
+  			name CHAR(32) NOT NULL,
+  			value CHAR(255),
+  			INDEX indexIDname (ID(8),name(8)));`)
+	tk.MustExec(`INSERT INTO t VALUES ('keyword','urlprefix','text/ /text');`)
+	tk.MustExec(`admin check table t;`)
 }
