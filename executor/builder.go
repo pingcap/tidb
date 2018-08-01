@@ -827,11 +827,43 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	return e
 }
 
+// wrapCastForAggArgs wraps the args of an aggregate function with a cast function.
+func (b *executorBuilder) wrapCastForAggArgs(funcs []*aggregation.AggFuncDesc) {
+	for _, f := range funcs {
+		// We do not need to wrap cast upon these functions,
+		// since the EvalXXX method called by the arg is determined by the corresponding arg type.
+		if f.Name == ast.AggFuncCount || f.Name == ast.AggFuncMin || f.Name == ast.AggFuncMax || f.Name == ast.AggFuncFirstRow {
+			continue
+		}
+		var castFunc func(ctx sessionctx.Context, expr expression.Expression) expression.Expression
+		switch retTp := f.RetTp; retTp.EvalType() {
+		case types.ETInt:
+			castFunc = expression.WrapWithCastAsInt
+		case types.ETReal:
+			castFunc = expression.WrapWithCastAsReal
+		case types.ETString:
+			castFunc = expression.WrapWithCastAsString
+		case types.ETDecimal:
+			castFunc = expression.WrapWithCastAsDecimal
+		default:
+			panic("should never happen in executorBuilder.wrapCastForAggArgs")
+		}
+		for i := range f.Args {
+			f.Args[i] = castFunc(b.ctx, f.Args[i])
+		}
+	}
+}
+
 // buildProjBelowAgg builds a ProjectionExec below AggregationExec.
 // If all the args of `aggFuncs`, and all the item of `groupByItems`
 // are columns or constants, we do not need to build the `proj`.
 func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, src Executor) Executor {
 	hasScalarFunc := false
+	// If the mode is FinalMode, we do not need to wrap cast upon the args,
+	// since the types of the args are already the expected.
+	if len(aggFuncs) > 0 && aggFuncs[0].Mode != aggregation.FinalMode {
+		b.wrapCastForAggArgs(aggFuncs)
+	}
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		f := aggFuncs[i]
 		for _, arg := range f.Args {
