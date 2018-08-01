@@ -108,11 +108,8 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		return resp
 	}
 
-	var (
-		chunks []tipb.Chunk
-		rowCnt int
-	)
 	ctx := context.TODO()
+	var rows [][][]byte
 	for {
 		var row [][]byte
 		row, err = e.Next(ctx)
@@ -123,16 +120,18 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 			break
 		}
 
-		// TODO(zz-jason): return chunk-encoded data according the "encode type".
-		data := dummySlice
-		for _, offset := range dagReq.OutputOffsets {
-			data = append(data, row[offset]...)
-		}
-		chunks = appendRow(chunks, data, rowCnt)
-		rowCnt++
+		rows = append(rows, row)
 	}
-	warnings := dagCtx.evalCtx.sc.GetWarnings()
-	return buildResp(chunks, e.Counts(), err, warnings)
+
+	selResp := h.initSelectResponse(err, dagCtx.evalCtx.sc.GetWarnings(), e.Counts())
+	if err == nil {
+		err = h.supplementSelectResponse(selResp, dagReq, dagCtx, rows)
+		if err != nil {
+			terror.Log(err)
+		}
+	}
+
+	return buildResp(selResp, err)
 }
 
 func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
@@ -588,7 +587,7 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 	return chunk, finish, &ran, mock.exec.Counts(), warnings, nil
 }
 
-func (h *rpcHandler) buildSelectResponse(dagReq *tipb.DAGRequest, err error, rows [][][]byte, colTypes []*types.FieldType, counts []int64, warnings []stmtctx.SQLWarn, loc *time.Location) *tipb.SelectResponse {
+func (h *rpcHandler) initSelectResponse(err error, warnings []stmtctx.SQLWarn, counts []int64) *tipb.SelectResponse {
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
 		OutputCounts: counts,
@@ -596,23 +595,26 @@ func (h *rpcHandler) buildSelectResponse(dagReq *tipb.DAGRequest, err error, row
 	for i := range warnings {
 		selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i].Err))
 	}
-
-	if err != nil {
-		return selResp
-	}
-
-	switch dagReq.EncodeType {
-	case tipb.EncodeType_TypeArrow:
-		h.encodeDefault(rows, dagReq.OutputOffsets, selResp)
-	case tipb.EncodeType_TypeDefault:
-		h.encodeArrow(rows, colTypes, dagReq.OutputOffsets, selResp, loc)
-	default:
-		return nil
-	}
 	return selResp
 }
 
-func (h *rpcHandler) encodeDefault(rows [][][]byte, colOrdinal []uint32, selResp *tipb.SelectResponse) {
+func (h *rpcHandler) supplementSelectResponse(selResp *tipb.SelectResponse, dagReq *tipb.DAGRequest, dagCtx *dagContext, rows [][][]byte) error {
+	colTypes := dagCtx.evalCtx.fieldTps
+	loc := dagCtx.evalCtx.sc.TimeZone
+
+	switch dagReq.EncodeType {
+	case tipb.EncodeType_TypeDefault:
+		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
+	case tipb.EncodeType_TypeArrow:
+		err := h.encodeArrow(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (h *rpcHandler) encodeDefault(selResp *tipb.SelectResponse, rows [][][]byte, colOrdinal []uint32) {
 	var chunks []tipb.Chunk
 	for i := range rows {
 		requestedRow := dummySlice
@@ -624,7 +626,7 @@ func (h *rpcHandler) encodeDefault(rows [][][]byte, colOrdinal []uint32, selResp
 	selResp.Chunks = chunks
 }
 
-func (h *rpcHandler) encodeArrow(rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, selResp *tipb.SelectResponse, loc *time.Location) error {
+func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, colTypes []*types.FieldType, colOrdinal []uint32, loc *time.Location) error {
 	rowBatchData := make([]byte, 0, 1024)
 	respColTypes := make([]*types.FieldType, 0, len(colOrdinal))
 	for _, ordinal := range colOrdinal {
@@ -649,19 +651,9 @@ func (h *rpcHandler) encodeArrow(rows [][][]byte, colTypes []*types.FieldType, c
 	return nil
 }
 
-func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []stmtctx.SQLWarn) *coprocessor.Response {
+func buildResp(selResp *tipb.SelectResponse, err error) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	selResp := &tipb.SelectResponse{
-		Error:        toPBError(err),
-		Chunks:       chunks,
-		OutputCounts: counts,
-	}
-	if len(warnings) > 0 {
-		selResp.Warnings = make([]*tipb.Error, 0, len(warnings))
-		for i := range warnings {
-			selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i].Err))
-		}
-	}
+
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 			resp.Locked = &kvrpcpb.LockInfo{
