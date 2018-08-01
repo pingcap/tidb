@@ -198,7 +198,7 @@ func (c *Chunk) TruncateTo(numRows int) {
 			}
 		}
 		col.length = numRows
-		col.nullBitmap = col.nullBitmap[:(col.length>>3)+1]
+		col.nullBitmap = col.nullBitmap[:(col.length+7)/8]
 	}
 	c.numVirtualRows = numRows
 }
