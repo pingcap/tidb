@@ -34,7 +34,6 @@ import (
 const (
 	partitionMaxValue = "MAXVALUE"
 	primarykey        = "PRIMARY KEY"
-	uniqueIndex       = "UNIQUE INDEX"
 )
 
 // buildTablePartitionInfo builds partition info and checks for some errors.
@@ -324,14 +323,21 @@ func extractConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constra
 	for _, v := range cons {
 		if v.Tp == ast.ConstraintUniq {
 			multipleKeys := make(map[string]struct{})
+			uniKeys := make(map[string]struct{})
 			for i, key := range v.Keys {
 				if len(v.Keys) > 1 {
 					multipleKeys[key.Column.Name.L] = struct{}{}
+				} else {
+					uniKeys[key.Column.Name.L] = struct{}{}
 				}
 				if i == 0 {
 					// Extract every multiple key.
 					if len(multipleKeys) != 0 {
 						constraints = append(constraints, multipleKeys)
+					}
+					// Extract every unique key.
+					if len(uniKeys) != 0 {
+						constraints = append(constraints, uniKeys)
 					}
 				}
 			}
@@ -340,13 +346,6 @@ func extractConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constra
 
 	priKeys := make(map[string]struct{})
 	for _, col := range tblInfo.Cols() {
-		uniKeys := make(map[string]struct{})
-		if mysql.HasUniKeyFlag(col.Flag) {
-			uniKeys[col.Name.L] = struct{}{}
-			// Extract every unique key.
-			constraints = append(constraints, uniKeys)
-		}
-
 		if mysql.HasPriKeyFlag(col.Flag) {
 			priKeys[col.Name.L] = struct{}{}
 		}
