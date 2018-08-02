@@ -1249,8 +1249,10 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 
 // cols2Handle represents an mapper from column index to handle index.
 type cols2Handle struct {
-	start, end    int32 // Represent the ordinal range [start, end) of the consecutive columns.
-	handleOrdinal int32 // Represents the ordinal of the handle column.
+	// start/end represent the ordinal range [start, end) of the consecutive columns.
+	start, end int32
+	// handleOrdinal represents the ordinal of the handle column.
+	handleOrdinal int32
 }
 
 // cols2HandleSlice attaches the methods of sort.Interface to []cols2Handle sorting in increasing order.
