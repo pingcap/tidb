@@ -38,6 +38,9 @@ type Plan interface {
 	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() sessionctx.Context
+
+	// StatsInfo will return the StatsInfo for this plan.
+	StatsInfo() *StatsInfo
 }
 
 // taskType is the type of execution task.
@@ -161,7 +164,7 @@ type LogicalPlan interface {
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
 	// deriveStats derives statistic info between plans.
-	deriveStats() (*statsInfo, error)
+	deriveStats() (*StatsInfo, error)
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
@@ -204,9 +207,6 @@ type PhysicalPlan interface {
 
 	// getChildReqProps gets the required property by child index.
 	getChildReqProps(idx int) *requiredProp
-
-	// StatsInfo will return the statsInfo for this plan.
-	StatsInfo() *statsInfo
 
 	// Get all the children.
 	Children() []PhysicalPlan
@@ -270,6 +270,11 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 }
 
+// StatsInfo implements the Plan.StatsInfo interface.
+func (p *DataSource) StatsInfo() *StatsInfo {
+	return p.statsAfterSelect
+}
+
 func newBasePlan(ctx sessionctx.Context, tp string) basePlan {
 	ctx.GetSessionVars().PlanID++
 	id := ctx.GetSessionVars().PlanID
@@ -317,7 +322,7 @@ type basePlan struct {
 	tp    string
 	id    int
 	ctx   sessionctx.Context
-	stats *statsInfo
+	stats *StatsInfo
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
