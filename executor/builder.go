@@ -1282,10 +1282,7 @@ func (c cols2HandleSlice) findHandle(ordinal int32) (int32, bool) {
 	if rangeBehindOrdinal == 0 {
 		return 0, false
 	}
-	if ordinal < c[rangeBehindOrdinal-1].end {
-		return c[rangeBehindOrdinal-1].handleOrdinal, true
-	}
-	return 0, false
+	return c[rangeBehindOrdinal-1].handleOrdinal, true
 }
 
 // buildColumns2Handle builds columns to handle mapping.
