@@ -39,6 +39,9 @@ type UpdateExec struct {
 	newRowsData [][]types.Datum // The new values to be set.
 	fetched     bool
 	cursor      int
+	// columns2Handle stores relationship between column ordinal to its table handle.
+	// the columns ordinals is present in ordinal range format, @see executor.cols2Handle
+	columns2Handle cols2HandleSlice
 }
 
 func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
@@ -62,6 +65,10 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 		for _, col := range cols {
 			offset := getTableOffset(schema, col)
 			end := offset + len(tbl.WritableCols())
+			handleDatum := row[col.Index]
+			if e.canNotUpdate(handleDatum) {
+				continue
+			}
 			handle := row[col.Index].GetInt64()
 			oldData := row[offset:end]
 			newTableData := newData[offset:end]
@@ -71,6 +78,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 				// Each matched row is updated once, even if it matches the conditions multiple times.
 				continue
 			}
+
 			// Update row
 			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
 			if err1 == nil {
@@ -90,6 +98,16 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 	}
 	e.cursor++
 	return []types.Datum{}, nil
+}
+
+// canNotUpdate checks the handle of a record to decide whether that record
+// can not be updated. The handle is NULL only when it is the inner side of an
+// outer join: the outer row can not match any inner rows, and in this scenario
+// the inner handle field is filled with a NULL value.
+//
+// This fixes: https://github.com/pingcap/tidb/issues/7176.
+func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
+	return handle.IsNull()
 }
 
 // Next implements the Executor Next interface.
@@ -163,6 +181,10 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Datum, error) {
 	newRowData := types.CopyRow(oldRow)
 	for _, assign := range e.OrderedList {
+		handleIdx, handleFound := e.columns2Handle.findHandle(int32(assign.Col.Index))
+		if handleFound && e.canNotUpdate(oldRow[handleIdx]) {
+			continue
+		}
 		val, err := assign.Expr.Eval(chunk.MutRowFromDatums(newRowData).ToRow())
 
 		if err1 := e.handleErr(assign.Col.ColName, rowIdx, err); err1 != nil {
