@@ -28,10 +28,12 @@ type StatsInfo struct {
 	cardinality []float64
 }
 
+// String returns the string representation of the StatsInfo.
 func (s *StatsInfo) String() string {
 	return fmt.Sprintf("count %v, cardinality %v", s.count, s.cardinality)
 }
 
+// Count returns the count of the StatsInfo.
 func (s *StatsInfo) Count() int64 {
 	return int64(s.count)
 }
