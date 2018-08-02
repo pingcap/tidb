@@ -134,28 +134,26 @@ func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexI
 	for i := 0; i < len(indexedValues); i++ {
 		v := &indexedValues[i]
 		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
-			originKind := v.Kind()
 			ic := idxInfo.Columns[i]
 			colCharset := tblInfo.Columns[ic.Offset].Charset
 			colValue := v.GetBytes()
 			isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+			origKind := v.Kind()
 			if isUTF8Charset {
 				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(colValue) > ic.Length {
 					rs := bytes.Runes(colValue)
 					truncateStr := string(rs[:ic.Length])
 					// truncate value and limit its length
 					v.SetString(truncateStr)
+					if origKind == types.KindBytes {
+						v.SetBytes(v.GetBytes())
+					}
 				}
 			} else if ic.Length != types.UnspecifiedLength && len(colValue) > ic.Length {
 				// truncate value and limit its length
 				v.SetBytes(colValue[:ic.Length])
-			}
-			// Restore the orginal datum kind. Otherwise the admin check table will fail.
-			if originKind != v.Kind() {
-				if originKind == types.KindString {
+				if origKind == types.KindString {
 					v.SetString(v.GetString())
-				} else if originKind == types.KindBytes {
-					v.SetBytes(v.GetBytes())
 				}
 			}
 		}
