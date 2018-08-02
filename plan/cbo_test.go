@@ -636,9 +636,9 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	for i := 0; i < 10; i++ {
 		tk.MustExec("insert into t values (5,5,5), (10,10,10)")
 	}
-	origin := executor.GetMaxBucketSize()
-	defer func() { executor.SetMaxBucketSize(origin) }()
-	executor.SetMaxBucketSize(2)
+	origin := executor.GetMaxBucketSizeForTest()
+	defer func() { executor.SetMaxBucketSizeForTest(origin) }()
+	executor.SetMaxBucketSizeForTest(2)
 	tk.MustExec("analyze table t")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")

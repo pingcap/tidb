@@ -359,12 +359,12 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 	return hists, cms, nil
 }
 
-// SetMaxBucketSize sets the `maxBucketSize`.
-func SetMaxBucketSize(size int64) {
+// SetMaxBucketSizeForTest sets the `maxBucketSize`.
+func SetMaxBucketSizeForTest(size int64) {
 	maxBucketSize = size
 }
 
-// GetMaxBucketSize gets the `maxBucketSize`.
-func GetMaxBucketSize() int64 {
+// GetMaxBucketSizeForTest gets the `maxBucketSize`.
+func GetMaxBucketSizeForTest() int64 {
 	return maxBucketSize
 }
