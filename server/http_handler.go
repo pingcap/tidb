@@ -1261,9 +1261,9 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 
 // ReportServerInfo is only used to report the servers info when do http request
 type ReportServerInfo struct {
-	IsOwner         bool                `json:"is_owner"`
-	SelfServerInfo  *util.DDLServerInfo `json:"self_server_info"`
-	OwnerServerInfo *util.DDLServerInfo `json:"owner_server_info,omitempty"`
+	IsOwner         bool             `json:"is_owner"`
+	SelfServerInfo  *util.ServerInfo `json:"self_server_info"`
+	OwnerServerInfo *util.ServerInfo `json:"owner_server_info,omitempty"`
 }
 
 // ServeHTTP handles request of ddl server info.
@@ -1297,11 +1297,11 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 
 // ClusterServerInfo is only used to report cluster servers info when do http request
 type ClusterServerInfo struct {
-	ServersNum                   int                            `json:"servers_num,omitempty"`
-	OwnerID                      string                         `json:"owner_id"`
-	IsAllServerVersionConsistent bool                           `json:"is_all_server_version_consistent,omitempty"`
-	AllServersDiffVersions       []util.ServerVersionInfo       `json:"all_servers_diff_versions,omitempty"`
-	AllServersInfo               map[string]*util.DDLServerInfo `json:"all_servers_info,omitempty"`
+	ServersNum                   int                         `json:"servers_num,omitempty"`
+	OwnerID                      string                      `json:"owner_id"`
+	IsAllServerVersionConsistent bool                        `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []util.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*util.ServerInfo `json:"all_servers_info,omitempty"`
 }
 
 // ServeHTTP handles request of all ddl servers info.

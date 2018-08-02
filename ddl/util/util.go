@@ -110,10 +110,10 @@ func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, old
 	return errors.Trace(err)
 }
 
-// DDLServerInfo is DDL server static information.
-// DDLServerInfo will store into PD when server start up and delete when DDL closed.
-// It will not update when DDL server running. So please only put static information in DDLServerInfo struct.
-type DDLServerInfo struct {
+// ServerInfo is DDL server static information.
+// ServerInfo will store into PD when server start up and delete when DDL closed.
+// It will not update when DDL server running. So please only put static information in ServerInfo struct.
+type ServerInfo struct {
 	ServerVersionInfo
 	ID         string `json:"ddl_id"`
 	IP         string `json:"ip"`

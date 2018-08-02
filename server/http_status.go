@@ -52,8 +52,10 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})
 	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", valueHandler{})
 	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool})
-	router.Handle("/ddl/info", ddlServerInfoHandler{tikvHandlerTool})
-	router.Handle("/ddl/info/all", ddlAllServerInfoHandler{tikvHandlerTool})
+
+	// HTTP path for get server info
+	router.Handle("/info", ddlServerInfoHandler{tikvHandlerTool})
+	router.Handle("/info/all", ddlAllServerInfoHandler{tikvHandlerTool})
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv
 		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandlerTool, opTableRegions})

@@ -36,8 +36,8 @@ const (
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	// It's exported for testing.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
-	// DDLServerInformation store DDL server information such as IP, port and so on.
-	DDLServerInformation = "/tidb/ddl/info"
+	// ServerInformation store DDL server information such as IP, port and so on.
+	ServerInformation = "/tidb/ddl/info"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	// It's exported for testing.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
@@ -89,14 +89,14 @@ type SchemaSyncer interface {
 	// It returns until all servers' versions are equal to the latest version or the ctx is done.
 	OwnerCheckAllVersions(ctx context.Context, latestVer int64) error
 
-	// GetServerInfoFromPD get the DDL_id server information from PD.
-	GetServerInfoFromPD(ctx context.Context, id string) (*util.DDLServerInfo, error)
-	// GetAllServerInfoFromPD get all DDL servers information from PD.
-	GetAllServerInfoFromPD(ctx context.Context) (map[string]*util.DDLServerInfo, error)
-	// StoreSelfServerInfoToPD store DDL server information to PD.
-	StoreSelfServerInfoToPD(ctx context.Context, info *util.DDLServerInfo) error
-	// RemoveSelfServerInfoFromPD remove DDL server information from PD.
-	RemoveSelfServerInfoFromPD() error
+	// GetServerInfo gets the DDL_id server information from PD.
+	GetServerInfo(ctx context.Context, id string) (*util.ServerInfo, error)
+	// GetAllServerInfo gets all DDL servers information from PD.
+	GetAllServerInfo(ctx context.Context) (map[string]*util.ServerInfo, error)
+	// StoreServerInfo stores DDL server information to PD.
+	StoreServerInfo(ctx context.Context, info *util.ServerInfo) error
+	// RemoveServerInfo removes DDL server information from PD.
+	RemoveServerInfo() error
 }
 
 type schemaVersionSyncer struct {
@@ -115,7 +115,7 @@ func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
 	return &schemaVersionSyncer{
 		etcdCli:            etcdCli,
 		selfSchemaVerPath:  fmt.Sprintf("%s/%s", DDLAllSchemaVersions, id),
-		selfServerInfoPath: fmt.Sprintf("%s/%s", DDLServerInformation, id),
+		selfServerInfoPath: fmt.Sprintf("%s/%s", ServerInformation, id),
 	}
 }
 
@@ -169,11 +169,11 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-// GetServerInfoFromPD implements SchemaSyncer.GetServerInfoFromPD interface.
-func (s *schemaVersionSyncer) GetServerInfoFromPD(ctx context.Context, id string) (*util.DDLServerInfo, error) {
+// GetServerInfo implements SchemaSyncer.GetServerInfo interface.
+func (s *schemaVersionSyncer) GetServerInfo(ctx context.Context, id string) (*util.ServerInfo, error) {
 	var err error
 	var resp *clientv3.GetResponse
-	ddlPath := fmt.Sprintf("%s/%s", DDLServerInformation, id)
+	ddlPath := fmt.Sprintf("%s/%s", ServerInformation, id)
 	for {
 		if isContextDone(ctx) {
 			err = errors.Trace(ctx.Err())
@@ -187,7 +187,7 @@ func (s *schemaVersionSyncer) GetServerInfoFromPD(ctx context.Context, id string
 			continue
 		}
 		if len(resp.Kvs) > 0 {
-			info := &util.DDLServerInfo{}
+			info := &util.ServerInfo{}
 			err := json.Unmarshal(resp.Kvs[0].Value, info)
 			if err != nil {
 				log.Infof("[syncer] get ddl server info, ddl %s json.Unmarshal %v failed %v.", resp.Kvs[0].Key, resp.Kvs[0].Value, err)
@@ -198,10 +198,10 @@ func (s *schemaVersionSyncer) GetServerInfoFromPD(ctx context.Context, id string
 	}
 }
 
-// GetAllServerInfoFromPD implements SchemaSyncer.GetAllServerInfoFromPD interface.
-func (s *schemaVersionSyncer) GetAllServerInfoFromPD(ctx context.Context) (map[string]*util.DDLServerInfo, error) {
+// GetAllServerInfo implements SchemaSyncer.GetAllServerInfo interface.
+func (s *schemaVersionSyncer) GetAllServerInfo(ctx context.Context) (map[string]*util.ServerInfo, error) {
 	var err error
-	allDDLInfo := make(map[string]*util.DDLServerInfo)
+	allDDLInfo := make(map[string]*util.ServerInfo)
 	for {
 		if isContextDone(ctx) {
 			// ctx is canceled or timeout.
@@ -209,7 +209,7 @@ func (s *schemaVersionSyncer) GetAllServerInfoFromPD(ctx context.Context) (map[s
 			return nil, err
 		}
 
-		resp, err := s.etcdCli.Get(ctx, DDLServerInformation, clientv3.WithPrefix())
+		resp, err := s.etcdCli.Get(ctx, ServerInformation, clientv3.WithPrefix())
 		if err != nil {
 			log.Infof("[syncer] get all ddl server info failed %v, continue checking.", err)
 			time.Sleep(200 * time.Millisecond)
@@ -217,7 +217,7 @@ func (s *schemaVersionSyncer) GetAllServerInfoFromPD(ctx context.Context) (map[s
 		}
 
 		for _, kv := range resp.Kvs {
-			info := &util.DDLServerInfo{}
+			info := &util.ServerInfo{}
 			err := json.Unmarshal(kv.Value, info)
 			if err != nil {
 				log.Infof("[syncer] get all ddl server info, ddl %s json.Unmarshal %v failed %v.", kv.Key, kv.Value, err)
@@ -229,8 +229,8 @@ func (s *schemaVersionSyncer) GetAllServerInfoFromPD(ctx context.Context) (map[s
 	}
 }
 
-// StoreSelfServerInfoToPD implements SchemaSyncer.StoreSelfServerInfoToPD interface.
-func (s *schemaVersionSyncer) StoreSelfServerInfoToPD(ctx context.Context, info *util.DDLServerInfo) error {
+// StoreServerInfo implements SchemaSyncer.StoreServerInfo interface.
+func (s *schemaVersionSyncer) StoreServerInfo(ctx context.Context, info *util.ServerInfo) error {
 	infoBuf, err := json.Marshal(info)
 	if err != nil {
 		return errors.Trace(err)
@@ -239,8 +239,8 @@ func (s *schemaVersionSyncer) StoreSelfServerInfoToPD(ctx context.Context, info 
 	return errors.Trace(err)
 }
 
-// RemoveSelfServerInfoFromPD implements SchemaSyncer.RemoveSelfServerInfoFromPD interface.
-func (s *schemaVersionSyncer) RemoveSelfServerInfoFromPD() error {
+// RemoveServerInfo implements SchemaSyncer.RemoveServerInfo interface.
+func (s *schemaVersionSyncer) RemoveServerInfo() error {
 	var err error
 	ctx := context.Background()
 	for i := 0; i < keyOpDefaultRetryCnt; i++ {
