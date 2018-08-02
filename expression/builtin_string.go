@@ -708,17 +708,24 @@ func (c *spaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
 	bf.tp.Flen = mysql.MaxBlobWidth
-	sig := &builtinSpaceSig{bf}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinSpaceSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinSpaceSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinSpaceSig) Clone() builtinFunc {
 	newSig := &builtinSpaceSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -731,11 +738,15 @@ func (b *builtinSpaceSig) evalString(row chunk.Row) (d string, isNull bool, err 
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	if x > mysql.MaxBlobWidth {
-		return d, true, nil
-	}
 	if x < 0 {
 		x = 0
+	}
+	if uint64(x) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("space", b.maxAllowedPacket))
+		return d, true, nil
+	}
+	if x > mysql.MaxBlobWidth {
+		return d, true, nil
 	}
 	return strings.Repeat(" ", int(x)), false, nil
 }

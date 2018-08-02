@@ -72,7 +72,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		result := <-resultCh
 		if result.Err != nil {
 			err = result.Err
-			if errors.Trace(err) == analyzeWorkerPanic {
+			if errors.Trace(err) == errAnalyzeWorkerPanic {
 				panicCnt++
 			}
 			log.Error(errors.ErrorStack(err))
@@ -116,7 +116,7 @@ type analyzeTask struct {
 	colExec  *AnalyzeColumnsExec
 }
 
-var analyzeWorkerPanic = errors.New("analyze worker panic")
+var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
 	defer func() {
@@ -127,7 +127,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- 
 			log.Errorf("analyzeWorker panic stack is:\n%s", buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- statistics.AnalyzeResult{
-				Err: analyzeWorkerPanic,
+				Err: errAnalyzeWorkerPanic,
 			}
 		}
 	}()
