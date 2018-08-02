@@ -35,10 +35,12 @@ type UpdateExec struct {
 	updatedRowKeys map[int64]map[int64]struct{}
 	tblID2table    map[int64]table.Table
 
-	rows           [][]types.Datum // The rows fetched from TableExec.
-	newRowsData    [][]types.Datum // The new values to be set.
-	fetched        bool
-	cursor         int
+	rows        [][]types.Datum // The rows fetched from TableExec.
+	newRowsData [][]types.Datum // The new values to be set.
+	fetched     bool
+	cursor      int
+	// columns2Handle stores relationship between column ordinal to its table handle.
+	// the columns ordinals is present in ordinal range format, @see executor.cols2Handle
 	columns2Handle cols2HandleSlice
 }
 

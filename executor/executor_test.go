@@ -2969,8 +2969,12 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustExec("create table t3(id int auto_increment, k int, v int, primary key(id))")
 	tk.MustExec("create table t4(k int, v int)")
 	tk.MustExec("create table t5(v int, k int, primary key(k))")
-	tk.MustExec("insert into t1 values (1, 0)")
+	tk.MustExec("insert into t1 values (1, 1)")
 	tk.MustExec("insert into t4 values (3, 3)")
+
+	// test the normal case that update one row for a single table.
+	tk.MustExec("update t1 set v = 0 where k = 1")
+	tk.MustQuery("select k, v from t1 where k = 1").Check(testkit.Rows("1 0"))
 
 	// test the case that the table with auto_increment or none-null columns as the right table of left join.
 	tk.MustExec("update t1 left join t3 on t1.k = t3.k set t1.v = 1")

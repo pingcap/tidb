@@ -1261,12 +1261,12 @@ func (c cols2HandleSlice) Len() int {
 	return len(c)
 }
 
-// Len implements sort.Interface#Swap.
+// Swap implements sort.Interface#Swap.
 func (c cols2HandleSlice) Swap(i, j int) {
 	c[i], c[j] = c[j], c[i]
 }
 
-// Len implements sort.Interface#Less.
+// Less implements sort.Interface#Less.
 func (c cols2HandleSlice) Less(i, j int) bool {
 	return c[i].start < c[j].start
 }
@@ -1276,19 +1276,22 @@ func (c cols2HandleSlice) findHandle(ordinal int32) (int32, bool) {
 	if c == nil || len(c) == 0 {
 		return 0, false
 	}
-	biggerOne := sort.Search(len(c), func(i int) bool { return c[i].start > ordinal })
-	if biggerOne == 0 {
+	// find the smallest index of the range that its start great than ordinal.
+	// @see https://godoc.org/sort#Search
+	rangeBehindOrdinal := sort.Search(len(c), func(i int) bool { return c[i].start > ordinal })
+	if rangeBehindOrdinal == 0 {
 		return 0, false
 	}
-	if ordinal < c[biggerOne-1].end {
-		return c[biggerOne-1].handleOrdinal, true
+	if ordinal < c[rangeBehindOrdinal-1].end {
+		return c[rangeBehindOrdinal-1].handleOrdinal, true
 	}
 	return 0, false
 }
 
-// buildColumns2Handle build columns to handle mapping.
+// buildColumns2Handle builds columns to handle mapping.
 func buildColumns2Handle(schema *expression.Schema, tblID2Table map[int64]table.Table) cols2HandleSlice {
 	if len(schema.TblID2Handle) < 2 {
+		// skip buildColumns2Handle mapping if there are only single table.
 		return nil
 	}
 	var cols2Handles cols2HandleSlice
