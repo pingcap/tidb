@@ -16,6 +16,7 @@ package ddl
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -32,8 +33,12 @@ import (
 	"golang.org/x/net/context"
 )
 
-// RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
-var RunWorker = true
+var (
+	// RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
+	RunWorker = true
+	// ddlWorkerID is used for generating the next DDL worker ID.
+	ddlWorkerID = int32(0)
+)
 
 type workerType byte
 
@@ -51,7 +56,7 @@ const (
 // worker is used for handling DDL jobs.
 // Now we have two kinds of workers.
 type worker struct {
-	id       int
+	id       int32
 	tp       workerType
 	ddlJobCh chan struct{}
 	quitCh   chan struct{}
@@ -61,9 +66,9 @@ type worker struct {
 	delRangeManager delRangeManager
 }
 
-func newWorker(tp workerType, id int, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
+func newWorker(tp workerType, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
 	worker := &worker{
-		id:       id,
+		id:       atomic.AddInt32(&ddlWorkerID, 1),
 		tp:       tp,
 		ddlJobCh: make(chan struct{}, 1),
 		quitCh:   make(chan struct{}),
