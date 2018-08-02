@@ -84,7 +84,7 @@ tool-install:
 	# check spelling
 	# misspell works with gometalinter
 	retool add github.com/client9/misspell/cmd/misspell v0.3.4
-	# goword adds additional capability to checking comments
+	# goword adds additional capability to check comments
 	retool add github.com/chzchzchz/goword a9744cb52b033fe5c269df48eeef2c954526cd79
 
 	# checks correctness
