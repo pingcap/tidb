@@ -149,17 +149,16 @@ func (s *testSuite) TestGetDDLJobsIsSort(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
-	// insert 5 create table jobs to DefaultJobListKey queue
+	// insert 5 drop table jobs to DefaultJobListKey queue
 	t := meta.NewMeta(txn)
+	enQueueDDLJobs(c, t, model.ActionDropTable, 10, 15)
+
+	// insert 5 create table jobs to DefaultJobListKey queue
 	enQueueDDLJobs(c, t, model.ActionCreateTable, 0, 5)
 
 	// insert add index jobs to AddIndexJobListKey queue
 	t = meta.NewMeta(txn, meta.AddIndexJobListKey)
 	enQueueDDLJobs(c, t, model.ActionAddIndex, 5, 10)
-
-	// insert 5 drop table jobs to DefaultJobListKey queue
-	t = meta.NewMeta(txn)
-	enQueueDDLJobs(c, t, model.ActionDropTable, 10, 15)
 
 	currJobs, err := GetDDLJobs(txn)
 	c.Assert(err, IsNil)
