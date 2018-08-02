@@ -102,7 +102,7 @@ func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
 		}
 	}
 	d := s.dom.DDL()
-	d.(ddl.DDLForTest).SetHook(callback)
+	d.SetHook(callback)
 	tk.MustExec("alter table t add index idx1(id)")
 	c.Assert(checkErr, IsNil)
 	tk.MustExec("alter table t add column c int")
