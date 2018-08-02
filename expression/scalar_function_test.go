@@ -29,7 +29,7 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 	defer testleak.AfterTest(c)()
 
 	a := &Column{
-		Position: 1,
+		UniqueID: 1,
 		TblName:  model.NewCIStr("fei"),
 		ColName:  model.NewCIStr("han"),
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -55,7 +55,7 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 func (s *testEvaluatorSuite) TestScalarFuncs2Exprs(c *C) {
 	defer testleak.AfterTest(c)()
 	a := &Column{
-		Position: 1,
+		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
 	sf0, _ := newFunction(ast.LT, a, Zero).(*ScalarFunction)

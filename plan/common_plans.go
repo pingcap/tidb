@@ -213,7 +213,7 @@ func (e *Execute) rebuildRange(p Plan) error {
 		var pkCol *expression.Column
 		if ts.Table.PKIsHandle {
 			if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
-				pkCol = expression.ColInfo2Col(x.schema.Columns, pkColInfo)
+				pkCol = expression.ColInfo2Col(ts.schema.Columns, pkColInfo)
 			}
 		}
 		if pkCol != nil {
@@ -228,14 +228,14 @@ func (e *Execute) rebuildRange(p Plan) error {
 	case *PhysicalIndexReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error
-		is.Ranges, err = e.buildRangeForIndexScan(sctx, is, x.schema)
+		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	case *PhysicalIndexLookUpReader:
 		is := x.IndexPlans[0].(*PhysicalIndexScan)
 		var err error
-		is.Ranges, err = e.buildRangeForIndexScan(sctx, is, x.schema)
+		is.Ranges, err = e.buildRangeForIndexScan(sctx, is)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -251,8 +251,8 @@ func (e *Execute) rebuildRange(p Plan) error {
 	return nil
 }
 
-func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan, schema *expression.Schema) ([]*ranger.Range, error) {
-	idxCols, colLengths := expression.IndexInfo2Cols(schema.Columns, is.Index)
+func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) ([]*ranger.Range, error) {
+	idxCols, colLengths := expression.IndexInfo2Cols(is.schema.Columns, is.Index)
 	ranges := ranger.FullRange()
 	if len(idxCols) > 0 {
 		var err error
@@ -355,15 +355,15 @@ type Delete struct {
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	TableInfo *model.TableInfo
-	PKInfo    *model.ColumnInfo
-	ColsInfo  []*model.ColumnInfo
+	PhysicalID int64 // PhysicalID is the partition id for a partitioned table, otherwise, it is the table id.
+	PKInfo     *model.ColumnInfo
+	ColsInfo   []*model.ColumnInfo
 }
 
 // AnalyzeIndexTask is used for analyze index.
 type AnalyzeIndexTask struct {
-	TableInfo *model.TableInfo
-	IndexInfo *model.IndexInfo
+	PhysicalID int64 // PhysicalID is the partition id for a partitioned table, otherwise, it is the table id.
+	IndexInfo  *model.IndexInfo
 }
 
 // Analyze represents an analyze plan
