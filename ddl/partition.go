@@ -338,9 +338,8 @@ func extractConstraintsColumnNames(cons []*ast.Constraint) []map[string]struct{}
 			}
 			// Extract every primary key.
 			if len(priKeys) != 0 {
-					constraints = append(constraints, priKeys)
+				constraints = append(constraints, priKeys)
 			}
-
 		}
 	}
 	return constraints
