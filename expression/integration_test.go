@@ -3365,6 +3365,22 @@ func (s *testIntegrationSuite) TestPrefixIndex(c *C) {
 	tk.MustExec("insert into t1 values('借款策略集_网页');")
 	res := tk.MustQuery("select * from t1 where name = '借款策略集_网页';")
 	res.Check(testkit.Rows("借款策略集_网页"))
+
+	tk.MustExec(`CREATE TABLE prefix (
+		a int(11) NOT NULL,
+		b varchar(55) DEFAULT NULL,
+		c int(11) DEFAULT NULL,
+		PRIMARY KEY (a),
+		KEY prefix_index (b(2)),
+		KEY prefix_complex (a,b(2))
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;`)
+
+	tk.MustExec("INSERT INTO prefix VALUES(0, 'b', 2), (1, 'bbb', 3), (2, 'bbc', 4), (3, 'bbb', 5), (4, 'abc', 6), (5, 'abc', 7), (6, 'abc', 7), (7, 'ÿÿ', 8), (8, 'ÿÿ0', 9), (9, 'ÿÿÿ', 10);")
+	res = tk.MustQuery("select c, b from prefix where b > 'ÿ' and b < 'ÿÿc'")
+	res.Check(testkit.Rows("8 ÿÿ", "9 ÿÿ0"))
+
+	res = tk.MustQuery("select a, b from prefix where b LIKE 'ÿÿ%'")
+	res.Check(testkit.Rows("7 ÿÿ", "8 ÿÿ0", "9 ÿÿÿ"))
 }
 
 func (s *testIntegrationSuite) TestDecimalMul(c *C) {
