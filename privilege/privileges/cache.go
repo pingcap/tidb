@@ -15,6 +15,7 @@ package privileges
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -47,7 +48,8 @@ func computePrivMask(privs []mysql.PrivilegeType) mysql.PrivilegeType {
 	return mask
 }
 
-type userRecord struct {
+// UserRecord is used to represent a user record in privilege cache.
+type UserRecord struct {
 	Host       string // max length 60, primary key
 	User       string // max length 16, primary key
 	Password   string // max length 41
@@ -103,7 +105,7 @@ type columnsPrivRecord struct {
 
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
-	User        []userRecord
+	User        []UserRecord
 	DB          []dbRecord
 	TablesPriv  []tablesPrivRecord
 	ColumnsPriv []columnsPrivRecord
@@ -154,7 +156,99 @@ func noSuchTable(err error) bool {
 
 // LoadUserTable loads the mysql.user table from database.
 func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
-	return p.loadTable(ctx, "select Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Index_priv,Create_user_priv,Trigger_priv from mysql.user order by host, user;", p.decodeUserTableRow)
+	err := p.loadTable(ctx, "select Host,User,Password,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,Super_priv,Execute_priv,Index_priv,Create_user_priv,Trigger_priv from mysql.user;", p.decodeUserTableRow)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// See https://dev.mysql.com/doc/refman/8.0/en/connection-access.html
+	// When multiple matches are possible, the server must determine which of them to use. It resolves this issue as follows:
+	// 1. Whenever the server reads the user table into memory, it sorts the rows.
+	// 2. When a client attempts to connect, the server looks through the rows in sorted order.
+	// 3. The server uses the first row that matches the client host name and user name.
+	// The server uses sorting rules that order rows with the most-specific Host values first.
+	p.SortUserTable()
+	return nil
+}
+
+type sortedUserRecord []UserRecord
+
+func (s sortedUserRecord) Len() int {
+	return len(s)
+}
+
+func (s sortedUserRecord) Less(i, j int) bool {
+	x := s[i]
+	y := s[j]
+
+	// Compare two item by user's host first.
+	c1 := compareHost(x.Host, y.Host)
+	if c1 < 0 {
+		return true
+	}
+	if c1 > 0 {
+		return false
+	}
+
+	// Then, compare item by user's name value.
+	return x.User < y.User
+}
+
+// compareHost compares two host string using some special rules, return value 1, 0, -1 means > = <.
+// TODO: Check how MySQL do it exactly, instead of guess its rules.
+func compareHost(x, y string) int {
+	// The more-specific, the smaller it is.
+	// The pattern '%' means “any host” and is least specific.
+	if y == `%` {
+		if x == `%` {
+			return 0
+		}
+		return -1
+	}
+
+	// The empty string '' also means “any host” but sorts after '%'.
+	if y == "" {
+		if x == "" {
+			return 0
+		}
+		return -1
+	}
+
+	// One of them end with `%`.
+	xEnd := strings.HasSuffix(x, `%`)
+	yEnd := strings.HasSuffix(y, `%`)
+	if xEnd || yEnd {
+		switch {
+		case !xEnd && yEnd:
+			return -1
+		case xEnd && !yEnd:
+			return 1
+		case xEnd && yEnd:
+			// 192.168.199.% smaller than 192.168.%
+			// A not very accurate comparison, compare them by length.
+			if len(x) > len(y) {
+				return -1
+			}
+		}
+		return 0
+	}
+
+	// For other case, the order is nondeterministic.
+	switch x < y {
+	case true:
+		return -1
+	case false:
+		return 1
+	}
+	return 0
+}
+
+func (s sortedUserRecord) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
+// SortUserTable sorts p.User in the MySQLPrivilege struct.
+func (p MySQLPrivilege) SortUserTable() {
+	sort.Sort(sortedUserRecord(p.User))
 }
 
 // LoadDBTable loads the mysql.db table from database.
@@ -206,7 +300,7 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 }
 
 func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField) error {
-	var value userRecord
+	var value UserRecord
 	for i, f := range fs {
 		switch {
 		case f.ColumnAsName.L == "user":
@@ -326,7 +420,7 @@ func decodeSetToPrivilege(s types.Set) mysql.PrivilegeType {
 	return ret
 }
 
-func (record *userRecord) match(user, host string) bool {
+func (record *UserRecord) match(user, host string) bool {
 	return record.User == user && patternMatch(host, record.patChars, record.patTypes)
 }
 
@@ -355,7 +449,7 @@ func patternMatch(str string, patChars, patTypes []byte) bool {
 }
 
 // connectionVerification verifies the connection have access to TiDB server.
-func (p *MySQLPrivilege) connectionVerification(user, host string) *userRecord {
+func (p *MySQLPrivilege) connectionVerification(user, host string) *UserRecord {
 	for i := 0; i < len(p.User); i++ {
 		record := &p.User[i]
 		if record.match(user, host) {
@@ -365,7 +459,7 @@ func (p *MySQLPrivilege) connectionVerification(user, host string) *userRecord {
 	return nil
 }
 
-func (p *MySQLPrivilege) matchUser(user, host string) *userRecord {
+func (p *MySQLPrivilege) matchUser(user, host string) *UserRecord {
 	for i := 0; i < len(p.User); i++ {
 		record := &p.User[i]
 		if record.match(user, host) {
@@ -557,7 +651,7 @@ func (p *MySQLPrivilege) UserPrivilegesTable() [][]types.Datum {
 	return rows
 }
 
-func appendUserPrivilegesTableRow(rows [][]types.Datum, user userRecord) [][]types.Datum {
+func appendUserPrivilegesTableRow(rows [][]types.Datum, user UserRecord) [][]types.Datum {
 	var isGrantable string
 	if user.Privileges&mysql.GrantPriv > 0 {
 		isGrantable = "YES"
