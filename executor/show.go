@@ -474,9 +474,6 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var pkCol *table.Column
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
-		if col.State != model.StatePublic {
-			continue
-		}
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
 		if col.IsGenerated() {
 			// It's a generated column.
@@ -540,11 +537,14 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(",\n")
 	}
 
-	for i, idx := range tb.Indices() {
-		idxInfo := idx.Meta()
-		if idxInfo.State != model.StatePublic {
-			continue
+	publicIndices := make([]table.Index, 0, len(tb.Indices()))
+	for _, idx := range tb.Indices() {
+		if idx.Meta().State == model.StatePublic {
+			publicIndices = append(publicIndices, idx)
 		}
+	}
+	for i, idx := range publicIndices {
+		idxInfo := idx.Meta()
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
@@ -562,7 +562,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			cols = append(cols, colInfo)
 		}
 		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(cols, ",")))
-		if i != len(tb.Indices())-1 {
+		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
 		}
 	}
