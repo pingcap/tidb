@@ -326,7 +326,7 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a varchar(50), b int, c double, index idx_ab(a(50), b), index idx_cb(c, a))")
+	testKit.MustExec("create table t(a varchar(50), b int, c double, d varchar(10), e binary(10), index idx_ab(a(50), b), index idx_cb(c, a), index idx_d(d(2)), index idx_e(e(2)))")
 
 	tests := []struct {
 		indexPos    int
@@ -509,6 +509,20 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			accessConds: "[]",
 			filterConds: "[or(gt(test.t.a, a), gt(test.t.c, 1))]",
 			resultStr:   "[[<nil>,+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `d = "你好啊"`,
+			accessConds: "[eq(test.t.d, 你好啊)]",
+			filterConds: "[eq(test.t.d, 你好啊)]",
+			resultStr:   "[[你好,你好]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     `e = "你好啊"`,
+			accessConds: "[eq(test.t.e, 你好啊)]",
+			filterConds: "[eq(test.t.e, 你好啊)]",
+			resultStr:   "[[[228 189],[228 189]]]",
 		},
 	}
 
