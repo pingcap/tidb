@@ -1100,6 +1100,13 @@ PARTITION BY RANGE ( id ) (
 	tk.MustExec("admin check table t")
 	tk.MustExec(`delete from t;`)
 	tk.CheckExecResult(14, 0)
+
+	// Fix that partitioned table should not use PointGetPlan.
+	tk.MustExec(`create table t1 (c1 bigint, c2 bigint, c3 bigint, primary key(c1)) partition by range (c1) (partition p0 values less than (3440))`)
+	tk.MustExec("insert into t1 values (379, 379, 379)")
+	tk.MustExec("delete from t1 where c1 = 379")
+	tk.CheckExecResult(1, 0)
+	tk.MustExec(`drop table t1;`)
 }
 
 func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
