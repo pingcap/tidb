@@ -296,10 +296,12 @@ func adjustDatumKind(vals1, vals2 []types.Datum) {
 
 	for i, val1 := range vals1 {
 		val2 := vals2[i]
-		if val1.Kind() != val2.Kind() && (val1.Kind() == types.KindBytes || val1.Kind() == types.KindString) &&
-			(val2.Kind() == types.KindBytes || val2.Kind() == types.KindString) {
-			vals1[i].SetBytes(val1.GetBytes())
-			vals2[i].SetBytes(val2.GetBytes())
+		if val1.Kind() != val2.Kind() {
+			if (val1.Kind() == types.KindBytes || val1.Kind() == types.KindString) &&
+				(val2.Kind() == types.KindBytes || val2.Kind() == types.KindString) {
+				vals1[i].SetBytes(val1.GetBytes())
+				vals2[i].SetBytes(val2.GetBytes())
+			}
 		}
 	}
 }
