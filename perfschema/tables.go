@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tables
+package perfschema
 
 import (
 	"github.com/juju/errors"
@@ -23,36 +23,37 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// VirtualDataSource is used to extract data from the struct in memory.
-type VirtualDataSource interface {
-	// GetRows do the actual job
-	GetRows(ctx sessionctx.Context) (fullRows [][]types.Datum, err error)
-	// Meta return the meta of table
-	Meta() *model.TableInfo
-	// Cols return the cols of table
-	Cols() []*table.Column
+// perfSchemaTable stands for the fake table all its data is in the memory.
+type perfSchemaTable struct {
+	meta        *model.TableInfo
+	cols        []*table.Column
+	globalScope bool
 }
 
-// VirtualTable stands for the fake table all its data is in the memory.
-// dataSource: the function to get rows
-// @TODO this table is almost the same as the infoschema tables, but we need to use it in performance schema.
-// @TODO So we have to move it here, sometimes we need to refactor the infoschema tables to decrease the multiplicity of the codes
-type VirtualTable struct {
-	dataSource VirtualDataSource
-}
-
-// CreateVirtualTable as its name
-func CreateVirtualTable(dataSource VirtualDataSource) *VirtualTable {
-	return &VirtualTable{dataSource: dataSource}
+// createPerfSchemaTable as its name
+func createPerfSchemaTable(tableName string, meta *model.TableInfo) *perfSchemaTable {
+	columns := make([]*table.Column, 0, len(meta.Columns))
+	for _, colInfo := range meta.Columns {
+		col := table.ToColumn(colInfo)
+		columns = append(columns, col)
+	}
+	t := &perfSchemaTable{
+		meta: meta,
+		cols: columns,
+	}
+	if tableName == tableGlobalStatus {
+		t.globalScope = true
+	}
+	return t
 }
 
 // IterRecords implements table.Table Type interface.
-func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
+func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
 	if len(startKey) != 0 {
 		return table.ErrUnsupportedOp
 	}
-	rows, err := vt.dataSource.GetRows(ctx)
+	rows, err := vt.getRows(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -69,106 +70,111 @@ func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, col
 }
 
 // RowWithCols implements table.Table Type interface.
-func (vt *VirtualTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
+func (vt *perfSchemaTable) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // Row implements table.Table Type interface.
-func (vt *VirtualTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
+func (vt *perfSchemaTable) Row(ctx sessionctx.Context, h int64) ([]types.Datum, error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // Cols implements table.Table Type interface.
-func (vt *VirtualTable) Cols() []*table.Column {
-	return vt.dataSource.Cols()
+func (vt *perfSchemaTable) Cols() []*table.Column {
+	return vt.cols
 }
 
 // WritableCols implements table.Table Type interface.
-func (vt *VirtualTable) WritableCols() []*table.Column {
-	return vt.dataSource.Cols()
+func (vt *perfSchemaTable) WritableCols() []*table.Column {
+	return vt.cols
 }
 
 // Indices implements table.Table Type interface.
-func (vt *VirtualTable) Indices() []table.Index {
+func (vt *perfSchemaTable) Indices() []table.Index {
 	return nil
 }
 
 // WritableIndices implements table.Table Type interface.
-func (vt *VirtualTable) WritableIndices() []table.Index {
+func (vt *perfSchemaTable) WritableIndices() []table.Index {
 	return nil
 }
 
 // DeletableIndices implements table.Table Type interface.
-func (vt *VirtualTable) DeletableIndices() []table.Index {
+func (vt *perfSchemaTable) DeletableIndices() []table.Index {
 	return nil
 }
 
 // RecordPrefix implements table.Table Type interface.
-func (vt *VirtualTable) RecordPrefix() kv.Key {
+func (vt *perfSchemaTable) RecordPrefix() kv.Key {
 	return nil
 }
 
 // IndexPrefix implements table.Table Type interface.
-func (vt *VirtualTable) IndexPrefix() kv.Key {
+func (vt *perfSchemaTable) IndexPrefix() kv.Key {
 	return nil
 }
 
 // FirstKey implements table.Table Type interface.
-func (vt *VirtualTable) FirstKey() kv.Key {
+func (vt *perfSchemaTable) FirstKey() kv.Key {
 	return nil
 }
 
 // RecordKey implements table.Table Type interface.
-func (vt *VirtualTable) RecordKey(h int64) kv.Key {
+func (vt *perfSchemaTable) RecordKey(h int64) kv.Key {
 	return nil
 }
 
 // AddRecord implements table.Table Type interface.
-func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (vt *perfSchemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	return 0, table.ErrUnsupportedOp
 }
 
 // RemoveRecord implements table.Table Type interface.
-func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
+func (vt *perfSchemaTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
 // UpdateRecord implements table.Table Type interface.
-func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (vt *perfSchemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
 // AllocAutoID implements table.Table Type interface.
-func (vt *VirtualTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
+func (vt *perfSchemaTable) AllocAutoID(ctx sessionctx.Context) (int64, error) {
 	return 0, table.ErrUnsupportedOp
 }
 
 // Allocator implements table.Table Type interface.
-func (vt *VirtualTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
+func (vt *perfSchemaTable) Allocator(ctx sessionctx.Context) autoid.Allocator {
 	return nil
 }
 
 // RebaseAutoID implements table.Table Type interface.
-func (vt *VirtualTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
+func (vt *perfSchemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, isSetStep bool) error {
 	return table.ErrUnsupportedOp
 }
 
 // Meta implements table.Table Type interface.
-func (vt *VirtualTable) Meta() *model.TableInfo {
-	return vt.dataSource.Meta()
+func (vt *perfSchemaTable) Meta() *model.TableInfo {
+	return vt.meta
 }
 
 // GetID implements table.Table GetID interface.
-func (vt *VirtualTable) GetID() int64 {
-	return vt.dataSource.Meta().ID
+func (vt *perfSchemaTable) GetID() int64 {
+	return vt.meta.ID
 }
 
 // Seek implements table.Table Type interface.
-func (vt *VirtualTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
+func (vt *perfSchemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, error) {
 	return 0, false, table.ErrUnsupportedOp
 }
 
 // Type implements table.Table Type interface.
-func (vt *VirtualTable) Type() table.Type {
+func (vt *perfSchemaTable) Type() table.Type {
 	return table.VirtualTable
+}
+
+// getRows implements the interface of VirtualDataSource.
+func (vt *perfSchemaTable) getRows(ctx sessionctx.Context) ([][]types.Datum, error) {
+	return nil, nil
 }
