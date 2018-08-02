@@ -129,7 +129,7 @@ func (c *index) getIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	return make([]byte, 0, defaultCap)
 }
 
-// TruncateIndexValuesIfNeeded truncates the index values that be created that use only the leading part of column values.
+// TruncateIndexValuesIfNeeded truncates the index values created using only the leading part of column values.
 func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) []types.Datum {
 	for i := 0; i < len(indexedValues); i++ {
 		v := &indexedValues[i]

@@ -288,7 +288,7 @@ func getIndexFieldTypes(t table.Table, idx table.Index) ([]*types.FieldType, err
 	return fieldTypes, nil
 }
 
-// we should treat KindString equals to KindBytes.
+// adjustDatumKind treats KindString as KindBytes.
 func adjustDatumKind(vals1, vals2 []types.Datum) {
 	if len(vals1) != len(vals2) {
 		return
