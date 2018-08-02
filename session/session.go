@@ -277,6 +277,9 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
+	if s.txn.IsReadOnly() {
+		return nil
+	}
 	if s.sessionVars.BinlogClient != nil {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
@@ -541,7 +544,7 @@ func (s *session) sysSessionPool() *pools.ResourcePool {
 // This is used for executing some restricted sql statements, usually executed during a normal statement execution.
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
-func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]types.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
 	var span opentracing.Span
 	ctx := context.TODO()
 	span, ctx = opentracing.StartSpanFromContext(ctx, "session.ExecRestrictedSQL")
@@ -562,7 +565,7 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]type
 	}
 
 	var (
-		rows   []types.Row
+		rows   []chunk.Row
 		fields []*ast.ResultField
 	)
 	// Execute all recordset, take out the first one as result.
@@ -615,8 +618,8 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	}
 }
 
-func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]types.Row, error) {
-	var rows []types.Row
+func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]chunk.Row, error) {
+	var rows []chunk.Row
 	for {
 		chk := rs.NewChunk()
 		err := rs.Next(ctx, chk)

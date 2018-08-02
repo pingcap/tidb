@@ -893,6 +893,22 @@ func (mvcc *MVCCLevelDB) RawPut(key, value []byte) {
 	terror.Log(mvcc.db.Put(key, value, nil))
 }
 
+// RawBatchPut implements the RawKV interface
+func (mvcc *MVCCLevelDB) RawBatchPut(keys, values [][]byte) {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	batch := &leveldb.Batch{}
+	for i, key := range keys {
+		value := values[i]
+		if value == nil {
+			value = []byte{}
+		}
+		batch.Put(key, value)
+	}
+	terror.Log(mvcc.db.Write(batch, nil))
+}
+
 // RawGet implements the RawKV interface.
 func (mvcc *MVCCLevelDB) RawGet(key []byte) []byte {
 	mvcc.mu.Lock()

@@ -49,7 +49,7 @@ type bitOrUint64 struct {
 func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
-		inputValue, isNull, err := e.args[0].EvalInt(sctx, &row)
+		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -68,7 +68,7 @@ type bitXorUint64 struct {
 func (e *bitXorUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
-		inputValue, isNull, err := e.args[0].EvalInt(sctx, &row)
+		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -98,7 +98,7 @@ func (e *bitAndUint64) ResetPartialResult(pr PartialResult) {
 func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
-		inputValue, isNull, err := e.args[0].EvalInt(sctx, &row)
+		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
 			return errors.Trace(err)
 		}

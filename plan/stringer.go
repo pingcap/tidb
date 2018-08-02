@@ -200,15 +200,15 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Analyze{"
 		var children []string
 		for _, idx := range x.IdxTasks {
-			children = append(children, fmt.Sprintf("Index(%s.%s)", idx.TableInfo.Name.O, idx.IndexInfo.Name.O))
+			children = append(children, fmt.Sprintf("Index(%s)", idx.IndexInfo.Name.O))
 		}
 		for _, col := range x.ColTasks {
 			var colNames []string
 			if col.PKInfo != nil {
-				colNames = append(colNames, fmt.Sprintf("%s.%s", col.TableInfo.Name.O, col.PKInfo.Name.O))
+				colNames = append(colNames, fmt.Sprintf("%s", col.PKInfo.Name.O))
 			}
 			for _, c := range col.ColsInfo {
-				colNames = append(colNames, fmt.Sprintf("%s.%s", col.TableInfo.Name.O, c.Name.O))
+				colNames = append(colNames, fmt.Sprintf("%s", c.Name.O))
 			}
 			children = append(children, fmt.Sprintf("Table(%s)", strings.Join(colNames, ", ")))
 		}

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -63,7 +64,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"'123456789123456711111189' = a", "0"},
 		{"123456789123456789.12345 = a", "0"},
 		// This cast can not be eliminated,
-		// since convert "aaaa" to int will cause DataTruncate error.
+		// since converting "aaaa" to an int will cause DataTruncate error.
 		{"'aaaa'=a", "eq(cast(aaaa), cast(a))"},
 	}
 
@@ -136,7 +137,7 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 		args := bf.getArgs()
 		c.Assert(args[0].GetType().Tp, Equals, t.tp)
 		c.Assert(args[1].GetType().Tp, Equals, t.tp)
-		res, isNil, err := bf.evalInt(nil)
+		res, isNil, err := bf.evalInt(chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isNil, IsFalse)
 		c.Assert(res, Equals, t.expected)
@@ -186,7 +187,7 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Coalesce, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -241,7 +242,7 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		fc := funcs[ast.Interval]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t.args))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v.GetInt64(), Equals, t.ret)
 	}
@@ -299,7 +300,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 	} {
 		f0, err := newFunctionForTest(s.ctx, ast.Greatest, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f0.Eval(nil)
+		d, err := f0.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -313,7 +314,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 
 		f1, err := newFunctionForTest(s.ctx, ast.Least, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err = f1.Eval(nil)
+		d, err = f1.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {

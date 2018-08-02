@@ -31,13 +31,13 @@ var _ = Suite(&testExpressionSuite{})
 
 type testExpressionSuite struct{}
 
-func newColumn(from int) *Column {
+func newColumn(id int) *Column {
 	return &Column{
-		FromID:  from,
-		ColName: model.NewCIStr(fmt.Sprint(from)),
-		TblName: model.NewCIStr("t"),
-		DBName:  model.NewCIStr("test"),
-		RetType: types.NewFieldType(mysql.TypeLonglong),
+		UniqueID: id,
+		ColName:  model.NewCIStr(fmt.Sprint(id)),
+		TblName:  model.NewCIStr("t"),
+		DBName:   model.NewCIStr("test"),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
 }
 

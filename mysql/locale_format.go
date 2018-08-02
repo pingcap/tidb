@@ -15,10 +15,9 @@ func formatENUS(number string, precision string) (string, error) {
 		for i, v := range precision {
 			if unicode.IsDigit(v) {
 				continue
-			} else {
-				precision = precision[:i]
-				break
 			}
+			precision = precision[:i]
+			break
 		}
 	} else {
 		precision = "0"

@@ -23,8 +23,6 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-var _ types.Row = Row{}
-
 // Row represents a row of data, can be used to assess values.
 type Row struct {
 	c   *Chunk
@@ -146,7 +144,7 @@ func (r Row) GetDatumRow(fields []*types.FieldType) []types.Datum {
 	return datumRow
 }
 
-// GetDatum implements the types.Row interface.
+// GetDatum implements the chunk.Row interface.
 func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	var d types.Datum
 	switch tp.Tp {
@@ -189,7 +187,15 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		if !r.IsNull(colIdx) {
 			d.SetMysqlDecimal(r.GetMyDecimal(colIdx))
 			d.SetLength(tp.Flen)
-			d.SetFrac(tp.Decimal)
+			// If tp.Decimal is unspecified(-1), we should set it to the real
+			// fraction length of the decimal value, if not, the d.Frac will
+			// be set to MAX_UINT16 which will cause unexpected BadNumber error
+			// when encoding.
+			if tp.Decimal == types.UnspecifiedLength {
+				d.SetFrac(d.Frac())
+			} else {
+				d.SetFrac(tp.Decimal)
+			}
 		}
 	case mysql.TypeEnum:
 		if !r.IsNull(colIdx) {
@@ -211,7 +217,7 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	return d
 }
 
-// IsNull implements the types.Row interface.
+// IsNull returns if the datum in the chunk.Row is null.
 func (r Row) IsNull(colIdx int) bool {
 	return r.c.columns[colIdx].isNull(r.idx)
 }
