@@ -114,7 +114,7 @@ func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
 func (p *PointGetPlan) ResolveIndices() {}
 
 func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
-	if PreparedPlanCacheEnabled {
+	if PreparedPlanCacheEnabled() {
 		// Do not support plan cache.
 		return nil
 	}
@@ -417,7 +417,7 @@ func colInfoToColumn(db model.CIStr, tblName model.CIStr, asName model.CIStr, co
 		TblName:     tblName,
 		RetType:     &col.FieldType,
 		ID:          col.ID,
-		Position:    col.Offset,
+		UniqueID:    col.Offset,
 		Index:       idx,
 	}
 }
