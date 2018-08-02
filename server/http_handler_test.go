@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/printer"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -644,4 +645,43 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 		time.Sleep(time.Millisecond * 10)
 	}
 	log.Fatalf("Failed to get profile for %d retries in every 10 ms", retryTime)
+}
+
+func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/info")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	decoder := json.NewDecoder(resp.Body)
+
+	serverInfo := ReportServerInfo{}
+	err = decoder.Decode(&serverInfo)
+	c.Assert(err, IsNil)
+
+	cfg := config.GetGlobalConfig()
+	c.Assert(serverInfo.IsOwner, IsTrue)
+	c.Assert(serverInfo.SelfServerInfo.IP, Equals, cfg.AdvertiseAddress)
+	c.Assert(serverInfo.SelfServerInfo.StatusPort, Equals, cfg.Status.StatusPort)
+	c.Assert(serverInfo.SelfServerInfo.Lease, Equals, cfg.Lease)
+	c.Assert(serverInfo.SelfServerInfo.Version, Equals, mysql.ServerVersion)
+	c.Assert(serverInfo.SelfServerInfo.GitHash, Equals, printer.TiDBGitHash)
+}
+
+func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/info/all")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	decoder := json.NewDecoder(resp.Body)
+
+	allServerInfo := ClusterServerInfo{}
+	err = decoder.Decode(&allServerInfo)
+	c.Assert(err, IsNil)
+
+	c.Assert(allServerInfo.IsAllServerVersionConsistent, IsTrue)
+	c.Assert(allServerInfo.ServersNum, Equals, 1)
 }
