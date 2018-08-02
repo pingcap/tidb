@@ -14,6 +14,7 @@
 package plan
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/mysql"
@@ -24,11 +25,36 @@ import (
 )
 
 var (
-	// PreparedPlanCacheEnabled stores the global config "prepared-plan-cache-enabled".
-	PreparedPlanCacheEnabled bool
+	// preparedPlanCacheEnabledValue stores the global config "prepared-plan-cache-enabled".
+	// If the value of "prepared-plan-cache-enabled" is true, preparedPlanCacheEnabledValue's value is 1.
+	// Otherwise, preparedPlanCacheEnabledValue's value is 0.
+	preparedPlanCacheEnabledValue int32
 	// PreparedPlanCacheCapacity stores the global config "prepared-plan-cache-capacity".
 	PreparedPlanCacheCapacity uint
 )
+
+const (
+	preparedPlanCacheEnabled = 1
+	preparedPlanCacheUnable  = 0
+)
+
+// SetPreparedPlanCache sets isEnabled to true, then prepared plan cache is enabled.
+func SetPreparedPlanCache(isEnabled bool) {
+	if isEnabled {
+		atomic.StoreInt32(&preparedPlanCacheEnabledValue, preparedPlanCacheEnabled)
+	} else {
+		atomic.StoreInt32(&preparedPlanCacheEnabledValue, preparedPlanCacheUnable)
+	}
+}
+
+// PreparedPlanCacheEnabled returns whether the prepared plan cache is enabled.
+func PreparedPlanCacheEnabled() bool {
+	isEnabled := atomic.LoadInt32(&preparedPlanCacheEnabledValue)
+	if isEnabled == preparedPlanCacheEnabled {
+		return true
+	}
+	return false
+}
 
 type pstmtPlanCacheKey struct {
 	database       string
