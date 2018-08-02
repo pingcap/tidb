@@ -14,9 +14,11 @@
 package model
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
@@ -423,6 +425,28 @@ func NewCIStr(s string) (cs CIStr) {
 	cs.O = s
 	cs.L = strings.ToLower(s)
 	return
+}
+
+// UnmarshalJSON implements the user defined unmarshal method.
+// CIStr can be unmarshaled from a single string.
+func (cis *CIStr) UnmarshalJSON(b []byte) error {
+	tmp := struct {
+		O string `json:"O"` // Original string.
+		L string `json:"L"` // Lower case string.
+	}{}
+	if err := json.Unmarshal(b, &tmp); err == nil {
+		cis.O = tmp.O
+		cis.L = tmp.L
+		return nil
+	}
+
+	// Unmarshal CIStr from a single string.
+	err := json.Unmarshal(b, &cis.O)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cis.L = strings.ToLower(cis.O)
+	return nil
 }
 
 // ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
