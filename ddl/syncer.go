@@ -242,16 +242,7 @@ func (s *schemaVersionSyncer) StoreServerInfo(ctx context.Context, info *util.Se
 // RemoveServerInfo implements SchemaSyncer.RemoveServerInfo interface.
 func (s *schemaVersionSyncer) RemoveServerInfo() error {
 	var err error
-	ctx := context.Background()
-	for i := 0; i < keyOpDefaultRetryCnt; i++ {
-		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
-		_, err = s.etcdCli.Delete(childCtx, s.selfServerInfoPath)
-		cancel()
-		if err == nil {
-			return nil
-		}
-		log.Warnf("[syncer] remove server info path %s failed %v no.%d", s.selfServerInfoPath, err, i)
-	}
+	err = removePath(s.selfServerInfoPath, s.etcdCli)
 	return errors.Trace(err)
 }
 
@@ -341,15 +332,21 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 		metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerClear, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
+	err = removePath(s.selfSchemaVerPath, s.etcdCli)
+	return errors.Trace(err)
+}
+
+func removePath(path string,etcdCli *clientv3.Client) error {
+	var err error
 	ctx := context.Background()
 	for i := 0; i < keyOpDefaultRetryCnt; i++ {
 		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
-		_, err = s.etcdCli.Delete(childCtx, s.selfSchemaVerPath)
+		_, err = etcdCli.Delete(childCtx, path)
 		cancel()
 		if err == nil {
 			return nil
 		}
-		log.Warnf("[syncer] remove schema version path %s failed %v no.%d", s.selfSchemaVerPath, err, i)
+		log.Warnf("[syncer] remove path %s failed %v no.%d", path, err, i)
 	}
 	return errors.Trace(err)
 }
