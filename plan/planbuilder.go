@@ -1110,10 +1110,10 @@ func (b *planBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 		return
 	}
 
-	// If the value_list and col_list is empty and we have generated column, we can still write to this table.
-	// i.e. insert into t values(); can be executed successfully if t have generated column.
+	// If value_list and col_list are empty and we have a generated column, we can still write data to this table.
+	// For example, insert into t values(); can be executed successfully if t has a generated column.
 	if len(insert.Columns) > 0 || len(insert.Lists[0]) > 0 {
-		// If value_list is not empty or the col_list is not empty, length of value_list should be the same with col_list's.
+		// If value_list or col_list is not empty, the length of value_list should be the same with that of col_list.
 		if len(insert.Lists[0]) != len(affectedValuesCols) {
 			b.err = ErrWrongValueCountOnRow.GenByArgs(1)
 			return
@@ -1129,7 +1129,7 @@ func (b *planBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 
 	totalTableCols := insertPlan.Table.Cols()
 	for i, valuesItem := range insert.Lists {
-		// The length of the all the value_list should be the same.
+		// The length of all the value_list should be the same.
 		// "insert into t values (), ()" is valid.
 		// "insert into t values (), (1)" is not valid.
 		// "insert into t values (1), ()" is not valid.
@@ -1178,7 +1178,7 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 		return
 	}
 
-	// Check that the length of select' row is equal to the col list.
+	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
 	if selectPlan.Schema().Len() != len(affectedValuesCols) {
 		b.err = ErrWrongValueCountOnRow.GenByArgs(1)
 		return
