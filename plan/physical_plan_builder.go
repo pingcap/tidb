@@ -406,7 +406,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 			selectivity := path.countAfterIndex / path.countAfterAccess
 			count = is.stats.count * selectivity
 		}
-		stats := &statsInfo{count: count}
+		stats := &StatsInfo{count: count}
 		indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx, stats)
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
@@ -565,7 +565,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 	return task, nil
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *statsInfo) {
+func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *StatsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
 		copTask.cst += copTask.count() * cpuFactor
