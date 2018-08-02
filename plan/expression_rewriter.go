@@ -571,6 +571,8 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	return v, true
 }
 
+// popExistsSubPlan will remove the useless plan in exist's child.
+// See comments inside the method for more details.
 func (er *expressionRewriter) popExistsSubPlan(p LogicalPlan) LogicalPlan {
 out:
 	for {
