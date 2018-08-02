@@ -287,3 +287,21 @@ func (testModelSuite) TestString(c *C) {
 		c.Assert(str, Equals, v.result)
 	}
 }
+
+func (testModelSuite) TestUnmarshalCIStr(c *C) {
+	var ci CIStr
+
+	// Test unmarshal CIStr from a single string.
+	str := "aaBB"
+	buf, err := json.Marshal(str)
+	c.Assert(err, IsNil)
+	ci.UnmarshalJSON(buf)
+	c.Assert(ci.O, Equals, str)
+	c.Assert(ci.L, Equals, "aabb")
+
+	buf, err = json.Marshal(ci)
+	c.Assert(string(buf), Equals, `{"O":"aaBB","L":"aabb"}`)
+	ci.UnmarshalJSON(buf)
+	c.Assert(ci.O, Equals, str)
+	c.Assert(ci.L, Equals, "aabb")
+}
