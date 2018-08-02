@@ -2748,6 +2748,7 @@ func checkPartitionDelRangeDone(c *C, s *testDBSuite, partitionPrefix kv.Key) bo
 	return hasOldPartitionData
 }
 
+// TestTruncatePartitionAndDropTable to test support truncate partitioned table and drop partitioned table.
 func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
