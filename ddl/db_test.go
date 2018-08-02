@@ -1579,11 +1579,12 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 }
 
 func (s *testDBSuite) TestBitDefaultValue(c *C) {
-	s.tk.MustExec("use test")
-	s.tk.MustExec("create table t_bit (c1 bit(10) default 250, c2 int);")
-	s.tk.MustExec("insert into t_bit set c2=1;")
-	s.tk.MustQuery("select bin(c1),c2 from t_bit").Check(testkit.Rows("11111010 1"))
-	s.tk.MustExec("drop table t_bit")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_bit (c1 bit(10) default 250, c2 int);")
+	tk.MustExec("insert into t_bit set c2=1;")
+	tk.MustQuery("select bin(c1),c2 from t_bit").Check(testkit.Rows("11111010 1"))
+	tk.MustExec("drop table t_bit")
 }
 
 func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
