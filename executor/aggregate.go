@@ -776,8 +776,8 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	e.inputRow = e.inputIter.End()
 
 	e.partialResults = make([]aggfuncs.PartialResult, 0, len(e.aggFuncs))
-	for _, newAggFunc := range e.aggFuncs {
-		e.partialResults = append(e.partialResults, newAggFunc.AllocPartialResult())
+	for _, aggFunc := range e.aggFuncs {
+		e.partialResults = append(e.partialResults, aggFunc.AllocPartialResult())
 	}
 
 	return nil
@@ -838,8 +838,8 @@ func (e *StreamAggExec) consumeGroupRows() error {
 		return nil
 	}
 
-	for i, newAggFunc := range e.aggFuncs {
-		err := newAggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
+	for i, aggFunc := range e.aggFuncs {
+		err := aggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -883,12 +883,12 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 // appendResult2Chunk appends result of all the aggregation functions to the
 // result chunk, and reset the evaluation context for each aggregation.
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
-	for i, newAggFunc := range e.aggFuncs {
-		err := newAggFunc.AppendFinalResult2Chunk(e.ctx, e.partialResults[i], chk)
+	for i, aggFunc := range e.aggFuncs {
+		err := aggFunc.AppendFinalResult2Chunk(e.ctx, e.partialResults[i], chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		newAggFunc.ResetPartialResult(e.partialResults[i])
+		aggFunc.ResetPartialResult(e.partialResults[i])
 	}
 	if len(e.aggFuncs) == 0 {
 		chk.SetNumVirtualRows(chk.NumRows() + 1)
