@@ -336,7 +336,7 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 	return errors.Trace(err)
 }
 
-func removePath(path string,etcdCli *clientv3.Client) error {
+func removePath(path string, etcdCli *clientv3.Client) error {
 	var err error
 	ctx := context.Background()
 	for i := 0; i < keyOpDefaultRetryCnt; i++ {
