@@ -211,36 +211,37 @@ func (t *PartitionedTable) RemoveRecord(ctx sessionctx.Context, h int64, r []typ
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
 func (t *PartitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error {
 	partitionInfo := t.meta.GetPartitionInfo()
-	old, err := t.locatePartition(ctx, partitionInfo, currData)
+	from, err := t.locatePartition(ctx, partitionInfo, currData)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	new, err := t.locatePartition(ctx, partitionInfo, newData)
+	to, err := t.locatePartition(ctx, partitionInfo, newData)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
-	if old != new {
-		_, err = t.GetPartition(new).AddRecord(ctx, newData, false)
+	if from != to {
+		_, err = t.GetPartition(to).AddRecord(ctx, newData, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		// UpdateRecord should be side effect free, but there're two steps here.
 		// What would happen if step1 succeed but step2 meets error? It's hard
 		// to rollback.
-		// So this special order is chosen: errors such as 'Key Already Exists'
-		// will generally happen during step1, and unlikely to happen in
-		// step2.
-		err = t.GetPartition(old).RemoveRecord(ctx, h, currData)
+		// So this special order is chosen: add record first, errors such as
+		// 'Key Already Exists' will generally happen during step1, errors are
+		// unlikely to happen in step2.
+		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
 		if err != nil {
+			log.Error("partition update record error, it may write dirty data to txn:", errors.ErrorStack(err))
 			return errors.Trace(err)
 		}
 		return nil
 	}
 
-	tbl := t.GetPartition(new)
+	tbl := t.GetPartition(to)
 	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
 }
 

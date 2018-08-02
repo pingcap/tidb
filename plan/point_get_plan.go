@@ -153,6 +153,10 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if tbl == nil {
 		return nil
 	}
+	// Do not handle partitioned table.
+	if tbl.GetPartitionInfo() != nil {
+		return nil
+	}
 	for _, col := range tbl.Columns {
 		// Do not handle generated columns.
 		if col.IsGenerated() {
