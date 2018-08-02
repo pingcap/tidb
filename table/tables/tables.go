@@ -919,7 +919,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
-	if col.DefaultValue == nil && value.IsNull() {
+	if col.GetDefaultValue() == nil && value.IsNull() {
 		return true
 	}
 	if col.IsGenerated() && !col.GeneratedStored {

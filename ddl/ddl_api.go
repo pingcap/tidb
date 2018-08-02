@@ -329,7 +329,9 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				if err = checkColumnCantHaveDefaultValue(col, value); err != nil {
 					return nil, nil, errors.Trace(err)
 				}
-				col.DefaultValue = value
+				if err = col.SetDefaultValue(value); err != nil {
+					return nil, nil, errors.Trace(err)
+				}
 				hasDefaultValue = true
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
@@ -485,7 +487,7 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 		return nil
 	}
 
-	if c.DefaultValue != nil {
+	if c.GetDefaultValue() != nil {
 		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
 			return types.ErrInvalidDefault.GenByArgs(c.Name)
 		}
@@ -507,7 +509,7 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 // checkPriKeyConstraint check all parts of a PRIMARY KEY must be NOT NULL
 func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool, outPriKeyConstraint *ast.Constraint) error {
 	// Primary key should not be null.
-	if mysql.HasPriKeyFlag(col.Flag) && hasDefaultValue && col.DefaultValue == nil {
+	if mysql.HasPriKeyFlag(col.Flag) && hasDefaultValue && col.GetDefaultValue() == nil {
 		return types.ErrInvalidDefault.GenByArgs(col.Name)
 	}
 	// Set primary key flag for outer primary key constraint.
@@ -1225,7 +1227,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	col.OriginDefaultValue = col.DefaultValue
+	col.OriginDefaultValue = col.GetDefaultValue()
 	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
 		zeroVal := table.GetZeroValue(col.ToInfo())
 		col.OriginDefaultValue, err = zeroVal.ToString()
@@ -1436,7 +1438,10 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	if err != nil {
 		return ErrColumnBadNull.Gen("invalid default value - %s", err)
 	}
-	col.DefaultValue = value
+	err = col.SetDefaultValue(value)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return errors.Trace(checkDefaultValue(ctx, col, true))
 }
 
@@ -1465,7 +1470,9 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			if err = checkColumnCantHaveDefaultValue(col, value); err != nil {
 				return errors.Trace(err)
 			}
-			col.DefaultValue = value
+			if err = col.SetDefaultValue(value); err != nil {
+				return errors.Trace(err)
+			}
 			hasDefaultValue = true
 		case ast.ColumnOptionComment:
 			err := setColumnComment(ctx, col, opt)
@@ -1688,7 +1695,10 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	// Clean the NoDefaultValueFlag value.
 	col.Flag &= ^mysql.NoDefaultValueFlag
 	if len(specNewColumn.Options) == 0 {
-		col.DefaultValue = nil
+		err = col.SetDefaultValue(nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		setNoDefaultValueFlag(col, false)
 	} else {
 		err = setDefaultValue(ctx, col, specNewColumn.Options[0])

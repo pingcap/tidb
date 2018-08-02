@@ -66,6 +66,7 @@ type ColumnInfo struct {
 	Offset              int                 `json:"offset"`
 	OriginDefaultValue  interface{}         `json:"origin_default"`
 	DefaultValue        interface{}         `json:"default"`
+	DefaultValueBit     []byte              `json:"default_bit"`
 	GeneratedExprString string              `json:"generated_expr_string"`
 	GeneratedStored     bool                `json:"generated_stored"`
 	Dependences         map[string]struct{} `json:"dependences"`
@@ -83,6 +84,26 @@ func (c *ColumnInfo) Clone() *ColumnInfo {
 // IsGenerated returns true if the column is generated column.
 func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
+}
+
+func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
+	c.DefaultValue = value
+	if c.Tp == mysql.TypeBit {
+		if v, ok := value.(string); ok {
+			c.DefaultValueBit = []byte(v)
+			return nil
+		}
+		return types.ErrInvalidDefault.GenByArgs(c.Name)
+
+	}
+	return nil
+}
+
+func (c *ColumnInfo) GetDefaultValue() interface{} {
+	if c.Tp == mysql.TypeBit && c.DefaultValueBit != nil {
+		return string(c.DefaultValueBit)
+	}
+	return c.DefaultValue
 }
 
 // FindColumnInfo finds ColumnInfo in cols by name.
