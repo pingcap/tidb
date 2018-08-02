@@ -420,7 +420,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 		Ranges:           ranger.FullNewRange(),
 		KeepOrder:        false,
 	}.init(b.ctx)
-	is.stats = &statsInfo{}
+	is.stats = &StatsInfo{}
 	cop := &copTask{indexPlan: is}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.init(b.ctx)
