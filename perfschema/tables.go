@@ -25,13 +25,12 @@ import (
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
 type perfSchemaTable struct {
-	meta        *model.TableInfo
-	cols        []*table.Column
-	globalScope bool
+	meta *model.TableInfo
+	cols []*table.Column
 }
 
-// createPerfSchemaTable as its name
-func createPerfSchemaTable(tableName string, meta *model.TableInfo) *perfSchemaTable {
+// createPerfSchemaTable creates all perfSchemaTables
+func createPerfSchemaTable(meta *model.TableInfo) *perfSchemaTable {
 	columns := make([]*table.Column, 0, len(meta.Columns))
 	for _, colInfo := range meta.Columns {
 		col := table.ToColumn(colInfo)
@@ -40,9 +39,6 @@ func createPerfSchemaTable(tableName string, meta *model.TableInfo) *perfSchemaT
 	t := &perfSchemaTable{
 		meta: meta,
 		cols: columns,
-	}
-	if tableName == tableGlobalStatus {
-		t.globalScope = true
 	}
 	return t
 }
@@ -174,7 +170,7 @@ func (vt *perfSchemaTable) Type() table.Type {
 	return table.VirtualTable
 }
 
-// getRows implements the interface of VirtualDataSource.
+// getRows returns empty row for performance schema.
 func (vt *perfSchemaTable) getRows(ctx sessionctx.Context) ([][]types.Datum, error) {
 	return nil, nil
 }

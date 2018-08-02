@@ -37,7 +37,7 @@ func (*testSuite) TestPerfSchema(c *C) {
 		c.Assert(tb, NotNil)
 		meta, ok := ps.GetTableMeta(tableName)
 		c.Assert(ok, IsTrue)
-		_, err := createPerfSchemaTable(tableName, meta).getRows(mock.NewContext())
+		_, err := createPerfSchemaTable(meta).getRows(mock.NewContext())
 		c.Assert(err, IsNil)
 	}
 }

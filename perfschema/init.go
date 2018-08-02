@@ -206,7 +206,7 @@ func (ps *perfSchema) buildTables() {
 		for _, c := range meta.Columns {
 			c.ID = autoid.GenLocalSchemaID()
 		}
-		ps.mTables[name] = createPerfSchemaTable(name, meta)
+		ps.mTables[name] = createPerfSchemaTable(meta)
 	}
 	ps.dbInfo = &model.DBInfo{
 		ID:      dbID,
