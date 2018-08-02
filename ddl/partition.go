@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -291,7 +290,7 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.Create
 	}
 
 	// Extract the column names in table constraints to []map[string]struct{}.
-	consColNames := extractConstraintsColumnNames(tblInfo, constraints)
+	consColNames := extractConstraintsColumnNames(constraints)
 
 	// Parse partitioning key, extract the column names in the partitioning key to slice.
 	buf := new(bytes.Buffer)
@@ -318,23 +317,14 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.Create
 }
 
 // extractConstraintsColumnNames extract the column names in table constraints to []map[string]struct{}.
-func extractConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constraint) []map[string]struct{} {
+func extractConstraintsColumnNames(cons []*ast.Constraint) []map[string]struct{} {
 	var constraints []map[string]struct{}
 	for _, v := range cons {
 		if v.Tp == ast.ConstraintUniq {
-			multipleKeys := make(map[string]struct{})
 			uniKeys := make(map[string]struct{})
 			for i, key := range v.Keys {
-				if len(v.Keys) > 1 {
-					multipleKeys[key.Column.Name.L] = struct{}{}
-				} else {
-					uniKeys[key.Column.Name.L] = struct{}{}
-				}
-				if i == 0 {
-					// Extract every multiple key.
-					if len(multipleKeys) != 0 {
-						constraints = append(constraints, multipleKeys)
-					}
+				uniKeys[key.Column.Name.L] = struct{}{}
+				if i == len(v.Keys) -1 {
 					// Extract every unique key.
 					if len(uniKeys) != 0 {
 						constraints = append(constraints, uniKeys)
@@ -342,17 +332,18 @@ func extractConstraintsColumnNames(tblInfo *model.TableInfo, cons []*ast.Constra
 				}
 			}
 		}
-	}
-
-	priKeys := make(map[string]struct{})
-	for _, col := range tblInfo.Cols() {
-		if mysql.HasPriKeyFlag(col.Flag) {
-			priKeys[col.Name.L] = struct{}{}
+		if v.Tp == ast.ConstraintPrimaryKey {
+			priKeys := make(map[string]struct{})
+			for j, key := range v.Keys {
+				priKeys[key.Column.Name.L] = struct{}{}
+				if j == len(v.Keys) -1 {
+					// Extract every primary key.
+					if len(priKeys) != 0 {
+						constraints = append(constraints, priKeys)
+					}
+				}
+			}
 		}
-	}
-
-	if len(priKeys) != 0 {
-		constraints = append(constraints, priKeys)
 	}
 	return constraints
 }
