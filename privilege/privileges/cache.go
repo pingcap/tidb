@@ -173,12 +173,12 @@ func (p *MySQLPrivilege) LoadUserTable(ctx sessionctx.Context) error {
 type sortedUserRecord []UserRecord
 
 func (s sortedUserRecord) Len() int {
-	return len([]UserRecord(s))
+	return len(s)
 }
 
 func (s sortedUserRecord) Less(i, j int) bool {
-	x := ([]UserRecord(s))[i]
-	y := ([]UserRecord(s))[j]
+	x := s[i]
+	y := s[j]
 
 	// Compare two item by user's host first.
 	c1 := compareHost(x.Host, y.Host)
@@ -243,8 +243,7 @@ func compareHost(x, y string) int {
 }
 
 func (s sortedUserRecord) Swap(i, j int) {
-	s1 := []UserRecord(s)
-	s1[i], s1[j] = s1[j], s1[i]
+	s[i], s[j] = s[j], s[i]
 }
 
 // SortUserTable sorts p.User in the MySQLPrivilege struct.
