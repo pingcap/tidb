@@ -761,6 +761,33 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testEvaluatorSuite) TestSpaceSig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeLonglong},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	space := &builtinSpaceSig{base, 1000}
+	input := chunk.NewChunkWithCapacity(colTypes, 10)
+	input.AppendInt64(0, 6)
+	input.AppendInt64(0, 1001)
+	res, isNull, err := space.evalString(input.GetRow(0))
+	c.Assert(res, Equals, "      ")
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
+	res, isNull, err = space.evalString(input.GetRow(1))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 1)
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+}
+
 func (s *testEvaluatorSuite) TestLocate(c *C) {
 	// 1. Test LOCATE without binary input.
 	defer testleak.AfterTest(c)()
