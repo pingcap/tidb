@@ -1280,7 +1280,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 		},
 	}
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
-		BucketSize: MaxBucketSize,
+		BucketSize: maxBucketSize,
 		NumColumns: int32(len(task.IndexInfo.Columns)),
 	}
 	depth := int32(defaultCMSketchDepth)
@@ -1316,7 +1316,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 	depth := int32(defaultCMSketchDepth)
 	width := int32(defaultCMSketchWidth)
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
-		BucketSize:    MaxBucketSize,
+		BucketSize:    maxBucketSize,
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
 		ColumnsInfo:   model.ColumnsToProto(cols, task.TableInfo.PKIsHandle),

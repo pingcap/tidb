@@ -41,8 +41,7 @@ type AnalyzeExec struct {
 	tasks []*analyzeTask
 }
 
-// MaxBucketSize is the maximum number of bucket that a histogram could contain.
-var MaxBucketSize = int64(256)
+var maxBucketSize = int64(256)
 
 const (
 	maxSampleSize        = 10000
@@ -195,7 +194,7 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), int(MaxBucketSize))
+		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), int(maxBucketSize))
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -324,7 +323,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		}
 		sc := e.ctx.GetSessionVars().StmtCtx
 		if e.pkInfo != nil {
-			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), int(MaxBucketSize))
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), int(maxBucketSize))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -350,7 +349,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 				return nil, nil, errors.Trace(err)
 			}
 		}
-		hg, err := statistics.BuildColumn(e.ctx, MaxBucketSize, col.ID, collectors[i], &col.FieldType)
+		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i], &col.FieldType)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -358,4 +357,14 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		cms = append(cms, collectors[i].CMSketch)
 	}
 	return hists, cms, nil
+}
+
+// SetMaxBucketSize sets the `maxBucketSize`.
+func SetMaxBucketSize(size int64) {
+	maxBucketSize = size
+}
+
+// GetMaxBucketSize gets the `maxBucketSize`.
+func GetMaxBucketSize() int64 {
+	return maxBucketSize
 }
