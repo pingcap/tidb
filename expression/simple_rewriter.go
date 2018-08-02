@@ -65,7 +65,7 @@ func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Colum
 				TblName:     sr.tbl.Name,
 				RetType:     &col.FieldType,
 				ID:          col.ID,
-				Position:    sr.ctx.GetSessionVars().AllocPlanColumnID(),
+				UniqueID:    sr.ctx.GetSessionVars().AllocPlanColumnID(),
 				Index:       i,
 			}, nil
 		}

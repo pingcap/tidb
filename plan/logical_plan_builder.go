@@ -106,7 +106,7 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 			plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
 			schema4Agg.Append(&expression.Column{
 				ColName:     model.NewCIStr(fmt.Sprintf("%d_col_%d", plan4Agg.id, position)),
-				Position:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+				UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
 				IsAggOrSubq: true,
 				RetType:     newFunc.RetTp,
 			})
@@ -554,7 +554,7 @@ func (b *planBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 		colName = b.buildProjectionFieldNameFromExpressions(field)
 	}
 	return &expression.Column{
-		Position:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
 		TblName:     tblName,
 		OrigTblName: origTblName,
 		ColName:     colName,
@@ -668,7 +668,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
 			if childID == 0 {
 				for _, col := range unionSchema.Columns {
-					col.Position = b.ctx.GetSessionVars().AllocPlanColumnID()
+					col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 				}
 			}
 			proj.SetChildren(child)
@@ -1717,7 +1717,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		proj.SetChildren(p)
 		schema := expression.NewSchema(p.Schema().Clone().Columns[:oldLen]...)
 		for _, col := range schema.Columns {
-			col.Position = b.ctx.GetSessionVars().AllocPlanColumnID()
+			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
 		}
 		proj.SetSchema(schema)
 		return proj
@@ -1737,7 +1737,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 		TblName:  ds.tableInfo.Name,
 		ColName:  model.ExtraHandleName,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		Position: ds.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 	}
 }
@@ -1819,7 +1819,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	for _, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		newCol := &expression.Column{
-			Position: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			DBName:   dbName,
 			TblName:  tableInfo.Name,
 			ColName:  col.Name,
@@ -1963,7 +1963,7 @@ out:
 	newCol := &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeTiny),
 		ColName:  model.NewCIStr("exists_col"),
-		Position: b.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 	}
 	exists.SetSchema(expression.NewSchema(newCol))
 	return exists
@@ -1988,7 +1988,7 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 			ColName:     model.NewCIStr(fmt.Sprintf("%d_aux_0", joinPlan.id)),
 			RetType:     types.NewFieldType(mysql.TypeTiny),
 			IsAggOrSubq: true,
-			Position:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
 		})
 		joinPlan.SetSchema(newSchema)
 		if not {

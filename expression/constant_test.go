@@ -33,7 +33,7 @@ type testExpressionSuite struct{}
 
 func newColumn(id int) *Column {
 	return &Column{
-		Position: id,
+		UniqueID: id,
 		ColName:  model.NewCIStr(fmt.Sprint(id)),
 		TblName:  model.NewCIStr("t"),
 		DBName:   model.NewCIStr("test"),

@@ -417,7 +417,7 @@ func colInfoToColumn(db model.CIStr, tblName model.CIStr, asName model.CIStr, co
 		TblName:     tblName,
 		RetType:     &col.FieldType,
 		ID:          col.ID,
-		Position:    col.Offset,
+		UniqueID:    col.Offset,
 		Index:       idx,
 	}
 }

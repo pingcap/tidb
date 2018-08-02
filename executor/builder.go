@@ -1236,13 +1236,74 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
+	columns2Handle := buildColumns2Handle(v.Schema(), tblID2table)
 	updateExec := &UpdateExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
-		SelectExec:   selExec,
-		OrderedList:  v.OrderedList,
-		tblID2table:  tblID2table,
+		baseExecutor:   newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
+		SelectExec:     selExec,
+		OrderedList:    v.OrderedList,
+		tblID2table:    tblID2table,
+		columns2Handle: columns2Handle,
 	}
 	return updateExec
+}
+
+// cols2Handle represents an mapper from column index to handle index.
+type cols2Handle struct {
+	// start/end represent the ordinal range [start, end) of the consecutive columns.
+	start, end int32
+	// handleOrdinal represents the ordinal of the handle column.
+	handleOrdinal int32
+}
+
+// cols2HandleSlice attaches the methods of sort.Interface to []cols2Handle sorting in increasing order.
+type cols2HandleSlice []cols2Handle
+
+// Len implements sort.Interface#Len.
+func (c cols2HandleSlice) Len() int {
+	return len(c)
+}
+
+// Swap implements sort.Interface#Swap.
+func (c cols2HandleSlice) Swap(i, j int) {
+	c[i], c[j] = c[j], c[i]
+}
+
+// Less implements sort.Interface#Less.
+func (c cols2HandleSlice) Less(i, j int) bool {
+	return c[i].start < c[j].start
+}
+
+// findHandle finds the ordinal of the corresponding handle column.
+func (c cols2HandleSlice) findHandle(ordinal int32) (int32, bool) {
+	if c == nil || len(c) == 0 {
+		return 0, false
+	}
+	// find the smallest index of the range that its start great than ordinal.
+	// @see https://godoc.org/sort#Search
+	rangeBehindOrdinal := sort.Search(len(c), func(i int) bool { return c[i].start > ordinal })
+	if rangeBehindOrdinal == 0 {
+		return 0, false
+	}
+	return c[rangeBehindOrdinal-1].handleOrdinal, true
+}
+
+// buildColumns2Handle builds columns to handle mapping.
+func buildColumns2Handle(schema *expression.Schema, tblID2Table map[int64]table.Table) cols2HandleSlice {
+	if len(schema.TblID2Handle) < 2 {
+		// skip buildColumns2Handle mapping if there are only single table.
+		return nil
+	}
+	var cols2Handles cols2HandleSlice
+	for tblID, handleCols := range schema.TblID2Handle {
+		tbl := tblID2Table[tblID]
+		for _, handleCol := range handleCols {
+			offset := getTableOffset(schema, handleCol)
+			end := offset + len(tbl.WritableCols())
+			cols2Handles = append(cols2Handles, cols2Handle{int32(offset), int32(end), int32(handleCol.Index)})
+		}
+	}
+	sort.Sort(cols2Handles)
+	return cols2Handles
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
@@ -1269,7 +1330,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 	_, offset := zone(b.ctx)
 	e := &AnalyzeIndexExec{
 		ctx:         b.ctx,
-		tblInfo:     task.TableInfo,
+		physicalID:  task.PhysicalID,
 		idxInfo:     task.IndexInfo,
 		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -1301,7 +1362,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 	_, offset := zone(b.ctx)
 	e := &AnalyzeColumnsExec{
 		ctx:         b.ctx,
-		tblInfo:     task.TableInfo,
+		physicalID:  task.PhysicalID,
 		colsInfo:    task.ColsInfo,
 		pkInfo:      task.PKInfo,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency,
@@ -1319,7 +1380,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		BucketSize:    maxBucketSize,
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
-		ColumnsInfo:   model.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+		ColumnsInfo:   model.ColumnsToProto(cols, task.PKInfo != nil),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
