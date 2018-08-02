@@ -299,8 +299,8 @@ type DataSource struct {
 	// relevantIndices means the indices match the push down conditions
 	relevantIndices []bool
 
-	// statsAfterSelect is the statsInfo for dataSource and selection.
-	statsAfterSelect *statsInfo
+	// statsAfterSelect is the StatsInfo for dataSource and selection.
+	statsAfterSelect *StatsInfo
 
 	statisticTable *statistics.Table
 
