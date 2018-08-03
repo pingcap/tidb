@@ -683,9 +683,8 @@ func convertFloat(val []byte, f32 bool) (*Constant, error) {
 }
 
 func convertDecimal(val []byte) (*Constant, error) {
-	_, dec, err := codec.DecodeDecimal(val)
+	_, dec, precision, frac, err := codec.DecodeDecimal(val)
 	var d types.Datum
-	precision, frac := dec.PrecisionAndFrac()
 	d.SetMysqlDecimal(dec)
 	d.SetLength(precision)
 	d.SetFrac(frac)

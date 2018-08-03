@@ -76,6 +76,7 @@ var (
 	ErrWrongValueCountOnRow        = terror.ClassExecutor.New(codeWrongValueCountOnRow, "Column count doesn't match value count at row %d")
 	ErrPasswordFormat              = terror.ClassExecutor.New(codePasswordFormat, "The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.")
 	ErrCantChangeTxCharacteristics = terror.ClassExecutor.New(codeErrCantChangeTxCharacteristics, "Transaction characteristics can't be changed while a transaction is in progress")
+	ErrPsManyParam                 = terror.ClassExecutor.New(mysql.ErrPsManyParam, mysql.MySQLErrName[mysql.ErrPsManyParam])
 )
 
 // Error codes.
@@ -91,6 +92,7 @@ const (
 	codeWrongValueCountOnRow           terror.ErrCode = 1136 // MySQL error code
 	codePasswordFormat                 terror.ErrCode = 1827 // MySQL error code
 	codeErrCantChangeTxCharacteristics terror.ErrCode = 1568
+	codeErrPsManyParam                 terror.ErrCode = 1390
 )
 
 type baseExecutor struct {
@@ -611,6 +613,7 @@ func init() {
 		codeWrongValueCountOnRow:           mysql.ErrWrongValueCountOnRow,
 		codePasswordFormat:                 mysql.ErrPasswordFormat,
 		codeErrCantChangeTxCharacteristics: mysql.ErrCantChangeTxCharacteristics,
+		codeErrPsManyParam:                 mysql.ErrPsManyParam,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }

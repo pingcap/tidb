@@ -234,7 +234,7 @@ func (s *testSuite) TestScan(c *C) {
 	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(2), int64(20), int64(21))}
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	records, _, err := ScanSnapshotTableRecord(s.store, ver, tb, int64(1), 1)
+	records, _, err := ScanSnapshotTableRecord(se, s.store, ver, tb, int64(1), 1)
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record1})
 
@@ -245,14 +245,14 @@ func (s *testSuite) TestScan(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
-	records, nextHandle, err := ScanTableRecord(txn, tb, int64(1), 1)
+	records, nextHandle, err := ScanTableRecord(se, txn, tb, int64(1), 1)
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record1})
-	records, nextHandle, err = ScanTableRecord(txn, tb, nextHandle, 1)
+	records, nextHandle, err = ScanTableRecord(se, txn, tb, nextHandle, 1)
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record2})
 	startHandle := nextHandle
-	records, nextHandle, err = ScanTableRecord(txn, tb, startHandle, 1)
+	records, nextHandle, err = ScanTableRecord(se, txn, tb, startHandle, 1)
 	c.Assert(err, IsNil)
 	c.Assert(records, IsNil)
 	c.Assert(nextHandle, Equals, startHandle)
@@ -296,45 +296,45 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
-	err = CompareTableRecord(txn, tb, rs, true)
+	err = CompareTableRecord(s.ctx, txn, tb, rs, true)
 	c.Assert(err, IsNil)
 
 	records := []*RecordData{
 		{Handle: rs[0].Handle},
 		{Handle: rs[1].Handle},
 	}
-	err = CompareTableRecord(txn, tb, records, false)
+	err = CompareTableRecord(s.ctx, txn, tb, records, false)
 	c.Assert(err, IsNil)
 
 	record := &RecordData{Handle: rs[1].Handle, Values: types.MakeDatums(int64(30))}
-	err = CompareTableRecord(txn, tb, []*RecordData{rs[0], record}, true)
+	err = CompareTableRecord(s.ctx, txn, tb, []*RecordData{rs[0], record}, true)
 	c.Assert(err, NotNil)
 	diffMsg := newDiffRetError("data", record, rs[1])
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	record.Handle = 3
-	err = CompareTableRecord(txn, tb, []*RecordData{rs[0], record, rs[1]}, true)
+	err = CompareTableRecord(s.ctx, txn, tb, []*RecordData{rs[0], record, rs[1]}, true)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", record, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CompareTableRecord(txn, tb, []*RecordData{rs[0], rs[1], record}, true)
+	err = CompareTableRecord(s.ctx, txn, tb, []*RecordData{rs[0], rs[1], record}, true)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", record, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CompareTableRecord(txn, tb, []*RecordData{rs[0]}, true)
+	err = CompareTableRecord(s.ctx, txn, tb, []*RecordData{rs[0]}, true)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", nil, rs[1])
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CompareTableRecord(txn, tb, nil, true)
+	err = CompareTableRecord(s.ctx, txn, tb, nil, true)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", nil, rs[0])
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	errRs := append(rs, &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(3))})
-	err = CompareTableRecord(txn, tb, errRs, false)
+	err = CompareTableRecord(s.ctx, txn, tb, errRs, false)
 	c.Assert(err.Error(), DeepEquals, "[admin:2]handle:1 is repeated in data")
 }
 
