@@ -2164,8 +2164,7 @@ func (s *testDBSuite) TestCheckColumnCantHaveDefaultValue(c *C) {
 	s.tk.MustExec("drop table if exists text_default_text;")
 	s.tk.MustExec("create table text_default_text(c1 text not null default '');")
 	s.tk.MustQuery(`show create table text_default_text`).Check(testutil.RowsWithSep("|",
-		""+
-			"text_default_text CREATE TABLE `text_default_text` (\n"+
+		"text_default_text CREATE TABLE `text_default_text` (\n"+
 			"  `c1` text NOT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	))
@@ -2173,8 +2172,7 @@ func (s *testDBSuite) TestCheckColumnCantHaveDefaultValue(c *C) {
 	s.tk.MustExec("drop table if exists text_default_blob;")
 	s.tk.MustExec("create table text_default_blob(c1 blob not null default '');")
 	s.tk.MustQuery(`show create table text_default_blob`).Check(testutil.RowsWithSep("|",
-		""+
-			"text_default_blob CREATE TABLE `text_default_blob` (\n"+
+		"text_default_blob CREATE TABLE `text_default_blob` (\n"+
 			"  `c1` blob NOT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	))
@@ -2182,8 +2180,7 @@ func (s *testDBSuite) TestCheckColumnCantHaveDefaultValue(c *C) {
 	s.tk.MustExec("drop table if exists text_default_json;")
 	s.tk.MustExec("create table text_default_json(c1 json not null default '');")
 	s.tk.MustQuery(`show create table text_default_json`).Check(testutil.RowsWithSep("|",
-		""+
-			"text_default_json CREATE TABLE `text_default_json` (\n"+
+		"text_default_json CREATE TABLE `text_default_json` (\n"+
 			"  `c1` json NOT NULL DEFAULT 'null'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	))

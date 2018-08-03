@@ -252,22 +252,24 @@ func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 }
 
 // checkColumnCantHaveDefaultValue checks the column can have value as default or not.
-// Now, TEXT/BLOB/JSON can't have not null value as default.
+// In non-strict SQL mode, if the default value of the column is an empty string, the default value can be ignored.
+// In strict SQL mode, TEXT/BLOB/JSON can't have not null default values.
 func checkColumnCantHaveDefaultValue(ctx sessionctx.Context, col *table.Column, value interface{}) (bool, error) {
 	hasDefaultValue := true
 	if value != nil && (col.Tp == mysql.TypeJSON ||
 		col.Tp == mysql.TypeTinyBlob || col.Tp == mysql.TypeMediumBlob ||
 		col.Tp == mysql.TypeLongBlob || col.Tp == mysql.TypeBlob) {
+		// In non-strict SQL mode.
 		if !ctx.GetSessionVars().SQLMode.HasStrictMode() && value == "" {
-			// In non-strict SQL mode, if the default value of the column is an empty string, can ignore it.
-			if col.Tp == mysql.TypeBlob || col.Tp == mysql.TypeLongBlob && value == "" {
+			if col.Tp == mysql.TypeBlob || col.Tp == mysql.TypeLongBlob {
+				// The TEXT/BLOB default value can be ignored.
 				hasDefaultValue = false
 			}
 			sc := ctx.GetSessionVars().StmtCtx
 			sc.AppendWarning(errBlobCantHaveDefault.GenByArgs(col.Name.O))
 			return hasDefaultValue, nil
 		}
-		// TEXT/BLOB/JSON can't have not null default values.
+		// In strict SQL mode.
 		return hasDefaultValue, errBlobCantHaveDefault.GenByArgs(col.Name.O)
 	}
 	return hasDefaultValue, nil
