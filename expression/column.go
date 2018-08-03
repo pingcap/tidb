@@ -155,14 +155,16 @@ type Column struct {
 	OrigTblName model.CIStr
 	TblName     model.CIStr
 	RetType     *types.FieldType
-	ID          int64
-	// Position is the unique id of this column.
-	Position int
+	// This id is used to specify whether this column is ExtraHandleColumn or to access histogram.
+	// We'll try to remove it in the future.
+	ID int64
+	// UniqueID is the unique id of this column.
+	UniqueID int
 	// IsAggOrSubq means if this column is referenced to a Aggregation column or a Subquery column.
 	// If so, this column's name will be the plain sql text.
 	IsAggOrSubq bool
 
-	// Index is only used for execution.
+	// Index is used for execution, to tell the column's position in the given row.
 	Index int
 
 	hashcode []byte
@@ -171,7 +173,7 @@ type Column struct {
 // Equal implements Expression interface.
 func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
-		return newCol.Position == col.Position
+		return newCol.UniqueID == col.UniqueID
 	}
 	return false
 }
@@ -324,7 +326,7 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	}
 	col.hashcode = make([]byte, 0, 9)
 	col.hashcode = append(col.hashcode, columnFlag)
-	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.Position))
+	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.UniqueID))
 	return col.hashcode
 }
 
