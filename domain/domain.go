@@ -623,7 +623,7 @@ func (do *Domain) newStatsOwner() owner.Manager {
 	// TODO: Need to do something when err is not nil.
 	err := statsOwner.CampaignOwner(cancelCtx)
 	if err != nil {
-		log.Warnf("[stats] campaign owner fail:", errors.ErrorStack(err))
+		log.Warnf("[stats] campaign owner fail: %s", errors.ErrorStack(err))
 	}
 	return statsOwner
 }

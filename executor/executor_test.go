@@ -1312,7 +1312,7 @@ func (s *testSuite) TestMultiUpdate(c *C) {
 func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key, b int, c int as (a+8) virtual)`)
+	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (a+8) virtual)`)
 	tk.MustExec(`CREATE TABLE test_gc_write_1 (a int primary key, b int, c int)`)
 
 	tests := []struct {
@@ -1336,6 +1336,7 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 		// Can insert without generated columns.
 		{`insert into test_gc_write (a, b) values (1, 1)`, 0},
 		{`insert into test_gc_write set a = 2, b = 2`, 0},
+		{`insert into test_gc_write (b) select c from test_gc_write`, 0},
 		// Can update without generated columns.
 		{`update test_gc_write set b = 2 where a = 2`, 0},
 		{`update test_gc_write t1, test_gc_write_1 t2 set t1.b = 3, t2.b = 4`, 0},
@@ -1343,13 +1344,15 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 		// But now we can't do this, just as same with MySQL 5.7:
 		{`insert into test_gc_write values (1, 1)`, mysql.ErrWrongValueCountOnRow},
 		{`insert into test_gc_write select 1, 1`, mysql.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write (c) select a, b from test_gc_write`, mysql.ErrWrongValueCountOnRow},
+		{`insert into test_gc_write (b, c) select a, b from test_gc_write`, mysql.ErrBadGeneratedColumn},
 	}
 	for _, tt := range tests {
 		_, err := tk.Exec(tt.stmt)
 		if tt.err != 0 {
-			c.Assert(err, NotNil)
+			c.Assert(err, NotNil, Commentf("sql is `%v`", tt.stmt))
 			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
-			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
+			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err), Commentf("sql is %v", tt.stmt))
 		} else {
 			c.Assert(err, IsNil)
 		}
@@ -1656,7 +1659,7 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
 
-func (s *testSuite) TestPointGet(c *C) {
+func (s *testSuite) TestIsPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(sessionctx.Context)
@@ -2938,9 +2941,116 @@ func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
 func (s *testSuite) TestIndexJoinTableDualPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists a")
 	tk.MustExec("create table a (f1 int, f2 varchar(32), primary key (f1))")
 	tk.MustExec("insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c')")
 	tk.MustQuery("select a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
 		Check(testkit.Rows("1 a"))
+}
+
+func (s *testSuite) TestUnionAutoSignedCast(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int, i int, b bigint, d double, dd decimal)")
+	tk.MustExec("create table t2 (id int, i int unsigned, b bigint unsigned, d double unsigned, dd decimal unsigned)")
+	tk.MustExec("insert into t1 values(1, -1, -1, -1.1, -1)")
+	tk.MustExec("insert into t2 values(2, 1, 1, 1.1, 1)")
+	tk.MustQuery("select * from t1 union select * from t2 order by id").
+		Check(testkit.Rows("1 -1 -1 -1.1 -1", "2 1 1 1.1 1"))
+	tk.MustQuery("select id, i, b, d, dd from t2 union select id, i, b, d, dd from t1 order by id").
+		Check(testkit.Rows("1 0 0 0 -1", "2 1 1 1.1 1"))
+	tk.MustQuery("select id, i from t2 union select id, cast(i as unsigned int) from t1 order by id").
+		Check(testkit.Rows("1 18446744073709551615", "2 1"))
+	tk.MustQuery("select dd from t2 union all select dd from t2").
+		Check(testkit.Rows("1", "1"))
+
+	tk.MustExec("drop table if exists t3,t4")
+	tk.MustExec("create table t3 (id int, v int)")
+	tk.MustExec("create table t4 (id int, v double unsigned)")
+	tk.MustExec("insert into t3 values (1, -1)")
+	tk.MustExec("insert into t4 values (2, 1)")
+	tk.MustQuery("select id, v from t3 union select id, v from t4 order by id").
+		Check(testkit.Rows("1 -1", "2 1"))
+	tk.MustQuery("select id, v from t4 union select id, v from t3 order by id").
+		Check(testkit.Rows("1 0", "2 1"))
+
+	tk.MustExec("drop table if exists t5,t6,t7")
+	tk.MustExec("create table t5 (id int, v bigint unsigned)")
+	tk.MustExec("create table t6 (id int, v decimal)")
+	tk.MustExec("create table t7 (id int, v bigint)")
+	tk.MustExec("insert into t5 values (1, 1)")
+	tk.MustExec("insert into t6 values (2, -1)")
+	tk.MustExec("insert into t7 values (3, -1)")
+	tk.MustQuery("select id, v from t5 union select id, v from t6 order by id").
+		Check(testkit.Rows("1 1", "2 -1"))
+	tk.MustQuery("select id, v from t5 union select id, v from t7 union select id, v from t6 order by id").
+		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
+}
+
+func (s *testSuite) TestUpdateJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4, t5")
+	tk.MustExec("create table t1(k int, v int)")
+	tk.MustExec("create table t2(k int, v int)")
+	tk.MustExec("create table t3(id int auto_increment, k int, v int, primary key(id))")
+	tk.MustExec("create table t4(k int, v int)")
+	tk.MustExec("create table t5(v int, k int, primary key(k))")
+	tk.MustExec("insert into t1 values (1, 1)")
+	tk.MustExec("insert into t4 values (3, 3)")
+
+	// test the normal case that update one row for a single table.
+	tk.MustExec("update t1 set v = 0 where k = 1")
+	tk.MustQuery("select k, v from t1 where k = 1").Check(testkit.Rows("1 0"))
+
+	// test the case that the table with auto_increment or none-null columns as the right table of left join.
+	tk.MustExec("update t1 left join t3 on t1.k = t3.k set t1.v = 1")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select id, k, v from t3").Check(testkit.Rows())
+
+	// test left join and the case that the right table has no matching record but has updated the right table columns.
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t1.v = t2.v, t2.v = 3")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 <nil>"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+
+	// test the case that the update operation in the left table references data in the right table while data of the right table columns is modified.
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t2.v = 3, t1.v = t2.v")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 <nil>"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+
+	// test right join and the case that the left table has no matching record but has updated the left table columns.
+	tk.MustExec("update t2 right join t1 on t2.k = t1.k set t2.v = 4, t1.v = 0")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 0"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+
+	// test the case of right join and left join at the same time.
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k right join t4 on t4.k = t2.k set t1.v = 4, t2.v = 4, t4.v = 4")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 0"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+	tk.MustQuery("select k, v from t4").Check(testkit.Rows("3 4"))
+
+	// test normal left join and the case that the right table has matching rows.
+	tk.MustExec("insert t2 values (1, 10)")
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t2.v = 11")
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows("1 11"))
+
+	// test the case of continuously joining the same table and updating the unmatching records.
+	tk.MustExec("update t1 t11 left join t2 on t11.k = t2.k left join t1 t12 on t2.v = t12.k set t12.v = 233, t11.v = 111")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 111"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows("1 11"))
+
+	// test the left join case that the left table has records but all records are null.
+	tk.MustExec("delete from t1")
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t1 values (null, null)")
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t1.v = 1")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("<nil> 1"))
+
+	// test the case that the right table of left join has an primary key.
+	tk.MustExec("insert t5 values(0, 0)")
+	tk.MustExec("update t1 left join t5 on t1.k = t5.k set t1.v = 2")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("<nil> 2"))
+	tk.MustQuery("select k, v from t5").Check(testkit.Rows("0 0"))
+
 }

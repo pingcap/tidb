@@ -596,7 +596,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	}
 
 	// Feedback from limit executor may not be accurate.
-	testKit.MustQuery("select * from t where t.a <= 2 limit 1")
+	testKit.MustQuery("select * from t where t.a <= 5 limit 1")
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	feedback := h.GetQueryFeedback()
 	c.Assert(len(feedback), Equals, 0)
@@ -619,6 +619,16 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		feedback := h.GetQueryFeedback()
 		c.Assert(len(feedback), Equals, 0)
 	}
+
+	// Test that the outdated feedback won't cause panic.
+	statistics.FeedbackProbability = 1
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+	}
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	testKit.MustExec("drop table t")
+	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
 }
 
 func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {
@@ -693,7 +703,7 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	tbl := h.GetTableStats(tblInfo)
 
 	testKit.MustQuery("select * from t use index(idx) where b <= 5")
-	testKit.MustQuery("select * from t use index(idx) where a > 1")
+	testKit.MustQuery("select * from t where a > 1")
 	testKit.MustQuery("select * from t use index(idx) where b = 5")
 
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
@@ -702,7 +712,7 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
 		"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n"+
 		"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n"+
-		"num: 3\tlower_bound: 4\tupper_bound: 4\trepeats: 1")
+		"num: 4\tlower_bound: 3\tupper_bound: 9223372036854775807\trepeats: 0")
 
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	low, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
@@ -711,6 +721,9 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint32(2))
 
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
-		"num: 2\tlower_bound: NULL\tupper_bound: 2\trepeats: 0\n"+
-		"num: 4\tlower_bound: 3\tupper_bound: \trepeats: 0")
+		"num: 2\tlower_bound: \tupper_bound: 2\trepeats: 0\n"+
+		"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0")
+
+	// Test that it won't cause panic after update.
+	testKit.MustQuery("select * from t use index(idx) where b > 0")
 }

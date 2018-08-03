@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
@@ -428,9 +429,9 @@ func (e *selectionExec) Counts() []int64 {
 }
 
 // evalBool evaluates expression to a boolean value.
-func evalBool(exprs []expression.Expression, row types.DatumRow, ctx *stmtctx.StatementContext) (bool, error) {
+func evalBool(exprs []expression.Expression, row []types.Datum, ctx *stmtctx.StatementContext) (bool, error) {
 	for _, expr := range exprs {
-		data, err := expr.Eval(row)
+		data, err := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -482,7 +483,7 @@ type topNExec struct {
 	evalCtx           *evalContext
 	relatedColOffsets []int
 	orderByExprs      []expression.Expression
-	row               types.DatumRow
+	row               []types.Datum
 	cursor            int
 	executed          bool
 
@@ -558,7 +559,7 @@ func (e *topNExec) evalTopN(value [][]byte) error {
 		return errors.Trace(err)
 	}
 	for i, expr := range e.orderByExprs {
-		newRow.key[i], err = expr.Eval(e.row)
+		newRow.key[i], err = expr.Eval(chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -178,7 +178,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test index filter condition push down.
 		{
 			sql:  "select * from t use index(e_d_c_str_prefix) where t.c_str = 'abcdefghijk' and t.d_str = 'd' and t.e_str = 'e'",
-			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[\"e\" \"d\" \"[97 98 99 100 101 102 103 104 105 106]\",\"e\" \"d\" \"[97 98 99 100 101 102 103 104 105 106]\"]], Table(t)->Sel([eq(test.t.c_str, abcdefghijk)]))",
+			best: "IndexLookUp(Index(t.e_d_c_str_prefix)[[\"e\" \"d\" \"abcdefghij\",\"e\" \"d\" \"abcdefghij\"]], Table(t)->Sel([eq(test.t.c_str, abcdefghijk)]))",
 		},
 		{
 			sql:  "select * from t use index(e_d_c_str_prefix) where t.e_str = b'1110000'",
@@ -620,7 +620,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		},
 		// Test simple insert.
 		{
-			sql:  "insert into t values(0,0,0,0,0,0,0)",
+			sql:  "insert into t (a, b, c, e, f, g) values(0,0,0,0,0,0)",
 			best: "Insert",
 		},
 		// Test dual.
@@ -1118,10 +1118,10 @@ func (s *testPlanSuite) TestRefine(c *C) {
 			sql:  `select a from t where c like '1'`,
 			best: "TableReader(Table(t))->Sel([like(cast(test.t.c), 1, 92)])->Projection",
 		},
-		//{
-		//	sql:  `select a from t where c = 1.9 and d > 3`,
-		//	best: "Index(t.c_d_e)[]->Projection",
-		//},
+		{
+			sql:  `select a from t where c = 1.9 and d > 3`,
+			best: "Dual->Projection",
+		},
 		{
 			sql:  `select a from t where c < 1.1`,
 			best: "IndexReader(Index(t.c_d_e)[[-inf,2)])->Projection",
@@ -1140,7 +1140,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  `select a from t where c = 123456789098765432101234`,
-			best: "TableReader(Table(t))->Sel([eq(cast(test.t.c), 123456789098765432101234)])->Projection",
+			best: "Dual->Projection",
 		},
 		{
 			sql:  `select a from t where c = 'hanfei'`,

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -82,7 +83,7 @@ func (c *jsonTypeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	return sig, nil
 }
 
-func (b *builtinJSONTypeSig) evalString(row types.Row) (res string, isNull bool, err error) {
+func (b *builtinJSONTypeSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	var j json.BinaryJSON
 	j, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
@@ -120,7 +121,7 @@ func (c *jsonExtractFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	return sig, nil
 }
 
-func (b *builtinJSONExtractSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONExtractSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return
@@ -170,7 +171,7 @@ func (c *jsonUnquoteFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	return sig, nil
 }
 
-func (b *builtinJSONUnquoteSig) evalString(row types.Row) (res string, isNull bool, err error) {
+func (b *builtinJSONUnquoteSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	var j json.BinaryJSON
 	j, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
@@ -215,7 +216,7 @@ func (c *jsonSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	return sig, nil
 }
 
-func (b *builtinJSONSetSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONSetSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = jsonModify(b.ctx, b.args, row, json.ModifySet)
 	return res, isNull, errors.Trace(err)
 }
@@ -255,7 +256,7 @@ func (c *jsonInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return sig, nil
 }
 
-func (b *builtinJSONInsertSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONInsertSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = jsonModify(b.ctx, b.args, row, json.ModifyInsert)
 	return res, isNull, errors.Trace(err)
 }
@@ -295,7 +296,7 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	return sig, nil
 }
 
-func (b *builtinJSONReplaceSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONReplaceSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = jsonModify(b.ctx, b.args, row, json.ModifyReplace)
 	return res, isNull, errors.Trace(err)
 }
@@ -329,7 +330,7 @@ func (c *jsonRemoveFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return sig, nil
 }
 
-func (b *builtinJSONRemoveSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONRemoveSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
@@ -383,7 +384,7 @@ func (c *jsonMergeFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
-func (b *builtinJSONMergeSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONMergeSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	values := make([]json.BinaryJSON, 0, len(b.args))
 	for _, arg := range b.args {
 		var value json.BinaryJSON
@@ -431,7 +432,7 @@ func (c *jsonObjectFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	return sig, nil
 }
 
-func (b *builtinJSONObjectSig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONObjectSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	if len(b.args)&1 == 1 {
 		err = ErrIncorrectParameterCount.GenByArgs(ast.JSONObject)
 		return res, true, errors.Trace(err)
@@ -494,7 +495,7 @@ func (c *jsonArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	return sig, nil
 }
 
-func (b *builtinJSONArraySig) evalJSON(row types.Row) (res json.BinaryJSON, isNull bool, err error) {
+func (b *builtinJSONArraySig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	jsons := make([]interface{}, 0, len(b.args))
 	for _, arg := range b.args {
 		j, isNull, err := arg.EvalJSON(b.ctx, row)
@@ -509,7 +510,7 @@ func (b *builtinJSONArraySig) evalJSON(row types.Row) (res json.BinaryJSON, isNu
 	return json.CreateBinary(jsons), false, nil
 }
 
-func jsonModify(ctx sessionctx.Context, args []Expression, row types.Row, mt json.ModifyType) (res json.BinaryJSON, isNull bool, err error) {
+func jsonModify(ctx sessionctx.Context, args []Expression, row chunk.Row, mt json.ModifyType) (res json.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
