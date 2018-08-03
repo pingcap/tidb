@@ -517,7 +517,7 @@ func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Colum
 	key := t.RecordKey(h)
 	value, err := ctx.Txn().Get(key)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, errors.Annotatef(err, "tableID:%d key:%x", t.ID, key)
 	}
 	v, _, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
 	if err != nil {
