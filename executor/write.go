@@ -1838,7 +1838,7 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.Dat
 		}
 		oldRow, err1 := e.Table.Row(e.ctx, h)
 		if err1 != nil {
-			return nil, errors.Trace(err1)
+			return nil, errors.Annotatef(err1, "handle %d", h)
 		}
 		rowUnchanged, err1 := types.EqualDatums(sc, oldRow, row)
 		if err1 != nil {

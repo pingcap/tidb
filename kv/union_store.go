@@ -115,7 +115,6 @@ func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	if lmb.mb == nil {
 		lmb.mb = NewMemDbBuffer(lmb.cap)
 	}
-
 	return lmb.mb.Set(key, value)
 }
 

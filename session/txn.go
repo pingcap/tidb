@@ -25,6 +25,7 @@ import (
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util"
 )
 
 // TxnState wraps kv.Transaction to provide a new kv.Transaction.
@@ -156,6 +157,7 @@ func (st *TxnState) Set(k kv.Key, v []byte) error {
 
 // Delete overrides the Transaction interface.
 func (st *TxnState) Delete(k kv.Key) error {
+	log.Infof("TxnState Delete %x stack %s", k, util.GetStack())
 	return st.buf.Delete(k)
 }
 

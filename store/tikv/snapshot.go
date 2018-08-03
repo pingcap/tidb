@@ -258,6 +258,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			return nil, errors.Trace(ErrBodyMissing)
 		}
 		val := cmdGetResp.GetValue()
+		log.Infof("snapshot KV Get key:%x val:%x", k, val)
 		if keyErr := cmdGetResp.GetError(); keyErr != nil {
 			lock, err := extractLockFromKeyErr(keyErr)
 			if err != nil {
