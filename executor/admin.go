@@ -462,7 +462,7 @@ type CleanupIndexExec struct {
 	idxColFieldTypes []*types.FieldType
 	idxChunk         *chunk.Chunk
 
-	idxValues   map[int64][]types.Datum
+	idxValues   map[int64][][]types.Datum
 	batchSize   uint64
 	batchKeys   []kv.Key
 	idxValsBufs [][]types.Datum
@@ -499,14 +499,15 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, e.idxValues[handle],
-				handle); err != nil {
-				return errors.Trace(err)
-			}
-			e.removeCnt++
-			if e.removeCnt%e.batchSize == 0 {
-				log.Infof("[cleaning up dangling index] table: %v, index: %v, count: %v.",
-					e.table.Meta().Name.String(), e.index.Meta().Name.String(), e.removeCnt)
+			for _, idxVals := range e.idxValues[handle] {
+				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, idxVals, handle); err != nil {
+					return errors.Trace(err)
+				}
+				e.removeCnt++
+				if e.removeCnt%e.batchSize == 0 {
+					log.Infof("[cleaning up dangling index] table: %v, index: %v, count: %v.",
+						e.table.Meta().Name.String(), e.index.Meta().Name.String(), e.removeCnt)
+				}
 			}
 		}
 	}
@@ -549,7 +550,7 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 			handle := row.GetInt64(len(e.idxCols) - 1)
 			idxVals := extractIdxVals(row, e.idxValsBufs[e.scanRowCnt], e.idxColFieldTypes)
 			e.idxValsBufs[e.scanRowCnt] = idxVals
-			e.idxValues[handle] = idxVals
+			e.idxValues[handle] = append(e.idxValues[handle], idxVals)
 			idxKey, _, err := e.index.GenIndexKey(sc, idxVals, handle, nil)
 			if err != nil {
 				return errors.Trace(err)
@@ -631,7 +632,7 @@ func (e *CleanupIndexExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	e.idxChunk = chunk.NewChunk(e.getIdxColTypes())
-	e.idxValues = make(map[int64][]types.Datum, e.batchSize)
+	e.idxValues = make(map[int64][][]types.Datum, e.batchSize)
 	e.batchKeys = make([]kv.Key, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
 	sc := e.ctx.GetSessionVars().StmtCtx
