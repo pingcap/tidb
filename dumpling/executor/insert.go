@@ -47,7 +47,7 @@ func (e *InsertExec) insertOneRow(row []types.Datum) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if !e.ctx.GetSessionVars().ImportingData {
+	if !e.ctx.GetSessionVars().LightningMode {
 		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 	}
 	e.batchInsertRowCount++
@@ -60,7 +60,7 @@ func (e *InsertExec) exec(rows [][]types.Datum) error {
 	defer sessVars.CleanBuffers()
 	ignoreErr := sessVars.StmtCtx.DupKeyAsWarning
 
-	if !sessVars.ImportingData {
+	if !sessVars.LightningMode {
 		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
 	}
 
@@ -107,7 +107,7 @@ func (e *InsertExec) checkBatchLimit() error {
 			return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
 		}
 		e.batchInsertRowCount = 0
-		if !sessVars.ImportingData {
+		if !sessVars.LightningMode {
 			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
 		}
 	}
