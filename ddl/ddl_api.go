@@ -251,10 +251,10 @@ func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	return col, cts, nil
 }
 
-// checkColumnCantHaveDefaultValue checks the column can have value as default or not.
+// checkColumnDefaultValue checks the default value of the column.
 // In non-strict SQL mode, if the default value of the column is an empty string, the default value can be ignored.
 // In strict SQL mode, TEXT/BLOB/JSON can't have not null default values.
-func checkColumnCantHaveDefaultValue(ctx sessionctx.Context, col *table.Column, value interface{}) (bool, error) {
+func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value interface{}) (bool, interface{}, error) {
 	hasDefaultValue := true
 	if value != nil && (col.Tp == mysql.TypeJSON ||
 		col.Tp == mysql.TypeTinyBlob || col.Tp == mysql.TypeMediumBlob ||
@@ -265,14 +265,18 @@ func checkColumnCantHaveDefaultValue(ctx sessionctx.Context, col *table.Column, 
 				// The TEXT/BLOB default value can be ignored.
 				hasDefaultValue = false
 			}
+			// In non-strict SQL mode, if the column type is json and the default value is null, it is initialized to an empty array.
+			if col.Tp == mysql.TypeJSON {
+				value = `null`
+			}
 			sc := ctx.GetSessionVars().StmtCtx
 			sc.AppendWarning(errBlobCantHaveDefault.GenByArgs(col.Name.O))
-			return hasDefaultValue, nil
+			return hasDefaultValue, value, nil
 		}
 		// In strict SQL mode.
-		return hasDefaultValue, errBlobCantHaveDefault.GenByArgs(col.Name.O)
+		return hasDefaultValue, value, errBlobCantHaveDefault.GenByArgs(col.Name.O)
 	}
-	return hasDefaultValue, nil
+	return hasDefaultValue, value, nil
 }
 
 // isExplicitTimeStamp is used to check if explicit_defaults_for_timestamp is on or off.
@@ -338,14 +342,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				if err != nil {
 					return nil, nil, ErrColumnBadNull.Gen("invalid default value - %s", err)
 				}
-				if hasDefaultValue, err = checkColumnCantHaveDefaultValue(ctx, col, value); err != nil {
+				if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 					return nil, nil, errors.Trace(err)
 				}
 				col.DefaultValue = value
-				// In non-strict SQL mode, if the column type is json and the default value is null, it is initialized to an empty array.
-				if col.Tp == mysql.TypeJSON && value == "" {
-					col.DefaultValue = `null`
-				}
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
@@ -1477,13 +1477,10 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			if err != nil {
 				return ErrColumnBadNull.Gen("invalid default value - %s", err)
 			}
-			if hasDefaultValue, err = checkColumnCantHaveDefaultValue(ctx, col, value); err != nil {
+			if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 				return errors.Trace(err)
 			}
 			col.DefaultValue = value
-			if col.Tp == mysql.TypeJSON && value == "" {
-				col.DefaultValue = `null`
-			}
 		case ast.ColumnOptionComment:
 			err := setColumnComment(ctx, col, opt)
 			if err != nil {
