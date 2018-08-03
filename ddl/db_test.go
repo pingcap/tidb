@@ -2145,7 +2145,7 @@ func (s *testDBSuite) TestYearTypeCreateTable(c *C) {
 	c.Assert(mysql.HasUnsignedFlag(yearCol.Flag), IsFalse)
 }
 
-func (s *testDBSuite) TestCheckColumnCantHaveDefaultValue(c *C) {
+func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
 	s.tk.MustExec("drop table if exists text_default_text;")
@@ -2168,6 +2168,11 @@ func (s *testDBSuite) TestCheckColumnCantHaveDefaultValue(c *C) {
 			"  `c1` text NOT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	))
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_text"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
 
 	s.tk.MustExec("drop table if exists text_default_blob;")
 	s.tk.MustExec("create table text_default_blob(c1 blob not null default '');")
@@ -2176,6 +2181,10 @@ func (s *testDBSuite) TestCheckColumnCantHaveDefaultValue(c *C) {
 			"  `c1` blob NOT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	))
+	is = domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_blob"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
 
 	s.tk.MustExec("drop table if exists text_default_json;")
 	s.tk.MustExec("create table text_default_json(c1 json not null default '');")
@@ -2184,6 +2193,10 @@ func (s *testDBSuite) TestCheckColumnCantHaveDefaultValue(c *C) {
 			"  `c1` json NOT NULL DEFAULT 'null'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
 	))
+	is = domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_json"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, `null`)
 }
 
 func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
