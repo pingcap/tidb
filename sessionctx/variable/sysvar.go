@@ -619,7 +619,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, ErrorCount, "0"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
-	{ScopeSession, TiDBImportingData, "0"},
 	{ScopeSession, TiDBOptAggPushDown, boolToIntStr(DefOptAggPushDown)},
 	{ScopeGlobal | ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
 	{ScopeGlobal, TiDBAutoAnalyzeRatio, strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64)},
