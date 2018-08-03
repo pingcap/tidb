@@ -515,7 +515,9 @@ func (t *Table) addIndices(ctx sessionctx.Context, recordID int64, r []types.Dat
 func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Column) ([]types.Datum, error) {
 	// Get raw row data from kv.
 	key := t.RecordKey(h)
-	value, err := ctx.Txn().Get(key)
+	value, err := ctx.Txn().GetSnapshot().Get(key)
+	log.Infof("snapshot get key %x value %x", key, value)
+	value, err = ctx.Txn().Get(key)
 	if err != nil {
 		return nil, errors.Annotatef(err, "tableID:%d key:%x", t.ID, key)
 	}

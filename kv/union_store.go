@@ -17,6 +17,7 @@ import (
 	"bytes"
 
 	"github.com/juju/errors"
+	"github.com/sirupsen/logrus"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
@@ -115,7 +116,7 @@ func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	if lmb.mb == nil {
 		lmb.mb = NewMemDbBuffer(lmb.cap)
 	}
-
+	logrus.Info("MemBuffer Set key %x value %x", key, value)
 	return lmb.mb.Set(key, value)
 }
 
