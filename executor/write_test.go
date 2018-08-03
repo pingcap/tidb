@@ -914,6 +914,8 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("CREATE TABLE `t` (	`c1` year DEFAULT NULL, `c2` year DEFAULT NULL, `c3` date DEFAULT NULL, `c4` datetime DEFAULT NULL,	KEY `idx` (`c1`,`c2`))")
 	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
 	c.Assert(err.Error(), Equals, "cannot convert datum from bigint to type year.")
+
+	tk.MustExec("update (select * from t) t set c1 = 1111111")
 }
 
 // TestUpdateCastOnlyModifiedValues for issue #4514.
