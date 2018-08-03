@@ -229,7 +229,7 @@ LOOP:
 		select {
 		case <-ticker.C:
 			d.Stop()
-			d.start(context.Background(), nil)
+			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
 			c.Assert(err, IsNil)
