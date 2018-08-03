@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/goroutine_pool"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/util"
 )
 
 var (
@@ -213,6 +214,7 @@ func (s *tikvSnapshot) Get(k kv.Key) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	if len(val) == 0 {
+		log.Infof("snapshot key %x not exist stack %s", k, util.GetStack())
 		return nil, kv.ErrNotExist
 	}
 	return val, nil
