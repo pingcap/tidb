@@ -983,7 +983,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		aggFunc := aggDesc.GetAggFunc(b.ctx)
 		e.AggFuncs = append(e.AggFuncs, aggFunc)
 		if e.defaultVal != nil {
-			value := aggFunc.GetDefaultValue()
+			value := aggDesc.GetDefaultValue()
 			e.defaultVal.AppendDatum(i, &value)
 		}
 	}
@@ -1002,7 +1002,7 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
 		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
-		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
+		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
@@ -1010,27 +1010,15 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	} else {
 		e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)
 	}
-	newAggFuncs := make([]aggfuncs.AggFunc, 0, len(v.AggFuncs))
 	for i, aggDesc := range v.AggFuncs {
-		aggFunc := aggDesc.GetAggFunc(b.ctx)
-		e.AggFuncs = append(e.AggFuncs, aggFunc)
+		aggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
+		e.aggFuncs = append(e.aggFuncs, aggFunc)
 		if e.defaultVal != nil {
-			value := aggFunc.GetDefaultValue()
+			value := aggDesc.GetDefaultValue()
 			e.defaultVal.AppendDatum(i, &value)
-		}
-		// For new aggregate evaluation framework.
-		newAggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
-		if newAggFunc != nil {
-			newAggFuncs = append(newAggFuncs, newAggFunc)
 		}
 	}
 
-	// Once we have successfully build all the aggregate functions to the new
-	// aggregate function execution framework, we can store them to the stream
-	// aggregate operator to indicate it using the new execution framework.
-	if len(newAggFuncs) == len(v.AggFuncs) {
-		e.newAggFuncs = newAggFuncs
-	}
 	metrics.ExecutorCounter.WithLabelValues("StreamAggExec").Inc()
 	return e
 }
