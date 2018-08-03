@@ -32,10 +32,6 @@ const (
 	// The value can be a datetime string like '2017-11-11 20:20:20' or a tso string. When this variable is set, the session reads history data of that time.
 	TiDBSnapshot = "tidb_snapshot"
 
-	// tidb_import_data is used for loading data from a dump file, to speed up the loading process.
-	// When the value is set to true, unique index constraint is not checked.
-	TiDBImportingData = "tidb_import_data"
-
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 

@@ -914,6 +914,8 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("CREATE TABLE `t` (	`c1` year DEFAULT NULL, `c2` year DEFAULT NULL, `c3` date DEFAULT NULL, `c4` datetime DEFAULT NULL,	KEY `idx` (`c1`,`c2`))")
 	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
 	c.Assert(err.Error(), Equals, "cannot convert datum from bigint to type year.")
+
+	tk.MustExec("update (select * from t) t set c1 = 1111111")
 }
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {
@@ -1202,6 +1204,13 @@ PARTITION BY RANGE ( id ) (
 	tk.MustExec("admin check table t")
 	tk.MustExec(`delete from t;`)
 	tk.CheckExecResult(14, 0)
+
+	// Fix that partitioned table should not use PointGetPlan.
+	tk.MustExec(`create table t1 (c1 bigint, c2 bigint, c3 bigint, primary key(c1)) partition by range (c1) (partition p0 values less than (3440))`)
+	tk.MustExec("insert into t1 values (379, 379, 379)")
+	tk.MustExec("delete from t1 where c1 = 379")
+	tk.CheckExecResult(1, 0)
+	tk.MustExec(`drop table t1;`)
 }
 
 func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
