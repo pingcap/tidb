@@ -152,7 +152,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
-	prepared.UseCache = plan.PreparedPlanCacheEnabled && (vars.ImportingData || plan.Cacheable(stmt))
+	prepared.UseCache = plan.PreparedPlanCacheEnabled() && (vars.LightningMode || plan.Cacheable(stmt))
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {

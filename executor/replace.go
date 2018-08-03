@@ -89,7 +89,7 @@ func (e *ReplaceExec) addRow(row []types.Datum) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if !e.ctx.GetSessionVars().ImportingData {
+	if !e.ctx.GetSessionVars().LightningMode {
 		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 	}
 	return h, nil
