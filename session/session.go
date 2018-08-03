@@ -151,7 +151,7 @@ func (s *session) DDLOwnerChecker() owner.DDLOwnerChecker {
 }
 
 func (s *session) getMembufCap() int {
-	if s.sessionVars.ImportingData {
+	if s.sessionVars.LightningMode {
 		return kv.ImportingTxnMembufCap
 	}
 
