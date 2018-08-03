@@ -91,7 +91,7 @@ var (
 		}, []string{LblType, LblResult})
 
 	CreateDDLInstance = "create_ddl_instance"
-	CreateDDLWorker   = "create_ddl_worker"
+	CreateDDL         = "create_ddl"
 	IsDDLOwner        = "is_ddl_owner"
 	DDLCounter        = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
