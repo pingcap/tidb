@@ -157,7 +157,6 @@ func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexI
 				}
 			}
 		}
-
 	}
 
 	return indexedValues
