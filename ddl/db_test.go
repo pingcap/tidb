@@ -187,6 +187,17 @@ func (s *testDBSuite) TestMySQLErrorCode(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongNameForIndex)
 	sql = "create table t2(c1.c2 blob default null);"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
+	sql = "create table t2 (id int default null primary key , age int);"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidDefault)
+	sql = "create table t2 (id int null primary key , age int);"
+	s.testErrorCode(c, sql, tmysql.ErrPrimaryCantHaveNull)
+	sql = "create table t2 (id int default null, age int, primary key(id));"
+	s.testErrorCode(c, sql, tmysql.ErrPrimaryCantHaveNull)
+	sql = "create table t2 (id int null, age int, primary key(id));"
+	s.testErrorCode(c, sql, tmysql.ErrPrimaryCantHaveNull)
+
+	sql = "create table t2 (id int primary key , age int);"
+	s.tk.MustExec(sql)
 
 	// add column
 	sql = "alter table test_error_code_succ add column c1 int"
@@ -584,7 +595,7 @@ func (s *testDBSuite) TestAddMultiColumnsIndex(c *C) {
 func (s *testDBSuite) TestAddIndex(c *C) {
 	s.testAddIndex(c, false, "create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
 	s.testAddIndex(c, true, `create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
-			      partition by range (c2) (
+			      partition by range (c1) (
 			      partition p0 values less than (3440),
 			      partition p1 values less than (61440),
 			      partition p2 values less than (122880),
@@ -595,8 +606,7 @@ func (s *testDBSuite) TestAddIndex(c *C) {
 func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL string) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	// TODO: Support delete operation, then uncomment here.
-	// s.tk.MustExec("set @@tidb_enable_table_partition = 1")
+	s.tk.MustExec("set @@tidb_enable_table_partition = 1")
 	s.tk.MustExec("drop table if exists test_add_index")
 	s.tk.MustExec(createTableSQL)
 
@@ -682,16 +692,16 @@ LOOP:
 	rows := s.mustQuery(c, fmt.Sprintf("select c1 from test_add_index where c3 >= %d order by c1", start))
 	matchRows(c, rows, expectedRows)
 
+	if testPartition {
+		s.tk.MustExec("admin check table test_add_index")
+		return
+	}
+
 	// test index range
 	for i := 0; i < 100; i++ {
 		index := rand.Intn(len(keys) - 3)
 		rows := s.mustQuery(c, "select c1 from test_add_index where c3 >= ? limit 3", keys[index])
 		matchRows(c, rows, [][]interface{}{{keys[index]}, {keys[index+1]}, {keys[index+2]}})
-	}
-
-	if testPartition {
-		s.tk.MustExec("admin check table test_add_index")
-		return
 	}
 
 	// TODO: Support explain in future.
@@ -2218,7 +2228,7 @@ func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bo
 	tbl := ctx.tbl
 	curVer, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.Meta(), tbl.Meta().ID)
+	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl)
 	c.Assert(err, IsNil)
 	return maxID, emptyTable
 }

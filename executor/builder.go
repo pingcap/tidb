@@ -91,6 +91,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildExecute(v)
 	case *plan.Explain:
 		return b.buildExplain(v)
+	case *plan.PointGetPlan:
+		return b.buildPointGet(v)
 	case *plan.Insert:
 		return b.buildInsert(v)
 	case *plan.LoadData:
@@ -825,11 +827,43 @@ func (b *executorBuilder) buildHashJoin(v *plan.PhysicalHashJoin) Executor {
 	return e
 }
 
+// wrapCastForAggArgs wraps the args of an aggregate function with a cast function.
+func (b *executorBuilder) wrapCastForAggArgs(funcs []*aggregation.AggFuncDesc) {
+	for _, f := range funcs {
+		// We do not need to wrap cast upon these functions,
+		// since the EvalXXX method called by the arg is determined by the corresponding arg type.
+		if f.Name == ast.AggFuncCount || f.Name == ast.AggFuncMin || f.Name == ast.AggFuncMax || f.Name == ast.AggFuncFirstRow {
+			continue
+		}
+		var castFunc func(ctx sessionctx.Context, expr expression.Expression) expression.Expression
+		switch retTp := f.RetTp; retTp.EvalType() {
+		case types.ETInt:
+			castFunc = expression.WrapWithCastAsInt
+		case types.ETReal:
+			castFunc = expression.WrapWithCastAsReal
+		case types.ETString:
+			castFunc = expression.WrapWithCastAsString
+		case types.ETDecimal:
+			castFunc = expression.WrapWithCastAsDecimal
+		default:
+			panic("should never happen in executorBuilder.wrapCastForAggArgs")
+		}
+		for i := range f.Args {
+			f.Args[i] = castFunc(b.ctx, f.Args[i])
+		}
+	}
+}
+
 // buildProjBelowAgg builds a ProjectionExec below AggregationExec.
 // If all the args of `aggFuncs`, and all the item of `groupByItems`
 // are columns or constants, we do not need to build the `proj`.
 func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, src Executor) Executor {
 	hasScalarFunc := false
+	// If the mode is FinalMode, we do not need to wrap cast upon the args,
+	// since the types of the args are already the expected.
+	if len(aggFuncs) > 0 && aggFuncs[0].Mode != aggregation.FinalMode {
+		b.wrapCastForAggArgs(aggFuncs)
+	}
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		f := aggFuncs[i]
 		for _, arg := range f.Args {
@@ -949,7 +983,7 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		aggFunc := aggDesc.GetAggFunc(b.ctx)
 		e.AggFuncs = append(e.AggFuncs, aggFunc)
 		if e.defaultVal != nil {
-			value := aggFunc.GetDefaultValue()
+			value := aggDesc.GetDefaultValue()
 			e.defaultVal.AppendDatum(i, &value)
 		}
 	}
@@ -968,7 +1002,7 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
 		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
-		AggFuncs:     make([]aggregation.Aggregation, 0, len(v.AggFuncs)),
+		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
@@ -976,27 +1010,15 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	} else {
 		e.defaultVal = chunk.NewChunkWithCapacity(e.retTypes(), 1)
 	}
-	newAggFuncs := make([]aggfuncs.AggFunc, 0, len(v.AggFuncs))
 	for i, aggDesc := range v.AggFuncs {
-		aggFunc := aggDesc.GetAggFunc(b.ctx)
-		e.AggFuncs = append(e.AggFuncs, aggFunc)
+		aggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
+		e.aggFuncs = append(e.aggFuncs, aggFunc)
 		if e.defaultVal != nil {
-			value := aggFunc.GetDefaultValue()
+			value := aggDesc.GetDefaultValue()
 			e.defaultVal.AppendDatum(i, &value)
-		}
-		// For new aggregate evaluation framework.
-		newAggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
-		if newAggFunc != nil {
-			newAggFuncs = append(newAggFuncs, newAggFunc)
 		}
 	}
 
-	// Once we have successfully build all the aggregate functions to the new
-	// aggregate function execution framework, we can store them to the stream
-	// aggregate operator to indicate it using the new execution framework.
-	if len(newAggFuncs) == len(v.AggFuncs) {
-		e.newAggFuncs = newAggFuncs
-	}
 	metrics.ExecutorCounter.WithLabelValues("StreamAggExec").Inc()
 	return e
 }
@@ -1030,7 +1052,7 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	// If the calculation row count for this Projection operator is smaller
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
-	if v.StatsInfo().Count() < int64(b.ctx.GetSessionVars().MaxChunkSize) {
+	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
 	return e
@@ -1202,13 +1224,74 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
+	columns2Handle := buildColumns2Handle(v.Schema(), tblID2table)
 	updateExec := &UpdateExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
-		SelectExec:   selExec,
-		OrderedList:  v.OrderedList,
-		tblID2table:  tblID2table,
+		baseExecutor:   newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
+		SelectExec:     selExec,
+		OrderedList:    v.OrderedList,
+		tblID2table:    tblID2table,
+		columns2Handle: columns2Handle,
 	}
 	return updateExec
+}
+
+// cols2Handle represents an mapper from column index to handle index.
+type cols2Handle struct {
+	// start/end represent the ordinal range [start, end) of the consecutive columns.
+	start, end int32
+	// handleOrdinal represents the ordinal of the handle column.
+	handleOrdinal int32
+}
+
+// cols2HandleSlice attaches the methods of sort.Interface to []cols2Handle sorting in increasing order.
+type cols2HandleSlice []cols2Handle
+
+// Len implements sort.Interface#Len.
+func (c cols2HandleSlice) Len() int {
+	return len(c)
+}
+
+// Swap implements sort.Interface#Swap.
+func (c cols2HandleSlice) Swap(i, j int) {
+	c[i], c[j] = c[j], c[i]
+}
+
+// Less implements sort.Interface#Less.
+func (c cols2HandleSlice) Less(i, j int) bool {
+	return c[i].start < c[j].start
+}
+
+// findHandle finds the ordinal of the corresponding handle column.
+func (c cols2HandleSlice) findHandle(ordinal int32) (int32, bool) {
+	if c == nil || len(c) == 0 {
+		return 0, false
+	}
+	// find the smallest index of the range that its start great than ordinal.
+	// @see https://godoc.org/sort#Search
+	rangeBehindOrdinal := sort.Search(len(c), func(i int) bool { return c[i].start > ordinal })
+	if rangeBehindOrdinal == 0 {
+		return 0, false
+	}
+	return c[rangeBehindOrdinal-1].handleOrdinal, true
+}
+
+// buildColumns2Handle builds columns to handle mapping.
+func buildColumns2Handle(schema *expression.Schema, tblID2Table map[int64]table.Table) cols2HandleSlice {
+	if len(schema.TblID2Handle) < 2 {
+		// skip buildColumns2Handle mapping if there are only single table.
+		return nil
+	}
+	var cols2Handles cols2HandleSlice
+	for tblID, handleCols := range schema.TblID2Handle {
+		tbl := tblID2Table[tblID]
+		for _, handleCol := range handleCols {
+			offset := getTableOffset(schema, handleCol)
+			end := offset + len(tbl.WritableCols())
+			cols2Handles = append(cols2Handles, cols2Handle{int32(offset), int32(end), int32(handleCol.Index)})
+		}
+	}
+	sort.Sort(cols2Handles)
+	return cols2Handles
 }
 
 func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
@@ -1235,7 +1318,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 	_, offset := zone(b.ctx)
 	e := &AnalyzeIndexExec{
 		ctx:         b.ctx,
-		tblInfo:     task.TableInfo,
+		physicalID:  task.PhysicalID,
 		idxInfo:     task.IndexInfo,
 		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency,
 		analyzePB: &tipb.AnalyzeReq{
@@ -1267,7 +1350,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 	_, offset := zone(b.ctx)
 	e := &AnalyzeColumnsExec{
 		ctx:         b.ctx,
-		tblInfo:     task.TableInfo,
+		physicalID:  task.PhysicalID,
 		colsInfo:    task.ColsInfo,
 		pkInfo:      task.PKInfo,
 		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency,
@@ -1285,7 +1368,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 		BucketSize:    maxBucketSize,
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
-		ColumnsInfo:   model.ColumnsToProto(cols, task.TableInfo.PKIsHandle),
+		ColumnsInfo:   model.ColumnsToProto(cols, task.PKInfo != nil),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
@@ -1483,7 +1566,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, ts.Hist, ts.StatsInfo().Count(), ts.Desc)
+		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
 	collect := e.feedback.CollectFeedback(len(ts.Ranges))
 	e.dagPB.CollectRangeCounts = &collect
@@ -1540,7 +1623,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
+		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
 	collect := e.feedback.CollectFeedback(len(is.Ranges))
 	e.dagPB.CollectRangeCounts = &collect
@@ -1606,10 +1689,14 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 	}
+	if isPartition, partitionID := ts.IsPartition(); isPartition {
+		e.tableID = partitionID
+	}
+
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
+		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
 	// do not collect the feedback for table request.
 	collectTable := false

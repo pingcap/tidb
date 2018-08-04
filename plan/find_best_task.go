@@ -344,7 +344,12 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 			return invalidTask, nil
 		}
 		// On this way, it's double read case.
-		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
+		ts := PhysicalTableScan{
+			Columns:     ds.Columns,
+			Table:       is.Table,
+			isPartition: ds.isPartition,
+			partitionID: ds.partitionID,
+		}.init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
 	} else if prop.taskTp == copDoubleReadTaskType {
@@ -404,15 +409,22 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	return task, nil
 }
 
+// TODO: refactor this part, we should not call Clone in fact.
 func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, 0, len(idx.Columns))
 	for _, col := range idx.Columns {
-		indexCols = append(indexCols, &expression.Column{FromID: id, ColName: col.Name, Position: col.Offset})
+		colFound := is.dataSourceSchema.FindColumnByName(col.Name.L)
+		if colFound == nil {
+			colFound = &expression.Column{ColName: col.Name, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()}
+		} else {
+			colFound = colFound.Clone().(*expression.Column)
+		}
+		indexCols = append(indexCols, colFound)
 	}
 	setHandle := false
 	for _, col := range is.Columns {
 		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-			indexCols = append(indexCols, &expression.Column{FromID: id, ID: col.ID, ColName: col.Name, Position: col.Offset})
+			indexCols = append(indexCols, is.dataSourceSchema.FindColumnByName(col.Name.L))
 			setHandle = true
 			break
 		}
@@ -420,7 +432,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{FromID: id, ID: model.ExtraHandleID, ColName: model.ExtraHandleName, Position: -1})
+		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, ColName: model.ExtraHandleName, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 }

@@ -340,6 +340,9 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 		}
 		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d)", id, histID, deltaColSize))
 	}
+	if len(values) == 0 {
+		return nil
+	}
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
 	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
@@ -364,7 +367,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	vals, err := encodeFeedback(fb)
 	if err != nil {
-		log.Debugf("error occurred when encoding feedback, err: ", errors.ErrorStack(err))
+		log.Debugf("error occurred when encoding feedback, err: %s", errors.ErrorStack(err))
 		return nil
 	}
 	var isIndex int64
@@ -408,8 +411,10 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				continue
 			}
 			newIdx := *idx
-			newIdx.Histogram = *UpdateHistogram(&idx.Histogram, fb)
-			newIdx.CMSketch = UpdateCMSketch(idx.CMSketch, fb)
+			eqFB, ranFB := splitFeedbackByQueryType(fb.feedback)
+			newIdx.CMSketch = UpdateCMSketch(idx.CMSketch, eqFB)
+			newIdx.Histogram = *UpdateHistogram(&idx.Histogram, &QueryFeedback{feedback: ranFB})
+			newIdx.Histogram.PreCalculateScalar()
 			newTblStats.Indices[fb.hist.ID] = &newIdx
 		} else {
 			col, ok := tblStats.Columns[fb.hist.ID]
@@ -417,7 +422,11 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				continue
 			}
 			newCol := *col
-			newCol.Histogram = *UpdateHistogram(&col.Histogram, fb)
+			// only use the range query to update primary key
+			_, ranFB := splitFeedbackByQueryType(fb.feedback)
+			newFB := &QueryFeedback{feedback: ranFB}
+			newFB = newFB.decodeIntValues()
+			newCol.Histogram = *UpdateHistogram(&col.Histogram, newFB)
 			newTblStats.Columns[fb.hist.ID] = &newCol
 		}
 		h.UpdateTableStats([]*Table{newTblStats}, nil)

@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
@@ -760,6 +761,33 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testEvaluatorSuite) TestSpaceSig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeLonglong},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	space := &builtinSpaceSig{base, 1000}
+	input := chunk.NewChunkWithCapacity(colTypes, 10)
+	input.AppendInt64(0, 6)
+	input.AppendInt64(0, 1001)
+	res, isNull, err := space.evalString(input.GetRow(0))
+	c.Assert(res, Equals, "      ")
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
+	res, isNull, err = space.evalString(input.GetRow(1))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 1)
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+}
+
 func (s *testEvaluatorSuite) TestLocate(c *C) {
 	// 1. Test LOCATE without binary input.
 	defer testleak.AfterTest(c)()
@@ -1264,6 +1292,47 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 			c.Assert(result.GetString(), Equals, expect)
 		}
 	}
+}
+
+func (s *testEvaluatorSuite) TestRpadSig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeLonglong},
+		{Tp: mysql.TypeVarchar},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+		&Column{Index: 2, RetType: colTypes[2]},
+	}
+
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	rpad := &builtinRpadSig{base, 1000}
+
+	input := chunk.NewChunkWithCapacity(colTypes, 10)
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendInt64(1, 6)
+	input.AppendInt64(1, 10000)
+	input.AppendString(2, "123")
+	input.AppendString(2, "123")
+
+	res, isNull, err := rpad.evalString(input.GetRow(0))
+	c.Assert(res, Equals, "abc123")
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = rpad.evalString(input.GetRow(1))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 1)
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestInstr(c *C) {

@@ -142,22 +142,21 @@ func (col *CorrelatedColumn) resolveIndices(_ *Schema) {
 
 // Column represents a column.
 type Column struct {
-	FromID      int
 	ColName     model.CIStr
 	DBName      model.CIStr
 	OrigTblName model.CIStr
 	TblName     model.CIStr
 	RetType     *types.FieldType
-	ID          int64
-	// Position means the position of this column that appears in the select fields.
-	// e.g. SELECT name as id , 1 - id as id , 1 + name as id, name as id from src having id = 1;
-	// There are four ids in the same schema, so you can't identify the column through the FromID and ColName.
-	Position int
+	// This id is used to specify whether this column is ExtraHandleColumn or to access histogram.
+	// We'll try to remove it in the future.
+	ID int64
+	// UniqueID is the unique id of this column.
+	UniqueID int
 	// IsAggOrSubq means if this column is referenced to a Aggregation column or a Subquery column.
 	// If so, this column's name will be the plain sql text.
 	IsAggOrSubq bool
 
-	// Index is only used for execution.
+	// Index is used for execution, to tell the column's position in the given row.
 	Index int
 
 	hashcode []byte
@@ -166,7 +165,7 @@ type Column struct {
 // Equal implements Expression interface.
 func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
-		return newCol.FromID == col.FromID && newCol.Position == col.Position
+		return newCol.UniqueID == col.UniqueID
 	}
 	return false
 }
@@ -306,10 +305,9 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 	if len(col.hashcode) != 0 {
 		return col.hashcode
 	}
-	col.hashcode = make([]byte, 0, 17)
+	col.hashcode = make([]byte, 0, 9)
 	col.hashcode = append(col.hashcode, columnFlag)
-	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.FromID))
-	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.Position))
+	col.hashcode = codec.EncodeInt(col.hashcode, int64(col.UniqueID))
 	return col.hashcode
 }
 
