@@ -169,49 +169,19 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-// GetServerInfo implements SchemaSyncer.GetServerInfo interface.
-func (s *schemaVersionSyncer) GetServerInfo(ctx context.Context, id string) (*util.ServerInfo, error) {
+func (s *schemaVersionSyncer) getInfo(ctx context.Context, key string, opts ...clientv3.OpOption) (map[string]*util.ServerInfo, error) {
 	var err error
-	var resp *clientv3.GetResponse
-	ddlPath := fmt.Sprintf("%s/%s", ServerInformation, id)
+	allInfo := make(map[string]*util.ServerInfo)
+
 	for {
 		if isContextDone(ctx) {
 			err = errors.Trace(ctx.Err())
 			return nil, err
 		}
 
-		resp, err = s.etcdCli.Get(ctx, ddlPath)
+		resp, err := s.etcdCli.Get(ctx, key, opts...)
 		if err != nil {
-			log.Infof("[syncer] get ddl server info,  ddl %s failed %v, continue checking.", ddlPath, err)
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-		if len(resp.Kvs) > 0 {
-			info := &util.ServerInfo{}
-			err := json.Unmarshal(resp.Kvs[0].Value, info)
-			if err != nil {
-				log.Infof("[syncer] get ddl server info, ddl %s json.Unmarshal %v failed %v.", resp.Kvs[0].Key, resp.Kvs[0].Value, err)
-				return nil, errors.Trace(err)
-			}
-			return info, nil
-		}
-	}
-}
-
-// GetAllServerInfo implements SchemaSyncer.GetAllServerInfo interface.
-func (s *schemaVersionSyncer) GetAllServerInfo(ctx context.Context) (map[string]*util.ServerInfo, error) {
-	var err error
-	allDDLInfo := make(map[string]*util.ServerInfo)
-	for {
-		if isContextDone(ctx) {
-			// ctx is canceled or timeout.
-			err = errors.Trace(ctx.Err())
-			return nil, err
-		}
-
-		resp, err := s.etcdCli.Get(ctx, ServerInformation, clientv3.WithPrefix())
-		if err != nil {
-			log.Infof("[syncer] get all ddl server info failed %v, continue checking.", err)
+			log.Infof("[syncer] get %s failed %v, continue checking.", key, err)
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
@@ -220,13 +190,38 @@ func (s *schemaVersionSyncer) GetAllServerInfo(ctx context.Context) (map[string]
 			info := &util.ServerInfo{}
 			err := json.Unmarshal(kv.Value, info)
 			if err != nil {
-				log.Infof("[syncer] get all ddl server info, ddl %s json.Unmarshal %v failed %v.", kv.Key, kv.Value, err)
+				log.Infof("[syncer] get %s, json.Unmarshal %v failed %v.", kv.Key, kv.Value, err)
 				return nil, errors.Trace(err)
 			}
-			allDDLInfo[info.ID] = info
+			allInfo[info.ID] = info
 		}
-		return allDDLInfo, nil
+		return allInfo, nil
 	}
+}
+
+// GetServerInfo implements SchemaSyncer.GetServerInfo interface.
+func (s *schemaVersionSyncer) GetServerInfo(ctx context.Context, id string) (*util.ServerInfo, error) {
+	var err error
+	ddlPath := fmt.Sprintf("%s/%s", ServerInformation, id)
+	allInfo, err := s.getInfo(ctx, ddlPath)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	info, ok := allInfo[id]
+	if !ok {
+		return nil, errors.New(fmt.Sprintf("[syncer] get %s failed", ddlPath))
+	}
+	return info, nil
+}
+
+// GetAllServerInfo implements SchemaSyncer.GetAllServerInfo interface.
+func (s *schemaVersionSyncer) GetAllServerInfo(ctx context.Context) (map[string]*util.ServerInfo, error) {
+	var err error
+	allInfo, err := s.getInfo(ctx, ServerInformation, clientv3.WithPrefix())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return allInfo, nil
 }
 
 // StoreServerInfo implements SchemaSyncer.StoreServerInfo interface.
