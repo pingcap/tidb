@@ -1594,7 +1594,7 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
-	// With the existance of global variable cache, it have to sleep a while here.
+	// With the existence of global variable cache, it have to sleep a while here.
 	time.Sleep(3 * time.Second)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
@@ -2845,7 +2845,7 @@ func (s *testSuite) TestForSelectScopeInUnion(c *C) {
 	tk2.MustExec("use test")
 	tk2.MustExec("update t set a = a + 1")
 
-	// As tk1 use select 'for update', it should dectect conflict and fail.
+	// As tk1 use select 'for update', it should detect conflict and fail.
 	_, err := tk1.Exec("commit")
 	c.Assert(err, NotNil)
 
