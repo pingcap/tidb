@@ -594,10 +594,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	}
 	defer span.Finish()
 
-	// I'm not sure is it safe to cancel 2pc commit process at any time,
-	// So use a new Background() context instead of inherit the ctx, this is by design,
-	// to avoid the cancel signal from parent context.
-	ctx = opentracing.ContextWithSpan(context.Background(), span)
+	// WARNING: cancel this ctx is a dangerous operation.
+	ctx = opentracing.ContextWithSpan(ctx, span)
 
 	binlogChan := c.prewriteBinlog()
 	err := c.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars), c.keys)
