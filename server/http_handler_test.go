@@ -668,9 +668,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	c.Assert(serverInfo.SelfServerInfo.Version, Equals, mysql.ServerVersion)
 	c.Assert(serverInfo.SelfServerInfo.GitHash, Equals, printer.TiDBGitHash)
 
-	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().store.(kv.Storage))
-	defer s.Close()
-	store := domain.GetDomain(s.(sessionctx.Context)).Store()
+	store := ts.server.newTikvHandlerTool().store.(kv.Storage)
 	do, err := session.GetDomain(store.(kv.Storage))
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
@@ -693,9 +691,7 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 	c.Assert(allServerInfo.IsAllServerVersionConsistent, IsTrue)
 	c.Assert(allServerInfo.ServersNum, Equals, 1)
 
-	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().store.(kv.Storage))
-	defer s.Close()
-	store := domain.GetDomain(s.(sessionctx.Context)).Store()
+	store := ts.server.newTikvHandlerTool().store.(kv.Storage)
 	do, err := session.GetDomain(store.(kv.Storage))
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
