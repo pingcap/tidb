@@ -667,6 +667,14 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	c.Assert(serverInfo.SelfServerInfo.Lease, Equals, cfg.Lease)
 	c.Assert(serverInfo.SelfServerInfo.Version, Equals, mysql.ServerVersion)
 	c.Assert(serverInfo.SelfServerInfo.GitHash, Equals, printer.TiDBGitHash)
+
+	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().store.(kv.Storage))
+	defer s.Close()
+	store := domain.GetDomain(s.(sessionctx.Context)).Store()
+	do, err := session.GetDomain(store.(kv.Storage))
+	c.Assert(err, IsNil)
+	ddl := do.DDL()
+	c.Assert(serverInfo.SelfServerInfo.ID, Equals, ddl.GetID())
 }
 
 func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
@@ -684,4 +692,22 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 
 	c.Assert(allServerInfo.IsAllServerVersionConsistent, IsTrue)
 	c.Assert(allServerInfo.ServersNum, Equals, 1)
+
+	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().store.(kv.Storage))
+	defer s.Close()
+	store := domain.GetDomain(s.(sessionctx.Context)).Store()
+	do, err := session.GetDomain(store.(kv.Storage))
+	c.Assert(err, IsNil)
+	ddl := do.DDL()
+	c.Assert(allServerInfo.OwnerID, Equals, ddl.GetID())
+	serverInfo, ok := allServerInfo.AllServersInfo[ddl.GetID()]
+	c.Assert(ok, Equals, true)
+
+	cfg := config.GetGlobalConfig()
+	c.Assert(serverInfo.IP, Equals, cfg.AdvertiseAddress)
+	c.Assert(serverInfo.StatusPort, Equals, cfg.Status.StatusPort)
+	c.Assert(serverInfo.Lease, Equals, cfg.Lease)
+	c.Assert(serverInfo.Version, Equals, mysql.ServerVersion)
+	c.Assert(serverInfo.GitHash, Equals, printer.TiDBGitHash)
+	c.Assert(serverInfo.ID, Equals, ddl.GetID())
 }

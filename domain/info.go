@@ -38,8 +38,8 @@ func GetServerInfo(ddlID string) *util.ServerInfo {
 	return info
 }
 
-// GetOwnerServerInfo gets owner DDL server static information from PD.
-func GetOwnerServerInfo(d ddl.DDL) (*util.ServerInfo, error) {
+// GetOwnerServerInfoFromPD gets owner DDL server static information from PD.
+func GetOwnerServerInfoFromPD(d ddl.DDL) (*util.ServerInfo, error) {
 	ctx := context.Background()
 	ddlOwnerID, err := d.OwnerManager().GetOwnerID(ctx)
 	if err != nil {
@@ -52,8 +52,8 @@ func GetOwnerServerInfo(d ddl.DDL) (*util.ServerInfo, error) {
 	return ownerInfo, nil
 }
 
-// GetAllServerInfo gets all DDL servers static information from PD.
-func GetAllServerInfo(d ddl.DDL) (map[string]*util.ServerInfo, error) {
+// GetAllServerInfoFromPD gets all DDL servers static information from PD.
+func GetAllServerInfoFromPD(d ddl.DDL) (map[string]*util.ServerInfo, error) {
 	ctx := context.Background()
 	AllServerInfo, err := d.SchemaSyncer().GetAllServerInfo(ctx)
 	if err != nil {
@@ -62,14 +62,14 @@ func GetAllServerInfo(d ddl.DDL) (map[string]*util.ServerInfo, error) {
 	return AllServerInfo, nil
 }
 
-// StoreServerInfo stores self DDL server static information to PD when domain Init.
+// StoreServerInfoToPD stores self DDL server static information to PD when domain Init.
 func StoreServerInfoToPD(d ddl.DDL) error {
 	info := GetServerInfo(d.GetID())
 	ctx := context.Background()
 	return d.SchemaSyncer().StoreServerInfo(ctx, info)
 }
 
-// RemoveServerInfo remove self DDL server static information from PD when domain close.
+// RemoveServerInfoFromPD remove self DDL server static information from PD when domain close.
 func RemoveServerInfoFromPD(d ddl.DDL) {
 	err := d.SchemaSyncer().RemoveServerInfo()
 	if err != nil {
