@@ -121,7 +121,7 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func checkJobsSort(jobs []*model.Job) bool {
+func isJobsSorted(jobs []*model.Job) bool {
 	if len(jobs) <= 1 {
 		return true
 	}
@@ -164,7 +164,7 @@ func (s *testSuite) TestGetDDLJobsIsSort(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(currJobs, HasLen, 15)
 
-	isSort := checkJobsSort(currJobs)
+	isSort := isJobsSorted(currJobs)
 	c.Assert(isSort, Equals, true)
 
 	err = txn.Rollback()
