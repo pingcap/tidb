@@ -268,7 +268,7 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 			// (1): The stats type, always prefer the primary key or index.
 			// (2): The number of expression that it covers, the more the better.
 			// (3): The number of columns that it contains, the less the better.
-			if (bestTp == colType && set.tp < colType) || bestCount < bits || (bestCount == bits && bestNumCols > set.numCols) {
+			if (bestTp == colType && set.tp != colType) || bestCount < bits || (bestCount == bits && bestNumCols > set.numCols) {
 				bestID, bestCount, bestTp, bestNumCols = i, bits, set.tp, set.numCols
 			}
 		}
