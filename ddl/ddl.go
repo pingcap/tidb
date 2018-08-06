@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
@@ -218,7 +219,7 @@ type DDL interface {
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
 	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
-	GetTableMaxRowID(startTS uint64, tblInfo *model.TableInfo, id int64) (int64, bool, error)
+	GetTableMaxRowID(startTS uint64, tbl table.Table) (int64, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(interface{})
 }
@@ -366,7 +367,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			go worker.start(d.ddlCtx)
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDLWorker, worker.String())).Inc()
+			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
 
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.

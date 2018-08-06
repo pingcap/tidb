@@ -153,7 +153,7 @@ func (s *Schema) IsUniqueKey(col *Column) bool {
 // ColumnIndex finds the index for a column.
 func (s *Schema) ColumnIndex(col *Column) int {
 	for i, c := range s.Columns {
-		if c.Position == col.Position {
+		if c.UniqueID == col.UniqueID {
 			return i
 		}
 	}
