@@ -39,12 +39,11 @@ const (
 
 // tikvSnapshot implements the kv.Snapshot interface.
 type tikvSnapshot struct {
-	store          *tikvStore
-	version        kv.Version
-	isolationLevel kv.IsoLevel
-	priority       pb.CommandPri
-	notFillCache   bool
-	syncLog        bool
+	store        *tikvStore
+	version      kv.Version
+	priority     pb.CommandPri
+	notFillCache bool
+	syncLog      bool
 }
 
 var snapshotGP = gp.New(time.Minute)
@@ -52,10 +51,9 @@ var snapshotGP = gp.New(time.Minute)
 // newTiKVSnapshot creates a snapshot of an TiKV store.
 func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 	return &tikvSnapshot{
-		store:          store,
-		version:        ver,
-		isolationLevel: kv.SI,
-		priority:       pb.CommandPri_Normal,
+		store:    store,
+		version:  ver,
+		priority: pb.CommandPri_Normal,
 	}
 }
 
@@ -146,9 +144,8 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 				Version: s.version.Ver,
 			},
 			Context: pb.Context{
-				Priority:       s.priority,
-				IsolationLevel: pbIsolationLevel(s.isolationLevel),
-				NotFillCache:   s.notFillCache,
+				Priority:     s.priority,
+				NotFillCache: s.notFillCache,
 			},
 		}
 		resp, err := sender.SendReq(bo, req, batch.region, ReadTimeoutMedium)
@@ -228,9 +225,8 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			Version: s.version.Ver,
 		},
 		Context: pb.Context{
-			Priority:       s.priority,
-			IsolationLevel: pbIsolationLevel(s.isolationLevel),
-			NotFillCache:   s.notFillCache,
+			Priority:     s.priority,
+			NotFillCache: s.notFillCache,
 		},
 	}
 	for {
