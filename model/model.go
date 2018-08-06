@@ -88,6 +88,7 @@ func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
 }
 
+// SetDefaultValue sets the default value.
 func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 	c.DefaultValue = value
 	if c.Tp == mysql.TypeBit {
@@ -101,6 +102,7 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 	return nil
 }
 
+// GetDefaultValue gets the default value.
 func (c *ColumnInfo) GetDefaultValue() interface{} {
 	if c.Tp == mysql.TypeBit && c.DefaultValueBit != nil {
 		return string(c.DefaultValueBit)
