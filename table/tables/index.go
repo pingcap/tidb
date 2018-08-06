@@ -129,25 +129,32 @@ func (c *index) getIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	return make([]byte, 0, defaultCap)
 }
 
-// truncateIndexValuesIfNeeded truncate the index values that be created that use only the leading part of column values.
-func (c *index) truncateIndexValuesIfNeeded(indexedValues []types.Datum) []types.Datum {
+// TruncateIndexValuesIfNeeded truncates the index values created using only the leading part of column values.
+func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) []types.Datum {
 	for i := 0; i < len(indexedValues); i++ {
 		v := &indexedValues[i]
 		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
-			ic := c.idxInfo.Columns[i]
-			colCharset := c.tblInfo.Columns[ic.Offset].Charset
+			ic := idxInfo.Columns[i]
+			colCharset := tblInfo.Columns[ic.Offset].Charset
 			colValue := v.GetBytes()
 			isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+			origKind := v.Kind()
 			if isUTF8Charset {
 				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(colValue) > ic.Length {
 					rs := bytes.Runes(colValue)
 					truncateStr := string(rs[:ic.Length])
 					// truncate value and limit its length
 					v.SetString(truncateStr)
+					if origKind == types.KindBytes {
+						v.SetBytes(v.GetBytes())
+					}
 				}
 			} else if ic.Length != types.UnspecifiedLength && len(colValue) > ic.Length {
 				// truncate value and limit its length
 				v.SetBytes(colValue[:ic.Length])
+				if origKind == types.KindString {
+					v.SetString(v.GetString())
+				}
 			}
 		}
 	}
@@ -172,9 +179,9 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 		}
 	}
 
-	// For string columns, indexes can be created that use only the leading part of column values,
+	// For string columns, indexes can be created using only the leading part of column values,
 	// using col_name(length) syntax to specify an index prefix length.
-	indexedValues = c.truncateIndexValuesIfNeeded(indexedValues)
+	indexedValues = TruncateIndexValuesIfNeeded(c.tblInfo, c.idxInfo, indexedValues)
 	key = c.getIndexKeyBuf(buf, len(c.prefix)+len(indexedValues)*9+9)
 	key = append(key, []byte(c.prefix)...)
 	key, err = codec.EncodeKey(sc, key, indexedValues...)
