@@ -86,11 +86,10 @@ type SchemaSyncer interface {
 }
 
 type schemaVersionSyncer struct {
-	selfSchemaVerPath  string
-	selfServerInfoPath string
-	etcdCli            *clientv3.Client
-	session            *concurrency.Session
-	mu                 struct {
+	selfSchemaVerPath string
+	etcdCli           *clientv3.Client
+	session           *concurrency.Session
+	mu                struct {
 		sync.RWMutex
 		globalVerCh clientv3.WatchChan
 	}
