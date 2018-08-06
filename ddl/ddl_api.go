@@ -273,7 +273,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 			sc.AppendWarning(errBlobCantHaveDefault.GenByArgs(col.Name.O))
 			return hasDefaultValue, value, nil
 		}
-		// In strict SQL mode.
+		// In strict SQL mode or default value is not an empty string.
 		return hasDefaultValue, value, errBlobCantHaveDefault.GenByArgs(col.Name.O)
 	}
 	return hasDefaultValue, value, nil
