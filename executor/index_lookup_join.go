@@ -60,7 +60,7 @@ type IndexLookUpJoin struct {
 	joinResult *chunk.Chunk
 	innerIter  chunk.Iterator
 
-	resultGenerator joinResultGenerator
+	resultGenerator recordJoiner
 
 	indexRanges   []*ranger.NewRange
 	keyOff2IdxOff []int
