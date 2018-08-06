@@ -181,22 +181,6 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 }
 
-func (s *testLockSuite) TestRC(c *C) {
-	s.putKV(c, []byte("key"), []byte("v1"))
-
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	txn.Set([]byte("key"), []byte("v2"))
-	s.prewriteTxn(c, txn.(*tikvTxn))
-
-	txn2, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	txn2.SetOption(kv.IsolationLevel, kv.RC)
-	val, err := txn2.Get([]byte("key"))
-	c.Assert(err, IsNil)
-	c.Assert(string(val), Equals, "v1")
-}
-
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
 	committer, err := newTwoPhaseCommitter(txn, 0)
 	c.Assert(err, IsNil)
