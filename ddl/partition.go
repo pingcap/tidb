@@ -320,24 +320,14 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.Create
 func extractConstraintsColumnNames(cons []*ast.Constraint) []map[string]struct{} {
 	var constraints []map[string]struct{}
 	for _, v := range cons {
-		if v.Tp == ast.ConstraintUniq {
+		if v.Tp == ast.ConstraintUniq || v.Tp == ast.ConstraintPrimaryKey {
 			uniKeys := make(map[string]struct{})
 			for _, key := range v.Keys {
 				uniKeys[key.Column.Name.L] = struct{}{}
 			}
-			// Extract every unique key.
+			// Extract every unique key and primary key.
 			if len(uniKeys) != 0 {
 				constraints = append(constraints, uniKeys)
-			}
-		}
-		if v.Tp == ast.ConstraintPrimaryKey {
-			priKeys := make(map[string]struct{})
-			for _, key := range v.Keys {
-				priKeys[key.Column.Name.L] = struct{}{}
-			}
-			// Extract every primary key.
-			if len(priKeys) != 0 {
-				constraints = append(constraints, priKeys)
 			}
 		}
 	}
