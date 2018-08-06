@@ -1351,10 +1351,6 @@ func (s *session) ActivePendingTxn() error {
 		return errors.Trace(err)
 	}
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-	isoLevel, _ := s.sessionVars.GetSystemVar(variable.TxnIsolation)
-	if isoLevel == ast.ReadCommitted {
-		s.txn.SetOption(kv.IsolationLevel, kv.RC)
-	}
 	return nil
 }
 
