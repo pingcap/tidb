@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -63,6 +64,11 @@ func (s *testRawKVSuite) mustGet(c *C, key, value []byte) {
 
 func (s *testRawKVSuite) mustPut(c *C, key, value []byte) {
 	err := s.client.Put(key, value)
+	c.Assert(err, IsNil)
+}
+
+func (s *testRawKVSuite) mustBatchPut(c *C, keys, values [][]byte) {
+	err := s.client.BatchPut(keys, values)
 	c.Assert(err, IsNil)
 }
 
@@ -124,6 +130,29 @@ func (s *testRawKVSuite) TestSimple(c *C) {
 	s.mustNotExist(c, []byte("key"))
 	err := s.client.Put([]byte("key"), []byte(""))
 	c.Assert(err, NotNil)
+}
+
+func (s *testRawKVSuite) TestBatchPut(c *C) {
+	testNum := 0
+	size := 0
+	var testKeys [][]byte
+	var testValues [][]byte
+	for i := 0; size/rawBatchPutSize < 4; i++ {
+		key := fmt.Sprint("key", i)
+		size += len(key)
+		testKeys = append(testKeys, []byte(key))
+		value := fmt.Sprint("value", i)
+		size += len(value)
+		testValues = append(testValues, []byte(value))
+		s.mustNotExist(c, []byte(key))
+		testNum = i
+	}
+	err := s.split(c, "", fmt.Sprint("key", testNum/2))
+	c.Assert(err, IsNil)
+	s.mustBatchPut(c, testKeys, testValues)
+	for i := 0; i < testNum; i++ {
+		s.mustGet(c, testKeys[i], testValues[i])
+	}
 }
 
 func (s *testRawKVSuite) TestSplit(c *C) {

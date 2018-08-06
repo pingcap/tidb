@@ -202,12 +202,11 @@ func DecodeTableID(key kv.Key) int64 {
 
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (int64, error) {
-	_, handle, err := DecodeRecordKey(key)
-	// errors.Trace can't be inlined by compiler, let's check error explicitly
-	if err != nil {
-		return handle, errors.Trace(err)
+	if len(key) != recordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
+		return 0, errInvalidKey.Gen("invalid key - %q", key)
 	}
-	return handle, nil
+	u := binary.BigEndian.Uint64(key[prefixLen:])
+	return codec.DecodeCmpUintToInt(u), nil
 }
 
 // EncodeValue encodes a go value to bytes.
@@ -223,7 +222,7 @@ func EncodeValue(sc *stmtctx.StatementContext, raw types.Datum) ([]byte, error) 
 
 // EncodeRow encode row data and column ids into a slice of byte.
 // Row layout: colID1, value1, colID2, value2, .....
-// valBuf and values pass by caller, for reducing EncodeRow allocates tempory bufs. If you pass valBuf and values as nil,
+// valBuf and values pass by caller, for reducing EncodeRow allocates temporary bufs. If you pass valBuf and values as nil,
 // EncodeRow will allocate it.
 func EncodeRow(sc *stmtctx.StatementContext, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum) ([]byte, error) {
 	if len(row) != len(colIDs) {

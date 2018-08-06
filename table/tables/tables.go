@@ -59,7 +59,7 @@ type tableCommon struct {
 	meta            *model.TableInfo
 	alloc           autoid.Allocator
 
-	// Both of them are generated using partitionID.
+	// recordPrefix and indexPrefix are generated using partitionID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
 }
@@ -163,7 +163,7 @@ func initTableIndices(t *tableCommon) error {
 		}
 
 		// Use partition ID for index, because tableCommon may be table or partition.
-		idx := NewIndex(t.partitionID, idxInfo)
+		idx := NewIndex(t.partitionID, tblInfo, idxInfo)
 		t.indices = append(t.indices, idx)
 	}
 	return nil
@@ -203,6 +203,11 @@ func (t *tableCommon) DeletableIndices() []table.Index {
 // Meta implements table.Table Meta interface.
 func (t *tableCommon) Meta() *model.TableInfo {
 	return t.meta
+}
+
+// GetID implements table.Table GetID interface.
+func (t *tableCommon) GetID() int64 {
+	return t.meta.ID
 }
 
 // Cols implements table.Table Cols interface.
@@ -383,7 +388,7 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 // getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
 // Just add the kv to transaction's membuf directly.
 func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMutator {
-	if ctx.GetSessionVars().ImportingData {
+	if ctx.GetSessionVars().LightningMode {
 		return ctx.Txn()
 	}
 
@@ -422,9 +427,9 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 
 	txn := ctx.Txn()
 	sessVars := ctx.GetSessionVars()
-	// when ImportingData or BatchCheck is true,
+	// when LightningMode or BatchCheck is true,
 	// no needs to check the key constrains, so we names the variable skipCheck.
-	skipCheck := sessVars.ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
+	skipCheck := sessVars.LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
 	if skipCheck {
 		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
@@ -468,7 +473,7 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
 	}
-	if !sessVars.ImportingData {
+	if !sessVars.LightningMode {
 		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -517,7 +522,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 	txn := ctx.Txn()
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
-	skipCheck := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
+	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !skipHandleCheck {
 		if err := CheckHandleExists(ctx, t, recordID); err != nil {
 			return recordID, errors.Trace(err)
@@ -709,14 +714,14 @@ func (t *tableCommon) removeRowIndices(ctx sessionctx.Context, h int64, rec []ty
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
-			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS, h, rec)
+			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS(), h, rec)
 			return errors.Trace(err)
 		}
 		if err = v.Delete(ctx.GetSessionVars().StmtCtx, ctx.Txn(), vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
-				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), ctx.Txn().StartTS, h)
+				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), ctx.Txn().StartTS(), h)
 				continue
 			}
 			return errors.Trace(err)

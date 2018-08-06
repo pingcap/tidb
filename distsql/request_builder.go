@@ -17,7 +17,6 @@ import (
 	"math"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -125,15 +124,9 @@ func (builder *RequestBuilder) SetKeepOrder(order bool) *RequestBuilder {
 	return builder
 }
 
-func (builder *RequestBuilder) getIsolationLevel(sv *variable.SessionVars) kv.IsoLevel {
-	var isoLevel string
-	if sv.TxnIsolationLevelOneShot.State == 2 {
-		isoLevel = sv.TxnIsolationLevelOneShot.Value
-	}
-	if isoLevel == "" {
-		isoLevel, _ = sv.GetSystemVar(variable.TxnIsolation)
-	}
-	if isoLevel == ast.ReadCommitted {
+func (builder *RequestBuilder) getIsolationLevel() kv.IsoLevel {
+	switch builder.Tp {
+	case kv.ReqTypeAnalyze:
 		return kv.RC
 	}
 	return kv.SI
@@ -155,7 +148,7 @@ func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 // "Concurrency", "IsolationLevel", "NotFillCache".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
 	builder.Request.Concurrency = sv.DistSQLScanConcurrency
-	builder.Request.IsolationLevel = builder.getIsolationLevel(sv)
+	builder.Request.IsolationLevel = builder.getIsolationLevel()
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.Priority = builder.getKVPriority(sv)
 	return builder
@@ -314,8 +307,22 @@ func encodeIndexKey(sc *stmtctx.StatementContext, ran *ranger.Range) ([]byte, []
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+
 	if !ran.HighExclude {
 		high = []byte(kv.Key(high).PrefixNext())
+	}
+
+	var hasNull bool
+	for _, highVal := range ran.HighVal {
+		if highVal.IsNull() {
+			hasNull = true
+			break
+		}
+	}
+
+	if hasNull {
+		// Append 0 to make unique-key range [null, null] to be a scan rather than point-get.
+		high = []byte(kv.Key(high).Next())
 	}
 	return low, high, nil
 }

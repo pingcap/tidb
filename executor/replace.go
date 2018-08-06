@@ -48,7 +48,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 
 // removeRow removes the duplicate row and cleanup its keys in the key-value map,
 // but if the to-be-removed row equals to the to-be-added row, no remove or add things to do.
-func (e *ReplaceExec) removeRow(handle int64, newRow types.DatumRow) (bool, error) {
+func (e *ReplaceExec) removeRow(handle int64, newRow []types.Datum) (bool, error) {
 	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -69,7 +69,7 @@ func (e *ReplaceExec) removeRow(handle int64, newRow types.DatumRow) (bool, erro
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 
 	// Cleanup keys map, because the record was removed.
-	cleanupRows, err := e.getKeysNeedCheck(e.ctx, e.Table, []types.DatumRow{oldRow})
+	cleanupRows, err := e.getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{oldRow})
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -81,7 +81,7 @@ func (e *ReplaceExec) removeRow(handle int64, newRow types.DatumRow) (bool, erro
 }
 
 // addRow adds a row when all the duplicate key were checked.
-func (e *ReplaceExec) addRow(row types.DatumRow) (int64, error) {
+func (e *ReplaceExec) addRow(row []types.Datum) (int64, error) {
 	// Set kv.PresumeKeyNotExists is safe here, because we've already removed all duplicated rows.
 	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
 	h, err := e.Table.AddRecord(e.ctx, row, false)
@@ -89,7 +89,7 @@ func (e *ReplaceExec) addRow(row types.DatumRow) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if !e.ctx.GetSessionVars().ImportingData {
+	if !e.ctx.GetSessionVars().LightningMode {
 		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 	}
 	return h, nil
@@ -161,7 +161,7 @@ func (e *ReplaceExec) removeIndexRow(r toBeCheckedRow) (bool, bool, error) {
 	return false, false, nil
 }
 
-func (e *ReplaceExec) exec(newRows []types.DatumRow) error {
+func (e *ReplaceExec) exec(newRows [][]types.Datum) error {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table

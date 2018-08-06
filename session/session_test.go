@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -1578,7 +1580,7 @@ func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
 	tk.MustExec("alter table t drop column b")
 	tk1.MustExec("execute stmt using @a, @a")
 	_, err := tk1.Exec("commit")
-	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, plan.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
@@ -1594,7 +1596,7 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 	// When tk1 commit, it will find schema already changed.
 	tk1.MustExec("insert into t values (4, 4)")
 	_, err := tk1.Exec("commit")
-	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrWrongValueCountOnRow), IsTrue)
 }
 
 func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
@@ -1953,7 +1955,7 @@ func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
 
 	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
 
-	// With the existance of global variable cache, it have to sleep a while here.
+	// With the existence of global variable cache, it have to sleep a while here.
 	time.Sleep(3 * time.Second)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
@@ -1998,7 +2000,7 @@ func (s *testSessionSuite) TestSetTransactionIsolationOneShot(c *C) {
 
 	// Check isolation level is set to read committed.
 	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
-		c.Assert(req.IsolationLevel, Equals, kv.RC)
+		c.Assert(req.IsolationLevel, Equals, kv.SI)
 	})
 	tk.Se.Execute(ctx, "select * from t where k = 1")
 
@@ -2110,4 +2112,51 @@ func (s *testSessionSuite) TestDisableTxnAutoRetry(c *C) {
 
 	tk1.MustExec("update no_retry set id = 7")
 	tk1.MustExec("commit")
+}
+
+// For issue #7034
+func (s *testSessionSuite) TestSetGroupConcatMaxLen(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// Normal case
+	tk.MustExec("set global group_concat_max_len = 100")
+	tk.MustExec("set @@session.group_concat_max_len = 50")
+	result := tk.MustQuery("show global variables  where variable_name='group_concat_max_len';")
+	result.Check(testkit.Rows("group_concat_max_len 100"))
+
+	result = tk.MustQuery("show session variables  where variable_name='group_concat_max_len';")
+	result.Check(testkit.Rows("group_concat_max_len 50"))
+
+	result = tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("50"))
+
+	result = tk.MustQuery("select @@global.group_concat_max_len;")
+	result.Check(testkit.Rows("100"))
+
+	result = tk.MustQuery("select @@session.group_concat_max_len;")
+	result.Check(testkit.Rows("50"))
+
+	tk.MustExec("set @@group_concat_max_len = 1024")
+
+	result = tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("1024"))
+
+	result = tk.MustQuery("select @@global.group_concat_max_len;")
+	result.Check(testkit.Rows("100"))
+
+	result = tk.MustQuery("select @@session.group_concat_max_len;")
+	result.Check(testkit.Rows("1024"))
+
+	// Test value out of range
+	tk.MustExec("set @@group_concat_max_len=1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
+	result = tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("4"))
+
+	_, err := tk.Exec("set @@group_concat_max_len = 18446744073709551616")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	// Test illegal type
+	_, err = tk.Exec("set @@group_concat_max_len='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
 }

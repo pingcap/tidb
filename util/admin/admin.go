@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -47,7 +48,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	info := &DDLInfo{}
 	t := meta.NewMeta(txn)
 
-	info.Job, err = t.GetDDLJob(0)
+	info.Job, err = t.GetDDLJobByIdx(0)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -59,7 +60,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 		return info, nil
 	}
 
-	info.ReorgHandle, err = t.GetDDLReorgHandle(info.Job)
+	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(info.Job)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -104,7 +105,11 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			err = t.UpdateDDLJob(int64(j), job, true)
+			if job.Type == model.ActionAddIndex {
+				err = t.UpdateDDLJob(int64(j), job, true, meta.AddIndexJobListKey)
+			} else {
+				err = t.UpdateDDLJob(int64(j), job, true)
+			}
 			if err != nil {
 				errs[i] = errors.Trace(err)
 			}
@@ -116,22 +121,34 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	return errs, nil
 }
 
-// GetDDLJobs returns the DDL jobs and an error.
-func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
-	t := meta.NewMeta(txn)
-	cnt, err := t.DDLJobQueueLen()
+func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.Job, error) {
+	cnt, err := t.DDLJobQueueLen(jobListKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	jobs := make([]*model.Job, cnt)
 	for i := range jobs {
-		jobs[i], err = t.GetDDLJob(int64(i))
+		jobs[i], err = t.GetDDLJobByIdx(int64(i), jobListKey)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	return jobs, nil
+}
+
+// GetDDLJobs returns all DDL jobs.
+// TODO: Sort jobs.
+func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
+	t := meta.NewMeta(txn)
+	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	addIdxJobs, err := getDDLJobsInQueue(t, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return append(generalJobs, addIdxJobs...), nil
 }
 
 // MaxHistoryJobs is exported for testing.
@@ -271,6 +288,24 @@ func getIndexFieldTypes(t table.Table, idx table.Index) ([]*types.FieldType, err
 	return fieldTypes, nil
 }
 
+// adjustDatumKind treats KindString as KindBytes.
+func adjustDatumKind(vals1, vals2 []types.Datum) {
+	if len(vals1) != len(vals2) {
+		return
+	}
+
+	for i, val1 := range vals1 {
+		val2 := vals2[i]
+		if val1.Kind() != val2.Kind() {
+			if (val1.Kind() == types.KindBytes || val1.Kind() == types.KindString) &&
+				(val2.Kind() == types.KindBytes || val2.Kind() == types.KindString) {
+				vals1[i].SetBytes(val1.GetBytes())
+				vals2[i].SetBytes(val2.GetBytes())
+			}
+		}
+	}
+}
+
 func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	it, err := idx.SeekFirst(txn)
 	if err != nil {
@@ -300,6 +335,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			return errors.Trace(err)
 		}
 		vals2, err := rowWithCols(sessCtx, txn, t, h, cols)
+		vals2 = tables.TruncateIndexValuesIfNeeded(t.Meta(), idx.Meta(), vals2)
 		if kv.ErrNotExist.Equal(err) {
 			record := &RecordData{Handle: h, Values: vals1}
 			err = errDateNotEqual.Gen("index:%#v != record:%#v", record, nil)
@@ -307,6 +343,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if err != nil {
 			return errors.Trace(err)
 		}
+		adjustDatumKind(vals1, vals2)
 		if !reflect.DeepEqual(vals1, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals1}
 			record2 := &RecordData{Handle: h, Values: vals2}

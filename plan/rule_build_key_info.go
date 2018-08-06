@@ -102,7 +102,9 @@ func (p *LogicalProjection) buildSchemaByExprs() *expression.Schema {
 		} else {
 			// If the expression is not a column, we add a column to occupy the position.
 			schema.Append(&expression.Column{
-				Position: -1, RetType: expr.GetType()})
+				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
+				RetType:  expr.GetType(),
+			})
 		}
 	}
 	return schema

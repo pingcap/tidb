@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 const (
@@ -206,6 +207,9 @@ type SessionVars struct {
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
 
+	// PlanColumnID is the unique id for column when building plan.
+	PlanColumnID int
+
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
@@ -248,7 +252,7 @@ type SessionVars struct {
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-	CurrInsertValues interface{}
+	CurrInsertValues chunk.Row
 
 	// Per-connection time zones. Each client that connects has its own time zone setting, given by the session time_zone variable.
 	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
@@ -258,8 +262,8 @@ type SessionVars struct {
 
 	/* TiDB system variables */
 
-	// ImportingData is true when importing data.
-	ImportingData bool
+	// LightningMode is true when the lightning use the kvencoder to transfer sql to raw kv.
+	LightningMode bool
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
@@ -349,9 +353,15 @@ func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {
-	if !s.ImportingData {
+	if !s.LightningMode {
 		s.GetWriteStmtBufs().clean()
 	}
+}
+
+// AllocPlanColumnID allocates column id for planner.
+func (s *SessionVars) AllocPlanColumnID() int {
+	s.PlanColumnID++
+	return s.PlanColumnID
 }
 
 // GetCharsetInfo gets charset and collation for current context.
@@ -476,8 +486,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
-	case TiDBImportingData:
-		s.ImportingData = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
@@ -545,8 +553,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableTablePartition:
 		s.EnableTablePartition = TiDBOptOn(val)
 	case TiDBDDLReorgWorkerCount:
-		workerCnt := tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
-		SetDDLReorgWorkerCounter(int32(workerCnt))
+		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	}
 	s.systems[name] = val
 	return nil

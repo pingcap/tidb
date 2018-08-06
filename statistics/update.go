@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -187,7 +188,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	metrics.StatsInaccuracyRate.Observe(rate)
 	s.Lock()
 	defer s.Unlock()
-	isIndex := q.hist.tp.Tp == mysql.TypeBlob
+	isIndex := q.hist.isIndexHist()
 	s.rateMap.update(q.tableID, q.hist.ID, rate, isIndex)
 	if len(s.feedback) < MaxQueryFeedbackCount {
 		s.feedback = append(s.feedback, q)
@@ -328,34 +329,24 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	return
 }
 
-func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) (err error) {
+func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) error {
 	if len(delta.ColSize) == 0 {
 		return nil
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	ctx := context.TODO()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err = exec.Execute(ctx, "begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = finishTransaction(ctx, exec, err)
-	}()
-	version := h.mu.ctx.Txn().StartTS()
-
-	for key, val := range delta.ColSize {
-		if val == 0 {
+	values := make([]string, 0, len(delta.ColSize))
+	for histID, deltaColSize := range delta.ColSize {
+		if deltaColSize == 0 {
 			continue
 		}
-		sql := fmt.Sprintf("update mysql.stats_histograms set version = %d, tot_col_size = tot_col_size + %d where hist_id = %d and table_id = %d and is_index = 0", version, val, key, id)
-		_, err = exec.Execute(ctx, sql)
-		if err != nil {
-			return
-		}
+		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d)", id, histID, deltaColSize))
 	}
-	return
+	if len(values) == 0 {
+		return nil
+	}
+	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
+		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
+	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
+	return errors.Trace(err)
 }
 
 // DumpStatsFeedbackToKV dumps the stats feedback to KV.
@@ -376,14 +367,12 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	vals, err := encodeFeedback(fb)
 	if err != nil {
-		log.Debugf("error occurred when encoding feedback, err: ", errors.ErrorStack(err))
+		log.Debugf("error occurred when encoding feedback, err: %s", errors.ErrorStack(err))
 		return nil
 	}
 	var isIndex int64
-	if fb.hist.tp.Tp == mysql.TypeBlob {
+	if fb.hist.isIndexHist() {
 		isIndex = 1
-	} else {
-		isIndex = 0
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
 		"(%d, %d, %d, X'%X')", fb.tableID, fb.hist.ID, isIndex, vals)
@@ -396,6 +385,52 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 		metrics.DumpFeedbackCounter.WithLabelValues(metrics.LblOK).Inc()
 	}
 	return errors.Trace(err)
+}
+
+// UpdateStatsByLocalFeedback will update statistics by the local feedback.
+// Currently, we dump the feedback with the period of 10 minutes, which means
+// it takes 10 minutes for a feedback to take effect. However, we can use the
+// feedback locally on this tidb-server, so it could be used more timely.
+func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
+	h.listHead.Lock()
+	for collector := h.listHead.next; collector != nil; collector = collector.next {
+		collector.tryToRemoveFromList()
+		h.merge(collector)
+	}
+	h.listHead.Unlock()
+	for _, fb := range h.feedback {
+		table, ok := is.TableByID(fb.tableID)
+		if !ok {
+			continue
+		}
+		tblStats := h.GetTableStats(table.Meta())
+		newTblStats := tblStats.copy()
+		if fb.hist.isIndexHist() {
+			idx, ok := tblStats.Indices[fb.hist.ID]
+			if !ok {
+				continue
+			}
+			newIdx := *idx
+			eqFB, ranFB := splitFeedbackByQueryType(fb.feedback)
+			newIdx.CMSketch = UpdateCMSketch(idx.CMSketch, eqFB)
+			newIdx.Histogram = *UpdateHistogram(&idx.Histogram, &QueryFeedback{feedback: ranFB})
+			newIdx.Histogram.PreCalculateScalar()
+			newTblStats.Indices[fb.hist.ID] = &newIdx
+		} else {
+			col, ok := tblStats.Columns[fb.hist.ID]
+			if !ok {
+				continue
+			}
+			newCol := *col
+			// only use the range query to update primary key
+			_, ranFB := splitFeedbackByQueryType(fb.feedback)
+			newFB := &QueryFeedback{feedback: ranFB}
+			newFB = newFB.decodeIntValues()
+			newCol.Histogram = *UpdateHistogram(&col.Histogram, newFB)
+			newTblStats.Columns[fb.hist.ID] = &newCol
+		}
+		h.UpdateTableStats([]*Table{newTblStats}, nil)
+	}
 }
 
 // UpdateErrorRate updates the error rate of columns from h.rateMap to cache.
@@ -435,97 +470,92 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	if len(rows) == 0 || err != nil {
 		return errors.Trace(err)
 	}
-	tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
-	q := &QueryFeedback{}
-	var (
-		cms        *CMSketch
-		hist       *Histogram
-		col        *Column
-		idx        *Index
-		PKIsHandle bool
-	)
-	for _, row := range rows {
-		// merge into previous feedback
-		if row.GetInt64(0) == tableID && row.GetInt64(1) == histID && row.GetInt64(2) == isIndex {
-			err = decodeFeedback(row.GetBytes(3), q, cms)
-			if err != nil {
-				log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
-			}
-			continue
+
+	var groupedRows [][]chunk.Row
+	preIdx := 0
+	tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
+	for i := 1; i < len(rows); i++ {
+		row := rows[i]
+		if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex {
+			groupedRows = append(groupedRows, rows[preIdx:i])
+			tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
+			preIdx = i
 		}
-		// dump the stats into kv
-		if hist != nil {
-			// Update the NDV of primary key column.
-			if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
-				hist.NDV = int64(hist.totalRowCount())
-				col = nil
-			}
-			err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
-			if err != nil {
-				return errors.Trace(err)
-			}
+	}
+	groupedRows = append(groupedRows, rows[preIdx:])
+
+	for _, rows := range groupedRows {
+		if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
+			return errors.Trace(err)
 		}
-		// initialize new feedback
-		tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-		table, ok := is.TableByID(tableID)
-		if !ok {
-			hist, cms = nil, nil
-			continue
+	}
+	return nil
+}
+
+// handleSingleHistogramUpdate updates the Histogram and CM Sketch using these feedbacks. All the feedbacks for
+// the same index or column are gathered in `rows`.
+func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []chunk.Row) (err error) {
+	tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
+	defer func() {
+		if err == nil {
+			err = errors.Trace(h.deleteOutdatedFeedback(tableID, histID, isIndex))
 		}
-		PKIsHandle = table.Meta().PKIsHandle
-		tbl := h.GetTableStats(table.Meta())
-		if isIndex == 1 {
-			idx, ok = tbl.Indices[histID]
-			if !ok {
-				hist, cms = nil, nil
-				continue
-			}
+	}()
+	table, ok := is.TableByID(tableID)
+	// The table has been deleted.
+	if !ok {
+		return nil
+	}
+	tbl := h.GetTableStats(table.Meta())
+	var cms *CMSketch
+	var hist *Histogram
+	if isIndex == 1 {
+		idx, ok := tbl.Indices[histID]
+		if ok {
 			idxHist := idx.Histogram
 			hist = &idxHist
 			cms = idx.CMSketch.copy()
-		} else {
-			col, ok = tbl.Columns[histID]
-			if !ok {
-				hist, cms = nil, nil
-				continue
-			}
+		}
+	} else {
+		col, ok := tbl.Columns[histID]
+		if ok {
 			colHist := col.Histogram
 			hist = &colHist
-			cms = nil
 		}
-		err = decodeFeedback(row.GetBytes(3), q, cms)
-		if err != nil {
+	}
+	// The column or index has been deleted.
+	if hist == nil {
+		return nil
+	}
+	q := &QueryFeedback{}
+	for _, row := range rows {
+		err1 := decodeFeedback(row.GetBytes(3), q, cms)
+		if err1 != nil {
 			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
 		}
 	}
 	// Update the NDV of primary key column.
-	if col != nil && mysql.HasPriKeyFlag(col.Info.Flag) && PKIsHandle {
+	if table.Meta().PKIsHandle && isIndex == 0 {
 		hist.NDV = int64(hist.totalRowCount())
 	}
-	// dump the last feedback into kv
-	err = h.dumpStatsUpdateToKV(tableID, int(isIndex), q, hist, cms)
+	err = h.dumpStatsUpdateToKV(tableID, isIndex, q, hist, cms)
 	return errors.Trace(err)
 }
 
-func (h *Handle) dumpStatsUpdateToKV(tableID int64, isIndex int, q *QueryFeedback, hist *Histogram, cms *CMSketch) (err error) {
-	defer func() {
-		if err != nil {
-			metrics.UpdateStatsCounter.WithLabelValues(metrics.LblError).Inc()
-		} else {
-			metrics.UpdateStatsCounter.WithLabelValues(metrics.LblOK).Inc()
-		}
-	}()
-	hist = UpdateHistogram(hist, q)
-	err = h.SaveStatsToStorage(tableID, -1, isIndex, hist, cms, 0)
-	if err != nil {
-		return errors.Trace(err)
-	}
+func (h *Handle) deleteOutdatedFeedback(tableID, histID, isIndex int64) error {
 	h.mu.Lock()
 	h.mu.ctx.GetSessionVars().BatchDelete = true
-	sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d", tableID, hist.ID, isIndex)
-	_, err = h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	sql := fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d and hist_id = %d and is_index = %d", tableID, histID, isIndex)
+	_, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	h.mu.ctx.GetSessionVars().BatchDelete = false
 	h.mu.Unlock()
-	q.feedback = q.feedback[:0]
+	return errors.Trace(err)
+}
+
+func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *QueryFeedback, hist *Histogram, cms *CMSketch) error {
+	hist = UpdateHistogram(hist, q)
+	err := h.SaveStatsToStorage(tableID, -1, int(isIndex), hist, cms, 0)
+	metrics.UpdateStatsCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 	return errors.Trace(err)
 }
 

@@ -37,7 +37,7 @@ type LoadDataExec struct {
 }
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
-func NewLoadDataInfo(ctx sessionctx.Context, row types.DatumRow, tbl table.Table, cols []*table.Column) *LoadDataInfo {
+func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
 	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
 	return &LoadDataInfo{
 		row:          row,
@@ -88,8 +88,7 @@ func (e *LoadDataExec) Open(ctx context.Context) error {
 type LoadDataInfo struct {
 	*InsertValues
 
-	row types.DatumRow
-
+	row        []types.Datum
 	Path       string
 	Table      table.Table
 	FieldsInfo *ast.FieldsClause
@@ -214,7 +213,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		isEOF = true
 		prevData, curData = curData, prevData
 	}
-	rows := make([]types.DatumRow, 0, e.maxRowsInBatch)
+	rows := make([][]types.Datum, 0, e.maxRowsInBatch)
 	for len(curData) > 0 {
 		line, curData, hasStarting = e.getLine(prevData, curData)
 		prevData = nil
@@ -260,7 +259,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 	return curData, reachLimit, nil
 }
 
-func (e *LoadDataInfo) colsToRow(cols []field) types.DatumRow {
+func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 	for i := 0; i < len(e.row); i++ {
 		if i >= len(cols) {
 			e.row[i].SetNull()
@@ -283,7 +282,7 @@ func (e *LoadDataInfo) colsToRow(cols []field) types.DatumRow {
 	return row
 }
 
-func (e *LoadDataInfo) insertData(row types.DatumRow) (int64, error) {
+func (e *LoadDataInfo) insertData(row []types.Datum) (int64, error) {
 	if row == nil {
 		return 0, nil
 	}

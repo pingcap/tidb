@@ -93,7 +93,7 @@ func assertFieldsGreaterThanZero(c *C, val reflect.Value) {
 func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	defer testleak.AfterTest(c)()
 	v := NewSessionVars()
-	v.GlobalVarsAccessor = newMockGlobalAccessor()
+	v.GlobalVarsAccessor = NewMockGlobalAccessor()
 
 	SetSessionSystemVar(v, "autocommit", types.NewStringDatum("1"))
 	val, err := GetSessionSystemVar(v, "autocommit")
@@ -116,26 +116,6 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(collation, Equals, "utf8_general_ci")
 
 	c.Assert(SetSessionSystemVar(v, "character_set_results", types.Datum{}), IsNil)
-
-	// Test case for get TiDBImportingData session variable.
-	val, err = GetSessionSystemVar(v, TiDBImportingData)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "0")
-
-	// Test case for tidb_import_data
-	c.Assert(v.ImportingData, IsFalse)
-	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("0"))
-	c.Assert(v.ImportingData, IsFalse)
-	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("1"))
-	c.Assert(v.ImportingData, IsTrue)
-	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("0"))
-	c.Assert(v.ImportingData, IsFalse)
-
-	// Test case for change TiDBImportingData session variable.
-	SetSessionSystemVar(v, TiDBImportingData, types.NewStringDatum("1"))
-	val, err = GetSessionSystemVar(v, TiDBImportingData)
-	c.Assert(err, IsNil)
-	c.Assert(val, Equals, "1")
 
 	// Test case for time_zone session variable.
 	tests := []struct {
@@ -223,11 +203,11 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1))
 	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(1))
 
-	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
+	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
+	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
 	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(int64(maxDDLReorgWorkerCount)+1))
-	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(maxDDLReorgWorkerCount))
+	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
 
 	err = SetSessionSystemVar(v, TiDBRetryLimit, types.NewStringDatum("3"))
 	c.Assert(err, IsNil)
@@ -243,31 +223,4 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 	c.Assert(v.EnableTablePartition, IsTrue)
-}
-
-type mockGlobalAccessor struct {
-	vars map[string]string
-}
-
-func newMockGlobalAccessor() *mockGlobalAccessor {
-	m := &mockGlobalAccessor{
-		vars: make(map[string]string),
-	}
-	for name, val := range SysVars {
-		m.vars[name] = val.Value
-	}
-	return m
-}
-
-func (m *mockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
-	return m.vars[name], nil
-}
-
-func (m *mockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
-	m.vars[name] = value
-	return nil
-}
-
-func (m *mockGlobalAccessor) GetAllSysVars() (map[string]string, error) {
-	return m.vars, nil
 }

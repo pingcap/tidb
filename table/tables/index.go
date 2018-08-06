@@ -100,15 +100,18 @@ func (c *indexIter) Next() (val []types.Datum, h int64, err error) {
 // index is the data structure for index data in the KV store.
 type index struct {
 	idxInfo *model.IndexInfo
+	tblInfo *model.TableInfo
 	prefix  kv.Key
 }
 
 // NewIndex builds a new Index object.
 // id may be partition or table ID, depends on whether the table is a PartitionedTable.
-func NewIndex(id int64, indexInfo *model.IndexInfo) table.Index {
+func NewIndex(id int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
 	index := &index{
 		idxInfo: indexInfo,
-		prefix:  tablecodec.EncodeTableIndexPrefix(id, indexInfo.ID),
+		tblInfo: tblInfo,
+		// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
+		prefix: tablecodec.EncodeTableIndexPrefix(id, indexInfo.ID),
 	}
 	return index
 }
@@ -126,24 +129,31 @@ func (c *index) getIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	return make([]byte, 0, defaultCap)
 }
 
-// truncateIndexValuesIfNeeded truncate the index values that be created that use only the leading part of column values.
-func (c *index) truncateIndexValuesIfNeeded(indexedValues []types.Datum) []types.Datum {
+// TruncateIndexValuesIfNeeded truncates the index values created using only the leading part of column values.
+func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) []types.Datum {
 	for i := 0; i < len(indexedValues); i++ {
 		v := &indexedValues[i]
 		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
-			ic := c.idxInfo.Columns[i]
-			if ic.Tp.Charset == charset.CharsetUTF8 || ic.Tp.Charset == charset.CharsetUTF8MB4 {
-				val := v.GetBytes()
-				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(val) > ic.Length {
-					rs := bytes.Runes(val)
+			ic := idxInfo.Columns[i]
+			colCharset := tblInfo.Columns[ic.Offset].Charset
+			colValue := v.GetBytes()
+			isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+			origKind := v.Kind()
+			if isUTF8Charset {
+				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(colValue) > ic.Length {
+					rs := bytes.Runes(colValue)
 					truncateStr := string(rs[:ic.Length])
 					// truncate value and limit its length
 					v.SetString(truncateStr)
+					if origKind == types.KindBytes {
+						v.SetBytes(v.GetBytes())
+					}
 				}
-			} else {
-				if ic.Length != types.UnspecifiedLength && len(v.GetBytes()) > ic.Length {
-					// truncate value and limit its length
-					v.SetBytes(v.GetBytes()[:ic.Length])
+			} else if ic.Length != types.UnspecifiedLength && len(colValue) > ic.Length {
+				// truncate value and limit its length
+				v.SetBytes(colValue[:ic.Length])
+				if origKind == types.KindString {
+					v.SetString(v.GetString())
 				}
 			}
 		}
@@ -169,9 +179,9 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 		}
 	}
 
-	// For string columns, indexes can be created that use only the leading part of column values,
+	// For string columns, indexes can be created using only the leading part of column values,
 	// using col_name(length) syntax to specify an index prefix length.
-	indexedValues = c.truncateIndexValuesIfNeeded(indexedValues)
+	indexedValues = TruncateIndexValuesIfNeeded(c.tblInfo, c.idxInfo, indexedValues)
 	key = c.getIndexKeyBuf(buf, len(c.prefix)+len(indexedValues)*9+9)
 	key = append(key, []byte(c.prefix)...)
 	key, err = codec.EncodeKey(sc, key, indexedValues...)
@@ -189,7 +199,7 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
 func (c *index) Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error) {
 	writeBufs := ctx.GetSessionVars().GetWriteStmtBufs()
-	skipCheck := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
+	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
 	key, distinct, err := c.GenIndexKey(ctx.GetSessionVars().StmtCtx, indexedValues, h, writeBufs.IndexKeyBuf)
 	if err != nil {
 		return 0, errors.Trace(err)

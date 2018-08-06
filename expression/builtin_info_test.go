@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testleak"
@@ -33,11 +34,11 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	ctx := mock.NewContext()
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, nil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.Kind(), Equals, types.KindNull)
 	ctx.GetSessionVars().CurrentDB = "test"
-	d, err = evalBuiltinFunc(f, nil)
+	d, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 
@@ -46,7 +47,7 @@ func (s *testEvaluatorSuite) TestDatabase(c *C) {
 	c.Assert(fc, NotNil)
 	f, err = fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err = evalBuiltinFunc(f, types.DatumRow(types.MakeDatums()))
+	d, err = evalBuiltinFunc(f, chunk.MutRowFromDatums(types.MakeDatums()).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "test")
 }
@@ -60,7 +61,7 @@ func (s *testEvaluatorSuite) TestFoundRows(c *C) {
 	fc := funcs[ast.FoundRows]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, nil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(2))
 }
@@ -74,7 +75,7 @@ func (s *testEvaluatorSuite) TestUser(c *C) {
 	fc := funcs[ast.User]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, nil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
@@ -88,7 +89,7 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	fc := funcs[ast.CurrentUser]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, nil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetString(), Equals, "root@localhost")
 }
@@ -102,7 +103,7 @@ func (s *testEvaluatorSuite) TestConnectionID(c *C) {
 	fc := funcs[ast.ConnectionID]
 	f, err := fc.getFunction(ctx, nil)
 	c.Assert(err, IsNil)
-	d, err := evalBuiltinFunc(f, nil)
+	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(d.GetUint64(), Equals, uint64(1))
 }
@@ -112,7 +113,7 @@ func (s *testEvaluatorSuite) TestVersion(c *C) {
 	fc := funcs[ast.Version]
 	f, err := fc.getFunction(s.ctx, nil)
 	c.Assert(err, IsNil)
-	v, err := evalBuiltinFunc(f, nil)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, mysql.ServerVersion)
 }
@@ -161,7 +162,7 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	sig, ok := f.(*builtinRowCountSig)
 	c.Assert(ok, IsTrue)
 	c.Assert(sig, NotNil)
-	intResult, isNull, err := sig.evalInt(nil)
+	intResult, isNull, err := sig.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsFalse)
 	c.Assert(intResult, Equals, int64(10))
@@ -172,7 +173,7 @@ func (s *testEvaluatorSuite) TestTiDBVersion(c *C) {
 	defer testleak.AfterTest(c)()
 	f, err := newFunctionForTest(s.ctx, ast.TiDBVersion, s.primitiveValsToConstants([]interface{}{})...)
 	c.Assert(err, IsNil)
-	v, err := f.Eval(nil)
+	v, err := f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.GetString(), Equals, printer.GetTiDBInfo())
 }
@@ -217,7 +218,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
 		c.Assert(tp.Flag&mysql.BinaryFlag, Equals, uint(mysql.BinaryFlag))
 		c.Assert(tp.Flen, Equals, mysql.MaxIntWidth)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {

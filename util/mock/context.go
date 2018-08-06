@@ -156,7 +156,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 	}
 	if c.Store != nil {
 		membufCap := kv.DefaultTxnMembufCap
-		if c.sessionVars.ImportingData {
+		if c.sessionVars.LightningMode {
 			membufCap = kv.ImportingTxnMembufCap
 		}
 		txn, err := c.Store.BeginWithStartTS(startTS)
@@ -225,6 +225,7 @@ func NewContext() *Context {
 	}
 	sctx.sessionVars.MaxChunkSize = 2
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
+	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	return sctx
 }
 

@@ -16,6 +16,7 @@ package infoschema
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -63,6 +64,7 @@ const (
 	tableOptimizerTrace                     = "OPTIMIZER_TRACE"
 	tableTableSpaces                        = "TABLESPACES"
 	tableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
+	tableProcesslist                        = "PROCESSLIST"
 )
 
 type columnInfo struct {
@@ -516,6 +518,17 @@ var tableCollationCharacterSetApplicabilityCols = []columnInfo{
 	{"CHARACTER_SET_NAME", mysql.TypeVarchar, 32, mysql.NotNullFlag, nil, nil},
 }
 
+var tableProcesslistCols = []columnInfo{
+	{"ID", mysql.TypeLonglong, 21, mysql.NotNullFlag, 0, nil},
+	{"USER", mysql.TypeVarchar, 16, mysql.NotNullFlag, "", nil},
+	{"HOST", mysql.TypeVarchar, 64, mysql.NotNullFlag, "", nil},
+	{"DB", mysql.TypeVarchar, 64, mysql.NotNullFlag, "", nil},
+	{"COMMAND", mysql.TypeVarchar, 16, mysql.NotNullFlag, "", nil},
+	{"TIME", mysql.TypeLong, 7, mysql.NotNullFlag, 0, nil},
+	{"STATE", mysql.TypeVarchar, 7, 0, nil, nil},
+	{"Info", mysql.TypeString, 512, 0, nil, nil},
+}
+
 func dataForCharacterSets() (records [][]types.Datum) {
 	records = append(records,
 		types.MakeDatums("ascii", "ascii_general_ci", "US ASCII", 1),
@@ -567,6 +580,34 @@ func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err err
 func dataForUserPrivileges(ctx sessionctx.Context) [][]types.Datum {
 	pm := privilege.GetPrivilegeManager(ctx)
 	return pm.UserPrivilegesTable()
+}
+
+func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
+	sm := ctx.GetSessionManager()
+	if sm == nil {
+		return nil
+	}
+
+	var records [][]types.Datum
+	pl := sm.ShowProcessList()
+	for _, pi := range pl {
+		var t uint64
+		if len(pi.Info) != 0 {
+			t = uint64(time.Since(pi.Time) / time.Second)
+		}
+		record := types.MakeDatums(
+			pi.ID,
+			pi.User,
+			pi.Host,
+			pi.DB,
+			pi.Command,
+			t,
+			fmt.Sprintf("%d", pi.State),
+			pi.Info,
+		)
+		records = append(records, record)
+	}
+	return records
 }
 
 func dataForEngines() (records [][]types.Datum) {
@@ -1079,6 +1120,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableOptimizerTrace:                     tableOptimizerTraceCols,
 	tableTableSpaces:                        tableTableSpacesCols,
 	tableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,
+	tableProcesslist:                        tableProcesslistCols,
 }
 
 func createInfoSchemaTable(handle *Handle, meta *model.TableInfo) *infoschemaTable {
@@ -1165,6 +1207,8 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableTableSpaces:
 	case tableCollationCharacterSetApplicability:
 		fullRows = dataForCollationCharacterSetApplicability()
+	case tableProcesslist:
+		fullRows = dataForProcesslist(ctx)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1275,6 +1319,10 @@ func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, i
 
 func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
+}
+
+func (it *infoschemaTable) GetID() int64 {
+	return it.meta.ID
 }
 
 // Seek is the first method called for table scan, we lazy initialize it here.
