@@ -2153,6 +2153,60 @@ func (s *testDBSuite) TestYearTypeCreateTable(c *C) {
 	c.Assert(mysql.HasUnsignedFlag(yearCol.Flag), IsFalse)
 }
 
+func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test;")
+	s.tk.MustExec("drop table if exists text_default_text;")
+	s.testErrorCode(c, "create table text_default_text(c1 text not null default '');", tmysql.ErrBlobCantHaveDefault)
+	s.testErrorCode(c, "create table text_default_text(c1 text not null default 'scds');", tmysql.ErrBlobCantHaveDefault)
+
+	s.tk.MustExec("drop table if exists text_default_json;")
+	s.testErrorCode(c, "create table text_default_json(c1 json not null default '');", tmysql.ErrBlobCantHaveDefault)
+	s.testErrorCode(c, "create table text_default_json(c1 json not null default 'dfew555');", tmysql.ErrBlobCantHaveDefault)
+
+	s.tk.MustExec("drop table if exists text_default_blob;")
+	s.testErrorCode(c, "create table text_default_blob(c1 blob not null default '');", tmysql.ErrBlobCantHaveDefault)
+	s.testErrorCode(c, "create table text_default_blob(c1 blob not null default 'scds54');", tmysql.ErrBlobCantHaveDefault)
+
+	s.tk.MustExec("set sql_mode='';")
+	s.tk.MustExec("drop table if exists text_default_text;")
+	s.tk.MustExec("create table text_default_text(c1 text not null default '');")
+	s.tk.MustQuery(`show create table text_default_text`).Check(testutil.RowsWithSep("|",
+		"text_default_text CREATE TABLE `text_default_text` (\n"+
+			"  `c1` text NOT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_text"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
+
+	s.tk.MustExec("drop table if exists text_default_blob;")
+	s.tk.MustExec("create table text_default_blob(c1 blob not null default '');")
+	s.tk.MustQuery(`show create table text_default_blob`).Check(testutil.RowsWithSep("|",
+		"text_default_blob CREATE TABLE `text_default_blob` (\n"+
+			"  `c1` blob NOT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+	is = domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_blob"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, "")
+
+	s.tk.MustExec("drop table if exists text_default_json;")
+	s.tk.MustExec("create table text_default_json(c1 json not null default '');")
+	s.tk.MustQuery(`show create table text_default_json`).Check(testutil.RowsWithSep("|",
+		"text_default_json CREATE TABLE `text_default_json` (\n"+
+			"  `c1` json NOT NULL DEFAULT 'null'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin",
+	))
+	is = domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_json"))
+	c.Assert(err, IsNil)
+	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, `null`)
+}
+
 func (s *testDBSuite) TestCharacterSetInColumns(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("drop database if exists varchar_test;")
