@@ -248,7 +248,6 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 
 	builder.Request.NotFillCache = true
 	builder.Request.Priority = kv.PriorityLow
-	builder.Request.IsolationLevel = kv.SI
 
 	kvReq, err := builder.Build()
 	sctx := newContext(d.store)
