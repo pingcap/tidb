@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/table"
 )
 
-// perfSchema exports for test.
+// perfSchema is used for tables in performance_schema.
 type perfSchema struct {
 	dbInfo  *model.DBInfo
 	tables  map[string]*model.TableInfo

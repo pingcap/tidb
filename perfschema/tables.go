@@ -14,7 +14,6 @@
 package perfschema
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -48,19 +47,6 @@ func (vt *perfSchemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 	fn table.RecordIterFunc) error {
 	if len(startKey) != 0 {
 		return table.ErrUnsupportedOp
-	}
-	rows, err := vt.getRows(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for i, row := range rows {
-		more, err := fn(int64(i), row, cols)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !more {
-			break
-		}
 	}
 	return nil
 }
@@ -168,9 +154,4 @@ func (vt *perfSchemaTable) Seek(ctx sessionctx.Context, h int64) (int64, bool, e
 // Type implements table.Table Type interface.
 func (vt *perfSchemaTable) Type() table.Type {
 	return table.VirtualTable
-}
-
-// getRows returns empty row for performance schema.
-func (vt *perfSchemaTable) getRows(ctx sessionctx.Context) ([][]types.Datum, error) {
-	return nil, nil
 }
