@@ -164,6 +164,35 @@ func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx sessionctx.Context, schema *e
 	}
 }
 
+// GetDefaultValue gets the default value when the aggregation function's input is null.
+// According to MySQL, default values of the aggregation function are listed as follows:
+// e.g.
+// Table t which is empty:
+// +-------+---------+---------+
+// | Table | Field   | Type    |
+// +-------+---------+---------+
+// | t     | a       | int(11) |
+// +-------+---------+---------+
+//
+// Query: `select a, avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a) from t;`
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// | a    | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) |
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// | NULL |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+func (a *AggFuncDesc) GetDefaultValue() (v types.Datum) {
+	switch a.Name {
+	case ast.AggFuncCount, ast.AggFuncBitOr, ast.AggFuncBitXor:
+		v = types.NewIntDatum(0)
+	case ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMax,
+		ast.AggFuncMin, ast.AggFuncGroupConcat:
+		v = types.Datum{}
+	case ast.AggFuncBitAnd:
+		v = types.NewUintDatum(uint64(math.MaxUint64))
+	}
+	return
+}
+
 // GetAggFunc gets an evaluator according to the aggregation function signature.
 func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 	aggFunc := aggFunction{AggFuncDesc: a}

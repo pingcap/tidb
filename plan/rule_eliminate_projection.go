@@ -90,10 +90,8 @@ func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 	newRoot := doPhysicalProjectionElimination(p)
 	newCols := newRoot.Schema().Columns
 	for i, oldCol := range oldSchema.Columns {
-		newCols[i].DBName = oldCol.DBName
-		newCols[i].TblName = oldCol.TblName
-		newCols[i].ColName = oldCol.ColName
-		newCols[i].OrigTblName = oldCol.OrigTblName
+		oldCol.Index = newCols[i].Index
+		newRoot.Schema().Columns[i] = oldCol
 	}
 	return newRoot
 }

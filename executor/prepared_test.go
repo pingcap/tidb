@@ -27,16 +27,16 @@ import (
 )
 
 func (s *testSuite) TestPrepared(c *C) {
-	orgEnable := plan.PreparedPlanCacheEnabled
+	orgEnable := plan.PreparedPlanCacheEnabled()
 	orgCapacity := plan.PreparedPlanCacheCapacity
 	defer func() {
-		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.SetPreparedPlanCache(orgEnable)
 		plan.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		plan.PreparedPlanCacheEnabled = flag
+		plan.SetPreparedPlanCache(flag)
 		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -187,16 +187,16 @@ func (s *testSuite) TestPrepared(c *C) {
 }
 
 func (s *testSuite) TestPreparedLimitOffset(c *C) {
-	orgEnable := plan.PreparedPlanCacheEnabled
+	orgEnable := plan.PreparedPlanCacheEnabled()
 	orgCapacity := plan.PreparedPlanCacheCapacity
 	defer func() {
-		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.SetPreparedPlanCache(orgEnable)
 		plan.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		plan.PreparedPlanCacheEnabled = flag
+		plan.SetPreparedPlanCache(flag)
 		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -223,15 +223,15 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 }
 
 func (s *testSuite) TestPreparedNullParam(c *C) {
-	orgEnable := plan.PreparedPlanCacheEnabled
+	orgEnable := plan.PreparedPlanCacheEnabled()
 	orgCapacity := plan.PreparedPlanCacheCapacity
 	defer func() {
-		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.SetPreparedPlanCache(orgEnable)
 		plan.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plan.PreparedPlanCacheEnabled = flag
+		plan.SetPreparedPlanCache(flag)
 		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -287,15 +287,15 @@ func (s *testSuite) TestPrepareMaxParamCountCheck(c *C) {
 }
 
 func (s *testSuite) TestPrepareWithAggregation(c *C) {
-	orgEnable := plan.PreparedPlanCacheEnabled
+	orgEnable := plan.PreparedPlanCacheEnabled()
 	orgCapacity := plan.PreparedPlanCacheCapacity
 	defer func() {
-		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.SetPreparedPlanCache(orgEnable)
 		plan.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plan.PreparedPlanCacheEnabled = flag
+		plan.SetPreparedPlanCache(flag)
 		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
