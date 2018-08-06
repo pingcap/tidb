@@ -103,8 +103,11 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			p.buffer.WriteString(e.sep)
 		}
 	}
-	p.buffer.Truncate(p.buffer.Len() - len(e.sep))
-	return e.truncatePartialResultIfNeed(sctx, p.buffer)
+	if p.buffer != nil {
+		p.buffer.Truncate(p.buffer.Len() - len(e.sep))
+		return e.truncatePartialResultIfNeed(sctx, p.buffer)
+	}
+	return nil
 }
 
 type partialResult4GroupConcatDistinct struct {
