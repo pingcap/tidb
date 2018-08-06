@@ -30,15 +30,15 @@ func (s *testPrepareSuite) TestPrepareCache(c *C) {
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
-	orgEnable := plan.PreparedPlanCacheEnabled
+	orgEnable := plan.PreparedPlanCacheEnabled()
 	orgCapacity := plan.PreparedPlanCacheCapacity
 	defer func() {
 		dom.Close()
 		store.Close()
-		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.SetPreparedPlanCache(orgEnable)
 		plan.PreparedPlanCacheCapacity = orgCapacity
 	}()
-	plan.PreparedPlanCacheEnabled = true
+	plan.SetPreparedPlanCache(true)
 	plan.PreparedPlanCacheCapacity = 100
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
