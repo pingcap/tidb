@@ -393,6 +393,11 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 		return false, errors.Trace(err)
 	}
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
+	// If the `countAfterAccess` is less than `stats.count`, there must be some inconsistent stats info.
+	// We prefer the `stats.count` because it could use more stats info to calculate the selectivity.
+	if path.countAfterAccess < ds.stats.count {
+		path.countAfterAccess = math.Min(ds.stats.count/selectionFactor, float64(ds.statisticTable.Count))
+	}
 	// Check whether the primary key is covered by point query.
 	noIntervalRange := true
 	for _, ran := range path.ranges {
