@@ -47,12 +47,11 @@ var _ table.PartitionedTable = &PartitionedTable{}
 // Partition also implements the table.Table interface.
 type Partition struct {
 	tableCommon
-	ID int64
 }
 
 // GetID implements table.Table GetID interface.
 func (p *Partition) GetID() int64 {
-	return p.ID
+	return p.partitionID
 }
 
 // PartitionedTable implements the table.PartitionedTable interface.
@@ -77,7 +76,6 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		t.ID = p.ID
 		partitions[p.ID] = &t
 	}
 

@@ -47,9 +47,6 @@ func (e *InsertExec) insertOneRow(row []types.Datum) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if !e.ctx.GetSessionVars().LightningMode {
-		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
-	}
 	e.batchInsertRowCount++
 	return h, nil
 }
