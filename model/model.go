@@ -97,7 +97,6 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 			return nil
 		}
 		return types.ErrInvalidDefault.GenByArgs(c.Name)
-
 	}
 	return nil
 }
