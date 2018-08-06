@@ -20,7 +20,6 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"golang.org/x/net/context"
@@ -33,8 +32,6 @@ const mockCheckVersInterval = 2 * time.Millisecond
 type mockSchemaSyncer struct {
 	selfSchemaVersion int64
 	globalVerCh       chan clientv3.WatchResponse
-	// selfServerInfo used to save self DDL server information.
-	selfServerInfo *util.ServerInfo
 }
 
 // NewMockSchemaSyncer creates a new mock SchemaSyncer.
@@ -103,29 +100,6 @@ func (s *mockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 			}
 		}
 	}
-}
-
-// GetServerInfo implements SchemaSyncer.GetServerInfo interface.
-func (s *mockSchemaSyncer) GetServerInfo(ctx context.Context, _ string) (*util.ServerInfo, error) {
-	return s.selfServerInfo, nil
-}
-
-// GetAllServerInfo implements SchemaSyncer.GetAllServerInfo interface.
-func (s *mockSchemaSyncer) GetAllServerInfo(ctx context.Context) (map[string]*util.ServerInfo, error) {
-	allDDLInfo := make(map[string]*util.ServerInfo)
-	allDDLInfo[s.selfServerInfo.ID] = s.selfServerInfo
-	return allDDLInfo, nil
-}
-
-// StoreServerInfo implements SchemaSyncer.StoreServerInfo interface.
-func (s *mockSchemaSyncer) StoreServerInfo(ctx context.Context, info *util.ServerInfo) error {
-	s.selfServerInfo = info
-	return nil
-}
-
-// RemoveServerInfo implements SchemaSyncer.RemoveServerInfo interface.
-func (s *mockSchemaSyncer) RemoveServerInfo() error {
-	return nil
 }
 
 type mockDelRange struct {

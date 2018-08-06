@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -1259,11 +1258,11 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 	return h.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }
 
-// ReportServerInfo is only used to report the servers info when do http request
-type ReportServerInfo struct {
-	IsOwner         bool             `json:"is_owner"`
-	SelfServerInfo  *util.ServerInfo `json:"self_server_info"`
-	OwnerServerInfo *util.ServerInfo `json:"owner_server_info,omitempty"`
+// reportServerInfo is only used to report the servers info when do http request
+type reportServerInfo struct {
+	IsOwner         bool               `json:"is_owner"`
+	SelfServerInfo  *domain.ServerInfo `json:"self_server_info"`
+	OwnerServerInfo *domain.ServerInfo `json:"owner_server_info,omitempty"`
 }
 
 // ServeHTTP handles request of ddl server info.
@@ -1274,18 +1273,19 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	ddl := do.DDL()
+	is := do.InfoSyncer()
 	ownerID, err := ddl.OwnerManager().GetOwnerID(context.Background())
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		return
 	}
-	selfInfo := domain.GetServerInfo(ddl.GetID())
-	reportServerInfo := ReportServerInfo{
+	selfInfo := is.GetServerInfo()
+	reportServerInfo := reportServerInfo{
 		IsOwner:        selfInfo.ID == ownerID,
 		SelfServerInfo: selfInfo,
 	}
 	if !reportServerInfo.IsOwner {
-		ownerInfo, err := domain.GetOwnerServerInfoFromPD(ddl)
+		ownerInfo, err := is.GetOwnerServerInfoFromPD(ownerID)
 		if err != nil {
 			writeError(w, errors.New("ddl server information not found"))
 			return
@@ -1295,13 +1295,13 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	writeData(w, reportServerInfo)
 }
 
-// ClusterServerInfo is only used to report cluster servers info when do http request
-type ClusterServerInfo struct {
-	ServersNum                   int                         `json:"servers_num,omitempty"`
-	OwnerID                      string                      `json:"owner_id"`
-	IsAllServerVersionConsistent bool                        `json:"is_all_server_version_consistent,omitempty"`
-	AllServersDiffVersions       []util.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
-	AllServersInfo               map[string]*util.ServerInfo `json:"all_servers_info,omitempty"`
+// clusterServerInfo is only used to report cluster servers info when do http request
+type clusterServerInfo struct {
+	ServersNum                   int                           `json:"servers_num,omitempty"`
+	OwnerID                      string                        `json:"owner_id"`
+	IsAllServerVersionConsistent bool                          `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []domain.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*domain.ServerInfo `json:"all_servers_info,omitempty"`
 }
 
 // ServeHTTP handles request of all ddl servers info.
@@ -1312,8 +1312,8 @@ func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 		return
 	}
 	ddl := do.DDL()
-
-	allServersInfo, err := domain.GetAllServerInfoFromPD(ddl)
+	is := do.InfoSyncer()
+	allServersInfo, err := is.GetAllServerInfoFromPD()
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		return
@@ -1323,8 +1323,8 @@ func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 		writeError(w, errors.New("ddl server information not found"))
 		return
 	}
-	allVersionsMap := map[util.ServerVersionInfo]struct{}{}
-	allVersions := []util.ServerVersionInfo{}
+	allVersionsMap := map[domain.ServerVersionInfo]struct{}{}
+	allVersions := []domain.ServerVersionInfo{}
 	for _, v := range allServersInfo {
 		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
 			continue
@@ -1332,7 +1332,7 @@ func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 		allVersionsMap[v.ServerVersionInfo] = struct{}{}
 		allVersions = append(allVersions, v.ServerVersionInfo)
 	}
-	clusterServerInfo := ClusterServerInfo{
+	clusterServerInfo := clusterServerInfo{
 		ServersNum: len(allServersInfo),
 		OwnerID:    ownerID,
 		IsAllServerVersionConsistent: len(allVersions) == 1,

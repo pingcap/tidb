@@ -52,6 +52,7 @@ type Domain struct {
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
 	ddl             ddl.DDL
+	info            *infoSyncer
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
 	sysSessionPool  *pools.ResourcePool
@@ -251,6 +252,11 @@ func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
 }
 
+// InfoSyncer gets infoSyncer from domain
+func (do *Domain) InfoSyncer() *infoSyncer {
+	return do.info
+}
+
 // Store gets KV store from domain.
 func (do *Domain) Store() kv.Storage {
 	return do.store
@@ -390,8 +396,10 @@ func (do *Domain) mustRestartSyncer() error {
 // Close closes the Domain and release its resource.
 func (do *Domain) Close() {
 	if do.ddl != nil {
-		RemoveServerInfoFromPD(do.ddl)
 		terror.Log(errors.Trace(do.ddl.Stop()))
+	}
+	if do.info != nil {
+		do.info.RemoveServerInfoFromPD()
 	}
 	close(do.exit)
 	if do.etcdClient != nil {
@@ -501,7 +509,8 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = StoreServerInfoToPD(do.ddl)
+	do.info = newInfoSyncer(do.ddl.GetID(), do.etcdClient)
+	err = do.info.StoreServerInfoToPD()
 	if err != nil {
 		return errors.Trace(err)
 	}

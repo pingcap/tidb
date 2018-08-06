@@ -109,20 +109,3 @@ func UpdateDeleteRange(ctx sessionctx.Context, dr DelRangeTask, newStartKey, old
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
-
-// ServerInfo is DDL server static information.
-// ServerInfo will store into PD when server start up and delete when DDL closed.
-// It will not update when DDL server running. So please only put static information in ServerInfo struct.
-type ServerInfo struct {
-	ServerVersionInfo
-	ID         string `json:"ddl_id"`
-	IP         string `json:"ip"`
-	StatusPort uint   `json:"status_port"`
-	Lease      string `json:"lease"`
-}
-
-// ServerVersionInfo is the server version and git_hash.
-type ServerVersionInfo struct {
-	Version string `json:"version"`
-	GitHash string `json:"git_hash"`
-}

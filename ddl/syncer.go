@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -24,10 +23,8 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/util/hack"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -36,8 +33,6 @@ const (
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	// It's exported for testing.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
-	// ServerInformation store DDL server information such as IP, port and so on.
-	ServerInformation = "/tidb/ddl/info"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	// It's exported for testing.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
@@ -88,15 +83,6 @@ type SchemaSyncer interface {
 	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
 	// It returns until all servers' versions are equal to the latest version or the ctx is done.
 	OwnerCheckAllVersions(ctx context.Context, latestVer int64) error
-
-	// GetServerInfo gets the DDL_id server information from PD.
-	GetServerInfo(ctx context.Context, id string) (*util.ServerInfo, error)
-	// GetAllServerInfo gets all DDL servers information from PD.
-	GetAllServerInfo(ctx context.Context) (map[string]*util.ServerInfo, error)
-	// StoreServerInfo stores DDL server information to PD.
-	StoreServerInfo(ctx context.Context, info *util.ServerInfo) error
-	// RemoveServerInfo removes DDL server information from PD.
-	RemoveServerInfo() error
 }
 
 type schemaVersionSyncer struct {
@@ -113,13 +99,18 @@ type schemaVersionSyncer struct {
 // NewSchemaSyncer creates a new SchemaSyncer.
 func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
 	return &schemaVersionSyncer{
-		etcdCli:            etcdCli,
-		selfSchemaVerPath:  fmt.Sprintf("%s/%s", DDLAllSchemaVersions, id),
-		selfServerInfoPath: fmt.Sprintf("%s/%s", ServerInformation, id),
+		etcdCli:           etcdCli,
+		selfSchemaVerPath: fmt.Sprintf("%s/%s", DDLAllSchemaVersions, id),
 	}
 }
 
 func (s *schemaVersionSyncer) putKV(ctx context.Context, retryCnt int, key, val string,
+	opts ...clientv3.OpOption) error {
+	return PutKV(ctx, s.etcdCli, retryCnt, key, val, opts...)
+}
+
+// PutKV put key value to etcd.
+func PutKV(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
 	opts ...clientv3.OpOption) error {
 	var err error
 	for i := 0; i < retryCnt; i++ {
@@ -128,12 +119,12 @@ func (s *schemaVersionSyncer) putKV(ctx context.Context, retryCnt int, key, val 
 		}
 
 		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
-		_, err = s.etcdCli.Put(childCtx, key, val, opts...)
+		_, err = etcdCli.Put(childCtx, key, val, opts...)
 		cancel()
 		if err == nil {
 			return nil
 		}
-		log.Warnf("[syncer] put schema version %s failed %v no.%d", val, err, i)
+		log.Warnf("[syncer] put key: %s value: %s failed %v no.%d", key, val, err, i)
 		time.Sleep(keyOpRetryInterval)
 	}
 	return errors.Trace(err)
@@ -166,78 +157,6 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 
 	err = s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.session.Lease()))
-	return errors.Trace(err)
-}
-
-func (s *schemaVersionSyncer) getInfo(ctx context.Context, key string, opts ...clientv3.OpOption) (map[string]*util.ServerInfo, error) {
-	var err error
-	allInfo := make(map[string]*util.ServerInfo)
-
-	for {
-		if isContextDone(ctx) {
-			err = errors.Trace(ctx.Err())
-			return nil, err
-		}
-
-		resp, err := s.etcdCli.Get(ctx, key, opts...)
-		if err != nil {
-			log.Infof("[syncer] get %s failed %v, continue checking.", key, err)
-			time.Sleep(200 * time.Millisecond)
-			continue
-		}
-
-		for _, kv := range resp.Kvs {
-			info := &util.ServerInfo{}
-			err := json.Unmarshal(kv.Value, info)
-			if err != nil {
-				log.Infof("[syncer] get %s, json.Unmarshal %v failed %v.", kv.Key, kv.Value, err)
-				return nil, errors.Trace(err)
-			}
-			allInfo[info.ID] = info
-		}
-		return allInfo, nil
-	}
-}
-
-// GetServerInfo implements SchemaSyncer.GetServerInfo interface.
-func (s *schemaVersionSyncer) GetServerInfo(ctx context.Context, id string) (*util.ServerInfo, error) {
-	var err error
-	ddlPath := fmt.Sprintf("%s/%s", ServerInformation, id)
-	allInfo, err := s.getInfo(ctx, ddlPath)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	info, ok := allInfo[id]
-	if !ok {
-		return nil, errors.New(fmt.Sprintf("[syncer] get %s failed", ddlPath))
-	}
-	return info, nil
-}
-
-// GetAllServerInfo implements SchemaSyncer.GetAllServerInfo interface.
-func (s *schemaVersionSyncer) GetAllServerInfo(ctx context.Context) (map[string]*util.ServerInfo, error) {
-	var err error
-	allInfo, err := s.getInfo(ctx, ServerInformation, clientv3.WithPrefix())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return allInfo, nil
-}
-
-// StoreServerInfo implements SchemaSyncer.StoreServerInfo interface.
-func (s *schemaVersionSyncer) StoreServerInfo(ctx context.Context, info *util.ServerInfo) error {
-	infoBuf, err := json.Marshal(info)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = s.putKV(ctx, keyOpDefaultRetryCnt, s.selfServerInfoPath, hack.String(infoBuf))
-	return errors.Trace(err)
-}
-
-// RemoveServerInfo implements SchemaSyncer.RemoveServerInfo interface.
-func (s *schemaVersionSyncer) RemoveServerInfo() error {
-	var err error
-	err = removePath(s.selfServerInfoPath, s.etcdCli)
 	return errors.Trace(err)
 }
 
@@ -327,11 +246,12 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 		metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerClear, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	err = removePath(s.selfSchemaVerPath, s.etcdCli)
+	err = RemovePath(s.selfSchemaVerPath, s.etcdCli)
 	return errors.Trace(err)
 }
 
-func removePath(path string, etcdCli *clientv3.Client) error {
+// RemovePath remove key value from etcd.
+func RemovePath(path string, etcdCli *clientv3.Client) error {
 	var err error
 	ctx := context.Background()
 	for i := 0; i < keyOpDefaultRetryCnt; i++ {
