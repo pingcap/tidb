@@ -14,12 +14,13 @@
 package executor
 
 import (
+	"runtime"
 	"strconv"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -41,11 +42,12 @@ type AnalyzeExec struct {
 	tasks []*analyzeTask
 }
 
+var maxBucketSize = int64(256)
+
 const (
 	maxSampleSize        = 10000
 	maxRegionSampleSize  = 1000
 	maxSketchSize        = 10000
-	maxBucketSize        = 256
 	defaultCMSketchDepth = 5
 	defaultCMSketchWidth = 2048
 )
@@ -66,15 +68,18 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	close(taskCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	for i := 0; i < len(e.tasks); i++ {
+	for i, panicCnt := 0, 0; i < len(e.tasks) && panicCnt < concurrency; i++ {
 		result := <-resultCh
 		if result.Err != nil {
 			err = result.Err
+			if errors.Trace(err) == errAnalyzeWorkerPanic {
+				panicCnt++
+			}
 			log.Error(errors.ErrorStack(err))
 			continue
 		}
 		for i, hg := range result.Hist {
-			err1 := statsHandle.SaveStatsToStorage(result.TableID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
+			err1 := statsHandle.SaveStatsToStorage(result.PhysicalID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
 			if err1 != nil {
 				err = err1
 				log.Error(errors.ErrorStack(err))
@@ -111,7 +116,21 @@ type analyzeTask struct {
 	colExec  *AnalyzeColumnsExec
 }
 
+var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
+
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("analyzeWorker panic stack is:\n%s", buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			resultCh <- statistics.AnalyzeResult{
+				Err: errAnalyzeWorkerPanic,
+			}
+		}
+	}()
 	for task := range taskCh {
 		switch task.taskType {
 		case colTask:
@@ -128,10 +147,10 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 		return statistics.AnalyzeResult{Err: err}
 	}
 	result := statistics.AnalyzeResult{
-		TableID: idxExec.tblInfo.ID,
-		Hist:    []*statistics.Histogram{hist},
-		Cms:     []*statistics.CMSketch{cms},
-		IsIndex: 1,
+		PhysicalID: idxExec.physicalID,
+		Hist:       []*statistics.Histogram{hist},
+		Cms:        []*statistics.CMSketch{cms},
+		IsIndex:    1,
 	}
 	if hist.Len() > 0 {
 		result.Count = hist.Buckets[hist.Len()-1].Count
@@ -142,7 +161,7 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 // AnalyzeIndexExec represents analyze index push down executor.
 type AnalyzeIndexExec struct {
 	ctx         sessionctx.Context
-	tblInfo     *model.TableInfo
+	physicalID  int64 // physicalID is the partition id for a partitioned table, otherwise, it is the table id.
 	idxInfo     *model.IndexInfo
 	concurrency int
 	priority    int
@@ -152,12 +171,11 @@ type AnalyzeIndexExec struct {
 
 func (e *AnalyzeIndexExec) open() error {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, ranger.FullRange()).
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalID, e.idxInfo.ID, ranger.FullRange()).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
 		Build()
 	kvReq.Concurrency = e.concurrency
-	kvReq.IsolationLevel = kv.RC
 	ctx := context.TODO()
 	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
@@ -193,7 +211,7 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), maxBucketSize)
+		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), int(maxBucketSize))
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -214,9 +232,9 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 		return statistics.AnalyzeResult{Err: err}
 	}
 	result := statistics.AnalyzeResult{
-		TableID: colExec.tblInfo.ID,
-		Hist:    hists,
-		Cms:     cms,
+		PhysicalID: colExec.physicalID,
+		Hist:       hists,
+		Cms:        cms,
 	}
 	hist := hists[0]
 	result.Count = hist.NullCount
@@ -229,7 +247,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 // AnalyzeColumnsExec represents Analyze columns push down executor.
 type AnalyzeColumnsExec struct {
 	ctx           sessionctx.Context
-	tblInfo       *model.TableInfo
+	physicalID    int64 // physicalID is the partition id for a partitioned table, otherwise, it is the table id.
 	colsInfo      []*model.ColumnInfo
 	pkInfo        *model.ColumnInfo
 	concurrency   int
@@ -268,11 +286,10 @@ func (e *AnalyzeColumnsExec) open() error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges, nil).
+	kvReq, err := builder.SetTableRanges(e.physicalID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
 		Build()
-	kvReq.IsolationLevel = kv.RC
 	kvReq.Concurrency = e.concurrency
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -322,7 +339,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		}
 		sc := e.ctx.GetSessionVars().StmtCtx
 		if e.pkInfo != nil {
-			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), maxBucketSize)
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), int(maxBucketSize))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -356,4 +373,14 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		cms = append(cms, collectors[i].CMSketch)
 	}
 	return hists, cms, nil
+}
+
+// SetMaxBucketSizeForTest sets the `maxBucketSize`.
+func SetMaxBucketSizeForTest(size int64) {
+	maxBucketSize = size
+}
+
+// GetMaxBucketSizeForTest gets the `maxBucketSize`.
+func GetMaxBucketSizeForTest() int64 {
+	return maxBucketSize
 }

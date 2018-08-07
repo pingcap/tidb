@@ -532,6 +532,10 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 		chk := task.innerResult.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
 			innerRow := chk.GetRow(j)
+			if iw.hasNullInJoinKey(innerRow) {
+				continue
+			}
+
 			keyBuf = keyBuf[:0]
 			for _, keyCol := range iw.keyCols {
 				d := innerRow.GetDatum(keyCol, iw.rowTypes[keyCol])
@@ -547,6 +551,15 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 		}
 	}
 	return nil
+}
+
+func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
+	for _, ordinal := range iw.keyCols {
+		if row.IsNull(ordinal) {
+			return true
+		}
+	}
+	return false
 }
 
 // Close implements the Executor interface.

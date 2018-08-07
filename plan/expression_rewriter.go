@@ -224,20 +224,18 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 	}
 }
 
-func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) LogicalPlan {
+func (er *expressionRewriter) buildSubquery(subq *ast.SubqueryExpr) (LogicalPlan, error) {
 	if er.schema != nil {
 		outerSchema := er.schema.Clone()
 		er.b.outerSchemas = append(er.b.outerSchemas, outerSchema)
+		defer func() { er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1] }()
 	}
-	np := er.b.buildResultSetNode(subq.Query)
-	if er.schema != nil {
-		er.b.outerSchemas = er.b.outerSchemas[0 : len(er.b.outerSchemas)-1]
+
+	np, err := er.b.buildResultSetNode(subq.Query)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	if er.b.err != nil {
-		er.err = errors.Trace(er.b.err)
-		return nil
-	}
-	return np
+	return np, nil
 }
 
 // Enter implements Visitor interface.
@@ -323,8 +321,9 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 		er.err = errors.Errorf("Unknown compare type %T.", v.R)
 		return v, true
 	}
-	np := er.buildSubquery(subq)
-	if er.err != nil {
+	np, err := er.buildSubquery(subq)
+	if err != nil {
+		er.err = errors.Trace(err)
 		return v, true
 	}
 	// Only (a,b,c) = any (...) and (a,b,c) != all (...) can use row expression.
@@ -365,11 +364,11 @@ func (er *expressionRewriter) handleCompareSubquery(v *ast.CompareSubqueryExpr) 
 			if v.All {
 				er.handleEQAll(lexpr, rexpr, np)
 			} else {
-				er.p = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, false)
+				er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, false)
 			}
 		} else if v.Op == opcode.NE {
 			if v.All {
-				er.p = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, true)
+				er.p, er.err = er.b.buildSemiApply(er.p, np, []expression.Expression{condition}, er.asScalar, true)
 			} else {
 				er.handleNEAny(lexpr, rexpr, np)
 			}
@@ -406,7 +405,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.
 	// Create a column and append it to the schema of that aggregation.
 	colMaxOrMin := &expression.Column{
 		ColName:  model.NewCIStr("agg_Col_0"),
-		Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  funcMaxOrMin.RetTp,
 	}
 	schema := expression.NewSchema(colMaxOrMin)
@@ -425,7 +424,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	funcSum := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncSum, []expression.Expression{funcIsNull}, false)
 	colSum := &expression.Column{
 		ColName:  model.NewCIStr("agg_col_sum"),
-		Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  funcSum.RetTp,
 	}
 	plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcSum)
@@ -435,7 +434,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 		funcCount := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{funcIsNull}, false)
 		colCount := &expression.Column{
 			ColName:  model.NewCIStr("agg_col_cnt"),
-			Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 			RetType:  funcCount.RetTp,
 		}
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, funcCount)
@@ -459,7 +458,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	// plan4Agg.buildProjectionIfNecessary()
 	if !er.asScalar {
 		// For Semi LogicalApply without aux column, the result is no matter false or null. So we can add it to join predicate.
-		er.p = er.b.buildSemiApply(er.p, plan4Agg, []expression.Expression{cond}, false, false)
+		er.p, er.err = er.b.buildSemiApply(er.p, plan4Agg, []expression.Expression{cond}, false, false)
 		return
 	}
 	// If we treat the result as a scalar value, we will add a projection with a extra column to output true, false or null.
@@ -473,7 +472,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 	proj.Exprs = append(proj.Exprs, cond)
 	proj.schema.Append(&expression.Column{
 		ColName:     model.NewCIStr("aux_col"),
-		Position:    er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID:    er.ctx.GetSessionVars().AllocPlanColumnID(),
 		IsAggOrSubq: true,
 		RetType:     cond.GetType(),
 	})
@@ -493,12 +492,12 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
-		Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
 	}
 	count := &expression.Column{
 		ColName:  model.NewCIStr("col_count"),
-		Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
 	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
@@ -519,12 +518,12 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 	plan4Agg.SetChildren(np)
 	firstRowResultCol := &expression.Column{
 		ColName:  model.NewCIStr("col_firstRow"),
-		Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  firstRowFunc.RetTp,
 	}
 	count := &expression.Column{
 		ColName:  model.NewCIStr("col_count"),
-		Position: er.ctx.GetSessionVars().AllocPlanColumnID(),
+		UniqueID: er.ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
 	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
@@ -540,14 +539,15 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
 		return v, true
 	}
-	np := er.buildSubquery(subq)
-	if er.err != nil {
+	np, err := er.buildSubquery(subq)
+	if err != nil {
+		er.err = errors.Trace(err)
 		return v, true
 	}
 	np = er.b.buildExists(np)
 	if len(np.extractCorrelatedCols()) > 0 {
-		er.p = er.b.buildSemiApply(er.p, np.Children()[0], nil, er.asScalar, false)
-		if !er.asScalar {
+		er.p, er.err = er.b.buildSemiApply(er.p, np.Children()[0], nil, er.asScalar, false)
+		if er.err != nil || !er.asScalar {
 			return v, true
 		}
 		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
@@ -582,8 +582,9 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = errors.Errorf("Unknown compare type %T.", v.Sel)
 		return v, true
 	}
-	np := er.buildSubquery(subq)
-	if er.err != nil {
+	np, err := er.buildSubquery(subq)
+	if err != nil {
+		er.err = errors.Trace(err)
 		return v, true
 	}
 	lLen := expression.GetRowLen(lexpr)
@@ -595,14 +596,14 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	// TODO: Now we cannot add it to CBO framework. Instead, user can set a session variable to open this optimization.
 	// We will improve our CBO framework in future.
 	if lLen == 1 && er.ctx.GetSessionVars().AllowInSubqueryUnFolding && len(np.extractCorrelatedCols()) == 0 {
-		physicalPlan, err := doOptimize(er.b.optFlag, np)
-		if err != nil {
-			er.err = errors.Trace(err)
+		physicalPlan, err1 := doOptimize(er.b.optFlag, np)
+		if err1 != nil {
+			er.err = errors.Trace(err1)
 			return v, true
 		}
-		rows, err := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
-		if err != nil {
-			er.err = errors.Trace(err)
+		rows, err1 := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
+		if err1 != nil {
+			er.err = errors.Trace(err1)
 			return v, true
 		}
 		for _, row := range rows {
@@ -644,7 +645,11 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	er.p = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
+	er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
+	if er.err != nil {
+		return v, true
+	}
+
 	if asScalar {
 		col := er.p.Schema().Columns[er.p.Schema().Len()-1]
 		er.ctxStack[len(er.ctxStack)-1] = col
@@ -655,8 +660,9 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 }
 
 func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Node, bool) {
-	np := er.buildSubquery(v)
-	if er.err != nil {
+	np, err := er.buildSubquery(v)
+	if err != nil {
+		er.err = errors.Trace(err)
 		return v, true
 	}
 	np = er.b.buildMaxOneRow(np)
@@ -667,9 +673,9 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 			for _, col := range np.Schema().Columns {
 				newCols = append(newCols, col)
 			}
-			expr, err := expression.NewFunction(er.ctx, ast.RowFunc, newCols[0].GetType(), newCols...)
-			if err != nil {
-				er.err = errors.Trace(err)
+			expr, err1 := expression.NewFunction(er.ctx, ast.RowFunc, newCols[0].GetType(), newCols...)
+			if err1 != nil {
+				er.err = errors.Trace(err1)
 				return v, true
 			}
 			er.ctxStack = append(er.ctxStack, expr)

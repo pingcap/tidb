@@ -723,4 +723,7 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
 		"num: 2\tlower_bound: \tupper_bound: 2\trepeats: 0\n"+
 		"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0")
+
+	// Test that it won't cause panic after update.
+	testKit.MustQuery("select * from t use index(idx) where b > 0")
 }
