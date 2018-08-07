@@ -597,22 +597,26 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-// checkPointTypeColumns checks multiple decimal/float/double columns.
-func checkPointTypeColumns(colDefs []*ast.ColumnDef) error {
+// checkColumnsAttributes checks attributes for multiple columns.
+func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
-		if err := checkPointTypeColumn(colDef.Name.OrigColName(), colDef.Tp); err != nil {
+		if err := checkColumnAttributes(colDef.Name.OrigColName(), colDef.Tp); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
 }
 
-// checkPointTypeColumn checks a decimal/float/double column.
-func checkPointTypeColumn(colName string, tp *types.FieldType) error {
+// checkColumnAttributes check attributes for single column.
+func checkColumnAttributes(colName string, tp *types.FieldType) error {
 	switch tp.Tp {
 	case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
 		if tp.Flen < tp.Decimal {
 			return types.ErrMBiggerThanD.GenByArgs(colName)
+		}
+	case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
+		if tp.Decimal != types.UnspecifiedFsp && (tp.Decimal < types.MinFsp || tp.Decimal > types.MaxFsp) {
+			return types.ErrTooBigPrecision.GenByArgs(tp.Decimal, colName, types.MaxFsp)
 		}
 	}
 	return nil
@@ -871,7 +875,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	if err = checkPointTypeColumns(colDefs); err != nil {
+	if err = checkColumnsAttributes(colDefs); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -896,24 +900,27 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 
 	if pi != nil {
-		err = checkPartitionNameUnique(tbInfo, pi)
-		if err != nil {
+		if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
 			return errors.Trace(err)
 		}
-		err = checkCreatePartitionValue(pi)
-		if err != nil {
+
+		if err = checkCreatePartitionValue(pi); err != nil {
 			return errors.Trace(err)
 		}
-		err = checkAddPartitionTooManyPartitions(len(pi.Definitions))
-		if err != nil {
+
+		if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
 			return errors.Trace(err)
 		}
-		err = checkPartitionFuncValid(s.Partition.Expr)
-		if err != nil {
+
+		if err = checkPartitionFuncValid(s.Partition.Expr); err != nil {
 			return errors.Trace(err)
 		}
-		err = checkPartitionFuncType(ctx, s, cols, tbInfo)
-		if err != nil {
+
+		if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+
+		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
 			return errors.Trace(err)
 		}
 		tbInfo.Partition = pi
@@ -1190,7 +1197,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	colName := specNewColumn.Name.Name.O
-	if err = checkPointTypeColumn(colName, specNewColumn.Tp); err != nil {
+	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1566,7 +1573,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
-	if err = checkPointTypeColumn(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
+	if err = checkColumnAttributes(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
 		return nil, errors.Trace(err)
 	}
 
