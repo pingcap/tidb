@@ -738,13 +738,9 @@ func (hook *logHook) Levels() []log.Level {
 }
 
 func (hook *logHook) Fire(entry *log.Entry) error {
-	line, err := entry.String()
-	if err != nil {
-		return err
-	}
-
-	if idx := strings.Index(line, "[stats"); idx != -1 {
-		hook.results = hook.results + line[idx:]
+	message := entry.Message
+	if idx := strings.Index(message, "[stats"); idx != -1 {
+		hook.results = hook.results + message[idx:]
 	}
 	return nil
 }
@@ -782,21 +778,21 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 	}{
 		{
 			sql: "select * from t where t.a <= 15",
-			result: "[stats-feedback] test.t, column: a, range: [-inf,7), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1} \n" +
-				"[stats-feedback] test.t, column: a, range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1} \n",
+			result: "[stats-feedback] test.t, column: a, range: [-inf,7), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}" +
+				"[stats-feedback] test.t, column: a, range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
 		},
 		{
 			sql: "select * from t use index(idx) where t.b <= 15",
-			result: "[stats-feedback] test.t, index: idx, range: [-inf,7), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1} \n" +
-				"[stats-feedback] test.t, index: idx, range: [8,15), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1} \n",
+			result: "[stats-feedback] test.t, index: idx, range: [-inf,7), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}" +
+				"[stats-feedback] test.t, index: idx, range: [8,15), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
 		},
 		{
 			sql:    "select b from t use index(idx_ba) where b = 1 and a <= 5",
-			result: "[stats-feedback] test.t, index: idx_ba, actual: 1, equality: 1, expected equality: 1, range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1} \n",
+			result: "[stats-feedback] test.t, index: idx_ba, actual: 1, equality: 1, expected equality: 1, range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}",
 		},
 		{
 			sql:    "select b from t use index(idx_ba) where b = 1",
-			result: "[stats-feedback] test.t, index: idx_ba, value: 1, actual: 1, expected: 1 \n",
+			result: "[stats-feedback] test.t, index: idx_ba, value: 1, actual: 1, expected: 1",
 		},
 	}
 	log.SetLevel(log.DebugLevel)
