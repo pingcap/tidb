@@ -21,61 +21,61 @@ const (
 // Definition order same as MySQL's reference manual, so don't bother to
 // adjust according to alphabetical order.
 const (
-	TableGlobalStatus           = "GLOBAL_STATUS"
-	TableSessionStatus          = "SESSION_STATUS"
-	TableSetupActors            = "SETUP_ACTORS"
-	TableSetupObjects           = "SETUP_OBJECTS"
-	TableSetupInstruments       = "SETUP_INSTRUMENTS"
-	TableSetupConsumers         = "SETUP_CONSUMERS"
-	TableSetupTimers            = "SETUP_TIMERS"
-	TableStmtsCurrent           = "EVENTS_STATEMENTS_CURRENT"
-	TableStmtsHistory           = "EVENTS_STATEMENTS_HISTORY"
-	TableStmtsHistoryLong       = "EVENTS_STATEMENTS_HISTORY_LONG"
-	TablePreparedStmtsInstances = "PREPARED_STATEMENTS_INSTANCES"
-	TableTransCurrent           = "EVENTS_TRANSACTIONS_CURRENT"
-	TableTransHistory           = "EVENTS_TRANSACTIONS_HISTORY"
-	TableTransHistoryLong       = "EVENTS_TRANSACTIONS_HISTORY_LONG"
-	TableStagesCurrent          = "EVENTS_STAGES_CURRENT"
-	TableStagesHistory          = "EVENTS_STAGES_HISTORY"
-	TableStagesHistoryLong      = "EVENTS_STAGES_HISTORY_LONG"
+	tableGlobalStatus           = "GLOBAL_STATUS"
+	tableSessionStatus          = "SESSION_STATUS"
+	tableSetupActors            = "SETUP_ACTORS"
+	tableSetupObjects           = "SETUP_OBJECTS"
+	tableSetupInstruments       = "SETUP_INSTRUMENTS"
+	tableSetupConsumers         = "SETUP_CONSUMERS"
+	tableSetupTimers            = "SETUP_TIMERS"
+	tableStmtsCurrent           = "EVENTS_STATEMENTS_CURRENT"
+	tableStmtsHistory           = "EVENTS_STATEMENTS_HISTORY"
+	tableStmtsHistoryLong       = "EVENTS_STATEMENTS_HISTORY_LONG"
+	tablePreparedStmtsInstances = "PREPARED_STATEMENTS_INSTANCES"
+	tableTransCurrent           = "EVENTS_TRANSACTIONS_CURRENT"
+	tableTransHistory           = "EVENTS_TRANSACTIONS_HISTORY"
+	tableTransHistoryLong       = "EVENTS_TRANSACTIONS_HISTORY_LONG"
+	tableStagesCurrent          = "EVENTS_STAGES_CURRENT"
+	tableStagesHistory          = "EVENTS_STAGES_HISTORY"
+	tableStagesHistoryLong      = "EVENTS_STAGES_HISTORY_LONG"
 )
 
-// PerfSchemaTables is a shortcut to involve all table names.
-var PerfSchemaTables = []string{
-	TableGlobalStatus,
-	TableSessionStatus,
-	TableSetupActors,
-	TableSetupObjects,
-	TableSetupInstruments,
-	TableSetupConsumers,
-	TableSetupTimers,
-	TableStmtsCurrent,
-	TableStmtsHistory,
-	TableStmtsHistoryLong,
-	TablePreparedStmtsInstances,
-	TableTransCurrent,
-	TableTransHistory,
-	TableTransHistoryLong,
-	TableStagesCurrent,
-	TableStagesHistory,
-	TableStagesHistoryLong,
+// perfSchemaTables is a shortcut to involve all table names.
+var perfSchemaTables = []string{
+	tableGlobalStatus,
+	tableSessionStatus,
+	tableSetupActors,
+	tableSetupObjects,
+	tableSetupInstruments,
+	tableSetupConsumers,
+	tableSetupTimers,
+	tableStmtsCurrent,
+	tableStmtsHistory,
+	tableStmtsHistoryLong,
+	tablePreparedStmtsInstances,
+	tableTransCurrent,
+	tableTransHistory,
+	tableTransHistoryLong,
+	tableStagesCurrent,
+	tableStagesHistory,
+	tableStagesHistoryLong,
 }
 
-// ColumnGlobalStatus contains the column name definitions for table global_status, same as MySQL.
+// columnGlobalStatus contains the column name definitions for table global_status, same as MySQL.
 //
 // CREATE TABLE performance_schema.global_status(
 //     VARIABLE_NAME VARCHAR(64) not null,
 //     VARIABLE_VALUE VARCHAR(1024));
-var ColumnGlobalStatus = []string{"VARIABLE_NAME", "VARIABLE_VALUE"}
+var columnGlobalStatus = []string{"VARIABLE_NAME", "VARIABLE_VALUE"}
 
-// ColumnSessionStatus contains the column name definitions for table session_status, same as MySQL.
+// columnSessionStatus contains the column name definitions for table session_status, same as MySQL.
 //
 // CREATE TABLE performance_schema.session_status(
 //     VARIABLE_NAME VARCHAR(64) not null,
 //     VARIABLE_VALUE VARCHAR(1024));
-var ColumnSessionStatus = []string{"VARIABLE_NAME", "VARIABLE_VALUE"}
+var columnSessionStatus = []string{"VARIABLE_NAME", "VARIABLE_VALUE"}
 
-// ColumnSetupActors contains the column name definitions for table setup_actors, same as MySQL.
+// columnSetupActors contains the column name definitions for table setup_actors, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.setup_actors (
 // 		HOST			CHAR(60) NOT NULL  DEFAULT '%',
@@ -83,9 +83,9 @@ var ColumnSessionStatus = []string{"VARIABLE_NAME", "VARIABLE_VALUE"}
 // 		ROLE			CHAR(16) NOT NULL  DEFAULT '%',
 // 		ENABLED			ENUM('YES','NO') NOT NULL  DEFAULT 'YES',
 // 		HISTORY			ENUM('YES','NO') NOT NULL  DEFAULT 'YES');
-var ColumnSetupActors = []string{"HOST", "USER", "ROLE", "ENABLED", "HISTORY"}
+var columnSetupActors = []string{"HOST", "USER", "ROLE", "ENABLED", "HISTORY"}
 
-// ColumnSetupObjects contains the column name definitions for table setup_objects, same as MySQL.
+// columnSetupObjects contains the column name definitions for table setup_objects, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.setup_objects (
 // 		OBJECT_TYPE		ENUM('EVENT','FUNCTION','TABLE') NOT NULL  DEFAULT 'TABLE',
@@ -93,31 +93,31 @@ var ColumnSetupActors = []string{"HOST", "USER", "ROLE", "ENABLED", "HISTORY"}
 // 		OBJECT_NAME		VARCHAR(64) NOT NULL  DEFAULT '%',
 // 		ENABLED			ENUM('YES','NO') NOT NULL  DEFAULT 'YES',
 // 		TIMED			ENUM('YES','NO') NOT NULL  DEFAULT 'YES');
-var ColumnSetupObjects = []string{"OBJECT_TYPE", "OBJECT_SCHEMA", "OBJECT_NAME", "ENABLED", "TIMED"}
+var columnSetupObjects = []string{"OBJECT_TYPE", "OBJECT_SCHEMA", "OBJECT_NAME", "ENABLED", "TIMED"}
 
-// ColumnSetupInstruments contains the column name definitions for table setup_instruments, same as MySQL.
+// columnSetupInstruments contains the column name definitions for table setup_instruments, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.setup_instruments (
 // 		NAME			VARCHAR(128) NOT NULL,
 // 		ENABLED			ENUM('YES','NO') NOT NULL,
 // 		TIMED			ENUM('YES','NO') NOT NULL);
-var ColumnSetupInstruments = []string{"NAMED", "ENABLED", "TIMED"}
+var columnSetupInstruments = []string{"NAMED", "ENABLED", "TIMED"}
 
-// ColumnSetupConsumers contains the column name definitions for table setup_consumers, same as MySQL.
+// columnSetupConsumers contains the column name definitions for table setup_consumers, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.setup_consumers (
 // 		NAME			VARCHAR(64) NOT NULL,
 // 		ENABLED			ENUM('YES','NO') NOT NULL);
-var ColumnSetupConsumers = []string{"NAMED", "ENABLED"}
+var columnSetupConsumers = []string{"NAMED", "ENABLED"}
 
-// ColumnSetupTimers contains the column name definitions for table setup_timers, same as MySQL.
+// columnSetupTimers contains the column name definitions for table setup_timers, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.setup_timers (
 // 		NAME			VARCHAR(64) NOT NULL,
 // 		TIMER_NAME		ENUM('NANOSECOND','MICROSECOND','MILLISECOND') NOT NULL);
-var ColumnSetupTimers = []string{"NAME", "TIMER_NAME"}
+var columnSetupTimers = []string{"NAME", "TIMER_NAME"}
 
-// ColumnStmtsCurrent contains the column name definitions for table events_statements_current, same as MySQL.
+// columnStmtsCurrent contains the column name definitions for table events_statements_current, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.events_statements_current (
 // 		THREAD_ID		BIGINT(20) UNSIGNED NOT NULL,
@@ -161,7 +161,7 @@ var ColumnSetupTimers = []string{"NAME", "TIMER_NAME"}
 // 		NESTING_EVENT_ID		BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'),
 // 		NESTING_EVENT_LEVEL		INT(11));
-var ColumnStmtsCurrent = []string{
+var columnStmtsCurrent = []string{
 	"THREAD_ID",
 	"EVENT_ID",
 	"END_EVENT_ID",
@@ -205,7 +205,7 @@ var ColumnStmtsCurrent = []string{
 	"NESTING_EVENT_LEVEL",
 }
 
-// ColumnStmtsHistory contains the column name definitions for table events_statements_history, same as MySQL.
+// columnStmtsHistory contains the column name definitions for table events_statements_history, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.events_statements_history (
 // 		THREAD_ID		BIGINT(20) UNSIGNED NOT NULL,
@@ -249,7 +249,7 @@ var ColumnStmtsCurrent = []string{
 // 		NESTING_EVENT_ID		BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'),
 // 		NESTING_EVENT_LEVEL		INT(11));
-var ColumnStmtsHistory = []string{
+var columnStmtsHistory = []string{
 	"THREAD_ID",
 	"EVENT_ID",
 	"END_EVENT_ID",
@@ -293,7 +293,7 @@ var ColumnStmtsHistory = []string{
 	"NESTING_EVENT_LEVEL",
 }
 
-// ColumnStmtsHistoryLong contains the column name definitions for table events_statements_history_long, same as MySQL.
+// columnStmtsHistoryLong contains the column name definitions for table events_statements_history_long, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.events_statements_history_long (
 // 		THREAD_ID		BIGINT(20) UNSIGNED NOT NULL,
@@ -337,7 +337,7 @@ var ColumnStmtsHistory = []string{
 // 		NESTING_EVENT_ID		BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'),
 // 		NESTING_EVENT_LEVEL		INT(11));
-var ColumnStmtsHistoryLong = []string{
+var columnStmtsHistoryLong = []string{
 	"THREAD_ID",
 	"EVENT_ID",
 	"END_EVENT_ID",
@@ -381,7 +381,7 @@ var ColumnStmtsHistoryLong = []string{
 	"NESTING_EVENT_LEVEL",
 }
 
-// ColumnPreparedStmtsInstances contains the column name definitions for table prepared_statements_instances, same as MySQL.
+// columnPreparedStmtsInstances contains the column name definitions for table prepared_statements_instances, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.prepared_statements_instances (
 // 		OBJECT_INSTANCE_BEGIN	BIGINT(20) UNSIGNED NOT NULL,
@@ -419,7 +419,7 @@ var ColumnStmtsHistoryLong = []string{
 // 		SUM_SORT_SCAN	BIGINT(20) UNSIGNED NOT NULL,
 // 		SUM_NO_INDEX_USED		BIGINT(20) UNSIGNED NOT NULL,
 // 		SUM_NO_GOOD_INDEX_USED	BIGINT(20) UNSIGNED NOT NULL);
-var ColumnPreparedStmtsInstances = []string{
+var columnPreparedStmtsInstances = []string{
 	"OBJECT_INSTANCE_BEGIN",
 	"STATEMENT_ID",
 	"STATEMENT_NAME",
@@ -457,7 +457,7 @@ var ColumnPreparedStmtsInstances = []string{
 	"SUM_NO_GOOD_INDEX_USED",
 }
 
-// ColumnTransCurrent contains the column name definitions for table events_transactions_current, same as MySQL.
+// columnTransCurrent contains the column name definitions for table events_transactions_current, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.events_transactions_current (
 // 		THREAD_ID		BIGINT(20) UNSIGNED NOT NULL,
@@ -484,7 +484,7 @@ var ColumnPreparedStmtsInstances = []string{
 // 		OBJECT_INSTANCE_BEGIN	BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_ID		BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));
-var ColumnTransCurrent = []string{
+var columnTransCurrent = []string{
 	"THREAD_ID",
 	"EVENT_ID",
 	"END_EVENT_ID",
@@ -511,7 +511,7 @@ var ColumnTransCurrent = []string{
 	"NESTING_EVENT_TYPE",
 }
 
-// ColumnTransHistory contains the column name definitions for table events_transactions_history, same as MySQL.
+// columnTransHistory contains the column name definitions for table events_transactions_history, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.events_transactions_history (
 // 		THREAD_ID		BIGINT(20) UNSIGNED NOT NULL,
@@ -538,7 +538,7 @@ var ColumnTransCurrent = []string{
 // 		OBJECT_INSTANCE_BEGIN	BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_ID		BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));
-var ColumnTransHistory = []string{
+var columnTransHistory = []string{
 	"THREAD_ID",
 	"EVENT_ID",
 	"END_EVENT_ID",
@@ -565,7 +565,7 @@ var ColumnTransHistory = []string{
 	"NESTING_EVENT_TYPE",
 }
 
-// ColumnTransHistoryLong contains the column name definitions for table events_transactions_history_long, same as MySQL.
+// columnTransHistoryLong contains the column name definitions for table events_transactions_history_long, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.events_transactions_history_long (
 // 		THREAD_ID		BIGINT(20) UNSIGNED NOT NULL,
@@ -592,7 +592,7 @@ var ColumnTransHistory = []string{
 // 		OBJECT_INSTANCE_BEGIN	BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_ID		BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));
-var ColumnTransHistoryLong = []string{
+var columnTransHistoryLong = []string{
 	"THREAD_ID",
 	"EVENT_ID",
 	"END_EVENT_ID",
@@ -619,7 +619,7 @@ var ColumnTransHistoryLong = []string{
 	"NESTING_EVENT_TYPE",
 }
 
-// ColumnStagesCurrent contains the column name definitions for table events_stages_current, same as MySQL.
+// columnStagesCurrent contains the column name definitions for table events_stages_current, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.events_stages_current (
 // 		THREAD_ID		BIGINT(20) UNSIGNED NOT NULL,
@@ -634,7 +634,7 @@ var ColumnTransHistoryLong = []string{
 // 		WORK_ESTIMATED	BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_ID		BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));
-var ColumnStagesCurrent = []string{
+var columnStagesCurrent = []string{
 	"THREAD_ID",
 	"EVENT_ID",
 	"END_EVENT_ID",
@@ -649,7 +649,7 @@ var ColumnStagesCurrent = []string{
 	"NESTING_EVENT_TYPE",
 }
 
-// ColumnStagesHistory contains the column name definitions for table events_stages_history, same as MySQL.
+// columnStagesHistory contains the column name definitions for table events_stages_history, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.events_stages_history (
 // 		THREAD_ID		BIGINT(20) UNSIGNED NOT NULL,
@@ -664,7 +664,7 @@ var ColumnStagesCurrent = []string{
 // 		WORK_ESTIMATED	BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_ID		BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));
-var ColumnStagesHistory = []string{
+var columnStagesHistory = []string{
 	"THREAD_ID",
 	"EVENT_ID",
 	"END_EVENT_ID",
@@ -679,7 +679,7 @@ var ColumnStagesHistory = []string{
 	"NESTING_EVENT_TYPE",
 }
 
-// ColumnStagesHistoryLong contains the column name definitions for table events_stages_history_long, same as MySQL.
+// columnStagesHistoryLong contains the column name definitions for table events_stages_history_long, same as MySQL.
 //
 // CREATE TABLE if not exists performance_schema.events_stages_history_long (
 // 		THREAD_ID		BIGINT(20) UNSIGNED NOT NULL,
@@ -694,7 +694,7 @@ var ColumnStagesHistory = []string{
 // 		WORK_ESTIMATED	BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_ID		BIGINT(20) UNSIGNED,
 // 		NESTING_EVENT_TYPE		ENUM('TRANSACTION','STATEMENT','STAGE'));
-var ColumnStagesHistoryLong = []string{
+var columnStagesHistoryLong = []string{
 	"THREAD_ID",
 	"EVENT_ID",
 	"END_EVENT_ID",

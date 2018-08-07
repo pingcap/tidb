@@ -18,18 +18,18 @@ import (
 	"github.com/pingcap/tidb/table"
 )
 
-// PerfSchema exports for test.
-type PerfSchema struct {
+// perfSchema is used for tables in performance_schema.
+type perfSchema struct {
 	dbInfo  *model.DBInfo
 	tables  map[string]*model.TableInfo
 	mTables map[string]table.Table // Memory tables for perfSchema
 }
 
-var handle = NewPerfHandle()
+var handle = newPerfHandle()
 
-// NewPerfHandle creates a new perfSchema on store.
-func NewPerfHandle() *PerfSchema {
-	schema := &PerfSchema{}
+// newPerfHandle creates a new perfSchema on store.
+func newPerfHandle() *perfSchema {
+	schema := &perfSchema{}
 	schema.initialize()
 	return schema
 }
