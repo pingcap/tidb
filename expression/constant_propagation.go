@@ -31,36 +31,6 @@ var eqFuncNameMap = map[string]bool{
 	ast.EQ: true,
 }
 
-// nonDeterministicFuncNameMap stores all the non-deterministic operators that cannot be propagated.
-var nonDeterministicFuncNameMap = map[string]bool{
-	ast.Rand:                     true,
-	ast.Now:                      true,
-	ast.Curdate:                  true,
-	ast.CurrentDate:              true,
-	ast.CurrentTime:              true,
-	ast.CurrentTimestamp:         true,
-	ast.Curtime:                  true,
-	ast.LocalTime:                true,
-	ast.LocalTimestamp:           true,
-	ast.Sysdate:                  true,
-	ast.MasterPosWait:            true,
-	ast.AnyValue:                 true,
-	ast.Sleep:                    true,
-	ast.UUID:                     true,
-	ast.UUIDShort:                true,
-	ast.Encrypt:                  true,
-	ast.RandomBytes:              true,
-	ast.PasswordFunc:             true,
-	ast.GetLock:                  true,
-	ast.ReleaseLock:              true,
-	ast.ReleaseAllLocks:          true,
-	ast.ValidatePasswordStrength: true,
-	ast.AesDecrypt:               true,
-	ast.AesEncrypt:               true,
-	ast.FoundRows:                true,
-	ast.RowCount:                 true,
-}
-
 type multiEqualSet struct {
 	parent []int
 }
@@ -140,13 +110,18 @@ func (s *propagateConstantSolver) propagateOthers() {
 
 	condsLen := len(s.conditions)
 	for j, colj := range s.columns {
-		for k, colk := range s.columns {
-			if j == k || s.unionSet.findRoot(j) != s.unionSet.findRoot(k) {
+		for k := j + 1; k < len(s.columns); k++ {
+			if s.unionSet.findRoot(j) != s.unionSet.findRoot(k) {
 				continue
 			}
+			colk := s.columns[k]
 			for i := 0; i < condsLen; i++ {
 				cond := s.conditions[i]
 				replaced, _, newExpr := s.tryToReplaceCond(colj, colk, cond)
+				if replaced {
+					s.conditions = append(s.conditions, newExpr)
+				}
+				replaced, _, newExpr = s.tryToReplaceCond(colk, colj, cond)
 				if replaced {
 					s.conditions = append(s.conditions, newExpr)
 				}
@@ -183,18 +158,18 @@ func (s *propagateConstantSolver) validPropagateCond(cond Expression, funNameMap
 func (s *propagateConstantSolver) tryToReplaceCond(src *Column, tgt *Column, cond Expression) (bool, bool, Expression) {
 	replaced := false
 	var r *ScalarFunction
-	if funct, ok := cond.(*ScalarFunction); ok {
-		if _, isNonDeterminisitc := nonDeterministicFuncNameMap[funct.FuncName.L]; isNonDeterminisitc {
+	if sf, ok := cond.(*ScalarFunction); ok {
+		if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 			return false, true, cond
 		}
-		if _, isEq := eqFuncNameMap[funct.FuncName.L]; isEq {
+		if _, isEq := eqFuncNameMap[sf.FuncName.L]; isEq {
 			return false, false, cond
 		}
-		for idx, expr := range funct.GetArgs() {
+		for idx, expr := range sf.GetArgs() {
 			if src.Equal(nil, expr) {
 				replaced = true
 				if r == nil {
-					r = funct.Clone().(*ScalarFunction)
+					r = sf.Clone().(*ScalarFunction)
 				}
 				r.GetArgs()[idx] = tgt
 			} else {
@@ -204,7 +179,7 @@ func (s *propagateConstantSolver) tryToReplaceCond(src *Column, tgt *Column, con
 				} else if subReplaced {
 					replaced = true
 					if r == nil {
-						r = funct.Clone().(*ScalarFunction)
+						r = sf.Clone().(*ScalarFunction)
 					}
 					r.GetArgs()[idx] = subExpr
 				}
