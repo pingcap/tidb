@@ -431,9 +431,6 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 			}
 		}
 	}
-	if !hasMatch {
-		e.resultGenerators[workerID].onMissMatch(outerRow, joinResult.chk)
-	}
 	return true, joinResult
 }
 
