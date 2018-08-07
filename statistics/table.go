@@ -47,6 +47,7 @@ type Table struct {
 	HistColl
 	Version    uint64
 	PKIsHandle bool
+	name       string
 }
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
@@ -89,6 +90,7 @@ func (t *Table) copy() *Table {
 	nt := &Table{
 		HistColl: newHistColl,
 		Version:  t.Version,
+		name:     t.name,
 	}
 	return nt
 }

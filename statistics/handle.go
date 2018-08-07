@@ -152,6 +152,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl.Version = version
 		tbl.Count = count
 		tbl.ModifyCount = modifyCount
+		tbl.name = getFullTableName(is, tableInfo)
 		tables = append(tables, tbl)
 	}
 	h.mu.Lock()
