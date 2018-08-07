@@ -600,15 +600,15 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 // checkColumnsAttributes checks attributes for multiple columns.
 func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
-		if err := checkColumnAttribute(colDef.Name.OrigColName(), colDef.Tp); err != nil {
+		if err := checkColumnAttributes(colDef.Name.OrigColName(), colDef.Tp); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
 }
 
-// checkColumnAttribute check attributes for single column.
-func checkColumnAttribute(colName string, tp *types.FieldType) error {
+// checkColumnAttributes check attributes for single column.
+func checkColumnAttributes(colName string, tp *types.FieldType) error {
 	switch tp.Tp {
 	case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
 		if tp.Flen < tp.Decimal {
@@ -1197,7 +1197,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	colName := specNewColumn.Name.Name.O
-	if err = checkColumnAttribute(colName, specNewColumn.Tp); err != nil {
+	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1573,7 +1573,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
-	if err = checkColumnAttribute(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
+	if err = checkColumnAttributes(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
 		return nil, errors.Trace(err)
 	}
 

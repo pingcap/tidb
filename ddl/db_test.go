@@ -1745,6 +1745,8 @@ func (s *testDBSuite) TestTableDDLWithTimeType(c *C) {
 	s.testErrorCode(c, "create table t (a time(7))", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "create table t (a datetime(7))", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "create table t (a timestamp(7))", tmysql.ErrTooBigPrecision)
+	_, err := s.tk.Exec("create table t (a time(-1))")
+	c.Assert(err, NotNil)
 	s.mustExec(c, "create table t (a datetime)")
 	s.testErrorCode(c, "alter table t add column b time(7)", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "alter table t add column b datetime(7)", tmysql.ErrTooBigPrecision)
