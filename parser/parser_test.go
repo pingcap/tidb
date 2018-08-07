@@ -811,6 +811,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 
 		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true},
+		{"CREATE TABLE t( c1 TIME(7) );", false},
+		{"CREATE TABLE t( c1 DATETIME(7) );", false},
+		{"CREATE TABLE t( c1 TIMESTAMP(7) );", false},
 
 		// for row
 		{"select row(1)", false},
