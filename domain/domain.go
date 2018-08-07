@@ -252,7 +252,7 @@ func (do *Domain) DDL() ddl.DDL {
 	return do.ddl
 }
 
-// InfoSyncer gets infoSyncer from domain
+// InfoSyncer gets infoSyncer from domain.
 func (do *Domain) InfoSyncer() *infoSyncer {
 	return do.info
 }
@@ -399,7 +399,7 @@ func (do *Domain) Close() {
 		terror.Log(errors.Trace(do.ddl.Stop()))
 	}
 	if do.info != nil {
-		do.info.RemoveServerInfoFromPD()
+		do.info.RemoveServerInfo()
 	}
 	close(do.exit)
 	if do.etcdClient != nil {
@@ -510,7 +510,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		return errors.Trace(err)
 	}
 	do.info = NewInfoSyncer(do.ddl.GetID(), do.etcdClient)
-	err = do.info.StoreServerInfoToPD()
+	err = do.info.StoreServerInfo(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

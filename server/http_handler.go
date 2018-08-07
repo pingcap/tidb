@@ -1258,7 +1258,7 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 	return h.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }
 
-// reportServerInfo is only used to report the servers info when do http request
+// reportServerInfo is only used to report the servers info when do http request.
 type reportServerInfo struct {
 	IsOwner         bool               `json:"is_owner"`
 	SelfServerInfo  *domain.ServerInfo `json:"self_server_info"`
@@ -1274,7 +1274,8 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 	ddl := do.DDL()
 	is := do.InfoSyncer()
-	ownerID, err := ddl.OwnerManager().GetOwnerID(context.Background())
+	ctx := context.Background()
+	ownerID, err := ddl.OwnerManager().GetOwnerID(ctx)
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		return
@@ -1285,7 +1286,7 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		SelfServerInfo: selfInfo,
 	}
 	if !reportInfo.IsOwner {
-		ownerInfo, err := is.GetOwnerServerInfoFromPD(ownerID)
+		ownerInfo, err := is.GetOwnerServerInfo(ctx, ownerID)
 		if err != nil {
 			writeError(w, errors.New("ddl server information not found"))
 			return
@@ -1295,7 +1296,7 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	writeData(w, reportInfo)
 }
 
-// clusterServerInfo is only used to report cluster servers info when do http request
+// clusterServerInfo is only used to report cluster servers info when do http request.
 type clusterServerInfo struct {
 	ServersNum                   int                           `json:"servers_num,omitempty"`
 	OwnerID                      string                        `json:"owner_id"`
@@ -1313,12 +1314,13 @@ func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 	}
 	ddl := do.DDL()
 	is := do.InfoSyncer()
-	allServersInfo, err := is.GetAllServerInfoFromPD()
+	ctx := context.Background()
+	allServersInfo, err := is.GetAllServerInfo(ctx)
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		return
 	}
-	ownerID, err := ddl.OwnerManager().GetOwnerID(context.Background())
+	ownerID, err := ddl.OwnerManager().GetOwnerID(ctx)
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		return

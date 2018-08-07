@@ -216,7 +216,7 @@ type DDL interface {
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
-	// GetID gets the ddl ID
+	// GetID gets the ddl ID.
 	GetID() string
 	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
 	GetTableMaxRowID(startTS uint64, tbl table.Table) (int64, bool, error)

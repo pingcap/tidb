@@ -36,8 +36,9 @@ const (
 
 // infoSyncer stores server info to PD when server start and delete when server down.
 type infoSyncer struct {
-	etcdCli *clientv3.Client
-	info    *ServerInfo
+	etcdCli        *clientv3.Client
+	info           *ServerInfo
+	serverInfoPath string
 }
 
 // ServerInfo is server static information.
@@ -59,8 +60,9 @@ type ServerVersionInfo struct {
 // NewInfoSyncer return new infoSyncer. It export for tidb-test test.
 func NewInfoSyncer(id string, etcdCli *clientv3.Client) *infoSyncer {
 	return &infoSyncer{
-		etcdCli: etcdCli,
-		info:    getServerInfo(id),
+		etcdCli:        etcdCli,
+		info:           getServerInfo(id),
+		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformation, id),
 	}
 }
 
@@ -82,12 +84,11 @@ func (is *infoSyncer) GetServerInfo() *ServerInfo {
 	return is.info
 }
 
-// GetOwnerServerInfoFromPD gets owner server static information from PD.
-func (is *infoSyncer) GetOwnerServerInfoFromPD(ownerID string) (*ServerInfo, error) {
+// GetOwnerServerInfo gets owner server static information from PD.
+func (is *infoSyncer) GetOwnerServerInfo(ctx context.Context, ownerID string) (*ServerInfo, error) {
 	if is.etcdCli == nil || ownerID == is.info.ID {
 		return is.info, nil
 	}
-	ctx := context.Background()
 	key := fmt.Sprintf("%s/%s", ServerInformation, ownerID)
 	infoMap, err := getInfo(ctx, is.etcdCli, key)
 	if err != nil {
@@ -95,19 +96,18 @@ func (is *infoSyncer) GetOwnerServerInfoFromPD(ownerID string) (*ServerInfo, err
 	}
 	info, ok := infoMap[ownerID]
 	if !ok {
-		return nil, errors.New(fmt.Sprintf("[infoSyncer] get %s failed", key))
+		return nil, errors.Errorf("[infoSyncer] get %s failed", key)
 	}
 	return info, nil
 }
 
-// GetAllServerInfoFromPD gets all servers static information from PD.
-func (is *infoSyncer) GetAllServerInfoFromPD() (map[string]*ServerInfo, error) {
+// GetAllServerInfo gets all servers static information from PD.
+func (is *infoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
 		allInfo[is.info.ID] = is.info
 		return allInfo, nil
 	}
-	ctx := context.Background()
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformation, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -115,8 +115,8 @@ func (is *infoSyncer) GetAllServerInfoFromPD() (map[string]*ServerInfo, error) {
 	return allInfo, nil
 }
 
-// StoreServerInfoToPD stores self server static information to PD when domain Init.
-func (is *infoSyncer) StoreServerInfoToPD() error {
+// StoreServerInfo stores self server static information to PD when domain Init.
+func (is *infoSyncer) StoreServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
@@ -124,19 +124,16 @@ func (is *infoSyncer) StoreServerInfoToPD() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx := context.Background()
-	key := fmt.Sprintf("%s/%s", ServerInformation, is.info.ID)
-	err = ddl.PutKV(ctx, is.etcdCli, ddl.KeyOpDefaultRetryCnt, key, hack.String(infoBuf))
+	err = ddl.PutKV(ctx, is.etcdCli, ddl.KeyOpDefaultRetryCnt, is.serverInfoPath, hack.String(infoBuf))
 	return errors.Trace(err)
 }
 
-// RemoveServerInfoFromPD remove self server static information from PD when domain close.
-func (is *infoSyncer) RemoveServerInfoFromPD() {
+// RemoveServerInfo remove self server static information from PD when domain close.
+func (is *infoSyncer) RemoveServerInfo() {
 	if is.etcdCli == nil {
 		return
 	}
-	key := fmt.Sprintf("%s/%s", ServerInformation, is.info.ID)
-	err := ddl.DeleteKey(key, is.etcdCli)
+	err := ddl.DeleteKey(is.serverInfoPath, is.etcdCli)
 	if err != nil {
 		log.Errorf("[infoSyncer] remove self server info failed %v", err)
 	}
@@ -152,8 +149,9 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, opts ...
 			return nil, err
 		default:
 		}
-
-		resp, err := etcdCli.Get(ctx, key, opts...)
+		childCtx, cancel := context.WithTimeout(ctx, ddl.KeyOpDefaultTimeout)
+		resp, err := etcdCli.Get(childCtx, key, opts...)
+		cancel()
 		if err != nil {
 			log.Infof("[infoSyncer] get %s failed %v, continue checking.", key, err)
 			time.Sleep(200 * time.Millisecond)
