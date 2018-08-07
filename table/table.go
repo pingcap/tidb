@@ -165,6 +165,7 @@ type Table interface {
 type PartitionedTable interface {
 	Table
 	GetPartition(partitionID int64) Table
+	GetPartitionByRow(sessionctx.Context, []types.Datum) (Table, error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

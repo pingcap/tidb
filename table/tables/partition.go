@@ -180,6 +180,15 @@ func (t *PartitionedTable) GetPartition(pid int64) table.Table {
 	return t.partitions[pid]
 }
 
+// GetPartitionByRow returns a Table, which is actually a Partition.
+func (t *PartitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.Datum) (table.Table, error) {
+	pid, err := t.locatePartition(ctx, t.Meta().GetPartitionInfo(), r)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return t.partitions[pid], nil
+}
+
 // AddRecord implements the AddRecord method for the table.Table interface.
 func (t *PartitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
@@ -252,4 +261,8 @@ func (t *PartitionedTable) CheckHandleExists(ctx sessionctx.Context, handle int6
 		return errors.Trace(err)
 	}
 	return CheckHandleExists(ctx, t.GetPartition(pid), handle)
+}
+
+func (t *PartitionedTable) RecordKey(_ int64) kv.Key {
+	panic("RecordKey() should never be called on PartitionedTable")
 }
