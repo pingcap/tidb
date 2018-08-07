@@ -91,7 +91,7 @@ var (
 		}, []string{LblType, LblResult})
 
 	CreateDDLInstance = "create_ddl_instance"
-	CreateDDLWorker   = "create_ddl_worker"
+	CreateDDL         = "create_ddl"
 	IsDDLOwner        = "is_ddl_owner"
 	DDLCounter        = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -101,13 +101,13 @@ var (
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{LblType})
 
-	// DDLJobErrCounter is the counter of error occured in ddl job.
+	// DDLJobErrCounter is the counter of error occurred in ddl job.
 	DDLJobErrCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
 			Name:      "job_error_total",
-			Help:      "Counter of error occured in ddl job.",
+			Help:      "Counter of error occurred in ddl job.",
 		})
 )
 

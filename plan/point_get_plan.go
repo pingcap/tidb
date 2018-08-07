@@ -153,6 +153,13 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	if tbl == nil {
 		return nil
 	}
+	// Do not handle partitioned table.
+	// Table partition implementation translates LogicalPlan from `DataSource` to
+	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
+	// bypass the logical plan optimization, it can't support partitioned table.
+	if tbl.GetPartitionInfo() != nil {
+		return nil
+	}
 	for _, col := range tbl.Columns {
 		// Do not handle generated columns.
 		if col.IsGenerated() {

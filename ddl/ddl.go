@@ -367,7 +367,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			go worker.start(d.ddlCtx)
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDLWorker, worker.String())).Inc()
+			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
 
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
