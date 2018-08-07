@@ -507,7 +507,7 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		KeepOrder:      true,
 		Desc:           false,
 		Concurrency:    0,
-		IsolationLevel: 0,
+		IsolationLevel: kv.SI,
 		Priority:       1,
 		NotFillCache:   true,
 		SyncLog:        false,
