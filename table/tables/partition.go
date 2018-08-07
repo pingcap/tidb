@@ -203,3 +203,53 @@ func (t *PartitionedTable) RemoveRecord(ctx sessionctx.Context, h int64, r []typ
 	tbl := t.GetPartition(pid)
 	return tbl.RemoveRecord(ctx, h, r)
 }
+
+// UpdateRecord implements table.Table UpdateRecord interface.
+// `touched` means which columns are really modified, used for secondary indices.
+// Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
+func (t *PartitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error {
+	partitionInfo := t.meta.GetPartitionInfo()
+	from, err := t.locatePartition(ctx, partitionInfo, currData)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	to, err := t.locatePartition(ctx, partitionInfo, newData)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// The old and new data locate in different partitions.
+	// Remove record from old partition and add record to new partition.
+	if from != to {
+		_, err = t.GetPartition(to).AddRecord(ctx, newData, false)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// UpdateRecord should be side effect free, but there're two steps here.
+		// What would happen if step1 succeed but step2 meets error? It's hard
+		// to rollback.
+		// So this special order is chosen: add record first, errors such as
+		// 'Key Already Exists' will generally happen during step1, errors are
+		// unlikely to happen in step2.
+		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
+		if err != nil {
+			log.Error("partition update record error, it may write dirty data to txn:", errors.ErrorStack(err))
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
+	tbl := t.GetPartition(to)
+	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
+}
+
+// CheckHandleExists check whether recordID key exists. if not exists, return nil,
+// otherwise return kv.ErrKeyExists error.
+func (t *PartitionedTable) CheckHandleExists(ctx sessionctx.Context, handle int64, data []types.Datum) error {
+	info := t.Meta().GetPartitionInfo()
+	pid, err := t.locatePartition(ctx, info, data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return CheckHandleExists(ctx, t.GetPartition(pid), handle)
+}
