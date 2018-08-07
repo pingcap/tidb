@@ -34,15 +34,6 @@ var (
 	_ Executor = &LoadDataExec{}
 )
 
-const (
-	// DirtyTableAddRow is the constant for dirty table operation type.
-	DirtyTableAddRow = iota
-	// DirtyTableDeleteRow is the constant for dirty table operation type.
-	DirtyTableDeleteRow
-	// DirtyTableTruncate is the constant for dirty table operation type.
-	DirtyTableTruncate
-)
-
 // updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
 // `modified` means which columns are really modified. It's used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
@@ -147,7 +138,12 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		skipHandleCheck := false
 		if sc.DupKeyAsWarning {
 			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
-			if err = tables.CheckHandleExists(ctx, t, newHandle); err != nil {
+			if t1, ok := t.(*tables.PartitionedTable); ok {
+				err = t1.CheckHandleExists(ctx, newHandle, newData)
+			} else {
+				err = tables.CheckHandleExists(ctx, t, newHandle)
+			}
+			if err != nil {
 				return false, handleChanged, newHandle, 0, errors.Trace(err)
 			}
 			skipHandleCheck = true
@@ -163,14 +159,6 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	}
 	if err != nil {
 		return false, handleChanged, newHandle, 0, errors.Trace(err)
-	}
-
-	tid := t.Meta().ID
-	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, tid, h, nil)
-	if handleChanged {
-		ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, newHandle, newData)
-	} else {
-		ctx.StmtAddDirtyTableOP(DirtyTableAddRow, tid, h, newData)
 	}
 
 	if onDup {
