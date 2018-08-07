@@ -6234,6 +6234,9 @@ DateAndTimeType:
 		x := types.NewFieldType(mysql.TypeDatetime)
 		x.Flen = mysql.MaxDatetimeWidthNoFsp
 		x.Decimal = $2.(int)
+		if x.Decimal > 6 {
+            yylex.Errorf("Too-big precision %d specified for DATETIME type, must in [0, 6]", x.Decimal)
+        }
 		if x.Decimal > 0 {
 			x.Flen = x.Flen + 1 + x.Decimal
 		}
@@ -6244,6 +6247,9 @@ DateAndTimeType:
 		x := types.NewFieldType(mysql.TypeTimestamp)
 		x.Flen = mysql.MaxDatetimeWidthNoFsp
 		x.Decimal = $2.(int)
+		if x.Decimal > 6 {
+            yylex.Errorf("Too-big precision %d specified for TIMESTAMP type, must in [0, 6]", x.Decimal)
+        }
 		if x.Decimal > 0 {
 			x.Flen = x.Flen + 1 + x.Decimal
 		}
@@ -6254,6 +6260,9 @@ DateAndTimeType:
 		x := types.NewFieldType(mysql.TypeDuration)
 		x.Flen = mysql.MaxDurationWidthNoFsp
 		x.Decimal = $2.(int)
+		if x.Decimal > 6 {
+            yylex.Errorf("Too-big precision %d specified for TIME type, must in [0, 6]", x.Decimal)
+        }
 		if x.Decimal > 0 {
 			x.Flen = x.Flen + 1 + x.Decimal
 		}
