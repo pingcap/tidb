@@ -918,6 +918,108 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("update (select * from t) t set c1 = 1111111")
 }
 
+func (s *testSuite) TestPartitionedTableUpdate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int not null default 1, name varchar(255))
+		PARTITION BY RANGE ( id ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21))`)
+
+	tk.MustExec(`insert INTO t VALUES (1, "hello");`)
+	tk.CheckExecResult(1, 0)
+	tk.MustExec(`insert INTO t VALUES (7, "hello");`)
+	tk.CheckExecResult(1, 0)
+
+	// update non partition column
+	tk.MustExec(`UPDATE t SET name = "abc" where id > 0;`)
+	tk.CheckExecResult(2, 0)
+	r := tk.MustQuery(`SELECT * from t order by id limit 2;`)
+	r.Check(testkit.Rows("1 abc", "7 abc"))
+
+	// update partition column
+	tk.MustExec(`update t set id = id + 1`)
+	tk.CheckExecResult(2, 0)
+	r = tk.MustQuery(`SELECT * from t order by id limit 2;`)
+	r.Check(testkit.Rows("2 abc", "8 abc"))
+
+	// update partition column, old and new record locates on different partitions
+	tk.MustExec(`update t set id = 20 where id = 8`)
+	tk.CheckExecResult(2, 0)
+	r = tk.MustQuery(`SELECT * from t order by id limit 2;`)
+	r.Check(testkit.Rows("2 abc", "20 abc"))
+
+	// table option is auto-increment
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (id int not null auto_increment, name varchar(255), primary key(id))
+		PARTITION BY RANGE ( id ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21))`)
+
+	tk.MustExec("insert into t(name) values ('aa')")
+	tk.MustExec("update t set id = 8 where name = 'aa'")
+	tk.MustExec("insert into t(name) values ('bb')")
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows("8 aa", "9 bb"))
+
+	_, err := tk.Exec("update t set id = null where name = 'aa'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), DeepEquals, "[table:1048]Column 'id' cannot be null")
+
+	// Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (id int, name int unique)
+		PARTITION BY RANGE ( name ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21))`)
+	tk.MustExec("insert t values (1, 1), (2, 2);")
+	_, err = tk.Exec("update t set name = 1 where id = 2")
+	c.Assert(err, NotNil)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
+
+	// test update ignore for pimary key
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(a bigint, primary key (a))
+		PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11))`)
+	tk.MustExec("insert into t values (5)")
+	tk.MustExec("insert into t values (7)")
+	_, err = tk.Exec("update ignore t set a = 5 where a = 7;")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 'PRIMARY'"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("5", "7"))
+
+	// test update ignore for truncate as warning
+	_, err = tk.Exec("update ignore t set a = 1 where a = (select '2a')")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
+
+	// test update ignore for unique key
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(a bigint, unique key I_uniq (a))
+		PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11))`)
+	tk.MustExec("insert into t values (5)")
+	tk.MustExec("insert into t values (7)")
+	_, err = tk.Exec("update ignore t set a = 5 where a = 7;")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 'I_uniq'"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("5", "7"))
+}
+
 // TestUpdateCastOnlyModifiedValues for issue #4514.
 func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
