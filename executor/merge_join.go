@@ -301,6 +301,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			}
 			e.outerTable.row = e.outerTable.iter.Next()
 			e.innerIter4Row.Begin()
+			e.outerTable.hasMatch = false
 		}
 
 		if chk.NumRows() >= e.maxChunkSize {
