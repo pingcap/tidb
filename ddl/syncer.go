@@ -261,7 +261,7 @@ func DeleteKey(key string, etcdCli *clientv3.Client) error {
 		if err == nil {
 			return nil
 		}
-		log.Warnf("[etcd] remove key %s failed %v no.%d", key, err, i)
+		log.Warnf("[etcd] delete key %s failed %v no.%d", key, err, i)
 	}
 	return errors.Trace(err)
 }

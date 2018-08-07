@@ -684,19 +684,19 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	decoder := json.NewDecoder(resp.Body)
 
-	allServerInfo := ClusterServerInfo{}
-	err = decoder.Decode(&allServerInfo)
+	clusterInfo := clusterServerInfo{}
+	err = decoder.Decode(&clusterInfo)
 	c.Assert(err, IsNil)
 
-	c.Assert(allServerInfo.IsAllServerVersionConsistent, IsTrue)
-	c.Assert(allServerInfo.ServersNum, Equals, 1)
+	c.Assert(clusterInfo.IsAllServerVersionConsistent, IsTrue)
+	c.Assert(clusterInfo.ServersNum, Equals, 1)
 
 	store := ts.server.newTikvHandlerTool().store.(kv.Storage)
 	do, err := session.GetDomain(store.(kv.Storage))
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
-	c.Assert(allServerInfo.OwnerID, Equals, ddl.GetID())
-	serverInfo, ok := allServerInfo.AllServersInfo[ddl.GetID()]
+	c.Assert(clusterInfo.OwnerID, Equals, ddl.GetID())
+	serverInfo, ok := clusterInfo.AllServersInfo[ddl.GetID()]
 	c.Assert(ok, Equals, true)
 
 	cfg := config.GetGlobalConfig()

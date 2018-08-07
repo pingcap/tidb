@@ -56,7 +56,8 @@ type ServerVersionInfo struct {
 	GitHash string `json:"git_hash"`
 }
 
-func newInfoSyncer(id string, etcdCli *clientv3.Client) *infoSyncer {
+// NewInfoSyncer return new infoSyncer. It export for tidb-test test.
+func NewInfoSyncer(id string, etcdCli *clientv3.Client) *infoSyncer {
 	return &infoSyncer{
 		etcdCli: etcdCli,
 		info:    getServerInfo(id),
@@ -88,11 +89,11 @@ func (is *infoSyncer) GetOwnerServerInfoFromPD(ownerID string) (*ServerInfo, err
 	}
 	ctx := context.Background()
 	key := fmt.Sprintf("%s/%s", ServerInformation, ownerID)
-	allInfo, err := getInfo(ctx, is.etcdCli, key)
+	infoMap, err := getInfo(ctx, is.etcdCli, key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	info, ok := allInfo[ownerID]
+	info, ok := infoMap[ownerID]
 	if !ok {
 		return nil, errors.New(fmt.Sprintf("[infoSyncer] get %s failed", key))
 	}
@@ -144,7 +145,6 @@ func (is *infoSyncer) RemoveServerInfoFromPD() {
 func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, opts ...clientv3.OpOption) (map[string]*ServerInfo, error) {
 	var err error
 	allInfo := make(map[string]*ServerInfo)
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -159,7 +159,6 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, opts ...
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
-
 		for _, kv := range resp.Kvs {
 			info := &ServerInfo{}
 			err := json.Unmarshal(kv.Value, info)

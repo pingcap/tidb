@@ -1295,8 +1295,8 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	writeData(w, reportInfo)
 }
 
-// ClusterServerInfo is only used to report cluster servers info when do http request
-type ClusterServerInfo struct {
+// clusterServerInfo is only used to report cluster servers info when do http request
+type clusterServerInfo struct {
 	ServersNum                   int                           `json:"servers_num,omitempty"`
 	OwnerID                      string                        `json:"owner_id"`
 	IsAllServerVersionConsistent bool                          `json:"is_all_server_version_consistent,omitempty"`
@@ -1332,7 +1332,7 @@ func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 		allVersionsMap[v.ServerVersionInfo] = struct{}{}
 		allVersions = append(allVersions, v.ServerVersionInfo)
 	}
-	clusterInfo := ClusterServerInfo{
+	clusterInfo := clusterServerInfo{
 		ServersNum: len(allServersInfo),
 		OwnerID:    ownerID,
 		IsAllServerVersionConsistent: len(allVersions) == 1,

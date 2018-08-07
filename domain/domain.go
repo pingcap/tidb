@@ -509,7 +509,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return errors.Trace(err)
 	}
-	do.info = newInfoSyncer(do.ddl.GetID(), do.etcdClient)
+	do.info = NewInfoSyncer(do.ddl.GetID(), do.etcdClient)
 	err = do.info.StoreServerInfoToPD()
 	if err != nil {
 		return errors.Trace(err)
