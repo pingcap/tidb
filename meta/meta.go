@@ -505,12 +505,12 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 	}
 
 	job := &model.Job{
-		// for compability, if the job is enqueued by old version TiDB and Priority field is omitted,
-		// set the default priority to kv.PriorityLow
+		// For compability, if the job is enqueued by old version TiDB and Priority field is omitted,
+		// set the default priority to kv.PriorityLow.
 		Priority: kv.PriorityLow,
 	}
 	err = job.Decode(value)
-	// check job.Priority is valid.
+	// Check if the job.Priority is valid.
 	if job.Priority < kv.PriorityNormal || job.Priority > kv.PriorityHigh {
 		job.Priority = kv.PriorityLow
 	}
