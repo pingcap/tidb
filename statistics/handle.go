@@ -126,27 +126,28 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 
 	tables := make([]*Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
+	pid2tid := buildPartitionID2TableID(is)
 	for _, row := range rows {
 		version := row.GetUint64(0)
-		tableID := row.GetInt64(1)
+		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
 		lastVersion = version
-		table, ok := is.TableByID(tableID)
+		table, ok := getTableByPhysicalID(is, pid2tid, physicalID)
 		if !ok {
-			log.Debugf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
-			deletedTableIDs = append(deletedTableIDs, tableID)
+			log.Debugf("Unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
+			deletedTableIDs = append(deletedTableIDs, physicalID)
 			continue
 		}
 		tableInfo := table.Meta()
-		tbl, err := h.tableStatsFromStorage(tableInfo, false)
+		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
 			log.Debugf("Error occurred when read table stats for table %s. The error message is %s.", tableInfo.Name.O, errors.ErrorStack(err))
 			continue
 		}
 		if tbl == nil {
-			deletedTableIDs = append(deletedTableIDs, tableID)
+			deletedTableIDs = append(deletedTableIDs, physicalID)
 			continue
 		}
 		tbl.Version = version
@@ -163,9 +164,15 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
-	tbl, ok := h.statsCache.Load().(statsCache)[tblInfo.ID]
+	return h.GetPartitionStats(tblInfo, tblInfo.ID)
+}
+
+// GetPartitionStats retrieves the partition stats from cache.
+func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *Table {
+	tbl, ok := h.statsCache.Load().(statsCache)[pid]
 	if !ok {
 		tbl = PseudoTable(tblInfo)
+		tbl.PhysicalID = pid
 		h.UpdateTableStats([]*Table{tbl}, nil)
 		return tbl
 	}
@@ -185,7 +192,7 @@ func (h *Handle) copyFromOldCache() statsCache {
 func (h *Handle) UpdateTableStats(tables []*Table, deletedIDs []int64) {
 	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {
-		id := tbl.TableID
+		id := tbl.PhysicalID
 		newCache[id] = tbl
 	}
 	for _, id := range deletedIDs {
