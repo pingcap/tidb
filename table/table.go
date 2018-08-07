@@ -39,6 +39,15 @@ const (
 	MemoryTable
 )
 
+const (
+	// DirtyTableAddRow is the constant for dirty table operation type.
+	DirtyTableAddRow = iota
+	// DirtyTableDeleteRow is the constant for dirty table operation type.
+	DirtyTableDeleteRow
+	// DirtyTableTruncate is the constant for dirty table operation type.
+	DirtyTableTruncate
+)
+
 var (
 	// ErrColumnCantNull is used for inserting null to a not null column.
 	ErrColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, mysql.MySQLErrName[mysql.ErrBadNull])
