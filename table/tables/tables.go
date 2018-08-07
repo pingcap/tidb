@@ -207,7 +207,7 @@ func (t *tableCommon) Meta() *model.TableInfo {
 
 // GetID implements table.Table GetID interface.
 func (t *tableCommon) GetID() int64 {
-	return t.meta.ID
+	return t.partitionID
 }
 
 // Cols implements table.Table Cols interface.
@@ -326,6 +326,8 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	if err = bs.SaveTo(txn); err != nil {
 		return errors.Trace(err)
 	}
+	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.partitionID, h, nil)
+	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.partitionID, h, newData)
 	if shouldWriteBinlog(ctx) {
 		if !t.meta.PKIsHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
@@ -477,6 +479,10 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
 			return 0, errors.Trace(err)
 		}
+	}
+
+	if !ctx.GetSessionVars().LightningMode {
+		ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.partitionID, recordID, r)
 	}
 	if shouldWriteBinlog(ctx) {
 		// For insert, TiDB and Binlog can use same row and schema.
@@ -637,6 +643,8 @@ func (t *tableCommon) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Da
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.partitionID, h, nil)
 	if shouldWriteBinlog(ctx) {
 		cols := t.Cols()
 		colIDs := make([]int64, 0, len(cols)+1)

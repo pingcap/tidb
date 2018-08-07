@@ -146,9 +146,8 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				Version:  s.startTS(),
 			},
 			Context: pb.Context{
-				IsolationLevel: pbIsolationLevel(s.snapshot.isolationLevel),
-				Priority:       s.snapshot.priority,
-				NotFillCache:   s.snapshot.notFillCache,
+				Priority:     s.snapshot.priority,
+				NotFillCache: s.snapshot.notFillCache,
 			},
 		}
 		resp, err := sender.SendReq(bo, req, loc.Region, ReadTimeoutMedium)

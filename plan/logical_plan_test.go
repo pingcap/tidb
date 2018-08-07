@@ -1485,8 +1485,8 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			is:        s.is,
 		}
 		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
-		builder.build(stmt)
-		c.Assert(builder.err, IsNil, comment)
+		_, err = builder.build(stmt)
+		c.Assert(err, IsNil, comment)
 
 		checkVisitInfo(c, builder.visitInfo, tt.ans, comment)
 	}
@@ -1588,13 +1588,12 @@ func (s *testPlanSuite) TestUnion(c *C) {
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		c.Assert(builder.err, IsNil)
-		plan := builder.build(stmt)
+		plan, err := builder.build(stmt)
 		if tt.err {
-			c.Assert(builder.err, NotNil)
+			c.Assert(err, NotNil)
 			return
 		}
-		c.Assert(builder.err, IsNil)
+		c.Assert(err, IsNil)
 		p := plan.(LogicalPlan)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
@@ -1716,8 +1715,8 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		c.Assert(builder.err, IsNil)
-		p := builder.build(stmt).(LogicalPlan)
+		p, err := builder.build(stmt)
+		c.Assert(err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)

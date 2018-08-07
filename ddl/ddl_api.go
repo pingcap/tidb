@@ -251,16 +251,32 @@ func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
 	return col, cts, nil
 }
 
-// checkColumnCantHaveDefaultValue checks the column can have value as default or not.
-// Now, TEXT/BLOB/JSON can't have not null value as default.
-func checkColumnCantHaveDefaultValue(col *table.Column, value interface{}) (err error) {
+// checkColumnDefaultValue checks the default value of the column.
+// In non-strict SQL mode, if the default value of the column is an empty string, the default value can be ignored.
+// In strict SQL mode, TEXT/BLOB/JSON can't have not null default values.
+func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value interface{}) (bool, interface{}, error) {
+	hasDefaultValue := true
 	if value != nil && (col.Tp == mysql.TypeJSON ||
 		col.Tp == mysql.TypeTinyBlob || col.Tp == mysql.TypeMediumBlob ||
 		col.Tp == mysql.TypeLongBlob || col.Tp == mysql.TypeBlob) {
-		// TEXT/BLOB/JSON can't have not null default values.
-		return errBlobCantHaveDefault.GenByArgs(col.Name.O)
+		// In non-strict SQL mode.
+		if !ctx.GetSessionVars().SQLMode.HasStrictMode() && value == "" {
+			if col.Tp == mysql.TypeBlob || col.Tp == mysql.TypeLongBlob {
+				// The TEXT/BLOB default value can be ignored.
+				hasDefaultValue = false
+			}
+			// In non-strict SQL mode, if the column type is json and the default value is null, it is initialized to an empty array.
+			if col.Tp == mysql.TypeJSON {
+				value = `null`
+			}
+			sc := ctx.GetSessionVars().StmtCtx
+			sc.AppendWarning(errBlobCantHaveDefault.GenByArgs(col.Name.O))
+			return hasDefaultValue, value, nil
+		}
+		// In strict SQL mode or default value is not an empty string.
+		return hasDefaultValue, value, errBlobCantHaveDefault.GenByArgs(col.Name.O)
 	}
-	return nil
+	return hasDefaultValue, value, nil
 }
 
 // isExplicitTimeStamp is used to check if explicit_defaults_for_timestamp is on or off.
@@ -326,11 +342,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				if err != nil {
 					return nil, nil, ErrColumnBadNull.Gen("invalid default value - %s", err)
 				}
-				if err = checkColumnCantHaveDefaultValue(col, value); err != nil {
+				if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 					return nil, nil, errors.Trace(err)
 				}
 				col.DefaultValue = value
-				hasDefaultValue = true
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
@@ -881,24 +896,27 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 
 	if pi != nil {
-		err = checkPartitionNameUnique(tbInfo, pi)
-		if err != nil {
+		if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
 			return errors.Trace(err)
 		}
-		err = checkCreatePartitionValue(pi)
-		if err != nil {
+
+		if err = checkCreatePartitionValue(pi); err != nil {
 			return errors.Trace(err)
 		}
-		err = checkAddPartitionTooManyPartitions(len(pi.Definitions))
-		if err != nil {
+
+		if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
 			return errors.Trace(err)
 		}
-		err = checkPartitionFuncValid(s.Partition.Expr)
-		if err != nil {
+
+		if err = checkPartitionFuncValid(s.Partition.Expr); err != nil {
 			return errors.Trace(err)
 		}
-		err = checkPartitionFuncType(ctx, s, cols, tbInfo)
-		if err != nil {
+
+		if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+
+		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
 			return errors.Trace(err)
 		}
 		tbInfo.Partition = pi
@@ -1462,11 +1480,10 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			if err != nil {
 				return ErrColumnBadNull.Gen("invalid default value - %s", err)
 			}
-			if err = checkColumnCantHaveDefaultValue(col, value); err != nil {
+			if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 				return errors.Trace(err)
 			}
 			col.DefaultValue = value
-			hasDefaultValue = true
 		case ast.ColumnOptionComment:
 			err := setColumnComment(ctx, col, opt)
 			if err != nil {
