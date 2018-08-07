@@ -59,8 +59,8 @@ type HashJoinExec struct {
 	innerIdx        int
 
 	// We build individual resultGenerator for each join worker when use chunk-based execution,
-	// to avoid the concurrency of recordJoiner.chk and recordJoiner.selected.
-	resultGenerators []recordJoiner
+	// to avoid the concurrency of joinResultGenerator.chk and joinResultGenerator.selected.
+	resultGenerators []joinResultGenerator
 
 	outerKeyColIdx     []int
 	innerKeyColIdx     []int
@@ -562,7 +562,7 @@ type NestedLoopApplyExec struct {
 	outerFilter expression.CNFExprs
 	outer       bool
 
-	resultGenerator recordJoiner
+	resultGenerator joinResultGenerator
 
 	outerSchema []*expression.CorrelatedColumn
 

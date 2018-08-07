@@ -34,7 +34,7 @@ type MergeJoinExec struct {
 
 	stmtCtx         *stmtctx.StatementContext
 	compareFuncs    []chunk.CompareFunc
-	resultGenerator recordJoiner
+	resultGenerator joinResultGenerator
 
 	prepared bool
 	outerIdx int

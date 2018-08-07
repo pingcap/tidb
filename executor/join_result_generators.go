@@ -23,16 +23,16 @@ import (
 )
 
 var (
-	_ recordJoiner = &semiJoiner{}
-	_ recordJoiner = &antiSemiJoiner{}
-	_ recordJoiner = &leftOuterSemiJoiner{}
-	_ recordJoiner = &antiLeftOuterSemiJoiner{}
-	_ recordJoiner = &leftOuterJoiner{}
-	_ recordJoiner = &rightOuterJoiner{}
-	_ recordJoiner = &innerJoiner{}
+	_ joinResultGenerator = &semiJoinResultGenerator{}
+	_ joinResultGenerator = &antiSemiJoinResultGenerator{}
+	_ joinResultGenerator = &leftOuterSemiJoinResultGenerator{}
+	_ joinResultGenerator = &antiLeftOuterSemiJoinResultGenerator{}
+	_ joinResultGenerator = &leftOuterJoinResultGenerator{}
+	_ joinResultGenerator = &rightOuterJoinResultGenerator{}
+	_ joinResultGenerator = &innerJoinResultGenerator{}
 )
 
-// recordJoiner is used to generate join results according the join type.
+// joinResultGenerator is used to generate join results according the join type.
 // A typical instruction flow is:
 //
 //     hasMatch := false
@@ -46,7 +46,7 @@ var (
 //     }
 //
 // NOTE: This interface is **not** thread-safe.
-type recordJoiner interface {
+type joinResultGenerator interface {
 	// tryToMatch tries to join an outer row with a batch of inner rows. When
 	// 'inners.Len != 0' but all the joined rows are filtered, the outer row is
 	// considered unmatched. Otherwise, the outer row is matched and some joined
@@ -79,10 +79,10 @@ type recordJoiner interface {
 	onMissMatch(outer chunk.Row, chk *chunk.Chunk)
 }
 
-func newRecordJoiner(ctx sessionctx.Context, joinType plan.JoinType,
+func newJoinResultGenerator(ctx sessionctx.Context, joinType plan.JoinType,
 	outerIsRight bool, defaultInner []types.Datum, filter []expression.Expression,
-	lhsColTypes, rhsColTypes []*types.FieldType) recordJoiner {
-	base := baseJoiner{
+	lhsColTypes, rhsColTypes []*types.FieldType) joinResultGenerator {
+	base := baseJoinResultGenerator{
 		ctx:          ctx,
 		conditions:   filter,
 		outerIsRight: outerIsRight,
@@ -102,24 +102,24 @@ func newRecordJoiner(ctx sessionctx.Context, joinType plan.JoinType,
 	}
 	switch joinType {
 	case plan.SemiJoin:
-		return &semiJoiner{base}
+		return &semiJoinResultGenerator{base}
 	case plan.AntiSemiJoin:
-		return &antiSemiJoiner{base}
+		return &antiSemiJoinResultGenerator{base}
 	case plan.LeftOuterSemiJoin:
-		return &leftOuterSemiJoiner{base}
+		return &leftOuterSemiJoinResultGenerator{base}
 	case plan.AntiLeftOuterSemiJoin:
-		return &antiLeftOuterSemiJoiner{base}
+		return &antiLeftOuterSemiJoinResultGenerator{base}
 	case plan.LeftOuterJoin:
-		return &leftOuterJoiner{base}
+		return &leftOuterJoinResultGenerator{base}
 	case plan.RightOuterJoin:
-		return &rightOuterJoiner{base}
+		return &rightOuterJoinResultGenerator{base}
 	case plan.InnerJoin:
-		return &innerJoiner{base}
+		return &innerJoinResultGenerator{base}
 	}
-	panic("unsupported join type in func newRecordJoiner()")
+	panic("unsupported join type in func newJoinResultGenerator()")
 }
 
-type baseJoiner struct {
+type baseJoinResultGenerator struct {
 	ctx          sessionctx.Context
 	conditions   []expression.Expression
 	defaultInner chunk.Row
@@ -129,26 +129,26 @@ type baseJoiner struct {
 	maxChunkSize int
 }
 
-func (joiner *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInner []types.Datum) {
+func (outputor *baseJoinResultGenerator) initDefaultInner(innerTypes []*types.FieldType, defaultInner []types.Datum) {
 	mutableRow := chunk.MutRowFromTypes(innerTypes)
 	mutableRow.SetDatums(defaultInner[:len(innerTypes)]...)
-	joiner.defaultInner = mutableRow.ToRow()
+	outputor.defaultInner = mutableRow.ToRow()
 }
 
-func (joiner *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
+func (outputor *baseJoinResultGenerator) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
 	// Call AppendRow() first to increment the virtual rows.
 	// Fix: https://github.com/pingcap/tidb/issues/5771
 	chk.AppendRow(lhs)
 	chk.AppendPartialRow(lhs.Len(), rhs)
 }
 
-func (joiner *baseJoiner) filter(input, output *chunk.Chunk) (matched bool, err error) {
-	joiner.selected, err = expression.VectorizedFilter(joiner.ctx, joiner.conditions, chunk.NewIterator4Chunk(input), joiner.selected)
+func (outputor *baseJoinResultGenerator) filter(input, output *chunk.Chunk) (matched bool, err error) {
+	outputor.selected, err = expression.VectorizedFilter(outputor.ctx, outputor.conditions, chunk.NewIterator4Chunk(input), outputor.selected)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	for i := 0; i < len(joiner.selected); i++ {
-		if !joiner.selected[i] {
+	for i := 0; i < len(outputor.selected); i++ {
+		if !outputor.selected[i] {
 			continue
 		}
 		matched = true
@@ -157,11 +157,11 @@ func (joiner *baseJoiner) filter(input, output *chunk.Chunk) (matched bool, err 
 	return matched, nil
 }
 
-type semiJoiner struct {
-	baseJoiner
+type semiJoinResultGenerator struct {
+	baseJoinResultGenerator
 }
 
-func (joiner *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, err error) {
+func (outputor *semiJoinResultGenerator) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, err error) {
 	if inners.Len() == 0 {
 		return false, nil
 	}
@@ -175,18 +175,18 @@ func (joiner *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 		inners.ReachEnd()
 	}()
 
-	if len(joiner.conditions) == 0 {
+	if len(outputor.conditions) == 0 {
 		return true, nil
 	}
 
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
-		joiner.chk.Reset()
-		if joiner.outerIsRight {
-			joiner.makeJoinRowToChunk(joiner.chk, inner, outer)
+		outputor.chk.Reset()
+		if outputor.outerIsRight {
+			outputor.makeJoinRowToChunk(outputor.chk, inner, outer)
 		} else {
-			joiner.makeJoinRowToChunk(joiner.chk, outer, inner)
+			outputor.makeJoinRowToChunk(outputor.chk, outer, inner)
 		}
-		matched, err = expression.EvalBool(joiner.ctx, joiner.conditions, joiner.chk.GetRow(0))
+		matched, err = expression.EvalBool(outputor.ctx, outputor.conditions, outputor.chk.GetRow(0))
 		if err != nil || matched {
 			return true, errors.Trace(err)
 		}
@@ -194,35 +194,35 @@ func (joiner *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 	return false, nil
 }
 
-func (joiner *semiJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
+func (outputor *semiJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 	return
 }
 
-type antiSemiJoiner struct {
-	baseJoiner
+type antiSemiJoinResultGenerator struct {
+	baseJoinResultGenerator
 }
 
-// tryToMatch implements recordJoiner interface.
-func (joiner *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, err error) {
+// tryToMatch implements joinResultGenerator interface.
+func (outputor *antiSemiJoinResultGenerator) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, err error) {
 	if inners.Len() == 0 {
 		return false, nil
 	}
 
 	defer inners.ReachEnd()
 
-	if len(joiner.conditions) == 0 {
+	if len(outputor.conditions) == 0 {
 		return true, nil
 	}
 
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
-		joiner.chk.Reset()
-		if joiner.outerIsRight {
-			joiner.makeJoinRowToChunk(joiner.chk, inner, outer)
+		outputor.chk.Reset()
+		if outputor.outerIsRight {
+			outputor.makeJoinRowToChunk(outputor.chk, inner, outer)
 		} else {
-			joiner.makeJoinRowToChunk(joiner.chk, outer, inner)
+			outputor.makeJoinRowToChunk(outputor.chk, outer, inner)
 		}
 
-		matched, err = expression.EvalBool(joiner.ctx, joiner.conditions, joiner.chk.GetRow(0))
+		matched, err = expression.EvalBool(outputor.ctx, outputor.conditions, outputor.chk.GetRow(0))
 		if err != nil || matched {
 			return true, errors.Trace(err)
 		}
@@ -230,17 +230,17 @@ func (joiner *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator,
 	return false, nil
 }
 
-func (joiner *antiSemiJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
+func (outputor *antiSemiJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendRow(outer)
 	return
 }
 
-type leftOuterSemiJoiner struct {
-	baseJoiner
+type leftOuterSemiJoinResultGenerator struct {
+	baseJoinResultGenerator
 }
 
-// tryToMatch implements recordJoiner interface.
-func (joiner *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, err error) {
+// tryToMatch implements joinResultGenerator interface.
+func (outputor *leftOuterSemiJoinResultGenerator) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, err error) {
 	if inners.Len() == 0 {
 		return false, nil
 	}
@@ -255,14 +255,14 @@ func (joiner *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iter
 		inners.ReachEnd()
 	}()
 
-	if len(joiner.conditions) == 0 {
+	if len(outputor.conditions) == 0 {
 		return true, nil
 	}
 
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
-		joiner.chk.Reset()
-		joiner.makeJoinRowToChunk(joiner.chk, outer, inner)
-		matched, err = expression.EvalBool(joiner.ctx, joiner.conditions, joiner.chk.GetRow(0))
+		outputor.chk.Reset()
+		outputor.makeJoinRowToChunk(outputor.chk, outer, inner)
+		matched, err = expression.EvalBool(outputor.ctx, outputor.conditions, outputor.chk.GetRow(0))
 		if err != nil || matched {
 			return true, errors.Trace(err)
 		}
@@ -270,18 +270,18 @@ func (joiner *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iter
 	return false, nil
 }
 
-func (joiner *leftOuterSemiJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
+func (outputor *leftOuterSemiJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, outer)
 	chk.AppendInt64(outer.Len(), 0)
 	return
 }
 
-type antiLeftOuterSemiJoiner struct {
-	baseJoiner
+type antiLeftOuterSemiJoinResultGenerator struct {
+	baseJoinResultGenerator
 }
 
-// tryToMatch implements recordJoiner interface.
-func (joiner *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, err error) {
+// tryToMatch implements joinResultGenerator interface.
+func (outputor *antiLeftOuterSemiJoinResultGenerator) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, err error) {
 	if inners.Len() == 0 {
 		return false, nil
 	}
@@ -296,14 +296,14 @@ func (joiner *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.
 		inners.ReachEnd()
 	}()
 
-	if len(joiner.conditions) == 0 {
+	if len(outputor.conditions) == 0 {
 		return true, nil
 	}
 
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
-		joiner.chk.Reset()
-		joiner.makeJoinRowToChunk(joiner.chk, outer, inner)
-		matched, err := expression.EvalBool(joiner.ctx, joiner.conditions, joiner.chk.GetRow(0))
+		outputor.chk.Reset()
+		outputor.makeJoinRowToChunk(outputor.chk, outer, inner)
+		matched, err := expression.EvalBool(outputor.ctx, outputor.conditions, outputor.chk.GetRow(0))
 		if err != nil || matched {
 			return true, errors.Trace(err)
 		}
@@ -311,115 +311,115 @@ func (joiner *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.
 	return false, nil
 }
 
-func (joiner *antiLeftOuterSemiJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
+func (outputor *antiLeftOuterSemiJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, outer)
 	chk.AppendInt64(outer.Len(), 1)
 	return
 }
 
-type leftOuterJoiner struct {
-	baseJoiner
+type leftOuterJoinResultGenerator struct {
+	baseJoinResultGenerator
 }
 
-// tryToMatch implements recordJoiner interface.
-func (joiner *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, error) {
+// tryToMatch implements joinResultGenerator interface.
+func (outputor *leftOuterJoinResultGenerator) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, error) {
 	if inners.Len() == 0 {
 		return false, nil
 	}
 
-	joiner.chk.Reset()
-	chkForJoin := joiner.chk
-	if len(joiner.conditions) == 0 {
+	outputor.chk.Reset()
+	chkForJoin := outputor.chk
+	if len(outputor.conditions) == 0 {
 		chkForJoin = chk
 	}
 
-	numToAppend := joiner.maxChunkSize - chk.NumRows()
+	numToAppend := outputor.maxChunkSize - chk.NumRows()
 	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
-		joiner.makeJoinRowToChunk(chkForJoin, outer, inners.Current())
+		outputor.makeJoinRowToChunk(chkForJoin, outer, inners.Current())
 		inners.Next()
 	}
-	if len(joiner.conditions) == 0 {
+	if len(outputor.conditions) == 0 {
 		return true, nil
 	}
 
-	// reach here, chkForJoin is joiner.chk
-	matched, err := joiner.filter(chkForJoin, chk)
+	// reach here, chkForJoin is outputor.chk
+	matched, err := outputor.filter(chkForJoin, chk)
 	return matched, errors.Trace(err)
 }
 
-func (joiner *leftOuterJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
+func (outputor *leftOuterJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, outer)
-	chk.AppendPartialRow(outer.Len(), joiner.defaultInner)
+	chk.AppendPartialRow(outer.Len(), outputor.defaultInner)
 	return
 }
 
-type rightOuterJoiner struct {
-	baseJoiner
+type rightOuterJoinResultGenerator struct {
+	baseJoinResultGenerator
 }
 
-// tryToMatch implements recordJoiner interface.
-func (joiner *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, error) {
+// tryToMatch implements joinResultGenerator interface.
+func (outputor *rightOuterJoinResultGenerator) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, error) {
 	if inners.Len() == 0 {
 		return false, nil
 	}
 
-	joiner.chk.Reset()
-	chkForJoin := joiner.chk
-	if len(joiner.conditions) == 0 {
+	outputor.chk.Reset()
+	chkForJoin := outputor.chk
+	if len(outputor.conditions) == 0 {
 		chkForJoin = chk
 	}
 
-	numToAppend := joiner.maxChunkSize - chk.NumRows()
+	numToAppend := outputor.maxChunkSize - chk.NumRows()
 	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
-		joiner.makeJoinRowToChunk(chkForJoin, inners.Current(), outer)
+		outputor.makeJoinRowToChunk(chkForJoin, inners.Current(), outer)
 		inners.Next()
 	}
-	if len(joiner.conditions) == 0 {
+	if len(outputor.conditions) == 0 {
 		return true, nil
 	}
 
-	// reach here, chkForJoin is joiner.chk
-	matched, err := joiner.filter(chkForJoin, chk)
+	// reach here, chkForJoin is outputor.chk
+	matched, err := outputor.filter(chkForJoin, chk)
 	return matched, errors.Trace(err)
 }
 
-func (joiner *rightOuterJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
-	chk.AppendPartialRow(0, joiner.defaultInner)
-	chk.AppendPartialRow(joiner.defaultInner.Len(), outer)
+func (outputor *rightOuterJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
+	chk.AppendPartialRow(0, outputor.defaultInner)
+	chk.AppendPartialRow(outputor.defaultInner.Len(), outer)
 	return
 }
 
-type innerJoiner struct {
-	baseJoiner
+type innerJoinResultGenerator struct {
+	baseJoinResultGenerator
 }
 
-// tryToMatch implements recordJoiner interface.
-func (joiner *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, error) {
+// tryToMatch implements joinResultGenerator interface.
+func (outputor *innerJoinResultGenerator) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, error) {
 	if inners.Len() == 0 {
 		return false, nil
 	}
-	joiner.chk.Reset()
-	chkForJoin := joiner.chk
-	if len(joiner.conditions) == 0 {
+	outputor.chk.Reset()
+	chkForJoin := outputor.chk
+	if len(outputor.conditions) == 0 {
 		chkForJoin = chk
 	}
-	inner, numToAppend := inners.Current(), joiner.maxChunkSize-chk.NumRows()
+	inner, numToAppend := inners.Current(), outputor.maxChunkSize-chk.NumRows()
 	for ; inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
-		if joiner.outerIsRight {
-			joiner.makeJoinRowToChunk(chkForJoin, inner, outer)
+		if outputor.outerIsRight {
+			outputor.makeJoinRowToChunk(chkForJoin, inner, outer)
 		} else {
-			joiner.makeJoinRowToChunk(chkForJoin, outer, inner)
+			outputor.makeJoinRowToChunk(chkForJoin, outer, inner)
 		}
 	}
-	if len(joiner.conditions) == 0 {
+	if len(outputor.conditions) == 0 {
 		return true, nil
 	}
 
-	// reach here, chkForJoin is joiner.chk
-	matched, err := joiner.filter(chkForJoin, chk)
+	// reach here, chkForJoin is outputor.chk
+	matched, err := outputor.filter(chkForJoin, chk)
 	return matched, errors.Trace(err)
 }
 
-func (joiner *innerJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
+func (outputor *innerJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 	return
 }
