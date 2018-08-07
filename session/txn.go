@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
@@ -218,11 +219,11 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 
 func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 	switch op.kind {
-	case executor.DirtyTableAddRow:
+	case table.DirtyTableAddRow:
 		dirtyDB.AddRow(op.tid, op.handle, op.row)
-	case executor.DirtyTableDeleteRow:
+	case table.DirtyTableDeleteRow:
 		dirtyDB.DeleteRow(op.tid, op.handle)
-	case executor.DirtyTableTruncate:
+	case table.DirtyTableTruncate:
 		dirtyDB.TruncateTable(op.tid)
 	}
 }
