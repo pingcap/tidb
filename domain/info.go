@@ -32,8 +32,6 @@ import (
 const (
 	// ServerInformation store server information such as IP, port and so on.
 	ServerInformation = "/tidb/server/info"
-
-	keyOpDefaultRetryCnt = 3
 )
 
 // infoSyncer stores server info to PD when server start and delete when server down.
@@ -96,7 +94,7 @@ func (is *infoSyncer) GetOwnerServerInfoFromPD(ownerID string) (*ServerInfo, err
 	}
 	info, ok := allInfo[ownerID]
 	if !ok {
-		return nil, errors.New(fmt.Sprintf("[syncer] get %s failed", key))
+		return nil, errors.New(fmt.Sprintf("[infoSyncer] get %s failed", key))
 	}
 	return info, nil
 }
@@ -127,7 +125,7 @@ func (is *infoSyncer) StoreServerInfoToPD() error {
 	}
 	ctx := context.Background()
 	key := fmt.Sprintf("%s/%s", ServerInformation, is.info.ID)
-	err = ddl.PutKV(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, hack.String(infoBuf))
+	err = ddl.PutKV(ctx, is.etcdCli, ddl.KeyOpDefaultRetryCnt, key, hack.String(infoBuf))
 	return errors.Trace(err)
 }
 
@@ -137,7 +135,7 @@ func (is *infoSyncer) RemoveServerInfoFromPD() {
 		return
 	}
 	key := fmt.Sprintf("%s/%s", ServerInformation, is.info.ID)
-	err := ddl.RemovePath(key, is.etcdCli)
+	err := ddl.DeleteKey(key, is.etcdCli)
 	if err != nil {
 		log.Errorf("[infoSyncer] remove self server info failed %v", err)
 	}

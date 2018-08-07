@@ -38,9 +38,10 @@ const (
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 	// InitialVersion is the initial schema version for every server.
 	// It's exported for testing.
-	InitialVersion       = "0"
+	InitialVersion = "0"
+	// KeyOpDefaultRetryCnt is the default retry count for etcd store.
+	KeyOpDefaultRetryCnt = 3
 	putKeyNoRetry        = 1
-	keyOpDefaultRetryCnt = 3
 	putKeyRetryUnlimited = math.MaxInt64
 	keyOpDefaultTimeout  = 2 * time.Second
 	keyOpRetryInterval   = 30 * time.Millisecond
@@ -123,7 +124,7 @@ func PutKV(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val
 		if err == nil {
 			return nil
 		}
-		log.Warnf("[syncer] put key: %s value: %s failed %v no.%d", key, val, err, i)
+		log.Warnf("[etcdCli] put key: %s value: %s failed %v no.%d", key, val, err, i)
 		time.Sleep(keyOpRetryInterval)
 	}
 	return errors.Trace(err)
@@ -154,7 +155,7 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 	s.mu.globalVerCh = s.etcdCli.Watch(ctx, DDLGlobalSchemaVersion)
 	s.mu.Unlock()
 
-	err = s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
+	err = s.putKV(ctx, KeyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.session.Lease()))
 	return errors.Trace(err)
 }
@@ -245,22 +246,22 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 		metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerClear, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	err = RemovePath(s.selfSchemaVerPath, s.etcdCli)
+	err = DeleteKey(s.selfSchemaVerPath, s.etcdCli)
 	return errors.Trace(err)
 }
 
-// RemovePath remove key value from etcd.
-func RemovePath(path string, etcdCli *clientv3.Client) error {
+// DeleteKey delete key value from etcd.
+func DeleteKey(key string, etcdCli *clientv3.Client) error {
 	var err error
 	ctx := context.Background()
-	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+	for i := 0; i < KeyOpDefaultRetryCnt; i++ {
 		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
-		_, err = etcdCli.Delete(childCtx, path)
+		_, err = etcdCli.Delete(childCtx, key)
 		cancel()
 		if err == nil {
 			return nil
 		}
-		log.Warnf("[syncer] remove path %s failed %v no.%d", path, err, i)
+		log.Warnf("[etcd] remove key %s failed %v no.%d", key, err, i)
 	}
 	return errors.Trace(err)
 }

@@ -388,6 +388,7 @@ func (d *ddl) close() {
 	if err != nil {
 		log.Errorf("[ddl] remove self version path failed %v", err)
 	}
+
 	for _, worker := range d.workers {
 		worker.close()
 	}

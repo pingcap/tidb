@@ -684,7 +684,7 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	decoder := json.NewDecoder(resp.Body)
 
-	allServerInfo := clusterServerInfo{}
+	allServerInfo := ClusterServerInfo{}
 	err = decoder.Decode(&allServerInfo)
 	c.Assert(err, IsNil)
 

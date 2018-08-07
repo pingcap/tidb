@@ -1280,23 +1280,23 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	selfInfo := is.GetServerInfo()
-	reportServerInfo := reportServerInfo{
+	reportInfo := reportServerInfo{
 		IsOwner:        selfInfo.ID == ownerID,
 		SelfServerInfo: selfInfo,
 	}
-	if !reportServerInfo.IsOwner {
+	if !reportInfo.IsOwner {
 		ownerInfo, err := is.GetOwnerServerInfoFromPD(ownerID)
 		if err != nil {
 			writeError(w, errors.New("ddl server information not found"))
 			return
 		}
-		reportServerInfo.OwnerServerInfo = ownerInfo
+		reportInfo.OwnerServerInfo = ownerInfo
 	}
-	writeData(w, reportServerInfo)
+	writeData(w, reportInfo)
 }
 
-// clusterServerInfo is only used to report cluster servers info when do http request
-type clusterServerInfo struct {
+// ClusterServerInfo is only used to report cluster servers info when do http request
+type ClusterServerInfo struct {
 	ServersNum                   int                           `json:"servers_num,omitempty"`
 	OwnerID                      string                        `json:"owner_id"`
 	IsAllServerVersionConsistent bool                          `json:"is_all_server_version_consistent,omitempty"`
@@ -1332,14 +1332,14 @@ func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 		allVersionsMap[v.ServerVersionInfo] = struct{}{}
 		allVersions = append(allVersions, v.ServerVersionInfo)
 	}
-	clusterServerInfo := clusterServerInfo{
+	clusterInfo := ClusterServerInfo{
 		ServersNum: len(allServersInfo),
 		OwnerID:    ownerID,
 		IsAllServerVersionConsistent: len(allVersions) == 1,
 		AllServersInfo:               allServersInfo,
 	}
-	if !clusterServerInfo.IsAllServerVersionConsistent {
-		clusterServerInfo.AllServersDiffVersions = allVersions
+	if !clusterInfo.IsAllServerVersionConsistent {
+		clusterInfo.AllServersDiffVersions = allVersions
 	}
-	writeData(w, clusterServerInfo)
+	writeData(w, clusterInfo)
 }
