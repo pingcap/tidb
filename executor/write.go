@@ -147,7 +147,12 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		skipHandleCheck := false
 		if sc.DupKeyAsWarning {
 			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
-			if err = tables.CheckHandleExists(ctx, t, newHandle); err != nil {
+			if t1, ok := t.(*tables.PartitionedTable); ok {
+				err = t1.CheckHandleExists(ctx, newHandle, newData)
+			} else {
+				err = tables.CheckHandleExists(ctx, t, newHandle)
+			}
+			if err != nil {
 				return false, handleChanged, newHandle, 0, errors.Trace(err)
 			}
 			skipHandleCheck = true
