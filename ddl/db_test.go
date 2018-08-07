@@ -1739,6 +1739,26 @@ func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
 	s.mustExec(c, "drop table t")
 }
 
+func (s *testDBSuite) TestTableDDLWithTimeType(c *C) {
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists t")
+	s.testErrorCode(c, "create table t (a time(7))", tmysql.ErrTooBigPrecision)
+	s.testErrorCode(c, "create table t (a datetime(7))", tmysql.ErrTooBigPrecision)
+	s.testErrorCode(c, "create table t (a timestamp(7))", tmysql.ErrTooBigPrecision)
+	s.mustExec(c, "create table t (a datetime)")
+	s.testErrorCode(c, "alter table t add column b time(7)", tmysql.ErrTooBigPrecision)
+	s.testErrorCode(c, "alter table t add column b datetime(7)", tmysql.ErrTooBigPrecision)
+	s.testErrorCode(c, "alter table t add column b timestamp(7)", tmysql.ErrTooBigPrecision)
+	s.testErrorCode(c, "alter table t modify column a time(7)", tmysql.ErrTooBigPrecision)
+	s.testErrorCode(c, "alter table t modify column a datetime(7)", tmysql.ErrTooBigPrecision)
+	s.testErrorCode(c, "alter table t modify column a timestamp(7)", tmysql.ErrTooBigPrecision)
+	s.testErrorCode(c, "alter table t change column a aa time(7)", tmysql.ErrTooBigPrecision)
+	s.testErrorCode(c, "alter table t change column a aa datetime(7)", tmysql.ErrTooBigPrecision)
+	s.testErrorCode(c, "alter table t change column a aa timestamp(7)", tmysql.ErrTooBigPrecision)
+	s.mustExec(c, "alter table t change column a aa timestamp(0)")
+	s.mustExec(c, "drop table t")
+}
+
 func (s *testDBSuite) TestTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
