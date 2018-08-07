@@ -3322,6 +3322,33 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustExec("create table t1 (s1 binary(3));")
 	tk.MustExec("insert into t1 values (0x61), (0x6120), (0x612020);")
 	tk.MustQuery(`select hex(s1) from t1;`).Check(testkit.Rows("610000", "612000", "612020"))
+
+	tk.MustExec("drop table if exists vc")
+	tk.MustExec("CREATE TABLE vc (v VARCHAR(4), c CHAR(4));")
+	tk.MustExec("INSERT INTO vc VALUES ('ab  ', 'ab  ');")
+	tk.MustQuery(`SELECT CONCAT('(', v, ')'), CONCAT('(', c, ')') FROM vc;`).Check(testutil.RowsWithSep("|", "(ab  )|(ab)"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (c BINARY(3));")
+	tk.MustExec("INSERT INTO t SET c = 'a';")
+	tk.MustQuery(`SELECT HEX(c), c = 'a', c = 'a\0\0' from t;`).Check(testutil.RowsWithSep("|", "610000|0|1"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (s1 varbinary(20), s2 varbinary(20));")
+	tk.MustExec("insert into t1 values (0x41,0x4100),(0x41,0x4120),(0x4100,0x4120);")
+	tk.MustQuery(`select hex(s1), hex(s2) from t1;`).Check(testutil.RowsWithSep("|", "41|4100", "41|4120", "4100|4120"))
+	tk.MustQuery(`select count(*) from t1 where s1 < s2;`).Check(testkit.Rows("3"))
+	tk.MustQuery(`select s1<s2, s1=s2, s1>s2 from t1;`).Check(testutil.RowsWithSep("|", "1|0|0", "1|0|0", "1|0|0"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (s1 binary(20), s2 binary(20));")
+	tk.MustExec("insert into t1 values (0x41,0x4100),(0x41,0x4120),(0x4100,0x4120);")
+	tk.MustQuery(`select hex(s1), hex(s2) from t1;`).Check(testutil.RowsWithSep("|",
+		"4100000000000000000000000000000000000000|4100000000000000000000000000000000000000",
+		"4100000000000000000000000000000000000000|4120000000000000000000000000000000000000",
+		"4100000000000000000000000000000000000000|4120000000000000000000000000000000000000"))
+	tk.MustQuery(`select count(*) from t1 where s1 < s2;`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select s1<s2, s1=s2, s1>s2 from t1;`).Check(testutil.RowsWithSep("|", "0|1|0", "1|0|0", "1|0|0"))
 }
 
 func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {

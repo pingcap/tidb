@@ -2286,9 +2286,28 @@ func compareString(args []Expression, row chunk.Row, ctx sessionctx.Context) (va
 	if isNull1 || err != nil {
 		return 0, isNull1, errors.Trace(err)
 	}
-	// To be compatible with MySQL, we should trim the tailing spaces on the right before
-	// comparing the two strings, see issue #7085 for more details.
-	return int64(types.CompareString(strings.TrimRight(arg0, " "), strings.TrimRight(arg1, " "))), false, nil
+	return int64(types.CompareString(trimOrFillString(arg0, args[0].GetType()), trimOrFillString(arg1, args[1].GetType()))), false, nil
+}
+
+// MySQL trim the tailing spaces on the right before comparing non-binary string type, and appends '\0' for fixed length binary type.
+// See the following links for details:
+// https://dev.mysql.com/doc/refman/5.7/en/char.html
+// https://dev.mysql.com/doc/refman/5.7/en/binary-varbinary.html
+// https://dev.mysql.com/doc/refman/5.7/en/blob.html
+func trimOrFillString(s string, tp *types.FieldType) string {
+	t, binFlag, length := tp.Tp, mysql.HasBinaryFlag(tp.Flag), len(s)
+	// Type 'CHAR', 'VARCHAR', 'TEXT'
+	if !binFlag {
+		return strings.TrimRight(s, " ")
+	}
+	// Type 'BINARY'
+	if t == mysql.TypeString {
+		if length < tp.Flen {
+			return s + strings.Repeat("\000", tp.Flen-length)
+		}
+	}
+	// Type 'VARBINARY', 'BLOB'
+	return s
 }
 
 func compareReal(ctx sessionctx.Context, args []Expression, row chunk.Row) (val int64, isNull bool, err error) {
