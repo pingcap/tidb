@@ -263,8 +263,8 @@ type SessionVars struct {
 
 	/* TiDB system variables */
 
-	// ImportingData is true when importing data.
-	ImportingData bool
+	// LightningMode is true when the lightning use the kvencoder to transfer sql to raw kv.
+	LightningMode bool
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
@@ -358,7 +358,7 @@ func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {
-	if !s.ImportingData {
+	if !s.LightningMode {
 		s.GetWriteStmtBufs().clean()
 	}
 }
@@ -503,8 +503,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
-	case TiDBImportingData:
-		s.ImportingData = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:

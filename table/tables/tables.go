@@ -207,7 +207,7 @@ func (t *tableCommon) Meta() *model.TableInfo {
 
 // GetID implements table.Table GetID interface.
 func (t *tableCommon) GetID() int64 {
-	return t.meta.ID
+	return t.partitionID
 }
 
 // Cols implements table.Table Cols interface.
@@ -326,6 +326,8 @@ func (t *tableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	if err = bs.SaveTo(txn); err != nil {
 		return errors.Trace(err)
 	}
+	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.partitionID, h, nil)
+	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.partitionID, h, newData)
 	if shouldWriteBinlog(ctx) {
 		if !t.meta.PKIsHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
@@ -388,7 +390,7 @@ func adjustRowValuesBuf(writeBufs *variable.WriteStmtBufs, rowLen int) {
 // getRollbackableMemStore get a rollbackable BufferStore, when we are importing data,
 // Just add the kv to transaction's membuf directly.
 func (t *tableCommon) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMutator {
-	if ctx.GetSessionVars().ImportingData {
+	if ctx.GetSessionVars().LightningMode {
 		return ctx.Txn()
 	}
 
@@ -427,9 +429,9 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 
 	txn := ctx.Txn()
 	sessVars := ctx.GetSessionVars()
-	// when ImportingData or BatchCheck is true,
+	// when LightningMode or BatchCheck is true,
 	// no needs to check the key constrains, so we names the variable skipCheck.
-	skipCheck := sessVars.ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
+	skipCheck := sessVars.LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
 	if skipCheck {
 		txn.SetOption(kv.SkipCheckForWrite, true)
 	}
@@ -473,10 +475,14 @@ func (t *tableCommon) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHan
 	if err = txn.Set(key, value); err != nil {
 		return 0, errors.Trace(err)
 	}
-	if !sessVars.ImportingData {
+	if !sessVars.LightningMode {
 		if err = rm.(*kv.BufferStore).SaveTo(txn); err != nil {
 			return 0, errors.Trace(err)
 		}
+	}
+
+	if !ctx.GetSessionVars().LightningMode {
+		ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.partitionID, recordID, r)
 	}
 	if shouldWriteBinlog(ctx) {
 		// For insert, TiDB and Binlog can use same row and schema.
@@ -522,7 +528,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 	txn := ctx.Txn()
 	// Clean up lazy check error environment
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
-	skipCheck := ctx.GetSessionVars().ImportingData || ctx.GetSessionVars().StmtCtx.BatchCheck
+	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !skipHandleCheck {
 		if err := CheckHandleExists(ctx, t, recordID); err != nil {
 			return recordID, errors.Trace(err)
@@ -637,6 +643,8 @@ func (t *tableCommon) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Da
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.partitionID, h, nil)
 	if shouldWriteBinlog(ctx) {
 		cols := t.Cols()
 		colIDs := make([]int64, 0, len(cols)+1)

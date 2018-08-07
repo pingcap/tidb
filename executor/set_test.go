@@ -135,12 +135,6 @@ func (s *testSuite) TestSetVar(c *C) {
 
 	tk.MustExec("set @@character_set_results = NULL")
 
-	c.Assert(vars.ImportingData, IsFalse)
-	tk.MustExec("set @@tidb_import_data = '1'")
-	c.Assert(vars.ImportingData, IsTrue)
-	tk.MustExec("set @@tidb_import_data = '0'")
-	c.Assert(vars.ImportingData, IsFalse)
-
 	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
