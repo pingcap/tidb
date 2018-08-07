@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
@@ -179,13 +178,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			terror.Log(errors.Trace(err))
 		}
 		log.Infof("con:%d %s=%s", sessionVars.ConnectionID, name, valStr)
-	}
-
-	if name == variable.TxnIsolation {
-		isoLevel, _ := sessionVars.GetSystemVar(variable.TxnIsolation)
-		if isoLevel == ast.ReadCommitted {
-			e.ctx.Txn().SetOption(kv.IsolationLevel, kv.RC)
-		}
 	}
 
 	return nil

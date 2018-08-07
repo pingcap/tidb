@@ -149,20 +149,20 @@ race: parserlib
 	go get github.com/coreos/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -race $(PACKAGES)
+	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 leak: parserlib
 	go get github.com/coreos/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -tags leak $(PACKAGES)
+	$(GOTEST) -tags leak $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 tikv_integration_test: parserlib
 	go get github.com/coreos/gofail
 	@$(GOFAIL_ENABLE)
-	$(GOTEST) ./store/tikv/. -with-tikv=true
+	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 RACE_FLAG = 
