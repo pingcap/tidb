@@ -60,7 +60,7 @@ type joinResultGenerator interface {
 	// onMissMatch operates on the unmatched outer row according to the join
 	// type. An outer row can be considered miss matched if:
 	//   1. it can not pass the filter on the outer table side.
-	//   2. there is no inner row with the same join key..
+	//   2. there is no inner row with the same join key.
 	//   3. all the joined rows can not pass the filter on the join result.
 	//
 	// On these conditions, the caller calls this function to handle the
@@ -166,16 +166,9 @@ func (outputer *semiJoinResultGenerator) tryToMatch(outer chunk.Row, inners chun
 		return false, nil
 	}
 
-	defer func() {
-		if !(err == nil && matched) {
-			return
-		}
-		// here we handle the matched outer.
+	if len(outputer.conditions) == 0 {
 		chk.AppendPartialRow(0, outer)
 		inners.ReachEnd()
-	}()
-
-	if len(outputer.conditions) == 0 {
 		return true, nil
 	}
 
@@ -186,16 +179,21 @@ func (outputer *semiJoinResultGenerator) tryToMatch(outer chunk.Row, inners chun
 		} else {
 			outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		}
+
 		matched, err = expression.EvalBool(outputer.ctx, outputer.conditions, outputer.chk.GetRow(0))
-		if err != nil || matched {
-			return true, errors.Trace(err)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if matched {
+			chk.AppendPartialRow(0, outer)
+			inners.ReachEnd()
+			return true, nil
 		}
 	}
 	return false, nil
 }
 
 func (outputer *semiJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
-	return
 }
 
 type antiSemiJoinResultGenerator struct {
@@ -208,9 +206,8 @@ func (outputer *antiSemiJoinResultGenerator) tryToMatch(outer chunk.Row, inners 
 		return false, nil
 	}
 
-	defer inners.ReachEnd()
-
 	if len(outputer.conditions) == 0 {
+		inners.ReachEnd()
 		return true, nil
 	}
 
@@ -223,8 +220,12 @@ func (outputer *antiSemiJoinResultGenerator) tryToMatch(outer chunk.Row, inners 
 		}
 
 		matched, err = expression.EvalBool(outputer.ctx, outputer.conditions, outputer.chk.GetRow(0))
-		if err != nil || matched {
-			return true, errors.Trace(err)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if matched {
+			inners.ReachEnd()
+			return true, nil
 		}
 	}
 	return false, nil
@@ -232,7 +233,6 @@ func (outputer *antiSemiJoinResultGenerator) tryToMatch(outer chunk.Row, inners 
 
 func (outputer *antiSemiJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendRow(outer)
-	return
 }
 
 type leftOuterSemiJoinResultGenerator struct {
@@ -245,35 +245,37 @@ func (outputer *leftOuterSemiJoinResultGenerator) tryToMatch(outer chunk.Row, in
 		return false, nil
 	}
 
-	defer func() {
-		if !(err == nil && matched) {
-			return
-		}
-		// here we handle the matched outer.
-		chk.AppendPartialRow(0, outer)
-		chk.AppendInt64(outer.Len(), 1)
-		inners.ReachEnd()
-	}()
-
 	if len(outputer.conditions) == 0 {
+		outputer.onMatch(outer, chk)
+		inners.ReachEnd()
 		return true, nil
 	}
 
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		outputer.chk.Reset()
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
+
 		matched, err = expression.EvalBool(outputer.ctx, outputer.conditions, outputer.chk.GetRow(0))
-		if err != nil || matched {
-			return true, errors.Trace(err)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if matched {
+			outputer.onMatch(outer, chk)
+			inners.ReachEnd()
+			return true, nil
 		}
 	}
 	return false, nil
 }
 
+func (outputer *leftOuterSemiJoinResultGenerator) onMatch(outer chunk.Row, chk *chunk.Chunk) {
+	chk.AppendPartialRow(0, outer)
+	chk.AppendInt64(outer.Len(), 1)
+}
+
 func (outputer *leftOuterSemiJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, outer)
 	chk.AppendInt64(outer.Len(), 0)
-	return
 }
 
 type antiLeftOuterSemiJoinResultGenerator struct {
@@ -286,17 +288,9 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) tryToMatch(outer chunk.Row
 		return false, nil
 	}
 
-	defer func() {
-		if !(err == nil && matched) {
-			return
-		}
-		// here we handle the matched outer.
-		chk.AppendPartialRow(0, outer)
-		chk.AppendInt64(outer.Len(), 0)
-		inners.ReachEnd()
-	}()
-
 	if len(outputer.conditions) == 0 {
+		outputer.onMatch(outer, chk)
+		inners.ReachEnd()
 		return true, nil
 	}
 
@@ -304,17 +298,27 @@ func (outputer *antiLeftOuterSemiJoinResultGenerator) tryToMatch(outer chunk.Row
 		outputer.chk.Reset()
 		outputer.makeJoinRowToChunk(outputer.chk, outer, inner)
 		matched, err := expression.EvalBool(outputer.ctx, outputer.conditions, outputer.chk.GetRow(0))
-		if err != nil || matched {
-			return true, errors.Trace(err)
+
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if matched {
+			outputer.onMatch(outer, chk)
+			inners.ReachEnd()
+			return true, nil
 		}
 	}
 	return false, nil
 }
 
+func (outputer *antiLeftOuterSemiJoinResultGenerator) onMatch(outer chunk.Row, chk *chunk.Chunk) {
+	chk.AppendPartialRow(0, outer)
+	chk.AppendInt64(outer.Len(), 0)
+}
+
 func (outputer *antiLeftOuterSemiJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, outer)
 	chk.AppendInt64(outer.Len(), 1)
-	return
 }
 
 type leftOuterJoinResultGenerator struct {
@@ -350,7 +354,6 @@ func (outputer *leftOuterJoinResultGenerator) tryToMatch(outer chunk.Row, inners
 func (outputer *leftOuterJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, outer)
 	chk.AppendPartialRow(outer.Len(), outputer.defaultInner)
-	return
 }
 
 type rightOuterJoinResultGenerator struct {
@@ -386,7 +389,6 @@ func (outputer *rightOuterJoinResultGenerator) tryToMatch(outer chunk.Row, inner
 func (outputer *rightOuterJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendPartialRow(0, outputer.defaultInner)
 	chk.AppendPartialRow(outputer.defaultInner.Len(), outer)
-	return
 }
 
 type innerJoinResultGenerator struct {
@@ -421,5 +423,4 @@ func (outputer *innerJoinResultGenerator) tryToMatch(outer chunk.Row, inners chu
 }
 
 func (outputer *innerJoinResultGenerator) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
-	return
 }
