@@ -123,13 +123,14 @@ func (s *testSuite) TearDownTest(c *C) {
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
 	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		sql := fmt.Sprintf("drop table %v", tb[0])
+		tk.MustExec(sql)
 	}
 }
 
 func (s *testSuite) TestAdmin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	os.Setenv("TIDB_CHECK_BEFORE_DROP", "0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
@@ -245,6 +246,11 @@ func (s *testSuite) TestAdmin(c *C) {
 	// For "checksum_with_index", we have two checksums, so the result will be 1^1 = 0.
 	// For "checksum_without_index", we only have one checksum, so the result will be 1.
 	res.Sort().Check(testkit.Rows("test checksum_with_index 0 2 2", "test checksum_without_index 1 1 1"))
+
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("drop table if exists admin_test1")
+	tk.MustExec("drop table if exists admin_test2")
+	os.Setenv("TIDB_CHECK_BEFORE_DROP", "1")
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {

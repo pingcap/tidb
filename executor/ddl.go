@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/juju/errors"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/net/context"
 )
 
@@ -192,6 +195,14 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			continue
 		} else if err != nil {
 			return errors.Trace(err)
+		}
+
+		if os.Getenv("TIDB_CHECK_BEFORE_DROP") == "1" {
+			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
+			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		err = domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
