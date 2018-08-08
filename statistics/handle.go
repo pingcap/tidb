@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -56,6 +57,9 @@ type Handle struct {
 	feedback []*QueryFeedback
 
 	Lease time.Duration
+
+	pid2tid       map[int64]int64 // pid2tid is the map from partition ID to table ID.
+	schemaVersion int64           // schemaVersion is the version of information schema when `pid2tid` is built.
 }
 
 // Clear the statsCache, only for test.
@@ -126,14 +130,13 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 
 	tables := make([]*Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
-	pid2tid := buildPartitionID2TableID(is)
 	for _, row := range rows {
 		version := row.GetUint64(0)
 		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
 		lastVersion = version
-		table, ok := getTableByPhysicalID(is, pid2tid, physicalID)
+		table, ok := h.getTableByPhysicalID(is, physicalID)
 		if !ok {
 			log.Debugf("Unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
 			deletedTableIDs = append(deletedTableIDs, physicalID)
@@ -160,6 +163,34 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	h.UpdateTableStats(tables, deletedTableIDs)
 	h.mu.Unlock()
 	return nil
+}
+
+func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
+	if is.SchemaMetaVersion() != h.schemaVersion {
+		h.schemaVersion = is.SchemaMetaVersion()
+		h.pid2tid = buildPartitionID2TableID(is)
+	}
+	if id, ok := h.pid2tid[physicalID]; ok {
+		return is.TableByID(id)
+	}
+	return is.TableByID(physicalID)
+}
+
+func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
+	mapper := make(map[int64]int64)
+	for _, db := range is.AllSchemas() {
+		tbls := db.Tables
+		for _, tbl := range tbls {
+			pi := tbl.GetPartitionInfo()
+			if pi == nil {
+				continue
+			}
+			for _, def := range pi.Definitions {
+				mapper[def.ID] = tbl.ID
+			}
+		}
+	}
+	return mapper
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.

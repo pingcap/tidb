@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -28,10 +27,10 @@ import (
 	"golang.org/x/net/context"
 )
 
-func initStatsMeta4Chunk(is infoschema.InfoSchema, pid2tid map[int64]int64, tables statsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID := row.GetInt64(1)
-		table, ok := getTableByPhysicalID(is, pid2tid, physicalID)
+		table, ok := h.getTableByPhysicalID(is, physicalID)
 		if !ok {
 			log.Debugf("Unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
 			continue
@@ -55,7 +54,7 @@ func initStatsMeta4Chunk(is infoschema.InfoSchema, pid2tid map[int64]int64, tabl
 	}
 }
 
-func (h *Handle) initStatsMeta(is infoschema.InfoSchema, pid2tid map[int64]int64) (statsCache, error) {
+func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	sql := "select version, table_id, modify_count, count from mysql.stats_meta"
@@ -77,19 +76,19 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema, pid2tid map[int64]int64
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsMeta4Chunk(is, pid2tid, tables, iter)
+		h.initStatsMeta4Chunk(is, tables, iter)
 	}
 	return tables, nil
 }
 
-func initStatsHistograms4Chunk(is infoschema.InfoSchema, pid2tid map[int64]int64, tables statsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := tables[row.GetInt64(0)]
 		if !ok {
 			continue
 		}
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
-		tbl, _ := getTableByPhysicalID(is, pid2tid, table.PhysicalID)
+		tbl, _ := h.getTableByPhysicalID(is, table.PhysicalID)
 		if row.GetInt64(1) > 0 {
 			var idxInfo *model.IndexInfo
 			for _, idx := range tbl.Meta().Indices {
@@ -125,7 +124,7 @@ func initStatsHistograms4Chunk(is infoschema.InfoSchema, pid2tid map[int64]int64
 	}
 }
 
-func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, pid2tid map[int64]int64, tables statsCache) error {
+func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver from mysql.stats_histograms"
@@ -146,7 +145,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, pid2tid map[int64
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsHistograms4Chunk(is, pid2tid, tables, iter)
+		h.initStatsHistograms4Chunk(is, tables, iter)
 	}
 	return nil
 }
@@ -243,12 +242,11 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 
 // InitStats will init the stats cache using full load strategy.
 func (h *Handle) InitStats(is infoschema.InfoSchema) error {
-	pid2tid := buildPartitionID2TableID(is)
-	tables, err := h.initStatsMeta(is, pid2tid)
+	tables, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = h.initStatsHistograms(is, pid2tid, tables)
+	err = h.initStatsHistograms(is, tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -258,28 +256,4 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) error {
 	}
 	h.statsCache.Store(tables)
 	return nil
-}
-
-func getTableByPhysicalID(is infoschema.InfoSchema, pid2tid map[int64]int64, physicalID int64) (table.Table, bool) {
-	if id, ok := pid2tid[physicalID]; ok {
-		return is.TableByID(id)
-	}
-	return is.TableByID(physicalID)
-}
-
-func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
-	mapper := make(map[int64]int64)
-	for _, db := range is.AllSchemas() {
-		tbls := db.Tables
-		for _, tbl := range tbls {
-			pi := tbl.GetPartitionInfo()
-			if pi == nil {
-				continue
-			}
-			for _, def := range pi.Definitions {
-				mapper[def.ID] = tbl.ID
-			}
-		}
-	}
-	return mapper
 }
