@@ -90,8 +90,9 @@ type lookUpJoinTask struct {
 	lookupMap         *mvmap.MVMap
 	matchedInners     []chunk.Row
 
-	doneCh chan error
-	cursor int
+	doneCh   chan error
+	cursor   int
+	hasMatch bool
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -205,16 +206,19 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 
 		outerRow := task.outerResult.GetRow(task.cursor)
-		if e.innerIter.Len() == 0 {
-			err = e.resultGenerator.emit(outerRow, nil, chk)
-		} else if e.innerIter.Current() != e.innerIter.End() {
-			err = e.resultGenerator.emit(outerRow, e.innerIter, chk)
-		}
-		if err != nil {
-			return errors.Trace(err)
+		if e.innerIter.Current() != e.innerIter.End() {
+			matched, err := e.resultGenerator.tryToMatch(outerRow, e.innerIter, chk)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			task.hasMatch = task.hasMatch || matched
 		}
 		if e.innerIter.Current() == e.innerIter.End() {
+			if !task.hasMatch {
+				e.resultGenerator.onMissMatch(outerRow, chk)
+			}
 			task.cursor++
+			task.hasMatch = false
 		}
 		if chk.NumRows() == e.maxChunkSize {
 			return nil
