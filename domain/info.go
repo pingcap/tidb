@@ -30,11 +30,11 @@ import (
 )
 
 const (
-	// ServerInformation store server information such as IP, port and so on.
-	ServerInformation = "/tidb/server/info"
+	// ServerInformationPath store server information such as IP, port and so on.
+	ServerInformationPath = "/tidb/server/info"
 )
 
-// InfoSyncer stores server info to PD when server start and delete when server down.
+// InfoSyncer stores server info to Etcd when when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
 	etcdCli        *clientv3.Client
 	info           *ServerInfo
@@ -47,6 +47,7 @@ type ServerInfo struct {
 	ServerVersionInfo
 	ID         string `json:"ddl_id"`
 	IP         string `json:"ip"`
+	Port       uint   `json:"listening_port"`
 	StatusPort uint   `json:"status_port"`
 	Lease      string `json:"lease"`
 }
@@ -57,12 +58,12 @@ type ServerVersionInfo struct {
 	GitHash string `json:"git_hash"`
 }
 
-// NewInfoSyncer return new InfoSyncer. It export for tidb-test test.
+// NewInfoSyncer return new InfoSyncer. It is exported for testing.
 func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
 	return &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
-		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformation, id),
+		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 	}
 }
 
@@ -71,6 +72,7 @@ func getServerInfo(id string) *ServerInfo {
 	info := &ServerInfo{
 		ID:         id,
 		IP:         cfg.AdvertiseAddress,
+		Port:       cfg.Port,
 		StatusPort: cfg.Status.StatusPort,
 		Lease:      cfg.Lease,
 	}
@@ -84,38 +86,38 @@ func (is *InfoSyncer) GetServerInfo() *ServerInfo {
 	return is.info
 }
 
-// GetOwnerServerInfo gets owner server static information from PD.
-func (is *InfoSyncer) GetOwnerServerInfo(ctx context.Context, ownerID string) (*ServerInfo, error) {
-	if is.etcdCli == nil || ownerID == is.info.ID {
+// GetServerInfoByID gets owner server static information from Etcd.
+func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
+	if is.etcdCli == nil || id == is.info.ID {
 		return is.info, nil
 	}
-	key := fmt.Sprintf("%s/%s", ServerInformation, ownerID)
+	key := fmt.Sprintf("%s/%s", ServerInformationPath, id)
 	infoMap, err := getInfo(ctx, is.etcdCli, key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	info, ok := infoMap[ownerID]
+	info, ok := infoMap[id]
 	if !ok {
 		return nil, errors.Errorf("[infoSyncer] get %s failed", key)
 	}
 	return info, nil
 }
 
-// GetAllServerInfo gets all servers static information from PD.
+// GetAllServerInfo gets all servers static information from Etcd.
 func (is *InfoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
 		allInfo[is.info.ID] = is.info
 		return allInfo, nil
 	}
-	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformation, clientv3.WithPrefix())
+	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return allInfo, nil
 }
 
-// StoreServerInfo stores self server static information to PD when domain Init.
+// StoreServerInfo stores self server static information to Etcd when domain Init.
 func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
@@ -128,7 +130,7 @@ func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-// RemoveServerInfo remove self server static information from PD when domain close.
+// RemoveServerInfo remove self server static information from Etcd.
 func (is *InfoSyncer) RemoveServerInfo() {
 	if is.etcdCli == nil {
 		return
@@ -139,6 +141,7 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 }
 
+// getInfo gets server information from Etcd according to the key and opts.
 func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, opts ...clientv3.OpOption) (map[string]*ServerInfo, error) {
 	var err error
 	allInfo := make(map[string]*ServerInfo)

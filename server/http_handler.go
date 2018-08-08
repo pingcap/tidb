@@ -1286,9 +1286,10 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		SelfServerInfo: selfInfo,
 	}
 	if !reportInfo.IsOwner {
-		ownerInfo, err := is.GetOwnerServerInfo(ctx, ownerID)
+		ownerInfo, err := is.GetServerInfoByID(ctx, ownerID)
 		if err != nil {
 			writeError(w, errors.New("ddl server information not found"))
+			log.Error(err)
 			return
 		}
 		reportInfo.OwnerServerInfo = ownerInfo
@@ -1318,6 +1319,7 @@ func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Requ
 	allServersInfo, err := is.GetAllServerInfo(ctx)
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
+		log.Error(err)
 		return
 	}
 	ownerID, err := ddl.OwnerManager().GetOwnerID(ctx)

@@ -106,6 +106,9 @@ func NewSchemaSyncer(etcdCli *clientv3.Client, id string) SchemaSyncer {
 }
 
 // PutKVToEtcd puts key value to etcd.
+// etcdCli is client of etcd.
+// retryCnt is retry time when When an error occurs.
+// opts is configures of etcd Operations.
 func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
 	opts ...clientv3.OpOption) error {
 	var err error

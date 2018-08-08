@@ -96,7 +96,7 @@ timezone.*
     curl http://{TiDBIP}:10080/settings
     ```
 
-1. Get TiDB server information and owner server infomation.
+1. Get TiDB server information and owner server information.
 
     ```shell
     curl http://{TiDBIP}:10080/info
