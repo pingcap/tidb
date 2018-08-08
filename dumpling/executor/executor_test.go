@@ -2211,6 +2211,34 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
 	cli.mu.Unlock()
+
+	tk.MustExec("alter table t1 drop index t1_index;")
+	tk.MustExec("SET SESSION tidb_ddl_reorg_priority = 'PRIORITY_NORMAL'")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkDDLAddIndexPriority
+	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_Normal
+	tk.MustExec("alter table t1 add index t1_index (id);")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+
+	tk.MustExec("alter table t1 drop index t1_index;")
+	tk.MustExec("SET SESSION tidb_ddl_reorg_priority = 'PRIORITY_HIGH'")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkDDLAddIndexPriority
+	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_High
+	tk.MustExec("alter table t1 add index t1_index (id);")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
 }
 
 func (s *testContextOptionSuite) TestAlterTableComment(c *C) {
