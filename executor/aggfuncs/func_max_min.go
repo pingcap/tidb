@@ -645,7 +645,7 @@ func (e *maxMin4JSON) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 		return nil
 	}
 	if p2.isNull {
-		p2.val = p1.val
+		*p2 = *p1
 		return nil
 	}
 	cmp := json.CompareBinary(p1.val, p2.val)

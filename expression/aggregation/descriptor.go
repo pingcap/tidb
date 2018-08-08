@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/model"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
@@ -82,7 +83,8 @@ func (a *AggFuncDesc) Clone() *AggFuncDesc {
 // Split splits `a` into two aggregate descriptors for partial phase and
 // final phase individually.
 // This function is only used when executing aggregate function parallelly.
-func (a *AggFuncDesc) Split() (finalAggDesc *AggFuncDesc) {
+// ordinal indicates the column ordinal of the intermediate result.
+func (a *AggFuncDesc) Split(ordinal []int) (finalAggDesc *AggFuncDesc) {
 	if a.Mode == CompleteMode {
 		a.Mode = Partial1Mode
 	} else if a.Mode == FinalMode {
@@ -96,8 +98,31 @@ func (a *AggFuncDesc) Split() (finalAggDesc *AggFuncDesc) {
 		HasDistinct: a.HasDistinct,
 		RetTp:       a.RetTp,
 	}
-	if finalAggDesc.Name == ast.AggFuncGroupConcat {
-		finalAggDesc.Args = append(finalAggDesc.Args, a.Args[len(a.Args)-1]) // separator
+	switch a.Name{
+	case ast.AggFuncAvg:
+		args := make([]expression.Expression, 0, 2)
+		args = append(args, &expression.Column{
+			ColName: model.NewCIStr(fmt.Sprintf("avg_final_col_%d", ordinal[0])),
+			Index: ordinal[0],
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		})
+		args = append(args, &expression.Column{
+			ColName: model.NewCIStr(fmt.Sprintf("avg_final_col_%d", ordinal[1])),
+			Index: ordinal[1],
+			RetType: a.RetTp,
+		})
+		finalAggDesc.Args = args
+	default:
+		args := make([]expression.Expression, 0, 1)
+		args = append(args, &expression.Column{
+			ColName: model.NewCIStr(fmt.Sprintf("%s_final_col_%d", a.Name, ordinal[1])),
+			Index: ordinal[0],
+			RetType: a.RetTp,
+		})
+		finalAggDesc.Args = args
+		if finalAggDesc.Name == ast.AggFuncGroupConcat {
+			finalAggDesc.Args = append(finalAggDesc.Args, a.Args[len(a.Args)-1]) // separator
+		}
 	}
 	return finalAggDesc
 }

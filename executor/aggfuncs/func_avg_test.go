@@ -20,11 +20,9 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/types"
+		"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"strconv"
-)
+	)
 
 func (s *testSuite) TestMergePartialResult4Count(c *C) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 5)
@@ -38,7 +36,7 @@ func (s *testSuite) TestMergePartialResult4Count(c *C) {
 		Mode: aggregation.CompleteMode,
 		Args: []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLong), Index: 0}},
 	}
-	finalDesc := desc.Split()
+	finalDesc := desc.Split([]int{0})
 
 	// build count func for partial phase.
 	partialCountFunc := aggfuncs.Build(s.ctx, desc, 0)
@@ -84,7 +82,7 @@ func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
 	}
-	finalDesc := desc.Split()
+	finalDesc := desc.Split([]int{0,1})
 
 	// build avg func for partial phase.
 	partialAvgFunc := aggfuncs.Build(s.ctx, desc, 0)
@@ -140,7 +138,7 @@ func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeDouble),
 	}
-	finalDesc := desc.Split()
+	finalDesc := desc.Split([]int{0,1})
 
 	// build avg func for partial phase.
 	partialAvgFunc := aggfuncs.Build(s.ctx, desc, 0)
@@ -196,7 +194,7 @@ func (s *testSuite) TestMergePartialResult4SumDecimal(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
 	}
-	finalDesc := desc.Split()
+	finalDesc := desc.Split([]int{0})
 
 	// build sum func for partial phase.
 	partialSumFunc := aggfuncs.Build(s.ctx, desc, 0)
@@ -252,7 +250,7 @@ func (s *testSuite) TestMergePartialResult4SumFloat(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeDouble),
 	}
-	finalDesc := desc.Split()
+	finalDesc := desc.Split([]int{0})
 
 	// build sum func for partial phase.
 	partialSumFunc := aggfuncs.Build(s.ctx, desc, 0)
@@ -308,7 +306,7 @@ func (s *testSuite) TestMergePartialResult4MaxFloat(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeDouble),
 	}
-	finalDesc := desc.Split()
+	finalDesc := desc.Split([]int{0})
 
 	// build max func for partial phase.
 	partialMaxFunc := aggfuncs.Build(s.ctx, desc, 0)
@@ -348,65 +346,3 @@ func (s *testSuite) TestMergePartialResult4MaxFloat(c *C) {
 	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(4), IsTrue)
 }
 
-func (s *testSuite) TestMergePartialResult4GroupConcat(c *C) {
-	originGroupConcatMaxLen, err := variable.GetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen)
-	c.Assert(err, IsNil)
-	defer func() {
-		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen, types.NewStringDatum(originGroupConcatMaxLen))
-	}()
-	err = variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen, types.NewIntDatum(4))
-	c.Assert(err, IsNil)
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 5)
-	for i := int64(0); i < 5; i++ {
-		srcChk.AppendString(0, strconv.FormatInt(i, 10))
-	}
-	iter := chunk.NewIterator4Chunk(srcChk)
-
-	desc := &aggregation.AggFuncDesc{
-		Name: ast.AggFuncGroupConcat,
-		Mode: aggregation.CompleteMode,
-		Args: []expression.Expression{
-			&expression.Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
-			&expression.Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Flen: 1}, Value: types.NewStringDatum(",")},
-		},
-		RetTp: types.NewFieldType(mysql.TypeDouble),
-	}
-	finalDesc := desc.Split()
-
-	// build group_concat func for partial phase.
-	partialGroupConcatFunc := aggfuncs.Build(s.ctx, desc, 0)
-	partialPr1 := partialGroupConcatFunc.AllocPartialResult()
-	partialPr2 := partialGroupConcatFunc.AllocPartialResult()
-
-	// build final func for final phase.
-	finalAvgFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
-	finalPr := finalAvgFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 1)
-
-	// update partial result.
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		partialGroupConcatFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr1)
-	}
-	partialGroupConcatFunc.AppendFinalResult2Chunk(s.ctx, partialPr1, resultChk)
-	c.Assert(resultChk.GetRow(0).GetString(0), Equals, "0,1,")
-
-	row := iter.Begin()
-	row = iter.Next()
-	for row = iter.Next(); row != iter.End(); row = iter.Next() {
-		partialGroupConcatFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
-	}
-	resultChk.Reset()
-	partialGroupConcatFunc.AppendFinalResult2Chunk(s.ctx, partialPr2, resultChk)
-	c.Assert(resultChk.GetRow(0).GetString(0), Equals, "2,3,")
-
-	// merge two partial results.
-	err = finalAvgFunc.MergePartialResult(s.ctx, partialPr1, finalPr)
-	c.Assert(err, IsNil)
-	err = finalAvgFunc.MergePartialResult(s.ctx, partialPr2, finalPr)
-	c.Assert(err, IsNil)
-
-	resultChk.Reset()
-	err = finalAvgFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
-	c.Assert(err, IsNil)
-	c.Assert(resultChk.GetRow(0).GetString(0), Equals, "0,1,")
-}
