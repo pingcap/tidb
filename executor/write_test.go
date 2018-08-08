@@ -872,25 +872,24 @@ func (s *testSuite) TestPartitionedTableReplace(c *C) {
 	tk.MustExec(replaceUniqueIndexSQL)
 	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(2))
 
-	// TODO: Support NULL
-	// 	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
-	// 	tk.MustExec(replaceUniqueIndexSQL)
-	// 	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
-	// 	tk.MustExec(replaceUniqueIndexSQL)
-	// 	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
 
-	// 	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by range (c1) (
-	// 		PARTITION p0 VALUES LESS THAN (4),
-	// 		PARTITION p1 VALUES LESS THAN (7),
-	// 		PARTITION p2 VALUES LESS THAN (11)
-	// );`
-	// 	tk.MustExec(`drop table if exists replace_test_4`)
-	// 	tk.MustExec(replaceUniqueIndexSQL)
-	// 	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
-	// 	tk.MustExec(replaceUniqueIndexSQL)
-	// 	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
-	// 	tk.MustExec(replaceUniqueIndexSQL)
-	// 	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by range (c1) (
+			PARTITION p0 VALUES LESS THAN (4),
+			PARTITION p1 VALUES LESS THAN (7),
+			PARTITION p2 VALUES LESS THAN (11)
+	);`
+	tk.MustExec(`drop table if exists replace_test_4`)
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
 
 	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by range (c2) (
 		PARTITION p0 VALUES LESS THAN (4),
