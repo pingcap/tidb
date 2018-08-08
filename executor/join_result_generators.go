@@ -32,8 +32,8 @@ var (
 	_ joinResultGenerator = &innerJoinResultGenerator{}
 )
 
-// joinResultGenerator is used to generate join results according the join type.
-// A typical instruction flow is:
+// joinResultGenerator is used to generate join results according to the join
+// type. A typical instruction flow is:
 //
 //     hasMatch := false
 //     for innerIter.Current() != innerIter.End() {
@@ -50,7 +50,7 @@ type joinResultGenerator interface {
 	// tryToMatch tries to join an outer row with a batch of inner rows. When
 	// 'inners.Len != 0' but all the joined rows are filtered, the outer row is
 	// considered unmatched. Otherwise, the outer row is matched and some joined
-	// rows is appended to `chk`. The size of `chk` is limited to MaxChunkSize.
+	// rows are appended to `chk`. The size of `chk` is limited to MaxChunkSize.
 	//
 	// NOTE: Callers need to call this function multiple times to consume all
 	// the inner rows for an outer row, and dicide whether the outer row can be
@@ -60,21 +60,21 @@ type joinResultGenerator interface {
 	// onMissMatch operates on the unmatched outer row according to the join
 	// type. An outer row can be considered miss matched if:
 	//   1. it can not pass the filter on the outer table side.
-	//   2. there does not exist an inner row with the same join key.
+	//   2. there is no inner row with the same join key..
 	//   3. all the joined rows can not pass the filter on the join result.
 	//
 	// On these conditions, the caller calls this function to handle the
 	// unmatched outer rows according to the current join type:
 	//   1. 'SemiJoin': ignores the unmatched outer row.
 	//   2. 'AntiSemiJoin': appends the unmatched outer row to the result buffer.
-	//   3. 'LeftOuterSemiJoin': concates the unmatched outer row with 0 and
-	//      appended it to the result buffer.
-	//   4. 'AntiLeftOuterSemiJoin': concates the unmatched outer row with 0 and
-	//      appended to the result buffer.
-	//   5. 'LeftOuterJoin': concates the unmatched outer row with a row of NULLs
-	//      and appended to the result buffer.
-	//   6. 'RightOuterJoin': concates the unmatched outer row with a row of NULLs
-	//      and appended to the result buffer.
+	//   3. 'LeftOuterSemiJoin': concats the unmatched outer row with 0 and
+	//      appends it to the result buffer.
+	//   4. 'AntiLeftOuterSemiJoin': concats the unmatched outer row with 0 and
+	//      appends it to the result buffer.
+	//   5. 'LeftOuterJoin': concats the unmatched outer row with a row of NULLs
+	//      and appends it to the result buffer.
+	//   6. 'RightOuterJoin': concats the unmatched outer row with a row of NULLs
+	//      and appends it to the result buffer.
 	//   7. 'InnerJoin': ignores the unmatched outer row.
 	onMissMatch(outer chunk.Row, chk *chunk.Chunk)
 }
