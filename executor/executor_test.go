@@ -2137,7 +2137,9 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 			}
 		} else if req.Type == tikvrpc.CmdPrewrite {
 			if c.priority == pb.CommandPri_Low {
+				c.mu.Lock()
 				c.mu.lowPriorityCnt++
+				c.mu.Unlock()
 			}
 		}
 	}
@@ -2206,7 +2208,9 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	cli.priority = pb.CommandPri_Low
 	tk.MustExec("alter table t1 add index t1_index (id);")
 
+	cli.mu.RLock()
 	c.Assert(cli.mu.lowPriorityCnt > 0, IsTrue)
+	cli.mu.RUnlock()
 
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
