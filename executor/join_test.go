@@ -845,6 +845,14 @@ func (s *testSuite) TestIndexLookupJoin(c *C) {
 	tk.MustExec("CREATE TABLE t(a BIGINT PRIMARY KEY, b BIGINT);")
 	tk.MustExec("INSERT INTO t VALUES(1, 2);")
 	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a UNION ALL SELECT /*+ TIDB_INLJ(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a;").Check(testkit.Rows("1 2 1 2", "1 2 1 2"))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a decimal(6,2), index idx(a));`)
+	tk.MustExec(`insert into t values(1.01), (2.02), (NULL);`)
+	tk.MustQuery(`select /*+ TIDB_INLJ(t1) */ t1.a from t t1 join t t2 on t1.a=t2.a order by t1.a;`).Check(testkit.Rows(
+		`1.01`,
+		`2.02`,
+	))
 }
 
 func (s *testSuite) TestMergejoinOrder(c *C) {
@@ -881,5 +889,13 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 		`1 2 1 2`,
 		`2 1 2 1`,
 		`2 2 2 2`,
+	))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a decimal(6,2), index idx(a));`)
+	tk.MustExec(`insert into t values(1.01), (2.02), (NULL);`)
+	tk.MustQuery(`select /*+ TIDB_SMJ(t1) */ t1.a from t t1 join t t2 on t1.a=t2.a order by t1.a;`).Check(testkit.Rows(
+		`1.01`,
+		`2.02`,
 	))
 }
