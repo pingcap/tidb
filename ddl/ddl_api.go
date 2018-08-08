@@ -1934,6 +1934,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{unique, indexName, idxColNames, indexOption},
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 
 	err = d.doDDLJob(ctx, job)
