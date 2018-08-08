@@ -111,6 +111,10 @@ type AggFunc interface {
 	// aggregate function.
 	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error
 
+	// MergePartialResult will be called in the final phase when parallelly
+	// executing. It converts the PartialResult `src`, `dst` to the same specific
+	// data structure which stores the partial results, and then evaluate the
+	// final result using the partial results as input values.
 	MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error
 
 	// AppendFinalResult2Chunk finalizes the partial result and append the

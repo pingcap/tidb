@@ -110,7 +110,6 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	return nil
 }
 
-
 func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
 	p1, p2 := (*partialResult4GroupConcat)(src), (*partialResult4GroupConcat)(dst)
 	if p1.buffer == nil {
