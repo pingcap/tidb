@@ -52,7 +52,7 @@ type Domain struct {
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
 	ddl             ddl.DDL
-	info            *infoSyncer
+	info            *InfoSyncer
 	m               sync.Mutex
 	SchemaValidator SchemaValidator
 	sysSessionPool  *pools.ResourcePool
@@ -253,7 +253,7 @@ func (do *Domain) DDL() ddl.DDL {
 }
 
 // InfoSyncer gets infoSyncer from domain.
-func (do *Domain) InfoSyncer() *infoSyncer {
+func (do *Domain) InfoSyncer() *InfoSyncer {
 	return do.info
 }
 

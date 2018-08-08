@@ -34,8 +34,8 @@ const (
 	ServerInformation = "/tidb/server/info"
 )
 
-// infoSyncer stores server info to PD when server start and delete when server down.
-type infoSyncer struct {
+// InfoSyncer stores server info to PD when server start and delete when server down.
+type InfoSyncer struct {
 	etcdCli        *clientv3.Client
 	info           *ServerInfo
 	serverInfoPath string
@@ -57,9 +57,9 @@ type ServerVersionInfo struct {
 	GitHash string `json:"git_hash"`
 }
 
-// NewInfoSyncer return new infoSyncer. It export for tidb-test test.
-func NewInfoSyncer(id string, etcdCli *clientv3.Client) *infoSyncer {
-	return &infoSyncer{
+// NewInfoSyncer return new InfoSyncer. It export for tidb-test test.
+func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
+	return &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformation, id),
@@ -80,12 +80,12 @@ func getServerInfo(id string) *ServerInfo {
 }
 
 //GetServerInfo gets self server static information.
-func (is *infoSyncer) GetServerInfo() *ServerInfo {
+func (is *InfoSyncer) GetServerInfo() *ServerInfo {
 	return is.info
 }
 
 // GetOwnerServerInfo gets owner server static information from PD.
-func (is *infoSyncer) GetOwnerServerInfo(ctx context.Context, ownerID string) (*ServerInfo, error) {
+func (is *InfoSyncer) GetOwnerServerInfo(ctx context.Context, ownerID string) (*ServerInfo, error) {
 	if is.etcdCli == nil || ownerID == is.info.ID {
 		return is.info, nil
 	}
@@ -102,7 +102,7 @@ func (is *infoSyncer) GetOwnerServerInfo(ctx context.Context, ownerID string) (*
 }
 
 // GetAllServerInfo gets all servers static information from PD.
-func (is *infoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
+func (is *InfoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
 		allInfo[is.info.ID] = is.info
@@ -116,7 +116,7 @@ func (is *infoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerI
 }
 
 // StoreServerInfo stores self server static information to PD when domain Init.
-func (is *infoSyncer) StoreServerInfo(ctx context.Context) error {
+func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
@@ -129,7 +129,7 @@ func (is *infoSyncer) StoreServerInfo(ctx context.Context) error {
 }
 
 // RemoveServerInfo remove self server static information from PD when domain close.
-func (is *infoSyncer) RemoveServerInfo() {
+func (is *InfoSyncer) RemoveServerInfo() {
 	if is.etcdCli == nil {
 		return
 	}
