@@ -32,6 +32,10 @@ import (
 const (
 	// ServerInformationPath store server information such as IP, port and so on.
 	ServerInformationPath = "/tidb/server/info"
+	// keyOpDefaultRetryCnt is the default retry count for etcd store.
+	keyOpDefaultRetryCnt = 2
+	// keyOpDefaultTimeout is the default time out for etcd store.
+	keyOpDefaultTimeout = 1 * time.Second
 )
 
 // InfoSyncer stores server info to Etcd when when the tidb-server starts and delete when tidb-server shuts down.
@@ -86,13 +90,13 @@ func (is *InfoSyncer) GetServerInfo() *ServerInfo {
 	return is.info
 }
 
-// GetServerInfoByID gets owner server static information from Etcd.
+// GetServerInfoByID gets server static information from Etcd.
 func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 	if is.etcdCli == nil || id == is.info.ID {
 		return is.info, nil
 	}
 	key := fmt.Sprintf("%s/%s", ServerInformationPath, id)
-	infoMap, err := getInfo(ctx, is.etcdCli, key)
+	infoMap, err := getInfo(ctx, is.etcdCli, key, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -110,7 +114,7 @@ func (is *InfoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerI
 		allInfo[is.info.ID] = is.info
 		return allInfo, nil
 	}
-	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, clientv3.WithPrefix())
+	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -126,7 +130,7 @@ func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ddl.PutKVToEtcd(ctx, is.etcdCli, ddl.KeyOpDefaultRetryCnt, is.serverInfoPath, hack.String(infoBuf))
+	err = ddl.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, hack.String(infoBuf))
 	return errors.Trace(err)
 }
 
@@ -135,34 +139,38 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	if is.etcdCli == nil {
 		return
 	}
-	err := ddl.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli)
+	err := ddl.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		log.Errorf("[infoSyncer] remove self server info failed %v", err)
+		log.Errorf("[infoSyncer] remove server info failed %v", err)
 	}
 }
 
 // getInfo gets server information from Etcd according to the key and opts.
-func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, opts ...clientv3.OpOption) (map[string]*ServerInfo, error) {
+func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt int, timeout time.Duration, opts ...clientv3.OpOption) (map[string]*ServerInfo, error) {
 	var err error
+	var resp *clientv3.GetResponse
 	allInfo := make(map[string]*ServerInfo)
-	for {
+	for i := 0; i < retryCnt; i++ {
 		select {
 		case <-ctx.Done():
 			err = errors.Trace(ctx.Err())
 			return nil, err
 		default:
 		}
-		childCtx, cancel := context.WithTimeout(ctx, ddl.KeyOpDefaultTimeout)
-		resp, err := etcdCli.Get(childCtx, key, opts...)
+		childCtx, cancel := context.WithTimeout(ctx, timeout)
+		resp, err = etcdCli.Get(childCtx, key, opts...)
 		cancel()
 		if err != nil {
-			log.Infof("[infoSyncer] get %s failed %v, continue checking.", key, err)
+			// Reduce the number of logs.
+			if i%2 == 1 {
+				log.Infof("[infoSyncer] get %s failed %v, continue checking.", key, err)
+			}
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
 		for _, kv := range resp.Kvs {
 			info := &ServerInfo{}
-			err := json.Unmarshal(kv.Value, info)
+			err = json.Unmarshal(kv.Value, info)
 			if err != nil {
 				log.Infof("[infoSyncer] get %s, json.Unmarshal %v failed %v.", kv.Key, kv.Value, err)
 				return nil, errors.Trace(err)
@@ -171,4 +179,5 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, opts ...
 		}
 		return allInfo, nil
 	}
+	return nil, errors.Trace(err)
 }

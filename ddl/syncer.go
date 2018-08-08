@@ -38,13 +38,11 @@ const (
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
 	// InitialVersion is the initial schema version for every server.
 	// It's exported for testing.
-	InitialVersion = "0"
-	// KeyOpDefaultRetryCnt is the default retry count for etcd store.
-	KeyOpDefaultRetryCnt = 3
-	// KeyOpDefaultTimeout is the default time out for etcd store.
-	KeyOpDefaultTimeout  = 2 * time.Second
+	InitialVersion       = "0"
 	putKeyNoRetry        = 1
+	keyOpDefaultRetryCnt = 3
 	putKeyRetryUnlimited = math.MaxInt64
+	keyOpDefaultTimeout  = 2 * time.Second
 	keyOpRetryInterval   = 30 * time.Millisecond
 	checkVersInterval    = 20 * time.Millisecond
 )
@@ -117,7 +115,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 			return errors.Trace(ctx.Err())
 		}
 
-		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
+		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
 		_, err = etcdCli.Put(childCtx, key, val, opts...)
 		cancel()
 		if err == nil {
@@ -154,7 +152,7 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 	s.mu.globalVerCh = s.etcdCli.Watch(ctx, DDLGlobalSchemaVersion)
 	s.mu.Unlock()
 
-	err = PutKVToEtcd(ctx, s.etcdCli, KeyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
+	err = PutKVToEtcd(ctx, s.etcdCli, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.session.Lease()))
 	return errors.Trace(err)
 }
@@ -180,7 +178,7 @@ func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
 	}
 	s.session = session
 
-	childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
+	childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
 	defer cancel()
 	err = PutKVToEtcd(childCtx, s.etcdCli, putKeyRetryUnlimited, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.session.Lease()))
@@ -245,16 +243,16 @@ func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
 		metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerClear, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	err = DeleteKeyFromEtcd(s.selfSchemaVerPath, s.etcdCli)
+	err = DeleteKeyFromEtcd(s.selfSchemaVerPath, s.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	return errors.Trace(err)
 }
 
 // DeleteKeyFromEtcd deletes key value from etcd.
-func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client) error {
+func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeout time.Duration) error {
 	var err error
 	ctx := context.Background()
-	for i := 0; i < KeyOpDefaultRetryCnt; i++ {
-		childCtx, cancel := context.WithTimeout(ctx, KeyOpDefaultTimeout)
+	for i := 0; i < retryCnt; i++ {
+		childCtx, cancel := context.WithTimeout(ctx, timeout)
 		_, err = etcdCli.Delete(childCtx, key)
 		cancel()
 		if err == nil {
