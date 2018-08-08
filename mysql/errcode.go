@@ -700,7 +700,7 @@ const (
 	ErrPathLength                                                   = 1680
 	ErrWarnDeprecatedSyntaxNoReplacement                            = 1681
 	ErrWrongNativeTableStructure                                    = 1682
-	ErrWrongPerfschemaUsage                                         = 1683
+	ErrWrongPerfSchemaUsage                                         = 1683
 	ErrWarnISSkippedTable                                           = 1684
 	ErrInsideTransactionPreventsSwitchBinlogDirect                  = 1685
 	ErrStoredFunctionPreventsSwitchBinlogDirect                     = 1686
