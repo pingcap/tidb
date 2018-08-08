@@ -247,6 +247,8 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails) {
 	sc.mu.execDetails.WaitTime += details.WaitTime
 	sc.mu.execDetails.BackoffTime += details.BackoffTime
 	sc.mu.execDetails.RequestCount++
+	sc.mu.execDetails.TotalKeys += details.TotalKeys
+	sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
 	sc.mu.Unlock()
 }
 
