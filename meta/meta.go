@@ -463,7 +463,7 @@ var (
 type JobListKeyType []byte
 
 var (
-	// DefaultJobListKey keeps all actions of DDL jobs.
+	// DefaultJobListKey keeps all actions of DDL jobs except "add index".
 	DefaultJobListKey JobListKeyType = mDDLJobListKey
 	// AddIndexJobListKey only keeps the action of adding index.
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList

@@ -385,20 +385,14 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		return false, joinResult
 	}
 	if hasNull {
-		err = e.resultGenerators[workerID].emit(outerRow, nil, joinResult.chk)
-		if err != nil {
-			joinResult.err = errors.Trace(err)
-		}
-		return err == nil, joinResult
+		e.resultGenerators[workerID].onMissMatch(outerRow, joinResult.chk)
+		return true, joinResult
 	}
 	e.hashTableValBufs[workerID] = e.hashTable.Get(joinKey, e.hashTableValBufs[workerID][:0])
 	innerPtrs := e.hashTableValBufs[workerID]
 	if len(innerPtrs) == 0 {
-		err = e.resultGenerators[workerID].emit(outerRow, nil, joinResult.chk)
-		if err != nil {
-			joinResult.err = errors.Trace(err)
-		}
-		return err == nil, joinResult
+		e.resultGenerators[workerID].onMissMatch(outerRow, joinResult.chk)
+		return true, joinResult
 	}
 	innerRows := make([]chunk.Row, 0, len(innerPtrs))
 	for _, b := range innerPtrs {
@@ -407,12 +401,15 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		innerRows = append(innerRows, matchedInner)
 	}
 	iter := chunk.NewIterator4Slice(innerRows)
+	hasMatch := false
 	for iter.Begin(); iter.Current() != iter.End(); {
-		err = e.resultGenerators[workerID].emit(outerRow, iter, joinResult.chk)
+		matched, err := e.resultGenerators[workerID].tryToMatch(outerRow, iter, joinResult.chk)
 		if err != nil {
 			joinResult.err = errors.Trace(err)
 			return false, joinResult
 		}
+		hasMatch = hasMatch || matched
+
 		if joinResult.chk.NumRows() == e.maxChunkSize {
 			ok := true
 			e.joinResultCh <- joinResult
@@ -421,6 +418,9 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 				return false, joinResult
 			}
 		}
+	}
+	if !hasMatch {
+		e.resultGenerators[workerID].onMissMatch(outerRow, joinResult.chk)
 	}
 	return true, joinResult
 }
@@ -448,11 +448,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 	}
 	for i := range selected {
 		if !selected[i] { // process unmatched outer rows
-			err = e.resultGenerators[workerID].emit(outerChk.GetRow(i), nil, joinResult.chk)
-			if err != nil {
-				joinResult.err = errors.Trace(err)
-				return false, joinResult
-			}
+			e.resultGenerators[workerID].onMissMatch(outerChk.GetRow(i), joinResult.chk)
 		} else { // process matched outer rows
 			ok, joinResult = e.joinMatchedOuterRow2Chunk(workerID, outerChk.GetRow(i), joinResult)
 			if !ok {
@@ -578,6 +574,7 @@ type NestedLoopApplyExec struct {
 	innerSelected    []bool
 	innerIter        chunk.Iterator
 	outerRow         *chunk.Row
+	hasMatch         bool
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -635,9 +632,9 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 		if selected {
 			return &outerRow, nil
 		} else if e.outer {
-			err := e.resultGenerator.emit(outerRow, nil, chk)
-			if err != nil || chk.NumRows() == e.maxChunkSize {
-				return nil, errors.Trace(err)
+			e.resultGenerator.onMissMatch(outerRow, chk)
+			if chk.NumRows() == e.maxChunkSize {
+				return nil, nil
 			}
 		}
 	}
@@ -678,10 +675,15 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 	chk.Reset()
 	for {
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {
+			if e.outerRow != nil && !e.hasMatch {
+				e.resultGenerator.onMissMatch(*e.outerRow, chk)
+			}
 			e.outerRow, err = e.fetchSelectedOuterRow(ctx, chk)
 			if e.outerRow == nil || err != nil {
 				return errors.Trace(err)
 			}
+			e.hasMatch = false
+
 			for _, col := range e.outerSchema {
 				*col.Data = e.outerRow.GetDatum(col.Index, col.RetType)
 			}
@@ -693,7 +695,9 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 			e.innerIter.Begin()
 		}
 
-		err = e.resultGenerator.emit(*e.outerRow, e.innerIter, chk)
+		matched, err := e.resultGenerator.tryToMatch(*e.outerRow, e.innerIter, chk)
+		e.hasMatch = e.hasMatch || matched
+
 		if err != nil || chk.NumRows() == e.maxChunkSize {
 			return errors.Trace(err)
 		}
