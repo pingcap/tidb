@@ -23,12 +23,12 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/model"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
@@ -98,17 +98,17 @@ func (a *AggFuncDesc) Split(ordinal []int) (finalAggDesc *AggFuncDesc) {
 		HasDistinct: a.HasDistinct,
 		RetTp:       a.RetTp,
 	}
-	switch a.Name{
+	switch a.Name {
 	case ast.AggFuncAvg:
 		args := make([]expression.Expression, 0, 2)
 		args = append(args, &expression.Column{
 			ColName: model.NewCIStr(fmt.Sprintf("avg_final_col_%d", ordinal[0])),
-			Index: ordinal[0],
+			Index:   ordinal[0],
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		})
 		args = append(args, &expression.Column{
 			ColName: model.NewCIStr(fmt.Sprintf("avg_final_col_%d", ordinal[1])),
-			Index: ordinal[1],
+			Index:   ordinal[1],
 			RetType: a.RetTp,
 		})
 		finalAggDesc.Args = args
@@ -116,7 +116,7 @@ func (a *AggFuncDesc) Split(ordinal []int) (finalAggDesc *AggFuncDesc) {
 		args := make([]expression.Expression, 0, 1)
 		args = append(args, &expression.Column{
 			ColName: model.NewCIStr(fmt.Sprintf("%s_final_col_%d", a.Name, ordinal[1])),
-			Index: ordinal[0],
+			Index:   ordinal[0],
 			RetType: a.RetTp,
 		})
 		finalAggDesc.Args = args

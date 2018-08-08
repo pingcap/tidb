@@ -20,9 +20,9 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
-		"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	)
+)
 
 func (s *testSuite) TestMergePartialResult4Count(c *C) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 5)
@@ -82,7 +82,7 @@ func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
 	}
-	finalDesc := desc.Split([]int{0,1})
+	finalDesc := desc.Split([]int{0, 1})
 
 	// build avg func for partial phase.
 	partialAvgFunc := aggfuncs.Build(s.ctx, desc, 0)
@@ -138,7 +138,7 @@ func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeDouble),
 	}
-	finalDesc := desc.Split([]int{0,1})
+	finalDesc := desc.Split([]int{0, 1})
 
 	// build avg func for partial phase.
 	partialAvgFunc := aggfuncs.Build(s.ctx, desc, 0)
@@ -345,4 +345,3 @@ func (s *testSuite) TestMergePartialResult4MaxFloat(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(4), IsTrue)
 }
-

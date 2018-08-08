@@ -202,7 +202,7 @@ func (e *firstRow4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 
 func (*firstRow4Float64) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4FirstRowFloat64)(src), (*partialResult4FirstRowFloat64)(dst)
-	if !p2.gotFirstRow  {
+	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
 	return nil
@@ -248,7 +248,7 @@ func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 
 func (*firstRow4String) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4FirstRowString)(src), (*partialResult4FirstRowString)(dst)
-	if !p2.gotFirstRow  {
+	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
 	return nil
@@ -341,7 +341,7 @@ func (e *firstRow4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 }
 func (*firstRow4Duration) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4FirstRowDuration)(src), (*partialResult4FirstRowDuration)(dst)
-	if !p2.gotFirstRow  {
+	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
 	return nil
@@ -447,7 +447,7 @@ func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 
 func (*firstRow4Decimal) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4FirstRowDecimal)(src), (*partialResult4FirstRowDecimal)(dst)
-	if !p2.gotFirstRow  {
+	if !p2.gotFirstRow {
 		*p2 = *p1
 	}
 	return nil
