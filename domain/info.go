@@ -161,10 +161,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 		resp, err = etcdCli.Get(childCtx, key, opts...)
 		cancel()
 		if err != nil {
-			// Reduce the number of logs.
-			if i%2 == 1 {
-				log.Infof("[infoSyncer] get %s failed %v, continue checking.", key, err)
-			}
+			log.Infof("[infoSyncer] get %s failed %v, continue checking.", key, err)
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
