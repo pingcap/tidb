@@ -129,8 +129,12 @@ func (s *testSuite) TearDownTest(c *C) {
 }
 
 func (s *testSuite) TestAdmin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	origin := os.Getenv("TIDB_CHECK_BEFORE_DROP")
 	os.Setenv("TIDB_CHECK_BEFORE_DROP", "0")
+	defer func() {
+		os.Setenv("TIDB_CHECK_BEFORE_DROP", origin)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
@@ -250,7 +254,6 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("drop table if exists admin_test1")
 	tk.MustExec("drop table if exists admin_test2")
-	os.Setenv("TIDB_CHECK_BEFORE_DROP", "1")
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
