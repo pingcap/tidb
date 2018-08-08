@@ -579,7 +579,11 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.Meta()) {
-				data = append(data, types.NewIntDatum(handle))
+				if mysql.HasUnsignedFlag(col.Flag) {
+					data = append(data, types.NewUintDatum(uint64(handle)))
+				} else {
+					data = append(data, types.NewIntDatum(handle))
+				}
 			} else {
 				data = append(data, rowMap[col.ID])
 			}
