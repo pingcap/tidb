@@ -78,7 +78,6 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 			if value.IsNull() {
 				delete(sessionVars.Users, name)
-				sessionVars.Users[name] = ""
 			} else {
 				svalue, err1 := value.ToString()
 				if err1 != nil {
