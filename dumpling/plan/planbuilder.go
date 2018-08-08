@@ -267,13 +267,25 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func getPathByIndexName(paths []*accessPath, idxName model.CIStr) *accessPath {
+func getPathByIndexName(paths []*accessPath, idxName model.CIStr, tblInfo *model.TableInfo) *accessPath {
+	var tablePath *accessPath
 	for _, path := range paths {
+		if path.isTablePath {
+			tablePath = path
+			continue
+		}
 		if path.index.Name.L == idxName.L {
 			return path
 		}
 	}
+	if isPrimaryIndexHint(idxName) && tblInfo.PKIsHandle {
+		return tablePath
+	}
 	return nil
+}
+
+func isPrimaryIndexHint(indexName model.CIStr) bool {
+	return indexName.L == "primary"
 }
 
 func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo) ([]*accessPath, error) {
@@ -295,7 +307,7 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 
 		hasScanHint = true
 		for _, idxName := range hint.IndexNames {
-			path := getPathByIndexName(publicPaths[1:], idxName)
+			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
 				return nil, ErrKeyDoesNotExist.GenByArgs(idxName, tblInfo.Name)
 			}
@@ -316,7 +328,7 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 		available = publicPaths
 	}
 
-	available = removeIgnoredPaths(available, ignored)
+	available = removeIgnoredPaths(available, ignored, tblInfo)
 
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
@@ -326,13 +338,13 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 	return available, nil
 }
 
-func removeIgnoredPaths(paths, ignoredPaths []*accessPath) []*accessPath {
+func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableInfo) []*accessPath {
 	if len(ignoredPaths) == 0 {
 		return paths
 	}
 	remainedPaths := make([]*accessPath, 0, len(paths))
 	for _, path := range paths {
-		if path.isTablePath || getPathByIndexName(ignoredPaths, path.index.Name) == nil {
+		if path.isTablePath || getPathByIndexName(ignoredPaths, path.index.Name, tblInfo) == nil {
 			remainedPaths = append(remainedPaths, path)
 		}
 	}
