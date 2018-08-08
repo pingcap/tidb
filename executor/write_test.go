@@ -782,12 +782,12 @@ func (s *testSuite) TestPartitionedTableReplace(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	testSQL := `drop table if exists replace_test;
-    create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1) partition by range (id) (
-		PARTITION p0 VALUES LESS THAN (3),
-		PARTITION p1 VALUES LESS THAN (5),
-		PARTITION p2 VALUES LESS THAN (7),
-		PARTITION p3 VALUES LESS THAN (9)
-);`
+		    create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
+			partition by range (id) (
+			PARTITION p0 VALUES LESS THAN (3),
+			PARTITION p1 VALUES LESS THAN (5),
+			PARTITION p2 VALUES LESS THAN (7),
+			PARTITION p3 VALUES LESS THAN (9));`
 	tk.MustExec(testSQL)
 	testSQL = `replace replace_test (c1) values (1),(2),(NULL);`
 	tk.MustExec(testSQL)
