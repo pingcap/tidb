@@ -115,7 +115,7 @@ func (a *AggFuncDesc) Split(ordinal []int) (finalAggDesc *AggFuncDesc) {
 	default:
 		args := make([]expression.Expression, 0, 1)
 		args = append(args, &expression.Column{
-			ColName: model.NewCIStr(fmt.Sprintf("%s_final_col_%d", a.Name, ordinal[1])),
+			ColName: model.NewCIStr(fmt.Sprintf("%s_final_col_%d", a.Name, ordinal[0])),
 			Index:   ordinal[0],
 			RetType: a.RetTp,
 		})
