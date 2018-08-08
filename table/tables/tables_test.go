@@ -396,7 +396,7 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
 }
 
-// TestPartitionGetID tests Partition.GetID().
+// TestPartitionGetID tests partition.GetID().
 func (ts *testSuite) TestPartitionGetID(c *C) {
 	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
 PARTITION BY RANGE ( id ) (
