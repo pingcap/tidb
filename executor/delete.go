@@ -223,7 +223,6 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, d
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, t.Meta().ID, h, nil)
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	colSize := make(map[int64]int64)
 	for id, col := range t.Cols() {

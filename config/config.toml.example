@@ -45,7 +45,7 @@ enable-streaming = false
 lower-case-table-names = 2
 
 # Make "kill query" behavior compatible with MySQL. It's not recommend to
-# turn on this option when TiDB server is behand a proxy.
+# turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false
 
 [log]

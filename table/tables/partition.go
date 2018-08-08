@@ -32,35 +32,34 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Both Partition and PartitionedTable implement the table.Table interface.
-var _ table.Table = &Partition{}
-var _ table.Table = &PartitionedTable{}
+// Both partition and partitionedTable implement the table.Table interface.
+var _ table.Table = &partition{}
+var _ table.Table = &partitionedTable{}
 
-// PartitionedTable implements the table.PartitionedTable interface.
-var _ table.PartitionedTable = &PartitionedTable{}
+// partitionedTable implements the table.PartitionedTable interface.
+var _ table.PartitionedTable = &partitionedTable{}
 
-// Partition is a feature from MySQL:
+// partition is a feature from MySQL:
 // See https://dev.mysql.com/doc/refman/8.0/en/partitioning.html
 // A partition table may contain many partitions, each partition has a unique partition
 // id. The underlying representation of a partition and a normal table (a table with no
 // partitions) is basically the same.
-// Partition also implements the table.Table interface.
-type Partition struct {
+// partition also implements the table.Table interface.
+type partition struct {
 	tableCommon
-	ID int64
 }
 
 // GetID implements table.Table GetID interface.
-func (p *Partition) GetID() int64 {
-	return p.ID
+func (p *partition) GetID() int64 {
+	return p.partitionID
 }
 
-// PartitionedTable implements the table.PartitionedTable interface.
-// PartitionedTable is a table, it contains many Partitions.
-type PartitionedTable struct {
+// partitionedTable implements the table.PartitionedTable interface.
+// partitionedTable is a table, it contains many Partitions.
+type partitionedTable struct {
 	Table
 	partitionExpr *PartitionExpr
-	partitions    map[int64]*Partition
+	partitions    map[int64]*partition
 }
 
 func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, error) {
@@ -69,19 +68,18 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 		return nil, errors.Trace(err)
 	}
 
-	partitions := make(map[int64]*Partition)
+	partitions := make(map[int64]*partition)
 	pi := tblInfo.GetPartitionInfo()
 	for _, p := range pi.Definitions {
-		var t Partition
+		var t partition
 		err = initTableCommonWithIndices(&t.tableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		t.ID = p.ID
 		partitions[p.ID] = &t
 	}
 
-	return &PartitionedTable{
+	return &partitionedTable{
 		Table:         *tbl,
 		partitionExpr: partitionExpr,
 		partitions:    partitions,
@@ -146,7 +144,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 }
 
 // PartitionExpr returns the partition expression.
-func (t *PartitionedTable) PartitionExpr() *PartitionExpr {
+func (t *partitionedTable) PartitionExpr() *PartitionExpr {
 	return t.partitionExpr
 }
 
@@ -156,7 +154,7 @@ func partitionRecordKey(pid int64, handle int64) kv.Key {
 }
 
 // locatePartition returns the partition ID of the input record.
-func (t *PartitionedTable) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
+func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
 	var err error
 	partitionExprs := t.partitionExpr.UpperBounds
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
@@ -177,13 +175,13 @@ func (t *PartitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 	return pi.Definitions[idx].ID, nil
 }
 
-// GetPartition returns a Table, which is actually a Partition.
-func (t *PartitionedTable) GetPartition(pid int64) table.Table {
+// GetPartition returns a Table, which is actually a partition.
+func (t *partitionedTable) GetPartition(pid int64) table.Table {
 	return t.partitions[pid]
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
-func (t *PartitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
+func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
@@ -195,7 +193,7 @@ func (t *PartitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, sk
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (t *PartitionedTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
+func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error {
 	partitionInfo := t.meta.GetPartitionInfo()
 	pid, err := t.locatePartition(ctx, partitionInfo, r)
 	if err != nil {
@@ -204,4 +202,43 @@ func (t *PartitionedTable) RemoveRecord(ctx sessionctx.Context, h int64, r []typ
 
 	tbl := t.GetPartition(pid)
 	return tbl.RemoveRecord(ctx, h, r)
+}
+
+// UpdateRecord implements table.Table UpdateRecord interface.
+// `touched` means which columns are really modified, used for secondary indices.
+// Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
+func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error {
+	partitionInfo := t.meta.GetPartitionInfo()
+	from, err := t.locatePartition(ctx, partitionInfo, currData)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	to, err := t.locatePartition(ctx, partitionInfo, newData)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// The old and new data locate in different partitions.
+	// Remove record from old partition and add record to new partition.
+	if from != to {
+		_, err = t.GetPartition(to).AddRecord(ctx, newData, false)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// UpdateRecord should be side effect free, but there're two steps here.
+		// What would happen if step1 succeed but step2 meets error? It's hard
+		// to rollback.
+		// So this special order is chosen: add record first, errors such as
+		// 'Key Already Exists' will generally happen during step1, errors are
+		// unlikely to happen in step2.
+		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
+		if err != nil {
+			log.Error("partition update record error, it may write dirty data to txn:", errors.ErrorStack(err))
+			return errors.Trace(err)
+		}
+		return nil
+	}
+
+	tbl := t.GetPartition(to)
+	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
 }

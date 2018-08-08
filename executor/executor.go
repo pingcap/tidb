@@ -199,13 +199,17 @@ func (e *ShowDDLExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
-	ddlJob := ""
-	if e.ddlInfo.Job != nil {
-		ddlJob = e.ddlInfo.Job.String()
+	ddlJobs := ""
+	l := len(e.ddlInfo.Jobs)
+	for i, job := range e.ddlInfo.Jobs {
+		ddlJobs += job.String()
+		if i != l-1 {
+			ddlJobs += "\n"
+		}
 	}
 	chk.AppendInt64(0, e.ddlInfo.SchemaVer)
 	chk.AppendString(1, e.ddlOwnerID)
-	chk.AppendString(2, ddlJob)
+	chk.AppendString(2, ddlJobs)
 	chk.AppendString(3, e.selfID)
 	e.done = true
 	return nil
