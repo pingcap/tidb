@@ -324,7 +324,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(null)")
-	tk.MustQuery("select group_concat(a) from t").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select group_concat(a), group_concat(distinct a) from t").Check(testkit.Rows("<nil> <nil>"))
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {
