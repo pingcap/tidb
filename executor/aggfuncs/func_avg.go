@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/sirupsen/logrus"
 )
 
 // All the following avg function implementations return the decimal result,
@@ -277,7 +276,6 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 
 func (e *avgPartial4Float64) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4AvgFloat64)(src), (*partialResult4AvgFloat64)(dst)
-	logrus.Warning(p1.sum)
 	p2.sum += p1.sum
 	p2.count += p1.count
 	return nil
