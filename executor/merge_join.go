@@ -32,9 +32,9 @@ import (
 type MergeJoinExec struct {
 	baseExecutor
 
-	stmtCtx         *stmtctx.StatementContext
-	compareFuncs    []chunk.CompareFunc
-	joiner joiner
+	stmtCtx      *stmtctx.StatementContext
+	compareFuncs []chunk.CompareFunc
+	joiner       joiner
 
 	prepared bool
 	outerIdx int

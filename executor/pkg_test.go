@@ -84,12 +84,12 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, outerExec.retTypes(), innerExec.retTypes())
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
-		baseExecutor:    newBaseExecutor(sctx, joinSchema, ""),
-		outerExec:       outerExec,
-		innerExec:       innerExec,
-		outerFilter:     []expression.Expression{outerFilter},
-		innerFilter:     []expression.Expression{innerFilter},
-		joiner: joiner,
+		baseExecutor: newBaseExecutor(sctx, joinSchema, ""),
+		outerExec:    outerExec,
+		innerExec:    innerExec,
+		outerFilter:  []expression.Expression{outerFilter},
+		innerFilter:  []expression.Expression{innerFilter},
+		joiner:       joiner,
 	}
 	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.maxChunkSize)
 	join.innerChunk = innerExec.newChunk()
