@@ -45,11 +45,11 @@ import (
 	"golang.org/x/net/context"
 )
 
-// tableCommon is shared by both Table and Partition.
+// tableCommon is shared by both Table and partition.
 type tableCommon struct {
 	tableID int64
 	// partitionID is a unique int64 to identify a partition, it equals to tableID
-	// if this tableCommon struct is not a Partition.
+	// if this tableCommon struct is not a partition.
 	partitionID     int64
 	Columns         []*table.Column
 	publicColumns   []*table.Column
@@ -530,7 +530,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	skipCheck := ctx.GetSessionVars().LightningMode || ctx.GetSessionVars().StmtCtx.BatchCheck
 	if t.meta.PKIsHandle && !skipCheck && !skipHandleCheck {
-		if err := CheckHandleExists(ctx, t, recordID); err != nil {
+		if err := CheckHandleExists(ctx, t, recordID, nil); err != nil {
 			return recordID, errors.Trace(err)
 		}
 	}
@@ -965,7 +965,15 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 
 // CheckHandleExists check whether recordID key exists. if not exists, return nil,
 // otherwise return kv.ErrKeyExists error.
-func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64) error {
+func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, data []types.Datum) error {
+	if pt, ok := t.(*partitionedTable); ok {
+		info := t.Meta().GetPartitionInfo()
+		pid, err := pt.locatePartition(ctx, info, data)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		t = pt.GetPartition(pid)
+	}
 	txn := ctx.Txn()
 	// Check key exists.
 	recordKey := t.RecordKey(recordID)
