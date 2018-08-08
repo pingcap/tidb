@@ -467,6 +467,8 @@ func (s *SessionVars) setDDLReorgPriority(val string) {
 		s.DDLReorgPriority = kv.PriorityNormal
 	case "priority_high":
 		s.DDLReorgPriority = kv.PriorityHigh
+	default:
+		s.DDLReorgPriority = kv.PriorityLow
 	}
 }
 
