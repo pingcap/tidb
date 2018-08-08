@@ -65,8 +65,8 @@ func (s *testPlanBuilderSuite) TestGetPathByIndexName(c *C) {
 	}
 
 	accessPath := []*accessPath{
-		&accessPath{isTablePath: true},
-		&accessPath{index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
+		{isTablePath: true},
+		{index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
 	}
 
 	path := getPathByIndexName(accessPath, model.NewCIStr("idx"), tblInfo)
