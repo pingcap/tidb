@@ -619,7 +619,6 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, ErrorCount, "0"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
-	{ScopeSession, TiDBImportingData, "0"},
 	{ScopeSession, TiDBOptAggPushDown, boolToIntStr(DefOptAggPushDown)},
 	{ScopeGlobal | ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
 	{ScopeGlobal, TiDBAutoAnalyzeRatio, strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64)},
@@ -660,6 +659,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBConfig, ""},
 	{ScopeGlobal | ScopeSession, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
+	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

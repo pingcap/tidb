@@ -20,7 +20,6 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -43,11 +42,12 @@ type AnalyzeExec struct {
 	tasks []*analyzeTask
 }
 
+var maxBucketSize = int64(256)
+
 const (
 	maxSampleSize        = 10000
 	maxRegionSampleSize  = 1000
 	maxSketchSize        = 10000
-	maxBucketSize        = 256
 	defaultCMSketchDepth = 5
 	defaultCMSketchWidth = 2048
 )
@@ -176,7 +176,6 @@ func (e *AnalyzeIndexExec) open() error {
 		SetKeepOrder(true).
 		Build()
 	kvReq.Concurrency = e.concurrency
-	kvReq.IsolationLevel = kv.RC
 	ctx := context.TODO()
 	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
@@ -212,7 +211,7 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), maxBucketSize)
+		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), int(maxBucketSize))
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -291,7 +290,6 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
 		Build()
-	kvReq.IsolationLevel = kv.RC
 	kvReq.Concurrency = e.concurrency
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -341,7 +339,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		}
 		sc := e.ctx.GetSessionVars().StmtCtx
 		if e.pkInfo != nil {
-			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), maxBucketSize)
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), int(maxBucketSize))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -375,4 +373,14 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		cms = append(cms, collectors[i].CMSketch)
 	}
 	return hists, cms, nil
+}
+
+// SetMaxBucketSizeForTest sets the `maxBucketSize`.
+func SetMaxBucketSizeForTest(size int64) {
+	maxBucketSize = size
+}
+
+// GetMaxBucketSizeForTest gets the `maxBucketSize`.
+func GetMaxBucketSizeForTest() int64 {
+	return maxBucketSize
 }

@@ -123,6 +123,22 @@ func (s *testIntegrationSuite) TestCreateTableIfNotExists(c *C) {
 	c.Assert(terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), IsTrue)
 }
 
+func (s *testIntegrationSuite) TestUniquekeyNullValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test")
+
+	tk.MustExec("create table t(a int primary key, b varchar(255))")
+
+	tk.MustExec("insert into t values(1, NULL)")
+	tk.MustExec("insert into t values(2, NULL)")
+	tk.MustExec("alter table t add unique index b(b);")
+	res := tk.MustQuery("select count(*) from t use index(b);")
+	res.Check(testkit.Rows("2"))
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t b")
+}
+
 func (s *testIntegrationSuite) TestEndIncluded(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 

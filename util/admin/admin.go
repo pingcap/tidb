@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sort"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -37,8 +39,8 @@ import (
 // DDLInfo is for DDL information.
 type DDLInfo struct {
 	SchemaVer   int64
-	ReorgHandle int64 // it's only used for DDL information.
-	Job         *model.Job
+	ReorgHandle int64        // It's only used for DDL information.
+	Jobs        []*model.Job // It's the currently running jobs.
 }
 
 // GetDDLInfo returns DDL information.
@@ -47,19 +49,31 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	info := &DDLInfo{}
 	t := meta.NewMeta(txn)
 
-	info.Job, err = t.GetDDLJobByIdx(0)
+	info.Jobs = make([]*model.Job, 0, 2)
+	job, err := t.GetDDLJobByIdx(0)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if job != nil {
+		info.Jobs = append(info.Jobs, job)
+	}
+	addIdxJob, err := t.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if addIdxJob != nil {
+		info.Jobs = append(info.Jobs, addIdxJob)
+	}
+
 	info.SchemaVer, err = t.GetSchemaVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if info.Job == nil {
+	if addIdxJob == nil {
 		return info, nil
 	}
 
-	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(info.Job)
+	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -135,8 +149,7 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 	return jobs, nil
 }
 
-// GetDDLJobs returns all DDL jobs.
-// TODO: Sort jobs.
+// GetDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
 	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
@@ -147,7 +160,23 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return append(generalJobs, addIdxJobs...), nil
+	jobs := append(generalJobs, addIdxJobs...)
+	sort.Sort(jobArray(jobs))
+	return jobs, nil
+}
+
+type jobArray []*model.Job
+
+func (v jobArray) Len() int {
+	return len(v)
+}
+
+func (v jobArray) Less(i, j int) bool {
+	return v[i].ID < v[j].ID
+}
+
+func (v jobArray) Swap(i, j int) {
+	v[i], v[j] = v[j], v[i]
 }
 
 // MaxHistoryJobs is exported for testing.
@@ -287,6 +316,24 @@ func getIndexFieldTypes(t table.Table, idx table.Index) ([]*types.FieldType, err
 	return fieldTypes, nil
 }
 
+// adjustDatumKind treats KindString as KindBytes.
+func adjustDatumKind(vals1, vals2 []types.Datum) {
+	if len(vals1) != len(vals2) {
+		return
+	}
+
+	for i, val1 := range vals1 {
+		val2 := vals2[i]
+		if val1.Kind() != val2.Kind() {
+			if (val1.Kind() == types.KindBytes || val1.Kind() == types.KindString) &&
+				(val2.Kind() == types.KindBytes || val2.Kind() == types.KindString) {
+				vals1[i].SetBytes(val1.GetBytes())
+				vals2[i].SetBytes(val2.GetBytes())
+			}
+		}
+	}
+}
+
 func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	it, err := idx.SeekFirst(txn)
 	if err != nil {
@@ -316,6 +363,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			return errors.Trace(err)
 		}
 		vals2, err := rowWithCols(sessCtx, txn, t, h, cols)
+		vals2 = tables.TruncateIndexValuesIfNeeded(t.Meta(), idx.Meta(), vals2)
 		if kv.ErrNotExist.Equal(err) {
 			record := &RecordData{Handle: h, Values: vals1}
 			err = errDateNotEqual.Gen("index:%#v != record:%#v", record, nil)
@@ -323,6 +371,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if err != nil {
 			return errors.Trace(err)
 		}
+		adjustDatumKind(vals1, vals2)
 		if !reflect.DeepEqual(vals1, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals1}
 			record2 := &RecordData{Handle: h, Values: vals2}

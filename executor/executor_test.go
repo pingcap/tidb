@@ -1599,7 +1599,7 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
-	// With the existance of global variable cache, it have to sleep a while here.
+	// With the existence of global variable cache, it have to sleep a while here.
 	time.Sleep(3 * time.Second)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
@@ -2212,6 +2212,34 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	tk.MustExec("alter table t1 add index t1_index (id);")
 
 	c.Assert(cli.mu.lowPriorityCnt > 0, IsTrue)
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+
+	tk.MustExec("alter table t1 drop index t1_index;")
+	tk.MustExec("SET SESSION tidb_ddl_reorg_priority = 'PRIORITY_NORMAL'")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkDDLAddIndexPriority
+	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_Normal
+	tk.MustExec("alter table t1 add index t1_index (id);")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+
+	tk.MustExec("alter table t1 drop index t1_index;")
+	tk.MustExec("SET SESSION tidb_ddl_reorg_priority = 'PRIORITY_HIGH'")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkDDLAddIndexPriority
+	cli.mu.Unlock()
+
+	cli.priority = pb.CommandPri_High
+	tk.MustExec("alter table t1 add index t1_index (id);")
 
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
@@ -2850,7 +2878,7 @@ func (s *testSuite) TestForSelectScopeInUnion(c *C) {
 	tk2.MustExec("use test")
 	tk2.MustExec("update t set a = a + 1")
 
-	// As tk1 use select 'for update', it should dectect conflict and fail.
+	// As tk1 use select 'for update', it should detect conflict and fail.
 	_, err := tk1.Exec("commit")
 	c.Assert(err, NotNil)
 
