@@ -127,12 +127,14 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if sysVar == nil {
 		return UnknownSystemVar
 	}
-	if value.IsNull() {
-		return vars.deleteSystemVar(name)
-	}
 	var sVal string
 	var err error
-	sVal, err = value.ToString()
+	if value.IsNull() {
+		//return vars.deleteSystemVar(name)
+		sVal = ""
+	} else {
+		sVal, err = value.ToString()
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
