@@ -124,7 +124,7 @@ func (is *infoSyncer) StoreServerInfo(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ddl.PutKV(ctx, is.etcdCli, ddl.KeyOpDefaultRetryCnt, is.serverInfoPath, hack.String(infoBuf))
+	err = ddl.PutKVToEtcd(ctx, is.etcdCli, ddl.KeyOpDefaultRetryCnt, is.serverInfoPath, hack.String(infoBuf))
 	return errors.Trace(err)
 }
 
@@ -133,7 +133,7 @@ func (is *infoSyncer) RemoveServerInfo() {
 	if is.etcdCli == nil {
 		return
 	}
-	err := ddl.DeleteKey(is.serverInfoPath, is.etcdCli)
+	err := ddl.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli)
 	if err != nil {
 		log.Errorf("[infoSyncer] remove self server info failed %v", err)
 	}
