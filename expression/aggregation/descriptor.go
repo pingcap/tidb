@@ -79,6 +79,27 @@ func (a *AggFuncDesc) Clone() *AggFuncDesc {
 	return &clone
 }
 
+// Split splits `a` into two aggregate descriptors for partial phase and
+// final phase individually.
+// This function is only used when executing aggregate function parallelly.
+func (a *AggFuncDesc) Split() (finalAggDesc *AggFuncDesc) {
+	if a.Mode == CompleteMode {
+		a.Mode = Partial1Mode
+	} else {
+		a.Mode = Partial2Mode
+	}
+	finalAggDesc = &AggFuncDesc{
+		Name:        a.Name,
+		Mode:        FinalMode, // We only support FinalMode now in final phase.
+		HasDistinct: a.HasDistinct,
+		RetTp:       a.RetTp,
+	}
+	if finalAggDesc.Name == ast.AggFuncGroupConcat {
+		finalAggDesc.Args = append(finalAggDesc.Args, a.Args[len(a.Args)-1]) // separator
+	}
+	return finalAggDesc
+}
+
 // String implements the fmt.Stringer interface.
 func (a *AggFuncDesc) String() string {
 	buffer := bytes.NewBufferString(a.Name)

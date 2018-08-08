@@ -90,6 +90,16 @@ func (e *sum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	return nil
 }
 
+func (e *sum4Float64) MergePartialResult(src, dst PartialResult) error {
+	p1, p2 := (*partialResult4SumFloat64)(src), (*partialResult4SumFloat64)(dst)
+	if p1.isNull {
+		return nil
+	}
+	p2.val += p1.val
+	p2.isNull = false
+	return nil
+}
+
 type sum4Decimal struct {
 	baseSumAggFunc
 }
@@ -138,6 +148,21 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		}
 		p.val = *newSum
 	}
+	return nil
+}
+
+func (e *sum4Decimal) MergePartialResult(src, dst PartialResult) error {
+	p1, p2 := (*partialResult4SumDecimal)(src), (*partialResult4SumDecimal)(dst)
+	if p1.isNull {
+		return nil
+	}
+	newSum := new(types.MyDecimal)
+	err := types.DecimalAdd(&p1.val, &p2.val, newSum)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	p2.val = *newSum
+	p2.isNull = false
 	return nil
 }
 

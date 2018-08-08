@@ -121,6 +121,18 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	return nil
 }
 
+func (e *avgPartial4Decimal) MergePartialResult(src PartialResult, dst PartialResult) error {
+	p1, p2 := (*partialResult4AvgDecimal)(src), (*partialResult4AvgDecimal)(dst)
+	if p1.count == 0 {
+		return nil
+	}
+	newSum := new(types.MyDecimal)
+	err := types.DecimalAdd(&p1.sum, &p2.sum, newSum)
+	p2.sum = *newSum
+	p2.count += p1.count
+	return errors.Trace(err)
+}
+
 type partialResult4AvgDistinctDecimal struct {
 	partialResult4AvgDecimal
 	valSet decimalSet
@@ -265,6 +277,16 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		p.sum += inputSum
 		p.count += inputCount
 	}
+	return nil
+}
+
+func (e *avgPartial4Float64) MergePartialResult(src PartialResult, dst PartialResult) error {
+	p1, p2 := (*partialResult4AvgFloat64)(src), (*partialResult4AvgFloat64)(dst)
+	if p1.count == 0 {
+		return nil
+	}
+	p2.sum += p1.sum
+	p2.count += p2.count
 	return nil
 }
 
