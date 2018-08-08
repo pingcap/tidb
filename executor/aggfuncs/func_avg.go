@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/sirupsen/logrus"
 )
 
 // All the following avg function implementations return the decimal result,
@@ -67,7 +68,6 @@ type avgOriginal4Decimal struct {
 
 func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgDecimal)(pr)
-	newSum := new(types.MyDecimal)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
@@ -77,11 +77,10 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 
-		err = types.DecimalAdd(&p.sum, input, newSum)
+		err = types.DecimalAdd(&p.sum, input, &p.sum)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		p.sum = *newSum
 		p.count++
 	}
 	return nil
@@ -93,7 +92,6 @@ type avgPartial4Decimal struct {
 
 func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgDecimal)(pr)
-	newSum := new(types.MyDecimal)
 	for _, row := range rowsInGroup {
 		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, row)
 		if err != nil {
@@ -111,26 +109,26 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 			continue
 		}
 
-		err = types.DecimalAdd(&p.sum, inputSum, newSum)
+		err = types.DecimalAdd(&p.sum, inputSum, &p.sum)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		p.sum = *newSum
 		p.count += inputCount
 	}
 	return nil
 }
 
-func (e *avgPartial4Decimal) MergePartialResult(src PartialResult, dst PartialResult) error {
+func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4AvgDecimal)(src), (*partialResult4AvgDecimal)(dst)
 	if p1.count == 0 {
 		return nil
 	}
-	newSum := new(types.MyDecimal)
-	err := types.DecimalAdd(&p1.sum, &p2.sum, newSum)
-	p2.sum = *newSum
+	err := types.DecimalAdd(&p1.sum, &p2.sum, &p2.sum)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	p2.count += p1.count
-	return errors.Trace(err)
+	return nil
 }
 
 type partialResult4AvgDistinctDecimal struct {
@@ -158,7 +156,6 @@ func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 
 func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
-	newSum := new(types.MyDecimal)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
@@ -168,11 +165,10 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 			continue
 		}
 
-		err = types.DecimalAdd(&p.sum, input, newSum)
+		err = types.DecimalAdd(&p.sum, input, &p.sum)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		p.sum = *newSum
 		p.count++
 		p.valSet.insert(input)
 	}
@@ -273,20 +269,17 @@ func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		if isNull {
 			continue
 		}
-
 		p.sum += inputSum
 		p.count += inputCount
 	}
 	return nil
 }
 
-func (e *avgPartial4Float64) MergePartialResult(src PartialResult, dst PartialResult) error {
+func (e *avgPartial4Float64) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4AvgFloat64)(src), (*partialResult4AvgFloat64)(dst)
-	if p1.count == 0 {
-		return nil
-	}
+	logrus.Warning(p1.sum)
 	p2.sum += p1.sum
-	p2.count += p2.count
+	p2.count += p1.count
 	return nil
 }
 

@@ -60,7 +60,8 @@ func (e *baseGroupConcat4String) truncatePartialResultIfNeed(sctx sessionctx.Con
 }
 
 type basePartialResult4GroupConcat struct {
-	buffer *bytes.Buffer
+	valsBuf *bytes.Buffer
+	buffer  *bytes.Buffer
 }
 
 type partialResult4GroupConcat struct {
@@ -72,7 +73,9 @@ type groupConcat struct {
 }
 
 func (e *groupConcat) AllocPartialResult() PartialResult {
-	return PartialResult(new(partialResult4GroupConcat))
+	p := new(partialResult4GroupConcat)
+	p.valsBuf = &bytes.Buffer{}
+	return PartialResult(p)
 }
 
 func (e *groupConcat) ResetPartialResult(pr PartialResult) {
@@ -82,9 +85,10 @@ func (e *groupConcat) ResetPartialResult(pr PartialResult) {
 
 func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4GroupConcat)(pr)
-	v, isNull, isWriteSep := "", false, false
+	v, isNull := "", false
 	for _, row := range rowsInGroup {
-		isWriteSep = false
+		p.valsBuf.Reset()
+		isAllNull := true
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
@@ -93,38 +97,43 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			if isNull {
 				continue
 			}
-			isWriteSep = true
-			if p.buffer == nil {
-				p.buffer = &bytes.Buffer{}
-			}
-			p.buffer.WriteString(v)
+			isAllNull = false
+			p.valsBuf.WriteString(v)
 		}
-		if isWriteSep {
+		if isAllNull {
+			continue
+		}
+		if p.buffer == nil {
+			p.buffer = &bytes.Buffer{}
+		} else {
 			p.buffer.WriteString(e.sep)
 		}
+		p.buffer.WriteString(p.valsBuf.String())
 	}
-	p.buffer.Truncate(p.buffer.Len() - len(e.sep))
+	if p.buffer == nil {
+		return nil
+	}
 	return e.truncatePartialResultIfNeed(sctx, p.buffer)
 }
 
-func (e *groupConcat) MergePartialResult(src, dst PartialResult) error {
+func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
 	p1, p2 := (*partialResult4GroupConcat)(src), (*partialResult4GroupConcat)(dst)
 	if p1.buffer == nil {
 		return nil
 	}
 	if p2.buffer == nil {
-		p1.buffer = p2.buffer
+		p2.buffer = p1.buffer
 		return nil
 	}
 	p2.buffer.WriteString(e.sep)
 	p2.buffer.WriteString(p1.buffer.String())
+	e.truncatePartialResultIfNeed(sctx, p2.buffer)
 	return nil
 }
 
 type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
-	valsBuf *bytes.Buffer
-	valSet  stringSet
+	valSet stringSet
 }
 
 type groupConcatDistinct struct {

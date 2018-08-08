@@ -85,8 +85,10 @@ func (a *AggFuncDesc) Clone() *AggFuncDesc {
 func (a *AggFuncDesc) Split() (finalAggDesc *AggFuncDesc) {
 	if a.Mode == CompleteMode {
 		a.Mode = Partial1Mode
-	} else {
+	} else if a.Mode == FinalMode {
 		a.Mode = Partial2Mode
+	} else {
+		return
 	}
 	finalAggDesc = &AggFuncDesc{
 		Name:        a.Name,

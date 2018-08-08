@@ -46,6 +46,7 @@ var (
 
 	// All the AggFunc implementations for "MAX"/"MIN" are listed here.
 	_ AggFunc = (*maxMin4Int)(nil)
+	_ AggFunc = (*maxMin4Uint)(nil)
 	_ AggFunc = (*maxMin4Float32)(nil)
 	_ AggFunc = (*maxMin4Float64)(nil)
 	_ AggFunc = (*maxMin4Decimal)(nil)
@@ -110,7 +111,7 @@ type AggFunc interface {
 	// aggregate function.
 	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error
 
-	MergePartialResult(src, dst PartialResult) error
+	MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error
 
 	// AppendFinalResult2Chunk finalizes the partial result and append the
 	// final result to the input chunk. Like other operations, it converts the
@@ -130,6 +131,6 @@ type baseAggFunc struct {
 	ordinal int
 }
 
-func (*baseAggFunc) MergePartialResult(src, dst PartialResult) error {
+func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
 	return nil
 }

@@ -207,7 +207,7 @@ func (e *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	return nil
 }
 
-func (*countPartial) MergePartialResult(src, dst PartialResult) error {
+func (*countPartial) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
 	p1, p2 := (*partialResult4Count)(src), (*partialResult4Count)(dst)
 	*p2 += *p1
 	return nil

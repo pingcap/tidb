@@ -158,7 +158,7 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	// Build avg functions which consume the partial result of other avg
 	// functions and update their partial results.
 	case aggregation.Partial2Mode, aggregation.FinalMode:
-		switch aggFuncDesc.Args[1].GetType().Tp {
+		switch aggFuncDesc.RetTp.Tp {
 		case mysql.TypeNewDecimal:
 			return &avgPartial4Decimal{baseAvgDecimal{base}}
 		case mysql.TypeDouble:

@@ -107,19 +107,11 @@ func (e *firstRow4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	return nil
 }
 
-func (*firstRow4Int) MergePartialResult(src PartialResult, dst PartialResult) error {
+func (*firstRow4Int) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4FirstRowInt)(src), (*partialResult4FirstRowInt)(dst)
-	if p2.gotFirstRow || p2.isNull {
-		return nil
+	if !p2.gotFirstRow && !p2.isNull {
+		*p2 = *p1
 	}
-	if p1.isNull {
-		p2.isNull = true
-		return nil
-	}
-	if !p1.gotFirstRow {
-		return nil
-	}
-	p2.val, p2.isNull, p2.gotFirstRow = p1.val, false, true
 	return nil
 }
 
@@ -161,19 +153,11 @@ func (e *firstRow4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 	}
 	return nil
 }
-func (*firstRow4Float32) MergePartialResult(src PartialResult, dst PartialResult) error {
+func (*firstRow4Float32) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4FirstRowFloat32)(src), (*partialResult4FirstRowFloat32)(dst)
-	if p2.gotFirstRow || p2.isNull {
-		return nil
+	if !p2.gotFirstRow && !p2.isNull {
+		*p2 = *p1
 	}
-	if p1.isNull {
-		p2.isNull = true
-		return nil
-	}
-	if !p1.gotFirstRow {
-		return nil
-	}
-	p2.val, p2.isNull, p2.gotFirstRow = p1.val, false, true
 	return nil
 }
 
@@ -216,19 +200,11 @@ func (e *firstRow4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 	return nil
 }
 
-func (*firstRow4Float64) MergePartialResult(src PartialResult, dst PartialResult) error {
+func (*firstRow4Float64) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4FirstRowFloat64)(src), (*partialResult4FirstRowFloat64)(dst)
-	if p2.gotFirstRow || p2.isNull {
-		return nil
+	if !p2.gotFirstRow && !p2.isNull {
+		*p2 = *p1
 	}
-	if p1.isNull {
-		p2.isNull = true
-		return nil
-	}
-	if !p1.gotFirstRow {
-		return nil
-	}
-	p2.val, p2.isNull, p2.gotFirstRow = p1.val, false, true
 	return nil
 }
 func (e *firstRow4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -270,19 +246,11 @@ func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 	return nil
 }
 
-func (*firstRow4String) MergePartialResult(src PartialResult, dst PartialResult) error {
+func (*firstRow4String) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4FirstRowString)(src), (*partialResult4FirstRowString)(dst)
-	if p2.gotFirstRow || p2.isNull {
-		return nil
+	if !p2.gotFirstRow && !p2.isNull {
+		*p2 = *p1
 	}
-	if p1.isNull {
-		p2.isNull = true
-		return nil
-	}
-	if !p1.gotFirstRow {
-		return nil
-	}
-	p2.val, p2.isNull, p2.gotFirstRow = p1.val, false, true
 	return nil
 }
 
@@ -324,20 +292,13 @@ func (e *firstRow4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	}
 	return nil
 }
-func (*firstRow4Time) MergePartialResult(src PartialResult, dst PartialResult) error {
+func (*firstRow4Time) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4FirstRowTime)(src), (*partialResult4FirstRowTime)(dst)
-	if p2.gotFirstRow || p2.isNull {
-		return nil
+	if !p2.gotFirstRow && !p2.isNull {
+		*p2 = *p1
 	}
-	if p1.isNull {
-		p2.isNull = true
-		return nil
-	}
-	if !p1.gotFirstRow {
-		return nil
-	}
-	p2.val, p2.isNull, p2.gotFirstRow = p1.val, false, true
 	return nil
+
 }
 
 func (e *firstRow4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -378,19 +339,11 @@ func (e *firstRow4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	}
 	return nil
 }
-func (*firstRow4Duration) MergePartialResult(src PartialResult, dst PartialResult) error {
+func (*firstRow4Duration) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4FirstRowDuration)(src), (*partialResult4FirstRowDuration)(dst)
-	if p2.gotFirstRow || p2.isNull {
-		return nil
+	if !p2.gotFirstRow && !p2.isNull {
+		*p2 = *p1
 	}
-	if p1.isNull {
-		p2.isNull = true
-		return nil
-	}
-	if !p1.gotFirstRow {
-		return nil
-	}
-	p2.val, p2.isNull, p2.gotFirstRow = p1.val, false, true
 	return nil
 }
 
@@ -432,19 +385,11 @@ func (e *firstRow4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	}
 	return nil
 }
-func (*firstRow4JSON) MergePartialResult(src PartialResult, dst PartialResult) error {
+func (*firstRow4JSON) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4FirstRowJSON)(src), (*partialResult4FirstRowJSON)(dst)
-	if p2.gotFirstRow || p2.isNull {
-		return nil
+	if !p2.gotFirstRow && !p2.isNull {
+		*p2 = *p1
 	}
-	if p1.isNull {
-		p2.isNull = true
-		return nil
-	}
-	if !p1.gotFirstRow {
-		return nil
-	}
-	p2.val, p2.isNull, p2.gotFirstRow = p1.val, false, true
 	return nil
 }
 
@@ -500,18 +445,10 @@ func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 	return nil
 }
 
-func (*firstRow4Decimal) MergePartialResult(src PartialResult, dst PartialResult) error {
+func (*firstRow4Decimal) MergePartialResult(sctx sessionctx.Context, src PartialResult, dst PartialResult) error {
 	p1, p2 := (*partialResult4FirstRowDecimal)(src), (*partialResult4FirstRowDecimal)(dst)
-	if p2.gotFirstRow || p2.isNull {
-		return nil
+	if !p2.gotFirstRow && !p2.isNull {
+		*p2 = *p1
 	}
-	if p1.isNull {
-		p2.isNull = true
-		return nil
-	}
-	if !p1.gotFirstRow {
-		return nil
-	}
-	p2.val, p2.isNull, p2.gotFirstRow = p1.val, false, true
 	return nil
 }
