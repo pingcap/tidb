@@ -1271,24 +1271,17 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeError(w, errors.New("create session error"))
 		return
 	}
-	ddl := do.DDL()
-	is := do.InfoSyncer()
-	ctx := context.Background()
-	ownerID, err := ddl.OwnerManager().GetOwnerID(ctx)
-	if err != nil {
-		writeError(w, errors.New("ddl server information not found"))
-		return
-	}
 	info := serverInfo{}
-	info.ServerInfo = is.GetServerInfo()
-	info.IsOwner = info.ID == ownerID
+	info.ServerInfo = do.InfoSyncer().GetServerInfo()
+	info.IsOwner = do.DDL().OwnerManager().IsOwner()
 	writeData(w, info)
 }
 
 // clusterServerInfo is used to report cluster servers info when do http request.
 type clusterServerInfo struct {
-	ServersNum                   int                           `json:"servers_num,omitempty"`
-	OwnerID                      string                        `json:"owner_id"`
+	ServersNum int    `json:"servers_num,omitempty"`
+	OwnerID    string `json:"owner_id"`
+	// IsAllServerVersionConsistent indicates whether all tidb servers version is consistent.
 	IsAllServerVersionConsistent bool                          `json:"is_all_server_version_consistent,omitempty"`
 	AllServersDiffVersions       []domain.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
 	AllServersInfo               map[string]*domain.ServerInfo `json:"all_servers_info,omitempty"`
@@ -1301,18 +1294,17 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, errors.New("create session error"))
 		return
 	}
-	ddl := do.DDL()
-	is := do.InfoSyncer()
 	ctx := context.Background()
-	allServersInfo, err := is.GetAllServerInfo(ctx)
+	allServersInfo, err := do.InfoSyncer().GetAllServerInfo(ctx)
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		log.Error(err)
 		return
 	}
-	ownerID, err := ddl.OwnerManager().GetOwnerID(ctx)
+	ownerID, err := do.DDL().OwnerManager().GetOwnerID(ctx)
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
+		log.Error(err)
 		return
 	}
 	allVersionsMap := map[domain.ServerVersionInfo]struct{}{}
@@ -1330,6 +1322,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		IsAllServerVersionConsistent: len(allVersions) == 1,
 		AllServersInfo:               allServersInfo,
 	}
+	// if IsAllServerVersionConsistent is false, return the all tidb servers version.
 	if !clusterInfo.IsAllServerVersionConsistent {
 		clusterInfo.AllServersDiffVersions = allVersions
 	}
