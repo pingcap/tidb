@@ -398,6 +398,37 @@ func (s *testEvaluatorSuite) TestRepeat(c *C) {
 	c.Assert(v.GetString(), Equals, "")
 }
 
+func (s *testEvaluatorSuite) TestRepeatSig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeLonglong},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	repeat := &builtinRepeatSig{base, 1000}
+	input := chunk.NewChunkWithCapacity(colTypes, 10)
+	input.AppendString(0, "a")
+	input.AppendString(0, "a")
+	input.AppendInt64(1, 6)
+	input.AppendInt64(1, 10001)
+	res, isNull, err := repeat.evalString(input.GetRow(0))
+	c.Assert(res, Equals, "aaaaaa")
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
+	res, isNull, err = repeat.evalString(input.GetRow(1))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 1)
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+}
+
 func (s *testEvaluatorSuite) TestLower(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
