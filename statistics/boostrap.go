@@ -56,9 +56,9 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache
 
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	sql := "select version, table_id, modify_count, count from mysql.stats_meta"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	h.mu.Unlock()
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
@@ -126,9 +126,9 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables stat
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver from mysql.stats_histograms"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-	h.mu.Unlock()
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}

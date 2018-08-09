@@ -137,7 +137,9 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
 		lastVersion = version
+		h.mu.Lock()
 		table, ok := h.getTableByPhysicalID(is, physicalID)
+		h.mu.Unlock()
 		if !ok {
 			log.Debugf("Unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
 			deletedTableIDs = append(deletedTableIDs, physicalID)
@@ -167,8 +169,6 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
 	if is.SchemaMetaVersion() != h.mu.schemaVersion {
 		h.mu.schemaVersion = is.SchemaMetaVersion()
 		h.mu.pid2tid = buildPartitionID2TableID(is)
