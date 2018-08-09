@@ -163,10 +163,9 @@ func (s *testSuite) TestGetLackHandles(c *C) {
 func (s *testSuite) TestBigIntPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	// Uncomment below test after fix admin check table bug.
-	//tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b))")
-	//tk.MustExec("insert into t values(1, 1, 1), (9223372036854775807, 2, 2)")
-	//tk.MustQuery("select * from t use index(idx) order by a").Check(testkit.Rows("1 1 1", "9223372036854775807 2 2"))
+	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b))")
+	tk.MustExec("insert into t values(1, 1, 1), (9223372036854775807, 2, 2)")
+	tk.MustQuery("select * from t use index(idx) order by a").Check(testkit.Rows("1 1 1", "9223372036854775807 2 2"))
 }
 
 func (s *testSuite) TestCorColToRanges(c *C) {
