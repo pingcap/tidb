@@ -131,7 +131,6 @@ func (s *testSuite) TearDownTest(c *C) {
 
 func (s *testSuite) TestAdmin(c *C) {
 	origin := os.Getenv("TIDB_CHECK_BEFORE_DROP")
-	os.Setenv("TIDB_CHECK_BEFORE_DROP", "0")
 	defer func() {
 		os.Setenv("TIDB_CHECK_BEFORE_DROP", origin)
 	}()
@@ -241,6 +240,13 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
 
+	os.Setenv("TIDB_CHECK_BEFORE_DROP", "1")
+	r, err = tk.Exec("drop table admin_test")
+	c.Assert(err, NotNil)
+
+	os.Setenv("TIDB_CHECK_BEFORE_DROP", "0")
+	tk.MustExec("drop table admin_test")
+
 	// checksum table test
 	tk.MustExec("create table checksum_with_index (id int, count int, PRIMARY KEY(id), KEY(count))")
 	tk.MustExec("create table checksum_without_index (id int, count int, PRIMARY KEY(id))")
@@ -251,10 +257,6 @@ func (s *testSuite) TestAdmin(c *C) {
 	// For "checksum_with_index", we have two checksums, so the result will be 1^1 = 0.
 	// For "checksum_without_index", we only have one checksum, so the result will be 1.
 	res.Sort().Check(testkit.Rows("test checksum_with_index 0 2 2", "test checksum_without_index 1 1 1"))
-
-	tk.MustExec("drop table if exists admin_test")
-	tk.MustExec("drop table if exists admin_test1")
-	tk.MustExec("drop table if exists admin_test2")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
