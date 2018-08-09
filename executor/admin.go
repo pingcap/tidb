@@ -18,6 +18,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -97,6 +98,9 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		ID:   model.ExtraHandleID,
 		Name: model.ExtraHandleName,
 	})
+	for i := range e.cols {
+		e.cols[i].FieldType = *e.schema.Columns[i].RetType
+	}
 	e.srcChunk = e.newChunk()
 	dagPB, err := e.buildDAGPB()
 	if err != nil {
@@ -133,6 +137,9 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	err := plan.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if config.GetGlobalConfig().EnableArrow {
+		dagReq.EncodeType = tipb.EncodeType_TypeArrow
 	}
 	return dagReq, nil
 }
@@ -238,6 +245,9 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 	limitExec := e.constructLimitPB(limitCnt)
 	dagReq.Executors = append(dagReq.Executors, limitExec)
 
+	if config.GetGlobalConfig().EnableArrow {
+		dagReq.EncodeType = tipb.EncodeType_TypeArrow
+	}
 	return dagReq, nil
 }
 
@@ -663,6 +673,10 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 
 	limitExec := e.constructLimitPB()
 	dagReq.Executors = append(dagReq.Executors, limitExec)
+
+	if config.GetGlobalConfig().EnableArrow {
+		dagReq.EncodeType = tipb.EncodeType_TypeArrow
+	}
 
 	return dagReq, nil
 }

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -122,12 +123,38 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
+	if config.GetGlobalConfig().EnableArrow {
+		return r.readFromArrow(ctx, chk)
+	}
+	return r.readFromDefault(ctx, chk)
+}
+
+func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
+	if r.selectResp == nil || len(r.selectResp.RowBatchData) == 0 {
+		err := r.getSelectResp()
+		if err != nil || r.selectResp == nil {
+			return errors.Trace(err)
+		}
+	}
+	r.readRowBatch(chk)
+	return nil
+}
+
+func (r *selectResult) readRowBatch(chk *chunk.Chunk) {
+	rowBatchData := r.selectResp.RowBatchData
+	codec := chunk.NewCodec(r.fieldTypes)
+	remained := codec.DecodeToChunk(rowBatchData, chk)
+	r.selectResp.RowBatchData = remained
+}
+
+func (r *selectResult) readFromDefault(ctx context.Context, chk *chunk.Chunk) error {
 	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 			err := r.getSelectResp()
 			if err != nil || r.selectResp == nil {
 				return errors.Trace(err)
 			}
+			r.respChkIdx = 0
 		}
 		err := r.readRowsData(chk)
 		if err != nil {
@@ -140,8 +167,23 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
+func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
+	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
+	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
+	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
+	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
+		for i := 0; i < r.rowLen; i++ {
+			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	r.selectResp.Chunks[r.respChkIdx].RowsData = rowsData
+	return nil
+}
+
 func (r *selectResult) getSelectResp() error {
-	r.respChkIdx = 0
 	for {
 		re := <-r.results
 		if re.err != nil {
@@ -164,27 +206,18 @@ func (r *selectResult) getSelectResp() error {
 		}
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
-		if len(r.selectResp.Chunks) == 0 {
-			continue
+
+		if config.GetGlobalConfig().EnableArrow {
+			if len(r.selectResp.RowBatchData) == 0 {
+				continue
+			}
+		} else {
+			if len(r.selectResp.Chunks) == 0 {
+				continue
+			}
 		}
 		return nil
 	}
-}
-
-func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
-	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
-	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
-	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
-		for i := 0; i < r.rowLen; i++ {
-			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	r.selectResp.Chunks[r.respChkIdx].RowsData = rowsData
-	return nil
 }
 
 // Close closes selectResult.

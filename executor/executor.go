@@ -942,11 +942,17 @@ func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			chk.AppendNull(i)
 		}
 		return nil
-	} else if num == 1 {
-		return nil
+	} else if num != 1 {
+		return errors.New("subquery returns more than 1 row")
 	}
 
-	return errors.New("subquery returns more than 1 row")
+	childChunk := e.children[0].newChunk()
+	err = e.children[0].Next(ctx, childChunk)
+	if childChunk.NumRows() != 0 {
+		return errors.New("subquery returns more than 1 row")
+	}
+
+	return nil
 }
 
 // UnionExec pulls all it's children's result and returns to its parent directly.

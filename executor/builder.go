@@ -25,6 +25,7 @@ import (
 	"github.com/cznic/sortutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -1427,6 +1428,9 @@ func (b *executorBuilder) constructDAGReq(plans []plan.PhysicalPlan) (dagReq *ti
 	sc := b.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
+	if config.GetGlobalConfig().EnableArrow {
+		dagReq.EncodeType = tipb.EncodeType_TypeArrow
+	}
 	return dagReq, streaming, errors.Trace(err)
 }
 

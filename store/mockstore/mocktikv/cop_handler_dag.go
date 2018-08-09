@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -147,18 +148,13 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	sc := flagsToStatementContext(dagReq.Flags)
 
-	// retrieving timezone by name first. When name is set, it means we need
-	// consider daylight saving time. If it is not, we can use offset.
-	if dagReq.TimeZoneName != "" {
-		if sc.TimeZone, err = LocCache.getLoc(dagReq.TimeZoneName); err != nil {
-			return nil, nil, nil, errors.Trace(err)
-		}
-		dagReq.TimeZoneName = sc.TimeZone.String()
-	} else {
-		sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	sc := flagsToStatementContext(dagReq.Flags)
+	sc.TimeZone, err = h.constructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
 	}
+
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
@@ -169,6 +165,17 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		return nil, nil, nil, errors.Trace(err)
 	}
 	return ctx, e, dagReq, err
+}
+
+// constructTimeZone constructs timezone by name first. When the timezone name
+// is set and is not equal to "UTC", the daylight saving time problem must be
+// considered. Otherwise the timezone is constructed directly from the offset.
+func (h *rpcHandler) constructTimeZone(name string, offset int) (*time.Location, error) {
+	if name != "" && strings.ToLower(name) != "utc" {
+		return LocCache.getLoc(name)
+	} else {
+		return time.FixedZone("UTC", offset), nil
+	}
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
@@ -599,7 +606,7 @@ func (h *rpcHandler) initSelectResponse(err error, warnings []stmtctx.SQLWarn, c
 }
 
 func (h *rpcHandler) supplementSelectResponse(selResp *tipb.SelectResponse, dagReq *tipb.DAGRequest, dagCtx *dagContext, rows [][][]byte) error {
-	colTypes := dagCtx.evalCtx.fieldTps
+	colTypes := h.constructRespSchema(dagCtx)
 	loc := dagCtx.evalCtx.sc.TimeZone
 
 	switch dagReq.EncodeType {
@@ -612,6 +619,38 @@ func (h *rpcHandler) supplementSelectResponse(selResp *tipb.SelectResponse, dagR
 		}
 	}
 	return nil
+}
+
+func (h *rpcHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldType {
+	root := dagCtx.dagReq.Executors[len(dagCtx.dagReq.Executors)-1]
+	if root.Aggregation != nil {
+		hashAgg := root.Aggregation
+		schema := make([]*types.FieldType, 0, len(hashAgg.AggFunc)+len(hashAgg.GroupBy))
+		for i := range hashAgg.AggFunc {
+			if hashAgg.AggFunc[i].Tp == tipb.ExprType_Avg {
+				schema = append(schema, types.NewFieldType(mysql.TypeLonglong))
+			}
+			schema = append(schema, expression.PbTypeToFieldType(hashAgg.AggFunc[i].FieldType))
+		}
+		for i := range hashAgg.GroupBy {
+			schema = append(schema, expression.PbTypeToFieldType(hashAgg.GroupBy[i].FieldType))
+		}
+		return schema
+	} else if root.StreamAgg != nil {
+		streamAgg := root.StreamAgg
+		schema := make([]*types.FieldType, 0, len(streamAgg.AggFunc)+len(streamAgg.GroupBy))
+		for i := range streamAgg.AggFunc {
+			if streamAgg.AggFunc[i].Tp == tipb.ExprType_Avg {
+				schema = append(schema, types.NewFieldType(mysql.TypeLonglong))
+			}
+			schema = append(schema, expression.PbTypeToFieldType(streamAgg.AggFunc[i].FieldType))
+		}
+		for i := range streamAgg.GroupBy {
+			schema = append(schema, expression.PbTypeToFieldType(streamAgg.GroupBy[i].FieldType))
+		}
+		return schema
+	}
+	return dagCtx.evalCtx.fieldTps
 }
 
 func (h *rpcHandler) encodeDefault(selResp *tipb.SelectResponse, rows [][][]byte, colOrdinal []uint32) {
@@ -632,20 +671,25 @@ func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, 
 	for _, ordinal := range colOrdinal {
 		respColTypes = append(respColTypes, colTypes[ordinal])
 	}
+
 	chk := chunk.NewChunkWithCapacity(respColTypes, 32)
 	encoder := chunk.NewCodec(respColTypes)
+	decoder := codec.NewDecoder(chk, loc)
 	for i := range rows {
 		for j, ordinal := range colOrdinal {
-			colDatum, err := tablecodec.DecodeColumnValue(rows[i][ordinal], colTypes[ordinal], loc)
+			_, err := decoder.DecodeOne(rows[i][ordinal], j, colTypes[ordinal])
 			if err != nil {
 				return errors.Trace(err)
 			}
-			chk.AppendDatum(j, &colDatum)
 		}
 		if i%rowsPerChunk == 0 {
-			selResp.RowBatchData = append(selResp.RowBatchData, encoder.Encode(chk)...)
+			rowBatchData = append(rowBatchData, encoder.Encode(chk)...)
 			chk.Reset()
 		}
+	}
+	if chk.NumRows() > 0 {
+		rowBatchData = append(rowBatchData, encoder.Encode(chk)...)
+		chk.Reset()
 	}
 	selResp.RowBatchData = rowBatchData
 	return nil

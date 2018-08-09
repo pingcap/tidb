@@ -78,7 +78,7 @@ func (s *testSuite) TestSelectNormal(c *C) {
 			break
 		}
 	}
-	c.Assert(numAllRows, Equals, 2)
+	c.Assert(numAllRows, Equals, 0)
 	err = response.Close()
 	c.Assert(err, IsNil)
 }

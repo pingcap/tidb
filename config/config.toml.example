@@ -41,6 +41,9 @@ mem-quota-query = 34359738368
 # Enable coprocessor streaming.
 enable-streaming = false
 
+# Enable chunk encoded data.
+enable-arrow = true
+
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
 
