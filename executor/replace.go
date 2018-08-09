@@ -65,7 +65,6 @@ func (e *ReplaceExec) removeRow(handle int64, newRow []types.Datum) (bool, error
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, handle, nil)
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 
 	// Cleanup keys map, because the record was removed.
@@ -88,9 +87,6 @@ func (e *ReplaceExec) addRow(row []types.Datum) (int64, error) {
 	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
 		return 0, errors.Trace(err)
-	}
-	if !e.ctx.GetSessionVars().ImportingData {
-		e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
 	}
 	return h, nil
 }

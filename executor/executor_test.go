@@ -21,10 +21,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	gofail "github.com/coreos/gofail/runtime"
+	gofail "github.com/etcd-io/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -245,6 +246,11 @@ func (s *testSuite) TestAdmin(c *C) {
 	// For "checksum_with_index", we have two checksums, so the result will be 1^1 = 0.
 	// For "checksum_without_index", we only have one checksum, so the result will be 1.
 	res.Sort().Check(testkit.Rows("test checksum_with_index 0 2 2", "test checksum_without_index 1 1 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
+	tk.MustExec("insert into t values(1, 1, 1)")
+	tk.MustExec("admin check table t")
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
@@ -1594,7 +1600,7 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
-	// With the existance of global variable cache, it have to sleep a while here.
+	// With the existence of global variable cache, it have to sleep a while here.
 	time.Sleep(3 * time.Second)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
@@ -2099,13 +2105,21 @@ const (
 
 type checkRequestClient struct {
 	tikv.Client
-	priority pb.CommandPri
-	mu       struct {
+	priority       pb.CommandPri
+	lowPriorityCnt uint32
+	mu             struct {
 		sync.RWMutex
-		checkFlags     uint32
-		lowPriorityCnt uint32
-		syncLog        bool
+		checkFlags uint32
+		syncLog    bool
 	}
+}
+
+func (c *checkRequestClient) setCheckPriority(priority pb.CommandPri) {
+	atomic.StoreInt32((*int32)(&c.priority), int32(priority))
+}
+
+func (c *checkRequestClient) getCheckPriority() pb.CommandPri {
+	return (pb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
 }
 
 func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -2116,7 +2130,7 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	if checkFlags == checkRequestPriority {
 		switch req.Type {
 		case tikvrpc.CmdCop:
-			if c.priority != req.Priority {
+			if c.getCheckPriority() != req.Priority {
 				return nil, errors.New("fail to set priority")
 			}
 		}
@@ -2132,12 +2146,12 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 		}
 	} else if checkFlags == checkDDLAddIndexPriority {
 		if req.Type == tikvrpc.CmdScan {
-			if c.priority != req.Priority {
+			if c.getCheckPriority() != req.Priority {
 				return nil, errors.New("fail to set priority")
 			}
 		} else if req.Type == tikvrpc.CmdPrewrite {
-			if c.priority == pb.CommandPri_Low {
-				c.mu.lowPriorityCnt++
+			if c.getCheckPriority() == pb.CommandPri_Low {
+				atomic.AddUint32(&c.lowPriorityCnt, 1)
 			}
 		}
 	}
@@ -2203,10 +2217,38 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	cli.mu.checkFlags = checkDDLAddIndexPriority
 	cli.mu.Unlock()
 
-	cli.priority = pb.CommandPri_Low
+	cli.setCheckPriority(pb.CommandPri_Low)
 	tk.MustExec("alter table t1 add index t1_index (id);")
 
-	c.Assert(cli.mu.lowPriorityCnt > 0, IsTrue)
+	c.Assert(atomic.LoadUint32(&cli.lowPriorityCnt) > 0, IsTrue)
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+
+	tk.MustExec("alter table t1 drop index t1_index;")
+	tk.MustExec("SET SESSION tidb_ddl_reorg_priority = 'PRIORITY_NORMAL'")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkDDLAddIndexPriority
+	cli.mu.Unlock()
+
+	cli.setCheckPriority(pb.CommandPri_Normal)
+	tk.MustExec("alter table t1 add index t1_index (id);")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+
+	tk.MustExec("alter table t1 drop index t1_index;")
+	tk.MustExec("SET SESSION tidb_ddl_reorg_priority = 'PRIORITY_HIGH'")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkDDLAddIndexPriority
+	cli.mu.Unlock()
+
+	cli.setCheckPriority(pb.CommandPri_High)
+	tk.MustExec("alter table t1 add index t1_index (id);")
 
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
@@ -2245,11 +2287,11 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.checkFlags = checkRequestPriority
 	cli.mu.Unlock()
 
-	cli.priority = pb.CommandPri_High
+	cli.setCheckPriority(pb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 
-	cli.priority = pb.CommandPri_Normal
+	cli.setCheckPriority(pb.CommandPri_Normal)
 	tk.MustQuery("select count(*) from t")
 	tk.MustExec("update t set id = 3")
 	tk.MustExec("delete from t")
@@ -2263,11 +2305,11 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
 	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
 
-	cli.priority = pb.CommandPri_High
+	cli.setCheckPriority(pb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 
-	cli.priority = pb.CommandPri_Low
+	cli.setCheckPriority(pb.CommandPri_Low)
 	tk.MustQuery("select count(*) from t")
 	tk.MustExec("delete from t")
 	tk.MustExec("insert into t values (3)")
@@ -2278,10 +2320,10 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	// tk.MustExec("update t set id = 2 where id = 1")
 
 	// Test priority specified by SQL statement.
-	cli.priority = pb.CommandPri_High
+	cli.setCheckPriority(pb.CommandPri_High)
 	tk.MustQuery("select HIGH_PRIORITY * from t")
 
-	cli.priority = pb.CommandPri_Low
+	cli.setCheckPriority(pb.CommandPri_Low)
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
 
 	cli.mu.Lock()
@@ -2845,7 +2887,7 @@ func (s *testSuite) TestForSelectScopeInUnion(c *C) {
 	tk2.MustExec("use test")
 	tk2.MustExec("update t set a = a + 1")
 
-	// As tk1 use select 'for update', it should dectect conflict and fail.
+	// As tk1 use select 'for update', it should detect conflict and fail.
 	_, err := tk1.Exec("commit")
 	c.Assert(err, NotNil)
 

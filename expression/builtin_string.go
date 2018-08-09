@@ -1510,7 +1510,7 @@ func (b *builtinUnHexSig) evalString(row chunk.Row) (string, bool, error) {
 	return string(bs), false, nil
 }
 
-const spaceChars = "\n\t\r "
+const spaceChars = " "
 
 type trimFunctionClass struct {
 	baseFunctionClass

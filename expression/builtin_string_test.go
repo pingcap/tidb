@@ -869,6 +869,9 @@ func (s *testEvaluatorSuite) TestTrim(c *C) {
 		res    string
 	}{
 		{[]interface{}{"   bar   "}, false, false, "bar"},
+		{[]interface{}{"\t   bar   \n"}, false, false, "\t   bar   \n"},
+		{[]interface{}{"\r   bar   \t"}, false, false, "\r   bar   \t"},
+		{[]interface{}{"   \tbar\n     "}, false, false, "\tbar\n"},
 		{[]interface{}{""}, false, false, ""},
 		{[]interface{}{nil}, true, false, ""},
 		{[]interface{}{"xxxbarxxx", "x"}, false, false, "bar"},
@@ -919,6 +922,14 @@ func (s *testEvaluatorSuite) TestLTrim(c *C) {
 		res    string
 	}{
 		{"   bar   ", false, false, "bar   "},
+		{"\t   bar   ", false, false, "\t   bar   "},
+		{"   \tbar   ", false, false, "\tbar   "},
+		{"\t   bar   ", false, false, "\t   bar   "},
+		{"   \tbar   ", false, false, "\tbar   "},
+		{"\r   bar   ", false, false, "\r   bar   "},
+		{"   \rbar   ", false, false, "\rbar   "},
+		{"\n   bar   ", false, false, "\n   bar   "},
+		{"   \nbar   ", false, false, "\nbar   "},
 		{"bar", false, false, "bar"},
 		{"", false, false, ""},
 		{nil, true, false, ""},
@@ -954,6 +965,12 @@ func (s *testEvaluatorSuite) TestRTrim(c *C) {
 	}{
 		{"   bar   ", false, false, "   bar"},
 		{"bar", false, false, "bar"},
+		{"bar     \n", false, false, "bar     \n"},
+		{"bar\n     ", false, false, "bar\n"},
+		{"bar     \r", false, false, "bar     \r"},
+		{"bar\r     ", false, false, "bar\r"},
+		{"bar     \t", false, false, "bar     \t"},
+		{"bar\t     ", false, false, "bar\t"},
 		{"", false, false, ""},
 		{nil, true, false, ""},
 		{errors.New("must error"), false, true, ""},
