@@ -236,8 +236,9 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, version int
 func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version int64) error {
 	startTime := time.Now()
 	ver := strconv.FormatInt(version, 10)
+	// TODO: If the version is larger than the original global version, we need set the version.
+	// Otherwise, we'd better set the original global version.
 	err := PutKVToEtcd(ctx, s.etcdCli, putKeyRetryUnlimited, DDLGlobalSchemaVersion, ver)
-
 	metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerUpdateGlobalVersion, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
@@ -355,7 +356,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 				succ = false
 				break
 			}
-			if int64(ver) != latestVer {
+			if int64(ver) < latestVer {
 				if notMatchVerCnt%intervalCnt == 0 {
 					log.Infof("[syncer] check all versions, ddl %s is not synced, current ver %v, latest version %v, continue checking",
 						kv.Key, ver, latestVer)
