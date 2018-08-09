@@ -660,6 +660,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
 	{ScopeSession, TiDBConfig, ""},
 	{ScopeGlobal | ScopeSession, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
+	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
