@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	gofail "github.com/coreos/gofail/runtime"
+	gofail "github.com/etcd-io/gofail/runtime"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
