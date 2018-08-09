@@ -14,7 +14,7 @@
 package ddl_test
 
 import (
-	gofail "github.com/coreos/gofail/runtime"
+	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"golang.org/x/net/context"
 )
