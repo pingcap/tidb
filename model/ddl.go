@@ -163,6 +163,9 @@ type Job struct {
 	// ReorgMeta is meta info of ddl reorganization.
 	// This field is depreciated.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
+
+	// Priority is only used to set the operation priority of adding indices.
+	Priority int `json:"priority"`
 }
 
 // FinishTableJob is called when a job is finished.
