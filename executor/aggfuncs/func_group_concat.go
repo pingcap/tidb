@@ -103,8 +103,11 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			p.buffer.WriteString(e.sep)
 		}
 	}
-	p.buffer.Truncate(p.buffer.Len() - len(e.sep))
-	return e.truncatePartialResultIfNeed(sctx, p.buffer)
+	if p.buffer != nil {
+		p.buffer.Truncate(p.buffer.Len() - len(e.sep))
+		return e.truncatePartialResultIfNeed(sctx, p.buffer)
+	}
+	return nil
 }
 
 type partialResult4GroupConcatDistinct struct {
@@ -133,6 +136,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	v, isNull := "", false
 	for _, row := range rowsInGroup {
+		allIsNull := true
 		p.valsBuf.Reset()
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
@@ -142,7 +146,11 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			if isNull {
 				continue
 			}
+			allIsNull = false
 			p.valsBuf.WriteString(v)
+		}
+		if allIsNull {
+			continue
 		}
 		joinedVals := p.valsBuf.String()
 		if p.valSet.exist(joinedVals) {
@@ -158,5 +166,8 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		// write values
 		p.buffer.WriteString(joinedVals)
 	}
-	return e.truncatePartialResultIfNeed(sctx, p.buffer)
+	if p.buffer != nil {
+		return e.truncatePartialResultIfNeed(sctx, p.buffer)
+	}
+	return nil
 }
