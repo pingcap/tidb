@@ -8,9 +8,7 @@ Thank you for contributing to TiDB! Please read TiDB's [CONTRIBUTING](https://gi
 ### What is changed and how it works?
 
 
-### Check List
-
-<!-- Please REMOVE the items that are not applicable. -->
+### Check List <!--REMOVE the items that are not applicable-->
 
 Tests <!-- At least one of them must be included. -->
 
