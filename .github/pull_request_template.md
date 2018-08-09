@@ -10,7 +10,7 @@ Thank you for contributing to TiDB! Please read TiDB's [CONTRIBUTING](https://gi
 
 ### Check List
 
-<!-- Please REMOVE the items that don't apply. -->
+<!-- Please REMOVE the items that are not applicable. -->
 
 Tests <!-- At least one of them must be included. -->
 
@@ -26,7 +26,7 @@ Code changes
  - Has interface methods change
  - Has persistent data change
 
-Side effect
+Side effects
 
  - Possible performance regression
  - Increased code complexity
@@ -34,7 +34,7 @@ Side effect
 
 Related changes
 
- - need to cherry-pick to the release branch
- - need to update the documentation
- - need to update the `tidb-ansible` repository
- - need to be included in the release note
+ - Need to cherry-pick to the release branch
+ - Need to update the documentation
+ - Need to update the `tidb-ansible` repository
+ - Need to be included in the release note
