@@ -162,33 +162,42 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 	return nil
 }
 
-func checkIntegerSystemVar(name, value string, min int64, max uint64, vars *SessionVars) (string, error) {
+func checkUInt64SystemVar(name, value string, min, max uint64, vars *SessionVars) (string, error) {
 	if value[0] == '-' {
-		val, err := strconv.ParseInt(value, 10, 64)
+		_, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenByArgs(name)
 		}
-		if val < min {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return fmt.Sprintf("%d", min), nil
-		}
-		if val > 0 && uint64(val) > max {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return fmt.Sprintf("%d", max), nil
-		}
-	} else {
-		val, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < uint64(min) {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return fmt.Sprintf("%d", min), nil
-		}
-		if val > 0 && val > max {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return fmt.Sprintf("%d", max), nil
-		}
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+		return fmt.Sprintf("%d", min), nil
+	}
+	val, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenByArgs(name)
+	}
+	if val < min {
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+		return fmt.Sprintf("%d", min), nil
+	}
+	if val > max {
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+		return fmt.Sprintf("%d", max), nil
+	}
+	return value, nil
+}
+
+func checkInt64SystemVar(name, value string, min, max int64, vars *SessionVars) (string, error) {
+	val, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenByArgs(name)
+	}
+	if val < min {
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+		return fmt.Sprintf("%d", min), nil
+	}
+	if val > max {
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+		return fmt.Sprintf("%d", max), nil
 	}
 	return value, nil
 }
@@ -203,9 +212,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	}
 	switch name {
 	case ConnectTimeout:
-		return checkIntegerSystemVar(name, value, 2, 31536000, vars)
+		return checkUInt64SystemVar(name, value, 2, 31536000, vars)
 	case DefaultWeekFormat:
-		return checkIntegerSystemVar(name, value, 0, 7, vars)
+		return checkUInt64SystemVar(name, value, 0, 7, vars)
 	case DelayKeyWrite:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "ON", nil
@@ -227,7 +236,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	case GroupConcatMaxLen:
 		// The reasonable range of 'group_concat_max_len' is 4~18446744073709551615(64-bit platforms)
 		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len for details
-		return checkIntegerSystemVar(name, value, 4, 18446744073709551615, vars)
+		return checkUInt64SystemVar(name, value, 4, 18446744073709551615, vars)
 	case InteractiveTimeout:
 		val, err := strconv.Atoi(value)
 		if err != nil {
@@ -238,17 +247,17 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "1", nil
 		}
 	case MaxConnections:
-		return checkIntegerSystemVar(name, value, 1, 100000, vars)
+		return checkUInt64SystemVar(name, value, 1, 100000, vars)
 	case MaxConnectErrors:
-		return checkIntegerSystemVar(name, value, 1, 18446744073709551615, vars)
+		return checkUInt64SystemVar(name, value, 1, 18446744073709551615, vars)
 	case MaxSortLength:
-		return checkIntegerSystemVar(name, value, 4, 8388608, vars)
+		return checkUInt64SystemVar(name, value, 4, 8388608, vars)
 	case MaxSpRecursionDepth:
-		return checkIntegerSystemVar(name, value, 0, 255, vars)
+		return checkUInt64SystemVar(name, value, 0, 255, vars)
 	case MaxUserConnections:
-		return checkIntegerSystemVar(name, value, 0, 4294967295, vars)
+		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
 	case OldPasswords:
-		return checkIntegerSystemVar(name, value, 0, 2, vars)
+		return checkUInt64SystemVar(name, value, 0, 2, vars)
 	case SessionTrackGtids:
 		if strings.EqualFold(value, "OFF") || value == "0" {
 			return "OFF", nil
@@ -269,9 +278,9 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, nil
 	case TableDefinitionCache:
-		return checkIntegerSystemVar(name, value, 400, 524288, vars)
+		return checkUInt64SystemVar(name, value, 400, 524288, vars)
 	case TmpTableSize:
-		return checkIntegerSystemVar(name, value, 1024, 18446744073709551615, vars)
+		return checkUInt64SystemVar(name, value, 1024, 18446744073709551615, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
