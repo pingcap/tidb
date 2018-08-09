@@ -54,8 +54,8 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool})
 
 	// HTTP path for get server info.
-	router.Handle("/info", ddlServerInfoHandler{tikvHandlerTool})
-	router.Handle("/info/all", ddlAllServerInfoHandler{tikvHandlerTool})
+	router.Handle("/info", serverInfoHandler{tikvHandlerTool})
+	router.Handle("/info/all", allServerInfoHandler{tikvHandlerTool})
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandlerTool, opTableRegions})

@@ -334,11 +334,11 @@ type ddlHistoryJobHandler struct {
 	*tikvHandlerTool
 }
 
-type ddlServerInfoHandler struct {
+type serverInfoHandler struct {
 	*tikvHandlerTool
 }
 
-type ddlAllServerInfoHandler struct {
+type allServerInfoHandler struct {
 	*tikvHandlerTool
 }
 
@@ -1258,15 +1258,14 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 	return h.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }
 
-// reportServerInfo is only used to report the servers info when do http request.
-type reportServerInfo struct {
-	IsOwner         bool               `json:"is_owner"`
-	SelfServerInfo  *domain.ServerInfo `json:"self_server_info"`
-	OwnerServerInfo *domain.ServerInfo `json:"owner_server_info,omitempty"`
+// serverInfo is used to report the servers info when do http request.
+type serverInfo struct {
+	IsOwner bool `json:"is_owner"`
+	*domain.ServerInfo
 }
 
 // ServeHTTP handles request of ddl server info.
-func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	do, err := session.GetDomain(h.store.(kv.Storage))
 	if err != nil {
 		writeError(w, errors.New("create session error"))
@@ -1280,24 +1279,13 @@ func (h ddlServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, errors.New("ddl server information not found"))
 		return
 	}
-	selfInfo := is.GetServerInfo()
-	reportInfo := reportServerInfo{
-		IsOwner:        selfInfo.ID == ownerID,
-		SelfServerInfo: selfInfo,
-	}
-	if !reportInfo.IsOwner {
-		ownerInfo, err := is.GetServerInfoByID(ctx, ownerID)
-		if err != nil {
-			writeError(w, errors.New("ddl server information not found"))
-			log.Error(err)
-			return
-		}
-		reportInfo.OwnerServerInfo = ownerInfo
-	}
-	writeData(w, reportInfo)
+	info := serverInfo{}
+	info.ServerInfo = is.GetServerInfo()
+	info.IsOwner = info.ID == ownerID
+	writeData(w, info)
 }
 
-// clusterServerInfo is only used to report cluster servers info when do http request.
+// clusterServerInfo is used to report cluster servers info when do http request.
 type clusterServerInfo struct {
 	ServersNum                   int                           `json:"servers_num,omitempty"`
 	OwnerID                      string                        `json:"owner_id"`
@@ -1307,7 +1295,7 @@ type clusterServerInfo struct {
 }
 
 // ServeHTTP handles request of all ddl servers info.
-func (h ddlAllServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	do, err := session.GetDomain(h.store.(kv.Storage))
 	if err != nil {
 		writeError(w, errors.New("create session error"))

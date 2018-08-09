@@ -656,23 +656,23 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	decoder := json.NewDecoder(resp.Body)
 
-	serverInfo := reportServerInfo{}
-	err = decoder.Decode(&serverInfo)
+	info := serverInfo{}
+	err = decoder.Decode(&info)
 	c.Assert(err, IsNil)
 
 	cfg := config.GetGlobalConfig()
-	c.Assert(serverInfo.IsOwner, IsTrue)
-	c.Assert(serverInfo.SelfServerInfo.IP, Equals, cfg.AdvertiseAddress)
-	c.Assert(serverInfo.SelfServerInfo.StatusPort, Equals, cfg.Status.StatusPort)
-	c.Assert(serverInfo.SelfServerInfo.Lease, Equals, cfg.Lease)
-	c.Assert(serverInfo.SelfServerInfo.Version, Equals, mysql.ServerVersion)
-	c.Assert(serverInfo.SelfServerInfo.GitHash, Equals, printer.TiDBGitHash)
+	c.Assert(info.IsOwner, IsTrue)
+	c.Assert(info.IP, Equals, cfg.AdvertiseAddress)
+	c.Assert(info.StatusPort, Equals, cfg.Status.StatusPort)
+	c.Assert(info.Lease, Equals, cfg.Lease)
+	c.Assert(info.Version, Equals, mysql.ServerVersion)
+	c.Assert(info.GitHash, Equals, printer.TiDBGitHash)
 
 	store := ts.server.newTikvHandlerTool().store.(kv.Storage)
 	do, err := session.GetDomain(store.(kv.Storage))
 	c.Assert(err, IsNil)
 	ddl := do.DDL()
-	c.Assert(serverInfo.SelfServerInfo.ID, Equals, ddl.GetID())
+	c.Assert(info.ID, Equals, ddl.GetID())
 }
 
 func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
