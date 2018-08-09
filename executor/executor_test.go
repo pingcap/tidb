@@ -246,6 +246,11 @@ func (s *testSuite) TestAdmin(c *C) {
 	// For "checksum_with_index", we have two checksums, so the result will be 1^1 = 0.
 	// For "checksum_without_index", we only have one checksum, so the result will be 1.
 	res.Sort().Check(testkit.Rows("test checksum_with_index 0 2 2", "test checksum_without_index 1 1 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
+	tk.MustExec("insert into t values(1, 1, 1)")
+	tk.MustExec("admin check table t")
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
