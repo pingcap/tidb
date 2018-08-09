@@ -461,16 +461,16 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		},
 		// Test partitioned table.
 		{
-			sql:  "select * from t where t.a <= 2",
-			best: "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
+			sql:  "select * from t4 where t4.a <= 2",
+			best: "UnionAll{TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))->TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))}",
 		},
 		{
-			sql:  "select * from t where t.b < 2",
-			best: "IndexLookUp(Index(t.b)[[-inf,2)], Table(t))",
+			sql:  "select * from t4 where t4.b < 2",
+			best: "UnionAll{IndexLookUp(Index(t4.b)[[-inf,2)], Table(t4))->IndexLookUp(Index(t4.b)[[-inf,2)], Table(t4))}",
 		},
 		{
 			sql:  "select * from t4 where t4.a = 1 and t4.b <= 2",
-			best: "IndexLookUp(Index(t4.a)[[1,1]], Table(t4)->Sel([le(test.t4.b, 2)]))",
+			best: "TableReader(Table(t4)->Sel([eq(test.t4.a, 1) le(test.t4.b, 2)]))",
 		},
 		// TODO: Refine these tests in the future.
 		//{
