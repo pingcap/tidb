@@ -300,11 +300,11 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tbl table.Table) (maxRowID int
 var gofailOnceGuard bool
 
 // getTableRange gets the start and end handle of a table (or partition).
-func getTableRange(d *ddlCtx, tbl table.Table, snapshotVer uint64) (startHandle, endHandle int64, err error) {
+func getTableRange(d *ddlCtx, tbl table.Table, snapshotVer uint64, priority int) (startHandle, endHandle int64, err error) {
 	startHandle = math.MinInt64
 	endHandle = math.MaxInt64
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(d.store, tbl, snapshotVer, math.MinInt64,
+	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, math.MinInt64,
 		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			startHandle = h
 			return false, nil
@@ -351,7 +351,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 			pid = pi.Definitions[0].ID
 			tp = tbl.(table.PartitionedTable).GetPartition(pid)
 		}
-		start, end, err = getTableRange(d, tp, ver.Ver)
+		start, end, err = getTableRange(d, tp, ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
