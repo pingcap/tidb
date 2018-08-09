@@ -87,12 +87,16 @@ func (t CmdType) String() string {
 		return "DeleteRange"
 	case CmdRawGet:
 		return "RawGet"
+	case CmdRawBatchGet:
+		return "RawBatchGet"
 	case CmdRawPut:
 		return "RawPut"
 	case CmdRawBatchPut:
 		return "RawBatchPut"
 	case CmdRawDelete:
 		return "RawDelete"
+	case CmdRawBatchDelete:
+		return "RawBatchDelete"
 	case CmdRawDeleteRange:
 		return "RawDeleteRange"
 	case CmdRawScan:
@@ -211,12 +215,16 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.DeleteRange.Context = ctx
 	case CmdRawGet:
 		req.RawGet.Context = ctx
+	case CmdRawBatchGet:
+		req.RawBatchGet.Context = ctx
 	case CmdRawPut:
 		req.RawPut.Context = ctx
 	case CmdRawBatchPut:
 		req.RawBatchPut.Context = ctx
 	case CmdRawDelete:
 		req.RawDelete.Context = ctx
+	case CmdRawBatchDelete:
+		req.RawBatchDelete.Context = ctx
 	case CmdRawDeleteRange:
 		req.RawDeleteRange.Context = ctx
 	case CmdRawScan:
@@ -291,6 +299,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.RawGet = &kvrpcpb.RawGetResponse{
 			RegionError: e,
 		}
+	case CmdRawBatchGet:
+		resp.RawBatchGet = &kvrpcpb.RawBatchGetResponse{
+			RegionError: e,
+		}
 	case CmdRawPut:
 		resp.RawPut = &kvrpcpb.RawPutResponse{
 			RegionError: e,
@@ -301,6 +313,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		}
 	case CmdRawDelete:
 		resp.RawDelete = &kvrpcpb.RawDeleteResponse{
+			RegionError: e,
+		}
+	case CmdRawBatchDelete:
+		resp.RawBatchDelete = &kvrpcpb.RawBatchDeleteResponse{
 			RegionError: e,
 		}
 	case CmdRawDeleteRange:
@@ -367,12 +383,16 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.DeleteRange.GetRegionError()
 	case CmdRawGet:
 		e = resp.RawGet.GetRegionError()
+	case CmdRawBatchGet:
+		e = resp.RawBatchGet.GetRegionError()
 	case CmdRawPut:
 		e = resp.RawPut.GetRegionError()
 	case CmdRawBatchPut:
 		e = resp.RawBatchPut.GetRegionError()
 	case CmdRawDelete:
 		e = resp.RawDelete.GetRegionError()
+	case CmdRawBatchDelete:
+		e = resp.RawBatchDelete.GetRegionError()
 	case CmdRawDeleteRange:
 		e = resp.RawDeleteRange.GetRegionError()
 	case CmdRawScan:
@@ -425,12 +445,16 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.DeleteRange, err = client.KvDeleteRange(ctx, req.DeleteRange)
 	case CmdRawGet:
 		resp.RawGet, err = client.RawGet(ctx, req.RawGet)
+	case CmdRawBatchGet:
+		resp.RawBatchGet, err = client.RawBatchGet(ctx, req.RawBatchGet)
 	case CmdRawPut:
 		resp.RawPut, err = client.RawPut(ctx, req.RawPut)
 	case CmdRawBatchPut:
 		resp.RawBatchPut, err = client.RawBatchPut(ctx, req.RawBatchPut)
 	case CmdRawDelete:
 		resp.RawDelete, err = client.RawDelete(ctx, req.RawDelete)
+	case CmdRawBatchDelete:
+		resp.RawBatchDelete, err = client.RawBatchDelete(ctx, req.RawBatchDelete)
 	case CmdRawDeleteRange:
 		resp.RawDeleteRange, err = client.RawDeleteRange(ctx, req.RawDeleteRange)
 	case CmdRawScan:
