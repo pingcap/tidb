@@ -1279,9 +1279,8 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // clusterServerInfo is used to report cluster servers info when do http request.
 type clusterServerInfo struct {
-	ServersNum int    `json:"servers_num,omitempty"`
-	OwnerID    string `json:"owner_id"`
-	// IsAllServerVersionConsistent indicates whether all tidb servers version is consistent.
+	ServersNum                   int                           `json:"servers_num,omitempty"`
+	OwnerID                      string                        `json:"owner_id"`
 	IsAllServerVersionConsistent bool                          `json:"is_all_server_version_consistent,omitempty"`
 	AllServersDiffVersions       []domain.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
 	AllServersInfo               map[string]*domain.ServerInfo `json:"all_servers_info,omitempty"`
@@ -1319,6 +1318,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	clusterInfo := clusterServerInfo{
 		ServersNum: len(allServersInfo),
 		OwnerID:    ownerID,
+		// len(allVersions) = 1 indicates there has only 1 tidb version in cluster, so all server versions are consistent.
 		IsAllServerVersionConsistent: len(allVersions) == 1,
 		AllServersInfo:               allServersInfo,
 	}
