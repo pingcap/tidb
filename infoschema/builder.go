@@ -240,7 +240,7 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 	oldSchemaTables := b.is.schemaMap[dbName]
 	newSchemaTables := &schemaTables{
-		dbInfo: oldSchemaTables.dbInfo.Clone(),
+		dbInfo: oldSchemaTables.dbInfo.Copy(),
 		tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
 	}
 	for k, v := range oldSchemaTables.tables {
