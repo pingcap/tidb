@@ -77,28 +77,28 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	testKit.MustExec("create index idx_t on t(c1)")
 	is = do.InfoSchema()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 	// If index is build, but stats is not updated. statsTbl can also work.
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	// But the added index will not work.
 	c.Assert(statsTbl.Indices[int64(1)], IsNil)
 
 	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 	c.Assert(statsTbl.Pseudo, IsFalse)
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
 	do.StatsHandle().Clear()
 	do.StatsHandle().Update(is)
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	// If the new schema add a column, the table stats can still work.
@@ -107,7 +107,7 @@ func (s *testStatsCacheSuite) TestStatsCache(c *C) {
 
 	do.StatsHandle().Clear()
 	do.StatsHandle().Update(is)
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 	c.Assert(statsTbl.Pseudo, IsFalse)
 }
 
@@ -152,11 +152,11 @@ func (s *testStatsCacheSuite) TestStatsStoreAndLoad(c *C) {
 	tableInfo := tbl.Meta()
 
 	testKit.MustExec("analyze table t")
-	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 
 	do.StatsHandle().Clear()
 	do.StatsHandle().Update(is)
-	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	c.Assert(statsTbl2.Count, Equals, int64(recordCount))
 	assertTableEqual(c, statsTbl1, statsTbl2)
@@ -173,7 +173,7 @@ func (s *testStatsCacheSuite) TestEmptyTable(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 	sc := new(stmtctx.StatementContext)
 	count := statsTbl.ColumnGreaterRowCount(sc, types.NewDatum(1), tableInfo.Columns[0].ID)
 	c.Assert(count, Equals, 0.0)
@@ -191,7 +191,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 	sc := new(stmtctx.StatementContext)
 	count := statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
 	c.Assert(count, Equals, float64(1))
@@ -204,7 +204,7 @@ func (s *testStatsCacheSuite) TestColumnIDs(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 	// At that time, we should get c2's stats instead of c1's.
 	count = statsTbl.ColumnLessRowCount(sc, types.NewDatum(2), tableInfo.Columns[0].ID)
 	c.Assert(count, Equals, 0.0)
@@ -222,7 +222,7 @@ func (s *testStatsCacheSuite) TestAvgColLen(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count), Equals, 8.0)
 
 	// The size of varchar type is LEN + BYTE, here is 1 + 7 = 8
@@ -231,7 +231,7 @@ func (s *testStatsCacheSuite) TestAvgColLen(c *C) {
 	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count), Equals, 16.0)
 	testKit.MustExec("insert into t values(132, '123456789112', 1232.3, '2018-03-07 19:17:29')")
 	testKit.MustExec("analyze table t")
-	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo, tbl.GetID())
 	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count), Equals, 8.0)
 	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count), Equals, 10.5)
 	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count), Equals, 4.0)
@@ -254,7 +254,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 
 	h.Update(is)
 	c.Assert(h.LastUpdateVersion(), Equals, uint64(2))
-	statsTbl1 := h.GetTableStats(tableInfo1)
+	statsTbl1 := h.GetTableStats(tableInfo1, tbl1.GetID())
 	c.Assert(statsTbl1.Pseudo, IsFalse)
 
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
@@ -267,7 +267,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
 	h.Update(is)
 	c.Assert(h.LastUpdateVersion(), Equals, uint64(2))
-	statsTbl2 := h.GetTableStats(tableInfo2)
+	statsTbl2 := h.GetTableStats(tableInfo2, tbl2.GetID())
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 
 	testKit.MustExec("insert t1 values(1,2)")
@@ -276,7 +276,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+4, tableInfo1.ID)
 	h.Update(is)
 	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
-	statsTbl1 = h.GetTableStats(tableInfo1)
+	statsTbl1 = h.GetTableStats(tableInfo1, tbl1.GetID())
 	c.Assert(statsTbl1.Count, Equals, int64(1))
 
 	testKit.MustExec("insert t2 values(1,2)")
@@ -285,7 +285,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+3, tableInfo2.ID)
 	h.Update(is)
 	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetTableStats(tableInfo2, tbl2.GetID())
 	c.Assert(statsTbl2.Count, Equals, int64(1))
 
 	testKit.MustExec("insert t2 values(1,2)")
@@ -294,7 +294,7 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
 	h.Update(is)
 	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetTableStats(tableInfo2, tbl2.GetID())
 	c.Assert(statsTbl2.Count, Equals, int64(1))
 
 	// We add an index and analyze it, but DDL doesn't load.
@@ -302,13 +302,13 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	testKit.MustExec("analyze table t2")
 	// load it with old schema.
 	h.Update(is)
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetTableStats(tableInfo2, tbl2.GetID())
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	c.Assert(statsTbl2.Columns[int64(3)], IsNil)
 	// Next time DDL updated.
 	is = do.InfoSchema()
 	h.Update(is)
-	statsTbl2 = h.GetTableStats(tableInfo2)
+	statsTbl2 = h.GetTableStats(tableInfo2, tbl2.GetID())
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 	// We can read it without analyze again! Thanks for PrevLastVersion.
 	c.Assert(statsTbl2.Columns[int64(3)], NotNil)
@@ -332,13 +332,13 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := tbl.Meta()
-	oldStatsTbl := h.GetTableStats(tableInfo)
+	oldStatsTbl := h.GetTableStats(tableInfo, tbl.GetID())
 	for i := 0; i < rowCount; i++ {
 		testKit.MustExec("insert into t values('bb','sdfga')")
 	}
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(do.InfoSchema())
-	newStatsTbl := h.GetTableStats(tableInfo)
+	newStatsTbl := h.GetTableStats(tableInfo, tbl.GetID())
 	// The stats table is updated.
 	c.Assert(oldStatsTbl == newStatsTbl, IsFalse)
 	// Only the TotColSize of histograms is updated.
@@ -363,7 +363,7 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo = tbl.Meta()
 	h.Update(is)
-	newStatsTbl2 := h.GetTableStats(tableInfo)
+	newStatsTbl2 := h.GetTableStats(tableInfo, tbl.GetID())
 	c.Assert(newStatsTbl2 == newStatsTbl, IsFalse)
 	// The histograms is not updated.
 	for id, hist := range newStatsTbl.Columns {
@@ -389,10 +389,10 @@ func (s *testStatsCacheSuite) TestInitStats(c *C) {
 
 	h.Clear()
 	c.Assert(h.InitStats(is), IsNil)
-	table0 := h.GetTableStats(tbl.Meta())
+	table0 := h.GetTableStats(tbl.Meta(), tbl.GetID())
 	h.Clear()
 	c.Assert(h.Update(is), IsNil)
-	table1 := h.GetTableStats(tbl.Meta())
+	table1 := h.GetTableStats(tbl.Meta(), tbl.GetID())
 	assertTableEqual(c, table0, table1)
 	h.Lease = 0
 }
@@ -415,7 +415,7 @@ func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
 	time.Sleep(1 * time.Second)
-	stat := h.GetTableStats(tableInfo)
+	stat := h.GetTableStats(tableInfo, tbl.GetID())
 	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
 	c.Assert(hg.Len(), Greater, 0)
 	cms := stat.Columns[tableInfo.Columns[0].ID].CMSketch
@@ -431,7 +431,7 @@ func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
 	_, err = stat.ColumnEqualRowCount(testKit.Se.GetSessionVars().StmtCtx, types.NewIntDatum(1), tableInfo.Columns[2].ID)
 	c.Assert(err, IsNil)
 	time.Sleep(1 * time.Second)
-	stat = h.GetTableStats(tableInfo)
+	stat = h.GetTableStats(tableInfo, tbl.GetID())
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	c.Assert(hg.Len(), Greater, 0)
 }

@@ -250,7 +250,7 @@ func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
 	c.Assert(h.Update(s.dom.InfoSchema()), IsNil)
 	table, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	statsTbl := h.GetTableStats(table.Meta())
+	statsTbl := h.GetTableStats(table.Meta(), table.GetID())
 
 	sc := &stmtctx.StatementContext{}
 	colID := table.Meta().Columns[0].ID

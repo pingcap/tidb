@@ -242,3 +242,7 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 	tbl := t.GetPartition(to)
 	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
 }
+
+func (t *partitionedTable) GetID() int64 {
+	panic("GetID() should never be called on PartitionedTable")
+}

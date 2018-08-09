@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/ranger"
 	log "github.com/sirupsen/logrus"
@@ -76,8 +77,10 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 
 	var partitionExprs []expression.Expression
-	if table, ok := ds.table.(partitionTable); ok {
-		partitionExprs = table.PartitionExpr().Ranges
+	var partitionedTable table.PartitionedTable
+	if tmp, ok := ds.table.(partitionTable); ok {
+		partitionExprs = tmp.PartitionExpr().Ranges
+		partitionedTable = ds.table.(table.PartitionedTable)
 	}
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
@@ -99,6 +102,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 				continue
 			}
 		}
+		partition := partitionedTable.GetPartition(pi.Definitions[i].ID)
 
 		// Not a deep copy.
 		newDataSource := *ds
@@ -109,7 +113,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		// id as FromID. So we set the id of the newDataSource with the original one to
 		// avoid traversing the whole plan tree to update the references.
 		newDataSource.id = ds.id
-
+		newDataSource.statisticTable = getStatsTable(ds.context(), partition)
 		children = append(children, &newDataSource)
 	}
 	if len(children) == 0 {

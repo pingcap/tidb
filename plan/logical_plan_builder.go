@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -1719,15 +1720,16 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 // 1. tidb-server started and statistics handle has not been initialized.
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
-func (b *planBuilder) getStatsTable(tblInfo *model.TableInfo) *statistics.Table {
-	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+func getStatsTable(ctx sessionctx.Context, tbl table.Table) *statistics.Table {
+	tblInfo := tbl.Meta()
+	statsHandle := domain.GetDomain(ctx).StatsHandle()
 
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
 		return statistics.PseudoTable(tblInfo)
 	}
 
-	statsTbl := statsHandle.GetTableStats(tblInfo)
+	statsTbl := statsHandle.GetTableStats(tblInfo, tbl.GetID())
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.Count == 0 {
@@ -1773,12 +1775,16 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	} else {
 		columns = tbl.Cols()
 	}
+	var statisticTable *statistics.Table
+	if _, ok := tbl.(table.PartitionedTable); !ok {
+		statisticTable = getStatsTable(b.ctx, tbl)
+	}
 
 	ds := DataSource{
 		DBName:              dbName,
 		table:               tbl,
 		tableInfo:           tableInfo,
-		statisticTable:      b.getStatsTable(tableInfo),
+		statisticTable:      statisticTable,
 		indexHints:          tn.IndexHints,
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
