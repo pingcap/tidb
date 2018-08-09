@@ -2,73 +2,51 @@
 Thank you for contributing to TiDB! Please read TiDB's [CONTRIBUTING](https://github.com/pingcap/tidb/blob/master/CONTRIBUTING.md) document **BEFORE** filing this PR.
 -->
 
-## What have you changed? (mandatory)
+### What problem does this PR solve?
 
 <!--
-Please explain **IN DETAIL** what the changes are in this PR and why they are needed:
-- Summarize your change (mandatory)
-- How does this PR work? Need a brief introduction for the changed logic (optional)
-- Separately describe each logical change and avoid lazy messages (optional)
-- Describe any limitations of the current code (optional)
-
-Please **NOTE** that:
-- Do not assume reviewers understand the original issue
+A few sentences describing what problem does this pull request solve.
+If this fixes an existing issue, please write the issue summary along with the issue
+link.
 -->
 
-## What is the type of the changes? (mandatory)
+### What is changed and how it works?
 
 <!--
-The currently defined types are listed below, please pick one of the types for this PR by removing the others.
+Please explain IN DETAIL what is changed in this PR and how it solves the problem.
 -->
 
-- New feature (non-breaking change which adds functionality)
-- Improvement (non-breaking change which is an improvement to an existing feature)
-- Bug fix (non-breaking change which fixes an issue)
-- Breaking change (fix or feature that would cause existing functionality to not work as expected)
-
-## How has this PR been tested? (mandatory)
+### Check List
 
 <!--
-Please describe the tests that you ran to verify your changes.
-Have you finished unit tests, integration tests, or manual tests?
-What additional tests would give you greater confidence in this change?
+Please put an x in the boxes that apply.
 -->
 
-## Does this PR affect documentation (docs/docs-cn) update? (mandatory)
+Tests
 
-<!--
-If there is document change, please file a PR in ([docs](https://github.com/pingcap/docs) or [docs-cn](https://github.com/pingcap/docs-cn)) and add the PR number here.
--->
+<!-- At least one of them much be checked. -->
 
-## Does this PR affect tidb-ansible update? (mandatory)
+ - [ ] Unit test
+ - [ ] Integration test
+ - [ ] Manual test (add detailed scripts or steps below)
+ - [ ] No code
 
-<!--
-If there is a configuration or metrics change, please file a PR in [tidb-ansible](https://github.com/pingcap/tidb-ansible), and add the PR number here.
--->
+Code changes
 
-## Does this PR need to be added to the release notes? (mandatory)
+ - [ ] Has exported function/method change
+ - [ ] Has exported variable/fields change
+ - [ ] Has interface methods change
+ - [ ] Has persistent data change
 
-<!--
-If this PR needs to be added to the release notes, please:
-1. add the "**release-note**" label for this PR
-2. write your release note in the below block
-3. if the PR requires additional action from users switching to the new
-   release, describe the concrete action that users need to take in detail.
+Side effect
 
-An example:
-```
-release note:
-// put your release notes for this PR here.
+ - [ ] Possible performance regression
+ - [ ] Increased code complexity
+ - [ ] Breaking backward compatibility
 
-action required:
-// put your required action in detail here.
-```
--->
+Related changes
 
-
-## Refer to a related PR or issue link (optional)
-
-## Benchmark result if necessary (optional)
-
-## Add a few positive/negative examples (optional)
-
+ - [ ] need to cherry-pick to the release branch
+ - [ ] need to update the documentation
+ - [ ] need to update the `tidb-ansible` repository
+ - [ ] need to be included in the release note
