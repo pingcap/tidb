@@ -92,7 +92,7 @@ func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
 	return udb
 }
 
-// UnionScanExec merges the rows from dirty table and the rows from XAPI request.
+// UnionScanExec merges the rows from dirty table and the rows from distsql request.
 type UnionScanExec struct {
 	baseExecutor
 
