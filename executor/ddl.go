@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -198,6 +199,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 		}
 
 		if os.Getenv("TIDB_CHECK_BEFORE_DROP") == "1" {
+			log.Warnf("OS env variable TIDB_CHECK_BEFORE_DROP was on")
 			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
 			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 			if err != nil {
