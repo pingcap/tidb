@@ -58,18 +58,18 @@ func (s *testDumpStatsSuite) TestConversion(c *C) {
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
-	jsonTbl, err := h.DumpStatsToJSON("test", table.Meta())
+	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta())
 	c.Assert(err, IsNil)
-	loadTbl, err := h.LoadStatsFromJSONToTable(table.Meta(), jsonTbl)
+	loadTbl, err := h.LoadStatsFromJSONToTable(tableInfo.Meta(), jsonTbl)
 	c.Assert(err, IsNil)
 
-	tbl := h.GetTableStats(table.Meta(), table.GetID())
+	tbl := h.GetTableStats(tableInfo.Meta())
 	assertTableEqual(c, loadTbl, tbl)
 
 	err = h.LoadStatsFromJSON(is, jsonTbl)
 	c.Assert(err, IsNil)
-	loadTblInStorage := h.GetTableStats(table.Meta(), table.GetID())
+	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
 	assertTableEqual(c, loadTblInStorage, tbl)
 }

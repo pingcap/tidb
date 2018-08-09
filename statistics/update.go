@@ -403,7 +403,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 		if !ok {
 			continue
 		}
-		tblStats := h.GetTableStats(table.Meta(), table.GetID())
+		tblStats := h.GetTableStats(table.Meta())
 		newTblStats := tblStats.copy()
 		if fb.hist.isIndexHist() {
 			idx, ok := tblStats.Indices[fb.hist.ID]
@@ -442,7 +442,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 		if !ok {
 			continue
 		}
-		tbl := h.GetTableStats(table.Meta(), table.GetID()).copy()
+		tbl := h.GetTableStats(table.Meta()).copy()
 		if item.PkErrorRate != nil && tbl.Columns[item.PkID] != nil {
 			col := *tbl.Columns[item.PkID]
 			col.ErrorRate.merge(item.PkErrorRate)
@@ -506,7 +506,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	if !ok {
 		return nil
 	}
-	tbl := h.GetTableStats(table.Meta(), table.GetID())
+	tbl := h.GetTableStats(table.Meta())
 	var cms *CMSketch
 	var hist *Histogram
 	if isIndex == 1 {
@@ -631,7 +631,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
-			statsTbl := h.GetTableStats(tblInfo, tbl.GetID())
+			statsTbl := h.GetTableStats(tblInfo)
 			if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
 				continue
 			}

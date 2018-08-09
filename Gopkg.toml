@@ -30,10 +30,6 @@ required = ["github.com/golang/protobuf/jsonpb"]
 
 [[constraint]]
   branch = "master"
-  name = "github.com/coreos/gofail"
-
-[[constraint]]
-  branch = "master"
   name = "github.com/cznic/parser"
 
 [[constraint]]
@@ -92,3 +88,7 @@ required = ["github.com/golang/protobuf/jsonpb"]
 [[constraint]]
   name = "github.com/opentracing/basictracer-go"
   version = "1.0.0"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/etcd-io/gofail"

@@ -1720,8 +1720,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 // 1. tidb-server started and statistics handle has not been initialized.
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
-func getStatsTable(ctx sessionctx.Context, tbl table.Table) *statistics.Table {
-	tblInfo := tbl.Meta()
+func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 
 	// 1. tidb-server started and statistics handle has not been initialized.
@@ -1729,7 +1728,12 @@ func getStatsTable(ctx sessionctx.Context, tbl table.Table) *statistics.Table {
 		return statistics.PseudoTable(tblInfo)
 	}
 
-	statsTbl := statsHandle.GetTableStats(tblInfo, tbl.GetID())
+	var statsTbl *statistics.Table
+	if pid != tblInfo.ID {
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+	} else {
+		statsTbl = statsHandle.GetTableStats(tblInfo)
+	}
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.Count == 0 {
@@ -1777,7 +1781,7 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	}
 	var statisticTable *statistics.Table
 	if _, ok := tbl.(table.PartitionedTable); !ok {
-		statisticTable = getStatsTable(b.ctx, tbl)
+		statisticTable = getStatsTable(b.ctx, tbl.Meta(), tbl.Meta().ID)
 	}
 
 	ds := DataSource{

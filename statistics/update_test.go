@@ -79,13 +79,13 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	stats1 := h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 := h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
 	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
 	tableInfo2 := tbl2.Meta()
-	stats2 := h.GetTableStats(tableInfo2, tbl2.GetID())
+	stats2 := h.GetTableStats(tableInfo2)
 	c.Assert(stats2.Count, Equals, int64(rowCount2))
 
 	testKit.MustExec("analyze table t1")
@@ -95,7 +95,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	}
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	stats1 = h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
 
 	// Test IncreaseFactor.
@@ -110,7 +110,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	testKit.MustExec("commit")
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	stats1 = h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*3))
 
 	testKit.MustExec("begin")
@@ -126,9 +126,9 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	testKit.MustExec("commit")
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	stats1 = h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*3))
-	stats2 = h.GetTableStats(tableInfo2, tbl2.GetID())
+	stats2 = h.GetTableStats(tableInfo2)
 	c.Assert(stats2.Count, Equals, int64(rowCount2))
 
 	testKit.MustExec("begin")
@@ -136,7 +136,7 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	testKit.MustExec("commit")
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	stats1 = h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(0))
 
 	rs := testKit.MustQuery("select modify_count from mysql.stats_meta")
@@ -157,19 +157,19 @@ func (s *testStatsUpdateSuite) TestSingleSessionInsert(c *C) {
 	}
 	h.DumpStatsDeltaToKV(statistics.DumpDelta)
 	h.Update(is)
-	stats1 = h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
 	// not dumped
 	testKit.MustExec("insert into t1 values (1,2)")
 	h.DumpStatsDeltaToKV(statistics.DumpDelta)
 	h.Update(is)
-	stats1 = h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
 	h.FlushStats()
 	h.Update(is)
-	stats1 = h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }
 
@@ -191,7 +191,7 @@ func (s *testStatsUpdateSuite) TestRollback(c *C) {
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
 
-	stats := h.GetTableStats(tableInfo, tbl.GetID())
+	stats := h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(0))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 }
@@ -225,7 +225,7 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	stats1 := h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 := h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
 	for i := 0; i < rowCount1; i++ {
@@ -245,7 +245,7 @@ func (s *testStatsUpdateSuite) TestMultiSession(c *C) {
 
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	stats1 = h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
 	// The session in testKit is already Closed, set it to nil will create a new session.
 	testKit.Se = nil
@@ -274,14 +274,14 @@ func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
 	}
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	stats1 := h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 := h.GetTableStats(tableInfo1)
 	// have not commit
 	c.Assert(stats1.Count, Equals, int64(0))
 	testKit.MustExec("commit")
 
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	stats1 = h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
 	_, err = testKit.Exec("insert into t1 values(0, 2)")
@@ -289,13 +289,13 @@ func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
 
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	stats1 = h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
 	testKit.MustExec("insert into t1 values(-1, 2)")
 	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(is)
-	stats1 = h.GetTableStats(tableInfo1, tbl1.GetID())
+	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }
 
@@ -321,7 +321,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 
 	h.HandleDDLEvent(<-h.DDLEventCh())
 	h.Update(is)
-	stats := h.GetTableStats(tableInfo, tbl.GetID())
+	stats := h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(0))
 
 	_, err = testKit.Exec("insert into t values ('ss')")
@@ -331,7 +331,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
 	h.Update(is)
-	stats = h.GetTableStats(tableInfo, tbl.GetID())
+	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(1))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 	for _, item := range stats.Columns {
@@ -350,7 +350,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
 	h.Update(is)
-	stats = h.GetTableStats(tableInfo, tbl.GetID())
+	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(2))
 	c.Assert(stats.ModifyCount, Equals, int64(1))
 
@@ -361,7 +361,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
 	h.Update(is)
-	stats = h.GetTableStats(tableInfo, tbl.GetID())
+	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(3))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 
@@ -372,7 +372,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	err = h.HandleAutoAnalyze(is)
 	c.Assert(err, IsNil)
 	h.Update(is)
-	stats = h.GetTableStats(tableInfo, tbl.GetID())
+	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(4))
 	// Modify count is non-zero means that we do not analyze the table.
 	c.Assert(stats.ModifyCount, Equals, int64(1))
@@ -391,7 +391,7 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	tableInfo = tbl.Meta()
 	h.HandleAutoAnalyze(is)
 	h.Update(is)
-	stats = h.GetTableStats(tableInfo, tbl.GetID())
+	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(4))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
 	hg, ok := stats.Indices[tableInfo.Indices[0].ID]
@@ -434,7 +434,7 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tblInfo := table.Meta()
-	tbl := h.GetTableStats(tblInfo, table.GetID())
+	tbl := h.GetTableStats(tblInfo)
 	aID := tblInfo.Columns[0].ID
 	bID := tblInfo.Indices[0].ID
 
@@ -447,7 +447,7 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	c.Assert(h.HandleUpdateStats(is), IsNil)
 	h.UpdateErrorRate(is)
 	h.Update(is)
-	tbl = h.GetTableStats(tblInfo, table.GetID())
+	tbl = h.GetTableStats(tblInfo)
 
 	// The error rate of this column is not larger than MaxErrorRate now.
 	c.Assert(tbl.Columns[aID].NotAccurate(), IsFalse)
@@ -459,14 +459,14 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	c.Assert(h.HandleUpdateStats(is), IsNil)
 	h.UpdateErrorRate(is)
 	h.Update(is)
-	tbl = h.GetTableStats(tblInfo, table.GetID())
+	tbl = h.GetTableStats(tblInfo)
 	c.Assert(tbl.Indices[bID].NotAccurate(), IsFalse)
 	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(1))
 
 	testKit.MustExec("analyze table t")
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
 	h.Update(is)
-	tbl = h.GetTableStats(tblInfo, table.GetID())
+	tbl = h.GetTableStats(tblInfo)
 	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(0))
 }
 
@@ -587,7 +587,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		c.Assert(err, IsNil)
 		h.Update(is)
 		tblInfo := table.Meta()
-		tbl := h.GetTableStats(tblInfo, table.GetID())
+		tbl := h.GetTableStats(tblInfo)
 		if t.idxCols == 0 {
 			c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, tests[i].hist)
 		} else {
@@ -700,14 +700,14 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	c.Assert(err, IsNil)
 
 	tblInfo := table.Meta()
-	tbl := h.GetTableStats(tblInfo, table.GetID())
+	tbl := h.GetTableStats(tblInfo)
 
 	testKit.MustQuery("select * from t use index(idx) where b <= 5")
 	testKit.MustQuery("select * from t where a > 1")
 	testKit.MustQuery("select * from t use index(idx) where b = 5")
 
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
-	tbl = h.GetTableStats(tblInfo, table.GetID())
+	tbl = h.GetTableStats(tblInfo)
 
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
 		"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n"+
