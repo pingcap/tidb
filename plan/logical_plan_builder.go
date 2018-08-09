@@ -1917,35 +1917,6 @@ func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	return ap, nil
 }
 
-func (b *planBuilder) buildExists(p LogicalPlan) LogicalPlan {
-out:
-	for {
-		switch plan := p.(type) {
-		// This can be removed when in exists clause,
-		// e.g. exists(select count(*) from t order by a) is equal to exists t.
-		case *LogicalProjection, *LogicalSort:
-			p = p.Children()[0]
-		case *LogicalAggregation:
-			if len(plan.GroupByItems) == 0 {
-				p = b.buildTableDual()
-				break out
-			}
-			p = p.Children()[0]
-		default:
-			break out
-		}
-	}
-	exists := LogicalExists{}.init(b.ctx)
-	exists.SetChildren(p)
-	newCol := &expression.Column{
-		RetType:  types.NewFieldType(mysql.TypeTiny),
-		ColName:  model.NewCIStr("exists_col"),
-		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-	}
-	exists.SetSchema(expression.NewSchema(newCol))
-	return exists
-}
-
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	maxOneRow := LogicalMaxOneRow{}.init(b.ctx)
 	maxOneRow.SetChildren(p)
