@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1594,7 +1595,7 @@ func (s *testSuite) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
-	// With the existance of global variable cache, it have to sleep a while here.
+	// With the existence of global variable cache, it have to sleep a while here.
 	time.Sleep(3 * time.Second)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
@@ -1659,7 +1660,7 @@ func (s *testSuite) TestAdapterStatement(c *C) {
 	c.Check(stmt.OriginText(), Equals, "create table test.t (a int)")
 }
 
-func (s *testSuite) TestPointGet(c *C) {
+func (s *testSuite) TestIsPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use mysql")
 	ctx := tk.Se.(sessionctx.Context)
@@ -2099,13 +2100,21 @@ const (
 
 type checkRequestClient struct {
 	tikv.Client
-	priority pb.CommandPri
-	mu       struct {
+	priority       pb.CommandPri
+	lowPriorityCnt uint32
+	mu             struct {
 		sync.RWMutex
-		checkFlags     uint32
-		lowPriorityCnt uint32
-		syncLog        bool
+		checkFlags uint32
+		syncLog    bool
 	}
+}
+
+func (c *checkRequestClient) setCheckPriority(priority pb.CommandPri) {
+	atomic.StoreInt32((*int32)(&c.priority), int32(priority))
+}
+
+func (c *checkRequestClient) getCheckPriority() pb.CommandPri {
+	return (pb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
 }
 
 func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -2116,7 +2125,7 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	if checkFlags == checkRequestPriority {
 		switch req.Type {
 		case tikvrpc.CmdCop:
-			if c.priority != req.Priority {
+			if c.getCheckPriority() != req.Priority {
 				return nil, errors.New("fail to set priority")
 			}
 		}
@@ -2132,12 +2141,12 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 		}
 	} else if checkFlags == checkDDLAddIndexPriority {
 		if req.Type == tikvrpc.CmdScan {
-			if c.priority != req.Priority {
+			if c.getCheckPriority() != req.Priority {
 				return nil, errors.New("fail to set priority")
 			}
 		} else if req.Type == tikvrpc.CmdPrewrite {
-			if c.priority == pb.CommandPri_Low {
-				c.mu.lowPriorityCnt++
+			if c.getCheckPriority() == pb.CommandPri_Low {
+				atomic.AddUint32(&c.lowPriorityCnt, 1)
 			}
 		}
 	}
@@ -2203,10 +2212,38 @@ func (s *testContextOptionSuite) TestAddIndexPriority(c *C) {
 	cli.mu.checkFlags = checkDDLAddIndexPriority
 	cli.mu.Unlock()
 
-	cli.priority = pb.CommandPri_Low
+	cli.setCheckPriority(pb.CommandPri_Low)
 	tk.MustExec("alter table t1 add index t1_index (id);")
 
-	c.Assert(cli.mu.lowPriorityCnt > 0, IsTrue)
+	c.Assert(atomic.LoadUint32(&cli.lowPriorityCnt) > 0, IsTrue)
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+
+	tk.MustExec("alter table t1 drop index t1_index;")
+	tk.MustExec("SET SESSION tidb_ddl_reorg_priority = 'PRIORITY_NORMAL'")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkDDLAddIndexPriority
+	cli.mu.Unlock()
+
+	cli.setCheckPriority(pb.CommandPri_Normal)
+	tk.MustExec("alter table t1 add index t1_index (id);")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkRequestOff
+	cli.mu.Unlock()
+
+	tk.MustExec("alter table t1 drop index t1_index;")
+	tk.MustExec("SET SESSION tidb_ddl_reorg_priority = 'PRIORITY_HIGH'")
+
+	cli.mu.Lock()
+	cli.mu.checkFlags = checkDDLAddIndexPriority
+	cli.mu.Unlock()
+
+	cli.setCheckPriority(pb.CommandPri_High)
+	tk.MustExec("alter table t1 add index t1_index (id);")
 
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
@@ -2245,11 +2282,11 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.checkFlags = checkRequestPriority
 	cli.mu.Unlock()
 
-	cli.priority = pb.CommandPri_High
+	cli.setCheckPriority(pb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 
-	cli.priority = pb.CommandPri_Normal
+	cli.setCheckPriority(pb.CommandPri_Normal)
 	tk.MustQuery("select count(*) from t")
 	tk.MustExec("update t set id = 3")
 	tk.MustExec("delete from t")
@@ -2263,11 +2300,11 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
 	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
 
-	cli.priority = pb.CommandPri_High
+	cli.setCheckPriority(pb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")
 	tk.MustQuery("select * from t1 where id = 1")
 
-	cli.priority = pb.CommandPri_Low
+	cli.setCheckPriority(pb.CommandPri_Low)
 	tk.MustQuery("select count(*) from t")
 	tk.MustExec("delete from t")
 	tk.MustExec("insert into t values (3)")
@@ -2278,10 +2315,10 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	// tk.MustExec("update t set id = 2 where id = 1")
 
 	// Test priority specified by SQL statement.
-	cli.priority = pb.CommandPri_High
+	cli.setCheckPriority(pb.CommandPri_High)
 	tk.MustQuery("select HIGH_PRIORITY * from t")
 
-	cli.priority = pb.CommandPri_Low
+	cli.setCheckPriority(pb.CommandPri_Low)
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
 
 	cli.mu.Lock()
@@ -2845,7 +2882,7 @@ func (s *testSuite) TestForSelectScopeInUnion(c *C) {
 	tk2.MustExec("use test")
 	tk2.MustExec("update t set a = a + 1")
 
-	// As tk1 use select 'for update', it should dectect conflict and fail.
+	// As tk1 use select 'for update', it should detect conflict and fail.
 	_, err := tk1.Exec("commit")
 	c.Assert(err, NotNil)
 
@@ -2913,9 +2950,116 @@ func (s *testSuite) TestUnsignedDecimalOverflow(c *C) {
 func (s *testSuite) TestIndexJoinTableDualPanic(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists a")
 	tk.MustExec("create table a (f1 int, f2 varchar(32), primary key (f1))")
 	tk.MustExec("insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c')")
 	tk.MustQuery("select a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
 		Check(testkit.Rows("1 a"))
+}
+
+func (s *testSuite) TestUnionAutoSignedCast(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int, i int, b bigint, d double, dd decimal)")
+	tk.MustExec("create table t2 (id int, i int unsigned, b bigint unsigned, d double unsigned, dd decimal unsigned)")
+	tk.MustExec("insert into t1 values(1, -1, -1, -1.1, -1)")
+	tk.MustExec("insert into t2 values(2, 1, 1, 1.1, 1)")
+	tk.MustQuery("select * from t1 union select * from t2 order by id").
+		Check(testkit.Rows("1 -1 -1 -1.1 -1", "2 1 1 1.1 1"))
+	tk.MustQuery("select id, i, b, d, dd from t2 union select id, i, b, d, dd from t1 order by id").
+		Check(testkit.Rows("1 0 0 0 -1", "2 1 1 1.1 1"))
+	tk.MustQuery("select id, i from t2 union select id, cast(i as unsigned int) from t1 order by id").
+		Check(testkit.Rows("1 18446744073709551615", "2 1"))
+	tk.MustQuery("select dd from t2 union all select dd from t2").
+		Check(testkit.Rows("1", "1"))
+
+	tk.MustExec("drop table if exists t3,t4")
+	tk.MustExec("create table t3 (id int, v int)")
+	tk.MustExec("create table t4 (id int, v double unsigned)")
+	tk.MustExec("insert into t3 values (1, -1)")
+	tk.MustExec("insert into t4 values (2, 1)")
+	tk.MustQuery("select id, v from t3 union select id, v from t4 order by id").
+		Check(testkit.Rows("1 -1", "2 1"))
+	tk.MustQuery("select id, v from t4 union select id, v from t3 order by id").
+		Check(testkit.Rows("1 0", "2 1"))
+
+	tk.MustExec("drop table if exists t5,t6,t7")
+	tk.MustExec("create table t5 (id int, v bigint unsigned)")
+	tk.MustExec("create table t6 (id int, v decimal)")
+	tk.MustExec("create table t7 (id int, v bigint)")
+	tk.MustExec("insert into t5 values (1, 1)")
+	tk.MustExec("insert into t6 values (2, -1)")
+	tk.MustExec("insert into t7 values (3, -1)")
+	tk.MustQuery("select id, v from t5 union select id, v from t6 order by id").
+		Check(testkit.Rows("1 1", "2 -1"))
+	tk.MustQuery("select id, v from t5 union select id, v from t7 union select id, v from t6 order by id").
+		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
+}
+
+func (s *testSuite) TestUpdateJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4, t5")
+	tk.MustExec("create table t1(k int, v int)")
+	tk.MustExec("create table t2(k int, v int)")
+	tk.MustExec("create table t3(id int auto_increment, k int, v int, primary key(id))")
+	tk.MustExec("create table t4(k int, v int)")
+	tk.MustExec("create table t5(v int, k int, primary key(k))")
+	tk.MustExec("insert into t1 values (1, 1)")
+	tk.MustExec("insert into t4 values (3, 3)")
+
+	// test the normal case that update one row for a single table.
+	tk.MustExec("update t1 set v = 0 where k = 1")
+	tk.MustQuery("select k, v from t1 where k = 1").Check(testkit.Rows("1 0"))
+
+	// test the case that the table with auto_increment or none-null columns as the right table of left join.
+	tk.MustExec("update t1 left join t3 on t1.k = t3.k set t1.v = 1")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select id, k, v from t3").Check(testkit.Rows())
+
+	// test left join and the case that the right table has no matching record but has updated the right table columns.
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t1.v = t2.v, t2.v = 3")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 <nil>"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+
+	// test the case that the update operation in the left table references data in the right table while data of the right table columns is modified.
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t2.v = 3, t1.v = t2.v")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 <nil>"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+
+	// test right join and the case that the left table has no matching record but has updated the left table columns.
+	tk.MustExec("update t2 right join t1 on t2.k = t1.k set t2.v = 4, t1.v = 0")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 0"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+
+	// test the case of right join and left join at the same time.
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k right join t4 on t4.k = t2.k set t1.v = 4, t2.v = 4, t4.v = 4")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 0"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows())
+	tk.MustQuery("select k, v from t4").Check(testkit.Rows("3 4"))
+
+	// test normal left join and the case that the right table has matching rows.
+	tk.MustExec("insert t2 values (1, 10)")
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t2.v = 11")
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows("1 11"))
+
+	// test the case of continuously joining the same table and updating the unmatching records.
+	tk.MustExec("update t1 t11 left join t2 on t11.k = t2.k left join t1 t12 on t2.v = t12.k set t12.v = 233, t11.v = 111")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("1 111"))
+	tk.MustQuery("select k, v from t2").Check(testkit.Rows("1 11"))
+
+	// test the left join case that the left table has records but all records are null.
+	tk.MustExec("delete from t1")
+	tk.MustExec("delete from t2")
+	tk.MustExec("insert into t1 values (null, null)")
+	tk.MustExec("update t1 left join t2 on t1.k = t2.k set t1.v = 1")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("<nil> 1"))
+
+	// test the case that the right table of left join has an primary key.
+	tk.MustExec("insert t5 values(0, 0)")
+	tk.MustExec("update t1 left join t5 on t1.k = t5.k set t1.v = 2")
+	tk.MustQuery("select k, v from t1").Check(testkit.Rows("<nil> 2"))
+	tk.MustQuery("select k, v from t5").Check(testkit.Rows("0 0"))
+
 }

@@ -909,6 +909,115 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1265 Data Truncated"))
 	r = tk.MustQuery("select * from decimals")
 	r.Check(testkit.Rows("202"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE `t` (	`c1` year DEFAULT NULL, `c2` year DEFAULT NULL, `c3` date DEFAULT NULL, `c4` datetime DEFAULT NULL,	KEY `idx` (`c1`,`c2`))")
+	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
+	c.Assert(err.Error(), Equals, "cannot convert datum from bigint to type year.")
+
+	tk.MustExec("update (select * from t) t set c1 = 1111111")
+}
+
+func (s *testSuite) TestPartitionedTableUpdate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int not null default 1, name varchar(255))
+		PARTITION BY RANGE ( id ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21))`)
+
+	tk.MustExec(`insert INTO t VALUES (1, "hello");`)
+	tk.CheckExecResult(1, 0)
+	tk.MustExec(`insert INTO t VALUES (7, "hello");`)
+	tk.CheckExecResult(1, 0)
+
+	// update non partition column
+	tk.MustExec(`UPDATE t SET name = "abc" where id > 0;`)
+	tk.CheckExecResult(2, 0)
+	r := tk.MustQuery(`SELECT * from t order by id limit 2;`)
+	r.Check(testkit.Rows("1 abc", "7 abc"))
+
+	// update partition column
+	tk.MustExec(`update t set id = id + 1`)
+	tk.CheckExecResult(2, 0)
+	r = tk.MustQuery(`SELECT * from t order by id limit 2;`)
+	r.Check(testkit.Rows("2 abc", "8 abc"))
+
+	// update partition column, old and new record locates on different partitions
+	tk.MustExec(`update t set id = 20 where id = 8`)
+	tk.CheckExecResult(2, 0)
+	r = tk.MustQuery(`SELECT * from t order by id limit 2;`)
+	r.Check(testkit.Rows("2 abc", "20 abc"))
+
+	// table option is auto-increment
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (id int not null auto_increment, name varchar(255), primary key(id))
+		PARTITION BY RANGE ( id ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21))`)
+
+	tk.MustExec("insert into t(name) values ('aa')")
+	tk.MustExec("update t set id = 8 where name = 'aa'")
+	tk.MustExec("insert into t(name) values ('bb')")
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows("8 aa", "9 bb"))
+
+	_, err := tk.Exec("update t set id = null where name = 'aa'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), DeepEquals, "[table:1048]Column 'id' cannot be null")
+
+	// Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (id int, name int unique)
+		PARTITION BY RANGE ( name ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21))`)
+	tk.MustExec("insert t values (1, 1), (2, 2);")
+	_, err = tk.Exec("update t set name = 1 where id = 2")
+	c.Assert(err, NotNil)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
+
+	// test update ignore for pimary key
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(a bigint, primary key (a))
+		PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11))`)
+	tk.MustExec("insert into t values (5)")
+	tk.MustExec("insert into t values (7)")
+	_, err = tk.Exec("update ignore t set a = 5 where a = 7;")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 'PRIMARY'"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("5", "7"))
+
+	// test update ignore for truncate as warning
+	_, err = tk.Exec("update ignore t set a = 1 where a = (select '2a')")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
+
+	// test update ignore for unique key
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(a bigint, unique key I_uniq (a))
+		PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11))`)
+	tk.MustExec("insert into t values (5)")
+	tk.MustExec("insert into t values (7)")
+	_, err = tk.Exec("update ignore t set a = 5 where a = 7;")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 'I_uniq'"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("5", "7"))
 }
 
 // TestUpdateCastOnlyModifiedValues for issue #4514.
@@ -1047,6 +1156,61 @@ func (s *testSuite) TestDelete(c *C) {
 
 	tk.MustExec(`delete from delete_test ;`)
 	tk.CheckExecResult(1, 0)
+}
+
+func (s *testSuite) TestPartitionedTableDelete(c *C) {
+	createTable := `CREATE TABLE test.t (id int not null default 1, name varchar(255), index(id))
+PARTITION BY RANGE ( id ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+)`
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(createTable)
+	for i := 1; i < 21; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d, "hello")`, i))
+	}
+
+	tk.MustExec(`delete from t where id = 2 limit 1;`)
+	tk.CheckExecResult(1, 0)
+
+	// Test delete with false condition
+	tk.MustExec(`delete from t where 0;`)
+	tk.CheckExecResult(0, 0)
+
+	tk.MustExec("insert into t values (2, 'abc')")
+	tk.MustExec(`delete from t where t.id = 2 limit 1`)
+	tk.CheckExecResult(1, 0)
+
+	// Test delete ignore
+	tk.MustExec("insert into t values (2, 'abc')")
+	_, err := tk.Exec("delete from t where id = (select '2a')")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("delete ignore from t where id = (select '2a')")
+	c.Assert(err, IsNil)
+	tk.CheckExecResult(1, 0)
+	r := tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
+
+	// Test delete without using index, involve multiple partitions.
+	tk.MustExec("delete from t ignore index(id) where id >= 13 and id <= 17")
+	tk.CheckExecResult(5, 0)
+
+	tk.MustExec("admin check table t")
+	tk.MustExec(`delete from t;`)
+	tk.CheckExecResult(14, 0)
+
+	// Fix that partitioned table should not use PointGetPlan.
+	tk.MustExec(`create table t1 (c1 bigint, c2 bigint, c3 bigint, primary key(c1)) partition by range (c1) (partition p0 values less than (3440))`)
+	tk.MustExec("insert into t1 values (379, 379, 379)")
+	tk.MustExec("delete from t1 where c1 = 379")
+	tk.CheckExecResult(1, 0)
+	tk.MustExec(`drop table t1;`)
 }
 
 func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
@@ -1663,6 +1827,24 @@ func (s *testSuite) TestUpdateSelect(c *C) {
 	tk.MustExec("insert detail values ('abc', '123', 2)")
 	tk.MustExec("UPDATE msg SET msg.status = (SELECT detail.status FROM detail WHERE msg.id = detail.id)")
 	tk.MustExec("admin check table msg")
+}
+
+func (s *testSuite) TestUpdateDelete(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE ttt (id bigint(20) NOT NULL, host varchar(30) NOT NULL, PRIMARY KEY (id), UNIQUE KEY i_host (host));")
+	tk.MustExec("insert into ttt values (8,8),(9,9);")
+
+	tk.MustExec("begin")
+	tk.MustExec("update ttt set id = 0, host='9' where id = 9 limit 1;")
+	tk.MustExec("delete from ttt where id = 0 limit 1;")
+	tk.MustQuery("select * from ttt use index (i_host) order by host;").Check(testkit.Rows("8 8"))
+	tk.MustExec("update ttt set id = 0, host='8' where id = 8 limit 1;")
+	tk.MustExec("delete from ttt where id = 0 limit 1;")
+	tk.MustQuery("select * from ttt use index (i_host) order by host;").Check(testkit.Rows())
+	tk.MustExec("commit")
+	tk.MustExec("admin check table ttt;")
+	tk.MustExec("drop table ttt")
 }
 
 func (s *testSuite) TestUpdateAffectRowCnt(c *C) {

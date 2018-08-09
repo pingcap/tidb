@@ -14,6 +14,9 @@
 package executor_test
 
 import (
+	"math"
+	"strings"
+
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
@@ -24,16 +27,16 @@ import (
 )
 
 func (s *testSuite) TestPrepared(c *C) {
-	orgEnable := plan.PreparedPlanCacheEnabled
+	orgEnable := plan.PreparedPlanCacheEnabled()
 	orgCapacity := plan.PreparedPlanCacheCapacity
 	defer func() {
-		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.SetPreparedPlanCache(orgEnable)
 		plan.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		plan.PreparedPlanCacheEnabled = flag
+		plan.SetPreparedPlanCache(flag)
 		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -184,16 +187,16 @@ func (s *testSuite) TestPrepared(c *C) {
 }
 
 func (s *testSuite) TestPreparedLimitOffset(c *C) {
-	orgEnable := plan.PreparedPlanCacheEnabled
+	orgEnable := plan.PreparedPlanCacheEnabled()
 	orgCapacity := plan.PreparedPlanCacheCapacity
 	defer func() {
-		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.SetPreparedPlanCache(orgEnable)
 		plan.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		plan.PreparedPlanCacheEnabled = flag
+		plan.SetPreparedPlanCache(flag)
 		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -220,15 +223,15 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 }
 
 func (s *testSuite) TestPreparedNullParam(c *C) {
-	orgEnable := plan.PreparedPlanCacheEnabled
+	orgEnable := plan.PreparedPlanCacheEnabled()
 	orgCapacity := plan.PreparedPlanCacheCapacity
 	defer func() {
-		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.SetPreparedPlanCache(orgEnable)
 		plan.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plan.PreparedPlanCacheEnabled = flag
+		plan.SetPreparedPlanCache(flag)
 		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -266,4 +269,56 @@ func (s *testSuite) TestPreparedNameResolver(c *C) {
 
 	_, err = tk.Exec("prepare stmt from '(select * FROM t) union all (select * FROM t) order by a limit ?'")
 	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'order clause'")
+}
+
+func (s *testSuite) TestPrepareMaxParamCountCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v int)")
+	normalSQL, normalParams := generateBatchSQL(math.MaxUint16)
+	_, err := tk.Exec(normalSQL, normalParams...)
+	c.Assert(err, IsNil)
+
+	bigSQL, bigParams := generateBatchSQL(math.MaxUint16 + 2)
+	_, err = tk.Exec(bigSQL, bigParams...)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1390]Prepared statement contains too many placeholders")
+}
+
+func (s *testSuite) TestPrepareWithAggregation(c *C) {
+	orgEnable := plan.PreparedPlanCacheEnabled()
+	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.SetPreparedPlanCache(orgEnable)
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		plan.SetPreparedPlanCache(flag)
+		plan.PreparedPlanCacheCapacity = 100
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int primary key)")
+		tk.MustExec("insert into t values (1), (2), (3)")
+		tk.MustExec(`prepare stmt from 'select sum(id) from t where id = ?'`)
+
+		tk.MustExec(`set @id="1"`)
+		r := tk.MustQuery(`execute stmt using @id;`)
+		r.Check(testkit.Rows("1"))
+
+		r = tk.MustQuery(`execute stmt using @id;`)
+		r.Check(testkit.Rows("1"))
+	}
+}
+
+func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
+	params := make([]interface{}, 0, paramCount)
+	placeholders := make([]string, 0, paramCount)
+	for i := 0; i < paramCount; i++ {
+		params = append(params, i)
+		placeholders = append(placeholders, "(?)")
+	}
+	return "insert into t values " + strings.Join(placeholders, ","), params
 }

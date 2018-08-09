@@ -131,6 +131,26 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 	return ranges, nil
 }
 
+func (q *QueryFeedback) decodeIntValues() *QueryFeedback {
+	nq := &QueryFeedback{}
+	nq.feedback = make([]feedback, 0, len(q.feedback))
+	for _, fb := range q.feedback {
+		_, lowInt, err := codec.DecodeInt(fb.lower.GetBytes())
+		if err != nil {
+			log.Debugf("decode feedback lower bound \"%v\" to integer failed: %v", fb.lower.GetBytes(), err)
+			continue
+		}
+		_, highInt, err := codec.DecodeInt(fb.upper.GetBytes())
+		if err != nil {
+			log.Debugf("decode feedback upper bound \"%v\" to integer failed: %v", fb.upper.GetBytes(), err)
+			continue
+		}
+		low, high := types.NewIntDatum(lowInt), types.NewIntDatum(highInt)
+		nq.feedback = append(nq.feedback, feedback{lower: &low, upper: &high, count: fb.count})
+	}
+	return nq
+}
+
 // StoreRanges stores the ranges for update.
 func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
 	q.feedback = make([]feedback, 0, len(ranges))
@@ -540,16 +560,14 @@ func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
 }
 
 // UpdateCMSketch updates the CMSketch by feedback.
-func UpdateCMSketch(c *CMSketch, feedback *QueryFeedback) *CMSketch {
-	if c == nil {
-		return nil
+func UpdateCMSketch(c *CMSketch, eqFeedbacks []feedback) *CMSketch {
+	if c == nil || len(eqFeedbacks) == 0 {
+		return c
 	}
 	newCMSketch := c.copy()
-	for _, fb := range feedback.feedback {
-		if bytes.Compare(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) >= 0 {
-			h1, h2 := murmur3.Sum128(fb.lower.GetBytes())
-			newCMSketch.setValue(h1, h2, uint32(fb.count))
-		}
+	for _, fb := range eqFeedbacks {
+		h1, h2 := murmur3.Sum128(fb.lower.GetBytes())
+		newCMSketch.setValue(h1, h2, uint32(fb.count))
 	}
 	return newCMSketch
 }
@@ -714,11 +732,11 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.getRowCount(sc, ranges)
+		expected, err = idx.getRowCount(sc, ranges, t.ModifyCount)
 		expected *= idx.getIncreaseFactor(t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.getColumnRowCount(sc, ranges)
+		expected, err = c.getColumnRowCount(sc, ranges, t.ModifyCount)
 		expected *= c.getIncreaseFactor(t.Count)
 	}
 	if err != nil {
@@ -726,4 +744,18 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	}
 	q.expected = int64(expected)
 	return nil
+}
+
+// splitFeedback splits the feedbacks into equality feedbacks and range feedbacks.
+func splitFeedbackByQueryType(feedbacks []feedback) ([]feedback, []feedback) {
+	var eqFB, ranFB []feedback
+	for _, fb := range feedbacks {
+		// Use `>=` here because sometimes the lower is equal to upper.
+		if bytes.Compare(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) >= 0 {
+			eqFB = append(eqFB, fb)
+		} else {
+			ranFB = append(ranFB, fb)
+		}
+	}
+	return eqFB, ranFB
 }

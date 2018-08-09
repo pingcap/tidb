@@ -35,6 +35,8 @@ type exprSet struct {
 	mask int64
 	// ranges contains all the ranges we got.
 	ranges []*ranger.Range
+	// numCols is the number of columns contained in the index or column(which is always 1).
+	numCols int
 }
 
 // The type of the exprSet.
@@ -177,7 +179,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			sets = append(sets, &exprSet{tp: colType, ID: col.ID, mask: maskCovered, ranges: ranges})
+			sets = append(sets, &exprSet{tp: colType, ID: col.ID, mask: maskCovered, ranges: ranges, numCols: 1})
 			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
 				sets[len(sets)-1].tp = pkType
 			}
@@ -190,7 +192,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			sets = append(sets, &exprSet{tp: indexType, ID: idxInfo.ID, mask: maskCovered, ranges: ranges})
+			sets = append(sets, &exprSet{tp: indexType, ID: idxInfo.ID, mask: maskCovered, ranges: ranges, numCols: len(idxInfo.Info.Columns)})
 		}
 	}
 	sets = getUsableSetsByGreedy(sets)
@@ -254,7 +256,7 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
-		bestID, bestCount, bestTp := -1, 0, colType
+		bestID, bestCount, bestTp, bestNumCols := -1, 0, colType, 0
 		for i, set := range sets {
 			set.mask &= mask
 			bits := popCount(set.mask)
@@ -262,20 +264,24 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 			if bits == 0 {
 				continue
 			}
-			if (bestTp == colType && set.tp < colType) || bestCount < bits {
-				bestID, bestCount, bestTp = i, bits, set.tp
+			// We greedy select the stats info based on:
+			// (1): The stats type, always prefer the primary key or index.
+			// (2): The number of expression that it covers, the more the better.
+			// (3): The number of columns that it contains, the less the better.
+			if (bestTp == colType && set.tp != colType) || bestCount < bits || (bestCount == bits && bestNumCols > set.numCols) {
+				bestID, bestCount, bestTp, bestNumCols = i, bits, set.tp, set.numCols
 			}
 		}
 		if bestCount == 0 {
 			break
-		} else {
-			// update the mask, remove the bit that sets[bestID].mask has.
-			mask &^= sets[bestID].mask
-
-			newBlocks = append(newBlocks, sets[bestID])
-			// remove the chosen one
-			sets = append(sets[:bestID], sets[bestID+1:]...)
 		}
+
+		// update the mask, remove the bit that sets[bestID].mask has.
+		mask &^= sets[bestID].mask
+
+		newBlocks = append(newBlocks, sets[bestID])
+		// remove the chosen one
+		sets = append(sets[:bestID], sets[bestID+1:]...)
 	}
 	return
 }

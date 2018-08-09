@@ -16,6 +16,7 @@ package ddl
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
@@ -32,8 +33,12 @@ import (
 	"golang.org/x/net/context"
 )
 
-// RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
-var RunWorker = true
+var (
+	// RunWorker indicates if this TiDB server starts DDL worker and can run DDL job.
+	RunWorker = true
+	// ddlWorkerID is used for generating the next DDL worker ID.
+	ddlWorkerID = int32(0)
+)
 
 type workerType byte
 
@@ -51,7 +56,7 @@ const (
 // worker is used for handling DDL jobs.
 // Now we have two kinds of workers.
 type worker struct {
-	id       int
+	id       int32
 	tp       workerType
 	ddlJobCh chan struct{}
 	quitCh   chan struct{}
@@ -61,9 +66,9 @@ type worker struct {
 	delRangeManager delRangeManager
 }
 
-func newWorker(tp workerType, id int, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
+func newWorker(tp workerType, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
 	worker := &worker{
-		id:       id,
+		id:       atomic.AddInt32(&ddlWorkerID, 1),
 		tp:       tp,
 		ddlJobCh: make(chan struct{}, 1),
 		quitCh:   make(chan struct{}),
@@ -93,20 +98,20 @@ func (w *worker) typeStr() string {
 }
 
 func (w *worker) String() string {
-	return fmt.Sprintf("%d, tp %s", w.id, w.typeStr())
+	return fmt.Sprintf("worker %d, tp %s", w.id, w.typeStr())
 }
 
 func (w *worker) close() {
 	close(w.quitCh)
 	w.delRangeManager.clear()
 	w.wg.Wait()
-	log.Infof("[ddl] close DDL worker %s", w)
+	log.Infof("[ddl-%s] close DDL worker", w)
 }
 
 // start is used for async online schema changing, it will try to become the owner firstly,
 // then wait or pull the job queue to handle a schema change job.
 func (w *worker) start(d *ddlCtx) {
-	log.Infof("[ddl] start DDL worker %s", w)
+	log.Infof("[ddl-%s] start DDL worker", w)
 	defer w.wg.Done()
 
 	w.delRangeManager.start()
@@ -122,7 +127,7 @@ func (w *worker) start(d *ddlCtx) {
 		r := recover()
 		if r != nil {
 			buf := util.GetStack()
-			log.Errorf("[ddl] ddl %s, worker %s, %v %s", d.uuid, w, r, buf)
+			log.Errorf("[ddl-%s] ddl %s, %v %s", w, d.uuid, r, buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
 		}
 	}()
@@ -130,7 +135,7 @@ func (w *worker) start(d *ddlCtx) {
 	for {
 		select {
 		case <-ticker.C:
-			log.Debugf("[ddl] worker %s waits %s to check DDL status again", w, checkTime)
+			log.Debugf("[ddl-%s] wait %s to check DDL status again", w, checkTime)
 		case <-w.ddlJobCh:
 		case <-w.quitCh:
 			return
@@ -138,7 +143,7 @@ func (w *worker) start(d *ddlCtx) {
 
 		err := w.handleDDLJobQueue(d)
 		if err != nil {
-			log.Errorf("[ddl] worker %s handles DDL job err %v", w, errors.ErrorStack(err))
+			log.Errorf("[ddl-%s] handle DDL job err %v", w, errors.ErrorStack(err))
 		}
 	}
 }
@@ -234,7 +239,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		return nil
 	}
 	if kv.ErrEntryTooLarge.Equal(err) {
-		log.Warnf("[ddl] update DDL job %v failed %v", job, errors.ErrorStack(err))
+		log.Warnf("[ddl-%s] update DDL job %v failed %v", w, job, errors.ErrorStack(err))
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
 		job.Error = toTError(err)
@@ -252,7 +257,7 @@ func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error 
 	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
 	// so we shouldn't replace RawArgs with the marshaling Args.
 	if meetErr && (job.RawArgs != nil && job.Args == nil) {
-		log.Infof("[ddl] update DDL Job %s shouldn't update raw args", job)
+		log.Infof("[ddl-%s] update DDL Job %s shouldn't update raw args", w, job)
 		updateRawArgs = false
 	}
 	return errors.Trace(t.UpdateDDLJob(0, job, updateRawArgs))
@@ -296,7 +301,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}
 
 	job.BinlogInfo.FinishedTS = t.StartTS
-	log.Infof("[ddl] finish DDL job %v", job)
+	log.Infof("[ddl-%s] finish DDL job %v", w, job)
 	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
 }
@@ -390,7 +395,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		if runJobErr != nil {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
-			log.Infof("[ddl] worker %s runs DDL job error, sleeps a while:%v then retries it.", w, WaitTimeWhenErrorOccured)
+			log.Infof("[ddl-%s] run DDL job error, sleeps a while:%v then retries it.", w, WaitTimeWhenErrorOccured)
 			metrics.DDLJobErrCounter.Inc()
 			time.Sleep(WaitTimeWhenErrorOccured)
 		}
@@ -410,9 +415,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
-		if job.IsRunning() || job.IsRollingback() || job.IsDone() || job.IsRollbackDone() {
-			w.waitSchemaChanged(nil, d, waitTime, schemaVer)
-		}
+		w.waitSchemaChanged(nil, d, waitTime, schemaVer, job)
 		if job.IsSynced() {
 			asyncNotify(d.ddlJobDoneCh)
 		}
@@ -425,7 +428,7 @@ func (w *worker) waitDependencyJobFinished(job *model.Job, cnt *int) {
 	if job.DependencyID != noneDependencyJob {
 		intervalCnt := int(3 * time.Second / waitDependencyJobInterval)
 		if *cnt%intervalCnt == 0 {
-			log.Infof("[ddl] worker %s job %d needs to wait dependency job %d, sleeps a while:%v then retries it.", w, job.ID, job.DependencyID, waitDependencyJobInterval)
+			log.Infof("[ddl-%s] job ID:%d needs to wait dependency job %d, sleeps a while:%v then retries it.", w, job.ID, job.DependencyID, waitDependencyJobInterval)
 		}
 		time.Sleep(waitDependencyJobInterval)
 		*cnt++
@@ -443,7 +446,7 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
-	log.Infof("[ddl] run DDL job %s", job)
+	log.Infof("[ddl-%s] run DDL job %s", w, job)
 	if job.IsFinished() {
 		return
 	}
@@ -451,7 +454,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if job.IsCancelling() {
 		// If the value of SnapshotVer isn't zero, it means the work is backfilling the indexes.
 		if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-			log.Infof("[ddl] run the cancelling DDL job %s", job)
+			log.Infof("[ddl-%s] run the cancelling DDL job %s", w, job)
 			w.reorgCtx.notifyReorgCancel()
 		} else {
 			job.State = model.JobStateCancelled
@@ -516,9 +519,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if err != nil {
 		// If job is not cancelled, we should log this error.
 		if job.State != model.JobStateCancelled {
-			log.Errorf("[ddl] run DDL job err %v", errors.ErrorStack(err))
+			log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
 		} else {
-			log.Infof("[ddl] the DDL job is normal to cancel because %v", errors.ErrorStack(err))
+			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, errors.ErrorStack(err))
 		}
 
 		job.Error = toTError(err)
@@ -540,7 +543,10 @@ func toTError(err error) *terror.Error {
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
 // we wait 2 * lease time.
-func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64) {
+func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) {
+	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
+		return
+	}
 	if waitTime == 0 {
 		return
 	}
@@ -552,7 +558,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	}()
 
 	if latestSchemaVersion == 0 {
-		log.Infof("[ddl] schema version doesn't change")
+		log.Infof("[ddl-%s] schema version doesn't change", w)
 		return
 	}
 
@@ -563,7 +569,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	}
 	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
-		log.Infof("[ddl] update latest schema version %d failed %v", latestSchemaVersion, err)
+		log.Infof("[ddl-%s] update latest schema version %d failed %v", w, latestSchemaVersion, err)
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			// If err is context.DeadlineExceeded, it means waitTime(2 * lease) is elapsed. So all the schemas are synced by ticker.
 			// There is no need to use etcd to sync. The function returns directly.
@@ -574,7 +580,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	// OwnerCheckAllVersions returns only when context is timeout(2 * lease) or all TiDB schemas are synced.
 	err = d.schemaSyncer.OwnerCheckAllVersions(ctx, latestSchemaVersion)
 	if err != nil {
-		log.Infof("[ddl] wait latest schema version %d to deadline %v", latestSchemaVersion, err)
+		log.Infof("[ddl-%s] wait latest schema version %d to deadline %v", w, latestSchemaVersion, err)
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			return
 		}
@@ -583,7 +589,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 			return
 		}
 	}
-	log.Infof("[ddl] wait latest schema version %v changed, take time %v", latestSchemaVersion, time.Since(timeStart))
+	log.Infof("[ddl-%s] wait latest schema version %d changed, take time %v, job %s", w, latestSchemaVersion, time.Since(timeStart), job)
 	return
 }
 
@@ -604,11 +610,11 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 	startTime := time.Now()
 	latestSchemaVersion, err := d.schemaSyncer.MustGetGlobalVersion(ctx)
 	if err != nil {
-		log.Warnf("[ddl] handle exception take time %v", time.Since(startTime))
+		log.Warnf("[ddl-%s] handle exception take time %v", w, time.Since(startTime))
 		return
 	}
-	w.waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion)
-	log.Infof("[ddl] the handle exception take time %v", time.Since(startTime))
+	w.waitSchemaChanged(ctx, d, waitTime, latestSchemaVersion, job)
+	log.Infof("[ddl-%s] handle exception take time %v", w, time.Since(startTime))
 }
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.

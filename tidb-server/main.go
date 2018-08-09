@@ -384,8 +384,8 @@ func setGlobalVars() {
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
-	plan.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled
-	if plan.PreparedPlanCacheEnabled {
+	plan.SetPreparedPlanCache(cfg.PreparedPlanCache.Enabled)
+	if plan.PreparedPlanCacheEnabled() {
 		plan.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
 	}
 

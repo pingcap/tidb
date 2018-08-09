@@ -173,8 +173,16 @@ func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef
 	constraints []*ast.Constraint) ([]*table.Column, []*ast.Constraint, error) {
 	var cols []*table.Column
 	colMap := map[string]*table.Column{}
+	// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
+	var outPriKeyConstraint *ast.Constraint
+	for _, v := range constraints {
+		if v.Tp == ast.ConstraintPrimaryKey {
+			outPriKeyConstraint = v
+			break
+		}
+	}
 	for i, colDef := range colDefs {
-		col, cts, err := buildColumnAndConstraint(ctx, i, colDef)
+		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -229,29 +237,46 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 	return nil
 }
 
+// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func buildColumnAndConstraint(ctx sessionctx.Context, offset int,
-	colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
+	colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
 	err := setCharsetCollationFlenDecimal(colDef.Tp)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	col, cts, err := columnDefToCol(ctx, offset, colDef)
+	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	return col, cts, nil
 }
 
-// checkColumnCantHaveDefaultValue checks the column can have value as default or not.
-// Now, TEXT/BLOB/JSON can't have not null value as default.
-func checkColumnCantHaveDefaultValue(col *table.Column, value interface{}) (err error) {
+// checkColumnDefaultValue checks the default value of the column.
+// In non-strict SQL mode, if the default value of the column is an empty string, the default value can be ignored.
+// In strict SQL mode, TEXT/BLOB/JSON can't have not null default values.
+func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value interface{}) (bool, interface{}, error) {
+	hasDefaultValue := true
 	if value != nil && (col.Tp == mysql.TypeJSON ||
 		col.Tp == mysql.TypeTinyBlob || col.Tp == mysql.TypeMediumBlob ||
 		col.Tp == mysql.TypeLongBlob || col.Tp == mysql.TypeBlob) {
-		// TEXT/BLOB/JSON can't have not null default values.
-		return errBlobCantHaveDefault.GenByArgs(col.Name.O)
+		// In non-strict SQL mode.
+		if !ctx.GetSessionVars().SQLMode.HasStrictMode() && value == "" {
+			if col.Tp == mysql.TypeBlob || col.Tp == mysql.TypeLongBlob {
+				// The TEXT/BLOB default value can be ignored.
+				hasDefaultValue = false
+			}
+			// In non-strict SQL mode, if the column type is json and the default value is null, it is initialized to an empty array.
+			if col.Tp == mysql.TypeJSON {
+				value = `null`
+			}
+			sc := ctx.GetSessionVars().StmtCtx
+			sc.AppendWarning(errBlobCantHaveDefault.GenByArgs(col.Name.O))
+			return hasDefaultValue, value, nil
+		}
+		// In strict SQL mode or default value is not an empty string.
+		return hasDefaultValue, value, errBlobCantHaveDefault.GenByArgs(col.Name.O)
 	}
-	return nil
+	return hasDefaultValue, value, nil
 }
 
 // isExplicitTimeStamp is used to check if explicit_defaults_for_timestamp is on or off.
@@ -263,7 +288,8 @@ func isExplicitTimeStamp() bool {
 }
 
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
-func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (*table.Column, []*ast.Constraint, error) {
+// outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
+func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
 	var constraints = make([]*ast.Constraint, 0)
 	col := table.ToColumn(&model.ColumnInfo{
 		Offset:    offset,
@@ -282,6 +308,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 
 	setOnUpdateNow := false
 	hasDefaultValue := false
+	hasNullFlag := false
 	if colDef.Options != nil {
 		length := types.UnspecifiedLength
 
@@ -299,6 +326,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 			case ast.ColumnOptionNull:
 				col.Flag &= ^mysql.NotNullFlag
 				removeOnUpdateNowFlag(col)
+				hasNullFlag = true
 			case ast.ColumnOptionAutoIncrement:
 				col.Flag |= mysql.AutoIncrementFlag
 			case ast.ColumnOptionPrimaryKey:
@@ -314,11 +342,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 				if err != nil {
 					return nil, nil, ErrColumnBadNull.Gen("invalid default value - %s", err)
 				}
-				if err = checkColumnCantHaveDefaultValue(col, value); err != nil {
+				if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 					return nil, nil, errors.Trace(err)
 				}
 				col.DefaultValue = value
-				hasDefaultValue = true
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
@@ -367,7 +394,11 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef) (
 		col.Flag &= ^mysql.BinaryFlag
 		col.Flag |= mysql.ZerofillFlag
 	}
-	err := checkDefaultValue(ctx, col, hasDefaultValue)
+	err := checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	err = checkDefaultValue(ctx, col, hasDefaultValue)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -475,12 +506,40 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 		}
 		return nil
 	}
+	// Primary key default null is invalid.
+	if mysql.HasPriKeyFlag(c.Flag) {
+		return ErrPrimaryCantHaveNull
+	}
 
 	// Set not null but default null is invalid.
 	if mysql.HasNotNullFlag(c.Flag) {
 		return types.ErrInvalidDefault.GenByArgs(c.Name)
 	}
 
+	return nil
+}
+
+// checkPriKeyConstraint check all parts of a PRIMARY KEY must be NOT NULL
+func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool, outPriKeyConstraint *ast.Constraint) error {
+	// Primary key should not be null.
+	if mysql.HasPriKeyFlag(col.Flag) && hasDefaultValue && col.DefaultValue == nil {
+		return types.ErrInvalidDefault.GenByArgs(col.Name)
+	}
+	// Set primary key flag for outer primary key constraint.
+	// Such as: create table t1 (id int , age int, primary key(id))
+	if !mysql.HasPriKeyFlag(col.Flag) && outPriKeyConstraint != nil {
+		for _, key := range outPriKeyConstraint.Keys {
+			if key.Column.Name.L != col.Name.L {
+				continue
+			}
+			col.Flag |= mysql.PriKeyFlag
+			break
+		}
+	}
+	// Primary key should not be null.
+	if mysql.HasPriKeyFlag(col.Flag) && hasNullFlag {
+		return ErrPrimaryCantHaveNull
+	}
 	return nil
 }
 
@@ -538,22 +597,26 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 	return nil
 }
 
-// checkPointTypeColumns checks multiple decimal/float/double columns.
-func checkPointTypeColumns(colDefs []*ast.ColumnDef) error {
+// checkColumnsAttributes checks attributes for multiple columns.
+func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
-		if err := checkPointTypeColumn(colDef.Name.OrigColName(), colDef.Tp); err != nil {
+		if err := checkColumnAttributes(colDef.Name.OrigColName(), colDef.Tp); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
 }
 
-// checkPointTypeColumn checks a decimal/float/double column.
-func checkPointTypeColumn(colName string, tp *types.FieldType) error {
+// checkColumnAttributes check attributes for single column.
+func checkColumnAttributes(colName string, tp *types.FieldType) error {
 	switch tp.Tp {
 	case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
 		if tp.Flen < tp.Decimal {
 			return types.ErrMBiggerThanD.GenByArgs(colName)
+		}
+	case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
+		if tp.Decimal != types.UnspecifiedFsp && (tp.Decimal < types.MinFsp || tp.Decimal > types.MaxFsp) {
+			return types.ErrTooBigPrecision.GenByArgs(tp.Decimal, colName, types.MaxFsp)
 		}
 	}
 	return nil
@@ -812,7 +875,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	if err = checkPointTypeColumns(colDefs); err != nil {
+	if err = checkColumnsAttributes(colDefs); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -837,24 +900,27 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 
 	if pi != nil {
-		err = checkPartitionNameUnique(tbInfo, pi)
-		if err != nil {
+		if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
 			return errors.Trace(err)
 		}
-		err = checkCreatePartitionValue(pi)
-		if err != nil {
+
+		if err = checkCreatePartitionValue(pi); err != nil {
 			return errors.Trace(err)
 		}
-		err = checkAddPartitionTooManyPartitions(len(pi.Definitions))
-		if err != nil {
+
+		if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
 			return errors.Trace(err)
 		}
-		err = checkPartitionFuncValid(s.Partition.Expr)
-		if err != nil {
+
+		if err = checkPartitionFuncValid(s.Partition.Expr); err != nil {
 			return errors.Trace(err)
 		}
-		err = checkPartitionFuncType(ctx, s, cols, tbInfo)
-		if err != nil {
+
+		if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+
+		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
 			return errors.Trace(err)
 		}
 		tbInfo.Partition = pi
@@ -1131,7 +1197,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	colName := specNewColumn.Name.Name.O
-	if err = checkPointTypeColumn(colName, specNewColumn.Tp); err != nil {
+	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1177,7 +1243,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// Ingore table constraints now, maybe return error later.
 	// We use length(t.Cols()) as the default offset firstly, we will change the
 	// column's offset later.
-	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn)
+	col, _, err = buildColumnAndConstraint(ctx, len(t.Cols()), specNewColumn, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1418,11 +1484,10 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			if err != nil {
 				return ErrColumnBadNull.Gen("invalid default value - %s", err)
 			}
-			if err = checkColumnCantHaveDefaultValue(col, value); err != nil {
+			if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 				return errors.Trace(err)
 			}
 			col.DefaultValue = value
-			hasDefaultValue = true
 		case ast.ColumnOptionComment:
 			err := setColumnComment(ctx, col, opt)
 			if err != nil {
@@ -1508,7 +1573,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
-	if err = checkPointTypeColumn(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
+	if err = checkColumnAttributes(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1869,6 +1934,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{unique, indexName, idxColNames, indexOption},
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 
 	err = d.doDDLJob(ctx, job)

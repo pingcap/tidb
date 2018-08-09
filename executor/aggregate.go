@@ -376,7 +376,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 		}
 		aggEvalCtxs := w.getContext(sc, groupKey, w.aggCtxsMap)
 		for i, af := range w.aggFuncs {
-			if err = af.Update(aggEvalCtxs[i], sc, &row); err != nil {
+			if err = af.Update(aggEvalCtxs[i], sc, row); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -751,26 +751,17 @@ type StreamAggExec struct {
 	executed bool
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
 	isChildReturnEmpty bool
+	defaultVal         *chunk.Chunk
 	StmtCtx            *stmtctx.StatementContext
-	AggFuncs           []aggregation.Aggregation
-	aggCtxs            []*aggregation.AggEvaluateContext
 	GroupByItems       []expression.Expression
 	curGroupKey        []types.Datum
 	tmpGroupKey        []types.Datum
-
-	inputIter  *chunk.Iterator4Chunk
-	inputRow   chunk.Row
-	mutableRow chunk.MutRow
-	rowBuffer  []types.Datum
-
-	defaultVal *chunk.Chunk
-
-	// for the new execution framework of aggregate functions
-	newAggFuncs    []aggfuncs.AggFunc
-	partialResults []aggfuncs.PartialResult
-	groupRows      []chunk.Row
-
-	childResult *chunk.Chunk
+	inputIter          *chunk.Iterator4Chunk
+	inputRow           chunk.Row
+	aggFuncs           []aggfuncs.AggFunc
+	partialResults     []aggfuncs.PartialResult
+	groupRows          []chunk.Row
+	childResult        *chunk.Chunk
 }
 
 // Open implements the Executor Open interface.
@@ -783,19 +774,10 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
 	e.inputRow = e.inputIter.End()
-	e.mutableRow = chunk.MutRowFromTypes(e.retTypes())
-	e.rowBuffer = make([]types.Datum, 0, e.Schema().Len())
 
-	if e.newAggFuncs != nil {
-		e.partialResults = make([]aggfuncs.PartialResult, 0, len(e.newAggFuncs))
-		for _, newAggFunc := range e.newAggFuncs {
-			e.partialResults = append(e.partialResults, newAggFunc.AllocPartialResult())
-		}
-	} else {
-		e.aggCtxs = make([]*aggregation.AggEvaluateContext, 0, len(e.AggFuncs))
-		for _, agg := range e.AggFuncs {
-			e.aggCtxs = append(e.aggCtxs, agg.CreateContext(e.ctx.GetSessionVars().StmtCtx))
-		}
+	e.partialResults = make([]aggfuncs.PartialResult, 0, len(e.aggFuncs))
+	for _, aggFunc := range e.aggFuncs {
+		e.partialResults = append(e.partialResults, aggFunc.AllocPartialResult())
 	}
 
 	return nil
@@ -841,16 +823,7 @@ func (e *StreamAggExec) consumeOneGroup(ctx context.Context, chk *chunk.Chunk) e
 					return errors.Trace(err)
 				}
 			}
-			if e.newAggFuncs != nil {
-				e.groupRows = append(e.groupRows, e.inputRow)
-			} else {
-				for i, af := range e.AggFuncs {
-					err := af.Update(e.aggCtxs[i], e.StmtCtx, e.inputRow)
-					if err != nil {
-						return errors.Trace(err)
-					}
-				}
-			}
+			e.groupRows = append(e.groupRows, e.inputRow)
 			if meetNewGroup {
 				e.inputRow = e.inputIter.Next()
 				return nil
@@ -865,8 +838,8 @@ func (e *StreamAggExec) consumeGroupRows() error {
 		return nil
 	}
 
-	for i, newAggFunc := range e.newAggFuncs {
-		err := newAggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
+	for i, aggFunc := range e.aggFuncs {
+		err := aggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -881,11 +854,9 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 	}
 
 	// Before fetching a new batch of input, we should consume the last group.
-	if e.newAggFuncs != nil {
-		err = e.consumeGroupRows()
-		if err != nil {
-			return errors.Trace(err)
-		}
+	err = e.consumeGroupRows()
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	err = e.children[0].Next(ctx, e.childResult)
@@ -912,26 +883,16 @@ func (e *StreamAggExec) fetchChildIfNecessary(ctx context.Context, chk *chunk.Ch
 // appendResult2Chunk appends result of all the aggregation functions to the
 // result chunk, and reset the evaluation context for each aggregation.
 func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
-	if e.newAggFuncs != nil {
-		for i, newAggFunc := range e.newAggFuncs {
-			err := newAggFunc.AppendFinalResult2Chunk(e.ctx, e.partialResults[i], chk)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			newAggFunc.ResetPartialResult(e.partialResults[i])
+	for i, aggFunc := range e.aggFuncs {
+		err := aggFunc.AppendFinalResult2Chunk(e.ctx, e.partialResults[i], chk)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		if len(e.newAggFuncs) == 0 {
-			chk.SetNumVirtualRows(chk.NumRows() + 1)
-		}
-		return nil
+		aggFunc.ResetPartialResult(e.partialResults[i])
 	}
-	e.rowBuffer = e.rowBuffer[:0]
-	for i, af := range e.AggFuncs {
-		e.rowBuffer = append(e.rowBuffer, af.GetResult(e.aggCtxs[i]))
-		af.ResetContext(e.ctx.GetSessionVars().StmtCtx, e.aggCtxs[i])
+	if len(e.aggFuncs) == 0 {
+		chk.SetNumVirtualRows(chk.NumRows() + 1)
 	}
-	e.mutableRow.SetDatums(e.rowBuffer...)
-	chk.AppendRow(e.mutableRow.ToRow())
 	return nil
 }
 

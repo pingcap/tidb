@@ -15,6 +15,7 @@ package variable
 
 import (
 	"crypto/tls"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -207,6 +208,9 @@ type SessionVars struct {
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
 
+	// PlanColumnID is the unique id for column when building plan.
+	PlanColumnID int
+
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
@@ -259,8 +263,8 @@ type SessionVars struct {
 
 	/* TiDB system variables */
 
-	// ImportingData is true when importing data.
-	ImportingData bool
+	// LightningMode is true when the lightning use the kvencoder to transfer sql to raw kv.
+	LightningMode bool
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
@@ -280,6 +284,9 @@ type SessionVars struct {
 
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition bool
+
+	// DDLReorgPriority is the operation priority of adding indices.
+	DDLReorgPriority int
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -306,6 +313,7 @@ func NewSessionVars() *SessionVars {
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                DefTiDBRetryLimit,
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:          kv.PriorityLow,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -350,9 +358,15 @@ func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {
-	if !s.ImportingData {
+	if !s.LightningMode {
 		s.GetWriteStmtBufs().clean()
 	}
+}
+
+// AllocPlanColumnID allocates column id for planner.
+func (s *SessionVars) AllocPlanColumnID() int {
+	s.PlanColumnID++
+	return s.PlanColumnID
 }
 
 // GetCharsetInfo gets charset and collation for current context.
@@ -444,6 +458,20 @@ func (s *SessionVars) deleteSystemVar(name string) error {
 	return nil
 }
 
+func (s *SessionVars) setDDLReorgPriority(val string) {
+	val = strings.ToLower(val)
+	switch val {
+	case "priority_low":
+		s.DDLReorgPriority = kv.PriorityLow
+	case "priority_normal":
+		s.DDLReorgPriority = kv.PriorityNormal
+	case "priority_high":
+		s.DDLReorgPriority = kv.PriorityHigh
+	default:
+		s.DDLReorgPriority = kv.PriorityLow
+	}
+}
+
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
@@ -477,8 +505,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
-	case TiDBImportingData:
-		s.ImportingData = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
@@ -547,6 +573,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableTablePartition = TiDBOptOn(val)
 	case TiDBDDLReorgWorkerCount:
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
+	case TiDBDDLReorgPriority:
+		s.setDDLReorgPriority(val)
 	}
 	s.systems[name] = val
 	return nil

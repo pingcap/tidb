@@ -198,7 +198,17 @@ func (c *Chunk) TruncateTo(numRows int) {
 			}
 		}
 		col.length = numRows
-		col.nullBitmap = col.nullBitmap[:(col.length>>3)+1]
+		bitmapLen := (col.length + 7) / 8
+		col.nullBitmap = col.nullBitmap[:bitmapLen]
+		if col.length%8 != 0 {
+			// When we append null, we simply increment the nullCount,
+			// so we need to clear the unused bits in the last bitmap byte.
+			lastByte := col.nullBitmap[bitmapLen-1]
+			unusedBitsLen := 8 - uint(col.length%8)
+			lastByte <<= unusedBitsLen
+			lastByte >>= unusedBitsLen
+			col.nullBitmap[bitmapLen-1] = lastByte
+		}
 	}
 	c.numVirtualRows = numRows
 }

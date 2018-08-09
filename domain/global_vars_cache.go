@@ -18,21 +18,21 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // GlobalVariableCache caches global variables.
 type GlobalVariableCache struct {
 	sync.RWMutex
 	lastModify time.Time
-	rows       []types.Row
+	rows       []chunk.Row
 	fields     []*ast.ResultField
 }
 
 const globalVariableCacheExpiry time.Duration = 2 * time.Second
 
 // Update updates the global variable cache.
-func (gvc *GlobalVariableCache) Update(rows []types.Row, fields []*ast.ResultField) {
+func (gvc *GlobalVariableCache) Update(rows []chunk.Row, fields []*ast.ResultField) {
 	gvc.Lock()
 	gvc.lastModify = time.Now()
 	gvc.rows = rows
@@ -41,7 +41,7 @@ func (gvc *GlobalVariableCache) Update(rows []types.Row, fields []*ast.ResultFie
 }
 
 // Get gets the global variables from cache.
-func (gvc *GlobalVariableCache) Get() (succ bool, rows []types.Row, fields []*ast.ResultField) {
+func (gvc *GlobalVariableCache) Get() (succ bool, rows []chunk.Row, fields []*ast.ResultField) {
 	gvc.RLock()
 	defer gvc.RUnlock()
 	if time.Now().Sub(gvc.lastModify) < globalVariableCacheExpiry {
