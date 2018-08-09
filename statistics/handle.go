@@ -41,6 +41,10 @@ type Handle struct {
 		lastVersion uint64
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
+		// pid2tid is the map from partition ID to table ID.
+		pid2tid map[int64]int64
+		// schemaVersion is the version of information schema when `pid2tid` is built.
+		schemaVersion int64
 	}
 
 	restrictedExec sqlexec.RestrictedSQLExecutor
@@ -57,9 +61,6 @@ type Handle struct {
 	feedback []*QueryFeedback
 
 	Lease time.Duration
-
-	pid2tid       map[int64]int64 // pid2tid is the map from partition ID to table ID.
-	schemaVersion int64           // schemaVersion is the version of information schema when `pid2tid` is built.
 }
 
 // Clear the statsCache, only for test.
@@ -166,11 +167,13 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
-	if is.SchemaMetaVersion() != h.schemaVersion {
-		h.schemaVersion = is.SchemaMetaVersion()
-		h.pid2tid = buildPartitionID2TableID(is)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if is.SchemaMetaVersion() != h.mu.schemaVersion {
+		h.mu.schemaVersion = is.SchemaMetaVersion()
+		h.mu.pid2tid = buildPartitionID2TableID(is)
 	}
-	if id, ok := h.pid2tid[physicalID]; ok {
+	if id, ok := h.mu.pid2tid[physicalID]; ok {
 		return is.TableByID(id)
 	}
 	return is.TableByID(physicalID)
