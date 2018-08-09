@@ -83,6 +83,8 @@ type SchemaSyncer interface {
 	// the latest schema version. If the result is false, wait for a while and check again util the processing time reach 2 * lease.
 	// It returns until all servers' versions are equal to the latest version or the ctx is done.
 	OwnerCheckAllVersions(ctx context.Context, latestVer int64) error
+	// GetSession return the session lease id of SchemaSyncer.
+	GetSessionLeaseID() clientv3.LeaseID
 }
 
 type schemaVersionSyncer struct {
@@ -125,6 +127,11 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		time.Sleep(keyOpRetryInterval)
 	}
 	return errors.Trace(err)
+}
+
+// GetSessionLeaseID implements SchemaSyncer.GetSessionLeaseID interface.
+func (s *schemaVersionSyncer) GetSessionLeaseID() clientv3.LeaseID {
+	return s.session.Lease()
 }
 
 // Init implements SchemaSyncer.Init interface.

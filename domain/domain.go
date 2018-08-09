@@ -365,6 +365,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 				break
 			}
 			do.SchemaValidator.Restart()
+			do.info.Restart(syncer.GetSessionLeaseID())
 		case <-do.exit:
 			return
 		}
@@ -509,7 +510,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if err != nil {
 		return errors.Trace(err)
 	}
-	do.info = NewInfoSyncer(do.ddl.GetID(), do.etcdClient)
+	do.info = NewInfoSyncer(do.ddl.GetID(), do.etcdClient, do.ddl.SchemaSyncer().GetSessionLeaseID())
 	err = do.info.StoreServerInfo(ctx)
 	if err != nil {
 		return errors.Trace(err)

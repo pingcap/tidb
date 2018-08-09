@@ -1269,6 +1269,7 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	do, err := session.GetDomain(h.store.(kv.Storage))
 	if err != nil {
 		writeError(w, errors.New("create session error"))
+		log.Error(err)
 		return
 	}
 	info := serverInfo{}
@@ -1291,6 +1292,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	do, err := session.GetDomain(h.store.(kv.Storage))
 	if err != nil {
 		writeError(w, errors.New("create session error"))
+		log.Error(err)
 		return
 	}
 	ctx := context.Background()

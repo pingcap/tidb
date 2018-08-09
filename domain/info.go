@@ -43,6 +43,8 @@ type InfoSyncer struct {
 	etcdCli        *clientv3.Client
 	info           *ServerInfo
 	serverInfoPath string
+	// InfoSyncer will reuse the leaseID of ddl.SchemaSyncer.
+	sessionLeaseID clientv3.LeaseID
 }
 
 // ServerInfo is server static information.
@@ -63,26 +65,13 @@ type ServerVersionInfo struct {
 }
 
 // NewInfoSyncer return new InfoSyncer. It is exported for testing.
-func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
+func NewInfoSyncer(id string, etcdCli *clientv3.Client, leaseID clientv3.LeaseID) *InfoSyncer {
 	return &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
+		sessionLeaseID: leaseID,
 	}
-}
-
-func getServerInfo(id string) *ServerInfo {
-	cfg := config.GetGlobalConfig()
-	info := &ServerInfo{
-		ID:         id,
-		IP:         cfg.AdvertiseAddress,
-		Port:       cfg.Port,
-		StatusPort: cfg.Status.StatusPort,
-		Lease:      cfg.Lease,
-	}
-	info.Version = mysql.ServerVersion
-	info.GitHash = printer.TiDBGitHash
-	return info
 }
 
 //GetServerInfo gets self server static information.
@@ -130,7 +119,7 @@ func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ddl.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, hack.String(infoBuf))
+	err = ddl.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, hack.String(infoBuf), clientv3.WithLease(is.sessionLeaseID))
 	return errors.Trace(err)
 }
 
@@ -143,6 +132,12 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	if err != nil {
 		log.Errorf("[infoSyncer] remove server info failed %v", err)
 	}
+}
+
+// Restart restart the info syncer with new session leaseID and store server info to etcd again.
+func (is *InfoSyncer) Restart(leaseID clientv3.LeaseID) {
+	is.sessionLeaseID = leaseID
+	is.StoreServerInfo(context.Background())
 }
 
 // getInfo gets server information from Etcd according to the key and opts.
@@ -177,4 +172,19 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 		return allInfo, nil
 	}
 	return nil, errors.Trace(err)
+}
+
+// getServerInfo gets self tidb server information.
+func getServerInfo(id string) *ServerInfo {
+	cfg := config.GetGlobalConfig()
+	info := &ServerInfo{
+		ID:         id,
+		IP:         cfg.AdvertiseAddress,
+		Port:       cfg.Port,
+		StatusPort: cfg.Status.StatusPort,
+		Lease:      cfg.Lease,
+	}
+	info.Version = mysql.ServerVersion
+	info.GitHash = printer.TiDBGitHash
+	return info
 }

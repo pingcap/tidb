@@ -39,6 +39,11 @@ func NewMockSchemaSyncer() SchemaSyncer {
 	return &mockSchemaSyncer{}
 }
 
+// GetSessionLeaseID implements SchemaSyncer.GetSessionLeaseID interface.
+func (s *mockSchemaSyncer) GetSessionLeaseID() clientv3.LeaseID {
+	return 0
+}
+
 // Init implements SchemaSyncer.Init interface.
 func (s *mockSchemaSyncer) Init(ctx context.Context) error {
 	s.globalVerCh = make(chan clientv3.WatchResponse, 1)
