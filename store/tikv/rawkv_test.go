@@ -56,12 +56,12 @@ func (s *testRawKVSuite) mustNotExist(c *C, key []byte) {
 }
 
 func (s *testRawKVSuite) mustBatchNotExist(c *C, keys [][]byte) {
-	pairs, err := s.client.BatchGet(keys)
+	values, err := s.client.BatchGet(keys)
 	c.Assert(err, IsNil)
-	c.Assert(pairs, NotNil)
-	c.Assert(len(keys), Equals, len(pairs))
-	for _, pair := range pairs {
-		c.Assert([]byte{}, BytesEquals, pair.Value)
+	c.Assert(values, NotNil)
+	c.Assert(len(keys), Equals, len(values))
+	for _, value := range values {
+		c.Assert([]byte{}, BytesEquals, value)
 	}
 }
 
@@ -73,16 +73,12 @@ func (s *testRawKVSuite) mustGet(c *C, key, value []byte) {
 }
 
 func (s *testRawKVSuite) mustBatchGet(c *C, keys, values [][]byte) {
-	pairs, err := s.client.BatchGet(keys)
+	checkValues, err := s.client.BatchGet(keys)
 	c.Assert(err, IsNil)
-	c.Assert(pairs, NotNil)
-	c.Assert(len(keys), Equals, len(pairs))
-	checks := make(map[string][]byte, len(keys))
-	for i, key := range keys {
-		checks[string(key)] = values[i]
-	}
-	for _, pair := range pairs {
-		c.Assert(checks[string(pair.Key)], BytesEquals, pair.Value)
+	c.Assert(checkValues, NotNil)
+	c.Assert(len(keys), Equals, len(checkValues))
+	for i := range keys {
+		c.Check(values[i], BytesEquals, checkValues[i])
 	}
 }
 

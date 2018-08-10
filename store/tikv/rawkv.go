@@ -109,7 +109,7 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 }
 
 // BatchGet queries values with the keys.
-func (c *RawKVClient) BatchGet(keys [][]byte) ([]*kvrpcpb.KvPair, error) {
+func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
 	start := time.Now()
 	defer func() {
 		metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_get").Observe(time.Since(start).Seconds())
@@ -125,7 +125,15 @@ func (c *RawKVClient) BatchGet(keys [][]byte) ([]*kvrpcpb.KvPair, error) {
 	if cmdResp == nil {
 		return nil, errors.Trace(ErrBodyMissing)
 	}
-	return cmdResp.Pairs, nil
+	keyToIndex := make(map[string]int, len(keys))
+	for i, key := range keys {
+		keyToIndex[string(key)] = i
+	}
+	values := make([][]byte, 0, len(keys))
+	for _, pair := range cmdResp.Pairs {
+		values[keyToIndex[string(pair.Key)]] = pair.Value
+	}
+	return values, nil
 }
 
 // Put stores a key-value pair to TiKV.
@@ -331,13 +339,13 @@ func (c *RawKVClient) sendBatchReq(bo *Backoffer, keys [][]byte, cmdType tikvrpc
 		return nil, errors.Trace(err)
 	}
 
-	var batchs []batch
+	var batches []batch
 	for regionID, groupKeys := range groups {
-		batchs = appendKeyBatchs(batchs, regionID, groupKeys, rawBatchPairCount)
+		batches = appendKeyBatches(batches, regionID, groupKeys, rawBatchPairCount)
 	}
 	bo, cancel := bo.Fork()
-	ches := make(chan singleBatchResp, len(batchs))
-	for _, batch := range batchs {
+	ches := make(chan singleBatchResp, len(batches))
+	for _, batch := range batches {
 		batch1 := batch
 		rawKVClientGP.Go(func() {
 			singleBatchBackoffer, singleBatchCancel := bo.Fork()
@@ -354,7 +362,7 @@ func (c *RawKVClient) sendBatchReq(bo *Backoffer, keys [][]byte, cmdType tikvrpc
 	case tikvrpc.CmdRawBatchDelete:
 		resp = &tikvrpc.Response{Type: tikvrpc.CmdRawBatchDelete, RawBatchDelete: &kvrpcpb.RawBatchDeleteResponse{}}
 	}
-	for i := 0; i < len(batchs); i++ {
+	for i := 0; i < len(batches); i++ {
 		singleResp, ok := <-ches
 		if ok {
 			if singleResp.err != nil {
@@ -520,11 +528,11 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 	return errors.Trace(err)
 }
 
-func appendKeyBatchs(batchs []batch, regionID RegionVerID, groupKeys [][]byte, limit int) []batch {
+func appendKeyBatches(batches []batch, regionID RegionVerID, groupKeys [][]byte, limit int) []batch {
 	var keys [][]byte
 	for start, count := 0, 0; start < len(groupKeys); start++ {
 		if count > limit {
-			batchs = append(batchs, batch{regionID: regionID, keys: keys})
+			batches = append(batches, batch{regionID: regionID, keys: keys})
 			keys = make([][]byte, 0, limit)
 			count = 0
 		}
@@ -532,9 +540,9 @@ func appendKeyBatchs(batchs []batch, regionID RegionVerID, groupKeys [][]byte, l
 		count++
 	}
 	if len(keys) != 0 {
-		batchs = append(batchs, batch{regionID: regionID, keys: keys})
+		batches = append(batches, batch{regionID: regionID, keys: keys})
 	}
-	return batchs
+	return batches
 }
 
 func appendBatches(batches []batch, regionID RegionVerID, groupKeys [][]byte, keyToValue map[string][]byte, limit int) []batch {
