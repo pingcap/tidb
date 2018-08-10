@@ -3146,9 +3146,9 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("partition_add_idx"))
 	c.Assert(err, IsNil)
 	var idx1 table.Index
-	for _, pidx := range t.Indices() {
-		if pidx.Meta().Name.L == "idx1" {
-			idx1 = pidx
+	for _, idx := range t.Indices() {
+		if idx.Meta().Name.L == "idx1" {
+			idx1 = idx
 			break
 		}
 	}
