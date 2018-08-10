@@ -16,6 +16,7 @@ package expression
 import (
 	"strings"
 	"time"
+	"math"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
@@ -57,7 +58,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 	case string:
 		upperX := strings.ToUpper(x)
 		if upperX == strings.ToUpper(ast.CurrentTimestamp) {
-			value.Time = types.FromGoTime(defaultTime)
+			value.Time = types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond))
 			if tp == mysql.TypeTimestamp {
 				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
 				if err != nil {
