@@ -504,9 +504,9 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 }
 
 func (w *GCWorker) syncSafePointWithPd(ctx context.Context, safePoint uint64) error {
-	// TODO: Use backoff here
 	var newSafePoint uint64
 	var err error
+	// Try to communicate with PD at most 3 times.
 	for i := 0; i < 3; i++ {
 		newSafePoint, err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
 		if err == nil {
@@ -517,8 +517,8 @@ func (w *GCWorker) syncSafePointWithPd(ctx context.Context, safePoint uint64) er
 		return errors.Trace(err)
 	}
 	if newSafePoint != safePoint {
-		log.Warn("[gc worker] pd rejected our safe point %d and pd's safe point is %d", safePoint, newSafePoint)
-		// TODO: If unfortunately this happened, we may need to update safe point in `mysql.tidb`.
+		log.Warn("[gc worker] pd rejected our safe point %d, because pd has greater safe point %d", safePoint, newSafePoint)
+		// TODO: If unfortunately this happened, should we do something else?
 	}
 	return nil
 }
