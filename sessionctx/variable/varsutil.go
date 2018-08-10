@@ -25,7 +25,10 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"math"
 )
+
+const secondsPerYear = 31536000
 
 // SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
 // Max worker count is maxDDLReorgWorkerCount.
@@ -212,7 +215,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 	}
 	switch name {
 	case ConnectTimeout:
-		return checkUInt64SystemVar(name, value, 2, 31536000, vars)
+		return checkUInt64SystemVar(name, value, 2, secondsPerYear, vars)
 	case DefaultWeekFormat:
 		return checkUInt64SystemVar(name, value, 0, 7, vars)
 	case DelayKeyWrite:
@@ -225,31 +228,17 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenByArgs(name, value)
 	case FlushTime:
-		val, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < 0 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "0", nil
-		}
+		return checkUInt64SystemVar(name, value, 0, secondsPerYear, vars)
 	case GroupConcatMaxLen:
 		// The reasonable range of 'group_concat_max_len' is 4~18446744073709551615(64-bit platforms)
 		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len for details
-		return checkUInt64SystemVar(name, value, 4, 18446744073709551615, vars)
+		return checkUInt64SystemVar(name, value, 4, math.MaxUint64, vars)
 	case InteractiveTimeout:
-		val, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < 1 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "1", nil
-		}
+		return checkUInt64SystemVar(name, value, 1, secondsPerYear, vars)
 	case MaxConnections:
 		return checkUInt64SystemVar(name, value, 1, 100000, vars)
 	case MaxConnectErrors:
-		return checkUInt64SystemVar(name, value, 1, 18446744073709551615, vars)
+		return checkUInt64SystemVar(name, value, 1, math.MaxUint64, vars)
 	case MaxSortLength:
 		return checkUInt64SystemVar(name, value, 4, 8388608, vars)
 	case MaxSpRecursionDepth:
@@ -268,19 +257,11 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenByArgs(name, value)
 	case SQLSelectLimit:
-		val, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < 0 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "0", nil
-		}
-		return value, nil
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case TableDefinitionCache:
 		return checkUInt64SystemVar(name, value, 400, 524288, vars)
 	case TmpTableSize:
-		return checkUInt64SystemVar(name, value, 1024, 18446744073709551615, vars)
+		return checkUInt64SystemVar(name, value, 1024, math.MaxUint64, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil

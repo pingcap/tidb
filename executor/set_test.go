@@ -431,4 +431,15 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@global.connect_timeout;")
 	result.Check(testkit.Rows("31536000"))
 
+	result = tk.MustQuery("select @@sql_select_limit;")
+	result.Check(testkit.Rows("18446744073709551615"))
+	tk.MustExec("set @@sql_select_limit=default")
+	result = tk.MustQuery("select @@sql_select_limit;")
+	result.Check(testkit.Rows("18446744073709551615"))
+
+	tk.MustExec("set @@global.flush_time=31536001")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect flush_time value: '31536001'"))
+
+	tk.MustExec("set @@global.interactive_timeout=31536001")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect interactive_timeout value: '31536001'"))
 }
