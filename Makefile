@@ -129,7 +129,7 @@ explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 gotest: parserlib
-	go get github.com/coreos/gofail
+	go get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
@@ -146,23 +146,23 @@ endif
 	@$(GOFAIL_DISABLE)
 
 race: parserlib
-	go get github.com/coreos/gofail
+	go get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -race $(PACKAGES)
+	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 leak: parserlib
-	go get github.com/coreos/gofail
+	go get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -tags leak $(PACKAGES)
+	$(GOTEST) -tags leak $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 tikv_integration_test: parserlib
-	go get github.com/coreos/gofail
+	go get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
-	$(GOTEST) ./store/tikv/. -with-tikv=true
+	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 RACE_FLAG = 

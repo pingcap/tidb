@@ -28,7 +28,6 @@ var (
 	_ PhysicalPlan = &PhysicalSelection{}
 	_ PhysicalPlan = &PhysicalProjection{}
 	_ PhysicalPlan = &PhysicalTopN{}
-	_ PhysicalPlan = &PhysicalExists{}
 	_ PhysicalPlan = &PhysicalMaxOneRow{}
 	_ PhysicalPlan = &PhysicalTableDual{}
 	_ PhysicalPlan = &PhysicalUnionAll{}
@@ -360,11 +359,6 @@ type PhysicalSelection struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
-}
-
-// PhysicalExists is the physical operator of Exists.
-type PhysicalExists struct {
-	physicalSchemaProducer
 }
 
 // PhysicalMaxOneRow is the physical operator of maxOneRow.

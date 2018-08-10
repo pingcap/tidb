@@ -544,9 +544,9 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	np = er.b.buildExists(np)
+	np = er.popExistsSubPlan(np)
 	if len(np.extractCorrelatedCols()) > 0 {
-		er.p, er.err = er.b.buildSemiApply(er.p, np.Children()[0], nil, er.asScalar, false)
+		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, false)
 		if er.err != nil || !er.asScalar {
 			return v, true
 		}
@@ -562,11 +562,36 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 			er.err = errors.Trace(err)
 			return v, true
 		}
-		er.ctxStack = append(er.ctxStack, &expression.Constant{
-			Value:   rows[0][0],
-			RetType: types.NewFieldType(mysql.TypeTiny)})
+		if len(rows) > 0 {
+			er.ctxStack = append(er.ctxStack, expression.One.Clone())
+		} else {
+			er.ctxStack = append(er.ctxStack, expression.Zero.Clone())
+		}
 	}
 	return v, true
+}
+
+// popExistsSubPlan will remove the useless plan in exist's child.
+// See comments inside the method for more details.
+func (er *expressionRewriter) popExistsSubPlan(p LogicalPlan) LogicalPlan {
+out:
+	for {
+		switch plan := p.(type) {
+		// This can be removed when in exists clause,
+		// e.g. exists(select count(*) from t order by a) is equal to exists t.
+		case *LogicalProjection, *LogicalSort:
+			p = p.Children()[0]
+		case *LogicalAggregation:
+			if len(plan.GroupByItems) == 0 {
+				p = LogicalTableDual{RowCount: 1}.init(er.ctx)
+				break out
+			}
+			p = p.Children()[0]
+		default:
+			break out
+		}
+	}
+	return p
 }
 
 func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, bool) {

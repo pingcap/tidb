@@ -32,6 +32,7 @@ import (
 
 const (
 	partitionMaxValue = "MAXVALUE"
+	primarykey        = "PRIMARY KEY"
 )
 
 // buildTablePartitionInfo builds partition info and checks for some errors.
@@ -279,4 +280,66 @@ func getPartitionIDs(table *model.TableInfo) []int64 {
 		partitionIDs = append(partitionIDs, def.ID)
 	}
 	return partitionIDs
+}
+
+// checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
+func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.CreateTableStmt, tblInfo *model.TableInfo, constraints []*ast.Constraint) error {
+	// Returns directly if there is no constraint in the partition table.
+	if len(constraints) == 0 {
+		return nil
+	}
+
+	// Extract the column names in table constraints to []map[string]struct{}.
+	consColNames := extractConstraintsColumnNames(constraints)
+
+	// Parse partitioning key, extract the column names in the partitioning key to slice.
+	buf := new(bytes.Buffer)
+	s.Partition.Expr.Format(buf)
+	var partkeys []string
+	e, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cols := expression.ExtractColumns(e)
+	for _, col := range cols {
+		partkeys = append(partkeys, col.ColName.L)
+	}
+
+	// Checks that the partitioning key is included in the constraint.
+	for _, con := range consColNames {
+		// Every unique key on the table must use every column in the table's partitioning expression.
+		// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
+		if !checkConstraintIncludePartKey(partkeys, con) {
+			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs(primarykey)
+		}
+	}
+	return nil
+}
+
+// extractConstraintsColumnNames extract the column names in table constraints to []map[string]struct{}.
+func extractConstraintsColumnNames(cons []*ast.Constraint) []map[string]struct{} {
+	var constraints []map[string]struct{}
+	for _, v := range cons {
+		if v.Tp == ast.ConstraintUniq || v.Tp == ast.ConstraintPrimaryKey {
+			uniKeys := make(map[string]struct{})
+			for _, key := range v.Keys {
+				uniKeys[key.Column.Name.L] = struct{}{}
+			}
+			// Extract every unique key and primary key.
+			if len(uniKeys) != 0 {
+				constraints = append(constraints, uniKeys)
+			}
+		}
+	}
+	return constraints
+}
+
+// checkConstraintIncludePartKey checks that the partitioning key is included in the constraint.
+func checkConstraintIncludePartKey(partkeys []string, constraints map[string]struct{}) bool {
+	for _, pk := range partkeys {
+		if _, ok := constraints[pk]; !ok {
+			return false
+		}
+	}
+	return true
 }

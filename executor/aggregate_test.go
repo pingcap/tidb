@@ -320,6 +320,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows(string([]byte{0x0}), string([]byte{0x1})))
 	result = tk.MustQuery("select cast(a as signed) as idx, cast(max(a) as signed),  cast(min(a) as signed) from t group by 1 order by idx")
 	result.Check(testkit.Rows("0 0 0", "1 1 1"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t value(null)")
+	tk.MustQuery("select group_concat(a), group_concat(distinct a) from t").Check(testkit.Rows("<nil> <nil>"))
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {

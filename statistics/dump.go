@@ -58,7 +58,7 @@ func dumpJSONCol(hist *Histogram, CMSketch *CMSketch) *jsonColumn {
 
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JSONTable, error) {
-	tbl, err := h.tableStatsFromStorage(tableInfo, true)
+	tbl, err := h.tableStatsFromStorage(tableInfo, tableInfo.ID, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -101,18 +101,18 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 	}
 
 	for _, col := range tbl.Columns {
-		err = h.SaveStatsToStorage(tbl.TableID, tbl.Count, 0, &col.Histogram, col.CMSketch, 1)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range tbl.Indices {
-		err = h.SaveStatsToStorage(tbl.TableID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, 1)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	err = h.SaveMetaToStorage(tbl.TableID, tbl.Count, tbl.ModifyCount)
+	err = h.SaveMetaToStorage(tbl.PhysicalID, tbl.Count, tbl.ModifyCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -122,12 +122,12 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 // LoadStatsFromJSONToTable load statistic from JSONTable and return the Table of statistic.
 func (h *Handle) LoadStatsFromJSONToTable(tableInfo *model.TableInfo, jsonTbl *JSONTable) (*Table, error) {
 	newHistColl := HistColl{
-		TableID:     tableInfo.ID,
-		HaveTblID:   true,
-		Count:       jsonTbl.Count,
-		ModifyCount: jsonTbl.ModifyCount,
-		Columns:     make(map[int64]*Column, len(jsonTbl.Columns)),
-		Indices:     make(map[int64]*Index, len(jsonTbl.Indices)),
+		PhysicalID:     tableInfo.ID,
+		HavePhysicalID: true,
+		Count:          jsonTbl.Count,
+		ModifyCount:    jsonTbl.ModifyCount,
+		Columns:        make(map[int64]*Column, len(jsonTbl.Columns)),
+		Indices:        make(map[int64]*Index, len(jsonTbl.Indices)),
 	}
 	tbl := &Table{
 		HistColl: newHistColl,

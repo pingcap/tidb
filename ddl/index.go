@@ -454,6 +454,7 @@ type indexRecord struct {
 	handle int64
 	key    []byte        // It's used to lock a record. Record it to reduce the encoding time.
 	vals   []types.Datum // It's the index values.
+	skip   bool          // skip indicates that the index key is already exists, we should not add it.
 }
 
 type addIndexWorker struct {
@@ -467,10 +468,15 @@ type addIndexWorker struct {
 	table       table.Table
 	colFieldMap map[int64]*types.FieldType
 	closed      bool
+	priority    int
 
-	defaultVals []types.Datum         // It's used to reduce the number of new slice.
-	idxRecords  []*indexRecord        // It's used to reduce the number of new slice.
-	rowMap      map[int64]types.Datum // It's the index column values map. It is used to reduce the number of making map.
+	// The following attributes are used to reduce memory allocation.
+	defaultVals        []types.Datum
+	idxRecords         []*indexRecord
+	rowMap             map[int64]types.Datum
+	idxKeyBufs         [][]byte
+	batchCheckKeys     []kv.Key
+	distinctCheckFlags []bool
 }
 
 type reorgIndexTask struct {
@@ -502,7 +508,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		index:       index,
 		table:       t,
 		colFieldMap: colFieldMap,
-
+		priority:    kv.PriorityLow,
 		defaultVals: make([]types.Datum, len(t.Cols())),
 		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
 	}
@@ -584,7 +590,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
-	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.table, txn.StartTS(), taskRange.startHandle,
+	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
 			w.logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in fetchRowColVals", 0)
@@ -632,6 +638,71 @@ func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string
 	}
 }
 
+func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
+	if len(w.idxKeyBufs) < batchCount {
+		w.idxKeyBufs = make([][]byte, batchCount)
+	}
+
+	w.batchCheckKeys = w.batchCheckKeys[:0]
+	w.distinctCheckFlags = w.distinctCheckFlags[:0]
+}
+
+func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
+	idxInfo := w.index.Meta()
+	if !idxInfo.Unique {
+		// non-unique key need not to check, just overwrite it,
+		// because in most case, backfilling indices is not exists.
+		return nil
+	}
+
+	w.initBatchCheckBufs(len(idxRecords))
+	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
+	for i, record := range idxRecords {
+		idxKey, distinct, err := w.index.GenIndexKey(stmtCtx, record.vals, record.handle, w.idxKeyBufs[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// save the buffer to reduce memory allocations.
+		w.idxKeyBufs[i] = idxKey
+
+		w.batchCheckKeys = append(w.batchCheckKeys, idxKey)
+		w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
+	}
+
+	batchVals, err := kv.BatchGetValues(txn, w.batchCheckKeys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// 1. unique-key is duplicate and the handle is equal, skip it.
+	// 2. unique-key is duplicate and the handle is not equal, return duplicate error.
+	// 3. non-unique-key is duplicate, skip it.
+	for i, key := range w.batchCheckKeys {
+		if val, found := batchVals[string(key)]; found {
+			if w.distinctCheckFlags[i] {
+				handle, err1 := tables.DecodeHandle(val)
+				if err1 != nil {
+					return errors.Trace(err1)
+				}
+
+				if handle != idxRecords[i].handle {
+					return errors.Trace(kv.ErrKeyExists)
+				}
+			}
+			idxRecords[i].skip = true
+		} else {
+			// The keys in w.batchCheckKeys also maybe duplicate,
+			// so we need to backfill the not found key into `batchVals` map.
+			if w.distinctCheckFlags[i] {
+				batchVals[string(key)] = tables.EncodeHandle(idxRecords[i].handle)
+			}
+		}
+	}
+	// Constrains is already checked.
+	stmtCtx.BatchCheck = true
+	return nil
+}
+
 // backfillIndexInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
@@ -641,7 +712,8 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		addedCount = 0
 		scanCount = 0
-		txn.SetOption(kv.Priority, kv.PriorityLow)
+		txn.SetOption(kv.Priority, w.priority)
+
 		var (
 			idxRecords []*indexRecord
 			err        error
@@ -651,15 +723,27 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 			return errors.Trace(err)
 		}
 
+		err = w.batchCheckUniqueKey(txn, idxRecords)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		for _, idxRecord := range idxRecords {
+			scanCount++
+			// The index is already exists, we skip it, no needs to backfill it.
+			// The following update, delete, insert on these rows, TiDB can handle it correctly.
+			if idxRecord.skip {
+				continue
+			}
+
+			// Lock the row key to notify us that someone delete or update the row,
+			// then we should not backfill the index of it, otherwise the adding index is redundant.
 			err := txn.LockKeys(idxRecord.key)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			scanCount++
 
 			// Create the index.
-			// TODO: backfill unique-key will check constraint every row, we can speed up this case by using batch check.
 			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
@@ -977,6 +1061,7 @@ func (w *worker) addPhysicalTableIndex(t table.Table, indexInfo *model.IndexInfo
 	for i := 0; i < int(workerCnt); i++ {
 		sessCtx := newContext(reorgInfo.d.store)
 		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, colFieldMap)
+		idxWorkers[i].priority = job.Priority
 		go idxWorkers[i].run(reorgInfo.d)
 	}
 	defer closeAddIndexWorkers(idxWorkers)
@@ -1029,7 +1114,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 		return true, nil
 	}
 
-	start, end, err := getTableRange(reorg.d, t.GetPartition(pid), reorg.Job.SnapshotVer)
+	start, end, err := getTableRange(reorg.d, t.GetPartition(pid), reorg.Job.SnapshotVer, reorg.Job.Priority)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1074,11 +1159,11 @@ func allocateIndexID(tblInfo *model.TableInfo) int64 {
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h int64, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
+func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
 	ver := kv.Version{Ver: version}
 
 	snap, err := store.GetSnapshot(ver)
-	snap.SetPriority(kv.PriorityLow)
+	snap.SetPriority(priority)
 	if err != nil {
 		return errors.Trace(err)
 	}

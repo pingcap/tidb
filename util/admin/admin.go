@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sort"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
@@ -38,8 +39,8 @@ import (
 // DDLInfo is for DDL information.
 type DDLInfo struct {
 	SchemaVer   int64
-	ReorgHandle int64 // it's only used for DDL information.
-	Job         *model.Job
+	ReorgHandle int64        // It's only used for DDL information.
+	Jobs        []*model.Job // It's the currently running jobs.
 }
 
 // GetDDLInfo returns DDL information.
@@ -48,19 +49,31 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	info := &DDLInfo{}
 	t := meta.NewMeta(txn)
 
-	info.Job, err = t.GetDDLJobByIdx(0)
+	info.Jobs = make([]*model.Job, 0, 2)
+	job, err := t.GetDDLJobByIdx(0)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if job != nil {
+		info.Jobs = append(info.Jobs, job)
+	}
+	addIdxJob, err := t.GetDDLJobByIdx(0, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if addIdxJob != nil {
+		info.Jobs = append(info.Jobs, addIdxJob)
+	}
+
 	info.SchemaVer, err = t.GetSchemaVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if info.Job == nil {
+	if addIdxJob == nil {
 		return info, nil
 	}
 
-	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(info.Job)
+	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -136,8 +149,7 @@ func getDDLJobsInQueue(t *meta.Meta, jobListKey meta.JobListKeyType) ([]*model.J
 	return jobs, nil
 }
 
-// GetDDLJobs returns all DDL jobs.
-// TODO: Sort jobs.
+// GetDDLJobs get all DDL jobs and sorts jobs by job.ID.
 func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
 	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
@@ -148,7 +160,23 @@ func GetDDLJobs(txn kv.Transaction) ([]*model.Job, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return append(generalJobs, addIdxJobs...), nil
+	jobs := append(generalJobs, addIdxJobs...)
+	sort.Sort(jobArray(jobs))
+	return jobs, nil
+}
+
+type jobArray []*model.Job
+
+func (v jobArray) Len() int {
+	return len(v)
+}
+
+func (v jobArray) Less(i, j int) bool {
+	return v[i].ID < v[j].ID
+}
+
+func (v jobArray) Swap(i, j int) {
+	v[i], v[j] = v[j], v[i]
 }
 
 // MaxHistoryJobs is exported for testing.
@@ -600,7 +628,11 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.Meta()) {
-				data = append(data, types.NewIntDatum(handle))
+				if mysql.HasUnsignedFlag(col.Flag) {
+					data = append(data, types.NewUintDatum(uint64(handle)))
+				} else {
+					data = append(data, types.NewIntDatum(handle))
+				}
 			} else {
 				data = append(data, rowMap[col.ID])
 			}
