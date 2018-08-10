@@ -81,10 +81,10 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 
 	var t Table
 	initTableCommon(&t.tableCommon, tblInfo, tblInfo.ID, columns, nil)
+	if err := initTableIndices(&t.tableCommon); err != nil {
+		return nil
+	}
 	if tblInfo.GetPartitionInfo() == nil {
-		if err := initTableIndices(&t.tableCommon); err != nil {
-			return nil
-		}
 		return &t
 	}
 
@@ -130,10 +130,10 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 	var t Table
 	initTableCommon(&t.tableCommon, tblInfo, tblInfo.ID, columns, alloc)
+	if err := initTableIndices(&t.tableCommon); err != nil {
+		return nil, errors.Trace(err)
+	}
 	if tblInfo.GetPartitionInfo() == nil {
-		if err := initTableIndices(&t.tableCommon); err != nil {
-			return nil, errors.Trace(err)
-		}
 		return &t, nil
 	}
 
