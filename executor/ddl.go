@@ -198,8 +198,8 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			return errors.Trace(err)
 		}
 
-		if config.CheckBeforeDrop {
-			log.Warnf("admin check table before drop was on")
+		if config.CheckTableBeforeDrop() {
+			log.Warnf("admin check table `%s`.`%s` before drop.", fullti.Schema.O, fullti.Name.O)
 			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
 			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 			if err != nil {

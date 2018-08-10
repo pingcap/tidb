@@ -130,9 +130,9 @@ func (s *testSuite) TearDownTest(c *C) {
 }
 
 func (s *testSuite) TestAdmin(c *C) {
-	origin := config.CheckBeforeDrop
+	origin := config.CheckTableBeforeDrop()
 	defer func() {
-		config.CheckBeforeDrop = origin
+		config.SetCheckTableBeforeDrop(origin)
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -240,11 +240,11 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err_admin := tk.Exec("admin check table admin_test")
 	c.Assert(err_admin, NotNil)
 
-	config.CheckBeforeDrop = true
+	config.SetCheckTableBeforeDrop(true)
 	r, err = tk.Exec("drop table admin_test")
 	c.Assert(err.Error(), Equals, err_admin.Error())
 
-	config.CheckBeforeDrop = false
+	config.SetCheckTableBeforeDrop(false)
 	tk.MustExec("drop table admin_test")
 
 	// checksum table test
