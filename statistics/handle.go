@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
@@ -40,6 +41,10 @@ type Handle struct {
 		lastVersion uint64
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
+		// pid2tid is the map from partition ID to table ID.
+		pid2tid map[int64]int64
+		// schemaVersion is the version of information schema when `pid2tid` is built.
+		schemaVersion int64
 	}
 
 	restrictedExec sqlexec.RestrictedSQLExecutor
@@ -128,25 +133,27 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
 		version := row.GetUint64(0)
-		tableID := row.GetInt64(1)
+		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
 		lastVersion = version
-		table, ok := is.TableByID(tableID)
+		h.mu.Lock()
+		table, ok := h.getTableByPhysicalID(is, physicalID)
+		h.mu.Unlock()
 		if !ok {
-			log.Debugf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
-			deletedTableIDs = append(deletedTableIDs, tableID)
+			log.Debugf("Unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
+			deletedTableIDs = append(deletedTableIDs, physicalID)
 			continue
 		}
 		tableInfo := table.Meta()
-		tbl, err := h.tableStatsFromStorage(tableInfo, false)
+		tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, false)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
 			log.Debugf("Error occurred when read table stats for table %s. The error message is %s.", tableInfo.Name.O, errors.ErrorStack(err))
 			continue
 		}
 		if tbl == nil {
-			deletedTableIDs = append(deletedTableIDs, tableID)
+			deletedTableIDs = append(deletedTableIDs, physicalID)
 			continue
 		}
 		tbl.Version = version
@@ -162,11 +169,45 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	return nil
 }
 
+func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
+	if is.SchemaMetaVersion() != h.mu.schemaVersion {
+		h.mu.schemaVersion = is.SchemaMetaVersion()
+		h.mu.pid2tid = buildPartitionID2TableID(is)
+	}
+	if id, ok := h.mu.pid2tid[physicalID]; ok {
+		return is.TableByID(id)
+	}
+	return is.TableByID(physicalID)
+}
+
+func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
+	mapper := make(map[int64]int64)
+	for _, db := range is.AllSchemas() {
+		tbls := db.Tables
+		for _, tbl := range tbls {
+			pi := tbl.GetPartitionInfo()
+			if pi == nil {
+				continue
+			}
+			for _, def := range pi.Definitions {
+				mapper[def.ID] = tbl.ID
+			}
+		}
+	}
+	return mapper
+}
+
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *Table {
-	tbl, ok := h.statsCache.Load().(statsCache)[tblInfo.ID]
+	return h.GetPartitionStats(tblInfo, tblInfo.ID)
+}
+
+// GetPartitionStats retrieves the partition stats from cache.
+func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *Table {
+	tbl, ok := h.statsCache.Load().(statsCache)[pid]
 	if !ok {
 		tbl = PseudoTable(tblInfo)
+		tbl.PhysicalID = pid
 		h.UpdateTableStats([]*Table{tbl}, nil)
 		return tbl
 	}
@@ -186,7 +227,7 @@ func (h *Handle) copyFromOldCache() statsCache {
 func (h *Handle) UpdateTableStats(tables []*Table, deletedIDs []int64) {
 	newCache := h.copyFromOldCache()
 	for _, tbl := range tables {
-		id := tbl.TableID
+		id := tbl.PhysicalID
 		newCache[id] = tbl
 	}
 	for _, id := range deletedIDs {
