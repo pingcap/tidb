@@ -525,7 +525,7 @@ func appendKeyBatchs(batchs []batch, regionID RegionVerID, groupKeys [][]byte, l
 	for start, count := 0, 0; start < len(groupKeys); start++ {
 		if count > limit {
 			batchs = append(batchs, batch{regionID: regionID, keys: keys})
-			keys = make([][]byte, 0)
+			keys = make([][]byte, 0, limit)
 			count = 0
 		}
 		keys = append(keys, groupKeys[start])

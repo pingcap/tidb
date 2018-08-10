@@ -941,7 +941,7 @@ func (mvcc *MVCCLevelDB) RawDelete(key []byte) {
 	terror.Log(mvcc.db.Delete(key, nil))
 }
 
-// RawBatchDelete implements the RawKV interface
+// RawBatchDelete implements the RawKV interface.
 func (mvcc *MVCCLevelDB) RawBatchDelete(keys [][]byte) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
