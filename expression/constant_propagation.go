@@ -27,10 +27,6 @@ import (
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
 var MaxPropagateColsCnt = 100
 
-var eqFuncNameMap = map[string]bool{
-	ast.EQ: true,
-}
-
 type multiEqualSet struct {
 	parent []int
 }
@@ -131,9 +127,9 @@ func (s *propagateConstantSolver) propagateOthers() {
 }
 
 // validPropagateCond checks if the cond is an expression like [column op constant] and op is in the funNameMap.
-func (s *propagateConstantSolver) validPropagateCond(cond Expression, funNameMap map[string]bool) (*Column, *Constant) {
+func (s *propagateConstantSolver) validPropagateCond(cond Expression) (*Column, *Constant) {
 	if eq, ok := cond.(*ScalarFunction); ok {
-		if _, ok := funNameMap[eq.FuncName.L]; !ok {
+		if eq.FuncName.L != ast.EQ {
 			return nil, nil
 		}
 		if col, colOk := eq.GetArgs()[0].(*Column); colOk {
@@ -157,21 +153,24 @@ func (s *propagateConstantSolver) validPropagateCond(cond Expression, funNameMap
 //  Expression: the replaced expression, or original 'cond' if the replacement is not happened
 func (s *propagateConstantSolver) tryToReplaceCond(src *Column, tgt *Column, cond Expression) (bool, bool, Expression) {
 	replaced := false
-	var r *ScalarFunction
+	var r Expression
 	if sf, ok := cond.(*ScalarFunction); ok {
 		if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 			return false, true, cond
 		}
-		if _, isEq := eqFuncNameMap[sf.FuncName.L]; isEq {
+		// Equality is handled in propagateEQ already
+		if sf.FuncName.L == ast.EQ {
 			return false, false, cond
 		}
 		for idx, expr := range sf.GetArgs() {
 			if src.Equal(nil, expr) {
 				replaced = true
 				if r == nil {
-					r = sf.Clone().(*ScalarFunction)
+					args := make([]Expression, len(sf.GetArgs()))
+					copy(args, sf.GetArgs())
+					args[idx] = tgt
+					r = NewFunctionInternal(s.ctx, sf.FuncName.L, sf.GetType(), args...)
 				}
-				r.GetArgs()[idx] = tgt
 			} else {
 				subReplaced, isNonDeterminisitic, subExpr := s.tryToReplaceCond(src, tgt, expr)
 				if isNonDeterminisitic {
@@ -179,9 +178,11 @@ func (s *propagateConstantSolver) tryToReplaceCond(src *Column, tgt *Column, con
 				} else if subReplaced {
 					replaced = true
 					if r == nil {
-						r = sf.Clone().(*ScalarFunction)
+						args := make([]Expression, len(sf.GetArgs()))
+						copy(args, sf.GetArgs())
+						args[idx] = subExpr
+						r = NewFunctionInternal(s.ctx, sf.FuncName.L, sf.GetType(), args...)
 					}
-					r.GetArgs()[idx] = subExpr
 				}
 			}
 		}
@@ -207,7 +208,7 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 		if visited[i] {
 			continue
 		}
-		col, con := s.validPropagateCond(cond, eqFuncNameMap)
+		col, con := s.validPropagateCond(cond)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		var ok bool
 		if col == nil {
