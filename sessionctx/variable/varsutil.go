@@ -16,6 +16,7 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
-	"math"
 )
 
 const secondsPerYear = 31536000
