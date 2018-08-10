@@ -40,7 +40,6 @@ import (
 
 var (
 	_ Executor = &CheckTableExec{}
-	_ Executor = &ExistsExec{}
 	_ Executor = &HashAggExec{}
 	_ Executor = &LimitExec{}
 	_ Executor = &MaxOneRowExec{}
@@ -199,13 +198,17 @@ func (e *ShowDDLExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
-	ddlJob := ""
-	if e.ddlInfo.Job != nil {
-		ddlJob = e.ddlInfo.Job.String()
+	ddlJobs := ""
+	l := len(e.ddlInfo.Jobs)
+	for i, job := range e.ddlInfo.Jobs {
+		ddlJobs += job.String()
+		if i != l-1 {
+			ddlJobs += "\n"
+		}
 	}
 	chk.AppendInt64(0, e.ddlInfo.SchemaVer)
 	chk.AppendString(1, e.ddlOwnerID)
-	chk.AppendString(2, ddlJob)
+	chk.AppendString(2, ddlJobs)
 	chk.AppendString(3, e.selfID)
 	e.done = true
 	return nil
@@ -860,48 +863,6 @@ func (e *TableScanExec) Open(ctx context.Context) error {
 	e.iter = nil
 	e.virtualTableChunkList = nil
 	return nil
-}
-
-// ExistsExec represents exists executor.
-type ExistsExec struct {
-	baseExecutor
-
-	evaluated   bool
-	childResult *chunk.Chunk
-}
-
-// Open implements the Executor Open interface.
-func (e *ExistsExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
-	}
-	e.childResult = e.children[0].newChunk()
-	e.evaluated = false
-	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *ExistsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	if !e.evaluated {
-		e.evaluated = true
-		err := e.children[0].Next(ctx, e.childResult)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if e.childResult.NumRows() > 0 {
-			chk.AppendInt64(0, 1)
-		} else {
-			chk.AppendInt64(0, 0)
-		}
-	}
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *ExistsExec) Close() error {
-	e.childResult = nil
-	return errors.Trace(e.baseExecutor.Close())
 }
 
 // MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
