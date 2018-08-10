@@ -43,7 +43,7 @@ const (
 // InfoSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
 var InfoSessionTTL = 10 * 60
 
-// InfoSyncer stores server info to Etcd when when the tidb-server starts and delete when tidb-server shuts down.
+// InfoSyncer stores server info to etcd when when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
 	etcdCli        *clientv3.Client
 	info           *ServerInfo
@@ -87,7 +87,7 @@ func (is *InfoSyncer) GetServerInfo() *ServerInfo {
 	return is.info
 }
 
-// GetServerInfoByID gets server static information from Etcd.
+// GetServerInfoByID gets server static information from etcd.
 func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 	if is.etcdCli == nil || id == is.info.ID {
 		return is.info, nil
@@ -104,7 +104,7 @@ func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*Server
 	return info, nil
 }
 
-// GetAllServerInfo gets all servers static information from Etcd.
+// GetAllServerInfo gets all servers static information from etcd.
 func (is *InfoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
@@ -118,7 +118,7 @@ func (is *InfoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerI
 	return allInfo, nil
 }
 
-// storeServerInfo stores self server static information to Etcd.
+// storeServerInfo stores self server static information to etcd.
 func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
@@ -131,7 +131,7 @@ func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-// RemoveServerInfo remove self server static information from Etcd.
+// RemoveServerInfo remove self server static information from etcd.
 func (is *InfoSyncer) RemoveServerInfo() {
 	if is.etcdCli == nil {
 		return
@@ -170,7 +170,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	return errors.Trace(err)
 }
 
-// getInfo gets server information from Etcd according to the key and opts.
+// getInfo gets server information from etcd according to the key and opts.
 func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt int, timeout time.Duration, opts ...clientv3.OpOption) (map[string]*ServerInfo, error) {
 	var err error
 	var resp *clientv3.GetResponse
