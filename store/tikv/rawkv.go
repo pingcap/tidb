@@ -129,7 +129,7 @@ func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
 	for i, key := range keys {
 		keyToIndex[string(key)] = i
 	}
-	values := make([][]byte, 0, len(keys))
+	values := make([][]byte, len(keys))
 	for _, pair := range cmdResp.Pairs {
 		values[keyToIndex[string(pair.Key)]] = pair.Value
 	}
