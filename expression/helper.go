@@ -14,9 +14,9 @@
 package expression
 
 import (
+	"math"
 	"strings"
 	"time"
-	"math"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
