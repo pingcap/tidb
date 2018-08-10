@@ -476,5 +476,5 @@ func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
 	tk.MustExec("insert into t values(1, 1, 1), (9223372036854775807, 2, 2);")
-	tk.MustExec("admin check table t;")
+	tk.MustExec("admin check index t idx;")
 }
