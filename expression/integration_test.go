@@ -3349,6 +3349,15 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 		"4100000000000000000000000000000000000000|4120000000000000000000000000000000000000"))
 	tk.MustQuery(`select count(*) from t1 where s1 < s2;`).Check(testkit.Rows("2"))
 	tk.MustQuery(`select s1<s2, s1=s2, s1>s2 from t1;`).Check(testutil.RowsWithSep("|", "0|1|0", "1|0|0", "1|0|0"))
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (name_id int not null auto_increment, name blob, INDEX name_idx (name(5)), primary key (name_id));")
+	tk.MustExec("INSERT t1 VALUES(NULL,'/');")
+	tk.MustExec("INSERT t1 VALUES(NULL,'[T,U]_axpby');")
+	tk.MustExec("create table t2 (name_id int not null auto_increment, name char(255) binary, INDEX name_idx (name(5)), primary key (name_id) );")
+	tk.MustExec("INSERT t2 select * from t1;")
+	tk.MustQuery(`SELECT * FROM t2 WHERE name='[T,U]_axpby';`).Check(testutil.RowsWithSep("|", "2|[T,U]_axpby"))
 }
 
 func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {

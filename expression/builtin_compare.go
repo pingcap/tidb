@@ -2295,9 +2295,9 @@ func compareString(args []Expression, row chunk.Row, ctx sessionctx.Context) (va
 // https://dev.mysql.com/doc/refman/5.7/en/binary-varbinary.html
 // https://dev.mysql.com/doc/refman/5.7/en/blob.html
 func trimOrFillString(s string, tp *types.FieldType) string {
-	t, binFlag, length := tp.Tp, mysql.HasBinaryFlag(tp.Flag), len(s)
-	// Type 'CHAR', 'VARCHAR', 'TEXT'
-	if !binFlag {
+	t, length := tp.Tp, len(s)
+	// Trim right trailing spaces for non-binary strings
+	if types.IsNonBinaryStr(tp) {
 		return strings.TrimRight(s, " ")
 	}
 	// Type 'BINARY'
@@ -2306,7 +2306,7 @@ func trimOrFillString(s string, tp *types.FieldType) string {
 			return s + strings.Repeat("\000", tp.Flen-length)
 		}
 	}
-	// Type 'VARBINARY', 'BLOB'
+	// Other binary types
 	return s
 }
 
