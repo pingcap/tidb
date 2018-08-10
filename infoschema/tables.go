@@ -810,8 +810,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 				cnt = len(col.Elems) - 1
 			}
 			colLen = sumLen + cnt
-		}
-		if col.Tp == mysql.TypeEnum {
+		} else if col.Tp == mysql.TypeEnum {
 			//exapmle: In MySQL enum('a', 'ab', 'cdef') has length 4, This is because
 			//the longest string in the enum is 'cdef'
 			colLen = 0
