@@ -37,7 +37,6 @@ TARGET = ""
 
 default: server buildsucc
 
-
 buildsucc:
 	@echo Build TiDB Server successfully!
 
