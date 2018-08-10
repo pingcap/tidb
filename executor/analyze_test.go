@@ -15,11 +15,10 @@ package executor_test
 
 import (
 	"fmt"
-	"strings"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -47,14 +46,19 @@ PARTITION BY RANGE ( a ) (
 	c.Assert(err, IsNil)
 	pi := table.Meta().GetPartitionInfo()
 	c.Assert(pi, NotNil)
-	ids := make([]string, 0, len(pi.Definitions))
+	do, err := session.GetDomain(s.store)
+	c.Assert(err, IsNil)
+	handle := do.StatsHandle()
 	for _, def := range pi.Definitions {
-		ids = append(ids, fmt.Sprintf("%d", def.ID))
+		statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+		c.Assert(statsTbl.Pseudo, IsFalse)
+		c.Assert(len(statsTbl.Columns), Equals, 2)
+		c.Assert(len(statsTbl.Indices), Equals, 1)
+		for _, col := range statsTbl.Columns {
+			c.Assert(col.Len(), Greater, 0)
+		}
+		for _, idx := range statsTbl.Indices {
+			c.Assert(idx.Len(), Greater, 0)
+		}
 	}
-	result := tk.MustQuery(fmt.Sprintf("select count(distinct(table_id)) from mysql.stats_meta where table_id in (%s)", strings.Join(ids, ",")))
-	result.Check(testkit.Rows(fmt.Sprintf("%d", len(ids))))
-	result = tk.MustQuery(fmt.Sprintf("select count(distinct(table_id)) from mysql.stats_histograms where table_id in (%s)", strings.Join(ids, ",")))
-	result.Check(testkit.Rows(fmt.Sprintf("%d", len(ids))))
-	result = tk.MustQuery(fmt.Sprintf("select count(distinct(table_id)) from mysql.stats_buckets where table_id in (%s)", strings.Join(ids, ",")))
-	result.Check(testkit.Rows(fmt.Sprintf("%d", len(ids))))
 }

@@ -164,11 +164,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	}
 }
 
-// PruneColumns implements LogicalPlan interface.
-func (p *LogicalExists) PruneColumns(parentUsedCols []*expression.Column) {
-	p.children[0].PruneColumns(nil)
-}
-
 func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
 	for _, eqCond := range p.EqualConditions {
 		parentUsedCols = append(parentUsedCols, expression.ExtractColumns(eqCond)...)
