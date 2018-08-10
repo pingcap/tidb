@@ -152,9 +152,9 @@ func (s *propagateConstantSolver) validPropagateCond(cond Expression) (*Column, 
 //  bool: if 'cond' contains non-deterministic expression
 //  Expression: the replaced expression, or original 'cond' if the replacement is not happened
 func (s *propagateConstantSolver) tryToReplaceCond(src *Column, tgt *Column, cond Expression) (bool, bool, Expression) {
-	replaced := false
-	var r Expression
 	if sf, ok := cond.(*ScalarFunction); ok {
+		replaced := false
+		var args []Expression
 		if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 			return false, true, cond
 		}
@@ -165,33 +165,30 @@ func (s *propagateConstantSolver) tryToReplaceCond(src *Column, tgt *Column, con
 		for idx, expr := range sf.GetArgs() {
 			if src.Equal(nil, expr) {
 				replaced = true
-				if r == nil {
-					args := make([]Expression, len(sf.GetArgs()))
+				if args == nil {
+					args = make([]Expression, len(sf.GetArgs()))
 					copy(args, sf.GetArgs())
-					args[idx] = tgt
-					r = NewFunctionInternal(s.ctx, sf.FuncName.L, sf.GetType(), args...)
 				}
+				args[idx] = tgt
 			} else {
 				subReplaced, isNonDeterminisitic, subExpr := s.tryToReplaceCond(src, tgt, expr)
 				if isNonDeterminisitic {
 					return false, true, cond
 				} else if subReplaced {
 					replaced = true
-					if r == nil {
-						args := make([]Expression, len(sf.GetArgs()))
+					if args == nil {
+						args = make([]Expression, len(sf.GetArgs()))
 						copy(args, sf.GetArgs())
-						args[idx] = subExpr
-						r = NewFunctionInternal(s.ctx, sf.FuncName.L, sf.GetType(), args...)
 					}
+					args[idx] = subExpr
 				}
 			}
 		}
+		if replaced {
+			return true, false, NewFunctionInternal(s.ctx, sf.FuncName.L, sf.GetType(), args...)
+		}
 	}
-	if replaced {
-		return true, false, r
-	} else {
-		return false, false, cond
-	}
+	return false, false, cond
 }
 
 func (s *propagateConstantSolver) setConds2ConstFalse() {
