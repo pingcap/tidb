@@ -1760,7 +1760,22 @@ func (s *testDBSuite) TestTableDDLWithTimeType(c *C) {
 	s.testErrorCode(c, "alter table t change column a aa time(7)", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "alter table t change column a aa datetime(7)", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "alter table t change column a aa timestamp(7)", tmysql.ErrTooBigPrecision)
-	s.mustExec(c, "alter table t change column a aa timestamp(0)")
+	s.mustExec(c, "alter table t change column a aa datetime(0)")
+	s.mustExec(c, "drop table t")
+
+	s.testErrorCode(c, "create table t (a timestamp null default current_timestamp(3))", tmysql.ErrInvalidDefault)
+	s.testErrorCode(c, "create table t (a timestamp(2) null default current_timestamp(3))", tmysql.ErrInvalidDefault)
+	s.testErrorCode(c, "create table t (a timestamp(0) null default current_timestamp(3))", tmysql.ErrInvalidDefault)
+	s.testErrorCode(c, "create table t (a timestamp(0) null default now(3))", tmysql.ErrInvalidDefault)
+	s.testErrorCode(c, "create table t (a timestamp null default current_timestamp(3))", tmysql.ErrInvalidDefault)
+	s.testErrorCode(c, "create table t (a timestamp(3) null default current_timestamp(3) on update current_timestamp)", tmysql.ErrInvalidDefault)
+	s.testErrorCode(c, "create table t (a timestamp(3) null default localtimestamp(3) on update localtimestamp)", tmysql.ErrInvalidDefault)
+	_, err = s.tk.Exec("create table t (a timestamp(3) null default localtimestamp(3) on update now(3))")
+	c.Assert(err, NotNil)
+	_, err = s.tk.Exec("create table t (a timestamp(3) null default localtimestamp(3) on update localtime(3))")
+	c.Assert(err, NotNil)
+	s.mustExec(c, "create table t (a timestamp(3) null default current_timestamp(3) on update current_timestamp(3))")
+	s.mustExec(c, "create table t2 (a timestamp null default current_timestamp() on update current_timestamp)")
 	s.mustExec(c, "drop table t")
 }
 
