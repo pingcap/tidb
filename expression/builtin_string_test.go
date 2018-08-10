@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -1922,8 +1923,6 @@ func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {
 		&Column{Index: 0, RetType: colTypes[0]},
 	}
 
-	warningCount := 0
-
 	for _, test := range tests {
 		resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: base64NeededEncodedLength(len(test.args))}
 		base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
@@ -1935,16 +1934,17 @@ func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {
 		c.Assert(err, IsNil)
 		if test.isNil {
 			c.Assert(isNull, IsTrue)
-			warningCount += 1
+
+			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(len(warnings), Equals, 1)
+			lastWarn := warnings[len(warnings)-1]
+			c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+			s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+
 		} else {
 			c.Assert(isNull, IsFalse)
 		}
 		c.Assert(res, Equals, test.expect)
-	}
-	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, warningCount)
-	for _, warn := range warnings {
-		c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, warn.Err), IsTrue)
 	}
 }
 
