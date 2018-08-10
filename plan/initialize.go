@@ -194,18 +194,6 @@ func (p PhysicalTableDual) init(ctx sessionctx.Context, stats *statsInfo) *Physi
 	return &p
 }
 
-func (p LogicalExists) init(ctx sessionctx.Context) *LogicalExists {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeExists, &p)
-	return &p
-}
-
-func (p PhysicalExists) init(ctx sessionctx.Context, stats *statsInfo, props ...*requiredProp) *PhysicalExists {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, TypeExists, &p)
-	p.childrenReqProps = props
-	p.stats = stats
-	return &p
-}
-
 func (p LogicalMaxOneRow) init(ctx sessionctx.Context) *LogicalMaxOneRow {
 	p.baseLogicalPlan = newBaseLogicalPlan(ctx, TypeMaxOneRow, &p)
 	return &p
