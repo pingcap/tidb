@@ -469,4 +469,9 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
   			INDEX indexIDname (ID(8),name(8)));`)
 	tk.MustExec(`INSERT INTO t VALUES ('keyword','urlprefix','text/ /text');`)
 	tk.MustExec(`admin check table t;`)
+
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec(`admin check table test.t;`)
+	_, err := tk.Exec("admin check table t")
+	c.Assert(err, NotNil)
 }
