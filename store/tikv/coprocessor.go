@@ -556,10 +556,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	if resp.pbResp.Data == nil {
-		return &copResponse{}, nil
-	}
 	return resp, nil
 }
 
