@@ -519,7 +519,6 @@ import (
 	SignedLiteral			"Literal or NumLiteral with sign"
 	DefaultValueExpr		"DefaultValueExpr(Now or Signed Literal)"
 	NowSymOptionFraction		"NowSym with optional fraction part"
-	OnUpdateNowSymOptionFraction "NowSync with optional fraction part in on update"
 
 %type	<statement>
 	AdminStmt			"Check table statement or show ddl statement"
@@ -1375,7 +1374,7 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionDefaultValue, Expr: $2}
 	}
-|	"ON" "UPDATE" OnUpdateNowSymOptionFraction
+|	"ON" "UPDATE" NowSymOptionFraction
 	{
 		nowFunc := $3
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionOnUpdate, Expr: nowFunc}
@@ -1604,20 +1603,6 @@ NowSymOptionFraction:
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: []ast.ExprNode{ast.NewValueExpr(getUint64FromNUM($3))}}
 	}
 
-OnUpdateNowSymOptionFraction:
-	OnUpdateNowSym
-	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
-	}
-|	OnUpdateNowSym '(' ')'
-	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
-	}
-|	OnUpdateNowSym '(' NUM ')'
-	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: []ast.ExprNode{ast.NewValueExpr(getUint64FromNUM($3))}}
-	}
-
 /*
 * See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_localtime
 * TODO: Process other three keywords
@@ -1626,8 +1611,6 @@ NowSymFunc:
 	"CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP" | builtinNow
 NowSym:
 	"CURRENT_TIMESTAMP" | "LOCALTIME" | "LOCALTIMESTAMP"
-OnUpdateNowSym:
-    "CURRENT_TIMESTAMP" | "LOCALTIMESTAMP"
 
 
 SignedLiteral:
