@@ -121,7 +121,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = e.ctx.Txn().StartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset(e.ctx)
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = zone(e.ctx)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	for i := range e.schema.Columns {
@@ -219,7 +219,7 @@ func (e *RecoverIndexExec) constructLimitPB(count uint64) *tipb.Executor {
 func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = txn.StartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset(e.ctx)
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = zone(e.ctx)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	for i := range e.columns {
@@ -647,7 +647,7 @@ func (e *CleanupIndexExec) Open(ctx context.Context) error {
 func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = txn.StartTS()
-	dagReq.TimeZoneOffset = timeZoneOffset(e.ctx)
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = zone(e.ctx)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = statementContextToFlags(sc)
 	for i := range e.idxCols {
