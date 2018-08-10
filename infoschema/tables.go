@@ -797,6 +797,30 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 		if colLen == types.UnspecifiedLength {
 			colLen = defaultFlen
 		}
+		if col.Tp == mysql.TypeSet {
+			//example: In MySQL set('a','bc','def','ghij') has length 13, This is because
+			//len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
+			sumLen, cnt := 0, 0
+			for _, ele := range col.Elems {
+				sumLen += len(ele)
+			}
+			if len(col.Elems) == 0 {
+				cnt = 0
+			} else {
+				cnt = len(col.Elems) - 1
+			}
+			colLen = sumLen + cnt
+		}
+		if col.Tp == mysql.TypeEnum {
+			//exapmle: In MySQL enum('a', 'ab', 'cdef') has length 4, This is because
+			//the longest string in the enum is 'cdef'
+			colLen = 0
+			for _, ele := range col.Elems {
+				if len(ele) > colLen {
+					colLen = len(ele)
+				}
+			}
+		}
 		if decimal == types.UnspecifiedLength {
 			decimal = defaultDecimal
 		}
