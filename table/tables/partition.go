@@ -67,7 +67,8 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if err := initTableIndices(&tbl.tableCommon); err != nil {
+
+	if err = initTableIndices(&tbl.tableCommon); err != nil {
 		return nil, errors.Trace(err)
 	}
 	partitions := make(map[int64]*partition)
