@@ -436,7 +436,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args[0] = indexInfo.ID
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexInfo.ID)
+			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
 		}
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
