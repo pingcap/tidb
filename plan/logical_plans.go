@@ -484,7 +484,7 @@ func (path *accessPath) splitCorColAccessCondFromFilters() (access, remained []e
 	for i := path.eqCondCount; i < len(path.idxCols); i++ {
 		matched := false
 		for j, filter := range path.tableFilters {
-			if !isColEqCorColOrConstant(filter, path.idxCols[i]) {
+			if used[j] || !isColEqCorColOrConstant(filter, path.idxCols[i]) {
 				continue
 			}
 			matched = true
