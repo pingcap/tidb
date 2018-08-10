@@ -86,7 +86,6 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 		testkit.Rows("s2 30"))
 	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 'e1'").Check(
 		testkit.Rows("e1 4"))
-	//
 
 	tk1 := testkit.NewTestKit(c, store)
 	tk1.MustExec("use test")
