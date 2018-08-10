@@ -76,7 +76,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		if oldTableID == newTableID && diff.Type != model.ActionRenameTable && diff.Type != model.ActionRebaseAutoID {
 			alloc, _ = b.is.AllocByID(oldTableID)
 		}
-		if diff.Type == model.ActionRenameTable {
+		if diff.Type == model.ActionRenameTable && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
 			if !ok {
 				return nil, ErrDatabaseNotExists.GenByArgs(
@@ -240,7 +240,7 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 	oldSchemaTables := b.is.schemaMap[dbName]
 	newSchemaTables := &schemaTables{
-		dbInfo: oldSchemaTables.dbInfo.Clone(),
+		dbInfo: oldSchemaTables.dbInfo.Copy(),
 		tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
 	}
 	for k, v := range oldSchemaTables.tables {
