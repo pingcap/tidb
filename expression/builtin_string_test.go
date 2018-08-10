@@ -1888,15 +1888,13 @@ func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {
 		args           string
 		expect         string
 		isNil          bool
-		getErr         bool
 		maxAllowPacket uint64
 	}{
-		{"abc", "YWJj", false, false, 4},
-		{"abc", "", true, false, 3},
+		{"abc", "YWJj", false, 4},
+		{"abc", "", true, 3},
 		{
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrLw==",
-			false,
 			false,
 			89,
 		},
@@ -1904,13 +1902,11 @@ func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 			"",
 			true,
-			false,
 			88,
 		},
 		{
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv",
-			false,
 			false,
 			259,
 		},
@@ -1918,7 +1914,6 @@ func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
 			"",
 			true,
-			false,
 			258,
 		},
 	}
@@ -1937,11 +1932,7 @@ func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {
 		input := chunk.NewChunkWithCapacity(colTypes, 1)
 		input.AppendString(0, test.args)
 		res, isNull, err := toBase64.evalString(input.GetRow(0))
-		if test.getErr {
-			c.Assert(err, NotNil)
-		} else {
-			c.Assert(err, IsNil)
-		}
+		c.Assert(err, IsNil)
 		if test.isNil {
 			c.Assert(isNull, IsTrue)
 			warningCount += 1
