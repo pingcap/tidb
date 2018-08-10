@@ -19,10 +19,12 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
+	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/printer"
 	log "github.com/sirupsen/logrus"
@@ -38,13 +40,15 @@ const (
 	keyOpDefaultTimeout = 1 * time.Second
 )
 
+// InfoSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
+var InfoSessionTTL = 10 * 60
+
 // InfoSyncer stores server info to Etcd when when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
 	etcdCli        *clientv3.Client
 	info           *ServerInfo
 	serverInfoPath string
-	// InfoSyncer will reuse the leaseID of ddl.SchemaSyncer.
-	sessionLeaseID clientv3.LeaseID
+	session        *concurrency.Session
 }
 
 // ServerInfo is server static information.
@@ -65,13 +69,17 @@ type ServerVersionInfo struct {
 }
 
 // NewInfoSyncer return new InfoSyncer. It is exported for testing.
-func NewInfoSyncer(id string, etcdCli *clientv3.Client, leaseID clientv3.LeaseID) *InfoSyncer {
+func NewInfoSyncer(id string, etcdCli *clientv3.Client) *InfoSyncer {
 	return &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
-		sessionLeaseID: leaseID,
 	}
+}
+
+// Init creates a new etcd session and stores server info to etcd.
+func (is *InfoSyncer) Init(ctx context.Context) error {
+	return errors.Trace(is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt))
 }
 
 //GetServerInfo gets self server static information.
@@ -110,8 +118,8 @@ func (is *InfoSyncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerI
 	return allInfo, nil
 }
 
-// StoreServerInfo stores self server static information to Etcd when domain Init.
-func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
+// storeServerInfo stores self server static information to Etcd.
+func (is *InfoSyncer) storeServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
@@ -119,7 +127,7 @@ func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = ddl.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, hack.String(infoBuf), clientv3.WithLease(is.sessionLeaseID))
+	err = ddl.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, hack.String(infoBuf), clientv3.WithLease(is.session.Lease()))
 	return errors.Trace(err)
 }
 
@@ -134,10 +142,32 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 }
 
+// Done returns a channel that closes when the info syncer is no longer being refreshed.
+func (is InfoSyncer) Done() <-chan struct{} {
+	if is.etcdCli == nil {
+		return make(chan struct{}, 1)
+	}
+	return is.session.Done()
+}
+
 // Restart restart the info syncer with new session leaseID and store server info to etcd again.
-func (is *InfoSyncer) Restart(leaseID clientv3.LeaseID) {
-	is.sessionLeaseID = leaseID
-	is.StoreServerInfo(context.Background())
+func (is *InfoSyncer) Restart(ctx context.Context) error {
+	return errors.Trace(is.newSessionAndStoreServerInfo(ctx, owner.NewSessionRetryUnlimited))
+}
+
+// newSessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
+func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt int) error {
+	if is.etcdCli == nil {
+		return nil
+	}
+	var err error
+	logPrefix := fmt.Sprintf("[InfoSyncer] %s", is.serverInfoPath)
+	is.session, err = owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = is.storeServerInfo(ctx)
+	return errors.Trace(err)
 }
 
 // getInfo gets server information from Etcd according to the key and opts.
