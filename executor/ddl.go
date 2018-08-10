@@ -15,11 +15,11 @@ package executor
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -198,8 +198,8 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			return errors.Trace(err)
 		}
 
-		if os.Getenv("TIDB_CHECK_BEFORE_DROP") == "1" {
-			log.Warnf("OS env variable TIDB_CHECK_BEFORE_DROP was on")
+		if config.CheckBeforeDrop {
+			log.Warnf("admin check table before drop was on")
 			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
 			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
 			if err != nil {

@@ -43,6 +43,7 @@ func PrintTiDBInfo() {
 	log.Infof("UTC Build Time:  %s", TiDBBuildTS)
 	log.Infof("GoVersion:  %s", GoVersion)
 	log.Infof("Race Enabled: %v", israce.RaceEnabled)
+	log.Infof("Admin check table before drop is %v", config.CheckBeforeDrop)
 	log.Infof("TiKV Min Version: %s", TiKVMinVersion)
 	configJSON, err := json.Marshal(config.GetGlobalConfig())
 	if err != nil {

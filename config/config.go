@@ -36,7 +36,17 @@ var (
 		"mocktikv": true,
 		"tikv":     true,
 	}
+	// CheckBeforeDrop enable to execute `admin check table` before `drop table`.
+	CheckBeforeDrop = false
+	// CheckBeforeDropLDFlag is a go build flag.
+	CheckBeforeDropLDFlag = "None"
 )
+
+func init() {
+	if CheckBeforeDropLDFlag == "1" {
+		CheckBeforeDrop = true
+	}
+}
 
 // Config contains configuration options.
 type Config struct {

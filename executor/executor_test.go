@@ -130,9 +130,9 @@ func (s *testSuite) TearDownTest(c *C) {
 }
 
 func (s *testSuite) TestAdmin(c *C) {
-	origin := os.Getenv("TIDB_CHECK_BEFORE_DROP")
+	origin := config.CheckBeforeDrop
 	defer func() {
-		os.Setenv("TIDB_CHECK_BEFORE_DROP", origin)
+		config.CheckBeforeDrop = origin
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -237,14 +237,14 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	r, err = tk.Exec("admin check table admin_test")
-	c.Assert(err, NotNil)
+	r, err_admin := tk.Exec("admin check table admin_test")
+	c.Assert(err_admin, NotNil)
 
-	os.Setenv("TIDB_CHECK_BEFORE_DROP", "1")
+	config.CheckBeforeDrop = true
 	r, err = tk.Exec("drop table admin_test")
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, err_admin.Error())
 
-	os.Setenv("TIDB_CHECK_BEFORE_DROP", "0")
+	config.CheckBeforeDrop = false
 	tk.MustExec("drop table admin_test")
 
 	// checksum table test
