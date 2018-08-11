@@ -236,7 +236,7 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err_admin := tk.Exec("admin check table admin_test")
 	c.Assert(err_admin, NotNil)
 
-	if config.CheckTableBeforeDrop() {
+	if config.CheckTableBeforeDrop {
 		r, err = tk.Exec("drop table admin_test")
 		c.Assert(err.Error(), Equals, err_admin.Error())
 

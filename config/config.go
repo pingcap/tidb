@@ -17,7 +17,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"io/ioutil"
-	"sync/atomic"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -38,7 +37,7 @@ var (
 		"tikv":     true,
 	}
 	// checkTableBeforeDrop enable to execute `admin check table` before `drop table`.
-	checkTableBeforeDrop = int32(0)
+	CheckTableBeforeDrop = true
 	// CheckBeforeDropLDFlag is a go build flag.
 	CheckBeforeDropLDFlag = "None"
 )
@@ -381,13 +380,8 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 
 func init() {
 	if CheckBeforeDropLDFlag == "1" {
-		atomic.StoreInt32(&checkTableBeforeDrop, 1)
+		CheckTableBeforeDrop = true
 	}
-}
-
-// CheckTableBeforeDrop return true if check table before drop is enable.
-func CheckTableBeforeDrop() bool {
-	return atomic.LoadInt32(&checkTableBeforeDrop) == 1
 }
 
 // The following constants represents the valid action configurations for OOMAction.
