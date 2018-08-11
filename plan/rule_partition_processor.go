@@ -109,7 +109,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		// id as FromID. So we set the id of the newDataSource with the original one to
 		// avoid traversing the whole plan tree to update the references.
 		newDataSource.id = ds.id
-
+		newDataSource.statisticTable = getStatsTable(ds.context(), ds.table.Meta(), pi.Definitions[i].ID)
 		children = append(children, &newDataSource)
 	}
 	if len(children) == 0 {
