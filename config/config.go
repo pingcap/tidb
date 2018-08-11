@@ -390,16 +390,6 @@ func CheckTableBeforeDrop() bool {
 	return atomic.LoadInt32(&checkTableBeforeDrop) == 1
 }
 
-// SetCheckTableBeforeDrop set whether do check table before drop.
-func SetCheckTableBeforeDrop(on bool) {
-	if on {
-		atomic.StoreInt32(&checkTableBeforeDrop, 1)
-	} else {
-		atomic.StoreInt32(&checkTableBeforeDrop, 0)
-	}
-
-}
-
 // The following constants represents the valid action configurations for OOMAction.
 // NOTE: Althrough the values is case insensitiv, we should use lower-case
 // strings because the configuration value will be transformed to lower-case

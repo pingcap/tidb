@@ -130,10 +130,6 @@ func (s *testSuite) TearDownTest(c *C) {
 }
 
 func (s *testSuite) TestAdmin(c *C) {
-	origin := config.CheckTableBeforeDrop()
-	defer func() {
-		config.SetCheckTableBeforeDrop(origin)
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
@@ -240,13 +236,14 @@ func (s *testSuite) TestAdmin(c *C) {
 	r, err_admin := tk.Exec("admin check table admin_test")
 	c.Assert(err_admin, NotNil)
 
-	config.SetCheckTableBeforeDrop(true)
-	r, err = tk.Exec("drop table admin_test")
-	c.Assert(err.Error(), Equals, err_admin.Error())
+	if config.CheckTableBeforeDrop() {
+		r, err = tk.Exec("drop table admin_test")
+		c.Assert(err.Error(), Equals, err_admin.Error())
 
-	config.SetCheckTableBeforeDrop(false)
-	tk.MustExec("drop table admin_test")
-
+		// Drop inconsistency index.
+		tk.MustExec("alter table admin_test drop index c1")
+		tk.MustExec("admin check table admin_test")
+	}
 	// checksum table test
 	tk.MustExec("create table checksum_with_index (id int, count int, PRIMARY KEY(id), KEY(count))")
 	tk.MustExec("create table checksum_without_index (id int, count int, PRIMARY KEY(id))")
