@@ -470,7 +470,7 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`INSERT INTO t VALUES ('keyword','urlprefix','text/ /text');`)
 	tk.MustExec(`admin check table t;`)
 
-	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec("use mysql")
 	tk.MustExec(`admin check table test.t;`)
 	_, err := tk.Exec("admin check table t")
 	c.Assert(err, NotNil)

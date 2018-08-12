@@ -37,7 +37,7 @@ var (
 		"tikv":     true,
 	}
 	// checkTableBeforeDrop enable to execute `admin check table` before `drop table`.
-	CheckTableBeforeDrop = true
+	CheckTableBeforeDrop = false
 	// CheckBeforeDropLDFlag is a go build flag.
 	CheckBeforeDropLDFlag = "None"
 )
