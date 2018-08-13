@@ -801,16 +801,13 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			// Example: In MySQL set('a','bc','def','ghij') has length 13, because
 			// len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
 			// Reference link: https://bugs.mysql.com/bug.php?id=22613
-			sumLen, cnt := 0, 0
+			colLen = 0
 			for _, ele := range col.Elems {
-				sumLen += len(ele)
+				colLen += len(ele)
 			}
-			if len(col.Elems) == 0 {
-				cnt = 0
-			} else {
-				cnt = len(col.Elems) - 1
+			if len(col.Elems) != 0 {
+				colLen += (len(col.Elems) - 1)
 			}
-			colLen = sumLen + cnt
 		} else if col.Tp == mysql.TypeEnum {
 			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
 			// the longest string in the enum is 'cdef'
