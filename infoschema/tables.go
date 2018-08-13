@@ -1321,7 +1321,7 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
 }
 
-func (it *infoschemaTable) GetID() int64 {
+func (it *infoschemaTable) GetPhysicalID() int64 {
 	return it.meta.ID
 }
 

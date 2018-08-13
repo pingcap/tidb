@@ -497,7 +497,7 @@ type addIndexResult struct {
 }
 
 func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.Table, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
-	index := tables.NewIndex(t.GetID(), t.Meta(), indexInfo)
+	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
@@ -860,7 +860,7 @@ func splitTableRanges(t table.Table, store kv.Storage, startHandle, endHandle in
 	startRecordKey := t.RecordKey(startHandle)
 	endRecordKey := t.RecordKey(endHandle).Next()
 
-	log.Infof("[ddl-reorg] split partition %v range [%v, %v] from PD", t.GetID(), startHandle, endHandle)
+	log.Infof("[ddl-reorg] split partition %v range [%v, %v] from PD", t.GetPhysicalID(), startHandle, endHandle)
 	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {

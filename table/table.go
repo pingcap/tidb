@@ -150,7 +150,7 @@ type Table interface {
 	// GetID returns the ID of the table.
 	// If it is not a partition, the ID would be the tableID.
 	// If it is a partition, the ID would be the partitionID.
-	GetID() int64
+	GetPhysicalID() int64
 
 	// Seek returns the handle greater or equal to h.
 	Seek(ctx sessionctx.Context, h int64) (handle int64, found bool, err error)

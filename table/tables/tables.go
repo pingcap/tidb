@@ -205,8 +205,8 @@ func (t *tableCommon) Meta() *model.TableInfo {
 	return t.meta
 }
 
-// GetID implements table.Table GetID interface.
-func (t *tableCommon) GetID() int64 {
+// GetPhysicalID implements table.Table GetPhysicalID interface.
+func (t *tableCommon) GetPhysicalID() int64 {
 	return t.partitionID
 }
 

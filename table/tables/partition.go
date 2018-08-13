@@ -49,8 +49,8 @@ type partition struct {
 	tableCommon
 }
 
-// GetID implements table.Table GetID interface.
-func (p *partition) GetID() int64 {
+// GetPhysicalID implements table.Table GetPhysicalID interface.
+func (p *partition) GetPhysicalID() int64 {
 	return p.partitionID
 }
 
@@ -246,6 +246,6 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
 }
 
-func (t *partitionedTable) GetID() int64 {
-	panic("GetID() should never be called on PartitionedTable")
+func (t *partitionedTable) GetPhysicalID() int64 {
+	panic("GetPhysicalID() should never be called on PartitionedTable")
 }

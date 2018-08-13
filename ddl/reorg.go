@@ -219,7 +219,7 @@ func buildDescTableScanDAG(startTS uint64, tbl table.Table, columns []*model.Col
 	dagReq.Flags |= model.FlagInSelectStmt
 
 	pbColumnInfos := model.ColumnsToProto(columns, tbl.Meta().PKIsHandle)
-	tblScanExec := constructDescTableScanPB(tbl.GetID(), pbColumnInfos)
+	tblScanExec := constructDescTableScanPB(tbl.GetPhysicalID(), pbColumnInfos)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
 	return dagReq, nil
@@ -241,7 +241,7 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 	}
 	ranges := ranger.FullIntRange(false)
 	var builder distsql.RequestBuilder
-	builder.SetTableRanges(tbl.GetID(), ranges, nil).
+	builder.SetTableRanges(tbl.GetPhysicalID(), ranges, nil).
 		SetDAGRequest(dagPB).
 		SetKeepOrder(true).
 		SetConcurrency(1).SetDesc(true)
@@ -319,7 +319,7 @@ func getTableRange(d *ddlCtx, tbl table.Table, snapshotVer uint64, priority int)
 		return 0, 0, errors.Trace(err)
 	}
 	if endHandle < startHandle || emptyTable {
-		log.Infof("[ddl-reorg] get table range %v endHandle < startHandle partition %d [%d %d]", tbl.Meta(), tbl.GetID(), endHandle, startHandle)
+		log.Infof("[ddl-reorg] get table range %v endHandle < startHandle partition %d [%d %d]", tbl.Meta(), tbl.GetPhysicalID(), endHandle, startHandle)
 		endHandle = startHandle
 	}
 	return
