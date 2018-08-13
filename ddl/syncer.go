@@ -121,7 +121,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		if err == nil {
 			return nil
 		}
-		log.Warnf("[etcdCli] put key: %s value: %s failed %v no.%d", key, val, err, i)
+		log.Warnf("[etcd-cli] put key: %s value: %s failed %v no.%d", key, val, err, i)
 		time.Sleep(keyOpRetryInterval)
 	}
 	return errors.Trace(err)
@@ -259,7 +259,7 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 		if err == nil {
 			return nil
 		}
-		log.Warnf("[etcdCli] delete key %s failed %v no.%d", key, err, i)
+		log.Warnf("[etcd-cli] delete key %s failed %v no.%d", key, err, i)
 	}
 	return errors.Trace(err)
 }

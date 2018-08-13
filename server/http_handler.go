@@ -1302,7 +1302,9 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		log.Error(err)
 		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	ownerID, err := do.DDL().OwnerManager().GetOwnerID(ctx)
+	cancel()
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		log.Error(err)

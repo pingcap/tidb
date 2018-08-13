@@ -82,7 +82,7 @@ func (is *InfoSyncer) Init(ctx context.Context) error {
 	return errors.Trace(is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt))
 }
 
-//GetServerInfo gets self server static information.
+// GetServerInfo gets self server static information.
 func (is *InfoSyncer) GetServerInfo() *ServerInfo {
 	return is.info
 }
@@ -99,7 +99,7 @@ func (is *InfoSyncer) GetServerInfoByID(ctx context.Context, id string) (*Server
 	}
 	info, ok := infoMap[id]
 	if !ok {
-		return nil, errors.Errorf("[infoSyncer] get %s failed", key)
+		return nil, errors.Errorf("[info-syncer] get %s failed", key)
 	}
 	return info, nil
 }
@@ -138,7 +138,7 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 	err := ddl.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		log.Errorf("[infoSyncer] remove server info failed %v", err)
+		log.Errorf("[info-syncer] remove server info failed %v", err)
 	}
 }
 
@@ -161,7 +161,7 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 		return nil
 	}
 	var err error
-	logPrefix := fmt.Sprintf("[InfoSyncer] %s", is.serverInfoPath)
+	logPrefix := fmt.Sprintf("[Info-syncer] %s", is.serverInfoPath)
 	is.session, err = owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
@@ -186,7 +186,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 		resp, err = etcdCli.Get(childCtx, key, opts...)
 		cancel()
 		if err != nil {
-			log.Infof("[infoSyncer] get %s failed %v, continue checking.", key, err)
+			log.Infof("[info-syncer] get %s failed %v, continue checking.", key, err)
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
@@ -194,7 +194,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			info := &ServerInfo{}
 			err = json.Unmarshal(kv.Value, info)
 			if err != nil {
-				log.Infof("[infoSyncer] get %s, json.Unmarshal %v failed %v.", kv.Key, kv.Value, err)
+				log.Infof("[info-syncer] get %s, json.Unmarshal %v failed %v.", kv.Key, kv.Value, err)
 				return nil, errors.Trace(err)
 			}
 			allInfo[info.ID] = info
