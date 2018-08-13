@@ -329,6 +329,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(null)")
 	tk.MustQuery("select group_concat(a), group_concat(distinct a) from t").Check(testkit.Rows("<nil> <nil>"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a decimal(10, 4))")
+	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
+	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {
