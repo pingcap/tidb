@@ -1166,7 +1166,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outerFilter:  outerFilter,
 		innerFilter:  innerFilter,
 		outer:        v.JoinType != plan.InnerJoin,
-		joiner:       joiner,
+		joiner:       tupleJoiner,
 		outerSchema:  apply.OuterSchema,
 	}
 	metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec").Inc()
