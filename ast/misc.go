@@ -339,6 +339,7 @@ const (
 	FlushNone FlushStmtType = iota
 	FlushTables
 	FlushPrivileges
+	FlushStatus
 )
 
 // FlushStmt is a statement to flush tables/privileges/optimizer costs and so on.
