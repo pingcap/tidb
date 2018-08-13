@@ -480,7 +480,7 @@ type addIndexWorker struct {
 }
 
 type reorgIndexTask struct {
-	partitionID int64
+	physicalID  int64
 	startHandle int64
 	endHandle   int64
 	// endIncluded indicates whether the range include the endHandle.
@@ -804,7 +804,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 		rightParenthesis = "]"
 	}
 	log.Infof("[ddl-reorg] worker(%v), finish region %v ranges [%v,%v%s, addedCount:%v, scanCount:%v, nextHandle:%v, elapsed time(s):%v",
-		w.id, task.partitionID, task.startHandle, task.endHandle, rightParenthesis, result.addedCount, result.scanCount, result.nextHandle, time.Since(startTime).Seconds())
+		w.id, task.physicalID, task.startHandle, task.endHandle, rightParenthesis, result.addedCount, result.scanCount, result.nextHandle, time.Since(startTime).Seconds())
 
 	return result
 }
@@ -947,7 +947,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	if err != nil {
 		// update the reorg handle that has been processed.
 		err1 := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
-			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PartitionID))
+			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalID))
 		})
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime)
 		log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
@@ -966,7 +966,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 // sendRangeTaskToWorkers sends tasks to workers, and returns remaining kvRanges that is not handled.
 func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker, reorgInfo *reorgInfo, totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
-	partitionID := reorgInfo.PartitionID
+	physicalID := reorgInfo.PhysicalID
 
 	// Build reorg indices tasks.
 	for _, keyRange := range kvRanges {
@@ -980,7 +980,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 		if endKey.Cmp(keyRange.EndKey) < 0 {
 			endIncluded = true
 		}
-		task := &reorgIndexTask{partitionID, startHandle, endHandle, endIncluded}
+		task := &reorgIndexTask{physicalID, startHandle, endHandle, endIncluded}
 		batchTasks = append(batchTasks, task)
 
 		if len(batchTasks) >= len(workers) {
@@ -1075,9 +1075,9 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		var finish bool
 		for !finish {
-			p := tbl.GetPartition(reorgInfo.PartitionID)
+			p := tbl.GetPartition(reorgInfo.PhysicalID)
 			if p == nil {
-				return errors.Errorf("Can not find partition id %d for table %d", reorgInfo.PartitionID, t.Meta().ID)
+				return errors.Errorf("Can not find partition id %d for table %d", reorgInfo.PhysicalID, t.Meta().ID)
 			}
 			err = w.addPhysicalTableIndex(p, idx, reorgInfo)
 			if err != nil {
@@ -1103,7 +1103,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 		return true, nil
 	}
 
-	pid, err := findNextPartitionID(reorg.PartitionID, pi.Definitions)
+	pid, err := findNextPhysicalID(reorg.PhysicalID, pi.Definitions)
 	if err != nil {
 		// Fatal error, should not run here.
 		log.Errorf("[ddl-reorg] update reorg fail, %v error stack: %s", t, errors.ErrorStack(err))
@@ -1119,27 +1119,27 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 		return false, errors.Trace(err)
 	}
 	log.Infof("[ddl-reorg] job %v update reorgInfo partition %d range [%d %d]", reorg.Job.ID, pid, start, end)
-	reorg.StartHandle, reorg.EndHandle, reorg.PartitionID = start, end, pid
+	reorg.StartHandle, reorg.EndHandle, reorg.PhysicalID = start, end, pid
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
 	err = kv.RunInNewTxn(reorg.d.store, true, func(txn kv.Transaction) error {
-		return errors.Trace(reorg.UpdateReorgMeta(txn, reorg.StartHandle, reorg.EndHandle, reorg.PartitionID))
+		return errors.Trace(reorg.UpdateReorgMeta(txn, reorg.StartHandle, reorg.EndHandle, reorg.PhysicalID))
 	})
 	return false, errors.Trace(err)
 }
 
-// findNextPartitionID finds the next partition ID in the PartitionDefinition array.
-// Returns 0 if current partitionID is already the last one.
-func findNextPartitionID(partitionID int64, defs []model.PartitionDefinition) (int64, error) {
+// findNextPhysicalID finds the next partition ID in the PartitionDefinition array.
+// Returns 0 if current PhysicalID is already the last one.
+func findNextPhysicalID(physicalID int64, defs []model.PartitionDefinition) (int64, error) {
 	for i, def := range defs {
-		if partitionID == def.ID {
+		if physicalID == def.ID {
 			if i == len(defs)-1 {
 				return 0, nil
 			}
 			return defs[i+1].ID, nil
 		}
 	}
-	return 0, errors.Errorf("partition id not found %d", partitionID)
+	return 0, errors.Errorf("partition id not found %d", physicalID)
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {

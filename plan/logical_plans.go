@@ -302,7 +302,7 @@ type DataSource struct {
 
 	// The data source may be a partition, rather than a real table.
 	isPartition bool
-	partitionID int64
+	physicalID  int64
 }
 
 // accessPath tells how we access one index or just access table.

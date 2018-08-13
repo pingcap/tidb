@@ -330,7 +330,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		filterCondition:  path.indexFilters,
 		dataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
-		partitionID:      ds.partitionID,
+		physicalID:       ds.physicalID,
 	}.init(ds.ctx)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
@@ -348,7 +348,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 			Columns:     ds.Columns,
 			Table:       is.Table,
 			isPartition: ds.isPartition,
-			partitionID: ds.partitionID,
+			physicalID:  ds.physicalID,
 		}.init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
@@ -527,7 +527,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 		TableAsName: ds.TableAsName,
 		DBName:      ds.DBName,
 		isPartition: ds.isPartition,
-		partitionID: ds.partitionID,
+		physicalID:  ds.physicalID,
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	var pkCol *expression.Column

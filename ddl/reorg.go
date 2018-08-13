@@ -184,16 +184,16 @@ type reorgInfo struct {
 	EndHandle int64
 	d         *ddlCtx
 	first     bool
-	// PartitionID is used for partitioned table.
+	// PhysicalID is used for partitioned table.
 	// DDL reorganize for a partitioned table will handle partitions one by one,
-	// PartitionID is used to trace the current partition we are handling.
-	// If the table is not partitioned, PartitionID would be TableID.
-	PartitionID int64
+	// PhysicalID is used to trace the current partition we are handling.
+	// If the table is not partitioned, PhysicalID would be TableID.
+	PhysicalID int64
 }
 
-func constructDescTableScanPB(partitionID int64, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
+func constructDescTableScanPB(physicalID int64, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
 	tblScan := &tipb.TableScan{
-		TableId: partitionID,
+		TableId: physicalID,
 		Columns: pbColumnInfos,
 		Desc:    true,
 	}
@@ -379,12 +379,12 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	info.d = d
 	info.StartHandle = start
 	info.EndHandle = end
-	info.PartitionID = pid
+	info.PhysicalID = pid
 
 	return &info, errors.Trace(err)
 }
 
-func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle, partitionID int64) error {
+func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle, physicalID int64) error {
 	t := meta.NewMeta(txn)
-	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, partitionID))
+	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalID))
 }

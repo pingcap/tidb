@@ -1546,8 +1546,8 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 		corColInAccess: b.corColInAccess(v.TablePlans[0]),
 		plans:          v.TablePlans,
 	}
-	if isPartition, partitionID := ts.IsPartition(); isPartition {
-		e.tableID = partitionID
+	if isPartition, physicalID := ts.IsPartition(); isPartition {
+		e.tableID = physicalID
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -1603,8 +1603,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		colLens:        is.IdxColLens,
 		plans:          v.IndexPlans,
 	}
-	if isPartition, partitionID := is.IsPartition(); isPartition {
-		e.tableID = partitionID
+	if isPartition, physicalID := is.IsPartition(); isPartition {
+		e.tableID = physicalID
 	}
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -1675,8 +1675,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 	}
-	if isPartition, partitionID := ts.IsPartition(); isPartition {
-		e.tableID = partitionID
+	if isPartition, physicalID := ts.IsPartition(); isPartition {
+		e.tableID = physicalID
 	}
 
 	if containsLimit(indexReq.Executors) {
