@@ -110,6 +110,21 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	return nil
 }
 
+func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4GroupConcat)(src), (*partialResult4GroupConcat)(dst)
+	if p1.buffer == nil {
+		return nil
+	}
+	if p2.buffer == nil {
+		p2.buffer = p1.buffer
+		return nil
+	}
+	p2.buffer.WriteString(e.sep)
+	p2.buffer.WriteString(p1.buffer.String())
+	e.truncatePartialResultIfNeed(sctx, p2.buffer)
+	return nil
+}
+
 type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
 	valsBuf *bytes.Buffer
