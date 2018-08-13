@@ -68,6 +68,9 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 		return nil, errors.Trace(err)
 	}
 
+	if err = initTableIndices(&tbl.tableCommon); err != nil {
+		return nil, errors.Trace(err)
+	}
 	partitions := make(map[int64]*partition)
 	pi := tblInfo.GetPartitionInfo()
 	for _, p := range pi.Definitions {
@@ -241,4 +244,8 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 
 	tbl := t.GetPartition(to)
 	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
+}
+
+func (t *partitionedTable) GetID() int64 {
+	panic("GetID() should never be called on PartitionedTable")
 }
