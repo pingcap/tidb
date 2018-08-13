@@ -803,7 +803,8 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if s.Partition != nil {
+	// TODO: Remove the test 's.Partition.Expr != nil' when we support 'PARTITION BY RANGE COLUMNS'
+	if s.Partition != nil && s.Partition.Expr != nil {
 		pi := &model.PartitionInfo{
 			Type: s.Partition.Tp,
 			Expr: s.Partition.Expr.Text(),

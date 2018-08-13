@@ -1469,6 +1469,9 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	c.Assert(part.Definitions[1].Name, Equals, "p1")
 	c.Assert(part.Definitions[2].MaxValue, IsTrue)
 	c.Assert(part.Definitions[2].Name, Equals, "p2")
+
+	// Fix issue 7362.
+	s.tk.MustExec("create table test_partition(id bigint, name varchar(255), primary key(id)) ENGINE=InnoDB DEFAULT CHARSET=utf8 PARTITION BY RANGE  COLUMNS(id) (PARTITION p1 VALUES LESS THAN (10) ENGINE = InnoDB);")
 }
 
 func (s *testDBSuite) TestTruncateTable(c *C) {
