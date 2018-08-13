@@ -38,8 +38,8 @@ var (
 	}
 	// checkTableBeforeDrop enable to execute `admin check table` before `drop table`.
 	CheckTableBeforeDrop = false
-	// CheckBeforeDropLDFlag is a go build flag.
-	CheckBeforeDropLDFlag = "None"
+	// checkBeforeDropLDFlag is a go build flag.
+	checkBeforeDropLDFlag = "None"
 )
 
 // Config contains configuration options.
@@ -379,7 +379,7 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 }
 
 func init() {
-	if CheckBeforeDropLDFlag == "1" {
+	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
 	}
 }

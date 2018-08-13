@@ -34,7 +34,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.GoVersion=$(shell go version)"
 
-TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.CheckBeforeDropLDFlag=1"
+TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
 
 CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
