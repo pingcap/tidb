@@ -97,6 +97,9 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		ID:   model.ExtraHandleID,
 		Name: model.ExtraHandleName,
 	})
+	for i := range e.cols {
+		e.cols[i].FieldType = *e.schema.Columns[i].RetType
+	}
 	e.srcChunk = e.newChunk()
 	dagPB, err := e.buildDAGPB()
 	if err != nil {
