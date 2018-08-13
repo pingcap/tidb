@@ -1723,6 +1723,9 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 
 	// test check order. The sql below have 2 problem: 1. ErrFieldTypeNotAllowedAsPartitionField  2. ErrPartitionMaxvalue , mysql will return ErrPartitionMaxvalue.
 	s.testErrorCode(c, `create TABLE t25 (c1 float) partition by range( c1 ) (partition p1 values less than maxvalue,partition p0 values less than (2000));`, tmysql.ErrPartitionMaxvalue)
+
+	// Fix issue 7362.
+	s.tk.MustExec("create table test_partition(id bigint, name varchar(255), primary key(id)) ENGINE=InnoDB DEFAULT CHARSET=utf8 PARTITION BY RANGE  COLUMNS(id) (PARTITION p1 VALUES LESS THAN (10) ENGINE = InnoDB);")
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
