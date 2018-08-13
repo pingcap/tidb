@@ -800,6 +800,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 		if col.Tp == mysql.TypeSet {
 			//example: In MySQL set('a','bc','def','ghij') has length 13, This is because
 			//len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
+			//Reference link: https://bugs.mysql.com/bug.php?id=22613
 			sumLen, cnt := 0, 0
 			for _, ele := range col.Elems {
 				sumLen += len(ele)
@@ -813,6 +814,7 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 		} else if col.Tp == mysql.TypeEnum {
 			//exapmle: In MySQL enum('a', 'ab', 'cdef') has length 4, This is because
 			//the longest string in the enum is 'cdef'
+			//Reference link: https://bugs.mysql.com/bug.php?id=22613
 			colLen = 0
 			for _, ele := range col.Elems {
 				if len(ele) > colLen {
