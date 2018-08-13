@@ -179,7 +179,7 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 }
 
 // GetPartition returns a Table, which is actually a partition.
-func (t *partitionedTable) GetPartition(pid int64) table.Table {
+func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 	return t.partitions[pid]
 }
 
@@ -244,8 +244,4 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 
 	tbl := t.GetPartition(to)
 	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
-}
-
-func (t *partitionedTable) GetPhysicalID() int64 {
-	panic("GetPhysicalID() should never be called on PartitionedTable")
 }

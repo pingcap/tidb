@@ -496,7 +496,7 @@ type addIndexResult struct {
 	err        error
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.Table, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	return &addIndexWorker{
 		id:          id,
@@ -856,7 +856,7 @@ func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
 // to speed up adding index in table with disperse handle.
 // The `t` should be a non-partitioned table or a partition.
-func splitTableRanges(t table.Table, store kv.Storage, startHandle, endHandle int64) ([]kv.KeyRange, error) {
+func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endHandle int64) ([]kv.KeyRange, error) {
 	startRecordKey := t.RecordKey(startHandle)
 	endRecordKey := t.RecordKey(endHandle).Next()
 
@@ -1009,7 +1009,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker
 
 // buildIndexForReorgInfo build backfilling tasks from [reorgInfo.StartHandle, reorgInfo.EndHandle),
 // and send these tasks to add index workers, till we finish adding the indices.
-func (w *worker) buildIndexForReorgInfo(t table.Table, workers []*addIndexWorker, job *model.Job, reorgInfo *reorgInfo) error {
+func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, workers []*addIndexWorker, job *model.Job, reorgInfo *reorgInfo) error {
 	totalAddedCount := job.GetRowCount()
 
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
@@ -1050,7 +1050,7 @@ func (w *worker) buildIndexForReorgInfo(t table.Table, workers []*addIndexWorker
 //	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (w *worker) addPhysicalTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
 	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
@@ -1089,7 +1089,7 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 			}
 		}
 	} else {
-		err = w.addPhysicalTableIndex(t, idx, reorgInfo)
+		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), idx, reorgInfo)
 	}
 	return errors.Trace(err)
 }

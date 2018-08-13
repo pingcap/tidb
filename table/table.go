@@ -147,9 +147,6 @@ type Table interface {
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 
-	// GetPhysicalID returns the TiKV region ID of the table.
-	GetPhysicalID() int64
-
 	// Seek returns the handle greater or equal to h.
 	Seek(ctx sessionctx.Context, h int64) (handle int64, found bool, err error)
 
@@ -157,12 +154,19 @@ type Table interface {
 	Type() Type
 }
 
+// PhysicalTable is a concrete table implementation, it may be a partition or a table.
+type PhysicalTable interface {
+	Table
+	// GetPhysicalID returns a physical ID of the table or partition.
+	GetPhysicalID() int64
+}
+
 // PartitionedTable is a Table, and it has a GetPartition() method.
 // GetPartition() gets the partition from a partition table by a physical ID, its
 // return value is a Table because partition implements the Table interface.
 type PartitionedTable interface {
 	Table
-	GetPartition(physicalID int64) Table
+	GetPartition(physicalID int64) PhysicalTable
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
