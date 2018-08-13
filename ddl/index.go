@@ -1103,7 +1103,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 		return true, nil
 	}
 
-	pid, err := findNextPhysicalID(reorg.PhysicalID, pi.Definitions)
+	pid, err := findNextPartitionID(reorg.PhysicalID, pi.Definitions)
 	if err != nil {
 		// Fatal error, should not run here.
 		log.Errorf("[ddl-reorg] update reorg fail, %v error stack: %s", t, errors.ErrorStack(err))
@@ -1128,18 +1128,18 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	return false, errors.Trace(err)
 }
 
-// findNextPhysicalID finds the next partition ID in the PartitionDefinition array.
-// Returns 0 if current PhysicalID is already the last one.
-func findNextPhysicalID(physicalID int64, defs []model.PartitionDefinition) (int64, error) {
+// findNextPartitionID finds the next partition ID in the PartitionDefinition array.
+// Returns 0 if current partition is already the last one.
+func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinition) (int64, error) {
 	for i, def := range defs {
-		if physicalID == def.ID {
+		if currentPartition == def.ID {
 			if i == len(defs)-1 {
 				return 0, nil
 			}
 			return defs[i+1].ID, nil
 		}
 	}
-	return 0, errors.Errorf("partition id not found %d", physicalID)
+	return 0, errors.Errorf("partition id not found %d", currentPartition)
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
