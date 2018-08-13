@@ -413,8 +413,12 @@ func (s *testEvaluatorSuite) TestRepeatSig(c *C) {
 	input := chunk.NewChunkWithCapacity(colTypes, 10)
 	input.AppendString(0, "a")
 	input.AppendString(0, "a")
+	input.AppendString(0, "毅")
+	input.AppendString(0, "毅")
 	input.AppendInt64(1, 6)
 	input.AppendInt64(1, 10001)
+	input.AppendInt64(1, 6)
+	input.AppendInt64(1, 334)
 	res, isNull, err := repeat.evalString(input.GetRow(0))
 	c.Assert(res, Equals, "aaaaaa")
 	c.Assert(isNull, IsFalse)
@@ -426,6 +430,18 @@ func (s *testEvaluatorSuite) TestRepeatSig(c *C) {
 	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(len(warnings), Equals, 1)
 	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+	res, isNull, err = repeat.evalString(input.GetRow(2))
+	c.Assert(res, Equals, "毅毅毅毅毅毅")
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
+	res, isNull, err = repeat.evalString(input.GetRow(3))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+	warnings = s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 2)
+	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
 }
 
