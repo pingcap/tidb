@@ -32,9 +32,9 @@ import (
 type MergeJoinExec struct {
 	baseExecutor
 
-	stmtCtx         *stmtctx.StatementContext
-	compareFuncs    []chunk.CompareFunc
-	resultGenerator joinResultGenerator
+	stmtCtx      *stmtctx.StatementContext
+	compareFuncs []chunk.CompareFunc
+	joiner       joiner
 
 	prepared bool
 	outerIdx int
@@ -299,7 +299,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 		}
 
 		if cmpResult < 0 {
-			e.resultGenerator.onMissMatch(e.outerTable.row, chk)
+			e.joiner.onMissMatch(e.outerTable.row, chk)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
@@ -313,7 +313,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			continue
 		}
 
-		matched, err := e.resultGenerator.tryToMatch(e.outerTable.row, e.innerIter4Row, chk)
+		matched, err := e.joiner.tryToMatch(e.outerTable.row, e.innerIter4Row, chk)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -321,7 +321,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 
 		if e.innerIter4Row.Current() == e.innerIter4Row.End() {
 			if !e.outerTable.hasMatch {
-				e.resultGenerator.onMissMatch(e.outerTable.row, chk)
+				e.joiner.onMissMatch(e.outerTable.row, chk)
 			}
 			e.outerTable.row = e.outerTable.iter.Next()
 			e.innerIter4Row.Begin()
