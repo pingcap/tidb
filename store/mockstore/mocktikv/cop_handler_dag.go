@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -145,18 +146,13 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	sc := flagsToStatementContext(dagReq.Flags)
 
-	// retrieving timezone by name first. When name is set, it means we need
-	// consider daylight saving time. If it is not, we can use offset.
-	if dagReq.TimeZoneName != "" {
-		if sc.TimeZone, err = LocCache.getLoc(dagReq.TimeZoneName); err != nil {
-			return nil, nil, nil, errors.Trace(err)
-		}
-		dagReq.TimeZoneName = sc.TimeZone.String()
-	} else {
-		sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	sc := flagsToStatementContext(dagReq.Flags)
+	sc.TimeZone, err = h.constructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
 	}
+
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
@@ -167,6 +163,17 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		return nil, nil, nil, errors.Trace(err)
 	}
 	return ctx, e, dagReq, err
+}
+
+// constructTimeZone constructs timezone by name first. When the timezone name
+// is set and is not equal to "UTC", the daylight saving time problem must be
+// considered. Otherwise the timezone is constructed directly from the offset.
+func (h *rpcHandler) constructTimeZone(name string, offset int) (*time.Location, error) {
+	if name != "" && strings.ToLower(name) != "utc" {
+		return LocCache.getLoc(name)
+	} else {
+		return time.FixedZone("UTC", offset), nil
+	}
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
