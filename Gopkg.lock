@@ -44,12 +44,6 @@
   version = "v3.2.18"
 
 [[projects]]
-  branch = "master"
-  name = "github.com/coreos/gofail"
-  packages = ["runtime"]
-  revision = "38defe9971eda62d1b1c6a69c00acf001d46ecab"
-
-[[projects]]
   name = "github.com/cznic/golex"
   packages = ["lex"]
   revision = "da5a7153a51074477ecac5c45a7e5182a0c72448"
@@ -80,6 +74,16 @@
   name = "github.com/cznic/y"
   packages = ["."]
   revision = "9fdf92d4aac058959f814606bb729ed50f5e4240"
+
+[[projects]]
+  branch = "master"
+  name = "github.com/etcd-io/gofail"
+  packages = [
+    ".",
+    "code",
+    "runtime"
+  ]
+  revision = "51ce9a71510a58bad5ae66ddd278ef28762a1550"
 
 [[projects]]
   name = "github.com/go-sql-driver/mysql"
@@ -420,6 +424,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "8edc10ad65dbfebaec4badbf0954ad89e272446001fe4e7b2e96094589520ce2"
+  inputs-digest = "472d8f62cb1733b34466708b19eaa0f7d80c01045ad4de7d790cfc34797c991a"
   solver-name = "gps-cdcl"
   solver-version = 1

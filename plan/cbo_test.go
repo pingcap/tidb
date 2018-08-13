@@ -411,6 +411,14 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 
 	testKit.MustExec("create table t3 (a int, b int)")
 	testKit.MustExec("create index a on t3 (a)")
+
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec("create table t4 (a int, b int) partition by range (a) (partition p1 values less than (2), partition p2 values less than (3))")
+	testKit.MustExec("create index a on t4 (a)")
+	testKit.MustExec("create index b on t4 (b)")
+	testKit.MustExec("insert into t4 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
+	testKit.MustExec("analyze table t4")
+
 	tests := []struct {
 		sql  string
 		best string
@@ -450,6 +458,19 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		{
 			sql:  "analyze table t2 index",
 			best: "Analyze{Index(a),Index(b)}",
+		},
+		// Test partitioned table.
+		{
+			sql:  "select * from t4 where t4.a <= 2",
+			best: "UnionAll{TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))->TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))}",
+		},
+		{
+			sql:  "select * from t4 where t4.b < 2",
+			best: "UnionAll{IndexLookUp(Index(t4.b)[[-inf,2)], Table(t4))->IndexLookUp(Index(t4.b)[[-inf,2)], Table(t4))}",
+		},
+		{
+			sql:  "select * from t4 where t4.a = 1 and t4.b <= 2",
+			best: "TableReader(Table(t4)->Sel([eq(test.t4.a, 1) le(test.t4.b, 2)]))",
 		},
 		// TODO: Refine these tests in the future.
 		//{

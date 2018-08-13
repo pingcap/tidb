@@ -409,6 +409,14 @@ func (db *DBInfo) Clone() *DBInfo {
 	return &newInfo
 }
 
+// Copy shallow copies DBInfo.
+func (db *DBInfo) Copy() *DBInfo {
+	newInfo := *db
+	newInfo.Tables = make([]*TableInfo, len(db.Tables))
+	copy(newInfo.Tables, db.Tables)
+	return &newInfo
+}
+
 // CIStr is case insensitive string.
 type CIStr struct {
 	O string `json:"O"` // Original string.
