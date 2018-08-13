@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 func truncateStr(str string, flen int) string {
@@ -308,7 +309,7 @@ func StrToFloat(sc *stmtctx.StatementContext, str string) (float64, error) {
 		if err2, ok := err1.(*strconv.NumError); ok {
 			// value will truncate to MAX/MIN if out of range.
 			if err2.Err == strconv.ErrRange {
-				err1 = sc.HandleTruncate(ErrTruncatedWrongVal.GenByArgs("DOUBLE", str))
+				err1 = sc.HandleTruncate(ErrTruncatedWrongVal.GenByArgs("DOUBLE", stringutil.Copy(str)))
 				if math.IsInf(f, 1) {
 					f = math.MaxFloat64
 				} else if math.IsInf(f, -1) {

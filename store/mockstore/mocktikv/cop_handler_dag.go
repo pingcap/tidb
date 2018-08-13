@@ -672,7 +672,7 @@ func (h *rpcHandler) encodeArrow(selResp *tipb.SelectResponse, rows [][][]byte, 
 		respColTypes = append(respColTypes, colTypes[ordinal])
 	}
 
-	chk := chunk.NewChunkWithCapacity(respColTypes, 32)
+	chk := chunk.NewChunkWithCapacity(respColTypes, rowsPerChunk)
 	encoder := chunk.NewCodec(respColTypes)
 	decoder := codec.NewDecoder(chk, loc)
 	for i := range rows {
