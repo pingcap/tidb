@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"strings"
 	"sync"
 	"time"
 
@@ -169,7 +168,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 // is set and is not equal to "UTC", the daylight saving time problem must be
 // considered. Otherwise the timezone is constructed directly from the offset.
 func (h *rpcHandler) constructTimeZone(name string, offset int) (*time.Location, error) {
-	if name != "" && strings.ToLower(name) != "utc" {
+	if name != "" && name != "UTC" {
 		return LocCache.getLoc(name)
 	} else {
 		return time.FixedZone("UTC", offset), nil
