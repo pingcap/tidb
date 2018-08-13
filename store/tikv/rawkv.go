@@ -125,13 +125,15 @@ func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
 	if cmdResp == nil {
 		return nil, errors.Trace(ErrBodyMissing)
 	}
-	keyToIndex := make(map[string]int, len(keys))
-	for i, key := range keys {
-		keyToIndex[string(key)] = i
-	}
-	values := make([][]byte, len(keys))
+
+	keyToValue := make(map[string][]byte, len(keys))
 	for _, pair := range cmdResp.Pairs {
-		values[keyToIndex[string(pair.Key)]] = pair.Value
+		keyToValue[string(pair.Key)] = pair.Value
+	}
+
+	values := make([][]byte, len(keys))
+	for i, key := range keys {
+		values[i] = keyToValue[string(key)]
 	}
 	return values, nil
 }
@@ -370,13 +372,9 @@ func (c *RawKVClient) sendBatchReq(bo *Backoffer, keys [][]byte, cmdType tikvrpc
 				if firstError == nil {
 					firstError = singleResp.err
 				}
-			} else {
-				switch cmdType {
-				case tikvrpc.CmdRawBatchDelete:
-				case tikvrpc.CmdRawBatchGet:
-					cmdResp := singleResp.resp.RawBatchGet
-					resp.RawBatchGet.Pairs = append(resp.RawBatchGet.Pairs, cmdResp.Pairs...)
-				}
+			} else if cmdType == tikvrpc.CmdRawBatchGet {
+				cmdResp := singleResp.resp.RawBatchGet
+				resp.RawBatchGet.Pairs = append(resp.RawBatchGet.Pairs, cmdResp.Pairs...)
 			}
 		}
 	}
