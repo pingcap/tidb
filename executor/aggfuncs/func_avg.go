@@ -76,10 +76,12 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 
-		err = types.DecimalAdd(&p.sum, input, &p.sum)
+		newSum := new(types.MyDecimal)
+		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		p.sum = *newSum
 		p.count++
 	}
 	return nil
@@ -108,10 +110,12 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 			continue
 		}
 
-		err = types.DecimalAdd(&p.sum, inputSum, &p.sum)
+		newSum := new(types.MyDecimal)
+		err = types.DecimalAdd(&p.sum, inputSum, newSum)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		p.sum = *newSum
 		p.count += inputCount
 	}
 	return nil
@@ -122,10 +126,12 @@ func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src Par
 	if p1.count == 0 {
 		return nil
 	}
-	err := types.DecimalAdd(&p1.sum, &p2.sum, &p2.sum)
+	newSum := new(types.MyDecimal)
+	err := types.DecimalAdd(&p1.sum, &p2.sum, newSum)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	p2.sum = *newSum
 	p2.count += p1.count
 	return nil
 }
@@ -164,10 +170,12 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 			continue
 		}
 
-		err = types.DecimalAdd(&p.sum, input, &p.sum)
+		newSum := new(types.MyDecimal)
+		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		p.sum = *newSum
 		p.count++
 		p.valSet.insert(input)
 	}
