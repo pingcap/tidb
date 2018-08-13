@@ -77,7 +77,7 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	tk.MustExec("create user xxx")
 	tk.MustExec("flush privileges")
 
-	//Test for length of enum and set
+	// Test for length of enum and set
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t ( s set('a','bc','def','ghij') default NULL, e1 enum('a', 'ab', 'cdef'), s2 SET('1','2','3','4','1585','ONE','TWO','Y','N','THREE'))")
 	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 's'").Check(
