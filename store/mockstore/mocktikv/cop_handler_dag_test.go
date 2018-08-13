@@ -49,10 +49,6 @@ func (s *testRPCHandlerSuite) TestConstructTimezone(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(loc.String(), Equals, "Asia/Shanghai")
 
-	loc, err = h.constructTimeZone("ASIA/SHANGHAI", 12800)
-	c.Assert(err, IsNil)
-	c.Assert(loc.String(), Equals, "ASIA/SHANGHAI")
-
 	loc, err = h.constructTimeZone("asia/not-exist", 12800)
 	c.Assert(err.Error(), Equals, "invalid name for timezone asia/not-exist")
 }
