@@ -27,30 +27,30 @@ import (
 	"golang.org/x/net/context"
 )
 
-func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		tableID := row.GetInt64(1)
-		table, ok := is.TableByID(tableID)
+		physicalID := row.GetInt64(1)
+		table, ok := h.getTableByPhysicalID(is, physicalID)
 		if !ok {
-			log.Debugf("Unknown table ID %d in stats meta table, maybe it has been dropped", tableID)
+			log.Debugf("Unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
 			continue
 		}
 		tableInfo := table.Meta()
 		newHistColl := HistColl{
-			TableID:     tableInfo.ID,
-			HaveTblID:   true,
-			Count:       row.GetInt64(3),
-			ModifyCount: row.GetInt64(2),
-			Columns:     make(map[int64]*Column, len(tableInfo.Columns)),
-			Indices:     make(map[int64]*Index, len(tableInfo.Indices)),
-			colName2Idx: make(map[string]int64, len(tableInfo.Columns)),
-			colName2ID:  make(map[string]int64, len(tableInfo.Columns)),
+			PhysicalID:     physicalID,
+			HavePhysicalID: true,
+			Count:          row.GetInt64(3),
+			ModifyCount:    row.GetInt64(2),
+			Columns:        make(map[int64]*Column, len(tableInfo.Columns)),
+			Indices:        make(map[int64]*Index, len(tableInfo.Indices)),
+			colName2Idx:    make(map[string]int64, len(tableInfo.Columns)),
+			colName2ID:     make(map[string]int64, len(tableInfo.Columns)),
 		}
 		tbl := &Table{
 			HistColl: newHistColl,
 			Version:  row.GetUint64(0),
 		}
-		tables[tableID] = tbl
+		tables[physicalID] = tbl
 	}
 }
 
@@ -76,19 +76,19 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsMeta4Chunk(is, tables, iter)
+		h.initStatsMeta4Chunk(is, tables, iter)
 	}
 	return tables, nil
 }
 
-func initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := tables[row.GetInt64(0)]
 		if !ok {
 			continue
 		}
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
-		tbl, _ := is.TableByID(table.TableID)
+		tbl, _ := h.getTableByPhysicalID(is, table.PhysicalID)
 		if row.GetInt64(1) > 0 {
 			var idxInfo *model.IndexInfo
 			for _, idx := range tbl.Meta().Indices {
@@ -145,7 +145,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache
 		if chk.NumRows() == 0 {
 			break
 		}
-		initStatsHistograms4Chunk(is, tables, iter)
+		h.initStatsHistograms4Chunk(is, tables, iter)
 	}
 	return nil
 }

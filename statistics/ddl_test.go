@@ -82,6 +82,17 @@ func (s *testStatsCacheSuite) TestDDLTable(c *C) {
 	h.Update(is)
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
+
+	testKit.MustExec("truncate table t1")
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	tableInfo = tbl.Meta()
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	h.Update(is)
+	statsTbl = h.GetTableStats(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsFalse)
 }
 
 func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {

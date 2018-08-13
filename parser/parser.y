@@ -5518,6 +5518,12 @@ FlushOption:
 			Tp: ast.FlushPrivileges,
 		}
 	}
+|	"STATUS"
+	{
+		$$ = &ast.FlushStmt{
+			Tp: ast.FlushStatus,
+		}
+	}
 |	TableOrTables TableNameListOpt WithReadLockOpt
 	{
 		$$ = &ast.FlushStmt{
