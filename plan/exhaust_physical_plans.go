@@ -889,15 +889,6 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	return nil
 }
 
-func (p *LogicalExists) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
-	if !prop.isEmpty() {
-		return nil
-	}
-	exists := PhysicalExists{}.init(p.ctx, p.stats, &requiredProp{expectedCnt: 1})
-	exists.SetSchema(p.schema)
-	return []PhysicalPlan{exists}
-}
-
 func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	if !prop.isEmpty() {
 		return nil
