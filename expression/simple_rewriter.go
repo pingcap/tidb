@@ -32,20 +32,20 @@ type simpleRewriter struct {
 	ctx    sessionctx.Context
 }
 
-// ParseSimpleExpr parses simple expression string to Expression.
+// ParseSimpleExprWithTableInfo parses simple expression string to Expression.
 // The expression string must only reference the column in table Info.
-func ParseSimpleExpr(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
+func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
 	exprStr = "select " + exprStr
 	stmts, err := parser.New().Parse(exprStr, "", "")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	return RewriteSimpleExpr(ctx, tableInfo, expr)
+	return RewriteSimpleExprWithTableInfo(ctx, tableInfo, expr)
 }
 
-// RewriteSimpleExpr rewrites simple ast.ExprNode to expression.Expression.
-func RewriteSimpleExpr(ctx sessionctx.Context, tbl *model.TableInfo, expr ast.ExprNode) (Expression, error) {
+// RewriteSimpleExprWithTableInfo rewrites simple ast.ExprNode to expression.Expression.
+func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo, expr ast.ExprNode) (Expression, error) {
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	columns := ColumnInfos2ColumnsWithDBName(ctx, dbName, tbl.Name, tbl.Columns)
 	rewriter := &simpleRewriter{ctx: ctx, schema: NewSchema(columns...)}
