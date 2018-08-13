@@ -600,7 +600,7 @@ func checkTooManyColumns(colDefs []*ast.ColumnDef) error {
 // checkColumnsAttributes checks attributes for multiple columns.
 func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
-		if err := checkColumnAttributes(colDef.Name.OrigColName(), colDef.Tp, colDef.Options); err != nil {
+		if err := checkColumnAttributes(colDef.Name.OrigColName(), colDef.Tp); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -608,7 +608,7 @@ func checkColumnsAttributes(colDefs []*ast.ColumnDef) error {
 }
 
 // checkColumnAttributes check attributes for single column.
-func checkColumnAttributes(colName string, tp *types.FieldType, options []*ast.ColumnOption) error {
+func checkColumnAttributes(colName string, tp *types.FieldType) error {
 	switch tp.Tp {
 	case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
 		if tp.Flen < tp.Decimal {
@@ -617,28 +617,6 @@ func checkColumnAttributes(colName string, tp *types.FieldType, options []*ast.C
 	case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
 		if tp.Decimal != types.UnspecifiedFsp && (tp.Decimal < types.MinFsp || tp.Decimal > types.MaxFsp) {
 			return types.ErrTooBigPrecision.GenByArgs(tp.Decimal, colName, types.MaxFsp)
-		}
-		if tp.Tp == mysql.TypeTimestamp {
-			columnFsp := uint64(tp.Decimal)
-			if tp.Decimal < 0 {
-				columnFsp = 0
-			}
-			for _, option := range options {
-				if !expression.IsCurrentTimestampExpr(option.Expr) {
-					continue
-				}
-				fc, ok := option.Expr.(*ast.FuncCallExpr)
-				if !ok {
-					continue
-				}
-				funcFsp := uint64(0)
-				if fc.Args != nil && len(fc.Args) > 0 {
-					funcFsp = fc.Args[0].GetValue().(uint64)
-				}
-				if funcFsp != columnFsp {
-					return types.ErrInvalidDefault.GenByArgs(colName)
-				}
-			}
 		}
 	}
 	return nil
@@ -1219,7 +1197,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	colName := specNewColumn.Name.Name.O
-	if err = checkColumnAttributes(colName, specNewColumn.Tp, specNewColumn.Options); err != nil {
+	if err = checkColumnAttributes(colName, specNewColumn.Tp); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1595,7 +1573,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(errUnsupportedModifyColumn)
 	}
 
-	if err = checkColumnAttributes(specNewColumn.Name.OrigColName(), specNewColumn.Tp, specNewColumn.Options); err != nil {
+	if err = checkColumnAttributes(specNewColumn.Name.OrigColName(), specNewColumn.Tp); err != nil {
 		return nil, errors.Trace(err)
 	}
 
