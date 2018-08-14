@@ -160,8 +160,8 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 
 	// Deal with the correlated column.
 	for _, expr := range exprs {
-		if c := isColEqCorCol(expr); c != nil && !coll.ColumnIsInvalid(sc, c.ID) {
-			colHist := coll.Columns[c.ID]
+		if c := isColEqCorCol(expr); c != nil && !coll.ColumnIsInvalid(sc, c.UniqueID) {
+			colHist := coll.Columns[c.UniqueID]
 			if colHist.NDV > 0 {
 				ret *= 1 / float64(colHist.NDV)
 			}
@@ -172,27 +172,31 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 
 	extractedCols := make([]*expression.Column, 0, len(coll.Columns))
 	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
-	for _, colInfo := range coll.Columns {
+	for id, colInfo := range coll.Columns {
 		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
 		if col != nil {
 			maskCovered, ranges, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, col)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			sets = append(sets, &exprSet{tp: colType, ID: col.ID, mask: maskCovered, ranges: ranges, numCols: 1})
+			sets = append(sets, &exprSet{tp: colType, ID: id, mask: maskCovered, ranges: ranges, numCols: 1})
 			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
 				sets[len(sets)-1].tp = pkType
 			}
 		}
 	}
-	for _, idxInfo := range coll.Indices {
-		idxCols, lengths := expression.IndexInfo2Cols(extractedCols, idxInfo.Info)
+	for id, idxInfo := range coll.Indices {
+		idxCols := expression.FindColumnsByUniqueIDs(extractedCols, coll.Idx2ColumnIDs[id])
 		if len(idxCols) > 0 {
+			lengths := make([]int, 0, len(idxCols))
+			for i := 0; i < len(idxCols); i++ {
+				lengths = append(lengths, idxInfo.Info.Columns[i].Length)
+			}
 			maskCovered, ranges, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, idxCols...)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			sets = append(sets, &exprSet{tp: indexType, ID: idxInfo.ID, mask: maskCovered, ranges: ranges, numCols: len(idxInfo.Info.Columns)})
+			sets = append(sets, &exprSet{tp: indexType, ID: id, mask: maskCovered, ranges: ranges, numCols: len(idxInfo.Info.Columns)})
 		}
 	}
 	sets = getUsableSetsByGreedy(sets)

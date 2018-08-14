@@ -423,7 +423,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		path.countAfterAccess, err = ds.statisticTable.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
+		path.countAfterAccess, err = ds.stats.histColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -441,8 +441,8 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	}
 	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.index.Columns, ds.tableInfo)
 	if corColInAccessConds {
-		idxHist, ok := ds.statisticTable.Indices[path.index.ID]
-		if ok && !ds.statisticTable.Pseudo {
+		idxHist, ok := ds.stats.histColl.Indices[path.index.ID]
+		if ok && !ds.stats.histColl.Pseudo {
 			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
 		} else {
 			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
@@ -454,7 +454,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.countAfterAccess = math.Min(ds.stats.count/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
-		selectivity, err := ds.statisticTable.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, err := ds.stats.histColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 			selectivity = selectionFactor

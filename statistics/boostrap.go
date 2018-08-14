@@ -43,8 +43,6 @@ func initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache, iter *chun
 			ModifyCount: row.GetInt64(2),
 			Columns:     make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices:     make(map[int64]*Index, len(tableInfo.Indices)),
-			colName2Idx: make(map[string]int64, len(tableInfo.Columns)),
-			colName2ID:  make(map[string]int64, len(tableInfo.Columns)),
 		}
 		tbl := &Table{
 			HistColl: newHistColl,
@@ -235,7 +233,6 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 			}
 			col.PreCalculateScalar()
 		}
-		table.buildColNameMapper()
 	}
 	return nil
 }
