@@ -119,7 +119,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		} else {
 			fmt.Fprintf(&buf, "((%s) < (%s))", pi.Expr, pi.Definitions[i].LessThan[0])
 		}
-		expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+		expr, err := expression.ParseSimpleExprWithTableInfo(ctx, buf.String(), tblInfo)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
@@ -131,7 +131,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 			fmt.Fprintf(&buf, " and ((%s) >= (%s))", pi.Expr, pi.Definitions[i-1].LessThan[0])
 		}
 
-		expr, err = expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+		expr, err = expression.ParseSimpleExprWithTableInfo(ctx, buf.String(), tblInfo)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
