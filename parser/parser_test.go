@@ -201,6 +201,12 @@ func (s *testParserSuite) TestSimple(c *C) {
 	_, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
 
+	// for #7371, support NATIONAL CHARACTER
+	// reference link: https://dev.mysql.com/doc/refman/5.7/en/charset-national.html
+	src = "CREATE TABLE t(c1 NATIONAL CHARACTER(10));"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
 	src = `CREATE TABLE t(a tinyint signed,
 		b smallint signed,
 		c mediumint signed,
@@ -618,6 +624,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"flush tables tbl1, tbl2, tbl3", true},
 		{"flush tables tbl1, tbl2, tbl3 with read lock", true},
 		{"flush privileges", true},
+		{"flush status", true},
 	}
 	s.RunTest(c, table)
 }

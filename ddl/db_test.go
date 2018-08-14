@@ -1723,6 +1723,9 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 
 	// test check order. The sql below have 2 problem: 1. ErrFieldTypeNotAllowedAsPartitionField  2. ErrPartitionMaxvalue , mysql will return ErrPartitionMaxvalue.
 	s.testErrorCode(c, `create TABLE t25 (c1 float) partition by range( c1 ) (partition p1 values less than maxvalue,partition p0 values less than (2000));`, tmysql.ErrPartitionMaxvalue)
+
+	// Fix issue 7362.
+	s.tk.MustExec("create table test_partition(id bigint, name varchar(255), primary key(id)) ENGINE=InnoDB DEFAULT CHARSET=utf8 PARTITION BY RANGE  COLUMNS(id) (PARTITION p1 VALUES LESS THAN (10) ENGINE = InnoDB);")
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
@@ -1757,7 +1760,7 @@ func (s *testDBSuite) TestTableDDLWithTimeType(c *C) {
 	s.testErrorCode(c, "alter table t change column a aa time(7)", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "alter table t change column a aa datetime(7)", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "alter table t change column a aa timestamp(7)", tmysql.ErrTooBigPrecision)
-	s.mustExec(c, "alter table t change column a aa timestamp(0)")
+	s.mustExec(c, "alter table t change column a aa datetime(0)")
 	s.mustExec(c, "drop table t")
 }
 
@@ -3141,6 +3144,18 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 
 	tk.MustExec("alter table partition_add_idx add index idx1 (hired)")
 	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("partition_add_idx"))
+	c.Assert(err, IsNil)
+	var idx1 table.Index
+	for _, idx := range t.Indices() {
+		if idx.Meta().Name.L == "idx1" {
+			idx1 = idx
+			break
+		}
+	}
+	c.Assert(idx1, NotNil)
 
 	tk.MustQuery("select count(hired) from partition_add_idx use index(idx1)").Check(testkit.Rows("500"))
 	tk.MustQuery("select count(id) from partition_add_idx use index(idx2)").Check(testkit.Rows("500"))

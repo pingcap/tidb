@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -100,6 +101,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
+	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 	_, err = tk.Exec("admin check index admin_test c2")
 	c.Assert(err, NotNil)
 
