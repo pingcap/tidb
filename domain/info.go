@@ -41,7 +41,7 @@ const (
 )
 
 // InfoSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
-var InfoSessionTTL = 10 * 60
+var InfoSessionTTL = 1 * 60
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
