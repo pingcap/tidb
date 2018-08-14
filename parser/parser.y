@@ -6094,6 +6094,17 @@ StringType:
 		}
 		$$ = x
 	}
+|	"NATIONAL" "CHARACTER" FieldLen OptBinary OptCollate
+	{
+		x := types.NewFieldType(mysql.TypeString)
+		x.Flen = $3.(int)
+		x.Charset = $4.(*ast.OptBinary).Charset
+		x.Collate = $5.(string)
+		if $4.(*ast.OptBinary).IsBinary {
+			x.Flag |= mysql.BinaryFlag
+		}
+		$$ = x
+	}
 |	Varchar FieldLen OptBinary OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
