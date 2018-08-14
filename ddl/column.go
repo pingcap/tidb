@@ -121,10 +121,10 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	// gofail: var errorBeforeDecodeArgs bool
-	// if errorBeforeDecodeArgs {
-	// 	return ver, errors.New("occur an error before decode args")
-	// }
+	if verrorBeforeDecodeArgs, __fpErr := __fp_errorBeforeDecodeArgs.Acquire(); __fpErr == nil { defer __fp_errorBeforeDecodeArgs.Release(); errorBeforeDecodeArgs, __fpTypeOK := verrorBeforeDecodeArgs.(bool); if !__fpTypeOK { goto __badTypeerrorBeforeDecodeArgs} 
+		 if errorBeforeDecodeArgs {
+		 	return ver, errors.New("occur an error before decode args")
+		 }; __badTypeerrorBeforeDecodeArgs: __fp_errorBeforeDecodeArgs.BadType(verrorBeforeDecodeArgs, "bool"); };
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}
 	offset := 0
@@ -301,12 +301,12 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 		}
 	}
 
-	// gofail: var uninitializedOffsetAndState bool
-	// if uninitializedOffsetAndState {
-	// if newCol.State != model.StatePublic {
-	//      return ver, errors.New("the column state is wrong")
-	// }
-	// }
+	if vuninitializedOffsetAndState, __fpErr := __fp_uninitializedOffsetAndState.Acquire(); __fpErr == nil { defer __fp_uninitializedOffsetAndState.Release(); uninitializedOffsetAndState, __fpTypeOK := vuninitializedOffsetAndState.(bool); if !__fpTypeOK { goto __badTypeuninitializedOffsetAndState} 
+		 if uninitializedOffsetAndState {
+		 if newCol.State != model.StatePublic {
+		      return ver, errors.New("the column state is wrong")
+		 }
+		 }; __badTypeuninitializedOffsetAndState: __fp_uninitializedOffsetAndState.BadType(vuninitializedOffsetAndState, "bool"); };
 
 	// We need the latest column's offset and state. This information can be obtained from the store.
 	newCol.Offset = oldCol.Offset

@@ -829,13 +829,13 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		}
 
 		log.Debug("[ddl-reorg] got backfill index task:#v", task)
-		// gofail: var mockAddIndexErr bool
-		//if w.id == 0 && mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
-		//	gofailMockAddindexErrOnceGuard = true
-		//	result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
-		//	w.resultCh <- result
-		//	continue
-		//}
+		if vmockAddIndexErr, __fpErr := __fp_mockAddIndexErr.Acquire(); __fpErr == nil { defer __fp_mockAddIndexErr.Release(); mockAddIndexErr, __fpTypeOK := vmockAddIndexErr.(bool); if !__fpTypeOK { goto __badTypemockAddIndexErr} 
+			if w.id == 0 && mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
+				gofailMockAddindexErrOnceGuard = true
+				result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
+				w.resultCh <- result
+				continue
+			}; __badTypemockAddIndexErr: __fp_mockAddIndexErr.BadType(vmockAddIndexErr, "bool"); };
 
 		result := w.handleBackfillTask(d, task)
 		w.resultCh <- result

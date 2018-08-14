@@ -629,7 +629,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
 			"Projection_11 10.00 root 9_aux_0",
-			"└─Apply_12 10.00 root left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]",
+			"└─Apply_13 10.00 root left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─StreamAgg_20 1.00 root funcs:count(1)",
