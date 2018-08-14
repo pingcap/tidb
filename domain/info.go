@@ -152,7 +152,7 @@ func (is InfoSyncer) Done() <-chan struct{} {
 
 // Restart restart the info syncer with new session leaseID and store server info to etcd again.
 func (is *InfoSyncer) Restart(ctx context.Context) error {
-	return errors.Trace(is.newSessionAndStoreServerInfo(ctx, owner.NewSessionRetryUnlimited))
+	return errors.Trace(is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt))
 }
 
 // newSessionAndStoreServerInfo creates a new etcd session and stores server info to etcd.
