@@ -3123,7 +3123,7 @@ func (s *testDBSuite) TestPartitionDropIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	done := make(chan error, 1)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("set @@tidb_enable_table_partition = 1")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec("drop table if exists partition_drop_idx;")
 	s.tk.MustExec(`create table partition_drop_idx (
 		c1 int, c2 int, c3 int
@@ -3134,7 +3134,8 @@ func (s *testDBSuite) TestPartitionDropIndex(c *C) {
     	partition p2 values less than (7),
     	partition p3 values less than (11),
     	partition p4 values less than (15),
-    	partition p5 values less than (20)
+    	partition p5 values less than (20),
+		partition p6 values less than (maxvalue)
    	);`)
 
 	num := 20
@@ -3172,8 +3173,8 @@ LOOP:
 			step := 10
 			rand.Seed(time.Now().Unix())
 			for i := num; i < num+step; i++ {
-				rnd := rand.Intn(num)
-				s.mustExec(c, "update partition_drop_idx set c2 = 1 where c1 = ?", rnd)
+				n := rand.Intn(num)
+				s.mustExec(c, "update partition_drop_idx set c2 = 1 where c1 = ?", n)
 				s.mustExec(c, "insert into partition_drop_idx values (?, ?, ?)", i, i, i)
 			}
 			num += step

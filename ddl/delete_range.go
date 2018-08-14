@@ -251,6 +251,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 					return errors.Trace(err)
 				}
 			}
+		} else {
 			return nil
 		}
 
@@ -291,6 +292,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 					return errors.Trace(err)
 				}
 			}
+		} else {
 			return nil
 		}
 		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
