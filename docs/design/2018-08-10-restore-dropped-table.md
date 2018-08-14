@@ -6,7 +6,7 @@
 
 ## Abstract
 
-The proposal proposes to support `ADMIN RESTORE TABLE table_id` command, to restore the table that is dropped by faulty operation.
+This proposal proposes to support the `ADMIN RESTORE TABLE table_id` command, to restore the table that is dropped by a faulty operation.
 
 ## Background
 
