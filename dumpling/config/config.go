@@ -36,6 +36,10 @@ var (
 		"mocktikv": true,
 		"tikv":     true,
 	}
+	// checkTableBeforeDrop enable to execute `admin check table` before `drop table`.
+	CheckTableBeforeDrop = false
+	// checkBeforeDropLDFlag is a go build flag.
+	checkBeforeDropLDFlag = "None"
 )
 
 // Config contains configuration options.
@@ -372,6 +376,12 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 	ret.Sampler.MaxOperations = t.Sampler.MaxOperations
 	ret.Sampler.SamplingRefreshInterval = t.Sampler.SamplingRefreshInterval
 	return ret
+}
+
+func init() {
+	if checkBeforeDropLDFlag == "1" {
+		CheckTableBeforeDrop = true
+	}
 }
 
 // The following constants represents the valid action configurations for OOMAction.
