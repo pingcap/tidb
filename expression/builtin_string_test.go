@@ -410,39 +410,37 @@ func (s *testEvaluatorSuite) TestRepeatSig(c *C) {
 	}
 	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
 	repeat := &builtinRepeatSig{base, 1000}
-	input := chunk.NewChunkWithCapacity(colTypes, 10)
-	input.AppendString(0, "a")
-	input.AppendString(0, "a")
-	input.AppendString(0, "毅")
-	input.AppendString(0, "毅")
-	input.AppendInt64(1, 6)
-	input.AppendInt64(1, 10001)
-	input.AppendInt64(1, 6)
-	input.AppendInt64(1, 334)
-	res, isNull, err := repeat.evalString(input.GetRow(0))
-	c.Assert(res, Equals, "aaaaaa")
-	c.Assert(isNull, IsFalse)
-	c.Assert(err, IsNil)
-	res, isNull, err = repeat.evalString(input.GetRow(1))
-	c.Assert(res, Equals, "")
-	c.Assert(isNull, IsTrue)
-	c.Assert(err, IsNil)
-	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 1)
-	lastWarn := warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
-	res, isNull, err = repeat.evalString(input.GetRow(2))
-	c.Assert(res, Equals, "毅毅毅毅毅毅")
-	c.Assert(isNull, IsFalse)
-	c.Assert(err, IsNil)
-	res, isNull, err = repeat.evalString(input.GetRow(3))
-	c.Assert(res, Equals, "")
-	c.Assert(isNull, IsTrue)
-	c.Assert(err, IsNil)
-	warnings = s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 2)
-	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+
+	cases := []struct {
+		args    []interface{}
+		warning int
+		res     string
+	}{
+		{[]interface{}{"a", int64(6)}, 0, "aaaaaa"},
+		{[]interface{}{"a", int64(10001)}, 1, ""},
+		{[]interface{}{"毅", int64(6)}, 0, "毅毅毅毅毅毅"},
+		{[]interface{}{"毅", int64(334)}, 2, ""},
+	}
+
+	for _, t := range cases {
+		input := chunk.NewChunkWithCapacity(colTypes, 10)
+		input.AppendString(0, t.args[0].(string))
+		input.AppendInt64(1, t.args[1].(int64))
+
+		res, isNull, err := repeat.evalString(input.GetRow(0))
+		c.Assert(res, Equals, t.res)
+		c.Assert(err, IsNil)
+		if t.warning == 0 {
+			c.Assert(isNull, IsFalse)
+		} else {
+			c.Assert(isNull, IsTrue)
+			c.Assert(err, IsNil)
+			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(len(warnings), Equals, t.warning)
+			lastWarn := warnings[len(warnings)-1]
+			c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+		}
+	}
 }
 
 func (s *testEvaluatorSuite) TestLower(c *C) {
