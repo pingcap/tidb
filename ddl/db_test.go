@@ -1760,7 +1760,7 @@ func (s *testDBSuite) TestTableDDLWithTimeType(c *C) {
 	s.testErrorCode(c, "alter table t change column a aa time(7)", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "alter table t change column a aa datetime(7)", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "alter table t change column a aa timestamp(7)", tmysql.ErrTooBigPrecision)
-	s.mustExec(c, "alter table t change column a aa timestamp(0)")
+	s.mustExec(c, "alter table t change column a aa datetime(0)")
 	s.mustExec(c, "drop table t")
 }
 
