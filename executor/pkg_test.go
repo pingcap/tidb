@@ -80,16 +80,16 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	outerFilter := expression.NewFunctionInternal(sctx, ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
 	innerFilter := outerFilter.Clone()
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
-	generator := newJoinResultGenerator(sctx, plan.InnerJoin, false,
+	joiner := newJoiner(sctx, plan.InnerJoin, false,
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, outerExec.retTypes(), innerExec.retTypes())
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
-		baseExecutor:    newBaseExecutor(sctx, joinSchema, ""),
-		outerExec:       outerExec,
-		innerExec:       innerExec,
-		outerFilter:     []expression.Expression{outerFilter},
-		innerFilter:     []expression.Expression{innerFilter},
-		resultGenerator: generator,
+		baseExecutor: newBaseExecutor(sctx, joinSchema, ""),
+		outerExec:    outerExec,
+		innerExec:    innerExec,
+		outerFilter:  []expression.Expression{outerFilter},
+		innerFilter:  []expression.Expression{innerFilter},
+		joiner:       joiner,
 	}
 	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.maxChunkSize)
 	join.innerChunk = innerExec.newChunk()
