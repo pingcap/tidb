@@ -48,7 +48,7 @@ import (
 // tableCommon is shared by both Table and partition.
 type tableCommon struct {
 	tableID int64
-	// physicalID is a unique int64 to identify a physical TiKV region.
+	// physicalID is a unique int64 to identify a physical table.
 	physicalID      int64
 	Columns         []*table.Column
 	publicColumns   []*table.Column

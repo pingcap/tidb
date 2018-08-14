@@ -346,14 +346,14 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		}
 		tblInfo := tbl.Meta()
 		pid = tblInfo.ID
-		var tp table.PhysicalTable
+		var tb table.PhysicalTable
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
 			pid = pi.Definitions[0].ID
-			tp = tbl.(table.PartitionedTable).GetPartition(pid)
+			tb = tbl.(table.PartitionedTable).GetPartition(pid)
 		} else {
-			tp = tbl.(table.PhysicalTable)
+			tb = tbl.(table.PhysicalTable)
 		}
-		start, end, err = getTableRange(d, tp, ver.Ver, job.Priority)
+		start, end, err = getTableRange(d, tb, ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
