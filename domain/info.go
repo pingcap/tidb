@@ -43,7 +43,7 @@ const (
 // InfoSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
 var InfoSessionTTL = 10 * 60
 
-// InfoSyncer stores server info to etcd when when the tidb-server starts and delete when tidb-server shuts down.
+// InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
 	etcdCli        *clientv3.Client
 	info           *ServerInfo
@@ -52,7 +52,7 @@ type InfoSyncer struct {
 }
 
 // ServerInfo is server static information.
-// It will not update when server running. So please only put static information in ServerInfo struct.
+// It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
 type ServerInfo struct {
 	ServerVersionInfo
 	ID         string `json:"ddl_id"`
