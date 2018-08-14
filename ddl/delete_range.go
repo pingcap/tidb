@@ -252,12 +252,10 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 				}
 			}
 		} else {
-			return nil
+			startKey = tablecodec.EncodeTablePrefix(tableID)
+			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+			return doInsert(s, job.ID, tableID, startKey, endKey, now)
 		}
-
-		startKey = tablecodec.EncodeTablePrefix(tableID)
-		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-		return doInsert(s, job.ID, tableID, startKey, endKey, now)
 	case model.ActionDropTablePartition:
 		var partitionID int64
 		if err := job.DecodeArgs(&partitionID); err != nil {
@@ -293,11 +291,10 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 				}
 			}
 		} else {
-			return nil
+			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+			return doInsert(s, job.ID, indexID, startKey, endKey, now)
 		}
-		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-		return doInsert(s, job.ID, indexID, startKey, endKey, now)
 	}
 	return nil
 }

@@ -3203,7 +3203,7 @@ LOOP:
 func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
 	hired date not null
