@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -116,6 +117,9 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
 		schema4Agg.Append(col)
+	}
+	for _, c := range schema4Agg.Columns {
+		logrus.Warning(c.RetType)
 	}
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
@@ -594,6 +598,11 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) *LogicalAggre
 	}
 	plan4Agg.SetChildren(child)
 	plan4Agg.SetSchema(child.Schema().Clone())
+	// Distinct will be rewritten as first_row, we reset the type here since the return type
+	// of first_row is not always the same as the column arg of first_row.
+	for i, col := range plan4Agg.schema.Columns {
+		col.RetType = plan4Agg.AggFuncs[i].RetTp
+	}
 	return plan4Agg
 }
 
