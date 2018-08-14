@@ -589,11 +589,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
 	}
 
-	// add partition info here.
-	partitionInfo := tb.Meta().Partition
-	if partitionInfo != nil {
-		// Partition info is truncated in release-2.0 branch.
-	}
+	// Partition info is truncated in release-2.0 branch.
+	// create table t (id int) partition by ... will become
+	// create table t (id int)
 
 	if hasAutoIncID {
 		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
