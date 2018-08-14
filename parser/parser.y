@@ -6821,7 +6821,7 @@ RevokeStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName Fields Lines ColumnNameListOptWithBrackets
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName Fields Lines ColumnNameListOptWithBrackets CharsetOpt
 	{
 		x := &ast.LoadDataStmt{
 			Path:       $5,
@@ -6839,6 +6839,10 @@ LoadDataStmt:
 		}
 		$$ = x
 	}
+
+CharsetOpt:
+	{}
+|	"CHARACTER" "SET" CharsetName
 
 LocalOpt:
 	{
