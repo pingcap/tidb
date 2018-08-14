@@ -23,32 +23,26 @@ type testRPCHandlerSuite struct {
 }
 
 func (s *testRPCHandlerSuite) TestConstructTimezone(c *C) {
-	h := rpcHandler{}
+	loc, err := constructTimeZone("", 12800)
+	c.Assert(err, IsNil)
+	c.Assert(loc.String(), Equals, "")
 
-	loc, err := h.constructTimeZone("", 12800)
+	loc, err = constructTimeZone("", -8000000)
+	c.Assert(err, IsNil)
+	c.Assert(loc.String(), Equals, "")
+
+	loc, err = constructTimeZone("", 8000000)
+	c.Assert(err, IsNil)
+	c.Assert(loc.String(), Equals, "")
+
+	loc, err = constructTimeZone("UTC", 12800)
 	c.Assert(err, IsNil)
 	c.Assert(loc.String(), Equals, "UTC")
 
-	loc, err = h.constructTimeZone("", -8000000)
-	c.Assert(err, IsNil)
-	c.Assert(loc.String(), Equals, "UTC")
-
-	loc, err = h.constructTimeZone("", 8000000)
-	c.Assert(err, IsNil)
-	c.Assert(loc.String(), Equals, "UTC")
-
-	loc, err = h.constructTimeZone("utc", 12800)
-	c.Assert(err, IsNil)
-	c.Assert(loc.String(), Equals, "UTC")
-
-	loc, err = h.constructTimeZone("UTC", 12800)
-	c.Assert(err, IsNil)
-	c.Assert(loc.String(), Equals, "UTC")
-
-	loc, err = h.constructTimeZone("Asia/Shanghai", 0)
+	loc, err = constructTimeZone("Asia/Shanghai", 0)
 	c.Assert(err, IsNil)
 	c.Assert(loc.String(), Equals, "Asia/Shanghai")
 
-	loc, err = h.constructTimeZone("asia/not-exist", 12800)
+	loc, err = constructTimeZone("asia/not-exist", 12800)
 	c.Assert(err.Error(), Equals, "invalid name for timezone asia/not-exist")
 }
