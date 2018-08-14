@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/domain"
 )
 
 const (
@@ -278,10 +280,18 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		tableID := job.TableID
 		var indexName interface{}
 		var indexID int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexName, &indexID); err != nil {
 			return errors.Trace(err)
 		}
+		is := domain.GetDomain(ctx).InfoSchema()
+		tbl, ok := is.TableByID(job.TableID)
+		if !ok {
+			return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(
+				fmt.Sprintf("(Schema ID %d)", job.SchemaID),
+				fmt.Sprintf("(Table ID %d)", job.TableID),
+			))
+		}
+		partitionIDs := getPartitionIDs(tbl.Meta())
 		if len(partitionIDs) > 0 {
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
