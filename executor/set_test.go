@@ -133,7 +133,8 @@ func (s *testSuite) TestSetVar(c *C) {
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_bin")
 
-	tk.MustExec("set @@character_set_results = NULL")
+	tk.MustExec("set character_set_results = NULL")
+	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
 
 	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
