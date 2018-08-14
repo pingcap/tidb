@@ -79,7 +79,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			continue
 		}
 		for i, hg := range result.Hist {
-			err1 := statsHandle.SaveStatsToStorage(result.PhysicalID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
+			err1 := statsHandle.SaveStatsToStorage(result.PhysicalTableID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
 			if err1 != nil {
 				err = err1
 				log.Error(errors.ErrorStack(err))
@@ -147,10 +147,10 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 		return statistics.AnalyzeResult{Err: err}
 	}
 	result := statistics.AnalyzeResult{
-		PhysicalID: idxExec.physicalTableID,
-		Hist:       []*statistics.Histogram{hist},
-		Cms:        []*statistics.CMSketch{cms},
-		IsIndex:    1,
+		PhysicalTableID: idxExec.physicalTableID,
+		Hist:            []*statistics.Histogram{hist},
+		Cms:             []*statistics.CMSketch{cms},
+		IsIndex:         1,
 	}
 	if hist.Len() > 0 {
 		result.Count = hist.Buckets[hist.Len()-1].Count
@@ -161,7 +161,7 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 // AnalyzeIndexExec represents analyze index push down executor.
 type AnalyzeIndexExec struct {
 	ctx             sessionctx.Context
-	physicalTableID int64 // physicalID is the partition id for a partitioned table, otherwise, it is the table id.
+	physicalTableID int64
 	idxInfo         *model.IndexInfo
 	concurrency     int
 	priority        int
@@ -232,9 +232,9 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 		return statistics.AnalyzeResult{Err: err}
 	}
 	result := statistics.AnalyzeResult{
-		PhysicalID: colExec.physicalTableID,
-		Hist:       hists,
-		Cms:        cms,
+		PhysicalTableID: colExec.physicalTableID,
+		Hist:            hists,
+		Cms:             cms,
 	}
 	hist := hists[0]
 	result.Count = hist.NullCount

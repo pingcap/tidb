@@ -51,7 +51,7 @@ type partition struct {
 
 // GetPhysicalID implements table.Table GetPhysicalID interface.
 func (p *partition) GetPhysicalID() int64 {
-	return p.physicalID
+	return p.physicalTableID
 }
 
 // partitionedTable implements the table.PartitionedTable interface.

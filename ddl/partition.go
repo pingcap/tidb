@@ -271,7 +271,7 @@ func checkAddPartitionTooManyPartitions(piDefs int) error {
 	return nil
 }
 
-func getPhysicalTableIDs(table *model.TableInfo) []int64 {
+func getPartitionIDs(table *model.TableInfo) []int64 {
 	if table.GetPartitionInfo() == nil {
 		return []int64{}
 	}

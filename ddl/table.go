@@ -134,7 +134,7 @@ func onDropTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(tableID)
-		job.Args = append(job.Args, startKey, getPhysicalTableIDs(tblInfo))
+		job.Args = append(job.Args, startKey, getPartitionIDs(tblInfo))
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
@@ -217,7 +217,7 @@ func onTruncateTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
-		oldPartitionIDs = getPhysicalTableIDs(tblInfo)
+		oldPartitionIDs = getPartitionIDs(tblInfo)
 		for _, def := range tblInfo.Partition.Definitions {
 			var pid int64
 			pid, err = t.GenGlobalID()
