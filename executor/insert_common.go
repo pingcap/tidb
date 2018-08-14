@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/table"
@@ -248,6 +249,11 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 	chk := selectExec.newChunk()
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, e.ctx.GetSessionVars().MaxChunkSize)
+
+	sessVars := e.ctx.GetSessionVars()
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
+	batchSize := sessVars.DMLBatchSize
+
 	for {
 		err := selectExec.Next(ctx, chk)
 		if err != nil {
@@ -265,11 +271,24 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 				return errors.Trace(err)
 			}
 			rows = append(rows, row)
+			if batchInsert && e.rowCount%uint64(batchSize) == 0 {
+				if err := exec(rows); err != nil {
+					return errors.Trace(err)
+				}
+				e.ctx.StmtCommit()
+				rows = rows[:0]
+				if err := e.ctx.NewTxn(); err != nil {
+					// We should return a special error for batch insert.
+					return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
+				}
+				if !sessVars.LightningMode {
+					sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
+				}
+			}
 		}
-		if err := exec(rows); err != nil {
-			return errors.Trace(err)
-		}
-		rows = rows[:0]
+	}
+	if err := exec(rows); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
