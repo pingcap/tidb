@@ -330,7 +330,7 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		filterCondition:  path.indexFilters,
 		dataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
-		physicalID:       ds.physicalID,
+		physicalTableID:  ds.physicalTableID,
 	}.init(ds.ctx)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
@@ -345,10 +345,10 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		}
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
-			Columns:     ds.Columns,
-			Table:       is.Table,
-			isPartition: ds.isPartition,
-			physicalID:  ds.physicalID,
+			Columns:         ds.Columns,
+			Table:           is.Table,
+			isPartition:     ds.isPartition,
+			physicalTableID: ds.physicalTableID,
 		}.init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
@@ -522,12 +522,12 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 	}
 
 	ts := PhysicalTableScan{
-		Table:       ds.tableInfo,
-		Columns:     ds.Columns,
-		TableAsName: ds.TableAsName,
-		DBName:      ds.DBName,
-		isPartition: ds.isPartition,
-		physicalID:  ds.physicalID,
+		Table:           ds.tableInfo,
+		Columns:         ds.Columns,
+		TableAsName:     ds.TableAsName,
+		DBName:          ds.DBName,
+		isPartition:     ds.isPartition,
+		physicalTableID: ds.physicalTableID,
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	var pkCol *expression.Column

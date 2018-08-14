@@ -162,8 +162,7 @@ type PhysicalTable interface {
 }
 
 // PartitionedTable is a Table, and it has a GetPartition() method.
-// GetPartition() gets the partition from a partition table by a physical ID, its
-// return value is a Table because partition implements the Table interface.
+// GetPartition() gets the partition from a partition table by a physical table ID,
 type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable

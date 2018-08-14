@@ -147,7 +147,7 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 		return statistics.AnalyzeResult{Err: err}
 	}
 	result := statistics.AnalyzeResult{
-		PhysicalID: idxExec.physicalID,
+		PhysicalID: idxExec.physicalTableID,
 		Hist:       []*statistics.Histogram{hist},
 		Cms:        []*statistics.CMSketch{cms},
 		IsIndex:    1,
@@ -160,18 +160,18 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 
 // AnalyzeIndexExec represents analyze index push down executor.
 type AnalyzeIndexExec struct {
-	ctx         sessionctx.Context
-	physicalID  int64 // physicalID is the partition id for a partitioned table, otherwise, it is the table id.
-	idxInfo     *model.IndexInfo
-	concurrency int
-	priority    int
-	analyzePB   *tipb.AnalyzeReq
-	result      distsql.SelectResult
+	ctx             sessionctx.Context
+	physicalTableID int64 // physicalID is the partition id for a partitioned table, otherwise, it is the table id.
+	idxInfo         *model.IndexInfo
+	concurrency     int
+	priority        int
+	analyzePB       *tipb.AnalyzeReq
+	result          distsql.SelectResult
 }
 
 func (e *AnalyzeIndexExec) open() error {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalID, e.idxInfo.ID, ranger.FullRange()).
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.idxInfo.ID, ranger.FullRange()).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
 		Build()
@@ -232,7 +232,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 		return statistics.AnalyzeResult{Err: err}
 	}
 	result := statistics.AnalyzeResult{
-		PhysicalID: colExec.physicalID,
+		PhysicalID: colExec.physicalTableID,
 		Hist:       hists,
 		Cms:        cms,
 	}
@@ -246,15 +246,15 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
 type AnalyzeColumnsExec struct {
-	ctx           sessionctx.Context
-	physicalID    int64 // physicalID is the partition id for a partitioned table, otherwise, it is the table id.
-	colsInfo      []*model.ColumnInfo
-	pkInfo        *model.ColumnInfo
-	concurrency   int
-	priority      int
-	keepOrder     bool
-	analyzePB     *tipb.AnalyzeReq
-	resultHandler *tableResultHandler
+	ctx             sessionctx.Context
+	physicalTableID int64
+	colsInfo        []*model.ColumnInfo
+	pkInfo          *model.ColumnInfo
+	concurrency     int
+	priority        int
+	keepOrder       bool
+	analyzePB       *tipb.AnalyzeReq
+	resultHandler   *tableResultHandler
 }
 
 func (e *AnalyzeColumnsExec) open() error {
@@ -286,7 +286,7 @@ func (e *AnalyzeColumnsExec) open() error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(e.physicalID, ranges, nil).
+	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
 		Build()

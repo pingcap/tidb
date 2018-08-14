@@ -251,7 +251,7 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	physicalID := removePartitionInfo(tblInfo, partName)
+	physicalTableID := removePartitionInfo(tblInfo, partName)
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -260,7 +260,7 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 	// A background job will be created to delete old partition data.
-	job.Args = []interface{}{physicalID}
+	job.Args = []interface{}{physicalTableID}
 	return ver, nil
 }
 
@@ -271,15 +271,15 @@ func checkAddPartitionTooManyPartitions(piDefs int) error {
 	return nil
 }
 
-func getPhysicalIDs(table *model.TableInfo) []int64 {
+func getPhysicalTableIDs(table *model.TableInfo) []int64 {
 	if table.GetPartitionInfo() == nil {
 		return []int64{}
 	}
-	physicalIDs := make([]int64, 0, len(table.Partition.Definitions))
+	physicalTableIDs := make([]int64, 0, len(table.Partition.Definitions))
 	for _, def := range table.Partition.Definitions {
-		physicalIDs = append(physicalIDs, def.ID)
+		physicalTableIDs = append(physicalTableIDs, def.ID)
 	}
-	return physicalIDs
+	return physicalTableIDs
 }
 
 // checkRangePartitioningKeysConstraints checks that the range partitioning key is included in the table constraint.
