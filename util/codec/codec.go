@@ -315,7 +315,7 @@ func Decode(b []byte, size int) ([]types.Datum, error) {
 // It handles some special values like `MinNotNull` and `MaxValueDatum`.
 func DecodeRange(b []byte, size int) ([]types.Datum, error) {
 	if len(b) < 1 {
-		return nil, errors.New("invalid encoded key")
+		return nil, errors.New("invalid encoded key: length of key is zero")
 	}
 
 	var (

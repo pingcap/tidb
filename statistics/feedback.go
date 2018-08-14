@@ -774,7 +774,7 @@ func formatBuckets(hg *Histogram, lowBkt, highBkt, idxCols int) string {
 		highBkt-lowBkt-1, hg.Buckets[highBkt-1].Count-hg.Buckets[lowBkt].Count, hg.bucketToString(highBkt, 0))
 }
 
-func logForColumnRanges(c *Column, ran *ranger.Range, actual int64, factor float64) string {
+func colRangeToStr(c *Column, ran *ranger.Range, actual int64, factor float64) string {
 	lowCount, lowBkt := c.lessRowCountWithBktIdx(ran.LowVal[0])
 	highCount, highBkt := c.lessRowCountWithBktIdx(ran.HighVal[0])
 	return fmt.Sprintf("range: %s, actual: %d, expected: %d, buckets: {%s}", ran.String(), actual,
@@ -786,7 +786,7 @@ func logForPK(prefix string, c *Column, ranges []*ranger.Range, actual []int64, 
 		if ran.LowVal[0].GetInt64()+1 >= ran.HighVal[0].GetInt64() {
 			continue
 		}
-		log.Debugf("%s column: %s, %s", prefix, c.Info.Name, logForColumnRanges(c, ran, actual[i], factor))
+		log.Debugf("%s column: %s, %s", prefix, c.Info.Name, colRangeToStr(c, ran, actual[i], factor))
 	}
 }
 
@@ -855,7 +855,7 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 			if t.Columns[id] == nil {
 				return
 			}
-			rangeString = logForColumnRanges(t.Columns[t.colName2ID[colName]], &rang, -1, factor)
+			rangeString = colRangeToStr(t.Columns[t.colName2ID[colName]], &rang, -1, factor)
 		}
 		log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
 			actual[i], equalityString, equalityCount, rangeString)
