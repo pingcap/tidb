@@ -1409,6 +1409,8 @@ func DecimalNeg(from *MyDecimal) *MyDecimal {
 }
 
 // DecimalAdd adds two decimals, sets the result to 'to'.
+// Note: DO NOT use `from1` or `from2` as `to` since the metadata
+// of `to` may be changed during evaluating.
 func DecimalAdd(from1, from2, to *MyDecimal) error {
 	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
 	if from1.negative == from2.negative {
