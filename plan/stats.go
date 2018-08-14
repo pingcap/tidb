@@ -387,15 +387,6 @@ func getSingletonStats(len int) *statsInfo {
 	return ret
 }
 
-func (p *LogicalExists) deriveStats() (*statsInfo, error) {
-	_, err := p.children[0].deriveStats()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	p.stats = getSingletonStats(1)
-	return p.stats, nil
-}
-
 func (p *LogicalMaxOneRow) deriveStats() (*statsInfo, error) {
 	_, err := p.children[0].deriveStats()
 	if err != nil {

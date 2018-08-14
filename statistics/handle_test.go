@@ -60,10 +60,10 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
-	do.StatsHandle().Clear()
 	tk.MustExec("truncate table mysql.stats_meta")
 	tk.MustExec("truncate table mysql.stats_histograms")
 	tk.MustExec("truncate table mysql.stats_buckets")
+	do.StatsHandle().Clear()
 }
 
 func (s *testStatsCacheSuite) TestStatsCache(c *C) {

@@ -173,6 +173,10 @@ const (
 
 	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
+
+	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
+	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
+	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 )
 
 // Default TiDB system variable values.
@@ -192,7 +196,7 @@ const (
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false
 	DefCurretTS                      = 0
-	DefMaxChunkSize                  = 1024
+	DefMaxChunkSize                  = 32
 	DefDMLBatchSize                  = 20000
 	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin         = 32 << 30 // 32GB.

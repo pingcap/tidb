@@ -35,7 +35,6 @@ var (
 	_ LogicalPlan = &LogicalProjection{}
 	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
-	_ LogicalPlan = &LogicalExists{}
 	_ LogicalPlan = &LogicalMaxOneRow{}
 	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
@@ -255,11 +254,6 @@ func (la *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 		}
 	}
 	return corCols
-}
-
-// LogicalExists checks if a query returns result.
-type LogicalExists struct {
-	logicalSchemaProducer
 }
 
 // LogicalMaxOneRow checks if a query returns no more than one row.

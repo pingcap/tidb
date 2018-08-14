@@ -171,7 +171,7 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBBatchInsert, types.NewStringDatum("1"))
 	c.Assert(v.BatchInsert, IsTrue)
 
-	c.Assert(v.MaxChunkSize, Equals, 1024)
+	c.Assert(v.MaxChunkSize, Equals, 32)
 	SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
 	c.Assert(v.MaxChunkSize, Equals, 2)
 

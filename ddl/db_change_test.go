@@ -515,6 +515,29 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	callback = &ddl.TestDDLCallback{}
 	d.(ddl.DDLForTest).SetHook(callback)
+
+	_, err = s.se.Execute(context.Background(), "set @@tidb_enable_table_partition = 1")
+	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), `create table tr(
+		id int, name varchar(50), 
+		purchased date
+	)
+	partition by range( year(purchased) ) (
+    	partition p0 values less than (1990),
+    	partition p1 values less than (1995),
+    	partition p2 values less than (2000),
+    	partition p3 values less than (2005),
+    	partition p4 values less than (2010),
+    	partition p5 values less than (2015)
+   	);`)
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table tr")
+	_, err = s.se.Execute(context.Background(), "create index idx1 on tr (purchased);")
+	c.Assert(err, IsNil)
+	result, err = s.execQuery(tk, "show index from tr;")
+	c.Assert(err, IsNil)
+	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
 }
 
 func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {

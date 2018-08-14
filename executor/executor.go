@@ -40,7 +40,6 @@ import (
 
 var (
 	_ Executor = &CheckTableExec{}
-	_ Executor = &ExistsExec{}
 	_ Executor = &HashAggExec{}
 	_ Executor = &LimitExec{}
 	_ Executor = &MaxOneRowExec{}
@@ -866,48 +865,6 @@ func (e *TableScanExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// ExistsExec represents exists executor.
-type ExistsExec struct {
-	baseExecutor
-
-	evaluated   bool
-	childResult *chunk.Chunk
-}
-
-// Open implements the Executor Open interface.
-func (e *ExistsExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
-	}
-	e.childResult = e.children[0].newChunk()
-	e.evaluated = false
-	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *ExistsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	if !e.evaluated {
-		e.evaluated = true
-		err := e.children[0].Next(ctx, e.childResult)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if e.childResult.NumRows() > 0 {
-			chk.AppendInt64(0, 1)
-		} else {
-			chk.AppendInt64(0, 0)
-		}
-	}
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *ExistsExec) Close() error {
-	e.childResult = nil
-	return errors.Trace(e.baseExecutor.Close())
-}
-
 // MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
 // It's built from subquery expression.
 type MaxOneRowExec struct {
@@ -942,11 +899,17 @@ func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			chk.AppendNull(i)
 		}
 		return nil
-	} else if num == 1 {
-		return nil
+	} else if num != 1 {
+		return errors.New("subquery returns more than 1 row")
 	}
 
-	return errors.New("subquery returns more than 1 row")
+	childChunk := e.children[0].newChunk()
+	err = e.children[0].Next(ctx, childChunk)
+	if childChunk.NumRows() != 0 {
+		return errors.New("subquery returns more than 1 row")
+	}
+
+	return nil
 }
 
 // UnionExec pulls all it's children's result and returns to its parent directly.
