@@ -42,6 +42,7 @@ var (
 	ErrPasswordFormat              = terror.ClassExecutor.New(mysql.ErrPasswordFormat, mysql.MySQLErrName[mysql.ErrPasswordFormat])
 	ErrCantChangeTxCharacteristics = terror.ClassExecutor.New(mysql.ErrCantChangeTxCharacteristics, mysql.MySQLErrName[mysql.ErrCantChangeTxCharacteristics])
 	ErrPsManyParam                 = terror.ClassExecutor.New(mysql.ErrPsManyParam, mysql.MySQLErrName[mysql.ErrPsManyParam])
+	ErrAdminCheckTable             = terror.ClassExecutor.New(mysql.ErrAdminCheckTable, mysql.MySQLErrName[mysql.ErrAdminCheckTable])
 )
 
 func init() {
@@ -53,6 +54,7 @@ func init() {
 		mysql.ErrPasswordFormat:              mysql.ErrPasswordFormat,
 		mysql.ErrCantChangeTxCharacteristics: mysql.ErrCantChangeTxCharacteristics,
 		mysql.ErrPsManyParam:                 mysql.ErrPsManyParam,
+		mysql.ErrAdminCheckTable:             mysql.ErrAdminCheckTable,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }
