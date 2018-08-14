@@ -3068,3 +3068,23 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustQuery("select k, v from t5").Check(testkit.Rows("0 0"))
 
 }
+
+func (s *testSuite) TestMaxOneRow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`drop table if exists t2`)
+	tk.MustExec(`create table t1(a double, b double);`)
+	tk.MustExec(`create table t2(a double, b double);`)
+	tk.MustExec(`insert into t1 values(1, 1), (2, 2), (3, 3);`)
+	tk.MustExec(`insert into t2 values(0, 0);`)
+	tk.MustExec(`set @@tidb_max_chunk_size=1;`)
+	rs, err := tk.Exec(`select (select t1.a from t1 where t1.a > t2.a) as a from t2;`)
+	c.Assert(err, IsNil)
+
+	err = rs.Next(context.TODO(), rs.NewChunk())
+	c.Assert(err.Error(), Equals, "subquery returns more than 1 row")
+
+	err = rs.Close()
+	c.Assert(err, IsNil)
+}
