@@ -3076,3 +3076,57 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustQuery("select k, v from t5").Check(testkit.Rows("0 0"))
 
 }
+
+func (s *testSuite) TestMaxOneRow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`drop table if exists t2`)
+	tk.MustExec(`create table t1(a double, b double);`)
+	tk.MustExec(`create table t2(a double, b double);`)
+	tk.MustExec(`insert into t1 values(1, 1), (2, 2), (3, 3);`)
+	tk.MustExec(`insert into t2 values(0, 0);`)
+	tk.MustExec(`set @@tidb_max_chunk_size=1;`)
+	rs, err := tk.Exec(`select (select t1.a from t1 where t1.a > t2.a) as a from t2;`)
+	c.Assert(err, IsNil)
+
+	err = rs.Next(context.TODO(), rs.NewChunk())
+	c.Assert(err.Error(), Equals, "subquery returns more than 1 row")
+
+	err = rs.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestCurrentTimestampValueSelection(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t,t1")
+
+	tk.MustExec("create table t (id int, t0 timestamp null default current_timestamp, t1 timestamp(1) null default current_timestamp(1), t2 timestamp(2) null default current_timestamp(2) on update current_timestamp(2))")
+	tk.MustExec("insert into t (id) values (1)")
+	rs := tk.MustQuery("select t0, t1, t2 from t where id = 1")
+	t0 := rs.Rows()[0][0].(string)
+	t1 := rs.Rows()[0][1].(string)
+	t2 := rs.Rows()[0][2].(string)
+	c.Assert(len(strings.Split(t0, ".")), Equals, 1)
+	c.Assert(len(strings.Split(t1, ".")[1]), Equals, 1)
+	c.Assert(len(strings.Split(t2, ".")[1]), Equals, 2)
+	tk.MustQuery("select id from t where t0 = ?", t0).Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t where t1 = ?", t1).Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t where t2 = ?", t2).Check(testkit.Rows("1"))
+	time.Sleep(time.Second / 2)
+	tk.MustExec("update t set t0 = now() where id = 1")
+	rs = tk.MustQuery("select t2 from t where id = 1")
+	newT2 := rs.Rows()[0][0].(string)
+	c.Assert(newT2 != t2, IsTrue)
+
+	tk.MustExec("create table t1 (id int, a timestamp, b timestamp(2), c timestamp(3))")
+	tk.MustExec("insert into t1 (id, a, b, c) values (1, current_timestamp(2), current_timestamp, current_timestamp(3))")
+	rs = tk.MustQuery("select a, b, c from t1 where id = 1")
+	a := rs.Rows()[0][0].(string)
+	b := rs.Rows()[0][1].(string)
+	d := rs.Rows()[0][2].(string)
+	c.Assert(len(strings.Split(a, ".")), Equals, 1)
+	c.Assert(strings.Split(b, ".")[1], Equals, "00")
+	c.Assert(len(strings.Split(d, ".")[1]), Equals, 3)
+}

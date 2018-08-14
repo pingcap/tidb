@@ -61,6 +61,12 @@ func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	return nil
 }
 
+func (*bitOrUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
+	*p2 |= uint64(*p1)
+	return nil
+}
+
 type bitXorUint64 struct {
 	baseBitAggFunc
 }
@@ -77,6 +83,12 @@ func (e *bitXorUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 		}
 		*p ^= uint64(inputValue)
 	}
+	return nil
+}
+
+func (*bitXorUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
+	*p2 ^= uint64(*p1)
 	return nil
 }
 
@@ -107,5 +119,11 @@ func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 		}
 		*p &= uint64(inputValue)
 	}
+	return nil
+}
+
+func (*bitAndUint64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4BitFunc)(src), (*partialResult4BitFunc)(dst)
+	*p2 &= uint64(*p1)
 	return nil
 }
