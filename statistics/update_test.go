@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	log "github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testStatsUpdateSuite{})
@@ -555,25 +557,25 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5",
 			hist: "column:1 ndv:3 totColSize:0\n" +
-				"num: 1\tlower_bound: -9223372036854775808\tupper_bound: 1\trepeats: 0\n" +
-				"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n" +
-				"num: 4\tlower_bound: 3\tupper_bound: 5\trepeats: 0",
+				"num: 1 lower_bound: -9223372036854775808 upper_bound: 1 repeats: 0\n" +
+				"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1\n" +
+				"num: 2 lower_bound: 3 upper_bound: 5 repeats: 0",
 			idxCols: 0,
 		},
 		{
 			// test index feedback by double read
 			sql: "select * from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:2\n" +
-				"num: 2\tlower_bound: \tupper_bound: 2\trepeats: 0\n" +
-				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
+				"num: 2 lower_bound: -inf upper_bound: 2 repeats: 0\n" +
+				"num: 2 lower_bound: 3 upper_bound: 6 repeats: 0",
 			idxCols: 1,
 		},
 		{
 			// test index feedback by single read
 			sql: "select b from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:2\n" +
-				"num: 2\tlower_bound: \tupper_bound: 2\trepeats: 0\n" +
-				"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0",
+				"num: 2 lower_bound: -inf upper_bound: 2 repeats: 0\n" +
+				"num: 2 lower_bound: 3 upper_bound: 6 repeats: 0",
 			idxCols: 1,
 		},
 	}
@@ -710,10 +712,9 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	tbl = h.GetTableStats(tblInfo)
 
 	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
-		"num: 1\tlower_bound: 1\tupper_bound: 1\trepeats: 1\n"+
-		"num: 2\tlower_bound: 2\tupper_bound: 2\trepeats: 1\n"+
-		"num: 4\tlower_bound: 3\tupper_bound: 9223372036854775807\trepeats: 0")
-
+		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
+		"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1\n"+
+		"num: 2 lower_bound: 3 upper_bound: 9223372036854775807 repeats: 0")
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	low, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
 	c.Assert(err, IsNil)
@@ -721,9 +722,85 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].CMSketch.QueryBytes(low), Equals, uint32(2))
 
 	c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, "index:1 ndv:2\n"+
-		"num: 2\tlower_bound: \tupper_bound: 2\trepeats: 0\n"+
-		"num: 4\tlower_bound: 3\tupper_bound: 6\trepeats: 0")
+		"num: 2 lower_bound: -inf upper_bound: 2 repeats: 0\n"+
+		"num: 2 lower_bound: 3 upper_bound: 6 repeats: 0")
 
 	// Test that it won't cause panic after update.
 	testKit.MustQuery("select * from t use index(idx) where b > 0")
+}
+
+type logHook struct {
+	results string
+}
+
+func (hook *logHook) Levels() []log.Level {
+	return []log.Level{log.DebugLevel}
+}
+
+func (hook *logHook) Fire(entry *log.Entry) error {
+	message := entry.Message
+	if idx := strings.Index(message, "[stats"); idx != -1 {
+		hook.results = hook.results + message[idx:]
+	}
+	return nil
+}
+
+func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+
+	oriProbability := statistics.FeedbackProbability
+	oriMinLogCount := statistics.MinLogScanCount
+	oriMinError := statistics.MinLogErrorRate
+	oriLevel := log.GetLevel()
+	oriBucketNum := executor.GetMaxBucketSizeForTest()
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		statistics.MinLogScanCount = oriMinLogCount
+		statistics.MinLogErrorRate = oriMinError
+		executor.SetMaxBucketSizeForTest(oriBucketNum)
+		log.SetLevel(oriLevel)
+	}()
+	executor.SetMaxBucketSizeForTest(4)
+	statistics.FeedbackProbability = 1
+	statistics.MinLogScanCount = 0
+	statistics.MinLogErrorRate = 0
+
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b), index idx_ba(b,a))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	testKit.MustExec("analyze table t")
+	tests := []struct {
+		sql    string
+		result string
+	}{
+		{
+			sql: "select * from t where t.a <= 15",
+			result: "[stats-feedback] test.t, column: a, range: [-inf,7), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}" +
+				"[stats-feedback] test.t, column: a, range: [8,15), actual: 8, expected: 7, buckets: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
+		},
+		{
+			sql: "select * from t use index(idx) where t.b <= 15",
+			result: "[stats-feedback] test.t, index: idx, range: [-inf,7), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}" +
+				"[stats-feedback] test.t, index: idx, range: [8,15), actual: 8, expected: 7, histogram: {num: 8 lower_bound: 8 upper_bound: 15 repeats: 1}",
+		},
+		{
+			sql:    "select b from t use index(idx_ba) where b = 1 and a <= 5",
+			result: "[stats-feedback] test.t, index: idx_ba, actual: 1, equality: 1, expected equality: 1, range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}",
+		},
+		{
+			sql:    "select b from t use index(idx_ba) where b = 1",
+			result: "[stats-feedback] test.t, index: idx_ba, value: 1, actual: 1, expected: 1",
+		},
+	}
+	log.SetLevel(log.DebugLevel)
+	var hook logHook
+	log.AddHook(&hook)
+	for _, t := range tests {
+		hook.results = ""
+		testKit.MustQuery(t.sql)
+		c.Assert(hook.results, Equals, t.result)
+	}
 }
