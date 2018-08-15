@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -2073,9 +2074,9 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustExec("create table t (e enum('Y', 'N'))")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'")
 	_, err := tk.Exec("insert into t values (0)")
-	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
 	_, err = tk.Exec("insert into t values ('abc')")
-	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
 
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("insert into t values (0)")
