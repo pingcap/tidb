@@ -275,6 +275,10 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustQuery("select 10 from idx_agg group by b").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
 
+	tk.MustExec("set @@tidb_max_chunk_size=1;")
+	tk.MustQuery("select group_concat(b) from idx_agg group by b;").Check(testkit.Rows("1", "2,2"))
+	tk.MustExec("set @@tidb_max_chunk_size=2;")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(11), b decimal(15,2))")
 	tk.MustExec("insert into t values(1,771.64),(2,378.49),(3,920.92),(4,113.97)")
@@ -325,6 +329,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(null)")
 	tk.MustQuery("select group_concat(a), group_concat(distinct a) from t").Check(testkit.Rows("<nil> <nil>"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a decimal(10, 4))")
+	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
+	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {
