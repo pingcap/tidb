@@ -495,18 +495,25 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 // handleSingleHistogramUpdate updates the Histogram and CM Sketch using these feedbacks. All the feedbacks for
 // the same index or column are gathered in `rows`.
 func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []chunk.Row) (err error) {
-	tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
+	physicalTableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
 	defer func() {
 		if err == nil {
-			err = errors.Trace(h.deleteOutdatedFeedback(tableID, histID, isIndex))
+			err = errors.Trace(h.deleteOutdatedFeedback(physicalTableID, histID, isIndex))
 		}
 	}()
-	table, ok := is.TableByID(tableID)
+	h.mu.Lock()
+	table, ok := h.getTableByPhysicalID(is, physicalTableID)
+	h.mu.Unlock()
 	// The table has been deleted.
 	if !ok {
 		return nil
 	}
-	tbl := h.GetTableStats(table.Meta())
+	var tbl *Table
+	if table.Meta().GetPartitionInfo() != nil {
+		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
+	} else {
+		tbl = h.GetTableStats(table.Meta())
+	}
 	var cms *CMSketch
 	var hist *Histogram
 	if isIndex == 1 {
@@ -538,7 +545,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	if table.Meta().PKIsHandle && isIndex == 0 {
 		hist.NDV = int64(hist.totalRowCount())
 	}
-	err = h.dumpStatsUpdateToKV(tableID, isIndex, q, hist, cms)
+	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
 	return errors.Trace(err)
 }
 
