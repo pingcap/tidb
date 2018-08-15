@@ -62,8 +62,21 @@ func (e *ReplaceExec) removeRow(handle int64, r toBeCheckedRow) (bool, error) {
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 		return true, nil
 	}
-	if err = e.batchChecker.RemoveRow(e.ctx, e.Table, handle, oldRow); err != nil {
+
+	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
+	if err != nil {
 		return false, errors.Trace(err)
+	}
+	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+
+	// Cleanup keys map, because the record was removed.
+	cleanupRows, err := e.getKeysNeedCheck(e.ctx, r.t, [][]types.Datum{oldRow})
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if len(cleanupRows) > 0 {
+		// The length of need-to-cleanup rows should be at most 1, due to we only input 1 row.
+		e.deleteDupKeys(cleanupRows[0])
 	}
 	return false, nil
 }

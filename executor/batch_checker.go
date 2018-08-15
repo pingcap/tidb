@@ -50,25 +50,6 @@ type batchChecker struct {
 	dupOldRowValues map[string][]byte
 }
 
-func (b *batchChecker) RemoveRow(ctx sessionctx.Context, t table.Table, handle int64, row []types.Datum) error {
-	err := t.RemoveRecord(ctx, handle, row)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-
-	// Cleanup keys map, because the record was removed.
-	cleanupRows, err := b.getKeysNeedCheck(ctx, t, [][]types.Datum{row})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(cleanupRows) > 0 {
-		// The length of need-to-cleanup rows should be at most 1, due to we only input 1 row.
-		b.deleteDupKeys(cleanupRows[0])
-	}
-	return nil
-}
-
 // batchGetOldValues gets the values of storage in batch.
 func (b *batchChecker) batchGetOldValues(ctx sessionctx.Context, batchKeys []kv.Key) error {
 	values, err := kv.BatchGetValues(ctx.Txn(), batchKeys)
