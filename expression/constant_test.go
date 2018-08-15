@@ -124,6 +124,13 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 		{
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
+				newFunction(ast.EQ, newColumn(0), newFunction(ast.BitLength, newColumn(2))),
+			},
+			result: "eq(test.t.0, bit_length(cast(test.t.2))), eq(test.t.0, test.t.1), eq(test.t.1, bit_length(cast(test.t.2)))",
+		},
+		{
+			conditions: []Expression{
+				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.LE, newFunction(ast.Mul, newColumn(0), newColumn(0)), newLonglong(50)),
 			},
 			result: "eq(test.t.0, test.t.1), le(mul(test.t.0, test.t.0), 50), le(mul(test.t.1, test.t.1), 50)",
