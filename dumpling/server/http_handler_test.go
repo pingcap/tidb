@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/printer"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -644,4 +645,65 @@ func (ts *HTTPHandlerTestSuite) TestPprof(c *C) {
 		time.Sleep(time.Millisecond * 10)
 	}
 	log.Fatalf("Failed to get profile for %d retries in every 10 ms", retryTime)
+}
+
+func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/info")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	decoder := json.NewDecoder(resp.Body)
+
+	info := serverInfo{}
+	err = decoder.Decode(&info)
+	c.Assert(err, IsNil)
+
+	cfg := config.GetGlobalConfig()
+	c.Assert(info.IsOwner, IsTrue)
+	c.Assert(info.IP, Equals, cfg.AdvertiseAddress)
+	c.Assert(info.StatusPort, Equals, cfg.Status.StatusPort)
+	c.Assert(info.Lease, Equals, cfg.Lease)
+	c.Assert(info.Version, Equals, mysql.ServerVersion)
+	c.Assert(info.GitHash, Equals, printer.TiDBGitHash)
+
+	store := ts.server.newTikvHandlerTool().store.(kv.Storage)
+	do, err := session.GetDomain(store.(kv.Storage))
+	c.Assert(err, IsNil)
+	ddl := do.DDL()
+	c.Assert(info.ID, Equals, ddl.GetID())
+}
+
+func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get("http://127.0.0.1:10090/info/all")
+	c.Assert(err, IsNil)
+	defer resp.Body.Close()
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	decoder := json.NewDecoder(resp.Body)
+
+	clusterInfo := clusterServerInfo{}
+	err = decoder.Decode(&clusterInfo)
+	c.Assert(err, IsNil)
+
+	c.Assert(clusterInfo.IsAllServerVersionConsistent, IsTrue)
+	c.Assert(clusterInfo.ServersNum, Equals, 1)
+
+	store := ts.server.newTikvHandlerTool().store.(kv.Storage)
+	do, err := session.GetDomain(store.(kv.Storage))
+	c.Assert(err, IsNil)
+	ddl := do.DDL()
+	c.Assert(clusterInfo.OwnerID, Equals, ddl.GetID())
+	serverInfo, ok := clusterInfo.AllServersInfo[ddl.GetID()]
+	c.Assert(ok, Equals, true)
+
+	cfg := config.GetGlobalConfig()
+	c.Assert(serverInfo.IP, Equals, cfg.AdvertiseAddress)
+	c.Assert(serverInfo.StatusPort, Equals, cfg.Status.StatusPort)
+	c.Assert(serverInfo.Lease, Equals, cfg.Lease)
+	c.Assert(serverInfo.Version, Equals, mysql.ServerVersion)
+	c.Assert(serverInfo.GitHash, Equals, printer.TiDBGitHash)
+	c.Assert(serverInfo.ID, Equals, ddl.GetID())
 }
