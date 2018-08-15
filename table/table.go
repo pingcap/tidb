@@ -154,10 +154,11 @@ type Table interface {
 	Type() Type
 }
 
-// PhysicalTable is a concrete table implementation, it may be a partition or a table.
+// PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
+// PhysicalID is a ID that can be used to construct a key ranges, all the data in the key range belongs to the corresponding PhysicalTable.
+// For a non-partitioned table, its PhysicalID equals to its TableID; For a partition of a partitioned table, its PhysicalID is the partition's ID.
 type PhysicalTable interface {
 	Table
-	// GetPhysicalID returns a physical ID of the table or partition.
 	GetPhysicalID() int64
 }
 
