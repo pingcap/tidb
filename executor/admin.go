@@ -94,13 +94,13 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		col := tCols[ic.Offset]
 		e.cols = append(e.cols, col)
 	}
+
+	colTypeForHandle := e.schema.Columns[len(e.cols)].RetType
 	e.cols = append(e.cols, &model.ColumnInfo{
-		ID:   model.ExtraHandleID,
-		Name: model.ExtraHandleName,
+		ID:        model.ExtraHandleID,
+		Name:      model.ExtraHandleName,
+		FieldType: *colTypeForHandle,
 	})
-	for i := range e.cols {
-		e.cols[i].FieldType = *e.schema.Columns[i].RetType
-	}
 	e.srcChunk = e.newChunk()
 	dagPB, err := e.buildDAGPB()
 	if err != nil {
