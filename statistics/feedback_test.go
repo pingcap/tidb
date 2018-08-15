@@ -71,13 +71,13 @@ func (s *testFeedbackSuite) TestUpdateHistogram(c *C) {
 	defer func() { defaultBucketCount = originBucketCount }()
 	c.Assert(UpdateHistogram(q.Hist(), q).ToString(0), Equals,
 		"column:0 ndv:0 totColSize:0\n"+
-			"num: 10000\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
-			"num: 10008\tlower_bound: 2\tupper_bound: 7\trepeats: 0\n"+
-			"num: 10019\tlower_bound: 8\tupper_bound: 19\trepeats: 0\n"+
-			"num: 10019\tlower_bound: 20\tupper_bound: 20\trepeats: 0\n"+
-			"num: 10037\tlower_bound: 21\tupper_bound: 39\trepeats: 0\n"+
-			"num: 10055\tlower_bound: 40\tupper_bound: 58\trepeats: 0\n"+
-			"num: 10057\tlower_bound: 59\tupper_bound: 60\trepeats: 0")
+			"num: 10000 lower_bound: 0 upper_bound: 1 repeats: 0\n"+
+			"num: 8 lower_bound: 2 upper_bound: 7 repeats: 0\n"+
+			"num: 11 lower_bound: 8 upper_bound: 19 repeats: 0\n"+
+			"num: 0 lower_bound: 20 upper_bound: 20 repeats: 0\n"+
+			"num: 18 lower_bound: 21 upper_bound: 39 repeats: 0\n"+
+			"num: 18 lower_bound: 40 upper_bound: 58 repeats: 0\n"+
+			"num: 2 lower_bound: 59 upper_bound: 60 repeats: 0")
 }
 
 func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
@@ -91,12 +91,12 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	buckets, isNewBuckets, totalCount := splitBuckets(q.Hist(), q)
 	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
 		"column:0 ndv:0 totColSize:0\n"+
-			"num: 1\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
-			"num: 1\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
-			"num: 1\tlower_bound: 5\tupper_bound: 7\trepeats: 0\n"+
-			"num: 6\tlower_bound: 10\tupper_bound: 15\trepeats: 0\n"+
-			"num: 6\tlower_bound: 16\tupper_bound: 20\trepeats: 0\n"+
-			"num: 6\tlower_bound: 30\tupper_bound: 50\trepeats: 0")
+			"num: 1 lower_bound: 0 upper_bound: 1 repeats: 0\n"+
+			"num: 0 lower_bound: 2 upper_bound: 3 repeats: 0\n"+
+			"num: 0 lower_bound: 5 upper_bound: 7 repeats: 0\n"+
+			"num: 5 lower_bound: 10 upper_bound: 15 repeats: 0\n"+
+			"num: 0 lower_bound: 16 upper_bound: 20 repeats: 0\n"+
+			"num: 0 lower_bound: 30 upper_bound: 50 repeats: 0")
 	c.Assert(isNewBuckets, DeepEquals, []bool{false, false, false, true, true, false})
 	c.Assert(totalCount, Equals, int64(6))
 
@@ -110,12 +110,12 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), q)
 	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
 		"column:0 ndv:0 totColSize:0\n"+
-			"num: 100000\tlower_bound: 0\tupper_bound: 1\trepeats: 0\n"+
-			"num: 100000\tlower_bound: 2\tupper_bound: 3\trepeats: 0\n"+
-			"num: 100000\tlower_bound: 5\tupper_bound: 7\trepeats: 0\n"+
-			"num: 100001\tlower_bound: 10\tupper_bound: 15\trepeats: 0\n"+
-			"num: 100001\tlower_bound: 16\tupper_bound: 20\trepeats: 0\n"+
-			"num: 100001\tlower_bound: 30\tupper_bound: 50\trepeats: 0")
+			"num: 100000 lower_bound: 0 upper_bound: 1 repeats: 0\n"+
+			"num: 0 lower_bound: 2 upper_bound: 3 repeats: 0\n"+
+			"num: 0 lower_bound: 5 upper_bound: 7 repeats: 0\n"+
+			"num: 1 lower_bound: 10 upper_bound: 15 repeats: 0\n"+
+			"num: 0 lower_bound: 16 upper_bound: 20 repeats: 0\n"+
+			"num: 0 lower_bound: 30 upper_bound: 50 repeats: 0")
 	c.Assert(isNewBuckets, DeepEquals, []bool{false, false, false, true, true, false})
 	c.Assert(totalCount, Equals, int64(100001))
 
@@ -132,7 +132,7 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), q)
 	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
 		"column:0 ndv:0 totColSize:0\n"+
-			"num: 1000000\tlower_bound: 0\tupper_bound: 1000000\trepeats: 0")
+			"num: 1000000 lower_bound: 0 upper_bound: 1000000 repeats: 0")
 	c.Assert(isNewBuckets, DeepEquals, []bool{false})
 	c.Assert(totalCount, Equals, int64(1000000))
 
@@ -148,8 +148,8 @@ func (s *testFeedbackSuite) TestSplitBuckets(c *C) {
 	buckets, isNewBuckets, totalCount = splitBuckets(q.Hist(), q)
 	c.Assert(buildNewHistogram(q.Hist(), buckets).ToString(0), Equals,
 		"column:0 ndv:0 totColSize:0\n"+
-			"num: 1\tlower_bound: 0\tupper_bound: 10\trepeats: 0\n"+
-			"num: 1\tlower_bound: 11\tupper_bound: 1000000\trepeats: 0")
+			"num: 1 lower_bound: 0 upper_bound: 10 repeats: 0\n"+
+			"num: 0 lower_bound: 11 upper_bound: 1000000 repeats: 0")
 	c.Assert(isNewBuckets, DeepEquals, []bool{true, true})
 	c.Assert(totalCount, Equals, int64(1))
 }
@@ -169,7 +169,7 @@ func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
 			counts:       []int64{1},
 			isNewBuckets: []bool{false},
 			bucketCount:  1,
-			result:       "column:0 ndv:0 totColSize:0\nnum: 1\tlower_bound: 1\tupper_bound: 2\trepeats: 0",
+			result:       "column:0 ndv:0 totColSize:0\nnum: 1 lower_bound: 1 upper_bound: 2 repeats: 0",
 		},
 		{
 			points:       []int64{1, 2, 2, 3, 3, 4},
@@ -177,8 +177,8 @@ func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
 			isNewBuckets: []bool{false, false, false},
 			bucketCount:  2,
 			result: "column:0 ndv:0 totColSize:0\n" +
-				"num: 100000\tlower_bound: 1\tupper_bound: 2\trepeats: 0\n" +
-				"num: 100002\tlower_bound: 2\tupper_bound: 4\trepeats: 0",
+				"num: 100000 lower_bound: 1 upper_bound: 2 repeats: 0\n" +
+				"num: 2 lower_bound: 2 upper_bound: 4 repeats: 0",
 		},
 		// test do not merge if the result bucket count is too large
 		{
@@ -187,9 +187,9 @@ func (s *testFeedbackSuite) TestMergeBuckets(c *C) {
 			isNewBuckets: []bool{false, false, false, false},
 			bucketCount:  3,
 			result: "column:0 ndv:0 totColSize:0\n" +
-				"num: 2\tlower_bound: 1\tupper_bound: 3\trepeats: 0\n" +
-				"num: 100002\tlower_bound: 3\tupper_bound: 4\trepeats: 0\n" +
-				"num: 200002\tlower_bound: 4\tupper_bound: 5\trepeats: 0",
+				"num: 2 lower_bound: 1 upper_bound: 3 repeats: 0\n" +
+				"num: 100000 lower_bound: 3 upper_bound: 4 repeats: 0\n" +
+				"num: 100000 lower_bound: 4 upper_bound: 5 repeats: 0",
 		},
 	}
 	for _, t := range tests {
