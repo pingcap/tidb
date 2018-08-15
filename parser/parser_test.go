@@ -1852,6 +1852,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"CREATE USER 'uesr1'@'localhost'", true},
 		{"CREATE USER 'uesr1'@`localhost`", true},
 		{"CREATE USER `uesr1`@'localhost'", true},
+		{"create user 'bug19354014user'@'%' identified WITH mysql_native_password", true},
 		{`CREATE USER IF NOT EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
