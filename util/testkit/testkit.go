@@ -14,6 +14,7 @@
 package testkit
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"sync/atomic"
@@ -43,9 +44,15 @@ type Result struct {
 
 // Check asserts the result equals the expected results.
 func (res *Result) Check(expected [][]interface{}) {
-	got := fmt.Sprintf("%s", res.rows)
-	need := fmt.Sprintf("%s", expected)
-	res.c.Assert(got, check.Equals, need, res.comment)
+	resBuff := bytes.NewBufferString("")
+	for _, row := range res.rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	needBuff := bytes.NewBufferString("")
+	for _, row := range expected {
+		fmt.Fprintf(needBuff, "%s\n", row)
+	}
+	res.c.Assert(resBuff.String(), check.Equals, needBuff.String(), res.comment)
 }
 
 // CheckAt asserts the result of selected columns equals the expected results.
