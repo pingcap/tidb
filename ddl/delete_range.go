@@ -33,8 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/domain"
 )
 
 const (
@@ -253,11 +251,11 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 					return errors.Trace(err)
 				}
 			}
-		} else {
-			startKey = tablecodec.EncodeTablePrefix(tableID)
-			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-			return doInsert(s, job.ID, tableID, startKey, endKey, now)
+			return nil
 		}
+		startKey = tablecodec.EncodeTablePrefix(tableID)
+		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+		return doInsert(s, job.ID, tableID, startKey, endKey, now)
 	case model.ActionDropTablePartition:
 		var partitionID int64
 		if err := job.DecodeArgs(&partitionID); err != nil {
@@ -280,18 +278,10 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		tableID := job.TableID
 		var indexName interface{}
 		var indexID int64
-		if err := job.DecodeArgs(&indexName, &indexID); err != nil {
+		var partitionIDs []int64
+		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
-		is := domain.GetDomain(ctx).InfoSchema()
-		tbl, ok := is.TableByID(job.TableID)
-		if !ok {
-			return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(
-				fmt.Sprintf("(Schema ID %d)", job.SchemaID),
-				fmt.Sprintf("(Table ID %d)", job.TableID),
-			))
-		}
-		partitionIDs := getPartitionIDs(tbl.Meta())
 		if len(partitionIDs) > 0 {
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
