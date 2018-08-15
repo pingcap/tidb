@@ -380,17 +380,15 @@ func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 func FindColumnsByUniqueIDs(cols []*Column, ids []int) []*Column {
 	retCols := make([]*Column, 0, len(ids))
 	for _, id := range ids {
-		found := false
 		for _, col := range cols {
 			if col.UniqueID == id {
 				retCols = append(retCols, col)
-				found = true
 				break
 			}
 		}
-		if !found {
-			break
-		}
 	}
-	return retCols
+	if len(retCols) == len(ids) {
+		return retCols
+	}
+	return nil
 }
