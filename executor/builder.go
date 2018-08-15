@@ -927,9 +927,6 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	if len(v.AggFuncs) == 0 {
-		return src
-	}
 	src = b.buildProjBelowAgg(v.AggFuncs, v.GroupByItems, src)
 	sessionVars := b.ctx.GetSessionVars()
 	e := &HashAggExec{
@@ -1003,9 +1000,6 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
-	}
-	if len(v.AggFuncs) == 0 {
-		return src
 	}
 	src = b.buildProjBelowAgg(v.AggFuncs, v.GroupByItems, src)
 	e := &StreamAggExec{

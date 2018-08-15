@@ -280,7 +280,7 @@ var defaultConf = Config{
 	Performance: Performance{
 		TCPKeepAlive:        true,
 		CrossJoin:           true,
-		StatsLease:          "0s",
+		StatsLease:          "3s",
 		RunAutoAnalyze:      true,
 		StmtCountLimit:      5000,
 		FeedbackProbability: 0.05,
