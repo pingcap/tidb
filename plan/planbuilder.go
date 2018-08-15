@@ -1187,7 +1187,36 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 		return errors.Trace(err)
 	}
 
-	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, insertPlan.SelectPlan.Schema())
+	tableCols := insertPlan.Table.Cols()
+	var insertCols []*table.Column
+
+	if len(insertPlan.Columns) > 0 {
+		colNames := make([]string, 0, len(tableCols))
+		for _, col := range insertPlan.Columns {
+			colNames = append(colNames, col.Name.O)
+		}
+		for _, col := range insertPlan.GenCols.Columns {
+			colNames = append(colNames, col.Name.O)
+		}
+		insertCols, err = table.FindCols(tableCols, colNames, insertPlan.Table.Meta().PKIsHandle)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		insertCols = tableCols
+	}
+
+	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(tableCols))...)
+	for i, selCol := range insertPlan.SelectPlan.Schema().Columns {
+		ordinal := insertCols[i].Offset
+		schema4NewRow.Columns[ordinal] = selCol
+	}
+	for i := range schema4NewRow.Columns {
+		if schema4NewRow.Columns[i] == nil {
+			schema4NewRow.Columns[i] = &expression.Column{UniqueID: insertPlan.ctx.GetSessionVars().AllocPlanColumnID()}
+		}
+	}
+	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, schema4NewRow)
 	return nil
 }
 
