@@ -309,6 +309,8 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@time_zone;")
 	result.Check(testkit.Rows("SYSTEM"))
 
+	// The following cases test value out of range and illegal type when setting system variables.
+	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html for more details.
 	tk.MustExec("set @@global.max_connections=100001")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '100001'"))
 	result = tk.MustQuery("select @@global.max_connections;")
