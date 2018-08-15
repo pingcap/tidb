@@ -264,7 +264,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 		}
 
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
-			innerRow := innerChunkRow.GetDatumRow(fields)
+			innerRow := types.CopyRow(innerChunkRow.GetDatumRow(fields))
 			e.rowCount++
 			row, err := e.fillRowData(cols, innerRow)
 			if err != nil {
