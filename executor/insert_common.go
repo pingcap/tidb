@@ -165,7 +165,7 @@ func (e *InsertValues) insertRows(cols []*table.Column, exec func(rows [][]types
 	return errors.Trace(exec(rows))
 }
 
-func (e *InsertValues) handleErr(col *table.Column, val types.Datum, rowIdx int, err error) error {
+func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -202,11 +202,11 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 
 	for i, expr := range list {
 		val, err := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
-		if err = e.handleErr(cols[i], val, rowIdx, err); err != nil {
+		if err = e.handleErr(cols[i], &val, rowIdx, err); err != nil {
 			return nil, errors.Trace(err)
 		}
 		val1, err := table.CastValue(e.ctx, val, cols[i].ToInfo())
-		if err = e.handleErr(cols[i], val, rowIdx, err); err != nil {
+		if err = e.handleErr(cols[i], &val, rowIdx, err); err != nil {
 			return nil, errors.Trace(err)
 		}
 
