@@ -14,6 +14,8 @@
 package mocktikv
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 )
 
@@ -23,26 +25,80 @@ type testRPCHandlerSuite struct {
 }
 
 func (s *testRPCHandlerSuite) TestConstructTimezone(c *C) {
-	loc, err := constructTimeZone("", 12800)
+	secondsEastOfUTC := int((8 * time.Hour).Seconds())
+	loc, err := constructTimeZone("", secondsEastOfUTC)
 	c.Assert(err, IsNil)
-	c.Assert(loc.String(), Equals, "")
+	timeInLoc := time.Date(2018, 8, 15, 20, 0, 0, 0, loc)
+	timeInUTC := time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	c.Assert(timeInLoc.Equal(timeInUTC), IsTrue)
 
-	loc, err = constructTimeZone("", -8000000)
+	secondsEastOfUTC = int((-8 * time.Hour).Seconds())
+	loc, err = constructTimeZone("", secondsEastOfUTC)
 	c.Assert(err, IsNil)
-	c.Assert(loc.String(), Equals, "")
+	timeInLoc = time.Date(2018, 8, 15, 12, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 20, 0, 0, 0, time.UTC)
+	c.Assert(timeInLoc.Equal(timeInUTC), IsTrue)
 
-	loc, err = constructTimeZone("", 8000000)
+	secondsEastOfUTC = 0
+	loc, err = constructTimeZone("", secondsEastOfUTC)
 	c.Assert(err, IsNil)
-	c.Assert(loc.String(), Equals, "")
+	timeInLoc = time.Date(2018, 8, 15, 20, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 20, 0, 0, 0, time.UTC)
+	c.Assert(timeInLoc.Equal(timeInUTC), IsTrue)
 
-	loc, err = constructTimeZone("UTC", 12800)
+	// test the seconds east of UTC is ignored by the function
+	// constructTimeZone().
+	secondsEastOfUTC = int((23 * time.Hour).Seconds())
+	loc, err = constructTimeZone("UTC", secondsEastOfUTC)
 	c.Assert(err, IsNil)
-	c.Assert(loc.String(), Equals, "UTC")
+	timeInLoc = time.Date(2018, 8, 15, 12, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	c.Assert(timeInLoc.Equal(timeInUTC), IsTrue)
 
+	// test the seconds east of UTC is ignored by the function
+	// constructTimeZone().
+	secondsEastOfUTC = int((-23 * time.Hour).Seconds())
+	loc, err = constructTimeZone("UTC", secondsEastOfUTC)
+	c.Assert(err, IsNil)
+	timeInLoc = time.Date(2018, 8, 15, 12, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	c.Assert(timeInLoc.Equal(timeInUTC), IsTrue)
+
+	// test the seconds east of UTC is ignored by the function
+	// constructTimeZone().
+	loc, err = constructTimeZone("UTC", 0)
+	c.Assert(err, IsNil)
+	timeInLoc = time.Date(2018, 8, 15, 12, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	c.Assert(timeInLoc.Equal(timeInUTC), IsTrue)
+
+	// test the seconds east of UTC is ignored by the function
+	// constructTimeZone().
+	secondsEastOfUTC = int((-23 * time.Hour).Seconds())
+	loc, err = constructTimeZone("Asia/Shanghai", secondsEastOfUTC)
+	c.Assert(err, IsNil)
+	timeInLoc = time.Date(2018, 8, 15, 20, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	c.Assert(timeInLoc.Equal(timeInUTC), IsTrue)
+
+	// test the seconds east of UTC is ignored by the function
+	// constructTimeZone().
+	secondsEastOfUTC = int((23 * time.Hour).Seconds())
+	loc, err = constructTimeZone("Asia/Shanghai", secondsEastOfUTC)
+	c.Assert(err, IsNil)
+	timeInLoc = time.Date(2018, 8, 15, 20, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	c.Assert(timeInLoc.Equal(timeInUTC), IsTrue)
+
+	// test the seconds east of UTC is ignored by the function
+	// constructTimeZone().
 	loc, err = constructTimeZone("Asia/Shanghai", 0)
 	c.Assert(err, IsNil)
-	c.Assert(loc.String(), Equals, "Asia/Shanghai")
+	timeInLoc = time.Date(2018, 8, 15, 20, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	c.Assert(timeInLoc.Equal(timeInUTC), IsTrue)
 
-	loc, err = constructTimeZone("asia/not-exist", 12800)
+	// test the timezone name is not existed.
+	loc, err = constructTimeZone("asia/not-exist", 0)
 	c.Assert(err.Error(), Equals, "invalid name for timezone asia/not-exist")
 }

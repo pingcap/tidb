@@ -165,8 +165,8 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 }
 
 // constructTimeZone constructs timezone by name first. When the timezone name
-// is set and is not equal to "UTC", the daylight saving time problem must be
-// considered. Otherwise the timezone is constructed directly from the offset.
+// is set, the daylight saving problem must be considered. Otherwise the
+// timezone offset in seconds east of UTC is used to constructed the timezone.
 func constructTimeZone(name string, offset int) (*time.Location, error) {
 	if name != "" {
 		return LocCache.getLoc(name)
