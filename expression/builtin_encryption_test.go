@@ -24,42 +24,67 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 var aesTests = []struct {
-	origin interface{}
-	key    interface{}
-	crypt  interface{}
+	mode       string
+	origin     interface{}
+	key        interface{}
+	initVector interface{}
+	crypt      interface{}
 }{
-	{"pingcap", "1234567890123456", "697BFE9B3F8C2F289DD82C88C7BC95C4"},
-	{"pingcap123", "1234567890123456", "CEC348F4EF5F84D3AA6C4FA184C65766"},
-	{"pingcap", "123456789012345678901234", "6F1589686860C8E8C7A40A78B25FF2C0"},
-	{"pingcap", "123", "996E0CA8688D7AD20819B90B273E01C6"},
-	{"pingcap", 123, "996E0CA8688D7AD20819B90B273E01C6"},
-	{nil, 123, nil},
+	// test for ecb
+	{"aes-128-ecb", "pingcap", "1234567890123456", nil, "697BFE9B3F8C2F289DD82C88C7BC95C4"},
+	{"aes-128-ecb", "pingcap123", "1234567890123456", nil, "CEC348F4EF5F84D3AA6C4FA184C65766"},
+	{"aes-128-ecb", "pingcap", "123456789012345678901234", nil, "6F1589686860C8E8C7A40A78B25FF2C0"},
+	{"aes-128-ecb", "pingcap", "123", nil, "996E0CA8688D7AD20819B90B273E01C6"},
+	{"aes-128-ecb", "pingcap", 123, nil, "996E0CA8688D7AD20819B90B273E01C6"},
+	{"aes-128-ecb", nil, 123, nil, nil},
+	{"aes-192-ecb", "pingcap", "1234567890123456", nil, "9B139FD002E6496EA2D5C73A2265E661"},
+	{"aes-256-ecb", "pingcap", "1234567890123456", nil, "F80DCDEDDBE5663BDB68F74AEDDB8EE3"},
+	// test for cbc
+	{"aes-128-cbc", "pingcap", "1234567890123456", "1234567890123456", "2ECA0077C5EA5768A0485AA522774792"},
+	{"aes-128-cbc", "pingcap", "123456789012345678901234", "1234567890123456", "483788634DA8817423BA0934FD2C096E"},
+	{"aes-192-cbc", "pingcap", "1234567890123456", "1234567890123456", "516391DB38E908ECA93AAB22870EC787"},
+	{"aes-256-cbc", "pingcap", "1234567890123456", "1234567890123456", "5D0E22C1E77523AEF5C3E10B65653C8F"},
+	{"aes-256-cbc", "pingcap", "12345678901234561234567890123456", "1234567890123456", "A26BA27CA4BE9D361D545AA84A17002D"},
+	{"aes-256-cbc", "pingcap", "1234567890123456", "12345678901234561234567890123456", "5D0E22C1E77523AEF5C3E10B65653C8F"},
 }
 
 func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.AesEncrypt]
 	for _, tt := range aesTests {
+		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum(tt.mode))
 		str := types.NewDatum(tt.origin)
 		key := types.NewDatum(tt.key)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, key}))
+		args := []types.Datum{str, key}
+		if tt.initVector != nil {
+			vec := types.NewDatum(tt.initVector)
+			args = append(args, vec)
+		}
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
 	}
-	s.testNullInput(c, ast.AesDecrypt)
+	s.testNullInput(c, ast.AesEncrypt)
 }
 
 func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.AesDecrypt]
 	for _, test := range aesTests {
+		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum(test.mode))
 		cryptStr := fromHex(test.crypt)
 		key := types.NewDatum(test.key)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{cryptStr, key}))
+		args := []types.Datum{cryptStr, key}
+		if test.initVector != nil {
+			vec := types.NewDatum(test.initVector)
+			args = append(args, vec)
+		}
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		str, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(str, DeepEquals, types.NewDatum(test.origin))

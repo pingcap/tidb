@@ -33,6 +33,10 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"strings"
+	"strconv"
+	"crypto/aes"
 )
 
 var (
@@ -68,10 +72,41 @@ var (
 	_ builtinFunc = &builtinUncompressedLengthSig{}
 )
 
-// TODO: support other mode
-const (
-	aes128ecbBlobkSize = 16
-)
+var aesMode map[string]ModeAES
+
+type ModeAES struct {
+	Name       string
+	Mode       string
+	KeySize    int
+	IvRequired bool
+}
+
+func registerModeAES(name string) {
+	it := strings.Split(name, "-")
+	keyLen, _ := strconv.Atoi(it[1])
+	keySize := keyLen / 8
+	ivRequired := true
+	if it[2] == "ecb" {
+		ivRequired = false
+	}
+	aesMode[name] = ModeAES{
+		Name:       name,
+		Mode:       it[2],
+		KeySize:    keySize,
+		IvRequired: ivRequired,
+	}
+}
+
+func init() {
+	aesMode = make(map[string]ModeAES, 16)
+	//TODO support more mode
+	registerModeAES("aes-128-ecb")
+	registerModeAES("aes-192-ecb")
+	registerModeAES("aes-256-ecb")
+	registerModeAES("aes-128-cbc")
+	registerModeAES("aes-192-cbc")
+	registerModeAES("aes-256-cbc")
+}
 
 type aesDecryptFunctionClass struct {
 	baseFunctionClass
@@ -81,7 +116,11 @@ func (c *aesDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(c.verifyArgs(args))
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
+	argTps := make([]types.EvalType, 0, len(args))
+	for range args {
+		argTps = append(argTps, types.ETString)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
 	bf.tp.Flen = args[0].GetType().Flen // At most.
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinAesDecryptSig{bf}
@@ -112,9 +151,43 @@ func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 
-	// TODO: Support other modes.
-	key := encrypt.DeriveKeyMySQL([]byte(keyStr), aes128ecbBlobkSize)
-	plainText, err := encrypt.AESDecryptWithECB([]byte(cryptStr), key)
+	modeName, _ := b.ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	mode := aesMode[modeName] //TODO check mode is exists.
+	var iv string
+	if len(b.args) == 3 {
+		iv, isNull, err = b.args[2].EvalString(b.ctx, row)
+		if isNull || err != nil {
+			return "", true, errors.Trace(err)
+		}
+	}
+	if mode.IvRequired {
+		if len(b.args) != 3 {
+			err = ErrIncorrectParameterCount.GenByArgs("aes_decrypt")
+			return "", true, err
+		}
+		if len(iv) < aes.BlockSize {
+			err = errIncorrectArgs.Gen("The initialization vector supplied to aes_decrypt is too short. Must be at least 16 bytes long")
+			return "", true, err
+
+		}
+		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
+		iv = iv[0:aes.BlockSize]
+	} else if len(b.args) == 3 {
+		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenByArgs("IV"))
+	}
+
+	key := encrypt.DeriveKeyMySQL([]byte(keyStr), mode.KeySize)
+	var plainText []byte
+	switch modeName {
+	case "aes-128-ecb", "aes-192-ecb", "aes-256-ecb":
+		plainText, err = encrypt.AESDecryptWithECB([]byte(cryptStr), key)
+	case "aes-128-cbc", "aes-192-cbc", "aes-256-cbc":
+		plainText, err = encrypt.AESDecryptWithCBC([]byte(cryptStr), key, []byte(iv))
+	default:
+		//TODO
+	}
+
 	if err != nil {
 		return "", true, nil
 	}
@@ -129,8 +202,12 @@ func (c *aesEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(c.verifyArgs(args))
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
-	bf.tp.Flen = aes128ecbBlobkSize * (args[0].GetType().Flen/aes128ecbBlobkSize + 1) // At most.
+	argTps := make([]types.EvalType, 0, len(args))
+	for range args {
+		argTps = append(argTps, types.ETString)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
+	bf.tp.Flen = aes.BlockSize * (args[0].GetType().Flen/aes.BlockSize + 1) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinAesEncryptSig{bf}
 	return sig, nil
@@ -160,9 +237,43 @@ func (b *builtinAesEncryptSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 
-	// TODO: Support other modes.
-	key := encrypt.DeriveKeyMySQL([]byte(keyStr), aes128ecbBlobkSize)
-	cipherText, err := encrypt.AESEncryptWithECB([]byte(str), key)
+	modeName, _ := b.ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	mode := aesMode[modeName] //TODO check mode is exists.
+	var iv string
+	if len(b.args) == 3 {
+		iv, isNull, err = b.args[2].EvalString(b.ctx, row)
+		if isNull || err != nil {
+			return "", true, errors.Trace(err)
+		}
+	}
+	if mode.IvRequired {
+		if len(b.args) != 3 {
+			err = ErrIncorrectParameterCount.GenByArgs("aes_encrypt")
+			return "", true, err
+		}
+		if len(iv) < aes.BlockSize {
+			err = errIncorrectArgs.Gen("The initialization vector supplied to aes_encrypt is too short. Must be at least 16 bytes long")
+			return "", true, err
+
+		}
+		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
+		iv = iv[0:aes.BlockSize]
+	} else if len(b.args) == 3 {
+		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenByArgs("IV"))
+	}
+
+	key := encrypt.DeriveKeyMySQL([]byte(keyStr), mode.KeySize)
+	var cipherText []byte
+	switch modeName {
+	case "aes-128-ecb", "aes-192-ecb", "aes-256-ecb":
+		cipherText, err = encrypt.AESEncryptWithECB([]byte(str), key)
+	case "aes-128-cbc", "aes-192-cbc", "aes-256-cbc":
+		cipherText, err = encrypt.AESEncryptWithCBC([]byte(str), key, []byte(iv))
+	default:
+		//TODO
+	}
+
 	if err != nil {
 		return "", true, nil
 	}

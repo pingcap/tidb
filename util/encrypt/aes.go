@@ -172,3 +172,43 @@ func DeriveKeyMySQL(key []byte, blockSize int) []byte {
 	}
 	return rKey
 }
+
+// AESEncryptWithCBC encrypts data using AES with CBC mode.
+func AESEncryptWithCBC(str, key []byte, iv []byte) ([]byte, error) {
+	cb, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	blockSize := cb.BlockSize()
+	// The str arguments can be any length, and padding is automatically added to
+	// str so it is a multiple of a block as required by block-based algorithms such as AES.
+	// This padding is automatically removed by the AES_DECRYPT() function.
+	data, err := PKCS7Pad(str, blockSize)
+	if err != nil {
+		return nil, err
+	}
+	cbc := cipher.NewCBCEncrypter(cb, iv)
+	crypted := make([]byte, len(data))
+	cbc.CryptBlocks(crypted, data)
+	return crypted, nil
+}
+
+// AESDecryptWithCBC decrypts data using AES with CBC mode.
+func AESDecryptWithCBC(cryptStr, key []byte, iv []byte) ([]byte, error) {
+	cb, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	blockSize := cb.BlockSize()
+	if len(cryptStr)%blockSize != 0 {
+		return nil, errors.New("Corrupted data")
+	}
+	cbc := cipher.NewCBCDecrypter(cb, iv)
+	data := make([]byte, len(cryptStr))
+	cbc.CryptBlocks(data, cryptStr)
+	plain, err := PKCS7Unpad(data, blockSize)
+	if err != nil {
+		return nil, err
+	}
+	return plain, nil
+}
