@@ -66,7 +66,7 @@ var (
 func (s *testSuite) TestFailNewSession(c *C) {
 	defer testleak.AfterTest(c)()
 
-	func () {
+	func() {
 		cli, err := clientv3.New(clientv3.Config{
 			Endpoints:   endpoints,
 			DialTimeout: dialTimeout,
