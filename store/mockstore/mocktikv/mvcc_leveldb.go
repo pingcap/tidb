@@ -919,12 +919,38 @@ func (mvcc *MVCCLevelDB) RawGet(key []byte) []byte {
 	return ret
 }
 
+// RawBatchGet implements the RawKV interface.
+func (mvcc *MVCCLevelDB) RawBatchGet(keys [][]byte) [][]byte {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	var values [][]byte
+	for _, key := range keys {
+		value, err := mvcc.db.Get(key, nil)
+		terror.Log(err)
+		values = append(values, value)
+	}
+	return values
+}
+
 // RawDelete implements the RawKV interface.
 func (mvcc *MVCCLevelDB) RawDelete(key []byte) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
 	terror.Log(mvcc.db.Delete(key, nil))
+}
+
+// RawBatchDelete implements the RawKV interface.
+func (mvcc *MVCCLevelDB) RawBatchDelete(keys [][]byte) {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	batch := &leveldb.Batch{}
+	for _, key := range keys {
+		batch.Delete(key)
+	}
+	terror.Log(mvcc.db.Write(batch, nil))
 }
 
 // RawScan implements the RawKV interface.

@@ -149,7 +149,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 		}
 	}
 
-	e, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+	e, err := expression.ParseSimpleExprWithTableInfo(ctx, buf.String(), tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -297,7 +297,7 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.Create
 	buf := new(bytes.Buffer)
 	s.Partition.Expr.Format(buf)
 	var partkeys []string
-	e, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+	e, err := expression.ParseSimpleExprWithTableInfo(ctx, buf.String(), tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
