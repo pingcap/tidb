@@ -6821,24 +6821,28 @@ RevokeStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName Fields Lines ColumnNameListOptWithBrackets
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName CharsetOpt Fields Lines ColumnNameListOptWithBrackets
 	{
 		x := &ast.LoadDataStmt{
 			Path:       $5,
 			Table:      $8.(*ast.TableName),
-			Columns:    $11.([]*ast.ColumnName),
+			Columns:    $12.([]*ast.ColumnName),
 		}
 		if $3 != nil {
 			x.IsLocal = true
 		}
-		if $9 != nil {
-			x.FieldsInfo = $9.(*ast.FieldsClause)
-		}
 		if $10 != nil {
-			x.LinesInfo = $10.(*ast.LinesClause)
+			x.FieldsInfo = $10.(*ast.FieldsClause)
+		}
+		if $11 != nil {
+			x.LinesInfo = $11.(*ast.LinesClause)
 		}
 		$$ = x
 	}
+
+CharsetOpt:
+	{}
+|	"CHARACTER" "SET" CharsetName
 
 LocalOpt:
 	{
