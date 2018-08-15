@@ -1649,7 +1649,6 @@ func (s *testEvaluatorSuite) TestFromBase64Sig(c *C) {
 		input.AppendString(0, test.args)
 		res, isNull, err := fromBase64.evalString(input.GetRow(0))
 		c.Assert(err, IsNil)
-		fmt.Printf("test(%+v), res(%+v), isNull(%+v), err(%+v)\n", test, res, isNull, err)
 		if test.isNil {
 			c.Assert(isNull, IsTrue)
 
