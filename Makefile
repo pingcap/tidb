@@ -34,11 +34,17 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.GoVersion=$(shell go version)"
 
+TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
+
+CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
+
 TARGET = ""
 
 .PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib checklist
 
 default: server buildsucc
+
+server-admin-check: server_check buildsucc
 
 buildsucc:
 	@echo Build TiDB Server successfully!
@@ -141,7 +147,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 else
 	@echo "Running in native mode."
 	@export log_level=error; \
-	$(GOTEST) -cover $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 endif
 	@$(GOFAIL_DISABLE)
 
@@ -176,6 +182,13 @@ ifeq ($(TARGET), "")
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
 else
 	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
+endif
+
+server_check: parserlib
+ifeq ($(TARGET), "")
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server tidb-server/main.go
+else
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
 endif
 
 benchkv:
