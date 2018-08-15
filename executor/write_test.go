@@ -14,10 +14,10 @@
 package executor_test
 
 import (
-	"errors"
 	"fmt"
 	"sync/atomic"
 
+	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
@@ -26,8 +26,11 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestInsert(c *C) {
@@ -732,6 +735,36 @@ func (s *testSuite) TestReplace(c *C) {
 	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(3))
 	r = tk.MustQuery("select * from tIssue1012;")
 	r.Check(testkit.Rows("1 1"))
+}
+
+func (s *testSuite) TestReplaceLog(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table testLog (a int not null primary key, b int unique key);`)
+
+	// Make some dangling index.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("testLog")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	idxInfo := findIndexByName("b", tblInfo.Indices)
+	indexOpr := tables.NewIndex(tblInfo, idxInfo)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), 1)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`replace into testLog values (0, 0), (1, 1);`)
+	c.Assert(err, NotNil)
+	expErr := errors.New(`[replace] the 2th of total 2 rows, handle 1: [kv:2]Error: key not exist`)
+	c.Assert(expErr.Error() == err.Error(), IsTrue, Commentf("obtained error: (%s)\nexpected error: (%s)", err.Error(), expErr.Error()))
 }
 
 func (s *testSuite) TestUpdate(c *C) {
