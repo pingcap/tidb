@@ -165,7 +165,7 @@ func (e *InsertValues) insertRows(cols []*table.Column, exec func(rows [][]types
 	return errors.Trace(exec(rows))
 }
 
-func (e *InsertValues) handleErr(col *table.Column, rowIdx int, err error) error {
+func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -175,7 +175,11 @@ func (e *InsertValues) handleErr(col *table.Column, rowIdx int, err error) error
 	}
 
 	if types.ErrOverflow.Equal(err) {
-		return types.ErrWarnDataOutOfRange.GenByArgs(col.Name.O, int64(rowIdx+1))
+		return types.ErrWarnDataOutOfRange.GenByArgs(col.Name.O, rowIdx+1)
+	}
+	if types.ErrTruncated.Equal(err) {
+		valStr, _ := val.ToString()
+		return table.ErrTruncatedWrongValueForField.GenByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}
 	return e.filterErr(err)
 }
@@ -198,16 +202,16 @@ func (e *InsertValues) getRow(cols []*table.Column, list []expression.Expression
 
 	for i, expr := range list {
 		val, err := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
-		if err = e.handleErr(cols[i], rowIdx, err); err != nil {
+		if err = e.handleErr(cols[i], &val, rowIdx, err); err != nil {
 			return nil, errors.Trace(err)
 		}
-		val, err = table.CastValue(e.ctx, val, cols[i].ToInfo())
-		if err = e.handleErr(cols[i], rowIdx, err); err != nil {
+		val1, err := table.CastValue(e.ctx, val, cols[i].ToInfo())
+		if err = e.handleErr(cols[i], &val, rowIdx, err); err != nil {
 			return nil, errors.Trace(err)
 		}
 
 		offset := cols[i].Offset
-		row[offset], hasValue[offset] = val, true
+		row[offset], hasValue[offset] = val1, true
 	}
 
 	return e.fillGenColData(cols, len(list), hasValue, row)

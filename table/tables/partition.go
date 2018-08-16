@@ -49,9 +49,9 @@ type partition struct {
 	tableCommon
 }
 
-// GetID implements table.Table GetID interface.
-func (p *partition) GetID() int64 {
-	return p.partitionID
+// GetPhysicalID implements table.Table GetPhysicalID interface.
+func (p *partition) GetPhysicalID() int64 {
+	return p.physicalTableID
 }
 
 // partitionedTable implements the table.PartitionedTable interface.
@@ -119,7 +119,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		} else {
 			fmt.Fprintf(&buf, "((%s) < (%s))", pi.Expr, pi.Definitions[i].LessThan[0])
 		}
-		expr, err := expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+		expr, err := expression.ParseSimpleExprWithTableInfo(ctx, buf.String(), tblInfo)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
@@ -131,7 +131,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 			fmt.Fprintf(&buf, " and ((%s) >= (%s))", pi.Expr, pi.Definitions[i-1].LessThan[0])
 		}
 
-		expr, err = expression.ParseSimpleExpr(ctx, buf.String(), tblInfo)
+		expr, err = expression.ParseSimpleExprWithTableInfo(ctx, buf.String(), tblInfo)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			log.Error("wrong table partition expression:", errors.ErrorStack(err), buf.String())
@@ -188,7 +188,7 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 }
 
 // GetPartition returns a Table, which is actually a partition.
-func (t *partitionedTable) GetPartition(pid int64) table.Table {
+func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 	return t.partitions[pid]
 }
 
@@ -262,12 +262,4 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 
 	tbl := t.GetPartition(to)
 	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
-}
-
-func (t *partitionedTable) RecordKey(_ int64) kv.Key {
-	panic("RecordKey() should never be called on PartitionedTable")
-}
-
-func (t *partitionedTable) GetID() int64 {
-	panic("GetID() should never be called on PartitionedTable")
 }
