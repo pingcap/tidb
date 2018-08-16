@@ -41,7 +41,7 @@ func (s *testCacheSuite) SetUpSuite(c *C) {
 	s.store = store
 }
 
-func (s *testCacheSuite) TearDown(c *C) {
+func (s *testCacheSuite) TearDownSuit(c *C) {
 	s.domain.Close()
 	s.store.Close()
 }
@@ -187,11 +187,14 @@ func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 
 func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
+
+	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	s.domain, err = session.BootstrapSession(store)
-	c.Assert(err, IsNil)
+	defer dom.Close()
 
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
