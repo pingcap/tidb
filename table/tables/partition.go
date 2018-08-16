@@ -49,9 +49,9 @@ type partition struct {
 	tableCommon
 }
 
-// GetID implements table.Table GetID interface.
-func (p *partition) GetID() int64 {
-	return p.partitionID
+// GetPhysicalID implements table.Table GetPhysicalID interface.
+func (p *partition) GetPhysicalID() int64 {
+	return p.physicalTableID
 }
 
 // partitionedTable implements the table.PartitionedTable interface.
@@ -179,7 +179,7 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 }
 
 // GetPartition returns a Table, which is actually a partition.
-func (t *partitionedTable) GetPartition(pid int64) table.Table {
+func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 	return t.partitions[pid]
 }
 
@@ -244,8 +244,4 @@ func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currDat
 
 	tbl := t.GetPartition(to)
 	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
-}
-
-func (t *partitionedTable) GetID() int64 {
-	panic("GetID() should never be called on PartitionedTable")
 }
