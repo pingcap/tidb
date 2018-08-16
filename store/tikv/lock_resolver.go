@@ -15,11 +15,14 @@ package tikv
 
 import (
 	"container/list"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	log "github.com/sirupsen/logrus"
@@ -47,6 +50,40 @@ func newLockResolver(store Storage) *LockResolver {
 	r.mu.resolved = make(map[uint64]TxnStatus)
 	r.mu.recentResolved = list.New()
 	return r
+}
+
+// NewLockResolver is exported for other pkg to use, suppress unused warning.
+var _ = NewLockResolver
+
+// NewLockResolver creates a LockResolver.
+// It is exported for other pkg to use. For instance, binlog service needs
+// to determine a transaction's commit state.
+func NewLockResolver(etcdAddrs []string, security config.Security) (*LockResolver, error) {
+	pdCli, err := pd.NewClient(etcdAddrs, pd.SecurityOption{
+		CAPath:   security.ClusterSSLCA,
+		CertPath: security.ClusterSSLCert,
+		KeyPath:  security.ClusterSSLKey,
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
+
+	tlsConfig, err := security.ToTLSConfig()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	spkv, err := NewEtcdSafePointKV(etcdAddrs, tlsConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	s, err := newTikvStore(uuid, &codecPDClient{pdCli}, spkv, newRPCClient(security), false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return s.lockResolver, nil
 }
 
 // TxnStatus represents a txn's final status. It should be Commit or Rollback.
