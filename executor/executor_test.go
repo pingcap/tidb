@@ -1237,7 +1237,7 @@ func (s *testSuite) TestJSON(c *C) {
 
 	var result *testkit.Result
 	result = tk.MustQuery(`select tj.a from test_json tj order by tj.id`)
-	result.Check(testkit.Rows(`{"a":[1,"2",{"aa":"bb"},4],"b":true}`, "null", "<nil>", "true", "3", "4", `"string"`))
+	result.Check(testkit.Rows(`{"a": [1, "2", {"aa": "bb"}, 4], "b": true}`, "null", "<nil>", "true", "3", "4", `"string"`))
 
 	// Check json_type function
 	result = tk.MustQuery(`select json_type(a) from test_json tj order by tj.id`)
@@ -1481,7 +1481,7 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	tk.MustExec(`CREATE TABLE test_gc_read_cast_2( a JSON, b JSON AS (a->>'$.a'))`)
 	tk.MustExec(`INSERT INTO test_gc_read_cast_2(a) VALUES ('{"a": "{    \\\"key\\\": \\\"\\u6d4b\\\"    }"}')`)
 	result = tk.MustQuery(`SELECT b FROM test_gc_read_cast_2`)
-	result.Check(testkit.Rows(`{"key":"测"}`))
+	result.Check(testkit.Rows(`{"key": "测"}`))
 
 	_, err := tk.Exec(`INSERT INTO test_gc_read_cast_1 (a, b) VALUES ('{"a": "invalid"}', '$.a')`)
 	c.Assert(err, NotNil)
