@@ -1209,7 +1209,11 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(tableCols))...)
 	for i, selCol := range insertPlan.SelectPlan.Schema().Columns {
 		ordinal := insertCols[i].Offset
-		schema4NewRow.Columns[ordinal] = selCol
+		schema4NewRow.Columns[ordinal] = &expression.Column{}
+		*schema4NewRow.Columns[ordinal] = *selCol
+
+		schema4NewRow.Columns[ordinal].RetType = &types.FieldType{}
+		*schema4NewRow.Columns[ordinal].RetType = insertCols[i].FieldType
 	}
 	for i := range schema4NewRow.Columns {
 		if schema4NewRow.Columns[i] == nil {
