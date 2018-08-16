@@ -159,17 +159,26 @@ func partitionRecordKey(pid int64, handle int64) kv.Key {
 // locatePartition returns the partition ID of the input record.
 func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int64, error) {
 	var err error
+	var isNull bool
 	partitionExprs := t.partitionExpr.UpperBounds
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		var ret int64
-		ret, _, err = partitionExprs[i].EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+		ret, isNull, err = partitionExprs[i].EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 		if err != nil {
+			return true // Break the search.
+		}
+		if isNull {
+			// If the column value used to determine the partition is NULL, the row is inserted into the lowest partition.
+			// See https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-handling-nulls.html
 			return true // Break the search.
 		}
 		return ret > 0
 	})
 	if err != nil {
 		return 0, errors.Trace(err)
+	}
+	if isNull {
+		idx = 0
 	}
 	if idx < 0 || idx >= len(partitionExprs) {
 		// The data does not belong to any of the partition?
@@ -181,6 +190,15 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 // GetPartition returns a Table, which is actually a partition.
 func (t *partitionedTable) GetPartition(pid int64) table.PhysicalTable {
 	return t.partitions[pid]
+}
+
+// GetPartitionByRow returns a Table, which is actually a Partition.
+func (t *partitionedTable) GetPartitionByRow(ctx sessionctx.Context, r []types.Datum) (table.Table, error) {
+	pid, err := t.locatePartition(ctx, t.Meta().GetPartitionInfo(), r)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return t.partitions[pid], nil
 }
 
 // AddRecord implements the AddRecord method for the table.Table interface.
