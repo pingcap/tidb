@@ -85,6 +85,7 @@ type connArray struct {
 	v     []*grpc.ClientConn
 	// Bind with a background goroutine to process coprocessor streaming timeout.
 	streamTimeout chan *tikvrpc.Lease
+	superBatchCh  chan *superBatchEntry
 }
 
 func newConnArray(maxSize uint, addr string, security config.Security) (*connArray, error) {
@@ -92,6 +93,7 @@ func newConnArray(maxSize uint, addr string, security config.Security) (*connArr
 		index:         0,
 		v:             make([]*grpc.ClientConn, maxSize),
 		streamTimeout: make(chan *tikvrpc.Lease, 1024),
+		superBatchCh:  make(chan *superBatchEntry, 1024),
 	}
 	if err := a.Init(addr, security); err != nil {
 		return nil, err
@@ -151,6 +153,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 		a.v[i] = conn
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
+	go a.superBatchLoop()
 
 	return nil
 }
@@ -169,6 +172,51 @@ func (a *connArray) Close() {
 		}
 	}
 	close(a.streamTimeout)
+	close(a.superBatchCh)
+}
+
+type superBatchEntry struct {
+	req  *tikvpb.SuperBatchRequest_Request
+	done chan struct{}
+	res  *tikvpb.SuperBatchResponse_Response
+	err  error
+}
+
+func (a *connArray) superBatchLoop() {
+	var (
+		entries  []*superBatchEntry
+		requests []*tikvpb.SuperBatchRequest_Request
+	)
+
+	for {
+		entries, requests = entries[:0], requests[:0]
+
+		entry, ok := <-a.superBatchCh
+		if !ok {
+			return
+		}
+		entries = append(entries, entry)
+		requests = append(requests, entry.req)
+
+		length := len(a.superBatchCh)
+		for i := 0; i < length && i < 1000; i++ {
+			entry = <-a.superBatchCh
+			entries = append(entries, entry)
+			requests = append(requests, entry.req)
+		}
+
+		client := tikvpb.NewTikvClient(a.Get())
+		// FIXME: timeout is ignored.
+		res, err := client.SuperBatch(context.TODO(), &tikvpb.SuperBatchRequest{Requests: requests})
+		for i, entry := range entries {
+			if err != nil {
+				entry.err = err
+			} else {
+				entry.res = res.Responses[i] // FIXME: check length.
+			}
+			close(entry.done)
+		}
+	}
 }
 
 // rpcClient is RPC client struct.
@@ -249,6 +297,20 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	if superBatchReq := req.ToSuperBatchRequest(); superBatchReq != nil {
+		entry := &superBatchEntry{
+			req:  superBatchReq,
+			done: make(chan struct{}),
+		}
+		connArray.superBatchCh <- entry
+		<-entry.done
+		if entry.err != nil {
+			return nil, errors.Trace(entry.err)
+		}
+		return tikvrpc.FromSuperBatchResponse(entry.res), nil
+	}
+
 	client := tikvpb.NewTikvClient(connArray.Get())
 
 	if req.Type != tikvrpc.CmdCopStream {
