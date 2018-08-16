@@ -52,6 +52,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
 	CommitMaxBackoff = 20000
+	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
 
