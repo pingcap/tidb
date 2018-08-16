@@ -104,7 +104,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		newDataSource := *ds
 		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.context(), TypeTableScan, &newDataSource)
 		newDataSource.isPartition = true
-		newDataSource.partitionID = pi.Definitions[i].ID
+		newDataSource.physicalTableID = pi.Definitions[i].ID
 		// There are many expression nodes in the plan tree use the original datasource
 		// id as FromID. So we set the id of the newDataSource with the original one to
 		// avoid traversing the whole plan tree to update the references.
