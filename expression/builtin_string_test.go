@@ -786,7 +786,7 @@ func (s *testEvaluatorSuite) TestSpaceSig(c *C) {
 	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(len(warnings), Equals, 1)
 	lastWarn := warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 }
 
 func (s *testEvaluatorSuite) TestLocate(c *C) {
@@ -1350,7 +1350,7 @@ func (s *testEvaluatorSuite) TestRpadSig(c *C) {
 	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(len(warnings), Equals, 1)
 	lastWarn := warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 }
 
 func (s *testEvaluatorSuite) TestInstr(c *C) {

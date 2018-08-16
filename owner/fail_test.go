@@ -66,21 +66,36 @@ var (
 func (s *testSuite) TestFailNewSession(c *C) {
 	defer testleak.AfterTest(c)()
 
-	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   endpoints,
-		DialTimeout: dialTimeout,
-	})
-	gofail.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`)
-	_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
-	isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
-	c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+	func() {
+		cli, err := clientv3.New(clientv3.Config{
+			Endpoints:   endpoints,
+			DialTimeout: dialTimeout,
+		})
+		defer func() {
+			if cli != nil {
+				cli.Close()
+			}
+		}()
+		gofail.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`)
+		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
+		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
+		c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+	}()
 
-	cli, err = clientv3.New(clientv3.Config{
-		Endpoints:   endpoints,
-		DialTimeout: dialTimeout,
-	})
-	gofail.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`)
-	_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
-	isContextDone = terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
-	c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+	func() {
+		cli, err := clientv3.New(clientv3.Config{
+			Endpoints:   endpoints,
+			DialTimeout: dialTimeout,
+		})
+		defer func() {
+			if cli != nil {
+				cli.Close()
+			}
+		}()
+		gofail.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`)
+		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
+		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
+		c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
+	}()
+
 }
