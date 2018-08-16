@@ -187,9 +187,10 @@ func (s *testCacheSuite) TestCaseInsensitive(c *C) {
 
 func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
-	c.Assert(err, IsNil)
 
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
