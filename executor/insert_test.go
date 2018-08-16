@@ -15,6 +15,8 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -93,4 +95,13 @@ func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 2 3`))
 	tk.MustExec(`insert into t (v, k1, k2) select c, a, b from (select "3" c, "1" a, "2" b) tmp on duplicate key update v=c;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 2 3`))
+}
+
+func (s *testSuite) TestInsertWrongValueForField(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a bigint);`)
+	_, err := tk.Exec(`insert into t1 values("asfasdfsajhlkhlksdaf");`)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
 }

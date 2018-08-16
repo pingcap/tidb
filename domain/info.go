@@ -160,12 +160,13 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	if is.etcdCli == nil {
 		return nil
 	}
-	var err error
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", is.serverInfoPath)
-	is.session, err = owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
+	session, err := owner.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, InfoSessionTTL)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	is.session = session
+
 	err = is.storeServerInfo(ctx)
 	return errors.Trace(err)
 }
