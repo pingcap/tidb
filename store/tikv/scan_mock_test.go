@@ -41,7 +41,7 @@ func (s *testScanMockSuite) TestScanMultipleRegions(c *C) {
 	txn, err = store.Begin()
 	c.Assert(err, IsNil)
 	snapshot := newTiKVSnapshot(store, kv.Version{Ver: txn.StartTS()})
-	scanner, err := newScanner(snapshot, []byte("a"), 10)
+	scanner, err := newScanner(snapshot, []byte("a"), 10, false)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert([]byte{ch}, BytesEquals, []byte(scanner.Key()))

@@ -47,6 +47,7 @@ type tikvSnapshot struct {
 	priority     pb.CommandPri
 	notFillCache bool
 	syncLog      bool
+	keyOnly      bool
 	vars         *kv.Variables
 }
 
@@ -282,7 +283,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 
 // Seek return a list of key-value pair after `k`.
 func (s *tikvSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
-	scanner, err := newScanner(s, k, scanBatchSize)
+	scanner, err := newScanner(s, k, scanBatchSize, s.keyOnly)
 	return scanner, errors.Trace(err)
 }
 
