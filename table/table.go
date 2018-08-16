@@ -77,6 +77,8 @@ var (
 	ErrInvalidRecordKey = terror.ClassTable.New(codeInvalidRecordKey, "invalid record key")
 	// ErrTruncateWrongValue returns for truncate wrong value for field.
 	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "incorrect value")
+	// ErrTruncatedWrongValueForField returns for truncate wrong value for field.
+	ErrTruncatedWrongValueForField = terror.ClassTable.New(codeTruncateWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
 	// ErrTrgInvalidCreationCtx happens when inserting a value outside the table partitions.
 	ErrTrgInvalidCreationCtx = terror.ClassTable.New(codeTrgInvalidCreationCtx, "locate partition failed")
 )

@@ -60,7 +60,7 @@ type IndexLookUpJoin struct {
 	joinResult *chunk.Chunk
 	innerIter  chunk.Iterator
 
-	resultGenerator joinResultGenerator
+	joiner joiner
 
 	indexRanges   []*ranger.Range
 	keyOff2IdxOff []int
@@ -207,7 +207,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 		outerRow := task.outerResult.GetRow(task.cursor)
 		if e.innerIter.Current() != e.innerIter.End() {
-			matched, err := e.resultGenerator.tryToMatch(outerRow, e.innerIter, chk)
+			matched, err := e.joiner.tryToMatch(outerRow, e.innerIter, chk)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -215,7 +215,7 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		if e.innerIter.Current() == e.innerIter.End() {
 			if !task.hasMatch {
-				e.resultGenerator.onMissMatch(outerRow, chk)
+				e.joiner.onMissMatch(outerRow, chk)
 			}
 			task.cursor++
 			task.hasMatch = false
