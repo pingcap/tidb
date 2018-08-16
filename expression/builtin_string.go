@@ -2974,14 +2974,11 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 // base64NeededDecodedLength return the base64 decoded string length.
 func base64NeededDecodedLength(n int) int {
 	// Returns -1 indicate the result will overflow.
-	if strconv.IntSize == 64 {
-		if n > 3074457345618258602 {
-			return -1
-		}
-	} else {
-		if n > 715827882 {
-			return -1
-		}
+	if strconv.IntSize == 64 && n > math.MaxInt64/3 {
+		return -1
+	}
+	if strconv.IntSize == 32 && n > math.MaxInt32/3 {
+		return -1
 	}
 	return n * 3 / 4
 }
