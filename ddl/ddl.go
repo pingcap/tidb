@@ -221,7 +221,7 @@ type DDL interface {
 	// GetID gets the ddl ID.
 	GetID() string
 	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
-	GetTableMaxRowID(startTS uint64, tbl table.Table) (int64, bool, error)
+	GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (int64, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(interface{})
 }
