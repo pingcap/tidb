@@ -28,7 +28,8 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-const secondsPerYear = 31536000
+// secondsPerYear represents seconds in a normal year. Leap year is not considered here.
+const secondsPerYear = 60 * 60 * 24 * 365
 
 // SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
 // Max worker count is maxDDLReorgWorkerCount.
