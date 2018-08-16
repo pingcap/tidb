@@ -193,7 +193,7 @@ func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
 	}
 	for _, tt := range tests {
 		err := parseStmtArgs(tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues)
-		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
+		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("err %v", err))
 		c.Assert(tt.args.args[0], Equals, tt.expect)
 	}
 }
