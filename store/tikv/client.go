@@ -183,39 +183,41 @@ type superBatchEntry struct {
 }
 
 func (a *connArray) superBatchLoop() {
-	var (
-		entries  []*superBatchEntry
-		requests []*tikvpb.SuperBatchRequest_Request
-	)
-
+	sem := make(chan struct{}, 10) // Control on-the-fly requests count.
 	for {
-		entries, requests = entries[:0], requests[:0]
-
-		entry, ok := <-a.superBatchCh
+		first, ok := <-a.superBatchCh
 		if !ok {
 			return
 		}
-		entries = append(entries, entry)
-		requests = append(requests, entry.req)
-
+		sem <- struct{}{} // FIXME: handle server quit.
 		length := len(a.superBatchCh)
-		for i := 0; i < length && i < 1000; i++ {
-			entry = <-a.superBatchCh
+		if length > 1000 {
+			length = 1000
+		}
+		entries := make([]*superBatchEntry, 0, length+1)
+		requests := make([]*tikvpb.SuperBatchRequest_Request, 0, length+1)
+		entries = append(entries, first)
+		requests = append(requests, first.req)
+		for i := 0; i < length; i++ {
+			entry := <-a.superBatchCh
 			entries = append(entries, entry)
 			requests = append(requests, entry.req)
 		}
 
-		client := tikvpb.NewTikvClient(a.Get())
-		// FIXME: timeout is ignored.
-		res, err := client.SuperBatch(context.TODO(), &tikvpb.SuperBatchRequest{Requests: requests})
-		for i, entry := range entries {
-			if err != nil {
-				entry.err = err
-			} else {
-				entry.res = res.Responses[i] // FIXME: check length.
+		go func(entries []*superBatchEntry, requests []*tikvpb.SuperBatchRequest_Request) {
+			client := tikvpb.NewTikvClient(a.Get())
+			// FIXME: timeout is ignored.
+			res, err := client.SuperBatch(context.TODO(), &tikvpb.SuperBatchRequest{Requests: requests})
+			for i, entry := range entries {
+				if err != nil {
+					entry.err = err
+				} else {
+					entry.res = res.Responses[i] // FIXME: check length.
+				}
+				close(entry.done)
 			}
-			close(entry.done)
-		}
+			<-sem
+		}(entries, requests)
 	}
 }
 
