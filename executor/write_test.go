@@ -1049,7 +1049,7 @@ func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
 	r.Check(testkit.Rows("300"))
 	tk.MustExec(`UPDATE update_with_diff_type SET b = '{"a":   "\\u6d4b\\u8bd5"}'`)
 	r = tk.MustQuery("SELECT b FROM update_with_diff_type")
-	r.Check(testkit.Rows(`{"a":"测试"}`))
+	r.Check(testkit.Rows(`{"a": "测试"}`))
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
@@ -1782,13 +1782,13 @@ func (s *testSuite) TestInsertCalculatedValue(c *C) {
 	tk.MustExec("insert into t (b) value (a->'$.a'+1)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("<nil> <nil> <nil>", "<nil> <nil> <nil>"))
 	tk.MustExec(`insert into t (a, b) value ('{"a": 1}', a->'$.a'+1)`)
-	tk.MustQuery("select * from t where c = 1").Check(testkit.Rows(`{"a":1} 2 1`))
+	tk.MustQuery("select * from t where c = 1").Check(testkit.Rows(`{"a": 1} 2 1`))
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert t set b = c + 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("<nil> <nil> <nil>"))
 	tk.MustExec("truncate table t")
 	tk.MustExec(`insert t set a = '{"a": 1}', b = c`)
-	tk.MustQuery("select * from t").Check(testkit.Rows(`{"a":1} <nil> 1`))
+	tk.MustQuery("select * from t").Check(testkit.Rows(`{"a": 1} <nil> 1`))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int auto_increment key, b int)")
