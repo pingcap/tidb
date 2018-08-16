@@ -141,7 +141,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		idxs = idxs[:last]
 	case *DataSource:
 		if x.isPartition {
-			str = fmt.Sprintf("Partition(%d)", x.partitionID)
+			str = fmt.Sprintf("Partition(%d)", x.physicalTableID)
 		} else {
 			if x.TableAsName != nil && x.TableAsName.L != "" {
 				str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
