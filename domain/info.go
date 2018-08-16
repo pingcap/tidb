@@ -147,6 +147,7 @@ func (is InfoSyncer) Done() <-chan struct{} {
 	if is.etcdCli == nil {
 		return make(chan struct{}, 1)
 	}
+	log.Errorf("[InfoSyncer.Done] is.session = %#+v", is.session)
 	return is.session.Done()
 }
 
