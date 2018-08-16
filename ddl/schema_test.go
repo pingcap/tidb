@@ -173,7 +173,7 @@ func (s *testSchemaSuite) TestSchema(c *C) {
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	err := d.doDDLJob(ctx, job)
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), IsTrue, Commentf("err %v", err))
 
 	// Drop a database without a table.
 	dbInfo1 := testSchemaInfo(c, d, "test1")
