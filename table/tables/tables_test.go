@@ -396,8 +396,8 @@ PARTITION BY RANGE ( id ) (
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
 }
 
-// TestPartitionGetID tests partition.GetID().
-func (ts *testSuite) TestPartitionGetID(c *C) {
+// TestPartitionGetPhysicalID tests partition.GetPhysicalID().
+func (ts *testSuite) TestPartitionGetPhysicalID(c *C) {
 	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
@@ -419,6 +419,6 @@ PARTITION BY RANGE ( id ) (
 	for _, pd := range ps.Definitions {
 		p := tb.(table.PartitionedTable).GetPartition(pd.ID)
 		c.Assert(p, NotNil)
-		c.Assert(pd.ID, Equals, p.GetID())
+		c.Assert(pd.ID, Equals, p.GetPhysicalID())
 	}
 }

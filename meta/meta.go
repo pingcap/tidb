@@ -618,7 +618,7 @@ func (m *Meta) reorgJobEndHandle(id int64) []byte {
 	return b
 }
 
-func (m *Meta) reorgJobPartitionID(id int64) []byte {
+func (m *Meta) reorgJobPhysicalTableID(id int64) []byte {
 	b := make([]byte, 8, 12)
 	binary.BigEndian.PutUint64(b, uint64(id))
 	b = append(b, "_pid"...)
@@ -715,7 +715,7 @@ func (m *Meta) UpdateDDLReorgStartHandle(job *model.Job, startHandle int64) erro
 }
 
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
-func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle, partitionID int64) error {
+func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle, physicalTableID int64) error {
 	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID), []byte(strconv.FormatInt(startHandle, 10)))
 	if err != nil {
 		return errors.Trace(err)
@@ -724,7 +724,7 @@ func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle, part
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobPartitionID(job.ID), []byte(strconv.FormatInt(partitionID, 10)))
+	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID), []byte(strconv.FormatInt(physicalTableID, 10)))
 	return errors.Trace(err)
 }
 
@@ -737,14 +737,14 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
 	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID)); err != nil {
 		log.Warn("remove ddl reorg end handle error:", err)
 	}
-	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobPartitionID(job.ID)); err != nil {
-		log.Warn("remove ddl reorg partition id error:", err)
+	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID)); err != nil {
+		log.Warn("remove ddl reorg physical id error:", err)
 	}
 	return nil
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
-func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, partitionID int64, err error) {
+func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, physicalTableID int64, err error) {
 	startHandle, err = m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID))
 	if err != nil {
 		err = errors.Trace(err)
@@ -755,21 +755,21 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, partit
 		err = errors.Trace(err)
 		return
 	}
-	partitionID, err = m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobPartitionID(job.ID))
+	physicalTableID, err = m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID))
 	if err != nil {
 		err = errors.Trace(err)
 		return
 	}
-	// endHandle or partitionID may be 0, because older version TiDB (without table partition) doesn't store them.
+	// endHandle or physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
 	// update them to table's in this case.
-	if endHandle == 0 || partitionID == 0 {
+	if endHandle == 0 || physicalTableID == 0 {
 		if job.ReorgMeta != nil {
 			endHandle = job.ReorgMeta.EndHandle
 		} else {
 			endHandle = math.MaxInt64
 		}
-		partitionID = job.TableID
-		log.Warnf("new TiDB binary running on old TiDB ddl reorg data, partition %v [%v %v]", partitionID, startHandle, endHandle)
+		physicalTableID = job.TableID
+		log.Warnf("new TiDB binary running on old TiDB ddl reorg data, partition %v [%v %v]", physicalTableID, startHandle, endHandle)
 	}
 	return
 }
