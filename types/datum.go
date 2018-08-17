@@ -1871,3 +1871,38 @@ func CopyRow(dr []Datum) []Datum {
 	}
 	return c
 }
+
+// String implements fmt.Stringer interface.
+func (d Datum) String() string {
+	preStr := fmt.Sprintf("Kind %s, Value: ", kind2Str[d.k])
+	switch d.k {
+	case KindInt64:
+		return fmt.Sprintf(preStr+"%d", d.GetInt64())
+	case KindUint64:
+		return fmt.Sprintf(preStr+"%d", d.GetUint64())
+	case KindFloat32:
+		return fmt.Sprintf(preStr+"%f", d.GetFloat32())
+	case KindFloat64:
+		return fmt.Sprintf(preStr+"%f", d.GetFloat64())
+	case KindString:
+		return fmt.Sprintf(preStr+"%s", d.GetString())
+	case KindBytes:
+		return fmt.Sprintf(preStr+"%x", d.GetBytes())
+	case KindMysqlDecimal:
+		return fmt.Sprintf(preStr+"%s", d.GetMysqlDecimal())
+	case KindMysqlDuration:
+		return fmt.Sprintf(preStr+"%s", d.GetMysqlDuration())
+	case KindMysqlEnum:
+		return fmt.Sprintf(preStr+"%s", d.GetMysqlEnum())
+	case KindBinaryLiteral, KindMysqlBit:
+		return fmt.Sprintf(preStr+"%x", d.GetBinaryLiteral())
+	case KindMysqlSet:
+		return fmt.Sprintf(preStr+"%s", d.GetMysqlSet())
+	case KindMysqlJSON:
+		return fmt.Sprintf(preStr+"%s", d.GetMysqlJSON())
+	case KindMysqlTime:
+		return fmt.Sprintf(preStr+"%s", d.GetMysqlTime())
+	default:
+		return fmt.Sprintf(preStr+"%s", d.GetInterface())
+	}
+}
