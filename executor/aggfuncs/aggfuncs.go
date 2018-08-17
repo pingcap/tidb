@@ -34,11 +34,19 @@ var (
 	_ AggFunc = (*countOriginal4String)(nil)
 	_ AggFunc = (*countOriginalWithDistinct)(nil)
 
-	// All the AggFunc implementations for "SUM" are listed here.
 	// All the AggFunc implementations for "FIRSTROW" are listed here.
+	_ AggFunc = (*firstRow4Decimal)(nil)
+	_ AggFunc = (*firstRow4Int)(nil)
+	_ AggFunc = (*firstRow4Time)(nil)
+	_ AggFunc = (*firstRow4String)(nil)
+	_ AggFunc = (*firstRow4Duration)(nil)
+	_ AggFunc = (*firstRow4Float32)(nil)
+	_ AggFunc = (*firstRow4Float64)(nil)
+	_ AggFunc = (*firstRow4JSON)(nil)
 
 	// All the AggFunc implementations for "MAX"/"MIN" are listed here.
 	_ AggFunc = (*maxMin4Int)(nil)
+	_ AggFunc = (*maxMin4Uint)(nil)
 	_ AggFunc = (*maxMin4Float32)(nil)
 	_ AggFunc = (*maxMin4Float64)(nil)
 	_ AggFunc = (*maxMin4Decimal)(nil)
@@ -55,6 +63,7 @@ var (
 	_ AggFunc = (*avgPartial4Float64)(nil)
 	_ AggFunc = (*avgOriginal4DistinctFloat64)(nil)
 
+	// All the AggFunc implementations for "SUM" are listed here.
 	_ AggFunc = (*sum4DistinctFloat64)(nil)
 	_ AggFunc = (*sum4DistinctDecimal)(nil)
 	_ AggFunc = (*sum4Decimal)(nil)
@@ -102,6 +111,12 @@ type AggFunc interface {
 	// aggregate function.
 	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error
 
+	// MergePartialResult will be called in the final phase when parallelly
+	// executing. It converts the PartialResult `src`, `dst` to the same specific
+	// data structure which stores the partial results, and then evaluate the
+	// final result using the partial results as input values.
+	MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error
+
 	// AppendFinalResult2Chunk finalizes the partial result and append the
 	// final result to the input chunk. Like other operations, it converts the
 	// input PartialResult to the specific data structure which stores the
@@ -118,4 +133,8 @@ type baseAggFunc struct {
 	// ordinal stores the ordinal of the columns in the output chunk, which is
 	// used to append the final result of this function.
 	ordinal int
+}
+
+func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	return nil
 }

@@ -887,8 +887,11 @@ var MySQLErrName = map[uint16]string{
 	ErrInvalidJSONPath:                                       "Invalid JSON path expression %s.",
 	ErrInvalidJSONData:                                       "Invalid data type for JSON data",
 	ErrJSONUsedAsKey:                                         "JSON column '%-.192s' cannot be used in key specification.",
-	ErrMemExceedThreshold:                                    "%s holds %dB memory, exceeds threshold %dB.%s",
-	ErrForUpdateCantRetry:                                    "[%d] can not retry select for update statement",
+
+	// TiDB errors.
+	ErrMemExceedThreshold: "%s holds %dB memory, exceeds threshold %dB.%s",
+	ErrForUpdateCantRetry: "[%d] can not retry select for update statement",
+	ErrAdminCheckTable:    "TiDB admin check table failed.",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:    "PD server timeout",

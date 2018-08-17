@@ -127,12 +127,11 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if sysVar == nil {
 		return UnknownSystemVar
 	}
-	if value.IsNull() {
-		return vars.deleteSystemVar(name)
-	}
-	var sVal string
+	sVal := ""
 	var err error
-	sVal, err = value.ToString()
+	if !value.IsNull() {
+		sVal, err = value.ToString()
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -399,7 +398,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 			if s[0] == '-' {
 				ofst = -ofst
 			}
-			return time.FixedZone("UTC", ofst), nil
+			return time.FixedZone("", ofst), nil
 		}
 	}
 

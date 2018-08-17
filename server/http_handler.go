@@ -334,6 +334,14 @@ type ddlHistoryJobHandler struct {
 	*tikvHandlerTool
 }
 
+type serverInfoHandler struct {
+	*tikvHandlerTool
+}
+
+type allServerInfoHandler struct {
+	*tikvHandlerTool
+}
+
 // valueHandle is the handler for get value.
 type valueHandler struct {
 }
@@ -1248,4 +1256,79 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 		endKey = tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
 	}
 	return h.getMvccByStartTs(uint64(startTS), startKey, endKey)
+}
+
+// serverInfo is used to report the servers info when do http request.
+type serverInfo struct {
+	IsOwner bool `json:"is_owner"`
+	*domain.ServerInfo
+}
+
+// ServeHTTP handles request of ddl server info.
+func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	do, err := session.GetDomain(h.store.(kv.Storage))
+	if err != nil {
+		writeError(w, errors.New("create session error"))
+		log.Error(err)
+		return
+	}
+	info := serverInfo{}
+	info.ServerInfo = do.InfoSyncer().GetServerInfo()
+	info.IsOwner = do.DDL().OwnerManager().IsOwner()
+	writeData(w, info)
+}
+
+// clusterServerInfo is used to report cluster servers info when do http request.
+type clusterServerInfo struct {
+	ServersNum                   int                           `json:"servers_num,omitempty"`
+	OwnerID                      string                        `json:"owner_id"`
+	IsAllServerVersionConsistent bool                          `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []domain.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*domain.ServerInfo `json:"all_servers_info,omitempty"`
+}
+
+// ServeHTTP handles request of all ddl servers info.
+func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	do, err := session.GetDomain(h.store.(kv.Storage))
+	if err != nil {
+		writeError(w, errors.New("create session error"))
+		log.Error(err)
+		return
+	}
+	ctx := context.Background()
+	allServersInfo, err := do.InfoSyncer().GetAllServerInfo(ctx)
+	if err != nil {
+		writeError(w, errors.New("ddl server information not found"))
+		log.Error(err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	ownerID, err := do.DDL().OwnerManager().GetOwnerID(ctx)
+	cancel()
+	if err != nil {
+		writeError(w, errors.New("ddl server information not found"))
+		log.Error(err)
+		return
+	}
+	allVersionsMap := map[domain.ServerVersionInfo]struct{}{}
+	allVersions := []domain.ServerVersionInfo{}
+	for _, v := range allServersInfo {
+		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
+			continue
+		}
+		allVersionsMap[v.ServerVersionInfo] = struct{}{}
+		allVersions = append(allVersions, v.ServerVersionInfo)
+	}
+	clusterInfo := clusterServerInfo{
+		ServersNum: len(allServersInfo),
+		OwnerID:    ownerID,
+		// len(allVersions) = 1 indicates there has only 1 tidb version in cluster, so all server versions are consistent.
+		IsAllServerVersionConsistent: len(allVersions) == 1,
+		AllServersInfo:               allServersInfo,
+	}
+	// if IsAllServerVersionConsistent is false, return the all tidb servers version.
+	if !clusterInfo.IsAllServerVersionConsistent {
+		clusterInfo.AllServersDiffVersions = allVersions
+	}
+	writeData(w, clusterInfo)
 }

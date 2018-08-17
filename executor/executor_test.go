@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -233,9 +234,17 @@ func (s *testSuite) TestAdmin(c *C) {
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
-	r, err = tk.Exec("admin check table admin_test")
-	c.Assert(err, NotNil)
+	r, err_admin := tk.Exec("admin check table admin_test")
+	c.Assert(err_admin, NotNil)
 
+	if config.CheckTableBeforeDrop {
+		r, err = tk.Exec("drop table admin_test")
+		c.Assert(err.Error(), Equals, err_admin.Error())
+
+		// Drop inconsistency index.
+		tk.MustExec("alter table admin_test drop index c1")
+		tk.MustExec("admin check table admin_test")
+	}
 	// checksum table test
 	tk.MustExec("create table checksum_with_index (id int, count int, PRIMARY KEY(id), KEY(count))")
 	tk.MustExec("create table checksum_without_index (id int, count int, PRIMARY KEY(id))")
@@ -978,7 +987,7 @@ func (s *testSuite) TestUnion(c *C) {
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
 	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
-	c.Assert(terror.ErrorEqual(err, plan.ErrWrongUsage), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrWrongUsage), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("(select a from t limit 1) union all select a from t limit 1")
 	c.Assert(err, IsNil)
@@ -1228,7 +1237,7 @@ func (s *testSuite) TestJSON(c *C) {
 
 	var result *testkit.Result
 	result = tk.MustQuery(`select tj.a from test_json tj order by tj.id`)
-	result.Check(testkit.Rows(`{"a":[1,"2",{"aa":"bb"},4],"b":true}`, "null", "<nil>", "true", "3", "4", `"string"`))
+	result.Check(testkit.Rows(`{"a": [1, "2", {"aa": "bb"}, 4], "b": true}`, "null", "<nil>", "true", "3", "4", `"string"`))
 
 	// Check json_type function
 	result = tk.MustQuery(`select json_type(a) from test_json tj order by tj.id`)
@@ -1472,7 +1481,7 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	tk.MustExec(`CREATE TABLE test_gc_read_cast_2( a JSON, b JSON AS (a->>'$.a'))`)
 	tk.MustExec(`INSERT INTO test_gc_read_cast_2(a) VALUES ('{"a": "{    \\\"key\\\": \\\"\\u6d4b\\\"    }"}')`)
 	result = tk.MustQuery(`SELECT b FROM test_gc_read_cast_2`)
-	result.Check(testkit.Rows(`{"key":"测"}`))
+	result.Check(testkit.Rows(`{"key": "测"}`))
 
 	_, err := tk.Exec(`INSERT INTO test_gc_read_cast_1 (a, b) VALUES ('{"a": "invalid"}', '$.a')`)
 	c.Assert(err, NotNil)
@@ -1812,7 +1821,7 @@ func (s *testSuite) TestHistoryRead(c *C) {
 
 	// Set snapshot to a time before save point will fail.
 	_, err := tk.Exec("set @@tidb_snapshot = '2006-01-01 15:04:05.999999'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrSnapshotTooOld), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrSnapshotTooOld), IsTrue, Commentf("err %v", err))
 	// SnapshotTS Is not updated if check failed.
 	c.Assert(tk.Se.GetSessionVars().SnapshotTS, Equals, uint64(0))
 
@@ -1982,7 +1991,7 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
 
 	_, err := tk.Exec("set @@tidb_current_ts = '1'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite) TestSelectForUpdate(c *C) {
@@ -2065,9 +2074,9 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustExec("create table t (e enum('Y', 'N'))")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'")
 	_, err := tk.Exec("insert into t values (0)")
-	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("insert into t values ('abc')")
-	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("insert into t values (0)")
@@ -3067,4 +3076,58 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("<nil> 2"))
 	tk.MustQuery("select k, v from t5").Check(testkit.Rows("0 0"))
 
+}
+
+func (s *testSuite) TestMaxOneRow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`drop table if exists t2`)
+	tk.MustExec(`create table t1(a double, b double);`)
+	tk.MustExec(`create table t2(a double, b double);`)
+	tk.MustExec(`insert into t1 values(1, 1), (2, 2), (3, 3);`)
+	tk.MustExec(`insert into t2 values(0, 0);`)
+	tk.MustExec(`set @@tidb_max_chunk_size=1;`)
+	rs, err := tk.Exec(`select (select t1.a from t1 where t1.a > t2.a) as a from t2;`)
+	c.Assert(err, IsNil)
+
+	err = rs.Next(context.TODO(), rs.NewChunk())
+	c.Assert(err.Error(), Equals, "subquery returns more than 1 row")
+
+	err = rs.Close()
+	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestCurrentTimestampValueSelection(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t,t1")
+
+	tk.MustExec("create table t (id int, t0 timestamp null default current_timestamp, t1 timestamp(1) null default current_timestamp(1), t2 timestamp(2) null default current_timestamp(2) on update current_timestamp(2))")
+	tk.MustExec("insert into t (id) values (1)")
+	rs := tk.MustQuery("select t0, t1, t2 from t where id = 1")
+	t0 := rs.Rows()[0][0].(string)
+	t1 := rs.Rows()[0][1].(string)
+	t2 := rs.Rows()[0][2].(string)
+	c.Assert(len(strings.Split(t0, ".")), Equals, 1)
+	c.Assert(len(strings.Split(t1, ".")[1]), Equals, 1)
+	c.Assert(len(strings.Split(t2, ".")[1]), Equals, 2)
+	tk.MustQuery("select id from t where t0 = ?", t0).Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t where t1 = ?", t1).Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t where t2 = ?", t2).Check(testkit.Rows("1"))
+	time.Sleep(time.Second / 2)
+	tk.MustExec("update t set t0 = now() where id = 1")
+	rs = tk.MustQuery("select t2 from t where id = 1")
+	newT2 := rs.Rows()[0][0].(string)
+	c.Assert(newT2 != t2, IsTrue)
+
+	tk.MustExec("create table t1 (id int, a timestamp, b timestamp(2), c timestamp(3))")
+	tk.MustExec("insert into t1 (id, a, b, c) values (1, current_timestamp(2), current_timestamp, current_timestamp(3))")
+	rs = tk.MustQuery("select a, b, c from t1 where id = 1")
+	a := rs.Rows()[0][0].(string)
+	b := rs.Rows()[0][1].(string)
+	d := rs.Rows()[0][2].(string)
+	c.Assert(len(strings.Split(a, ".")), Equals, 1)
+	c.Assert(strings.Split(b, ".")[1], Equals, "00")
+	c.Assert(len(strings.Split(d, ".")[1]), Equals, 3)
 }

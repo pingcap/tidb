@@ -133,7 +133,8 @@ func (s *testSuite) TestSetVar(c *C) {
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_bin")
 
-	tk.MustExec("set @@character_set_results = NULL")
+	tk.MustExec("set character_set_results = NULL")
+	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
 
 	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
@@ -251,19 +252,19 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set global tidb_distsql_scan_concurrency=-1;")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency='fff';")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency=-1;")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@tidb_batch_delete='ok';")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set @@tidb_batch_delete='On';")
 	tk.MustExec("set @@tidb_batch_delete='oFf';")
@@ -271,10 +272,10 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	tk.MustExec("set @@tidb_batch_delete=0;")
 
 	_, err = tk.Exec("set @@tidb_batch_delete=3;")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@tidb_mem_quota_mergejoin='tidb';")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set @@group_concat_max_len=1")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
@@ -282,11 +283,11 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("4"))
 
 	_, err = tk.Exec("set @@group_concat_max_len = 18446744073709551616")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
 	// Test illegal type
 	_, err = tk.Exec("set @@group_concat_max_len='hello'")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set @@default_week_format=-1")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect default_week_format value: '-1'"))
@@ -299,10 +300,10 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result.Check(testkit.Rows("7"))
 
 	_, err = tk.Exec("set @@error_count = 0")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@warning_count = 0")
-	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set time_zone='SySTeM'")
 	result = tk.MustQuery("select @@time_zone;")

@@ -218,8 +218,10 @@ type DDL interface {
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
+	// GetID gets the ddl ID.
+	GetID() string
 	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
-	GetTableMaxRowID(startTS uint64, tbl table.Table) (int64, bool, error)
+	GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (int64, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(interface{})
 }
@@ -431,6 +433,11 @@ func (d *ddl) SchemaSyncer() SchemaSyncer {
 // OwnerManager implements DDL.OwnerManager interface.
 func (d *ddl) OwnerManager() owner.Manager {
 	return d.ownerManager
+}
+
+// GetID implements DDL.GetID interface.
+func (d *ddl) GetID() string {
+	return d.uuid
 }
 
 func checkJobMaxInterval(job *model.Job) time.Duration {
