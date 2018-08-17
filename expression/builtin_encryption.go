@@ -26,15 +26,15 @@ import (
 	"hash"
 	"io"
 
+	"crypto/aes"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"crypto/aes"
 	"strings"
 )
 
@@ -79,12 +79,12 @@ type aesModeAttr struct {
 
 var aesModes = map[string]*aesModeAttr{
 	//TODO support more modes
-	"aes-128-ecb": &aesModeAttr{"ecb", 16, false},
-	"aes-192-ecb": &aesModeAttr{"ecb", 24, false},
-	"aes-256-ecb": &aesModeAttr{"ecb", 32, false},
-	"aes-128-cbc": &aesModeAttr{"cbc", 16, true},
-	"aes-192-cbc": &aesModeAttr{"cbc", 24, true},
-	"aes-256-cbc": &aesModeAttr{"cbc", 32, true},
+	"aes-128-ecb": {"ecb", 16, false},
+	"aes-192-ecb": {"ecb", 24, false},
+	"aes-256-ecb": {"ecb", 32, false},
+	"aes-128-cbc": {"cbc", 16, true},
+	"aes-192-cbc": {"cbc", 24, true},
+	"aes-256-cbc": {"cbc", 32, true},
 }
 
 type aesDecryptFunctionClass struct {

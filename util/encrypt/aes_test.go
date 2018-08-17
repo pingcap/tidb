@@ -288,7 +288,6 @@ func (s *testEncryptSuite) TestAESEncryptWithCBC(c *C) {
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
 
-
 	for _, t := range tests {
 		str := []byte(t.str)
 		key := []byte(t.key)
