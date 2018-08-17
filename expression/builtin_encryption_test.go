@@ -69,7 +69,7 @@ func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
 	}
-	s.testNullInput(c, ast.AesEncrypt)
+	s.testAmbiguousInput(c, ast.AesEncrypt)
 }
 
 func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
@@ -89,10 +89,10 @@ func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(str, DeepEquals, types.NewDatum(test.origin))
 	}
-	s.testNullInput(c, ast.AesDecrypt)
+	s.testAmbiguousInput(c, ast.AesDecrypt)
 }
 
-func (s *testEvaluatorSuite) testNullInput(c *C, fnName string) {
+func (s *testEvaluatorSuite) testAmbiguousInput(c *C, fnName string) {
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	var argNull types.Datum
@@ -105,6 +105,23 @@ func (s *testEvaluatorSuite) testNullInput(c *C, fnName string) {
 	crypt, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
+
+	// test for modes that require init_vector
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum("aes-128-cbc"))
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg}))
+	crypt, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, NotNil)
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg, types.NewStringDatum("iv < 16 bytes")}))
+	crypt, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, NotNil)
+
+	// test for modes that do not require init_vector
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum("aes-128-ecb"))
+	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg, arg}))
+	crypt, err = evalBuiltinFunc(f, chunk.Row{})
+	c.Assert(err, IsNil)
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), GreaterEqual, 1)
 }
 
 func toHex(d types.Datum) (h types.Datum) {

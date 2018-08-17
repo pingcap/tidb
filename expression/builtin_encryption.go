@@ -34,9 +34,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"strings"
-	"strconv"
 	"crypto/aes"
+	"strings"
 )
 
 var (
@@ -72,40 +71,20 @@ var (
 	_ builtinFunc = &builtinUncompressedLengthSig{}
 )
 
-var aesMode map[string]ModeAES
-
-type ModeAES struct {
-	Name       string
-	Mode       string
-	KeySize    int
-	IvRequired bool
+type aesModeAttr struct {
+	modeName   string
+	keySize    int
+	ivRequired bool
 }
 
-func registerModeAES(name string) {
-	it := strings.Split(name, "-")
-	keyLen, _ := strconv.Atoi(it[1])
-	keySize := keyLen / 8
-	ivRequired := true
-	if it[2] == "ecb" {
-		ivRequired = false
-	}
-	aesMode[name] = ModeAES{
-		Name:       name,
-		Mode:       it[2],
-		KeySize:    keySize,
-		IvRequired: ivRequired,
-	}
-}
-
-func init() {
-	aesMode = make(map[string]ModeAES, 16)
-	//TODO support more mode
-	registerModeAES("aes-128-ecb")
-	registerModeAES("aes-192-ecb")
-	registerModeAES("aes-256-ecb")
-	registerModeAES("aes-128-cbc")
-	registerModeAES("aes-192-cbc")
-	registerModeAES("aes-256-cbc")
+var aesModes = map[string]*aesModeAttr{
+	//TODO support more modes
+	"aes-128-ecb": &aesModeAttr{"ecb", 16, false},
+	"aes-192-ecb": &aesModeAttr{"ecb", 24, false},
+	"aes-256-ecb": &aesModeAttr{"ecb", 32, false},
+	"aes-128-cbc": &aesModeAttr{"cbc", 16, true},
+	"aes-192-cbc": &aesModeAttr{"cbc", 24, true},
+	"aes-256-cbc": &aesModeAttr{"cbc", 32, true},
 }
 
 type aesDecryptFunctionClass struct {
@@ -151,43 +130,42 @@ func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 
-	modeName, _ := b.ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
-	mode := aesMode[modeName] //TODO check mode is exists.
 	var iv string
-	if len(b.args) == 3 {
+	modeName, _ := b.ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	mode, exists := aesModes[strings.ToLower(modeName)]
+	if !exists {
+		return "", true, errors.Errorf("unsupported block encryption mode - %v", modeName)
+	}
+	if mode.ivRequired {
+		if len(b.args) != 3 {
+			return "", true, ErrIncorrectParameterCount.GenByArgs("aes_decrypt")
+		}
 		iv, isNull, err = b.args[2].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return "", true, errors.Trace(err)
 		}
-	}
-	if mode.IvRequired {
-		if len(b.args) != 3 {
-			err = ErrIncorrectParameterCount.GenByArgs("aes_decrypt")
-			return "", true, err
-		}
 		if len(iv) < aes.BlockSize {
-			err = errIncorrectArgs.Gen("The initialization vector supplied to aes_decrypt is too short. Must be at least 16 bytes long")
-			return "", true, err
-
+			return "", true, errIncorrectArgs.Gen("The initialization vector supplied to aes_decrypt is too short. Must be at least 16 bytes long")
 		}
 		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
 		iv = iv[0:aes.BlockSize]
-	} else if len(b.args) == 3 {
-		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenByArgs("IV"))
+	} else {
+		if len(b.args) == 3 {
+			// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenByArgs("IV"))
+		}
 	}
 
-	key := encrypt.DeriveKeyMySQL([]byte(keyStr), mode.KeySize)
+	key := encrypt.DeriveKeyMySQL([]byte(keyStr), mode.keySize)
 	var plainText []byte
-	switch modeName {
-	case "aes-128-ecb", "aes-192-ecb", "aes-256-ecb":
+	switch mode.modeName {
+	case "ecb":
 		plainText, err = encrypt.AESDecryptWithECB([]byte(cryptStr), key)
-	case "aes-128-cbc", "aes-192-cbc", "aes-256-cbc":
+	case "cbc":
 		plainText, err = encrypt.AESDecryptWithCBC([]byte(cryptStr), key, []byte(iv))
 	default:
-		//TODO
+		return "", true, errors.Errorf("unsupported block encryption mode - %v", mode.modeName)
 	}
-
 	if err != nil {
 		return "", true, nil
 	}
@@ -237,43 +215,42 @@ func (b *builtinAesEncryptSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 
-	modeName, _ := b.ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
-	mode := aesMode[modeName] //TODO check mode is exists.
 	var iv string
-	if len(b.args) == 3 {
+	modeName, _ := b.ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	mode, exists := aesModes[strings.ToLower(modeName)]
+	if !exists {
+		return "", true, errors.Errorf("unsupported block encryption mode - %v", modeName)
+	}
+	if mode.ivRequired {
+		if len(b.args) != 3 {
+			return "", true, ErrIncorrectParameterCount.GenByArgs("aes_encrypt")
+		}
 		iv, isNull, err = b.args[2].EvalString(b.ctx, row)
 		if isNull || err != nil {
 			return "", true, errors.Trace(err)
 		}
-	}
-	if mode.IvRequired {
-		if len(b.args) != 3 {
-			err = ErrIncorrectParameterCount.GenByArgs("aes_encrypt")
-			return "", true, err
-		}
 		if len(iv) < aes.BlockSize {
-			err = errIncorrectArgs.Gen("The initialization vector supplied to aes_encrypt is too short. Must be at least 16 bytes long")
-			return "", true, err
-
+			return "", true, errIncorrectArgs.Gen("The initialization vector supplied to aes_encrypt is too short. Must be at least 16 bytes long")
 		}
 		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
 		iv = iv[0:aes.BlockSize]
-	} else if len(b.args) == 3 {
-		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenByArgs("IV"))
+	} else {
+		if len(b.args) == 3 {
+			// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenByArgs("IV"))
+		}
 	}
 
-	key := encrypt.DeriveKeyMySQL([]byte(keyStr), mode.KeySize)
+	key := encrypt.DeriveKeyMySQL([]byte(keyStr), mode.keySize)
 	var cipherText []byte
-	switch modeName {
-	case "aes-128-ecb", "aes-192-ecb", "aes-256-ecb":
+	switch mode.modeName {
+	case "ecb":
 		cipherText, err = encrypt.AESEncryptWithECB([]byte(str), key)
-	case "aes-128-cbc", "aes-192-cbc", "aes-256-cbc":
+	case "cbc":
 		cipherText, err = encrypt.AESEncryptWithCBC([]byte(str), key, []byte(iv))
 	default:
-		//TODO
+		return "", true, errors.Errorf("unsupported block encryption mode - %v", mode.modeName)
 	}
-
 	if err != nil {
 		return "", true, nil
 	}
