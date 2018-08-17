@@ -206,7 +206,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
 	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
 	if err != nil {
-		log.Errorf("[insert on dup] can not find record which handle is %d for the to-be-inserted row {%s}", handle, row.row)
+		log.Errorf("[insert on dup] can not find record which handle is %d for the to-be-inserted row %v", handle, row.row)
 		return errors.Trace(err)
 	}
 	// Do update row.
