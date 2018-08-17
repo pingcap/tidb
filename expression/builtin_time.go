@@ -2616,6 +2616,8 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 
 	if goTime.Nanosecond() == 0 {
 		date.Fsp = 0
+	} else {
+		date.Fsp = 6
 	}
 
 	date.Time = types.FromGoTime(goTime)
@@ -2639,6 +2641,8 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 
 	if goTime.Nanosecond() == 0 {
 		date.Fsp = 0
+	} else {
+		date.Fsp = 6
 	}
 
 	date.Time = types.FromGoTime(goTime)
