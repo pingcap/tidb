@@ -746,9 +746,9 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 
 	d := types.NewDecFromStringForTest("-123.123456789")
 	_, err := EncodeDecimal(nil, d, 20, 5)
-	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue, Commentf("err %v", err))
 	_, err = EncodeDecimal(nil, d, 12, 10)
-	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue, Commentf("err %v", err))
 
 	sc.IgnoreTruncate = true
 	decimalDatum := types.NewDatum(d)

@@ -398,7 +398,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 			if s[0] == '-' {
 				ofst = -ofst
 			}
-			return time.FixedZone("UTC", ofst), nil
+			return time.FixedZone("", ofst), nil
 		}
 	}
 

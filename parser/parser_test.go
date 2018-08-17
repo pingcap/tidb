@@ -358,6 +358,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// load data
 		{"load data infile '/tmp/t.csv' into table t", true},
+		{"load data infile '/tmp/t.csv' into table t character set utf8", true},
 		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab'", true},
 		{"load data infile '/tmp/t.csv' into table t columns terminated by 'ab'", true},
 		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b'", true},
@@ -371,6 +372,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t columns terminated by 'ab'", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b'", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*'", true},
+		{"load data local infile '/tmp/t.csv' into table t character set utf8 fields terminated by 'ab' enclosed by 'b' escaped by '*'", true},
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab'", true},
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy'", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy'", true},
@@ -381,8 +383,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t columns terminated by 'ab' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t character set utf8 fields terminated by 'ab' enclosed by 'b' escaped by '*' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t character set utf8 fields terminated by 'ab' lines terminated by 'xy' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t (a,b) fields terminated by 'ab'", false},
 
@@ -1848,6 +1852,9 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"CREATE USER 'uesr1'@'localhost'", true},
 		{"CREATE USER 'uesr1'@`localhost`", true},
 		{"CREATE USER `uesr1`@'localhost'", true},
+		{"create user 'bug19354014user'@'%' identified WITH mysql_native_password", true},
+		{"create user 'bug19354014user'@'%' identified WITH mysql_native_password by 'new-password'", true},
+		{"create user 'bug19354014user'@'%' identified WITH mysql_native_password as 'hashstring'", true},
 		{`CREATE USER IF NOT EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},

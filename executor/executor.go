@@ -369,8 +369,8 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 	defer func() { e.done = true }()
-	dbName := model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
 	for _, t := range e.tables {
+		dbName := t.DBInfo.Name
 		tb, err := e.is.TableByName(dbName, t.Name)
 		if err != nil {
 			return errors.Trace(err)
@@ -383,6 +383,10 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		if err != nil {
 			log.Warnf("%v error:%v", t.Name, errors.ErrorStack(err))
+			if admin.ErrDataInConsistent.Equal(err) {
+				return ErrAdminCheckTable.Gen("%v err:%v", t.Name, err)
+			}
+
 			return errors.Errorf("%v err:%v", t.Name, err)
 		}
 	}
@@ -899,11 +903,17 @@ func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			chk.AppendNull(i)
 		}
 		return nil
-	} else if num == 1 {
-		return nil
+	} else if num != 1 {
+		return errors.New("subquery returns more than 1 row")
 	}
 
-	return errors.New("subquery returns more than 1 row")
+	childChunk := e.children[0].newChunk()
+	err = e.children[0].Next(ctx, childChunk)
+	if childChunk.NumRows() != 0 {
+		return errors.New("subquery returns more than 1 row")
+	}
+
+	return nil
 }
 
 // UnionExec pulls all it's children's result and returns to its parent directly.
