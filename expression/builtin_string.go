@@ -555,17 +555,24 @@ func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	sig := &builtinRepeatSig{bf}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinRepeatSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinRepeatSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinRepeatSig) Clone() builtinFunc {
 	newSig := &builtinRepeatSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -576,6 +583,7 @@ func (b *builtinRepeatSig) evalString(row chunk.Row) (d string, isNull bool, err
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
+	byteLength := len(str)
 
 	num, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
@@ -588,7 +596,12 @@ func (b *builtinRepeatSig) evalString(row chunk.Row) (d string, isNull bool, err
 		num = math.MaxInt32
 	}
 
-	if int64(len(str)) > int64(b.tp.Flen)/num {
+	if uint64(byteLength)*uint64(num) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("repeat", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
+	if int64(byteLength) > int64(b.tp.Flen)/num {
 		return "", true, nil
 	}
 	return strings.Repeat(str, int(num)), false, nil
