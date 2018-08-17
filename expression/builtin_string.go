@@ -2959,18 +2959,39 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.MaxBlobWidth
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinFromBase64Sig{bf}
+	sig := &builtinFromBase64Sig{bf, maxAllowedPacket}
 	return sig, nil
+}
+
+// base64NeededDecodedLength return the base64 decoded string length.
+func base64NeededDecodedLength(n int) int {
+	// Returns -1 indicate the result will overflow.
+	if strconv.IntSize == 64 && n > math.MaxInt64/3 {
+		return -1
+	}
+	if strconv.IntSize == 32 && n > math.MaxInt32/3 {
+		return -1
+	}
+	return n * 3 / 4
 }
 
 type builtinFromBase64Sig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinFromBase64Sig) Clone() builtinFunc {
 	newSig := &builtinFromBase64Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -2981,6 +3002,16 @@ func (b *builtinFromBase64Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
+
+	needDecodeLen := base64NeededDecodedLength(len(str))
+	if needDecodeLen == -1 {
+		return "", true, nil
+	}
+	if needDecodeLen > int(b.maxAllowedPacket) {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("from_base64", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
 	str = strings.Replace(str, "\t", "", -1)
 	str = strings.Replace(str, " ", "", -1)
 	result, err := base64.StdEncoding.DecodeString(str)
