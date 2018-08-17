@@ -1937,11 +1937,11 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 func (s *testSessionSuite) TestCastTimeToDate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set time_zone = '-8:00'")
-	date := time.Now().In(time.FixedZone("UTC-8", -8*int(time.Hour/time.Second)))
+	date := time.Now().In(time.FixedZone("", -8*int(time.Hour/time.Second)))
 	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format("2006-01-02")))
 
 	tk.MustExec("set time_zone = '+08:00'")
-	date = time.Now().In(time.FixedZone("UTC+8", 8*int(time.Hour/time.Second)))
+	date = time.Now().In(time.FixedZone("", 8*int(time.Hour/time.Second)))
 	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format("2006-01-02")))
 }
 
