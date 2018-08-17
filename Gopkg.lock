@@ -78,23 +78,13 @@
 [[projects]]
   branch = "master"
   name = "github.com/etcd-io/gofail"
-  packages = [
-    ".",
-    "code",
-    "runtime"
-  ]
+  packages = ["runtime"]
   revision = "51ce9a71510a58bad5ae66ddd278ef28762a1550"
 
 [[projects]]
   name = "github.com/go-sql-driver/mysql"
   packages = ["."]
   revision = "3955978caca48c1658a4bb7a9c6a0f084e326af3"
-
-[[projects]]
-  name = "github.com/gogo/protobuf"
-  packages = ["proto"]
-  revision = "1adfc126b41513cc696b209667c8656ea7aac67c"
-  version = "v1.0.0"
 
 [[projects]]
   name = "github.com/golang/protobuf"
@@ -173,15 +163,6 @@
   revision = "7a24ed77b2efb460c1468b7dc917821c66e80e55"
 
 [[projects]]
-  name = "github.com/opentracing/basictracer-go"
-  packages = [
-    ".",
-    "wire"
-  ]
-  revision = "1b32af207119a14b1b231d451df3ed04a72efebf"
-  version = "v1.0.0"
-
-[[projects]]
   name = "github.com/opentracing/opentracing-go"
   packages = [
     ".",
@@ -234,13 +215,95 @@
     "pkg/raft_serverpb",
     "pkg/tikvpb"
   ]
-  revision = "5ef8fa297ea3547b015ef5069cb500bba67b0d94"
+  revision = "279515615485b0f2d12f1421cc412fe2784e0190"
 
 [[projects]]
   branch = "master"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
-  revision = "ea6597638eb7f3d7d50248b90e60888352ac8e85"
+  revision = "ba75bdda52f50df752c42c3f1434d9471e98f75e"
+
+[[projects]]
+  branch = "master"
+  name = "github.com/pingcap/tidb"
+  packages = [
+    "ast",
+    "config",
+    "ddl",
+    "ddl/util",
+    "distsql",
+    "domain",
+    "executor",
+    "executor/aggfuncs",
+    "expression",
+    "expression/aggregation",
+    "infoschema",
+    "kv",
+    "meta",
+    "meta/autoid",
+    "metrics",
+    "model",
+    "mysql",
+    "owner",
+    "parser",
+    "parser/opcode",
+    "perfschema",
+    "plan",
+    "privilege",
+    "privilege/privileges",
+    "server",
+    "session",
+    "sessionctx",
+    "sessionctx/binloginfo",
+    "sessionctx/stmtctx",
+    "sessionctx/variable",
+    "statistics",
+    "store/mockoracle",
+    "store/mockstore",
+    "store/mockstore/mocktikv",
+    "store/tikv",
+    "store/tikv/gcworker",
+    "store/tikv/latch",
+    "store/tikv/oracle",
+    "store/tikv/oracle/oracles",
+    "store/tikv/tikvrpc",
+    "structure",
+    "table",
+    "table/tables",
+    "tablecodec",
+    "terror",
+    "types",
+    "types/json",
+    "util",
+    "util/admin",
+    "util/arena",
+    "util/auth",
+    "util/charset",
+    "util/chunk",
+    "util/codec",
+    "util/encrypt",
+    "util/execdetails",
+    "util/filesort",
+    "util/format",
+    "util/goroutine_pool",
+    "util/hack",
+    "util/israce",
+    "util/kvcache",
+    "util/logutil",
+    "util/memory",
+    "util/mock",
+    "util/mvmap",
+    "util/printer",
+    "util/ranger",
+    "util/sqlexec",
+    "util/stringutil",
+    "util/systimemon",
+    "util/testkit",
+    "util/testleak",
+    "util/testutil",
+    "x-server"
+  ]
+  revision = "4624785b377784ce8b63b596c55f95fa01f26cce"
 
 [[projects]]
   branch = "master"
@@ -424,6 +487,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "472d8f62cb1733b34466708b19eaa0f7d80c01045ad4de7d790cfc34797c991a"
+  inputs-digest = "c0ea03a9e1069122ed9ffafa3e53f2a49e6fdf6a4ba4e4bb71d967c92a97b6bd"
   solver-name = "gps-cdcl"
   solver-version = 1
