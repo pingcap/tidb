@@ -1649,17 +1649,13 @@ func (s *testEvaluatorSuite) TestFromBase64Sig(c *C) {
 		input.AppendString(0, test.args)
 		res, isNull, err := fromBase64.evalString(input.GetRow(0))
 		c.Assert(err, IsNil)
+		c.Assert(isNull, Equals, test.isNil)
 		if test.isNil {
-			c.Assert(isNull, IsTrue)
-
 			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 			c.Assert(len(warnings), Equals, 1)
 			lastWarn := warnings[len(warnings)-1]
 			c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
 			s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
-
-		} else {
-			c.Assert(isNull, IsFalse)
 		}
 		c.Assert(res, Equals, test.expect)
 	}
