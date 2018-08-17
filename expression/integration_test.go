@@ -827,9 +827,11 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	// for char_length
 	result = tk.MustQuery(`select char_length(null), char_length("Hello"), char_length("a中b文c"), char_length(123),char_length(12.3456);`)
 	result.Check(testkit.Rows("<nil> 5 5 3 7"))
+	result = tk.MustQuery(`select char_length(null), char_length("Hello"), char_length("a 中 b 文 c"), char_length("НОЧЬ НА ОКРАИНЕ МОСКВЫ");`)
+	result.Check(testkit.Rows("<nil> 5 9 22"))
 	// for char_length, binary string type
 	result = tk.MustQuery(`select char_length(null), char_length(binary("Hello")), char_length(binary("a 中 b 文 c")), char_length(binary("НОЧЬ НА ОКРАИНЕ МОСКВЫ"));`)
-	result.Check(testkit.Rows("<nil> 5 9 22"))
+	result.Check(testkit.Rows("<nil> 5 13 41"))
 
 	// for elt
 	result = tk.MustQuery(`select elt(0, "abc", "def"), elt(2, "hello", "中文", "tidb"), elt(4, "hello", "中文",
