@@ -6561,6 +6561,23 @@ AuthOption:
 			ByAuthString: true,
 		}
 	}
+|	"IDENTIFIED" "WITH" StringName
+	{
+		$$ = nil
+	}
+|	"IDENTIFIED" "WITH" StringName "BY" AuthString
+	{
+		$$ = &ast.AuthOption {
+			AuthString: $5.(string),
+			ByAuthString: true,
+		}
+	}
+|	"IDENTIFIED" "WITH" StringName "AS" HashString
+	{
+		$$ = &ast.AuthOption{
+			HashString: $5.(string),
+		}
+	}
 |	"IDENTIFIED" "BY" "PASSWORD" HashString
 	{
 		$$ = &ast.AuthOption{
