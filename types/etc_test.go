@@ -190,6 +190,6 @@ func (s *testTypeEtcSuite) TestTruncate(c *C) {
 	for _, t := range tbl {
 		f, err := TruncateFloat(t.Input, t.Flen, t.Decimal)
 		c.Assert(f, Equals, t.Expect)
-		c.Assert(terror.ErrorEqual(err, t.Err), IsTrue)
+		c.Assert(terror.ErrorEqual(err, t.Err), IsTrue, Commentf("err %v", err))
 	}
 }

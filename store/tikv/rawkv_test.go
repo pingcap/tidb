@@ -55,11 +55,31 @@ func (s *testRawKVSuite) mustNotExist(c *C, key []byte) {
 	c.Assert(v, IsNil)
 }
 
+func (s *testRawKVSuite) mustBatchNotExist(c *C, keys [][]byte) {
+	values, err := s.client.BatchGet(keys)
+	c.Assert(err, IsNil)
+	c.Assert(values, NotNil)
+	c.Assert(len(keys), Equals, len(values))
+	for _, value := range values {
+		c.Assert([]byte{}, BytesEquals, value)
+	}
+}
+
 func (s *testRawKVSuite) mustGet(c *C, key, value []byte) {
 	v, err := s.client.Get(key)
 	c.Assert(err, IsNil)
 	c.Assert(v, NotNil)
 	c.Assert(v, BytesEquals, value)
+}
+
+func (s *testRawKVSuite) mustBatchGet(c *C, keys, values [][]byte) {
+	checkValues, err := s.client.BatchGet(keys)
+	c.Assert(err, IsNil)
+	c.Assert(checkValues, NotNil)
+	c.Assert(len(keys), Equals, len(checkValues))
+	for i := range keys {
+		c.Check(values[i], BytesEquals, checkValues[i])
+	}
 }
 
 func (s *testRawKVSuite) mustPut(c *C, key, value []byte) {
@@ -74,6 +94,11 @@ func (s *testRawKVSuite) mustBatchPut(c *C, keys, values [][]byte) {
 
 func (s *testRawKVSuite) mustDelete(c *C, key []byte) {
 	err := s.client.Delete(key)
+	c.Assert(err, IsNil)
+}
+
+func (s *testRawKVSuite) mustBatchDelete(c *C, keys [][]byte) {
+	err := s.client.BatchDelete(keys)
 	c.Assert(err, IsNil)
 }
 
@@ -132,7 +157,7 @@ func (s *testRawKVSuite) TestSimple(c *C) {
 	c.Assert(err, NotNil)
 }
 
-func (s *testRawKVSuite) TestBatchPut(c *C) {
+func (s *testRawKVSuite) TestRawBatch(c *C) {
 	testNum := 0
 	size := 0
 	var testKeys [][]byte
@@ -150,9 +175,9 @@ func (s *testRawKVSuite) TestBatchPut(c *C) {
 	err := s.split(c, "", fmt.Sprint("key", testNum/2))
 	c.Assert(err, IsNil)
 	s.mustBatchPut(c, testKeys, testValues)
-	for i := 0; i < testNum; i++ {
-		s.mustGet(c, testKeys[i], testValues[i])
-	}
+	s.mustBatchGet(c, testKeys, testValues)
+	s.mustBatchDelete(c, testKeys)
+	s.mustBatchNotExist(c, testKeys)
 }
 
 func (s *testRawKVSuite) TestSplit(c *C) {

@@ -14,8 +14,6 @@
 package mocktikv
 
 import (
-	"time"
-
 	"github.com/golang/protobuf/proto"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -118,9 +116,13 @@ type analyzeColumnsExec struct {
 	fields  []*ast.ResultField
 }
 
-func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
+func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (_ *coprocessor.Response, err error) {
 	sc := flagsToStatementContext(analyzeReq.Flags)
-	sc.TimeZone = time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	sc.TimeZone, err = constructTimeZone("", int(analyzeReq.TimeZoneOffset))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)

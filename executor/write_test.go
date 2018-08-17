@@ -586,6 +586,7 @@ commit;`
 	create table m (id int primary key auto_increment, code int unique);
 	insert tmp (code) values (1);
 	insert tmp (code) values (1);
+	set tidb_max_chunk_size=1;
 	insert m (code) select code from tmp on duplicate key update code = values(code);`
 	tk.MustExec(testSQL)
 	testSQL = `select * from m;`
@@ -777,6 +778,139 @@ func (s *testSuite) TestReplace(c *C) {
 	r.Check(testkit.Rows("1 1"))
 }
 
+func (s *testSuite) TestPartitionedTableReplace(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	testSQL := `drop table if exists replace_test;
+		    create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
+			partition by range (id) (
+			PARTITION p0 VALUES LESS THAN (3),
+			PARTITION p1 VALUES LESS THAN (5),
+			PARTITION p2 VALUES LESS THAN (7),
+			PARTITION p3 VALUES LESS THAN (9));`
+	tk.MustExec(testSQL)
+	testSQL = `replace replace_test (c1) values (1),(2),(NULL);`
+	tk.MustExec(testSQL)
+
+	errReplaceSQL := `replace replace_test (c1) values ();`
+	tk.MustExec("begin")
+	_, err := tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSQL = `replace replace_test (c1, c2) values (1,2),(1);`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSQL = `replace replace_test (xxx) values (3);`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSQL = `replace replace_test_xxx (c1) values ();`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	replaceSetSQL := `replace replace_test set c1 = 3;`
+	tk.MustExec(replaceSetSQL)
+
+	errReplaceSetSQL := `replace replace_test set c1 = 4, c1 = 5;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSetSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSetSQL = `replace replace_test set xxx = 6;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSetSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	tk.MustExec(`drop table if exists replace_test_1`)
+	tk.MustExec(`create table replace_test_1 (id int, c1 int) partition by range (id) (
+			PARTITION p0 VALUES LESS THAN (4),
+			PARTITION p1 VALUES LESS THAN (6),
+			PARTITION p2 VALUES LESS THAN (8),
+			PARTITION p3 VALUES LESS THAN (10),
+			PARTITION p4 VALUES LESS THAN (100))`)
+	tk.MustExec(`replace replace_test_1 select id, c1 from replace_test;`)
+
+	tk.MustExec(`drop table if exists replace_test_2`)
+	tk.MustExec(`create table replace_test_2 (id int, c1 int) partition by range (id) (
+			PARTITION p0 VALUES LESS THAN (10),
+			PARTITION p1 VALUES LESS THAN (50),
+			PARTITION p2 VALUES LESS THAN (100),
+			PARTITION p3 VALUES LESS THAN (300))`)
+	tk.MustExec(`replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;`)
+
+	errReplaceSelectSQL := `replace replace_test_1 select c1 from replace_test;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	tk.MustExec(`drop table if exists replace_test_3`)
+	replaceUniqueIndexSQL := `create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2)) partition by range (c2) (
+				    PARTITION p0 VALUES LESS THAN (4),
+				    PARTITION p1 VALUES LESS THAN (7),
+				    PARTITION p2 VALUES LESS THAN (11))`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=8;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=8;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c1=8, c2=8;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(2))
+
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by range (c1) (
+				    PARTITION p0 VALUES LESS THAN (4),
+				    PARTITION p1 VALUES LESS THAN (7),
+				    PARTITION p2 VALUES LESS THAN (11));`
+	tk.MustExec(`drop table if exists replace_test_4`)
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by range (c2) (
+				    PARTITION p0 VALUES LESS THAN (4),
+				    PARTITION p1 VALUES LESS THAN (7),
+				    PARTITION p2 VALUES LESS THAN (11));`
+	tk.MustExec(replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
+	tk.MustExec(replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
+	tk.MustExec(replacePrimaryKeySQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	issue989SQL := `CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by range (b) (
+			    PARTITION p1 VALUES LESS THAN (100),
+			    PARTITION p2 VALUES LESS THAN (200))`
+	tk.MustExec(issue989SQL)
+	issue989SQL = `insert into tIssue989 (a, b) values (1, 2);`
+	tk.MustExec(issue989SQL)
+	issue989SQL = `replace into tIssue989(a, b) values (111, 2);`
+	tk.MustExec(issue989SQL)
+	r := tk.MustQuery("select * from tIssue989;")
+	r.Check(testkit.Rows("111 2"))
+}
+
 func (s *testSuite) TestUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -924,11 +1058,11 @@ func (s *testSuite) TestPartitionedTableUpdate(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table t (id int not null default 1, name varchar(255))
-		PARTITION BY RANGE ( id ) (
-		PARTITION p0 VALUES LESS THAN (6),
-		PARTITION p1 VALUES LESS THAN (11),
-		PARTITION p2 VALUES LESS THAN (16),
-		PARTITION p3 VALUES LESS THAN (21))`)
+			PARTITION BY RANGE ( id ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21))`)
 
 	tk.MustExec(`insert INTO t VALUES (1, "hello");`)
 	tk.CheckExecResult(1, 0)
@@ -956,11 +1090,11 @@ func (s *testSuite) TestPartitionedTableUpdate(c *C) {
 	// table option is auto-increment
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t (id int not null auto_increment, name varchar(255), primary key(id))
-		PARTITION BY RANGE ( id ) (
-		PARTITION p0 VALUES LESS THAN (6),
-		PARTITION p1 VALUES LESS THAN (11),
-		PARTITION p2 VALUES LESS THAN (16),
-		PARTITION p3 VALUES LESS THAN (21))`)
+			PARTITION BY RANGE ( id ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21))`)
 
 	tk.MustExec("insert into t(name) values ('aa')")
 	tk.MustExec("update t set id = 8 where name = 'aa'")
@@ -975,11 +1109,11 @@ func (s *testSuite) TestPartitionedTableUpdate(c *C) {
 	// Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t (id int, name int unique)
-		PARTITION BY RANGE ( name ) (
-		PARTITION p0 VALUES LESS THAN (6),
-		PARTITION p1 VALUES LESS THAN (11),
-		PARTITION p2 VALUES LESS THAN (16),
-		PARTITION p3 VALUES LESS THAN (21))`)
+			PARTITION BY RANGE ( name ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21))`)
 	tk.MustExec("insert t values (1, 1), (2, 2);")
 	_, err = tk.Exec("update t set name = 1 where id = 2")
 	c.Assert(err, NotNil)
@@ -988,9 +1122,9 @@ func (s *testSuite) TestPartitionedTableUpdate(c *C) {
 	// test update ignore for pimary key
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t(a bigint, primary key (a))
-		PARTITION BY RANGE (a) (
-		PARTITION p0 VALUES LESS THAN (6),
-		PARTITION p1 VALUES LESS THAN (11))`)
+			PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11))`)
 	tk.MustExec("insert into t values (5)")
 	tk.MustExec("insert into t values (7)")
 	_, err = tk.Exec("update ignore t set a = 5 where a = 7;")
@@ -1008,9 +1142,9 @@ func (s *testSuite) TestPartitionedTableUpdate(c *C) {
 	// test update ignore for unique key
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t(a bigint, unique key I_uniq (a))
-		PARTITION BY RANGE (a) (
-		PARTITION p0 VALUES LESS THAN (6),
-		PARTITION p1 VALUES LESS THAN (11))`)
+			PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11))`)
 	tk.MustExec("insert into t values (5)")
 	tk.MustExec("insert into t values (7)")
 	_, err = tk.Exec("update ignore t set a = 5 where a = 7;")
@@ -1049,7 +1183,7 @@ func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
 	r.Check(testkit.Rows("300"))
 	tk.MustExec(`UPDATE update_with_diff_type SET b = '{"a":   "\\u6d4b\\u8bd5"}'`)
 	r = tk.MustQuery("SELECT b FROM update_with_diff_type")
-	r.Check(testkit.Rows(`{"a":"测试"}`))
+	r.Check(testkit.Rows(`{"a": "测试"}`))
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
@@ -1160,12 +1294,11 @@ func (s *testSuite) TestDelete(c *C) {
 
 func (s *testSuite) TestPartitionedTableDelete(c *C) {
 	createTable := `CREATE TABLE test.t (id int not null default 1, name varchar(255), index(id))
-PARTITION BY RANGE ( id ) (
-		PARTITION p0 VALUES LESS THAN (6),
-		PARTITION p1 VALUES LESS THAN (11),
-		PARTITION p2 VALUES LESS THAN (16),
-		PARTITION p3 VALUES LESS THAN (21)
-)`
+			  PARTITION BY RANGE ( id ) (
+			  PARTITION p0 VALUES LESS THAN (6),
+			  PARTITION p1 VALUES LESS THAN (11),
+			  PARTITION p2 VALUES LESS THAN (16),
+			  PARTITION p3 VALUES LESS THAN (21))`
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@session.tidb_enable_table_partition=1")
@@ -1782,13 +1915,13 @@ func (s *testSuite) TestInsertCalculatedValue(c *C) {
 	tk.MustExec("insert into t (b) value (a->'$.a'+1)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("<nil> <nil> <nil>", "<nil> <nil> <nil>"))
 	tk.MustExec(`insert into t (a, b) value ('{"a": 1}', a->'$.a'+1)`)
-	tk.MustQuery("select * from t where c = 1").Check(testkit.Rows(`{"a":1} 2 1`))
+	tk.MustQuery("select * from t where c = 1").Check(testkit.Rows(`{"a": 1} 2 1`))
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert t set b = c + 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("<nil> <nil> <nil>"))
 	tk.MustExec("truncate table t")
 	tk.MustExec(`insert t set a = '{"a": 1}', b = c`)
-	tk.MustQuery("select * from t").Check(testkit.Rows(`{"a":1} <nil> 1`))
+	tk.MustQuery("select * from t").Check(testkit.Rows(`{"a": 1} <nil> 1`))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int auto_increment key, b int)")
