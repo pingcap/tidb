@@ -142,7 +142,7 @@ func main() {
 	createStoreAndDomain()
 	createServer()
 	setupSignalHandler()
-	runServer()
+	//runServer()
 	cleanup()
 	os.Exit(0)
 }
