@@ -1650,7 +1650,7 @@ func (s *testEvaluatorSuite) TestFromBase64Sig(c *C) {
 		res, isNull, err := fromBase64.evalString(input.GetRow(0))
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, test.isNil)
-		if test.isNil {
+		if isNull {
 			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 			c.Assert(len(warnings), Equals, 1)
 			lastWarn := warnings[len(warnings)-1]
