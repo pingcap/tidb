@@ -2172,7 +2172,7 @@ func (b *builtinCharLengthBinarySig) evalInt(row chunk.Row) (int64, bool, error)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	return int64(len([]byte(val))), false, nil
+	return int64(len(val)), false, nil
 }
 
 type builtinCharLengthSig struct {
