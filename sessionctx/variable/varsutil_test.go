@@ -128,8 +128,8 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		{"US/Eastern", "US/Eastern", true, 5 * time.Hour},
 		//TODO: Check it out and reopen this case.
 		//{"SYSTEM", "Local", false, 0},
-		{"+10:00", "UTC", true, -10 * time.Hour},
-		{"-6:00", "UTC", true, 6 * time.Hour},
+		{"+10:00", "", true, -10 * time.Hour},
+		{"-6:00", "", true, 6 * time.Hour},
 	}
 	for _, tt := range tests {
 		err = SetSessionSystemVar(v, TimeZone, types.NewStringDatum(tt.input))
