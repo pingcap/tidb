@@ -23,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -1912,6 +1913,74 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 
 	_, err := funcs[ast.ToBase64].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
+}
+
+func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+	}
+
+	tests := []struct {
+		args           string
+		expect         string
+		isNil          bool
+		maxAllowPacket uint64
+	}{
+		{"abc", "YWJj", false, 4},
+		{"abc", "", true, 3},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrLw==",
+			false,
+			89,
+		},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"",
+			true,
+			88,
+		},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv",
+			false,
+			259,
+		},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"",
+			true,
+			258,
+		},
+	}
+
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+	}
+
+	for _, test := range tests {
+		resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: base64NeededEncodedLength(len(test.args))}
+		base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+		toBase64 := &builtinToBase64Sig{base, test.maxAllowPacket}
+
+		input := chunk.NewChunkWithCapacity(colTypes, 1)
+		input.AppendString(0, test.args)
+		res, isNull, err := toBase64.evalString(input.GetRow(0))
+		c.Assert(err, IsNil)
+		if test.isNil {
+			c.Assert(isNull, IsTrue)
+
+			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(len(warnings), Equals, 1)
+			lastWarn := warnings[len(warnings)-1]
+			c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+			s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+
+		} else {
+			c.Assert(isNull, IsFalse)
+		}
+		c.Assert(res, Equals, test.expect)
+	}
 }
 
 func (s *testEvaluatorSuite) TestStringRight(c *C) {
