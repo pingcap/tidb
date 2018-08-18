@@ -31,11 +31,13 @@ var _ = Suite(&testDDLTableSplitSuite{})
 func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
+	defer store.Close()
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	ddl.EnableSplitTableRegion = true
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	ddl.EnableSplitTableRegion = false
 	infoSchema := dom.InfoSchema()
 	c.Assert(infoSchema, NotNil)

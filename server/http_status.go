@@ -52,8 +52,12 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})
 	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", valueHandler{})
 	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool})
+
+	// HTTP path for get server info.
+	router.Handle("/info", serverInfoHandler{tikvHandlerTool})
+	router.Handle("/info/all", allServerInfoHandler{tikvHandlerTool})
 	if s.cfg.Store == "tikv" {
-		// HTTP path for tikv
+		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandlerTool, opTableRegions})
 		router.Handle("/tables/{db}/{table}/scatter", tableHandler{tikvHandlerTool, opTableScatter})
 		router.Handle("/tables/{db}/{table}/stop-scatter", tableHandler{tikvHandlerTool, opStopTableScatter})
@@ -62,7 +66,6 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/regions/{regionID}", regionHandler{tikvHandlerTool})
 		router.Handle("/mvcc/key/{db}/{table}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByKey})
 		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
-		router.Handle("/mvcc/txn/{startTS}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 	}

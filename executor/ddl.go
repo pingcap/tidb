@@ -14,10 +14,12 @@
 package executor
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -25,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -192,6 +196,15 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			continue
 		} else if err != nil {
 			return errors.Trace(err)
+		}
+
+		if config.CheckTableBeforeDrop {
+			log.Warnf("admin check table `%s`.`%s` before drop.", fullti.Schema.O, fullti.Name.O)
+			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
+			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		err = domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)

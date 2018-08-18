@@ -275,6 +275,10 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustQuery("select 10 from idx_agg group by b").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
 
+	tk.MustExec("set @@tidb_max_chunk_size=1;")
+	tk.MustQuery("select group_concat(b) from idx_agg group by b;").Check(testkit.Rows("1", "2,2"))
+	tk.MustExec("set @@tidb_max_chunk_size=2;")
+
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(11), b decimal(15,2))")
 	tk.MustExec("insert into t values(1,771.64),(2,378.49),(3,920.92),(4,113.97)")
@@ -325,6 +329,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t value(null)")
 	tk.MustQuery("select group_concat(a), group_concat(distinct a) from t").Check(testkit.Rows("<nil> <nil>"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a decimal(10, 4))")
+	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
+	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {
@@ -433,39 +442,39 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	// test incompatible with sql_mode = ONLY_FULL_GROUP_BY
 	var err error
 	_, err = tk.Exec("select * from t group by d")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select b-c from t group by b+c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select (b-c)*(b+c), min(a) from t group by b+c, b-c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select b between c and d from t group by b,c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select case b when 1 then c when 2 then d else d end from t group by b,c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select c > (select b from t) from t group by b")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select c is null from t group by b")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select c is true from t group by b")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select (c+b)*d from t group by c,d")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select b in (c,d) from t group by b,c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select b like '%a' from t group by c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select c REGEXP '1.*' from t group by b")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select -b from t group by c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select a, max(b) from t")
-	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select sum(a)+b from t")
-	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select count(b), c from t")
-	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select distinct a, b, count(a) from t")
-	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue, Commentf("err %v", err))
 	// test compatible with sql_mode = ONLY_FULL_GROUP_BY
 	tk.MustQuery("select a from t group by a,b,c")
 	tk.MustQuery("select b from t group by b")
@@ -494,7 +503,7 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustQuery("select * from t group by b,d")
 	// test functional depend on a unique null column
 	_, err = tk.Exec("select * from t group by b,c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	// test functional dependency derived from keys in where condition
 	tk.MustQuery("select * from t where c = d group by b, c")
 	tk.MustQuery("select t.*, x.* from t, x where t.a = x.a group by t.a")
@@ -502,7 +511,7 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustQuery("select t.*, x.* from t, x where t.b = x.a group by t.b, t.d")
 	tk.MustQuery("select t.b, x.* from t, x where t.b = x.a group by t.b")
 	_, err = tk.Exec("select t.*, x.* from t, x where t.c = x.a group by t.b, t.c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	// test functional dependency derived from keys in join
 	tk.MustQuery("select t.*, x.* from t inner join x on t.a = x.a group by t.a")
 	tk.MustQuery("select t.*, x.* from t inner join x  on (t.b = x.b and t.d = x.d) group by t.b, x.d")
@@ -512,9 +521,9 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustQuery("select x.b, t.* from t right join x on x.b = t.b group by x.b, t.d")
 	tk.MustQuery("select x.b, t.* from t right join x on t.b = x.b group by x.b, t.d")
 	_, err = tk.Exec("select t.b, x.* from t right join x on t.b = x.b group by t.b, x.d")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select t.b, x.* from t right join x on t.b = x.b group by t.b, x.d")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 
 	// FixMe: test functional dependency of derived table
 	//tk.MustQuery("select * from (select * from t) as e group by a")
@@ -525,10 +534,10 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	// test order by
 	tk.MustQuery("select c from t group by c,d order by d")
 	_, err = tk.Exec("select c from t group by c order by d")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	// test ambiguous column
 	_, err = tk.Exec("select c from t,x group by t.c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrAmbiguous), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plan.ErrAmbiguous), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite) TestHaving(c *C) {
