@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
@@ -143,14 +142,6 @@ func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
 	chk.AppendPartialRow(lhs.Len(), rhs)
 }
 
-func makeJoinRightRowsToChunk(chk *chunk.Chunk, lhser chunk.Iterator, rhs chunk.Row, maxLen int) int {
-	return chk.AppendRightMultiRows(lhser, rhs, maxLen)
-}
-
-func makeJoinRowsToChunk(chk *chunk.Chunk, lhs chunk.Row, rhser chunk.Iterator, maxLen int) int {
-	return chk.AppendMultiRows(lhs, rhser, maxLen)
-}
-
 func (j *baseJoiner) filter(input, output *chunk.Chunk) (matched bool, err error) {
 	j.selected, err = expression.VectorizedFilter(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
 	if err != nil {
@@ -180,31 +171,23 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 		inners.ReachEnd()
 		return true, nil
 	}
-	rowsLen := 64
-	for inners.Current() != inners.End() {
+
+	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.chk.Reset()
 		if j.outerIsRight {
-			rowsLen = makeJoinRightRowsToChunk(j.chk, inners, outer, 64)
+			j.makeJoinRowToChunk(j.chk, inner, outer)
 		} else {
-			rowsLen = makeJoinRowsToChunk(j.chk, outer, inners, 64)
+			j.makeJoinRowToChunk(j.chk, outer, inner)
 		}
-		//j.chk.Reset()
-		//if j.outerIsRight {
-		//	j.makeJoinRowToChunk(j.chk, inner, outer)
-		//} else {
-		//	j.makeJoinRowToChunk(j.chk, outer, inner)
-		//}
-		fmt.Printf("idx: %d, len: %d\n", 0, rowsLen)
-		for i := 0; i < rowsLen; i++ {
-			matched, err = expression.EvalBool(j.ctx, j.conditions, j.chk.GetRow(i))
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-			if matched {
-				chk.AppendPartialRow(0, outer)
-				inners.ReachEnd()
-				return true, nil
-			}
+
+		matched, err = expression.EvalBool(j.ctx, j.conditions, j.chk.GetRow(0))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if matched {
+			chk.AppendPartialRow(0, outer)
+			inners.ReachEnd()
+			return true, nil
 		}
 	}
 	return false, nil
