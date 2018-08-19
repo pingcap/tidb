@@ -43,6 +43,8 @@ type Iterator interface {
 
 	// ReachEnd reaches the end of iterator.
 	ReachEnd()
+
+	Copy() Iterator
 }
 
 // NewIterator4Slice returns a Iterator for Row slice.
@@ -98,6 +100,14 @@ func (it *iterator4Slice) Len() int {
 	return len(it.rows)
 }
 
+// Copy implements the Iterator interface.
+func (it *iterator4Slice) Copy() Iterator {
+	return &iterator4Slice{
+		rows:   it.rows,
+		cursor: it.cursor,
+	}
+}
+
 // NewIterator4Chunk returns a iterator for Chunk.
 func NewIterator4Chunk(chk *Chunk) *Iterator4Chunk {
 	return &Iterator4Chunk{chk: chk}
@@ -150,6 +160,14 @@ func (it *Iterator4Chunk) ReachEnd() {
 // Len implements the Iterator interface
 func (it *Iterator4Chunk) Len() int {
 	return it.chk.NumRows()
+}
+
+// Copy implements the Iterator interface.
+func (it *Iterator4Chunk) Copy() Iterator {
+	return &Iterator4Chunk{
+		chk:    it.chk,
+		cursor: it.cursor,
+	}
 }
 
 // NewIterator4List returns a Iterator for List.
@@ -224,6 +242,15 @@ func (it *iterator4List) Len() int {
 	return it.li.Len()
 }
 
+// Copy implements the Iterator interface.
+func (it *iterator4List) Copy() Iterator {
+	return &iterator4List{
+		li:        it.li,
+		chkCursor: it.chkCursor,
+		rowCursor: it.rowCursor,
+	}
+}
+
 // NewIterator4RowPtr returns a Iterator for RowPtrs.
 func NewIterator4RowPtr(li *List, ptrs []RowPtr) Iterator {
 	return &iterator4RowPtr{li: li, ptrs: ptrs}
@@ -276,4 +303,13 @@ func (it *iterator4RowPtr) ReachEnd() {
 // Len implements the Iterator interface.
 func (it *iterator4RowPtr) Len() int {
 	return len(it.ptrs)
+}
+
+// Copy implements the Iterator interface.
+func (it *iterator4RowPtr) Copy() Iterator {
+	return &iterator4RowPtr{
+		li:     it.li,
+		ptrs:   it.ptrs,
+		cursor: it.cursor,
+	}
 }

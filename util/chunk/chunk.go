@@ -160,11 +160,16 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	}
 }
 
-func (c *Chunk) AppendPartialRows(colIdx int, rower Iterator, maxLen int) int {
-	columns := rower.Current().c.columns
-	oldLen := c.columns[colIdx+0].length
+func (c *Chunk) AppendPartialRows(colIdx int, rowIt Iterator, maxLen int) int {
+
+	oldRowLen := c.columns[colIdx+0].length
+	columns := rowIt.Current().c.columns
 	for i, rowCol := range columns {
 		chkCol := c.columns[colIdx+i]
+		rower := rowIt.Copy()
+		if i == len(columns)-1 {
+			rower = rowIt
+		}
 
 		if rowCol.isFixed() {
 			elemLen := len(rowCol.elemBuf)
@@ -174,7 +179,6 @@ func (c *Chunk) AppendPartialRows(colIdx int, rower Iterator, maxLen int) int {
 				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
 				chkCol.length++
 			}
-
 		} else {
 			for row, j := rower.Current(), 0; j < maxLen && row != rower.End(); row, j = rower.Next(), j+1 {
 				chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
@@ -184,18 +188,17 @@ func (c *Chunk) AppendPartialRows(colIdx int, rower Iterator, maxLen int) int {
 				chkCol.length++
 			}
 		}
-
 	}
-	return c.columns[colIdx+0].length - oldLen
+	return c.columns[colIdx+0].length - oldRowLen
 }
 
-func (c *Chunk) AppendPartialSameRows(colIdx int, row Row, l int) {
+func (c *Chunk) AppendPartialSameRows(colIdx int, row Row, rowsLen int) {
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
-		for j := 0; j < l; j++ {
+		for j := 0; j < rowsLen; j++ {
 			chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
 		}
-		for j := 0; j < l; j++ {
+		for j := 0; j < rowsLen; j++ {
 			if rowCol.isFixed() {
 				elemLen := len(rowCol.elemBuf)
 				offset := row.idx * elemLen
@@ -206,21 +209,23 @@ func (c *Chunk) AppendPartialSameRows(colIdx int, row Row, l int) {
 				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
 			}
 		}
-		chkCol.length += l
+		chkCol.length += rowsLen
 	}
 }
 
-func (c *Chunk) AppendRightMultiRows(lhser Iterator, rhs Row, maxLen int) {
+func (c *Chunk) AppendRightMultiRows(lhser Iterator, rhs Row, maxLen int) int {
 	c.numVirtualRows += maxLen
 	lhsLen := lhser.Current().Len()
 	rowsLen := c.AppendPartialRows(0, lhser, maxLen)
 	c.AppendPartialSameRows(lhsLen, rhs, rowsLen)
+	return rowsLen
 }
 
-func (c *Chunk) AppendMultiRows(lhs Row, rhser Iterator, maxLen int) {
+func (c *Chunk) AppendMultiRows(lhs Row, rhser Iterator, maxLen int) int {
 	c.numVirtualRows += maxLen
 	rowsLen := c.AppendPartialRows(lhs.Len(), rhser, maxLen)
 	c.AppendPartialSameRows(0, lhs, rowsLen)
+	return rowsLen
 }
 
 // Append appends rows in [begin, end) in another Chunk to a Chunk.
