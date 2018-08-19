@@ -181,7 +181,7 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 		return true, nil
 	}
 	rowsLen := 64
-	for {
+	for inners.Current() != inners.End() {
 		j.chk.Reset()
 		if j.outerIsRight {
 			rowsLen = makeJoinRightRowsToChunk(j.chk, inners, outer, 64)
@@ -205,9 +205,6 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 				inners.ReachEnd()
 				return true, nil
 			}
-		}
-		if rowsLen < 64 {
-			break
 		}
 	}
 	return false, nil

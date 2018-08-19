@@ -161,7 +161,6 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 }
 
 func (c *Chunk) AppendPartialRows(colIdx int, rowIt Iterator, maxLen int) int {
-
 	oldRowLen := c.columns[colIdx+0].length
 	columns := rowIt.Current().c.columns
 	for i, rowCol := range columns {
@@ -197,10 +196,11 @@ func (c *Chunk) AppendPartialSameRows(colIdx int, row Row, rowsLen int) {
 		chkCol := c.columns[colIdx+i]
 		for j := 0; j < rowsLen; j++ {
 			chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+			chkCol.length++
 		}
+		elemLen := len(rowCol.elemBuf)
 		for j := 0; j < rowsLen; j++ {
 			if rowCol.isFixed() {
-				elemLen := len(rowCol.elemBuf)
 				offset := row.idx * elemLen
 				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
 			} else {
@@ -209,7 +209,6 @@ func (c *Chunk) AppendPartialSameRows(colIdx int, row Row, rowsLen int) {
 				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
 			}
 		}
-		chkCol.length += rowsLen
 	}
 }
 
