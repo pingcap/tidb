@@ -198,17 +198,21 @@ func (c *Chunk) AppendPartialSameRows(colIdx int, row Row, rowsLen int) {
 			chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
 			chkCol.length++
 		}
-		elemLen := len(rowCol.elemBuf)
-		for j := 0; j < rowsLen; j++ {
-			if rowCol.isFixed() {
-				offset := row.idx * elemLen
-				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
-			} else {
-				start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
+		if rowCol.isFixed() {
+			elemLen := len(rowCol.elemBuf)
+			start := row.idx * elemLen
+			end := start + elemLen
+			for j := 0; j < rowsLen; j++ {
+				chkCol.data = append(chkCol.data, rowCol.data[start:start+end]...)
+			}
+		} else {
+			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
+			for j := 0; j < rowsLen; j++ {
 				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
 				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
 			}
 		}
+
 	}
 }
 

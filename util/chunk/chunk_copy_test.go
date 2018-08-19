@@ -32,6 +32,42 @@ func getChunk() *Chunk {
 	return chk
 }
 
+func checkDstChk(t *testing.T, dst *Chunk) {
+	for i := 0; i < 8; i++ {
+		if dst.columns[i].length != numRows {
+			t.Fail()
+		}
+	}
+	for j := 0; j < numRows; j++ {
+		row := dst.GetRow(j)
+		if row.GetInt64(0) != int64(j) {
+			t.Fail()
+		}
+		if row.GetInt64(1) != 1 {
+			t.Fail()
+		}
+		if row.GetString(2) != "abcd" {
+			t.Fail()
+		}
+		if string(row.GetBytes(3)) != "01234567890zxcvbnmqwer" {
+			t.Fail()
+		}
+
+		if row.GetInt64(4) != 0 {
+			t.Fail()
+		}
+		if row.GetInt64(5) != 1 {
+			t.Fail()
+		}
+		if row.GetString(6) != "abcd" {
+			t.Fail()
+		}
+		if string(row.GetBytes(7)) != "01234567890zxcvbnmqwer" {
+			t.Fail()
+		}
+	}
+}
+
 func TestCopyFieldByField(t *testing.T) {
 	chk1 := getChunk()
 	row := chk1.GetRow(0)
@@ -44,86 +80,21 @@ func TestCopyFieldByField(t *testing.T) {
 		dst.AppendRow(lhs)
 		dst.AppendPartialRow(lhs.Len(), row)
 	}
-	for i := 0; i < 8; i++ {
-		if dst.columns[i].length != numRows {
-			t.Fail()
-		}
-	}
-	for j := 0; j < numRows; j++ {
-		row := dst.GetRow(j)
-		if row.GetInt64(0) != int64(j) {
-			t.Fail()
-		}
-		if row.GetInt64(1) != 1 {
-			t.Fail()
-		}
-		if row.GetString(2) != "abcd" {
-			t.Fail()
-		}
-		if string(row.GetBytes(3)) != "01234567890zxcvbnmqwer" {
-			t.Fail()
-		}
-
-		if row.GetInt64(4) != 0 {
-			t.Fail()
-		}
-		if row.GetInt64(5) != 1 {
-			t.Fail()
-		}
-		if row.GetString(6) != "abcd" {
-			t.Fail()
-		}
-		if string(row.GetBytes(7)) != "01234567890zxcvbnmqwer" {
-			t.Fail()
-		}
-	}
-
+	checkDstChk(t, dst)
 }
 
 func TestCopyColumnByColumn(t *testing.T) {
 	chk1 := getChunk()
 	row := chk1.GetRow(0)
 	it1 := NewIterator4Chunk(chk1)
-	it1.Begin()
+
 	dst := newChunkWithInitCap(1024, 8, 8, 0, 0, 8, 8, 0, 0)
 
 	dst.Reset()
-	for it1.Current() != it1.End() {
+	for it1.Begin(); it1.Current() != it1.End(); {
 		dst.AppendRightMultiRows(it1, row, 1024)
 	}
-	for i := 0; i < 8; i++ {
-		if dst.columns[i].length != numRows {
-			t.Fail()
-		}
-	}
-	for j := 0; j < numRows; j++ {
-		row := dst.GetRow(j)
-		if row.GetInt64(0) != int64(j) {
-			t.Fail()
-		}
-		if row.GetInt64(1) != 1 {
-			t.Fail()
-		}
-		if row.GetString(2) != "abcd" {
-			t.Fail()
-		}
-		if string(row.GetBytes(3)) != "01234567890zxcvbnmqwer" {
-			t.Fail()
-		}
-
-		if row.GetInt64(4) != 0 {
-			t.Fail()
-		}
-		if row.GetInt64(5) != 1 {
-			t.Fail()
-		}
-		if row.GetString(6) != "abcd" {
-			t.Fail()
-		}
-		if string(row.GetBytes(7)) != "01234567890zxcvbnmqwer" {
-			t.Fail()
-		}
-	}
+	checkDstChk(t, dst)
 }
 
 func BenchmarkCopyFieldByField(b *testing.B) {
@@ -157,8 +128,7 @@ func BenchmarkCopyColumnByColumn(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		dst.Reset()
-		it1.Begin()
-		for it1.Current() != it1.End() {
+		for it1.Begin(); it1.Current() != it1.End(); {
 			dst.AppendRightMultiRows(it1, row, 128)
 		}
 	}
