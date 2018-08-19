@@ -142,6 +142,14 @@ func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
 	chk.AppendPartialRow(lhs.Len(), rhs)
 }
 
+func makeJoinRightRowsToChunk(chk *chunk.Chunk, lhser chunk.Iterator, rhs chunk.Row, l int) {
+	chk.AppendRightMultiRows(lhser, rhs, l)
+}
+
+func makeJoinRowsToChunk(chk *chunk.Chunk, lhs chunk.Row, rhser chunk.Iterator, rowLen int) {
+	chk.AppendMultiRows(lhs, rhser, rowLen)
+}
+
 func (j *baseJoiner) filter(input, output *chunk.Chunk) (matched bool, err error) {
 	j.selected, err = expression.VectorizedFilter(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
 	if err != nil {
@@ -171,23 +179,34 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 		inners.ReachEnd()
 		return true, nil
 	}
-
-	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
+	rowsLen := 64
+	for {
 		j.chk.Reset()
 		if j.outerIsRight {
-			j.makeJoinRowToChunk(j.chk, inner, outer)
+			makeJoinRightRowsToChunk(j.chk, inners, outer, rowsLen)
 		} else {
-			j.makeJoinRowToChunk(j.chk, outer, inner)
+			makeJoinRowsToChunk(j.chk, outer, inners, rowsLen)
 		}
+		//j.chk.Reset()
+		//if j.outerIsRight {
+		//	j.makeJoinRowToChunk(j.chk, inner, outer)
+		//} else {
+		//	j.makeJoinRowToChunk(j.chk, outer, inner)
+		//}
 
-		matched, err = expression.EvalBool(j.ctx, j.conditions, j.chk.GetRow(0))
-		if err != nil {
-			return false, errors.Trace(err)
+		for i := 0; i < j.chk.NumRows(); i++ {
+			matched, err = expression.EvalBool(j.ctx, j.conditions, j.chk.GetRow(i))
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			if matched {
+				chk.AppendPartialRow(0, outer)
+				inners.ReachEnd()
+				return true, nil
+			}
 		}
-		if matched {
-			chk.AppendPartialRow(0, outer)
-			inners.ReachEnd()
-			return true, nil
+		if inners.Current() == inners.End() {
+			break
 		}
 	}
 	return false, nil

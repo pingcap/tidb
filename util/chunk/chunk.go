@@ -160,6 +160,69 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	}
 }
 
+func (c *Chunk) AppendPartialRows(colIdx int, rower Iterator, maxLen int) int {
+	columns := rower.Current().c.columns
+	oldLen := c.columns[colIdx+0].length
+	for i, rowCol := range columns {
+		chkCol := c.columns[colIdx+i]
+
+		if rowCol.isFixed() {
+			elemLen := len(rowCol.elemBuf)
+			for row, j := rower.Current(), 0; j < maxLen && row != rower.End(); row, j = rower.Next(), j+1 {
+				chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+				offset := row.idx * elemLen
+				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
+				chkCol.length++
+			}
+
+		} else {
+			for row, j := rower.Current(), 0; j < maxLen && row != rower.End(); row, j = rower.Next(), j+1 {
+				chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+				start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
+				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
+				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+				chkCol.length++
+			}
+		}
+
+	}
+	return c.columns[colIdx+0].length - oldLen
+}
+
+func (c *Chunk) AppendPartialSameRows(colIdx int, row Row, l int) {
+	for i, rowCol := range row.c.columns {
+		chkCol := c.columns[colIdx+i]
+		for j := 0; j < l; j++ {
+			chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+		}
+		for j := 0; j < l; j++ {
+			if rowCol.isFixed() {
+				elemLen := len(rowCol.elemBuf)
+				offset := row.idx * elemLen
+				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
+			} else {
+				start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
+				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
+				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+			}
+		}
+		chkCol.length += l
+	}
+}
+
+func (c *Chunk) AppendRightMultiRows(lhser Iterator, rhs Row, maxLen int) {
+	c.numVirtualRows += maxLen
+	lhsLen := lhser.Current().Len()
+	rowsLen := c.AppendPartialRows(0, lhser, maxLen)
+	c.AppendPartialSameRows(lhsLen, rhs, rowsLen)
+}
+
+func (c *Chunk) AppendMultiRows(lhs Row, rhser Iterator, maxLen int) {
+	c.numVirtualRows += maxLen
+	rowsLen := c.AppendPartialRows(lhs.Len(), rhser, maxLen)
+	c.AppendPartialSameRows(0, lhs, rowsLen)
+}
+
 // Append appends rows in [begin, end) in another Chunk to a Chunk.
 func (c *Chunk) Append(other *Chunk, begin, end int) {
 	for colID, src := range other.columns {
