@@ -165,9 +165,9 @@ func (c *Chunk) AppendPartialRows(colIdx int, rowIt Iterator, maxLen int) int {
 	columns := rowIt.Current().c.columns
 	for i, rowCol := range columns {
 		chkCol := c.columns[colIdx+i]
-		rower := rowIt.Copy()
-		if i == len(columns)-1 {
-			rower = rowIt
+		rower := rowIt
+		if i != 0 {
+			rower.PreRows(c.columns[colIdx+0].length - oldRowLen)
 		}
 
 		if rowCol.isFixed() {

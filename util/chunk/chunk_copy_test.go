@@ -93,7 +93,7 @@ func TestCopyColumnByColumn(t *testing.T) {
 
 	dst.Reset()
 	for it1.Begin(); it1.Current() != it1.End(); {
-		dst.AppendRightMultiRows(it1, row, 1024)
+		dst.AppendRightMultiRows(it1, row, 128)
 	}
 	checkDstChk(t, dst)
 }
@@ -120,7 +120,7 @@ func BenchmarkCopyColumnByColumn(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		dst.Reset()
 		for it1.Begin(); it1.Current() != it1.End(); {
-			dst.AppendRightMultiRows(it1, row, 1024)
+			dst.AppendRightMultiRows(it1, row, 128)
 		}
 	}
 }
