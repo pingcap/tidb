@@ -41,40 +41,41 @@ func prepareChks() (it1 Iterator, row Row, dst *Chunk) {
 	return it1, row, dst
 }
 
-func checkDstChk(t *testing.T, dst *Chunk) {
+func checkDstChk(dst *Chunk) bool {
 	for i := 0; i < 8; i++ {
 		if dst.columns[i].length != numRows {
-			t.Fail()
+			return false
 		}
 	}
 	for j := 0; j < numRows; j++ {
 		row := dst.GetRow(j)
 		if row.GetInt64(0) != int64(j) {
-			t.Fail()
+			return false
 		}
 		if row.GetInt64(1) != 1 {
-			t.Fail()
+			return false
 		}
 		if row.GetString(2) != "abcd" {
-			t.Fail()
+			return false
 		}
 		if string(row.GetBytes(3)) != "01234567890zxcvbnmqwer" {
-			t.Fail()
+			return false
 		}
 
 		if row.GetInt64(4) != 0 {
-			t.Fail()
+			return false
 		}
 		if row.GetInt64(5) != 1 {
-			t.Fail()
+			return false
 		}
 		if row.GetString(6) != "abcd" {
-			t.Fail()
+			return false
 		}
 		if string(row.GetBytes(7)) != "01234567890zxcvbnmqwer" {
-			t.Fail()
+			return false
 		}
 	}
+	return true
 }
 
 func TestCopyFieldByField(t *testing.T) {
@@ -85,7 +86,9 @@ func TestCopyFieldByField(t *testing.T) {
 		dst.AppendRow(lhs)
 		dst.AppendPartialRow(lhs.Len(), row)
 	}
-	checkDstChk(t, dst)
+	if !checkDstChk(dst) {
+		t.Fail()
+	}
 }
 
 func TestCopyColumnByColumn(t *testing.T) {
@@ -95,7 +98,9 @@ func TestCopyColumnByColumn(t *testing.T) {
 	for it1.Begin(); it1.Current() != it1.End(); {
 		dst.AppendRightMultiRows(it1, row, 128)
 	}
-	checkDstChk(t, dst)
+	if !checkDstChk(dst) {
+		t.Fail()
+	}
 }
 
 func BenchmarkCopyFieldByField(b *testing.B) {
@@ -109,6 +114,7 @@ func BenchmarkCopyFieldByField(b *testing.B) {
 			dst.AppendRow(lhs)
 			dst.AppendPartialRow(lhs.Len(), row)
 		}
+		checkDstChk(dst)
 	}
 }
 
@@ -122,5 +128,6 @@ func BenchmarkCopyColumnByColumn(b *testing.B) {
 		for it1.Begin(); it1.Current() != it1.End(); {
 			dst.AppendRightMultiRows(it1, row, 128)
 		}
+		checkDstChk(dst)
 	}
 }
