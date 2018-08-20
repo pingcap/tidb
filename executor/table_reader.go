@@ -106,7 +106,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		handler.open(firstResult, secondResult)
 		return nil
 	}
-	handler := &multiRangeResultHandler{
+	handler := &multiRangeNoOrderResultHandler{
 		buildResp: e.buildResp,
 		retTypes:  e.retTypes(),
 	}
@@ -185,6 +185,140 @@ func (tr *tableResultHandler) open(optionalResult, result distsql.SelectResult) 
 	tr.optionalResult = optionalResult
 	tr.result = result
 	tr.optionalFinished = false
+}
+
+func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	if !tr.optionalFinished {
+		err := tr.optionalResult.Next(ctx, chk)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if chk.NumRows() > 0 {
+			return nil
+		}
+		tr.optionalFinished = true
+	}
+	return tr.result.Next(ctx, chk)
+}
+
+func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err error) {
+	if !tr.optionalFinished {
+		data, err = tr.optionalResult.NextRaw(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if data != nil {
+			return data, nil
+		}
+		tr.optionalFinished = true
+	}
+	data, err = tr.result.NextRaw(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return data, nil
+}
+
+func (tr *tableResultHandler) Close() error {
+	err := closeAll(tr.optionalResult, tr.result)
+	tr.optionalResult, tr.result = nil, nil
+	return errors.Trace(err)
+}
+
+type resultWithErr struct {
+	chk *chunk.Chunk
+	err error
+}
+
+// multiRangeNoOrderResultHandler will handle the case that the range is too large and the we don't need to keep the order of the result.
+type multiRangeNoOrderResultHandler struct {
+	buildResp     buildResp
+	ranges        []*ranger.Range
+	rangeCh       chan []*ranger.Range
+	resultCh      chan *resultWithErr
+	resultWg      *sync.WaitGroup
+	retTypes      []*types.FieldType
+	chkResourceCh chan *chunk.Chunk
+	cancelFunc    context.CancelFunc
+}
+
+func (mr *multiRangeNoOrderResultHandler) openRanges(ctx context.Context, ranges []*ranger.Range) {
+	mr.ranges = ranges
+	mr.rangeCh = make(chan []*ranger.Range, 1)
+	mr.resultCh = make(chan *resultWithErr, 1)
+	count := mathutil.Min(requestWorkerCount, (len(ranges)+rangePerRequest-1)/rangePerRequest)
+	childCtx, cancelFunc := context.WithCancel(ctx)
+	mr.cancelFunc = cancelFunc
+
+	go mr.splitRanges(childCtx)
+	mr.chkResourceCh = make(chan *chunk.Chunk, count)
+	for i := 0; i < count; i++ {
+		mr.chkResourceCh <- chunk.NewChunkWithCapacity(mr.retTypes, 1024)
+	}
+	mr.resultWg = &sync.WaitGroup{}
+	mr.resultWg.Add(count)
+	go mr.checkWg()
+	for i := 0; i < count; i++ {
+		go mr.newWorker().run(childCtx)
+	}
+}
+
+func (mr *multiRangeNoOrderResultHandler) newWorker() *resultWorker {
+	return &resultWorker{
+		rangeCh:         mr.rangeCh,
+		resultCh:        mr.resultCh,
+		wg:              mr.resultWg,
+		buildResp:       mr.buildResp,
+		chkResourceChan: mr.chkResourceCh,
+		tps:             mr.retTypes,
+	}
+}
+
+func (mr *multiRangeNoOrderResultHandler) splitRanges(ctx context.Context) {
+splitRangeLoop:
+	for i := 0; i < len(mr.ranges); {
+		nextI := i + rangePerRequest
+		if nextI > len(mr.ranges) {
+			nextI = len(mr.ranges)
+		}
+		select {
+		case <-ctx.Done():
+			break splitRangeLoop
+		case mr.rangeCh <- mr.ranges[i:nextI]:
+		}
+		i = nextI
+	}
+	close(mr.rangeCh)
+}
+
+func (mr *multiRangeNoOrderResultHandler) checkWg() {
+	mr.resultWg.Wait()
+	close(mr.resultCh)
+}
+
+func (mr *multiRangeNoOrderResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) error {
+	result, ok := <-mr.resultCh
+	if !ok {
+		chk.Reset()
+		return nil
+	}
+	if result.err != nil {
+		return errors.Trace(result.err)
+	}
+	chk.SwapColumns(result.chk)
+	result.chk.Reset()
+	mr.chkResourceCh <- result.chk
+	return nil
+}
+
+func (mr *multiRangeNoOrderResultHandler) Close() error {
+	mr.cancelFunc()
+	if mr.chkResourceCh != nil {
+		close(mr.chkResourceCh)
+		for range mr.chkResourceCh {
+		}
+	}
+	return nil
 }
 
 type resultWorker struct {
@@ -278,137 +412,4 @@ func (rw *resultWorker) Close() {
 	if rw.request != nil {
 		terror.Call(rw.request.Close)
 	}
-}
-
-func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	if !tr.optionalFinished {
-		err := tr.optionalResult.Next(ctx, chk)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if chk.NumRows() > 0 {
-			return nil
-		}
-		tr.optionalFinished = true
-	}
-	return tr.result.Next(ctx, chk)
-}
-
-func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err error) {
-	if !tr.optionalFinished {
-		data, err = tr.optionalResult.NextRaw(ctx)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if data != nil {
-			return data, nil
-		}
-		tr.optionalFinished = true
-	}
-	data, err = tr.result.NextRaw(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return data, nil
-}
-
-func (tr *tableResultHandler) Close() error {
-	err := closeAll(tr.optionalResult, tr.result)
-	tr.optionalResult, tr.result = nil, nil
-	return errors.Trace(err)
-}
-
-type resultWithErr struct {
-	chk *chunk.Chunk
-	err error
-}
-
-type multiRangeResultHandler struct {
-	buildResp     buildResp
-	ranges        []*ranger.Range
-	rangeCh       chan []*ranger.Range
-	resultCh      chan *resultWithErr
-	resultWg      *sync.WaitGroup
-	retTypes      []*types.FieldType
-	chkResourceCh chan *chunk.Chunk
-	cancelFunc    context.CancelFunc
-}
-
-func (mr *multiRangeResultHandler) openRanges(ctx context.Context, ranges []*ranger.Range) {
-	mr.ranges = ranges
-	mr.rangeCh = make(chan []*ranger.Range, 1)
-	mr.resultCh = make(chan *resultWithErr, 1)
-	count := mathutil.Min(requestWorkerCount, (len(ranges)+rangePerRequest-1)/rangePerRequest)
-	childCtx, cancelFunc := context.WithCancel(ctx)
-	mr.cancelFunc = cancelFunc
-
-	go mr.splitRanges(childCtx)
-	mr.chkResourceCh = make(chan *chunk.Chunk, count)
-	for i := 0; i < count; i++ {
-		mr.chkResourceCh <- chunk.NewChunkWithCapacity(mr.retTypes, 1024)
-	}
-	mr.resultWg = &sync.WaitGroup{}
-	mr.resultWg.Add(count)
-	go mr.checkWg()
-	for i := 0; i < count; i++ {
-		go mr.newWorker().run(childCtx)
-	}
-}
-
-func (mr *multiRangeResultHandler) newWorker() *resultWorker {
-	return &resultWorker{
-		rangeCh:         mr.rangeCh,
-		resultCh:        mr.resultCh,
-		wg:              mr.resultWg,
-		buildResp:       mr.buildResp,
-		chkResourceChan: mr.chkResourceCh,
-		tps:             mr.retTypes,
-	}
-}
-
-func (mr *multiRangeResultHandler) splitRanges(ctx context.Context) {
-splitRangeLoop:
-	for i := 0; i < len(mr.ranges); {
-		nextI := i + rangePerRequest
-		if nextI > len(mr.ranges) {
-			nextI = len(mr.ranges)
-		}
-		select {
-		case <-ctx.Done():
-			break splitRangeLoop
-		case mr.rangeCh <- mr.ranges[i:nextI]:
-		}
-		i = nextI
-	}
-	close(mr.rangeCh)
-}
-
-func (mr *multiRangeResultHandler) checkWg() {
-	mr.resultWg.Wait()
-	close(mr.resultCh)
-}
-
-func (mr *multiRangeResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	result, ok := <-mr.resultCh
-	if !ok {
-		chk.Reset()
-		return nil
-	}
-	if result.err != nil {
-		return errors.Trace(result.err)
-	}
-	chk.SwapColumns(result.chk)
-	result.chk.Reset()
-	mr.chkResourceCh <- result.chk
-	return nil
-}
-
-func (mr *multiRangeResultHandler) Close() error {
-	mr.cancelFunc()
-	if mr.chkResourceCh != nil {
-		close(mr.chkResourceCh)
-		for range mr.chkResourceCh {
-		}
-	}
-	return nil
 }
