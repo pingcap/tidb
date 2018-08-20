@@ -64,7 +64,7 @@ func dumpFlag(tp byte, flag uint16) uint16 {
 	case mysql.TypeSet:
 		return flag | uint16(mysql.SetFlag)
 	case mysql.TypeEnum:
-		return flag | uint16(mysql.TypeEnum)
+		return flag | uint16(mysql.EnumFlag)
 	default:
 		return flag
 	}
