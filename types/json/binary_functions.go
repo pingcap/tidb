@@ -689,3 +689,41 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 	err = errors.New("Invalid JSON bytes")
 	return
 }
+
+func ContainsBinary(obj, target BinaryJSON) bool {
+	switch obj.TypeCode {
+	case TypeCodeObject:
+		if target.TypeCode == TypeCodeObject {
+			len := target.getElemCount()
+			for i := 0; i < len; i++ {
+				key := target.objectGetKey(i)
+				val := target.objectGetVal(i)
+				if exp, exists := obj.objectSearchKey(key); !exists || !ContainsBinary(exp, val) {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	case TypeCodeArray:
+		if target.TypeCode == TypeCodeArray {
+			len := target.getElemCount()
+			for i := 0; i < len; i++ {
+				if !ContainsBinary(obj, target.arrayGetElem(i)) {
+					return false
+				}
+			}
+			return true
+		} else {
+			len := obj.getElemCount()
+			for i := 0; i < len; i++ {
+				if ContainsBinary(obj.arrayGetElem(i), target) {
+					return true
+				}
+			}
+			return false
+		}
+	default:
+		return CompareBinary(obj, target) == 0
+	}
+}

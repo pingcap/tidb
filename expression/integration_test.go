@@ -3186,6 +3186,19 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	tk.MustExec(`update table_json set a=json_set(a,'$.a',json_object('a',1,'b',2)) where json_extract(a,'$.a[1]') = '2'`)
 	r = tk.MustQuery(`select json_extract(a, '$.a.a'), json_extract(a, '$.a.b') from table_json`)
 	r.Check(testkit.Rows("1 2", "<nil> <nil>"))
+
+	r = tk.MustQuery(`select json_contains(NULL, '1'), json_contains('1', NULL), json_contains('1', '1', NULL)`)
+	r.Check(testkit.Rows("<nil> <nil> <nil>"))
+	r = tk.MustQuery(`select json_contains('{}','{}'), json_contains('[1]','1'), json_contains('[1]','"1"'), json_contains('[1,2,[1,[5,[3]]]]', '[1,3]', '$[2]'), json_contains('[1,2,[1,[5,{"a":[2,3]}]]]', '[1,{"a":[3]}]', "$[2]"), json_contains('{"a":1}', '{"a":1,"b":2}', "$")`)
+	r.Check(testkit.Rows("1 1 0 1 1 0"))
+	r = tk.MustQuery(`select json_contains('{"a": 1}', '1', "$.c"), json_contains('{"a": [1, 2]}', '1', "$.a[2]"), json_contains('{"a": [1, {"a": 1}]}', '1', "$.a[1].b")`)
+	r.Check(testkit.Rows("<nil> <nil> <nil>"))
+	rs, err := tk.Exec("select json_contains('1','1','$.*')")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	_, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[json:3149]In this situation, path expressions may not contain the * and ** tokens.")
 }
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
