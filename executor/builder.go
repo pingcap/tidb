@@ -1761,13 +1761,14 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.resultHandler = &tableResultHandler{}
+	handler := &tableResultHandler{}
+	e.resultHandler = handler
 	result, err := distsql.Select(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	result.Fetch(ctx)
-	e.resultHandler.open(nil, result)
+	handler.open(nil, result)
 	return e, nil
 }
 
