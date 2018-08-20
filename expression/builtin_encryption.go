@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"strings"
 
 	"crypto/aes"
 	"github.com/juju/errors"
@@ -35,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/encrypt"
-	"strings"
 )
 
 var (
@@ -70,6 +70,9 @@ var (
 	_ builtinFunc = &builtinUncompressSig{}
 	_ builtinFunc = &builtinUncompressedLengthSig{}
 )
+
+// IVSize indicates the initialization vector supplied to aes_decrypt
+const IVSize = aes.BlockSize
 
 type aesModeAttr struct {
 	modeName   string
@@ -144,11 +147,11 @@ func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 		if isNull || err != nil {
 			return "", true, errors.Trace(err)
 		}
-		if len(iv) < aes.BlockSize {
+		if len(iv) < IVSize {
 			return "", true, errIncorrectArgs.Gen("The initialization vector supplied to aes_decrypt is too short. Must be at least 16 bytes long")
 		}
 		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
-		iv = iv[0:aes.BlockSize]
+		iv = iv[0:IVSize]
 	} else {
 		if len(b.args) == 3 {
 			// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.

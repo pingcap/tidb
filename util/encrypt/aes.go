@@ -21,6 +21,8 @@ import (
 	"github.com/juju/errors"
 )
 
+type blockModeBuild func(block cipher.Block) cipher.BlockMode
+
 type ecb struct {
 	b         cipher.Block
 	blockSize int
@@ -120,42 +122,16 @@ func PKCS7Unpad(data []byte, blockSize int) ([]byte, error) {
 
 // AESEncryptWithECB encrypts data using AES with ECB mode.
 func AESEncryptWithECB(str, key []byte) ([]byte, error) {
-	cb, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	blockSize := cb.BlockSize()
-	// The str arguments can be any length, and padding is automatically added to
-	// str so it is a multiple of a block as required by block-based algorithms such as AES.
-	// This padding is automatically removed by the AES_DECRYPT() function.
-	data, err := PKCS7Pad(str, blockSize)
-	if err != nil {
-		return nil, err
-	}
-	crypted := make([]byte, len(data))
-	ecb := newECBEncrypter(cb)
-	ecb.CryptBlocks(crypted, data)
-	return crypted, nil
+	return aesEncrypt(str, key, func(block cipher.Block) cipher.BlockMode {
+		return newECBEncrypter(block)
+	})
 }
 
 // AESDecryptWithECB decrypts data using AES with ECB mode.
 func AESDecryptWithECB(cryptStr, key []byte) ([]byte, error) {
-	cb, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	blockSize := cb.BlockSize()
-	if len(cryptStr)%blockSize != 0 {
-		return nil, errors.New("Corrupted data")
-	}
-	mode := newECBDecrypter(cb)
-	data := make([]byte, len(cryptStr))
-	mode.CryptBlocks(data, cryptStr)
-	plain, err := PKCS7Unpad(data, blockSize)
-	if err != nil {
-		return nil, err
-	}
-	return plain, nil
+	return aesDecrypt(cryptStr, key, func(block cipher.Block) cipher.BlockMode {
+		return newECBDecrypter(block)
+	})
 }
 
 // DeriveKeyMySQL derives the encryption key from a password in MySQL algorithm.
@@ -175,6 +151,40 @@ func DeriveKeyMySQL(key []byte, blockSize int) []byte {
 
 // AESEncryptWithCBC encrypts data using AES with CBC mode.
 func AESEncryptWithCBC(str, key []byte, iv []byte) ([]byte, error) {
+	return aesEncrypt(str, key, func(block cipher.Block) cipher.BlockMode {
+		return cipher.NewCBCEncrypter(block, iv)
+	})
+}
+
+// AESDecryptWithCBC decrypts data using AES with CBC mode.
+func AESDecryptWithCBC(cryptStr, key []byte, iv []byte) ([]byte, error) {
+	return aesDecrypt(cryptStr, key, func(block cipher.Block) cipher.BlockMode {
+		return cipher.NewCBCDecrypter(block, iv)
+	})
+}
+
+// aesDecrypt decrypts data using AES.
+func aesDecrypt(cryptStr, key []byte, build blockModeBuild) ([]byte, error) {
+	cb, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	blockSize := cb.BlockSize()
+	if len(cryptStr)%blockSize != 0 {
+		return nil, errors.New("Corrupted data")
+	}
+	mode := build(cb)
+	data := make([]byte, len(cryptStr))
+	mode.CryptBlocks(data, cryptStr)
+	plain, err := PKCS7Unpad(data, blockSize)
+	if err != nil {
+		return nil, err
+	}
+	return plain, nil
+}
+
+// aesEncrypt encrypts data using AES.
+func aesEncrypt(str, key []byte, build blockModeBuild) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -187,28 +197,8 @@ func AESEncryptWithCBC(str, key []byte, iv []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	cbc := cipher.NewCBCEncrypter(cb, iv)
+	mode := build(cb)
 	crypted := make([]byte, len(data))
-	cbc.CryptBlocks(crypted, data)
+	mode.CryptBlocks(crypted, data)
 	return crypted, nil
-}
-
-// AESDecryptWithCBC decrypts data using AES with CBC mode.
-func AESDecryptWithCBC(cryptStr, key []byte, iv []byte) ([]byte, error) {
-	cb, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	blockSize := cb.BlockSize()
-	if len(cryptStr)%blockSize != 0 {
-		return nil, errors.New("Corrupted data")
-	}
-	cbc := cipher.NewCBCDecrypter(cb, iv)
-	data := make([]byte, len(cryptStr))
-	cbc.CryptBlocks(data, cryptStr)
-	plain, err := PKCS7Unpad(data, blockSize)
-	if err != nil {
-		return nil, err
-	}
-	return plain, nil
 }
