@@ -163,6 +163,13 @@ func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedba
 	return lq
 }
 
+var (
+	// MinLogScanCount is the minimum scan count for a feedback to be logged.
+	MinLogScanCount = int64(1000)
+	// MinLogErrorRate is the minimum error rate for a feedback to be logged.
+	MinLogErrorRate = 0.5
+)
+
 // StoreQueryFeedback will merges the feedback into stats collector.
 func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle) error {
 	q := feedback.(*QueryFeedback)
@@ -184,6 +191,9 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 		}
 	} else {
 		rate = math.Abs(expected-float64(q.actual)) / float64(q.actual)
+	}
+	if rate >= MinLogErrorRate && (q.actual >= MinLogScanCount || q.expected >= MinLogScanCount) {
+		q.logDetailedInfo(h)
 	}
 	metrics.StatsInaccuracyRate.Observe(rate)
 	s.Lock()

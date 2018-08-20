@@ -105,13 +105,12 @@ type index struct {
 }
 
 // NewIndex builds a new Index object.
-// id may be partition or table ID, depends on whether the table is a PartitionedTable.
-func NewIndex(id int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
 	index := &index{
 		idxInfo: indexInfo,
 		tblInfo: tblInfo,
 		// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
-		prefix: tablecodec.EncodeTableIndexPrefix(id, indexInfo.ID),
+		prefix: tablecodec.EncodeTableIndexPrefix(physicalID, indexInfo.ID),
 	}
 	return index
 }

@@ -156,10 +156,11 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 
 // AnalyzeResult is used to represent analyze result.
 type AnalyzeResult struct {
-	PhysicalID int64 // PhysicalID is the partition id for a partitioned table, otherwise, it is the table id.
-	Hist       []*Histogram
-	Cms        []*CMSketch
-	Count      int64
-	IsIndex    int
-	Err        error
+	// PhysicalTableID is the id of a partition or a table.
+	PhysicalTableID int64
+	Hist            []*Histogram
+	Cms             []*CMSketch
+	Count           int64
+	IsIndex         int
+	Err             error
 }

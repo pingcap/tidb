@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
+	log "github.com/sirupsen/logrus"
 )
 
 // Kind constants.
@@ -1827,12 +1828,21 @@ func handleTruncateError(sc *stmtctx.StatementContext) error {
 }
 
 // DatumsToString converts several datums to formatted string.
-func DatumsToString(datums []Datum, handleNULL bool) (string, error) {
+func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 	var strs []string
 	for _, datum := range datums {
-		if datum.Kind() == KindNull && handleNULL {
-			strs = append(strs, "NULL")
-			continue
+		if handleSpecialValue {
+			switch datum.Kind() {
+			case KindNull:
+				strs = append(strs, "NULL")
+				continue
+			case KindMinNotNull:
+				strs = append(strs, "-inf")
+				continue
+			case KindMaxValue:
+				strs = append(strs, "+inf")
+				continue
+			}
 		}
 		str, err := datum.ToString()
 		if err != nil {
@@ -1861,4 +1871,13 @@ func CopyRow(dr []Datum) []Datum {
 		c[i] = *d.Copy()
 	}
 	return c
+}
+
+// String implements fmt.Stringer interface.
+func (d Datum) String() string {
+	str, err := d.ToString()
+	if err != nil {
+		log.Info(err)
+	}
+	return fmt.Sprintf("(Kind: %s, Value: %s)", kind2Str[d.k], str)
 }
