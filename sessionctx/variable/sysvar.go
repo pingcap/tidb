@@ -128,7 +128,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, "rand_seed2", ""},
 	{ScopeGlobal, "validate_password_number_count", "1"},
 	{ScopeSession, "gtid_next", ""},
-	{ScopeGlobal | ScopeSession, "sql_select_limit", "18446744073709551615"},
+	{ScopeGlobal | ScopeSession, SQLSelectLimit, "18446744073709551615"},
 	{ScopeGlobal, "ndb_show_foreign_key_mock_tables", ""},
 	{ScopeNone, "multi_range_count", "256"},
 	{ScopeGlobal | ScopeSession, DefaultWeekFormat, "0"},
@@ -136,7 +136,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "slave_transaction_retries", "10"},
 	{ScopeGlobal | ScopeSession, "default_storage_engine", "InnoDB"},
 	{ScopeNone, "ft_query_expansion_limit", "20"},
-	{ScopeGlobal, "max_connect_errors", "100"},
+	{ScopeGlobal, MaxConnectErrors, "100"},
 	{ScopeGlobal, "sync_binlog", "0"},
 	{ScopeNone, "max_digest_length", "1024"},
 	{ScopeNone, "innodb_force_load_corrupted", "OFF"},
@@ -146,7 +146,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_backward_compatible_user_definitions", ""},
 	{ScopeNone, "lc_messages_dir", "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/"},
 	{ScopeGlobal, "ft_boolean_syntax", "+ -><()~*:\"\"&|"},
-	{ScopeGlobal, "table_definition_cache", "1400"},
+	{ScopeGlobal, TableDefinitionCache, "-1"},
 	{ScopeNone, SkipNameResolve, "0"},
 	{ScopeNone, "performance_schema_max_file_handles", "32768"},
 	{ScopeSession, "transaction_allow_batching", ""},
@@ -154,7 +154,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_max_statement_classes", "168"},
 	{ScopeGlobal, "server_id", "0"},
 	{ScopeGlobal, "innodb_flushing_avg_loops", "30"},
-	{ScopeGlobal | ScopeSession, "tmp_table_size", "16777216"},
+	{ScopeGlobal | ScopeSession, TmpTableSize, "16777216"},
 	{ScopeGlobal, "innodb_max_purge_lag", "0"},
 	{ScopeGlobal | ScopeSession, "preload_buffer_size", "32768"},
 	{ScopeGlobal, "slave_checkpoint_period", "300"},
@@ -163,7 +163,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_flush_log_at_timeout", "1"},
 	{ScopeGlobal, "innodb_max_undo_log_size", ""},
 	{ScopeGlobal | ScopeSession, "range_alloc_block_size", "4096"},
-	{ScopeGlobal, "connect_timeout", "10"},
+	{ScopeGlobal, ConnectTimeout, "10"},
 	{ScopeGlobal | ScopeSession, "collation_server", charset.CollationUTF8},
 	{ScopeNone, "have_rtree_keys", "YES"},
 	{ScopeGlobal, "innodb_old_blocks_pct", "37"},
@@ -745,6 +745,16 @@ const (
 	WarningCount = "warning_count"
 	// ErrorCount is the name for 'error_count' system variable.
 	ErrorCount = "error_count"
+	// SQLSelectLimit is the name for 'sql_select_limit' system variable.
+	SQLSelectLimit = "sql_select_limit"
+	// MaxConnectErrors is the name for 'max_connect_errors' system variable.
+	MaxConnectErrors = "max_connect_errors"
+	// TableDefinitionCache is the name for 'table_definition_cache' system variable.
+	TableDefinitionCache = "table_definition_cache"
+	// TmpTableSize is the name for 'tmp_table_size' system variable.
+	TmpTableSize = "tmp_table_size"
+	// ConnectTimeout is the name for 'connect_timeout' system variable.
+	ConnectTimeout = "connect_timeout"
 	// BlockEncryptionMode is the name for 'block_encryption_mode' system variable.
 	BlockEncryptionMode = "block_encryption_mode"
 )
