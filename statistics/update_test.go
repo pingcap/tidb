@@ -660,22 +660,22 @@ func (s *testStatsUpdateSuite) TestQueryFeedbackForPartition(c *C) {
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5",
 			hist: "column:1 ndv:2 totColSize:0\n" +
-				"num: 1\tlower_bound: -9223372036854775808\tupper_bound: 1\trepeats: 0\n" +
-				"num: 2\tlower_bound: 2\tupper_bound: 5\trepeats: 0",
+				"num: 1 lower_bound: -9223372036854775808 upper_bound: 1 repeats: 0\n" +
+				"num: 1 lower_bound: 2 upper_bound: 5 repeats: 0",
 			idxCols: 0,
 		},
 		{
 			// test index feedback by double read
 			sql: "select * from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:1\n" +
-				"num: 2\tlower_bound: \tupper_bound: 6\trepeats: 0",
+				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0",
 			idxCols: 1,
 		},
 		{
 			// test index feedback by single read
 			sql: "select b from t use index(idx) where t.b <= 5",
 			hist: "index:1 ndv:1\n" +
-				"num: 2\tlower_bound: \tupper_bound: 6\trepeats: 0",
+				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0",
 			idxCols: 1,
 		},
 	}
