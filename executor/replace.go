@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -52,6 +53,7 @@ func (e *ReplaceExec) removeRow(handle int64, r toBeCheckedRow) (bool, error) {
 	newRow := r.row
 	oldRow, err := e.batchChecker.getOldRow(e.ctx, r.t, handle)
 	if err != nil {
+		log.Errorf("[replace] handle is %d for the to-be-inserted row %v", handle, types.DatumsToStrNoErr(r.row))
 		return false, errors.Trace(err)
 	}
 	rowUnchanged, err := types.EqualDatums(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
