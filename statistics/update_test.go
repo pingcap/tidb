@@ -644,10 +644,8 @@ func (s *testStatsUpdateSuite) TestQueryFeedbackForPartition(c *C) {
 	testKit.MustExec("analyze table t")
 
 	oriProbability := statistics.FeedbackProbability
-	oriNumber := statistics.MaxNumberOfRanges
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
-		statistics.MaxNumberOfRanges = oriNumber
 	}()
 	h := s.do.StatsHandle()
 	statistics.FeedbackProbability = 1
