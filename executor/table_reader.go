@@ -166,6 +166,7 @@ type resultHandler interface {
 	Close() error
 }
 
+// tableResultHandler holds the case that the TableReader's range is not much or need to be keep order.
 type tableResultHandler struct {
 	// If the pk is unsigned and we have KeepOrder=true.
 	// optionalResult handles the request whose range is in signed int range.
@@ -232,12 +233,17 @@ type resultWithErr struct {
 
 // multiRangeNoOrderResultHandler will handle the case that the range is too large and the we don't need to keep the order of the result.
 type multiRangeNoOrderResultHandler struct {
-	buildResp     buildResp
-	ranges        []*ranger.Range
-	rangeCh       chan []*ranger.Range
-	resultCh      chan *resultWithErr
-	resultWg      *sync.WaitGroup
-	retTypes      []*types.FieldType
+	buildResp buildResp
+	ranges    []*ranger.Range
+	// rangeCh receive the resource from `splitRanges` and send it to `noOrderResultWorker`'s `recvRange`.
+	rangeCh chan []*ranger.Range
+	// resultCh receive reslt from `noOrderResultWorker`'s `run` and send it to `nextChunk`.
+	resultCh chan *resultWithErr
+	// resultWg is to wait all worker exit successfully.
+	resultWg *sync.WaitGroup
+	retTypes []*types.FieldType
+	// chkResourceCh receive the chunk from `nextChunk` after a chunk is consumed and send it to `noOrderResultWorker`'s `run`,
+	// so that the chunk can be reused.
 	chkResourceCh chan *chunk.Chunk
 	cancelFunc    context.CancelFunc
 }
@@ -246,7 +252,7 @@ func (mr *multiRangeNoOrderResultHandler) openRanges(ctx context.Context, ranges
 	mr.ranges = ranges
 	mr.rangeCh = make(chan []*ranger.Range, 1)
 	mr.resultCh = make(chan *resultWithErr, 1)
-	count := mathutil.Min(requestWorkerCount, (len(ranges)+rangePerRequest-1)/rangePerRequest)
+	count := mathutil.Min(requestWorkerCount, (len(mr.ranges)+rangePerRequest-1)/rangePerRequest)
 	childCtx, cancelFunc := context.WithCancel(ctx)
 	mr.cancelFunc = cancelFunc
 
@@ -263,14 +269,13 @@ func (mr *multiRangeNoOrderResultHandler) openRanges(ctx context.Context, ranges
 	}
 }
 
-func (mr *multiRangeNoOrderResultHandler) newWorker() *resultWorker {
-	return &resultWorker{
+func (mr *multiRangeNoOrderResultHandler) newWorker() *noOrderResultWorker {
+	return &noOrderResultWorker{
 		rangeCh:         mr.rangeCh,
 		resultCh:        mr.resultCh,
 		wg:              mr.resultWg,
 		buildResp:       mr.buildResp,
 		chkResourceChan: mr.chkResourceCh,
-		tps:             mr.retTypes,
 	}
 }
 
@@ -282,6 +287,7 @@ splitRangeLoop:
 			nextI = len(mr.ranges)
 		}
 		select {
+		// If the context is done, we don't need to send range any more and can close the channel.
 		case <-ctx.Done():
 			break splitRangeLoop
 		case mr.rangeCh <- mr.ranges[i:nextI]:
@@ -291,6 +297,7 @@ splitRangeLoop:
 	close(mr.rangeCh)
 }
 
+// checkWg checks whether all worker have benn released.
 func (mr *multiRangeNoOrderResultHandler) checkWg() {
 	mr.resultWg.Wait()
 	close(mr.resultCh)
@@ -321,17 +328,17 @@ func (mr *multiRangeNoOrderResultHandler) Close() error {
 	return nil
 }
 
-type resultWorker struct {
+type noOrderResultWorker struct {
 	rangeCh         <-chan []*ranger.Range
 	request         distsql.SelectResult
 	resultCh        chan<- *resultWithErr
 	buildResp       buildResp
 	wg              *sync.WaitGroup
-	tps             []*types.FieldType
 	chkResourceChan chan *chunk.Chunk
 }
 
-func (rw *resultWorker) recvRanges(ctx context.Context) (ranges []*ranger.Range, ok bool) {
+// recvRange will receive the range from the channel, and check whether the context is done or the ranges have been all consumed.
+func (rw *noOrderResultWorker) recvRanges(ctx context.Context) (ranges []*ranger.Range, ok bool) {
 	select {
 	case <-ctx.Done():
 		return nil, false
@@ -340,7 +347,8 @@ func (rw *resultWorker) recvRanges(ctx context.Context) (ranges []*ranger.Range,
 	return
 }
 
-func (rw *resultWorker) run(ctx context.Context) {
+// run is the main thread that consumes the range and fetch the data.
+func (rw *noOrderResultWorker) run(ctx context.Context) {
 	defer func() {
 		rw.Close()
 	}()
@@ -365,6 +373,7 @@ func (rw *resultWorker) run(ctx context.Context) {
 				rw.sendResult(ctx, &resultWithErr{chk: nil, err: errors.Trace(err)})
 				return
 			}
+			// If there's no new request, this worker finishes its work.
 			if rw.request == nil {
 				return
 			}
@@ -378,17 +387,19 @@ func (rw *resultWorker) run(ctx context.Context) {
 			rw.sendResult(ctx, &resultWithErr{chk: chk, err: nil})
 			continue
 		}
+		// This request will be totally fetched if the chk returns no data.
 		err = rw.request.Close()
 		if err != nil {
 			rw.sendResult(ctx, &resultWithErr{chk: nil, err: errors.Trace(err)})
 			return
 		}
 		rw.request = nil
+		// This consumer channel should not send chk to chkResourceChan. So we need to reuse the chunk without receiving chk from channel.
 		goto reUseChunk
 	}
 }
 
-func (rw *resultWorker) newRequest(ctx context.Context) (distsql.SelectResult, error) {
+func (rw *noOrderResultWorker) newRequest(ctx context.Context) (distsql.SelectResult, error) {
 	ranges, recved := rw.recvRanges(ctx)
 	if !recved {
 		return nil, nil
@@ -400,14 +411,14 @@ func (rw *resultWorker) newRequest(ctx context.Context) (distsql.SelectResult, e
 	return resp, nil
 }
 
-func (rw *resultWorker) sendResult(ctx context.Context, result *resultWithErr) {
+func (rw *noOrderResultWorker) sendResult(ctx context.Context, result *resultWithErr) {
 	select {
 	case <-ctx.Done():
 	case rw.resultCh <- result:
 	}
 }
 
-func (rw *resultWorker) Close() {
+func (rw *noOrderResultWorker) Close() {
 	rw.wg.Done()
 	if rw.request != nil {
 		terror.Call(rw.request.Close)
