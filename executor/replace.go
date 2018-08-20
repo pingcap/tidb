@@ -53,7 +53,7 @@ func (e *ReplaceExec) removeRow(handle int64, r toBeCheckedRow) (bool, error) {
 	newRow := r.row
 	oldRow, err := e.batchChecker.getOldRow(e.ctx, r.t, handle)
 	if err != nil {
-		log.Errorf("[replace] can not find record which handle is %d for the to-be-inserted row %v", handle, r.row)
+		log.Errorf("[replace] cannot find the record whose handle is %d for the to-be-inserted row %v", handle, r.row)
 		return false, errors.Trace(err)
 	}
 	rowUnchanged, err := types.EqualDatums(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
