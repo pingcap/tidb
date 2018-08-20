@@ -586,6 +586,7 @@ commit;`
 	create table m (id int primary key auto_increment, code int unique);
 	insert tmp (code) values (1);
 	insert tmp (code) values (1);
+	set tidb_max_chunk_size=1;
 	insert m (code) select code from tmp on duplicate key update code = values(code);`
 	tk.MustExec(testSQL)
 	testSQL = `select * from m;`
