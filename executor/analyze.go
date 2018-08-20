@@ -271,8 +271,6 @@ func (e *AnalyzeColumnsExec) open() error {
 		return errors.Trace(err)
 	}
 	if len(secondPartRanges) == 0 {
-		e.resultHandler.optionalResult = nil
-		e.resultHandler.result = firstResult
 		e.resultHandler.open(nil, firstResult)
 		return nil
 	}

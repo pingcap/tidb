@@ -154,13 +154,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	return result, nil
 }
 
-type buildResp func(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error)
-
-const (
-	rangePerRequest    = 50000
-	requestWorkerCount = 8
-)
-
 type resultHandler interface {
 	nextChunk(ctx context.Context, chk *chunk.Chunk) error
 	Close() error
@@ -172,8 +165,9 @@ type tableResultHandler struct {
 	// optionalResult handles the request whose range is in signed int range.
 	// result handles the request whose range is exceed signed int range.
 	// Otherwise, we just set optionalFinished true and the result handles the whole ranges.
-	optionalResult   distsql.SelectResult
-	result           distsql.SelectResult
+	optionalResult distsql.SelectResult
+	result         distsql.SelectResult
+
 	optionalFinished bool
 }
 
@@ -230,6 +224,13 @@ type resultWithErr struct {
 	chk *chunk.Chunk
 	err error
 }
+
+type buildResp func(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error)
+
+const (
+	rangePerRequest    = 50000
+	requestWorkerCount = 8
+)
 
 // multiRangeNoOrderResultHandler will handle the case that the range is too large and the we don't need to keep the order of the result.
 type multiRangeNoOrderResultHandler struct {
