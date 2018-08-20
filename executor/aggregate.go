@@ -179,14 +179,14 @@ type HashAggIntermData struct {
 
 // getPartialResultBatch fetches a batch of partial results from HashAggIntermData.
 func (d *HashAggIntermData) getPartialResultBatch(sc *stmtctx.StatementContext, prs [][]aggfuncs.PartialResult, aggFuncs []aggfuncs.AggFunc, maxChunkSize int) (_ [][]aggfuncs.PartialResult, groupKeys [][]byte, reachEnd bool) {
-	if len(prs) == maxChunkSize {
-		return prs, nil, false
-	}
 	keyStart := d.cursor
-	for ; d.cursor < len(d.groupKeys); d.cursor++ {
+	for ; d.cursor < len(d.groupKeys) && len(prs) < maxChunkSize; d.cursor++ {
 		prs = append(prs, d.partialResultMap[string(d.groupKeys[d.cursor])])
 	}
-	return prs, d.groupKeys[keyStart:d.cursor], true
+	if d.cursor == len(d.groupKeys) {
+		reachEnd = true
+	}
+	return prs, d.groupKeys[keyStart:d.cursor], reachEnd
 }
 
 // Close implements the Executor Close interface.
