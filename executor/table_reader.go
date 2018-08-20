@@ -14,15 +14,20 @@
 package executor
 
 import (
+	"sync"
+
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -77,24 +82,32 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		}
 	}
 
-	e.resultHandler = &tableResultHandler{}
-	firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder)
-	firstResult, err := e.buildResp(ctx, firstPartRanges)
-	if err != nil {
-		e.feedback.Invalidate()
-		return errors.Trace(err)
-	}
-	if len(secondPartRanges) == 0 {
-		e.resultHandler.open(nil, firstResult)
+	if e.keepOrder || len(e.ranges) <= rangePerRequest {
+		e.resultHandler = &tableResultHandler{}
+		firstPartRanges, secondPartRanges := splitRanges(e.ranges, e.keepOrder)
+		firstResult, err := e.buildResp(ctx, firstPartRanges)
+		if err != nil {
+			e.feedback.Invalidate()
+			return errors.Trace(err)
+		}
+		if len(secondPartRanges) == 0 {
+			e.resultHandler.open(nil, firstResult)
+			return nil
+		}
+		var secondResult distsql.SelectResult
+		secondResult, err = e.buildResp(ctx, secondPartRanges)
+		if err != nil {
+			e.feedback.Invalidate()
+			return errors.Trace(err)
+		}
+		e.resultHandler.open(firstResult, secondResult)
 		return nil
 	}
-	var secondResult distsql.SelectResult
-	secondResult, err = e.buildResp(ctx, secondPartRanges)
-	if err != nil {
-		e.feedback.Invalidate()
-		return errors.Trace(err)
+	e.resultHandler = &tableResultHandler{
+		buildResp: e.buildResp,
+		retTypes:  e.retTypes(),
 	}
-	e.resultHandler.open(firstResult, secondResult)
+	e.resultHandler.openRanges(ctx, e.ranges)
 	return nil
 }
 
@@ -137,18 +150,43 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	return result, nil
 }
 
+type buildResp func(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error)
+
+const (
+	// rangePerRequest    = 50000
+	rangePerRequest    = 1
+	requestWorkerCount = 8
+)
+
+type resultWithErr struct {
+	chk *chunk.Chunk
+	err error
+}
+
 type tableResultHandler struct {
 	// If the pk is unsigned and we have KeepOrder=true.
 	// optionalResult handles the request whose range is in signed int range.
 	// result handles the request whose range is exceed signed int range.
 	// Otherwise, we just set optionalFinished true and the result handles the whole ranges.
-	optionalResult distsql.SelectResult
-	result         distsql.SelectResult
-
+	optionalResult   distsql.SelectResult
+	result           distsql.SelectResult
 	optionalFinished bool
+
+	buildResp     buildResp
+	ranges        []*ranger.Range
+	rangeCh       chan []*ranger.Range
+	resultCh      chan *resultWithErr
+	resultWg      *sync.WaitGroup
+	retTypes      []*types.FieldType
+	chkResourceCh chan *chunk.Chunk
+
+	nextChunk func(ctx context.Context, chk *chunk.Chunk) error
+	Close     func() error
 }
 
 func (tr *tableResultHandler) open(optionalResult, result distsql.SelectResult) {
+	tr.nextChunk = tr.nextChunkEz
+	tr.Close = tr.CloseSimple
 	if optionalResult == nil {
 		tr.optionalFinished = true
 		tr.result = result
@@ -159,7 +197,164 @@ func (tr *tableResultHandler) open(optionalResult, result distsql.SelectResult) 
 	tr.optionalFinished = false
 }
 
-func (tr *tableResultHandler) nextChunk(ctx context.Context, chk *chunk.Chunk) error {
+func (tr *tableResultHandler) openRanges(ctx context.Context, ranges []*ranger.Range) {
+	tr.ranges = ranges
+	tr.rangeCh = make(chan []*ranger.Range, 1)
+	tr.resultCh = make(chan *resultWithErr, 1)
+	count := mathutil.Min(requestWorkerCount, (len(ranges)+rangePerRequest-1)/rangePerRequest)
+	tr.nextChunk = tr.nextChunkMul
+	tr.Close = tr.CloseMul
+	go tr.splitRanges()
+	tr.chkResourceCh = make(chan *chunk.Chunk, count)
+	for i := 0; i < count; i++ {
+		tr.chkResourceCh <- chunk.NewChunkWithCapacity(tr.retTypes, 1024)
+	}
+	tr.resultWg = &sync.WaitGroup{}
+	tr.resultWg.Add(count)
+	go tr.checkWg()
+	for i := 0; i < count; i++ {
+		go tr.newWorker().run(ctx)
+	}
+}
+
+func (tr *tableResultHandler) newWorker() *resultWorker {
+	return &resultWorker{
+		rangeCh:         tr.rangeCh,
+		resultCh:        tr.resultCh,
+		wg:              tr.resultWg,
+		buildResp:       tr.buildResp,
+		chkResourceChan: tr.chkResourceCh,
+		tps:             tr.retTypes,
+	}
+}
+
+func (tr *tableResultHandler) splitRanges() {
+	for i := 0; i < len(tr.ranges); {
+		nextI := i + rangePerRequest
+		if nextI > len(tr.ranges) {
+			nextI = len(tr.ranges)
+		}
+		tr.rangeCh <- tr.ranges[i:nextI]
+		// logrus.Warnf("send ranges: %v", tr.ranges[i:nextI])
+		i = nextI
+	}
+	// logrus.Warnf("??")
+	close(tr.rangeCh)
+}
+
+func (tr *tableResultHandler) checkWg() {
+	tr.resultWg.Wait()
+	// logrus.Warnf("all closed")
+	close(tr.resultCh)
+}
+
+type resultWorker struct {
+	rangeCh         <-chan []*ranger.Range
+	request         distsql.SelectResult
+	resultCh        chan<- *resultWithErr
+	buildResp       buildResp
+	wg              *sync.WaitGroup
+	tps             []*types.FieldType
+	chkResourceChan chan *chunk.Chunk
+}
+
+func (rw *resultWorker) recvRanges(ctx context.Context) (ranges []*ranger.Range, ok bool) {
+	select {
+	case ranges, ok = <-rw.rangeCh:
+	case <-ctx.Done():
+		return nil, false
+	}
+	return
+}
+
+func (rw *resultWorker) run(ctx context.Context) {
+	defer func() {
+		rw.Close()
+		// logrus.Warnf("worker done")
+	}()
+	var (
+		err error
+		chk *chunk.Chunk
+		ok  bool
+	)
+	for {
+		select {
+		case chk, ok = <-rw.chkResourceChan:
+			// logrus.Warnf("get chunk, now: %v", len(rw.chkResourceChan))
+			if !ok {
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+		// logrus.Warnf("get chunk")
+	reUseChunk:
+		if rw.request == nil {
+			rw.request, err = rw.newRequest(ctx)
+			if err != nil {
+				rw.resultCh <- &resultWithErr{chk: nil, err: errors.Trace(err)}
+				return
+			}
+			if rw.request == nil {
+				return
+			}
+		}
+		err = rw.request.Next(ctx, chk)
+		if err != nil {
+			rw.resultCh <- &resultWithErr{chk: nil, err: errors.Trace(err)}
+			return
+		}
+		if chk.NumRows() > 0 {
+			rw.resultCh <- &resultWithErr{chk: chk, err: nil}
+			// logrus.Warnf("send, len: %v, val: %v", chk.NumRows(), chk)
+			continue
+		}
+		err = rw.request.Close()
+		if err != nil {
+			rw.resultCh <- &resultWithErr{chk: nil, err: errors.Trace(err)}
+			return
+		}
+		rw.request = nil
+		goto reUseChunk
+	}
+}
+
+func (rw *resultWorker) newRequest(ctx context.Context) (distsql.SelectResult, error) {
+	ranges, recved := rw.recvRanges(ctx)
+	// logrus.Warnf("range got: %v", recved)
+	if !recved {
+		return nil, nil
+	}
+	resp, err := rw.buildResp(ctx, ranges)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return resp, nil
+}
+func (rw *resultWorker) Close() {
+	rw.wg.Done()
+	if rw.request != nil {
+		terror.Call(rw.request.Close)
+	}
+}
+
+func (tr *tableResultHandler) nextChunkMul(ctx context.Context, chk *chunk.Chunk) error {
+	result, ok := <-tr.resultCh
+	if !ok {
+		chk.Reset()
+		return nil
+	}
+	if result.err != nil {
+		return errors.Trace(result.err)
+	}
+	chk.SwapColumns(result.chk)
+	result.chk.Reset()
+	tr.chkResourceCh <- result.chk
+	// logrus.Warnf("re send chk, this val: %v, now len: %v", printChunk(chk, tr.retTypes), len(tr.chkResourceCh))
+	return nil
+}
+
+func (tr *tableResultHandler) nextChunkEz(ctx context.Context, chk *chunk.Chunk) error {
 	if !tr.optionalFinished {
 		err := tr.optionalResult.Next(ctx, chk)
 		if err != nil {
@@ -191,8 +386,17 @@ func (tr *tableResultHandler) nextRaw(ctx context.Context) (data []byte, err err
 	return data, nil
 }
 
-func (tr *tableResultHandler) Close() error {
+func (tr *tableResultHandler) CloseSimple() error {
 	err := closeAll(tr.optionalResult, tr.result)
 	tr.optionalResult, tr.result = nil, nil
 	return errors.Trace(err)
+}
+
+func (tr *tableResultHandler) CloseMul() error {
+	if tr.chkResourceCh != nil {
+		close(tr.chkResourceCh)
+		for range tr.chkResourceCh {
+		}
+	}
+	return nil
 }
