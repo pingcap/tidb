@@ -28,8 +28,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"golang.org/x/net/context"
 )
 
 type testBypassSuite struct{}
@@ -1995,4 +1998,36 @@ func (s *testSuite) TestUpdateAffectRowCnt(c *C) {
 	tk.MustExec("update a set a = a*10 where b = 1001")
 	ctx = tk.Se.(sessionctx.Context)
 	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
+}
+
+func (s *testSuite) TestReplaceLog(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table testLog (a int not null primary key, b int unique key);`)
+
+	// Make some dangling index.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("testLog")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	idxInfo := findIndexByName("b", tblInfo.Indices)
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), 1)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`replace into testLog values (0, 0), (1, 1);`)
+	c.Assert(err, NotNil)
+	expErr := errors.New(`can not be duplicated row, due to old row not found. handle 1 not found`)
+	c.Assert(expErr.Error() == err.Error(), IsTrue, Commentf("obtained error: (%s)\nexpected error: (%s)", err.Error(), expErr.Error()))
+
+	tk.MustQuery(`admin cleanup index testLog b;`).Check(testkit.Rows("1"))
 }
