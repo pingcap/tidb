@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
+	log "github.com/sirupsen/logrus"
 )
 
 // Kind constants.
@@ -1870,4 +1871,13 @@ func CopyRow(dr []Datum) []Datum {
 		c[i] = *d.Copy()
 	}
 	return c
+}
+
+// String implements fmt.Stringer interface.
+func (d Datum) String() string {
+	str, err := d.ToString()
+	if err != nil {
+		log.Info(err)
+	}
+	return fmt.Sprintf("(Kind: %s, Value: %s)", kind2Str[d.k], str)
 }

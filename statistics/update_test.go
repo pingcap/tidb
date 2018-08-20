@@ -39,10 +39,13 @@ var _ = Suite(&testStatsUpdateSuite{})
 type testStatsUpdateSuite struct {
 	store kv.Storage
 	do    *domain.Domain
+	hook  logHook
 }
 
 func (s *testStatsUpdateSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	log.AddHook(&s.hook)
 	var err error
 	s.store, s.do, err = newStoreWithBootstrap(0)
 	c.Assert(err, IsNil)
@@ -796,11 +799,9 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 		},
 	}
 	log.SetLevel(log.DebugLevel)
-	var hook logHook
-	log.AddHook(&hook)
 	for _, t := range tests {
-		hook.results = ""
+		s.hook.results = ""
 		testKit.MustQuery(t.sql)
-		c.Assert(hook.results, Equals, t.result)
+		c.Assert(s.hook.results, Equals, t.result)
 	}
 }
