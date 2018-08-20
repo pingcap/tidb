@@ -450,6 +450,7 @@ var tokenMap = map[string]int{
 	"SUPER":                    super,
 	"TABLE":                    tableKwd,
 	"TABLES":                   tables,
+	"TABLESPACE":               tablespace,
 	"TEMPORARY":                temporary,
 	"TEMPTABLE":                temptable,
 	"TERMINATED":               terminated,
