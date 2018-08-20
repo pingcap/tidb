@@ -1726,6 +1726,15 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 
 	// Fix issue 7362.
 	s.tk.MustExec("create table test_partition(id bigint, name varchar(255), primary key(id)) ENGINE=InnoDB DEFAULT CHARSET=utf8 PARTITION BY RANGE  COLUMNS(id) (PARTITION p1 VALUES LESS THAN (10) ENGINE = InnoDB);")
+
+	// 'Less than' in partition expression could be a constant expression, notice that
+	// the SHOW result changed.
+	s.tk.MustExec(`create table t1 (a date)
+			  partition by range(to_seconds(a))(
+			  partition p0 values less than (to_seconds('2004-01-01')),
+			  partition p1 values less than (to_seconds('2005-01-01')));`)
+	s.tk.MustQuery("show create table t1").Check(
+		testkit.Rows("t1 CREATE TABLE `t1` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin\nPARTITION BY RANGE ( to_seconds(`a`) ) (\n  PARTITION p0 VALUES LESS THAN (63240134400),\n  PARTITION p1 VALUES LESS THAN (63271756800)\n)"))
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
@@ -3167,7 +3176,7 @@ func (s *testDBSuite) TestPartitionDropIndex(c *C) {
 LOOP:
 	for {
 		select {
-		case err := <-done:
+		case err = <-done:
 			if err == nil {
 				break LOOP
 			}
