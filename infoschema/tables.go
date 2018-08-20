@@ -797,6 +797,28 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 		if colLen == types.UnspecifiedLength {
 			colLen = defaultFlen
 		}
+		if col.Tp == mysql.TypeSet {
+			// Example: In MySQL set('a','bc','def','ghij') has length 13, because
+			// len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
+			// Reference link: https://bugs.mysql.com/bug.php?id=22613
+			colLen = 0
+			for _, ele := range col.Elems {
+				colLen += len(ele)
+			}
+			if len(col.Elems) != 0 {
+				colLen += (len(col.Elems) - 1)
+			}
+		} else if col.Tp == mysql.TypeEnum {
+			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
+			// the longest string in the enum is 'cdef'
+			// Reference link: https://bugs.mysql.com/bug.php?id=22613
+			colLen = 0
+			for _, ele := range col.Elems {
+				if len(ele) > colLen {
+					colLen = len(ele)
+				}
+			}
+		}
 		if decimal == types.UnspecifiedLength {
 			decimal = defaultDecimal
 		}
@@ -1321,7 +1343,7 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
 }
 
-func (it *infoschemaTable) GetID() int64 {
+func (it *infoschemaTable) GetPhysicalID() int64 {
 	return it.meta.ID
 }
 

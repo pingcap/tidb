@@ -232,7 +232,7 @@ func (b *builtinASCIISig) Clone() builtinFunc {
 	return newSig
 }
 
-// eval evals a builtinASCIISig.
+// evalInt evals a builtinASCIISig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
 func (b *builtinASCIISig) evalInt(row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -285,6 +285,7 @@ func (b *builtinConcatSig) Clone() builtinFunc {
 	return newSig
 }
 
+// evalString evals a builtinConcatSig
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func (b *builtinConcatSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
 	var s []byte
@@ -554,27 +555,35 @@ func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	sig := &builtinRepeatSig{bf}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinRepeatSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinRepeatSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinRepeatSig) Clone() builtinFunc {
 	newSig := &builtinRepeatSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
-// eval evals a builtinRepeatSig.
+// evalString evals a builtinRepeatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_repeat
 func (b *builtinRepeatSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
+	byteLength := len(str)
 
 	num, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
@@ -587,7 +596,12 @@ func (b *builtinRepeatSig) evalString(row chunk.Row) (d string, isNull bool, err
 		num = math.MaxInt32
 	}
 
-	if int64(len(str)) > int64(b.tp.Flen)/num {
+	if uint64(byteLength)*uint64(num) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("repeat", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
+	if int64(byteLength) > int64(b.tp.Flen)/num {
 		return "", true, nil
 	}
 	return strings.Repeat(str, int(num)), false, nil
@@ -1515,6 +1529,7 @@ type trimFunctionClass struct {
 	baseFunctionClass
 }
 
+// getFunction sets trim built-in function signature.
 // The syntax of trim in mysql is 'TRIM([{BOTH | LEADING | TRAILING} [remstr] FROM] str), TRIM([remstr FROM] str)',
 // but we wil convert it into trim(str), trim(str, remstr) and trim(str, remstr, direction) in AST.
 func (c *trimFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -2482,8 +2497,8 @@ func (b *builtinOctStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-// // evalString evals OCT(N).
-// // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
+// evalString evals OCT(N).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
 func (b *builtinOctStringSig) evalString(row chunk.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -2957,18 +2972,39 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.MaxBlobWidth
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinFromBase64Sig{bf}
+	sig := &builtinFromBase64Sig{bf, maxAllowedPacket}
 	return sig, nil
+}
+
+// base64NeededDecodedLength return the base64 decoded string length.
+func base64NeededDecodedLength(n int) int {
+	// Returns -1 indicate the result will overflow.
+	if strconv.IntSize == 64 && n > math.MaxInt64/3 {
+		return -1
+	}
+	if strconv.IntSize == 32 && n > math.MaxInt32/3 {
+		return -1
+	}
+	return n * 3 / 4
 }
 
 type builtinFromBase64Sig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinFromBase64Sig) Clone() builtinFunc {
 	newSig := &builtinFromBase64Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -2979,6 +3015,16 @@ func (b *builtinFromBase64Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
+
+	needDecodeLen := base64NeededDecodedLength(len(str))
+	if needDecodeLen == -1 {
+		return "", true, nil
+	}
+	if needDecodeLen > int(b.maxAllowedPacket) {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("from_base64", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
 	str = strings.Replace(str, "\t", "", -1)
 	str = strings.Replace(str, " ", "", -1)
 	result, err := base64.StdEncoding.DecodeString(str)
@@ -2999,17 +3045,26 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
-	sig := &builtinToBase64Sig{bf}
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	sig := &builtinToBase64Sig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinToBase64Sig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinToBase64Sig) Clone() builtinFunc {
 	newSig := &builtinToBase64Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -3043,7 +3098,14 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
-
+	needEncodeLen := base64NeededEncodedLength(len(str))
+	if needEncodeLen == -1 {
+		return "", true, nil
+	}
+	if needEncodeLen > int(b.maxAllowedPacket) {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("to_base64", b.maxAllowedPacket))
+		return "", true, nil
+	}
 	if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
 		return "", true, nil
 	}

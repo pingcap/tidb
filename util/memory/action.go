@@ -45,13 +45,13 @@ func (a *LogOnExceed) Action(t *Tracker) {
 	}
 }
 
-// PanicOnExceed panics when when memory usage exceeds memory quota.
+// PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
 	mutex sync.Mutex // For synchronization.
 	acted bool
 }
 
-// Action panics when when memory usage exceeds memory quota.
+// Action panics when memory usage exceeds memory quota.
 func (a *PanicOnExceed) Action(t *Tracker) {
 	a.mutex.Lock()
 	if a.acted {
