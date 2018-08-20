@@ -179,6 +179,7 @@ type tableResultHandler struct {
 	resultWg      *sync.WaitGroup
 	retTypes      []*types.FieldType
 	chkResourceCh chan *chunk.Chunk
+	cancelFunc    context.CancelFunc
 
 	nextChunk func(ctx context.Context, chk *chunk.Chunk) error
 	Close     func() error
@@ -204,7 +205,10 @@ func (tr *tableResultHandler) openRanges(ctx context.Context, ranges []*ranger.R
 	count := mathutil.Min(requestWorkerCount, (len(ranges)+rangePerRequest-1)/rangePerRequest)
 	tr.nextChunk = tr.nextChunkMul
 	tr.Close = tr.CloseMul
-	go tr.splitRanges()
+	childCtx, cancelFunc := context.WithCancel(ctx)
+	tr.cancelFunc = cancelFunc
+
+	go tr.splitRanges(childCtx)
 	tr.chkResourceCh = make(chan *chunk.Chunk, count)
 	for i := 0; i < count; i++ {
 		tr.chkResourceCh <- chunk.NewChunkWithCapacity(tr.retTypes, 1024)
@@ -213,7 +217,7 @@ func (tr *tableResultHandler) openRanges(ctx context.Context, ranges []*ranger.R
 	tr.resultWg.Add(count)
 	go tr.checkWg()
 	for i := 0; i < count; i++ {
-		go tr.newWorker().run(ctx)
+		go tr.newWorker().run(childCtx)
 	}
 }
 
@@ -228,13 +232,18 @@ func (tr *tableResultHandler) newWorker() *resultWorker {
 	}
 }
 
-func (tr *tableResultHandler) splitRanges() {
+func (tr *tableResultHandler) splitRanges(ctx context.Context) {
+splitRangeLoop:
 	for i := 0; i < len(tr.ranges); {
 		nextI := i + rangePerRequest
 		if nextI > len(tr.ranges) {
 			nextI = len(tr.ranges)
 		}
-		tr.rangeCh <- tr.ranges[i:nextI]
+		select {
+		case <-ctx.Done():
+			break splitRangeLoop
+		case tr.rangeCh <- tr.ranges[i:nextI]:
+		}
 		// logrus.Warnf("send ranges: %v", tr.ranges[i:nextI])
 		i = nextI
 	}
@@ -260,9 +269,9 @@ type resultWorker struct {
 
 func (rw *resultWorker) recvRanges(ctx context.Context) (ranges []*ranger.Range, ok bool) {
 	select {
-	case ranges, ok = <-rw.rangeCh:
 	case <-ctx.Done():
 		return nil, false
+	case ranges, ok = <-rw.rangeCh:
 	}
 	return
 }
@@ -292,7 +301,7 @@ func (rw *resultWorker) run(ctx context.Context) {
 		if rw.request == nil {
 			rw.request, err = rw.newRequest(ctx)
 			if err != nil {
-				rw.resultCh <- &resultWithErr{chk: nil, err: errors.Trace(err)}
+				rw.sendResult(ctx, &resultWithErr{chk: nil, err: errors.Trace(err)})
 				return
 			}
 			if rw.request == nil {
@@ -301,17 +310,17 @@ func (rw *resultWorker) run(ctx context.Context) {
 		}
 		err = rw.request.Next(ctx, chk)
 		if err != nil {
-			rw.resultCh <- &resultWithErr{chk: nil, err: errors.Trace(err)}
+			rw.sendResult(ctx, &resultWithErr{chk: nil, err: errors.Trace(err)})
 			return
 		}
 		if chk.NumRows() > 0 {
-			rw.resultCh <- &resultWithErr{chk: chk, err: nil}
+			rw.sendResult(ctx, &resultWithErr{chk: chk, err: nil})
 			// logrus.Warnf("send, len: %v, val: %v", chk.NumRows(), chk)
 			continue
 		}
 		err = rw.request.Close()
 		if err != nil {
-			rw.resultCh <- &resultWithErr{chk: nil, err: errors.Trace(err)}
+			rw.sendResult(ctx, &resultWithErr{chk: nil, err: errors.Trace(err)})
 			return
 		}
 		rw.request = nil
@@ -331,6 +340,14 @@ func (rw *resultWorker) newRequest(ctx context.Context) (distsql.SelectResult, e
 	}
 	return resp, nil
 }
+
+func (rw *resultWorker) sendResult(ctx context.Context, result *resultWithErr) {
+	select {
+	case <-ctx.Done():
+	case rw.resultCh <- result:
+	}
+}
+
 func (rw *resultWorker) Close() {
 	rw.wg.Done()
 	if rw.request != nil {
@@ -393,6 +410,7 @@ func (tr *tableResultHandler) CloseSimple() error {
 }
 
 func (tr *tableResultHandler) CloseMul() error {
+	tr.cancelFunc()
 	if tr.chkResourceCh != nil {
 		close(tr.chkResourceCh)
 		for range tr.chkResourceCh {
