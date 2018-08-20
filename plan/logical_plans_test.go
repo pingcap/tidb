@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ type testUnitTestSuit struct {
 	ctx sessionctx.Context
 }
 
-func (s *testUnitTestSuit) SetUpSuite(col3 *C) {
+func (s *testUnitTestSuit) SetUpSuite(c *C) {
 	s.ctx = mockContext()
 }
 
@@ -66,8 +66,8 @@ func (s *testUnitTestSuit) SubstituteCol2CorCol(expr expression.Expression, colI
 	return expr, nil
 }
 
-func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(col3 *C) {
-	defer testleak.AfterTest(col3)()
+func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
+	defer testleak.AfterTest(c)()
 	totalSchema := expression.NewSchema()
 	totalSchema.Append(&expression.Column{
 		ColName:  model.NewCIStr("col1"),
@@ -173,7 +173,7 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(col3 *C) {
 		if sf, ok := filters[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			filters = expression.FlattenCNFConditions(sf)
 		}
-		col3.Assert(err, IsNil, comment)
+		c.Assert(err, IsNil, comment)
 		trueFilters := make([]expression.Expression, 0, len(filters))
 		idMap := make(map[int]struct{})
 		for _, id := range tt.corColIDs {
@@ -181,7 +181,7 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(col3 *C) {
 		}
 		for _, filter := range filters {
 			trueFilter, err := s.SubstituteCol2CorCol(filter, idMap)
-			col3.Assert(err, IsNil, comment)
+			c.Assert(err, IsNil, comment)
 			trueFilters = append(trueFilters, trueFilter)
 		}
 		path := accessPath{
@@ -191,7 +191,7 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(col3 *C) {
 			idxColLens:   tt.idxColLens,
 		}
 		access, remained := path.splitCorColAccessCondFromFilters()
-		col3.Assert(fmt.Sprintf("%s", access), Equals, tt.access, comment)
-		col3.Assert(fmt.Sprintf("%s", remained), Equals, tt.remained, comment)
+		c.Assert(fmt.Sprintf("%s", access), Equals, tt.access, comment)
+		c.Assert(fmt.Sprintf("%s", remained), Equals, tt.remained, comment)
 	}
 }
