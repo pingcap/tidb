@@ -1839,11 +1839,9 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.Dat
 		}
 		oldRow, err1 := e.Table.Row(e.ctx, h)
 		if err1 != nil {
-			rErr := errors.Annotatef(err1, "[replace] the %dth of total %d rows, handle %d", idx+1, rowsLen, h)
 			rowStr, err := types.DatumsToString(row, true)
 			terror.Log(err)
-			log.Errorf("%s, row: %v", rErr.Error(), rowStr)
-			return nil, rErr
+			return nil, errors.Annotatef(err1, "[replace] the %dth of total %d rows, handle %d, row: %s", idx+1, rowsLen, h, rowStr)
 		}
 		rowUnchanged, err1 := types.EqualDatums(sc, oldRow, row)
 		if err1 != nil {

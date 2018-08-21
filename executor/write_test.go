@@ -763,7 +763,7 @@ func (s *testSuite) TestReplaceLog(c *C) {
 
 	_, err = tk.Exec(`replace into testLog values (0, 0), (1, 1);`)
 	c.Assert(err, NotNil)
-	expErr := errors.New(`[replace] the 2th of total 2 rows, handle 1: [kv:2]Error: key not exist`)
+	expErr := errors.New(`[replace] the 2th of total 2 rows, handle 1, row: (1, 1): [kv:2]Error: key not exist`)
 	c.Assert(expErr.Error() == err.Error(), IsTrue, Commentf("obtained error: (%s)\nexpected error: (%s)", err.Error(), expErr.Error()))
 }
 
