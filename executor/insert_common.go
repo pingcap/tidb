@@ -180,7 +180,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	}
 	if types.ErrTruncated.Equal(err) {
 		valStr, _ := val.ToString()
-		return table.ErrTruncatedWrongValueForField.GenByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
+		return table.ErrTruncatedWrongValueForField.GenByArgs(types.TypeToStrForErr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}
 	return e.filterErr(err)
 }

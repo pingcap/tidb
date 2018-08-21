@@ -87,7 +87,7 @@ func IsTemporalWithDate(tp byte) bool {
 // IsBinaryStr returns a boolean indicating
 // whether the field type is a binary string type.
 func IsBinaryStr(ft *FieldType) bool {
-	if ft.Collate == charset.CollationBin && IsString(ft) {
+	if ft.Collate == charset.CollationBin && IsString(ft.Tp) {
 		return true
 	}
 	return false
@@ -96,7 +96,7 @@ func IsBinaryStr(ft *FieldType) bool {
 // IsNonBinaryStr returns a boolean indicating
 // whether the field type is a non-binary string type.
 func IsNonBinaryStr(ft *FieldType) bool {
-	if ft.Collate != charset.CollationBin && IsString(ft) {
+	if ft.Collate != charset.CollationBin && IsString(ft.Tp) {
 		return true
 	}
 	return false
@@ -104,8 +104,8 @@ func IsNonBinaryStr(ft *FieldType) bool {
 
 // IsString returns a boolean indicating
 // whether the field type is a string type.
-func IsString(ft *FieldType) bool {
-	return IsTypeChar(ft.Tp) || IsTypeBlob(ft.Tp) || IsTypeVarchar(ft.Tp) || IsTypeUnspecified(ft.Tp)
+func IsString(tp byte) bool {
+	return IsTypeChar(tp) || IsTypeBlob(tp) || IsTypeVarchar(tp) || IsTypeUnspecified(tp)
 }
 
 var type2Str = map[byte]string{
@@ -185,6 +185,15 @@ func TypeToStr(tp byte, cs string) (r string) {
 		ts = strings.Replace(ts, "text", "blob", 1)
 	} else if IsTypeChar(tp) {
 		ts = strings.Replace(ts, "char", "binary", 1)
+	}
+	return ts
+}
+
+// TypeToStrForErr converts a field to a string for the error messages.
+func TypeToStrForErr(tp byte) string {
+	ts := type2Str[tp]
+	if tp == mysql.TypeLong {
+		ts = strings.Replace(ts, "int", "integer", 1)
 	}
 	return ts
 }
