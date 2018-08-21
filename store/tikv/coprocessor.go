@@ -599,6 +599,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			Priority:       kvPriorityToCommandPri(worker.req.Priority),
 			NotFillCache:   worker.req.NotFillCache,
 			HandleTime:     true,
+			ScanDetail:     true,
 		},
 	}
 	startTime := time.Now()
