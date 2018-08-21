@@ -1723,6 +1723,9 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 
 	// test check order. The sql below have 2 problem: 1. ErrFieldTypeNotAllowedAsPartitionField  2. ErrPartitionMaxvalue , mysql will return ErrPartitionMaxvalue.
 	s.testErrorCode(c, `create TABLE t25 (c1 float) partition by range( c1 ) (partition p1 values less than maxvalue,partition p0 values less than (2000));`, tmysql.ErrPartitionMaxvalue)
+
+	// Fix issue 7362.
+	s.tk.MustExec("create table test_partition(id bigint, name varchar(255), primary key(id)) ENGINE=InnoDB DEFAULT CHARSET=utf8 PARTITION BY RANGE  COLUMNS(id) (PARTITION p1 VALUES LESS THAN (10) ENGINE = InnoDB);")
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
@@ -1757,7 +1760,7 @@ func (s *testDBSuite) TestTableDDLWithTimeType(c *C) {
 	s.testErrorCode(c, "alter table t change column a aa time(7)", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "alter table t change column a aa datetime(7)", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "alter table t change column a aa timestamp(7)", tmysql.ErrTooBigPrecision)
-	s.mustExec(c, "alter table t change column a aa timestamp(0)")
+	s.mustExec(c, "alter table t change column a aa datetime(0)")
 	s.mustExec(c, "drop table t")
 }
 
@@ -2303,7 +2306,7 @@ func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bo
 	tbl := ctx.tbl
 	curVer, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl)
+	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.(table.PhysicalTable))
 	c.Assert(err, IsNil)
 	return maxID, emptyTable
 }
@@ -3119,10 +3122,91 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	s.testErrorCode(c, sql8, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 }
 
+func (s *testDBSuite) TestPartitionDropIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	done := make(chan error, 1)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
+	s.tk.MustExec("drop table if exists partition_drop_idx;")
+	s.tk.MustExec(`create table partition_drop_idx (
+		c1 int, c2 int, c3 int
+	)
+	partition by range( c1 ) (
+    	partition p0 values less than (3),
+    	partition p1 values less than (5),
+    	partition p2 values less than (7),
+    	partition p3 values less than (11),
+    	partition p4 values less than (15),
+    	partition p5 values less than (20),
+		partition p6 values less than (maxvalue)
+   	);`)
+
+	num := 20
+	for i := 0; i < num; i++ {
+		s.mustExec(c, "insert into partition_drop_idx values (?, ?, ?)", i, i, i)
+	}
+	s.tk.MustExec("alter table partition_drop_idx add index idx1 (c1)")
+
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("partition_drop_idx"))
+	c.Assert(err, IsNil)
+
+	var idx1 table.Index
+	for _, pidx := range t.Indices() {
+		if pidx.Meta().Name.L == "idx1" {
+			idx1 = pidx
+			break
+		}
+	}
+	c.Assert(idx1, NotNil)
+
+	sessionExecInGoroutine(c, s.store, "drop index idx1 on partition_drop_idx;", done)
+	ticker := time.NewTicker(s.lease / 2)
+	defer ticker.Stop()
+LOOP:
+	for {
+		select {
+		case err = <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+		case <-ticker.C:
+			step := 10
+			rand.Seed(time.Now().Unix())
+			for i := num; i < num+step; i++ {
+				n := rand.Intn(num)
+				s.mustExec(c, "update partition_drop_idx set c2 = 1 where c1 = ?", n)
+				s.mustExec(c, "insert into partition_drop_idx values (?, ?, ?)", i, i, i)
+			}
+			num += step
+		}
+	}
+
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("partition_drop_idx"))
+	c.Assert(err, IsNil)
+	// Only one partition id test is taken here.
+	pid := t.Meta().Partition.Definitions[0].ID
+	var idxn table.Index
+	t.Indices()
+	for _, idx := range t.Indices() {
+		if idx.Meta().Name.L == "idx1" {
+			idxn = idx
+			break
+		}
+	}
+	c.Assert(idxn, IsNil)
+	idx := tables.NewIndex(pid, t.Meta(), idx1.Meta())
+	checkDelRangeDone(c, ctx, idx)
+	s.tk.MustExec("drop table partition_drop_idx;")
+}
+
 func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
 	hired date not null
