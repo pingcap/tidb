@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
@@ -1839,7 +1840,9 @@ func (e *ReplaceExec) exec(ctx context.Context, rows [][]types.Datum) (types.Dat
 		oldRow, err1 := e.Table.Row(e.ctx, h)
 		if err1 != nil {
 			rErr := errors.Annotatef(err1, "[replace] the %dth of total %d rows, handle %d", idx+1, rowsLen, h)
-			log.Errorf("%s, row: %v", rErr.Error(), row)
+			rowStr, err := types.DatumsToString(row, true)
+			terror.Log(err)
+			log.Errorf("%s, row: %v", rErr.Error(), rowStr)
 			return nil, rErr
 		}
 		rowUnchanged, err1 := types.EqualDatums(sc, oldRow, row)
