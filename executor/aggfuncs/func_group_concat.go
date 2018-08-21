@@ -82,29 +82,28 @@ func (e *groupConcat) ResetPartialResult(pr PartialResult) {
 
 func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4GroupConcat)(pr)
-	v, isNull := "", false
+	v, isNull, preLen := "", false, 0
 	for _, row := range rowsInGroup {
-		if p.buffer != nil {
+		if p.buffer != nil && p.buffer.Len() != 0 {
+			preLen = p.buffer.Len()
 			p.buffer.WriteString(e.sep)
 		}
-		isAllNull := true
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if isNull {
-				continue
+				break
 			}
-			isAllNull = false
 			if p.buffer == nil {
 				p.buffer = &bytes.Buffer{}
 			}
 			p.buffer.WriteString(v)
 		}
-		if isAllNull {
+		if isNull {
 			if p.buffer != nil {
-				p.buffer.Truncate(p.buffer.Len() - len(e.sep))
+				p.buffer.Truncate(preLen)
 			}
 			continue
 		}
@@ -156,7 +155,6 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	v, isNull := "", false
 	for _, row := range rowsInGroup {
-		allIsNull := true
 		p.valsBuf.Reset()
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
@@ -164,12 +162,11 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 				return errors.Trace(err)
 			}
 			if isNull {
-				continue
+				break
 			}
-			allIsNull = false
 			p.valsBuf.WriteString(v)
 		}
-		if allIsNull {
+		if isNull {
 			continue
 		}
 		joinedVals := p.valsBuf.String()
