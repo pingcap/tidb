@@ -409,6 +409,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 			if idxCol.Name.L == col.Name.L {
 				columns = append(columns, col)
 				schema.Append(&expression.Column{
+					ColName:  col.Name,
 					UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 					RetType:  &col.FieldType,
 				})
@@ -589,12 +590,12 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 		physicalIDs := getPhysicalIDs(tbl.TableInfo)
 		for _, idx := range idxInfo {
 			for _, id := range physicalIDs {
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalID: id, IndexInfo: idx})
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx})
 			}
 		}
 		if len(colInfo) > 0 || pkInfo != nil {
 			for _, id := range physicalIDs {
-				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PhysicalID: id, PKInfo: pkInfo, ColsInfo: colInfo})
+				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{PhysicalTableID: id, PKInfo: pkInfo, ColsInfo: colInfo})
 			}
 		}
 	}
@@ -611,7 +612,7 @@ func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 			return nil, ErrAnalyzeMissIndex.GenByArgs(idxName.O, tblInfo.Name.O)
 		}
 		for _, id := range physicalIDs {
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalID: id, IndexInfo: idx})
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx})
 		}
 	}
 	return p, nil
@@ -624,7 +625,7 @@ func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			for _, id := range physicalIDs {
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalID: id, IndexInfo: idx})
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx})
 			}
 		}
 	}
