@@ -326,13 +326,17 @@ func (s *testSuite) TestAggregation(c *C) {
 	result.Check(testkit.Rows("0 0 0", "1 1 1"))
 
 	tk.MustExec("drop table t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t value(null)")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t value(null, null)")
 	tk.MustQuery("select group_concat(a), group_concat(distinct a) from t").Check(testkit.Rows("<nil> <nil>"))
+	tk.MustExec("insert into t value(1, null), (null, 1), (1, 2), (3, 4)")
+	tk.MustQuery("select group_concat(a, b), group_concat(distinct a,b) from t").Check(testkit.Rows("12,34 12,34"))
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a decimal(10, 4))")
+	tk.MustQuery("select 10 from t group by a").Check(testkit.Rows())
 	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
+	tk.MustQuery("select 10 from t group by a").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
 }
 
