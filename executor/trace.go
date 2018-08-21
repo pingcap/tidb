@@ -15,8 +15,8 @@ package executor
 
 import (
 	"fmt"
-	"time"
 
+	"bytes"
 	"github.com/juju/errors"
 	"github.com/opentracing/basictracer-go"
 	opentracing "github.com/opentracing/opentracing-go"
@@ -89,6 +89,17 @@ func (e *TraceExec) Open(ctx context.Context) error {
 	return nil
 }
 
+func getPrefix(idx int, suffix string, opName string) string {
+	var buf bytes.Buffer
+	for i := 0; i < 2*idx; i++ {
+		buf.WriteString(" ")
+	}
+
+	buf.WriteString(suffix)
+	buf.WriteString(opName)
+	return buf.String()
+}
+
 // Next executes real query and collects span later.
 func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -105,19 +116,47 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	e.rootTrace.LogKV("event", "tracing completed")
 	e.rootTrace.Finish()
-	var timeVal string
-	for i, sp := range e.CollectedSpans {
-		spanStartTime := sp.Start
-		for _, entry := range sp.Logs {
-			chk.AppendString(0, entry.Timestamp.Format(time.RFC3339))
-			timeVal = entry.Timestamp.Sub(spanStartTime).String()
-			chk.AppendString(1, timeVal)
-			chk.AppendString(2, sp.Operation)
-			chk.AppendInt64(3, int64(i))
-			chk.AppendString(4, entry.Fields[0].String())
+	var rootSpan basictracer.RawSpan
+	treeSpans := make(map[uint64][]basictracer.RawSpan)
+	for _, sp := range e.CollectedSpans {
+		if spans, ok := treeSpans[sp.ParentSpanID]; ok {
+			treeSpans[sp.ParentSpanID] = append(spans, sp)
+		} else {
+			treeSpans[sp.ParentSpanID] = make([]basictracer.RawSpan, 0)
+		}
+		if sp.Context.SpanID == 0 {
+			rootSpan = sp
 		}
 	}
-	e.exhausted = true
 
+	// add root span here
+	dfsTree(rootSpan, treeSpans, "", chk)
+	e.exhausted = true
 	return nil
+}
+
+func dfsTree(span basictracer.RawSpan, tree map[uint64][]basictracer.RawSpan, prefix string, chk *chunk.Chunk) {
+	// each span has a operation name, start time and duration.
+	// add two empty string to prefix
+	suffix := ""
+	hasChild := false
+	spans := tree[span.Context.SpanID]
+	if len(spans) > 0 {
+		hasChild = true
+		// prefix += "| "
+		suffix = "├─"
+	} else {
+		suffix = "└─"
+	}
+	fmt.Println("len of spans is ", len(spans))
+	for _, sp := range spans {
+		chk.AppendString(0, prefix+suffix+sp.Operation)
+		chk.AppendString(1, sp.Duration.String())
+		chk.AppendInt64(2, int64(sp.Context.SpanID))
+		if hasChild {
+			dfsTree(sp, tree, prefix+"| ", chk)
+		} else {
+			dfsTree(sp, tree, prefix+"  ", chk)
+		}
+	}
 }

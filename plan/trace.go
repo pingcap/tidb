@@ -27,13 +27,11 @@ func (b *planBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	}
 	p := &Trace{StmtPlan: optimizedP}
 
-	retFields := []string{"timestamp", "duration", "pos", "operation", "event"}
+	retFields := []string{"operation", "duration", "spanID"}
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-	schema.Append(buildColumn("", "timestamp", mysql.TypeString, mysql.MaxBlobWidth))
-	schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
 	schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
-	schema.Append(buildColumn("", "pos", mysql.TypeInt24, mysql.MaxBlobWidth))
-	schema.Append(buildColumn("", "log", mysql.TypeString, mysql.MaxBlobWidth))
+	schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
+	schema.Append(buildColumn("", "spanID", mysql.TypeLong, mysql.MaxBlobWidth))
 	p.SetSchema(schema)
 	return p, nil
 }

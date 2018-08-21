@@ -17,6 +17,7 @@ package tracing
 import (
 	"testing"
 	"context"
+	"fmt"
 )
 
 
@@ -30,7 +31,7 @@ func BenchmarkNoopLogKV(b *testing.B) {
 func BenchmarkNoopLogKVWithF(b *testing.B) {
 	sp := noopSpan()
 	for i := 0; i <  b.N; i++ {
-		sp.LogKV("event", "this is format %s", "noop is finished")
+		sp.LogKV("event", fmt.Sprintf("this is format %s", "noop is finished"))
 	}
 }
 
