@@ -923,9 +923,10 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a decimal(11, 8), b decimal(11,8))")
-	tk.MustExec("insert into t values('114.57011441','38.04620115');")
+	tk.MustExec("insert into t values('114.57011441','38.04620115'), ('-38.04620119', '38.04620115');")
 	result = tk.MustQuery("select a,b,concat_ws(',',a,b) from t")
-	result.Check(testkit.Rows("114.57011441 38.04620115 114.57011441,38.04620115"))
+	result.Check(testkit.Rows("114.57011441 38.04620115 114.57011441,38.04620115",
+		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
