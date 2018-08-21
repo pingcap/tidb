@@ -3167,7 +3167,7 @@ func (s *testDBSuite) TestPartitionDropIndex(c *C) {
 LOOP:
 	for {
 		select {
-		case err := <-done:
+		case err = <-done:
 			if err == nil {
 				break LOOP
 			}
