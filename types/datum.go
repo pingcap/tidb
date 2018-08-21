@@ -25,6 +25,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
@@ -1855,6 +1856,14 @@ func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 		strs[size-1] = strs[size-1] + ")"
 	}
 	return strings.Join(strs, ", "), nil
+}
+
+// DatumsToStrNoErr converts some datums to a formatted string.
+// If an error occurs, it will print a log instead of returning an error.
+func DatumsToStrNoErr(datums []Datum) string {
+	str, err := DatumsToString(datums, true)
+	terror.Log(errors.Trace(err))
+	return str
 }
 
 // CopyDatum returns a new copy of the datum.
