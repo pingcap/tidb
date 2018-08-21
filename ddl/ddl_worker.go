@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
@@ -62,6 +63,8 @@ type worker struct {
 	quitCh   chan struct{}
 	wg       sync.WaitGroup
 
+	// ctxPool is used to new sessions to execute SQL in ddl package.
+	ctxPool         *pools.ResourcePool
 	reorgCtx        *reorgCtx // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 }
@@ -73,6 +76,7 @@ func newWorker(tp workerType, store kv.Storage, ctxPool *pools.ResourcePool) *wo
 		ddlJobCh: make(chan struct{}, 1),
 		quitCh:   make(chan struct{}),
 		reorgCtx: &reorgCtx{notifyCancelReorgJob: 0},
+		ctxPool:  ctxPool,
 	}
 
 	if ctxPool != nil {
@@ -106,6 +110,25 @@ func (w *worker) close() {
 	w.delRangeManager.clear()
 	w.wg.Wait()
 	log.Infof("[ddl-%s] close DDL worker", w)
+}
+
+// getSessionCtx get sessionctx from context resource pool.
+// Please remember to call putSessionCtx after you getting the sessionctx.
+func (w *worker) getSessionCtx() (sessionctx.Context, error) {
+	resource, err := w.ctxPool.Get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ctx := resource.(sessionctx.Context)
+	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
+	ctx.GetSessionVars().InRestrictedSQL = true
+	return ctx, nil
+}
+
+// putSessionCtx return sessionctx to context resource pool.
+func (w *worker) putSessionCtx(ctx sessionctx.Context) {
+	w.ctxPool.Put(ctx.(pools.Resource))
 }
 
 // start is used for async online schema changing, it will try to become the owner firstly,
