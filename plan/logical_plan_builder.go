@@ -854,6 +854,8 @@ func matchField(f *ast.SelectField, col *ast.ColumnNameExpr, ignoreAsName bool) 
 		if f.AsName.L == "" || ignoreAsName {
 			if curCol, isCol := f.Expr.(*ast.ColumnNameExpr); isCol {
 				return curCol.Name.Name.L == col.Name.Name.L
+			} else if _, isFunc := f.Expr.(*ast.FuncCallExpr); isFunc {
+				return strings.ToLower(f.Text()) == col.Name.Name.L
 			}
 			// a expression without as name can't be matched.
 			return false
