@@ -163,23 +163,31 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 func (c *Chunk) AppendPartialRows(colIdx int, rowIt Iterator, maxLen int) int {
 	oldRowLen := c.columns[colIdx+0].length
 	columns := rowIt.Current().c.columns
-	for i, rowCol := range columns {
-		chkCol := c.columns[colIdx+i]
-		rower := rowIt
-		if i != 0 {
-			rower.PreRows(c.columns[colIdx+0].length - oldRowLen)
+	rowsCap := 32
+	rows := make([]Row, 0, rowsCap)
+	for row, j := rowIt.Current(), 0; j < maxLen && row != rowIt.End(); row, j = rowIt.Next(), j+1 {
+		rows = append(rows, row)
+		if j%rowsCap == 0 {
+			appendPartialRows(colIdx, rows, c, columns)
+			rows = rows[:0]
 		}
+	}
+	appendPartialRows(colIdx, rows, c, columns)
+	return c.columns[colIdx+0].length - oldRowLen
+}
 
-		if rowCol.isFixed() {
-			elemLen := len(rowCol.elemBuf)
-			for row, j := rower.Current(), 0; j < maxLen && row != rower.End(); row, j = rower.Next(), j+1 {
+func appendPartialRows(colIdx int, rows []Row, chk *Chunk, columns []*column) {
+	for _, row := range rows {
+		for i, rowCol := range columns {
+			chkCol := chk.columns[colIdx+i]
+
+			if rowCol.isFixed() {
+				elemLen := len(rowCol.elemBuf)
 				chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
 				offset := row.idx * elemLen
 				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
 				chkCol.length++
-			}
-		} else {
-			for row, j := rower.Current(), 0; j < maxLen && row != rower.End(); row, j = rower.Next(), j+1 {
+			} else {
 				chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
 				start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
 				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
@@ -188,7 +196,6 @@ func (c *Chunk) AppendPartialRows(colIdx int, rowIt Iterator, maxLen int) int {
 			}
 		}
 	}
-	return c.columns[colIdx+0].length - oldRowLen
 }
 
 func (c *Chunk) AppendPartialSameRows(colIdx int, row Row, rowsLen int) {
