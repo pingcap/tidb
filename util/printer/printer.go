@@ -60,14 +60,16 @@ func GetTiDBInfo() string {
 		"UTC Build Time: %s\n"+
 		"GoVersion: %s\n"+
 		"Race Enabled: %v\n"+
-		"TiKV Min Version: %s",
+		"TiKV Min Version: %s\n"+
+		"Check Table Before Drop: %v",
 		mysql.TiDBReleaseVersion,
 		TiDBGitHash,
 		TiDBGitBranch,
 		TiDBBuildTS,
 		GoVersion,
 		israce.RaceEnabled,
-		TiKVMinVersion)
+		TiKVMinVersion,
+		config.CheckTableBeforeDrop)
 }
 
 // checkValidity checks whether cols and every data have the same length.
