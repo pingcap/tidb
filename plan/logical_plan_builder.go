@@ -856,8 +856,8 @@ func matchField(f *ast.SelectField, col *ast.ColumnNameExpr, ignoreAsName bool) 
 				return curCol.Name.Name.L == col.Name.Name.L
 			} else if _, isFunc := f.Expr.(*ast.FuncCallExpr); isFunc {
 				// Fix issue 7331
-				// If ther are some function call in SelectField, we
-				// check if ColNameExpr in GroupByClause match these FunctionCallExpr
+				// If there are some function call in SelectField, we
+				// check if ColumnNameExpr in GroupByClause match these FunctionCallExpr
 				// Example: select concat(k1, k2) from t group by `concat(k1,k2)`,
 				// `concat(k1,k2)` matches FunctionCallExpr: concat(k1, k2)
 				return strings.ToLower(f.Text()) == col.Name.Name.L
