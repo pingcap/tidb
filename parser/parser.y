@@ -380,6 +380,7 @@ import (
 	some 		"SOME"
 	global		"GLOBAL"
 	tables		"TABLES"
+	tablespace	"TABLESPACE"
 	temporary	"TEMPORARY"
 	temptable	"TEMPTABLE"
 	textType	"TEXT"
@@ -681,9 +682,10 @@ import (
 	PartitionDefinitionListOpt	"Partition definition list option"
 	PartitionOpt			"Partition option"
 	PartitionNumOpt			"PARTITION NUM option"
-	PartDefCommentOpt		"Partition comment"
 	PartDefValuesOpt		"VALUES {LESS THAN {(expr | value_list) | MAXVALUE} | IN {value_list}"
-	PartDefStorageOpt		"ENGINE = xxx or empty"
+	PartDefOptionsOpt		"PartDefOptionList option"
+	PartDefOptionList		"PartDefOption list"
+	PartDefOption			"COMMENT [=] xxx | TABLESPACE [=] tablespace_name | ENGINE [=] xxx"
 	PasswordOpt			"Password option"
 	ColumnPosition			"Column position [First|After ColumnName]"
 	PrepareSQL			"Prepare statement sql string"
@@ -1845,11 +1847,10 @@ PartitionDefinitionList:
 	}
 
 PartitionDefinition:
-	"PARTITION" Identifier PartDefValuesOpt PartDefCommentOpt PartDefStorageOpt
+	"PARTITION" Identifier PartDefValuesOpt PartDefOptionsOpt
 	{
 		partDef := &ast.PartitionDefinition{
 			Name: model.NewCIStr($2),
-			Comment: $4.(string),
 		}
 		switch $3.(type) {
 		case []ast.ExprNode:
@@ -1858,17 +1859,50 @@ PartitionDefinition:
 			partDef.LessThan = make([]ast.ExprNode, 1)
 			partDef.LessThan[0] = $3.(ast.ExprNode)
 		}
+
+		if comment, ok := $4.(string); ok {
+			partDef.Comment = comment
+		}
 		$$ = partDef
 	}
 
-PartDefCommentOpt:
+PartDefOptionsOpt:
 	{
-		$$ = ""
+		$$ = nil
 	}
-|	"COMMENT" eq stringLit
+|	PartDefOptionList
+	{
+		$$ = $1
+	}
+
+PartDefOptionList:
+	PartDefOption
+	{
+		$$ = $1
+	}
+|	PartDefOptionList PartDefOption
+	{
+		if $1 != nil {
+			$$ = $1
+		} else {
+			$$ = $2
+		}
+	}
+
+PartDefOption:
+	"COMMENT" EqOpt stringLit
 	{
 		$$ = $3
 	}
+|	"ENGINE" EqOpt Identifier
+	{
+		$$ = nil
+	}
+|	"TABLESPACE" EqOpt Identifier
+	{
+		$$ =  nil
+	}
+
 
 PartDefValuesOpt:
 	{
@@ -1882,11 +1916,6 @@ PartDefValuesOpt:
 	{
 		$$ = $5
 	}
-
-PartDefStorageOpt:
-	{}
-|	"ENGINE" eq Identifier
-	{}
 
 DuplicateOpt:
 	{
@@ -2751,7 +2780,7 @@ UnReservedKeyword:
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ERRORS" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
-| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken | "TIMESTAMP" %prec lowerThanStringLitToken
+| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TABLESPACE" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken | "TIMESTAMP" %prec lowerThanStringLitToken
 | "TRACE" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MASTER" | "MAX_ROWS"
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
