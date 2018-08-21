@@ -854,6 +854,13 @@ func matchField(f *ast.SelectField, col *ast.ColumnNameExpr, ignoreAsName bool) 
 		if f.AsName.L == "" || ignoreAsName {
 			if curCol, isCol := f.Expr.(*ast.ColumnNameExpr); isCol {
 				return curCol.Name.Name.L == col.Name.Name.L
+			} else if _, isFunc := f.Expr.(*ast.FuncCallExpr); isFunc {
+				// Fix issue 7331
+				// If there are some function calls in SelectField, we check if
+				// ColumnNameExpr in GroupByClause matches one of these function calls.
+				// Example: select concat(k1,k2) from t group by `concat(k1,k2)`,
+				// `concat(k1,k2)` matches with function call concat(k1, k2).
+				return strings.ToLower(f.Text()) == col.Name.Name.L
 			}
 			// a expression without as name can't be matched.
 			return false
