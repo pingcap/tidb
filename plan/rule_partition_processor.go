@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
 )
 
 // partitionProcessor rewrites the ast for table partition.

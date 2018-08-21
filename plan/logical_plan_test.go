@@ -1182,6 +1182,14 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "select a from t having sum(avg(a))",
 			err: ErrInvalidGroupFuncUse,
 		},
+		{
+			sql: "select concat(c_str, d_str) from t group by `concat(c_str, d_str)`",
+			err: nil,
+		},
+		{
+			sql: "select concat(c_str, d_str) from t group by `concat(c_str,d_str)`",
+			err: ErrUnknownColumn,
+		},
 	}
 	for _, tt := range tests {
 		sql := tt.sql
