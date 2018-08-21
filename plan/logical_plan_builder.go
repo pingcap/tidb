@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -1719,15 +1720,20 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 // 1. tidb-server started and statistics handle has not been initialized.
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
-func (b *planBuilder) getStatsTable(tblInfo *model.TableInfo) *statistics.Table {
-	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) *statistics.Table {
+	statsHandle := domain.GetDomain(ctx).StatsHandle()
 
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
 		return statistics.PseudoTable(tblInfo)
 	}
 
-	statsTbl := statsHandle.GetTableStats(tblInfo)
+	var statsTbl *statistics.Table
+	if pid != tblInfo.ID {
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+	} else {
+		statsTbl = statsHandle.GetTableStats(tblInfo)
+	}
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.Count == 0 {
@@ -1773,12 +1779,16 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	} else {
 		columns = tbl.Cols()
 	}
+	var statisticTable *statistics.Table
+	if _, ok := tbl.(table.PartitionedTable); !ok {
+		statisticTable = getStatsTable(b.ctx, tbl.Meta(), tbl.Meta().ID)
+	}
 
 	ds := DataSource{
 		DBName:              dbName,
 		table:               tbl,
 		tableInfo:           tableInfo,
-		statisticTable:      b.getStatsTable(tableInfo),
+		statisticTable:      statisticTable,
 		indexHints:          tn.IndexHints,
 		possibleAccessPaths: possiblePaths,
 		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
@@ -1915,35 +1925,6 @@ func (b *planBuilder) buildSemiApply(outerPlan, innerPlan LogicalPlan, condition
 	ap.tp = TypeApply
 	ap.self = ap
 	return ap, nil
-}
-
-func (b *planBuilder) buildExists(p LogicalPlan) LogicalPlan {
-out:
-	for {
-		switch plan := p.(type) {
-		// This can be removed when in exists clause,
-		// e.g. exists(select count(*) from t order by a) is equal to exists t.
-		case *LogicalProjection, *LogicalSort:
-			p = p.Children()[0]
-		case *LogicalAggregation:
-			if len(plan.GroupByItems) == 0 {
-				p = b.buildTableDual()
-				break out
-			}
-			p = p.Children()[0]
-		default:
-			break out
-		}
-	}
-	exists := LogicalExists{}.init(b.ctx)
-	exists.SetChildren(p)
-	newCol := &expression.Column{
-		RetType:  types.NewFieldType(mysql.TypeTiny),
-		ColName:  model.NewCIStr("exists_col"),
-		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-	}
-	exists.SetSchema(expression.NewSchema(newCol))
-	return exists
 }
 
 func (b *planBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {

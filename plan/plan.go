@@ -289,7 +289,7 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	switch p.self.(type) {
 	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection, *LogicalApply, *LogicalProjection:
 		p.maxOneRow = p.children[0].MaxOneRow()
-	case *LogicalMaxOneRow, *LogicalExists:
+	case *LogicalMaxOneRow:
 		p.maxOneRow = true
 	}
 }

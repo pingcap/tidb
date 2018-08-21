@@ -377,6 +377,29 @@ func (h *rpcHandler) handleKvRawGet(req *kvrpcpb.RawGetRequest) *kvrpcpb.RawGetR
 	}
 }
 
+func (h *rpcHandler) handleKvRawBatchGet(req *kvrpcpb.RawBatchGetRequest) *kvrpcpb.RawBatchGetResponse {
+	rawKV, ok := h.mvccStore.(RawKV)
+	if !ok {
+		// TODO should we add error ?
+		return &kvrpcpb.RawBatchGetResponse{
+			RegionError: &errorpb.Error{
+				Message: "not implemented",
+			},
+		}
+	}
+	values := rawKV.RawBatchGet(req.Keys)
+	kvPairs := make([]*kvrpcpb.KvPair, len(values))
+	for i, key := range req.Keys {
+		kvPairs[i] = &kvrpcpb.KvPair{
+			Key:   key,
+			Value: values[i],
+		}
+	}
+	return &kvrpcpb.RawBatchGetResponse{
+		Pairs: kvPairs,
+	}
+}
+
 func (h *rpcHandler) handleKvRawPut(req *kvrpcpb.RawPutRequest) *kvrpcpb.RawPutResponse {
 	rawKV, ok := h.mvccStore.(RawKV)
 	if !ok {
@@ -414,6 +437,17 @@ func (h *rpcHandler) handleKvRawDelete(req *kvrpcpb.RawDeleteRequest) *kvrpcpb.R
 	}
 	rawKV.RawDelete(req.GetKey())
 	return &kvrpcpb.RawDeleteResponse{}
+}
+
+func (h *rpcHandler) handleKvRawBatchDelete(req *kvrpcpb.RawBatchDeleteRequest) *kvrpcpb.RawBatchDeleteResponse {
+	rawKV, ok := h.mvccStore.(RawKV)
+	if !ok {
+		return &kvrpcpb.RawBatchDeleteResponse{
+			Error: "not implemented",
+		}
+	}
+	rawKV.RawBatchDelete(req.Keys)
+	return &kvrpcpb.RawBatchDeleteResponse{}
 }
 
 func (h *rpcHandler) handleKvRawDeleteRange(req *kvrpcpb.RawDeleteRangeRequest) *kvrpcpb.RawDeleteRangeResponse {
@@ -625,6 +659,13 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.RawGet = handler.handleKvRawGet(r)
+	case tikvrpc.CmdRawBatchGet:
+		r := req.RawBatchGet
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.RawBatchGet = &kvrpcpb.RawBatchGetResponse{RegionError: err}
+			return resp, nil
+		}
+		resp.RawBatchGet = handler.handleKvRawBatchGet(r)
 	case tikvrpc.CmdRawPut:
 		r := req.RawPut
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
@@ -646,6 +687,12 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			return resp, nil
 		}
 		resp.RawDelete = handler.handleKvRawDelete(r)
+	case tikvrpc.CmdRawBatchDelete:
+		r := req.RawBatchDelete
+		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {
+			resp.RawBatchDelete = &kvrpcpb.RawBatchDeleteResponse{RegionError: err}
+		}
+		resp.RawBatchDelete = handler.handleKvRawBatchDelete(r)
 	case tikvrpc.CmdRawDeleteRange:
 		r := req.RawDeleteRange
 		if err := handler.checkRequest(reqCtx, r.Size()); err != nil {

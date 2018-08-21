@@ -245,7 +245,7 @@ func (bj BinaryJSON) marshalArrayTo(buf []byte) ([]byte, error) {
 	buf = append(buf, '[')
 	for i := 0; i < elemCount; i++ {
 		if i != 0 {
-			buf = append(buf, ',')
+			buf = append(buf, ", "...)
 		}
 		var err error
 		buf, err = bj.arrayGetElem(i).marshalTo(buf)
@@ -261,10 +261,10 @@ func (bj BinaryJSON) marshalObjTo(buf []byte) ([]byte, error) {
 	buf = append(buf, '{')
 	for i := 0; i < elemCount; i++ {
 		if i != 0 {
-			buf = append(buf, ',')
+			buf = append(buf, ", "...)
 		}
 		buf = marshalStringTo(buf, bj.objectGetKey(i))
-		buf = append(buf, ':')
+		buf = append(buf, ": "...)
 		var err error
 		buf, err = bj.objectGetVal(i).marshalTo(buf)
 		if err != nil {

@@ -35,7 +35,6 @@ var (
 	_ LogicalPlan = &LogicalProjection{}
 	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
-	_ LogicalPlan = &LogicalExists{}
 	_ LogicalPlan = &LogicalMaxOneRow{}
 	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
@@ -257,11 +256,6 @@ func (la *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// LogicalExists checks if a query returns result.
-type LogicalExists struct {
-	logicalSchemaProducer
-}
-
 // LogicalMaxOneRow checks if a query returns no more than one row.
 type LogicalMaxOneRow struct {
 	baseLogicalPlan
@@ -307,8 +301,8 @@ type DataSource struct {
 	possibleAccessPaths []*accessPath
 
 	// The data source may be a partition, rather than a real table.
-	isPartition bool
-	partitionID int64
+	isPartition     bool
+	physicalTableID int64
 }
 
 // accessPath tells how we access one index or just access table.
@@ -393,6 +387,11 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 		return false, errors.Trace(err)
 	}
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
+	// If the `countAfterAccess` is less than `stats.count`, there must be some inconsistent stats info.
+	// We prefer the `stats.count` because it could use more stats info to calculate the selectivity.
+	if path.countAfterAccess < ds.stats.count {
+		path.countAfterAccess = math.Min(ds.stats.count/selectionFactor, float64(ds.statisticTable.Count))
+	}
 	// Check whether the primary key is covered by point query.
 	noIntervalRange := true
 	for _, ran := range path.ranges {
@@ -442,6 +441,11 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		} else {
 			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
 		}
+	}
+	// If the `countAfterAccess` is less than `stats.count`, there must be some inconsistent stats info.
+	// We prefer the `stats.count` because it could use more stats info to calculate the selectivity.
+	if path.countAfterAccess < ds.stats.count {
+		path.countAfterAccess = math.Min(ds.stats.count/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
 		selectivity, err := ds.statisticTable.Selectivity(ds.ctx, path.indexFilters)

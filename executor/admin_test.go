@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -100,6 +101,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
+	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 	_, err = tk.Exec("admin check index admin_test c2")
 	c.Assert(err, NotNil)
 
@@ -459,4 +461,27 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into test values (%d, %d);", i, i))
 	}
 	tk.MustExec(`admin check table test;`)
+
+	// Test prefix index.
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (
+  			ID CHAR(32) NOT NULL,
+  			name CHAR(32) NOT NULL,
+  			value CHAR(255),
+  			INDEX indexIDname (ID(8),name(8)));`)
+	tk.MustExec(`INSERT INTO t VALUES ('keyword','urlprefix','text/ /text');`)
+	tk.MustExec(`admin check table t;`)
+
+	tk.MustExec("use mysql")
+	tk.MustExec(`admin check table test.t;`)
+	_, err := tk.Exec("admin check table t")
+	c.Assert(err, NotNil)
+}
+
+func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
+	tk.MustExec("insert into t values(1, 1, 1), (9223372036854775807, 2, 2);")
+	tk.MustExec("admin check index t idx;")
 }

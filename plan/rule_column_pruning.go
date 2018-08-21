@@ -121,7 +121,7 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) {
 		if len(cols) == 0 {
 			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
 		} else {
-			parentUsedCols = append(parentUsedCols, expression.ExtractColumns(ls.ByItems[i].Expr)...)
+			parentUsedCols = append(parentUsedCols, cols...)
 		}
 	}
 	child.PruneColumns(parentUsedCols)
@@ -162,11 +162,6 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		ds.schema.Append(ds.newExtraHandleSchemaCol())
 	}
-}
-
-// PruneColumns implements LogicalPlan interface.
-func (p *LogicalExists) PruneColumns(parentUsedCols []*expression.Column) {
-	p.children[0].PruneColumns(nil)
 }
 
 func (p *LogicalJoin) extractUsedCols(parentUsedCols []*expression.Column) (leftCols []*expression.Column, rightCols []*expression.Column) {
