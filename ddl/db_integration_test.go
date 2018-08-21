@@ -72,11 +72,11 @@ func (s *testIntegrationSuite) TestInvalidDefault(c *C) {
 
 	_, err := tk.Exec("create table t(c1 decimal default 1.7976931348623157E308)")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("create table t( c1 varchar(2) default 'TiDB');")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrInvalidDefault), IsTrue, Commentf("err %v", err))
 }
 
 // for issue #3848
@@ -87,15 +87,15 @@ func (s *testIntegrationSuite) TestInvalidNameWhenCreateTable(c *C) {
 
 	_, err := tk.Exec("create table t(xxx.t.a bigint)")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("create table t(test.tttt.a bigint)")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongTableName), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongTableName), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("create table t(t.tttt.a bigint)")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongDBName), IsTrue, Commentf("err %v", err))
 }
 
 // for issue #6879
@@ -112,7 +112,7 @@ func (s *testIntegrationSuite) TestCreateTableIfNotExists(c *C) {
 	warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(len(warnings), GreaterEqual, 1)
 	lastWarn := warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), IsTrue)
+	c.Assert(terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 	c.Assert(lastWarn.Level, Equals, stmtctx.WarnLevelNote)
 
 	// Test duplicate create-table without `LIKE` clause
@@ -121,6 +121,22 @@ func (s *testIntegrationSuite) TestCreateTableIfNotExists(c *C) {
 	c.Assert(len(warnings), GreaterEqual, 1)
 	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(infoschema.ErrTableExists, lastWarn.Err), IsTrue)
+}
+
+func (s *testIntegrationSuite) TestUniquekeyNullValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("USE test")
+
+	tk.MustExec("create table t(a int primary key, b varchar(255))")
+
+	tk.MustExec("insert into t values(1, NULL)")
+	tk.MustExec("insert into t values(2, NULL)")
+	tk.MustExec("alter table t add unique index b(b);")
+	res := tk.MustQuery("select count(*) from t use index(b);")
+	res.Check(testkit.Rows("2"))
+	tk.MustExec("admin check table t")
+	tk.MustExec("admin check index t b")
 }
 
 func (s *testIntegrationSuite) TestEndIncluded(c *C) {

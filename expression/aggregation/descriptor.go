@@ -23,6 +23,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -77,6 +78,53 @@ func (a *AggFuncDesc) Clone() *AggFuncDesc {
 		clone.Args[i] = a.Args[i].Clone()
 	}
 	return &clone
+}
+
+// Split splits `a` into two aggregate descriptors for partial phase and
+// final phase individually.
+// This function is only used when executing aggregate function parallelly.
+// ordinal indicates the column ordinal of the intermediate result.
+func (a *AggFuncDesc) Split(ordinal []int) (finalAggDesc *AggFuncDesc) {
+	if a.Mode == CompleteMode {
+		a.Mode = Partial1Mode
+	} else if a.Mode == FinalMode {
+		a.Mode = Partial2Mode
+	} else {
+		return
+	}
+	finalAggDesc = &AggFuncDesc{
+		Name:        a.Name,
+		Mode:        FinalMode, // We only support FinalMode now in final phase.
+		HasDistinct: a.HasDistinct,
+		RetTp:       a.RetTp,
+	}
+	switch a.Name {
+	case ast.AggFuncAvg:
+		args := make([]expression.Expression, 0, 2)
+		args = append(args, &expression.Column{
+			ColName: model.NewCIStr(fmt.Sprintf("avg_final_col_%d", ordinal[0])),
+			Index:   ordinal[0],
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		})
+		args = append(args, &expression.Column{
+			ColName: model.NewCIStr(fmt.Sprintf("avg_final_col_%d", ordinal[1])),
+			Index:   ordinal[1],
+			RetType: a.RetTp,
+		})
+		finalAggDesc.Args = args
+	default:
+		args := make([]expression.Expression, 0, 1)
+		args = append(args, &expression.Column{
+			ColName: model.NewCIStr(fmt.Sprintf("%s_final_col_%d", a.Name, ordinal[0])),
+			Index:   ordinal[0],
+			RetType: a.RetTp,
+		})
+		finalAggDesc.Args = args
+		if finalAggDesc.Name == ast.AggFuncGroupConcat {
+			finalAggDesc.Args = append(finalAggDesc.Args, a.Args[len(a.Args)-1]) // separator
+		}
+	}
+	return finalAggDesc
 }
 
 // String implements the fmt.Stringer interface.
@@ -162,6 +210,35 @@ func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx sessionctx.Context, schema *e
 	default:
 		panic("unsupported agg function")
 	}
+}
+
+// GetDefaultValue gets the default value when the aggregation function's input is null.
+// According to MySQL, default values of the aggregation function are listed as follows:
+// e.g.
+// Table t which is empty:
+// +-------+---------+---------+
+// | Table | Field   | Type    |
+// +-------+---------+---------+
+// | t     | a       | int(11) |
+// +-------+---------+---------+
+//
+// Query: `select a, avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a) from t;`
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// | a    | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) |
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// | NULL |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |
+// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+func (a *AggFuncDesc) GetDefaultValue() (v types.Datum) {
+	switch a.Name {
+	case ast.AggFuncCount, ast.AggFuncBitOr, ast.AggFuncBitXor:
+		v = types.NewIntDatum(0)
+	case ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMax,
+		ast.AggFuncMin, ast.AggFuncGroupConcat:
+		v = types.Datum{}
+	case ast.AggFuncBitAnd:
+		v = types.NewUintDatum(uint64(math.MaxUint64))
+	}
+	return
 }
 
 // GetAggFunc gets an evaluator according to the aggregation function signature.

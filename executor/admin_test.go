@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -100,6 +101,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
+	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 	_, err = tk.Exec("admin check index admin_test c2")
 	c.Assert(err, NotNil)
 
@@ -252,11 +254,17 @@ func (s *testSuite) TestAdminCleanupIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(6), 100)
 	c.Assert(err, IsNil)
+	_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(8), 100)
+	c.Assert(err, IsNil)
 	_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(nil), 101)
+	c.Assert(err, IsNil)
+	_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(nil), 102)
 	c.Assert(err, IsNil)
 	_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(6), 200)
 	c.Assert(err, IsNil)
 	_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(6), -200)
+	c.Assert(err, IsNil)
+	_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(8), -200)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -266,9 +274,9 @@ func (s *testSuite) TestAdminCleanupIndex(c *C) {
 	_, err = tk.Exec("admin check index admin_test c2")
 	c.Assert(err, NotNil)
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
-	r.Check(testkit.Rows("9"))
+	r.Check(testkit.Rows("11"))
 	r = tk.MustQuery("admin cleanup index admin_test c2")
-	r.Check(testkit.Rows("3"))
+	r.Check(testkit.Rows("5"))
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
 	r.Check(testkit.Rows("6"))
 	tk.MustExec("admin check index admin_test c2")
@@ -278,9 +286,9 @@ func (s *testSuite) TestAdminCleanupIndex(c *C) {
 	_, err = tk.Exec("admin check index admin_test c3")
 	c.Assert(err, NotNil)
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c3)")
-	r.Check(testkit.Rows("8"))
+	r.Check(testkit.Rows("9"))
 	r = tk.MustQuery("admin cleanup index admin_test c3")
-	r.Check(testkit.Rows("2"))
+	r.Check(testkit.Rows("3"))
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c3)")
 	r.Check(testkit.Rows("6"))
 	tk.MustExec("admin check index admin_test c3")
@@ -459,4 +467,26 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`create table test ( b json , c int as (JSON_EXTRACT(b,'$.d')) , index idxc(c));`)
 	tk.MustExec(`INSERT INTO test set b='{"d": 100}';`)
 	tk.MustExec(`admin check table test;`)
+	// Test prefix index.
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (
+  			ID CHAR(32) NOT NULL,
+  			name CHAR(32) NOT NULL,
+  			value CHAR(255),
+  			INDEX indexIDname (ID(8),name(8)));`)
+	tk.MustExec(`INSERT INTO t VALUES ('keyword','urlprefix','text/ /text');`)
+	tk.MustExec(`admin check table t;`)
+
+	tk.MustExec("use mysql")
+	tk.MustExec(`admin check table test.t;`)
+	_, err := tk.Exec("admin check table t")
+	c.Assert(err, NotNil)
+}
+
+func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
+	tk.MustExec("insert into t values(1, 1, 1), (9223372036854775807, 2, 2);")
+	tk.MustExec("admin check index t idx;")
 }

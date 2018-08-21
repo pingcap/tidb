@@ -5518,6 +5518,12 @@ FlushOption:
 			Tp: ast.FlushPrivileges,
 		}
 	}
+|	"STATUS"
+	{
+		$$ = &ast.FlushStmt{
+			Tp: ast.FlushStatus,
+		}
+	}
 |	TableOrTables TableNameListOpt WithReadLockOpt
 	{
 		$$ = &ast.FlushStmt{
@@ -6088,6 +6094,17 @@ StringType:
 		}
 		$$ = x
 	}
+|	"NATIONAL" "CHARACTER" FieldLen OptBinary OptCollate
+	{
+		x := types.NewFieldType(mysql.TypeString)
+		x.Flen = $3.(int)
+		x.Charset = $4.(*ast.OptBinary).Charset
+		x.Collate = $5.(string)
+		if $4.(*ast.OptBinary).IsBinary {
+			x.Flag |= mysql.BinaryFlag
+		}
+		$$ = x
+	}
 |	Varchar FieldLen OptBinary OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
@@ -6544,6 +6561,23 @@ AuthOption:
 			ByAuthString: true,
 		}
 	}
+|	"IDENTIFIED" "WITH" StringName
+	{
+		$$ = nil
+	}
+|	"IDENTIFIED" "WITH" StringName "BY" AuthString
+	{
+		$$ = &ast.AuthOption {
+			AuthString: $5.(string),
+			ByAuthString: true,
+		}
+	}
+|	"IDENTIFIED" "WITH" StringName "AS" HashString
+	{
+		$$ = &ast.AuthOption{
+			HashString: $5.(string),
+		}
+	}
 |	"IDENTIFIED" "BY" "PASSWORD" HashString
 	{
 		$$ = &ast.AuthOption{
@@ -6804,24 +6838,28 @@ RevokeStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName Fields Lines ColumnNameListOptWithBrackets
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName CharsetOpt Fields Lines ColumnNameListOptWithBrackets
 	{
 		x := &ast.LoadDataStmt{
 			Path:       $5,
 			Table:      $8.(*ast.TableName),
-			Columns:    $11.([]*ast.ColumnName),
+			Columns:    $12.([]*ast.ColumnName),
 		}
 		if $3 != nil {
 			x.IsLocal = true
 		}
-		if $9 != nil {
-			x.FieldsInfo = $9.(*ast.FieldsClause)
-		}
 		if $10 != nil {
-			x.LinesInfo = $10.(*ast.LinesClause)
+			x.FieldsInfo = $10.(*ast.FieldsClause)
+		}
+		if $11 != nil {
+			x.LinesInfo = $11.(*ast.LinesClause)
 		}
 		$$ = x
 	}
+
+CharsetOpt:
+	{}
+|	"CHARACTER" "SET" CharsetName
 
 LocalOpt:
 	{

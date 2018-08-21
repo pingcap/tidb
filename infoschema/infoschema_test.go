@@ -178,6 +178,22 @@ func (*testSuite) TestT(c *C) {
 	tb, err = is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("partitions"))
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
+
+	err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+		meta.NewMeta(txn).CreateTable(dbID, tblInfo)
+		return errors.Trace(err)
+	})
+	c.Assert(err, IsNil)
+	txn, err = store.Begin()
+	c.Assert(err, IsNil)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: dbID, TableID: tbID, OldSchemaID: dbID})
+	c.Assert(err, IsNil)
+	txn.Rollback()
+	builder.Build()
+	is = handle.Get()
+	schema, ok = is.SchemaByID(dbID)
+	c.Assert(ok, IsTrue)
+	c.Assert(len(schema.Tables), Equals, 1)
 }
 
 func checkApplyCreateNonExistsSchemaDoesNotPanic(c *C, txn kv.Transaction, builder *infoschema.Builder) {
@@ -262,6 +278,7 @@ func (*testSuite) TestInfoTables(c *C) {
 		"OPTIMIZER_TRACE",
 		"TABLESPACES",
 		"COLLATION_CHARACTER_SET_APPLICABILITY",
+		"PROCESSLIST",
 	}
 	for _, t := range info_tables {
 		tb, err1 := is.TableByName(model.NewCIStr(infoschema.Name), model.NewCIStr(t))

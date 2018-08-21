@@ -241,13 +241,13 @@ func rebuildIndexRanges(ctx sessionctx.Context, is *plan.PhysicalIndexScan, idxC
 type IndexReaderExecutor struct {
 	baseExecutor
 
-	table     table.Table
-	index     *model.IndexInfo
-	tableID   int64
-	keepOrder bool
-	desc      bool
-	ranges    []*ranger.Range
-	dagPB     *tipb.DAGRequest
+	table           table.Table
+	index           *model.IndexInfo
+	physicalTableID int64
+	keepOrder       bool
+	desc            bool
+	ranges          []*ranger.Range
+	dagPB           *tipb.DAGRequest
 
 	// result returns one or more distsql.PartialResult and each PartialResult is returned by one region.
 	result distsql.SelectResult
@@ -289,7 +289,7 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
+	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -334,13 +334,13 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 type IndexLookUpExecutor struct {
 	baseExecutor
 
-	table     table.Table
-	index     *model.IndexInfo
-	tableID   int64
-	keepOrder bool
-	desc      bool
-	ranges    []*ranger.Range
-	dagPB     *tipb.DAGRequest
+	table           table.Table
+	index           *model.IndexInfo
+	physicalTableID int64
+	keepOrder       bool
+	desc            bool
+	ranges          []*ranger.Range
+	dagPB           *tipb.DAGRequest
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx    int
 	tableRequest *tipb.DAGRequest
@@ -383,7 +383,7 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.tableID, e.index.ID, e.ranges, e.feedback)
+	kvRanges, err := distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.index.ID, e.ranges, e.feedback)
 	if err != nil {
 		e.feedback.Invalidate()
 		return errors.Trace(err)
@@ -511,14 +511,14 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
-		table:          e.table,
-		tableID:        e.tableID,
-		dagPB:          e.tableRequest,
-		streaming:      e.tableStreaming,
-		feedback:       statistics.NewQueryFeedback(0, nil, 0, false),
-		corColInFilter: e.corColInTblSide,
-		plans:          e.tblPlans,
+		baseExecutor:    newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
+		table:           e.table,
+		physicalTableID: e.physicalTableID,
+		dagPB:           e.tableRequest,
+		streaming:       e.tableStreaming,
+		feedback:        statistics.NewQueryFeedback(0, nil, 0, false),
+		corColInFilter:  e.corColInTblSide,
+		plans:           e.tblPlans,
 	}, handles)
 	if err != nil {
 		log.Error(err)

@@ -14,7 +14,7 @@
 package ddl
 
 import (
-	gofail "github.com/coreos/gofail/runtime"
+	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"

@@ -124,6 +124,21 @@ func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 	return nil
 }
 
+func (e *maxMin4Int) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4MaxMinInt)(src), (*partialResult4MaxMinInt)(dst)
+	if p1.isNull {
+		return nil
+	}
+	if p2.isNull {
+		*p2 = *p1
+		return nil
+	}
+	if e.isMax && p1.val > p2.val || !e.isMax && p1.val < p2.val {
+		p2.val, p2.isNull = p1.val, false
+	}
+	return nil
+}
+
 type maxMin4Uint struct {
 	baseMaxMinAggFunc
 }
@@ -169,6 +184,21 @@ func (e *maxMin4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if e.isMax && uintVal > p.val || !e.isMax && uintVal < p.val {
 			p.val = uintVal
 		}
+	}
+	return nil
+}
+
+func (e *maxMin4Uint) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4MaxMinUint)(src), (*partialResult4MaxMinUint)(dst)
+	if p1.isNull {
+		return nil
+	}
+	if p2.isNull {
+		*p2 = *p1
+		return nil
+	}
+	if e.isMax && p1.val > p2.val || !e.isMax && p1.val < p2.val {
+		p2.val, p2.isNull = p1.val, false
 	}
 	return nil
 }
@@ -223,6 +253,21 @@ func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 	return nil
 }
 
+func (e *maxMin4Float32) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4MaxMinFloat32)(src), (*partialResult4MaxMinFloat32)(dst)
+	if p1.isNull {
+		return nil
+	}
+	if p2.isNull {
+		*p2 = *p1
+		return nil
+	}
+	if e.isMax && p1.val > p2.val || !e.isMax && p1.val < p2.val {
+		p2.val, p2.isNull = p1.val, false
+	}
+	return nil
+}
+
 type maxMin4Float64 struct {
 	baseMaxMinAggFunc
 }
@@ -271,6 +316,21 @@ func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 	return nil
 }
 
+func (e *maxMin4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4MaxMinFloat64)(src), (*partialResult4MaxMinFloat64)(dst)
+	if p1.isNull {
+		return nil
+	}
+	if p2.isNull {
+		*p2 = *p1
+		return nil
+	}
+	if e.isMax && p1.val > p2.val || !e.isMax && p1.val < p2.val {
+		p2.val, p2.isNull = p1.val, false
+	}
+	return nil
+}
+
 type maxMin4Decimal struct {
 	baseMaxMinAggFunc
 }
@@ -315,6 +375,22 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 			p.val = *input
 		}
+	}
+	return nil
+}
+
+func (e *maxMin4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4MaxMinDecimal)(src), (*partialResult4MaxMinDecimal)(dst)
+	if p1.isNull {
+		return nil
+	}
+	if p2.isNull {
+		*p2 = *p1
+		return nil
+	}
+	cmp := (&p1.val).Compare(&p2.val)
+	if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
+		p2.val, p2.isNull = p1.val, false
 	}
 	return nil
 }
@@ -371,6 +447,22 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	return nil
 }
 
+func (e *maxMin4String) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4MaxMinString)(src), (*partialResult4MaxMinString)(dst)
+	if p1.isNull {
+		return nil
+	}
+	if p2.isNull {
+		*p2 = *p1
+		return nil
+	}
+	cmp := types.CompareString(p1.val, p2.val)
+	if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
+		p2.val, p2.isNull = p1.val, false
+	}
+	return nil
+}
+
 type maxMin4Time struct {
 	baseMaxMinAggFunc
 }
@@ -415,6 +507,22 @@ func (e *maxMin4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
 			p.val = input
 		}
+	}
+	return nil
+}
+
+func (e *maxMin4Time) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4Time)(src), (*partialResult4Time)(dst)
+	if p1.isNull {
+		return nil
+	}
+	if p2.isNull {
+		*p2 = *p1
+		return nil
+	}
+	cmp := p1.val.Compare(p2.val)
+	if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
+		p2.val, p2.isNull = p1.val, false
 	}
 	return nil
 }
@@ -467,6 +575,22 @@ func (e *maxMin4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 	return nil
 }
 
+func (e *maxMin4Duration) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4MaxMinDuration)(src), (*partialResult4MaxMinDuration)(dst)
+	if p1.isNull {
+		return nil
+	}
+	if p2.isNull {
+		*p2 = *p1
+		return nil
+	}
+	cmp := p1.val.Compare(p2.val)
+	if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
+		p2.val, p2.isNull = p1.val, false
+	}
+	return nil
+}
+
 type maxMin4JSON struct {
 	baseMaxMinAggFunc
 }
@@ -508,9 +632,26 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			continue
 		}
 		cmp := json.CompareBinary(input, p.val)
-		if e.isMax && cmp > 1 || !e.isMax && cmp < -1 {
+		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 			p.val = input
 		}
+	}
+	return nil
+}
+
+func (e *maxMin4JSON) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4MaxMinJSON)(src), (*partialResult4MaxMinJSON)(dst)
+	if p1.isNull {
+		return nil
+	}
+	if p2.isNull {
+		*p2 = *p1
+		return nil
+	}
+	cmp := json.CompareBinary(p1.val, p2.val)
+	if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
+		p2.val = p1.val
+		p2.isNull = false
 	}
 	return nil
 }

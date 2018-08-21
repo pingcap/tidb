@@ -238,20 +238,20 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil, Commentf(errors.ErrorStack(err)))
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("3.1415926", ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("99999", ft)
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
 	c.Assert(v.(*MyDecimal).String(), Equals, "9999.9999")
 	v, err = Convert("-10000", ft)
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
 	c.Assert(v.(*MyDecimal).String(), Equals, "-9999.9999")
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
 	sc := new(stmtctx.StatementContext)
 	v, err = d.ToDecimal(sc)
-	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
 
 	sc.IgnoreTruncate = true
 	v, err = d.ToDecimal(sc)
@@ -288,7 +288,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	_, err = Convert("d", ft)
 	c.Assert(err, NotNil)
 	v, err = Convert(4, ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
 	c.Assert(v, DeepEquals, Enum{})
 
 	ft = NewFieldType(mysql.TypeSet)
@@ -343,7 +343,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	ft.Flen = 10
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
 	testToString(c, v, "3.14159")
 
 	_, err = ToString(&invalidMockType{})
@@ -385,7 +385,7 @@ func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr 
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToInt(sc, str)
 	if expectErr != nil {
-		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, expect)
@@ -397,7 +397,7 @@ func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectEr
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToUint(sc, str)
 	if expectErr != nil {
-		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, expect)
@@ -409,7 +409,7 @@ func testStrToFloat(c *C, str string, expect float64, truncateAsErr bool, expect
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToFloat(sc, str)
 	if expectErr != nil {
-		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, expect)
@@ -685,9 +685,9 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		c.Assert(err, IsNil)
 	}
 	_, err := floatStrToIntStr("1e9223372036854775807")
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
 	_, err = floatStrToIntStr("1e21")
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
 }
 
 // TestConvertTime tests time related conversion.

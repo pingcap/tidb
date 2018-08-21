@@ -151,7 +151,7 @@ func (s *session) DDLOwnerChecker() owner.DDLOwnerChecker {
 }
 
 func (s *session) getMembufCap() int {
-	if s.sessionVars.ImportingData {
+	if s.sessionVars.LightningMode {
 		return kv.ImportingTxnMembufCap
 	}
 
@@ -1161,7 +1161,7 @@ func createSession(store kv.Storage) (*session, error) {
 		sessionVars:     variable.NewSessionVars(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
 	}
-	if plan.PreparedPlanCacheEnabled {
+	if plan.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plan.PreparedPlanCacheCapacity)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
@@ -1183,7 +1183,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		parser:      parser.New(),
 		sessionVars: variable.NewSessionVars(),
 	}
-	if plan.PreparedPlanCacheEnabled {
+	if plan.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plan.PreparedPlanCacheCapacity)
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
@@ -1351,10 +1351,6 @@ func (s *session) ActivePendingTxn() error {
 		return errors.Trace(err)
 	}
 	s.sessionVars.TxnCtx.StartTS = s.txn.StartTS()
-	isoLevel, _ := s.sessionVars.GetSystemVar(variable.TxnIsolation)
-	if isoLevel == ast.ReadCommitted {
-		s.txn.SetOption(kv.IsolationLevel, kv.RC)
-	}
 	return nil
 }
 

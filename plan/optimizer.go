@@ -70,9 +70,9 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 	}
-	p := builder.build(node)
-	if builder.err != nil {
-		return nil, errors.Trace(builder.err)
+	p, err := builder.build(node)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	// Maybe it's better to move this to Preprocess, but check privilege need table
@@ -102,9 +102,9 @@ func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoS
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 	}
-	p := builder.build(node)
-	if builder.err != nil {
-		return nil, errors.Trace(builder.err)
+	p, err := builder.build(node)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	return p, nil
 }

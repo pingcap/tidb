@@ -114,7 +114,7 @@ func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
 func (p *PointGetPlan) ResolveIndices() {}
 
 func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
-	if PreparedPlanCacheEnabled {
+	if PreparedPlanCacheEnabled() {
 		// Do not support plan cache.
 		return nil
 	}
@@ -151,6 +151,13 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 	}
 	tbl := tblName.TableInfo
 	if tbl == nil {
+		return nil
+	}
+	// Do not handle partitioned table.
+	// Table partition implementation translates LogicalPlan from `DataSource` to
+	// `Union -> DataSource` in the logical plan optimization pass, since PointGetPlan
+	// bypass the logical plan optimization, it can't support partitioned table.
+	if tbl.GetPartitionInfo() != nil {
 		return nil
 	}
 	for _, col := range tbl.Columns {

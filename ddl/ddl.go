@@ -186,6 +186,8 @@ var (
 	ErrPartitionFunctionIsNotAllowed = terror.ClassDDL.New(codePartitionFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFunctionIsNotAllowed])
 	// ErrPartitionFuncNotAllowed returns partition function returns the wrong type.
 	ErrPartitionFuncNotAllowed = terror.ClassDDL.New(codeErrPartitionFuncNotAllowed, mysql.MySQLErrName[mysql.ErrPartitionFuncNotAllowed])
+	// ErrUniqueKeyNeedAllFieldsInPf returns must include all columns in the table's partitioning function.
+	ErrUniqueKeyNeedAllFieldsInPf = terror.ClassDDL.New(codeUniqueKeyNeedAllFieldsInPf, mysql.MySQLErrName[mysql.ErrUniqueKeyNeedAllFieldsInPf])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -216,8 +218,10 @@ type DDL interface {
 	SchemaSyncer() SchemaSyncer
 	// OwnerManager gets the owner manager.
 	OwnerManager() owner.Manager
+	// GetID gets the ddl ID.
+	GetID() string
 	// GetTableMaxRowID gets the max row ID of a normal table or a partition.
-	GetTableMaxRowID(startTS uint64, tbl table.Table) (int64, bool, error)
+	GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (int64, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(interface{})
 }
@@ -365,7 +369,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			go worker.start(d.ddlCtx)
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDLWorker, worker.String())).Inc()
+			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
 
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
@@ -429,6 +433,11 @@ func (d *ddl) SchemaSyncer() SchemaSyncer {
 // OwnerManager implements DDL.OwnerManager interface.
 func (d *ddl) OwnerManager() owner.Manager {
 	return d.ownerManager
+}
+
+// GetID implements DDL.GetID interface.
+func (d *ddl) GetID() string {
+	return d.uuid
 }
 
 func checkJobMaxInterval(job *model.Job) time.Duration {
@@ -595,6 +604,7 @@ const (
 	codePartitionFunctionIsNotAllowed          = terror.ErrCode(mysql.ErrPartitionFunctionIsNotAllowed)
 	codeErrPartitionFuncNotAllowed             = terror.ErrCode(mysql.ErrPartitionFuncNotAllowed)
 	codeErrFieldTypeNotAllowedAsPartitionField = terror.ErrCode(mysql.ErrFieldTypeNotAllowedAsPartitionField)
+	codeUniqueKeyNeedAllFieldsInPf             = terror.ErrCode(mysql.ErrUniqueKeyNeedAllFieldsInPf)
 	codePrimaryCantHaveNull                    = terror.ErrCode(mysql.ErrPrimaryCantHaveNull)
 )
 
@@ -640,6 +650,7 @@ func init() {
 		codePartitionFunctionIsNotAllowed:          mysql.ErrPartitionFunctionIsNotAllowed,
 		codeErrPartitionFuncNotAllowed:             mysql.ErrPartitionFuncNotAllowed,
 		codeErrFieldTypeNotAllowedAsPartitionField: mysql.ErrFieldTypeNotAllowedAsPartitionField,
+		codeUniqueKeyNeedAllFieldsInPf:             mysql.ErrUniqueKeyNeedAllFieldsInPf,
 		codePrimaryCantHaveNull:                    mysql.ErrPrimaryCantHaveNull,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes

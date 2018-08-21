@@ -1,9 +1,11 @@
+PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
 
 # Ensure GOPATH is set before running build process.
 ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
+FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1 } }'
 
 CURDIR := $(shell pwd)
 path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
@@ -18,9 +20,10 @@ GOVERALLS := goveralls
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGES  := $$(go list ./...| grep -vE "vendor")
-FILES     := $$(find . -name "*.go" | grep -vE "vendor")
-TOPDIRS   := $$(ls -d */ | grep -vE "vendor")
+PACKAGE_LIST  := go list ./...| grep -vE "vendor"
+PACKAGES  := $$($(PACKAGE_LIST))
+PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
+FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go" | grep -vE "vendor")
 
 GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail enable)
 GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail disable)
@@ -31,11 +34,17 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.GoVersion=$(shell go version)"
 
+TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
+
+CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
+
 TARGET = ""
 
 .PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib checklist
 
 default: server buildsucc
+
+server-admin-check: server_check buildsucc
 
 buildsucc:
 	@echo Build TiDB Server successfully!
@@ -71,30 +80,44 @@ parserlib: parser/parser.go
 parser/parser.go: parser/parser.y
 	make parser
 
-check: fmt errcheck lint vet
+# The retool tools.json is setup from hack/retool-install.sh
+check-setup:
+	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
+	@retool sync
+
+check: check-setup fmt lint vet
+
+# These need to be fixed before they can be ran regularly
+check-fail: goword check-static check-slow
 
 fmt:
 	@echo "gofmt (simplify)"
-	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "vendor|parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@gofmt -s -l -w $(FILES) 2>&1 | grep -v "vendor|parser/parser.go" | $(FAIL_ON_STDOUT)
 
 goword:
-	go get github.com/chzchzchz/goword
-	@echo "goword"
-	@ goword $(FILES) | awk '{print} END{if(NR>0) {exit 1}}'
+	retool do goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-errcheck:
-	go get github.com/kisielk/errcheck
-	@echo "errcheck"
-	@ GOPATH=$(GOPATH) errcheck -exclude errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+check-static:
+	@ # vet and fmt have problems with vendor when ran through metalinter
+	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all --deadline 120s \
+	  --enable misspell \
+	  --enable megacheck \
+	  --enable ineffassign \
+ 	  $$($(PACKAGE_DIRECTORIES))
+
+check-slow:
+	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all \
+	  --enable errcheck \
+	  $$($(PACKAGE_DIRECTORIES))
+	CGO_ENABLED=0 retool do gosec $$($(PACKAGE_DIRECTORIES))
 
 lint:
-	go get github.com/mgechev/revive
 	@echo "linting"
-	CGO_ENABLED=0 revive -formatter friendly -config revive.toml $(PACKAGES)
+	@CGO_ENABLED=0 retool do revive -formatter friendly -config revive.toml $(PACKAGES)
 
 vet:
 	@echo "vet"
-	@ go tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
+	@retool do govet -all -shadow $$($(PACKAGE_DIRECTORIES)) 2>&1 | $(FAIL_ON_STDOUT)
 
 clean:
 	$(GO) clean -i ./...
@@ -112,7 +135,7 @@ explaintest: server
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 gotest: parserlib
-	go get github.com/coreos/gofail
+	go get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
@@ -124,28 +147,28 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 else
 	@echo "Running in native mode."
 	@export log_level=error; \
-	$(GOTEST) -cover $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 endif
 	@$(GOFAIL_DISABLE)
 
 race: parserlib
-	go get github.com/coreos/gofail
+	go get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -race $(PACKAGES)
+	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 leak: parserlib
-	go get github.com/coreos/gofail
+	go get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -tags leak $(PACKAGES)
+	$(GOTEST) -tags leak $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 tikv_integration_test: parserlib
-	go get github.com/coreos/gofail
+	go get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
-	$(GOTEST) ./store/tikv/. -with-tikv=true
+	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 RACE_FLAG = 
@@ -154,11 +177,23 @@ ifeq ("$(WITH_RACE)", "1")
 	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
+CHECK_FLAG = 
+ifeq ("$(WITH_CHECK)", "1")
+	CHECK_FLAG = $(TEST_LDFLAGS)
+endif
+
 server: parserlib
 ifeq ($(TARGET), "")
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server tidb-server/main.go
 else
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
+endif
+
+server_check: parserlib
+ifeq ($(TARGET), "")
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server tidb-server/main.go
+else
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
 endif
 
 benchkv:
