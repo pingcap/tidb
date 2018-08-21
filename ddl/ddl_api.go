@@ -904,7 +904,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			return errors.Trace(err)
 		}
 
-		if err = checkCreatePartitionValue(pi); err != nil {
+		if err = checkCreatePartitionValue(ctx, tbInfo, pi); err != nil {
 			return errors.Trace(err)
 		}
 
