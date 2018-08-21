@@ -60,8 +60,6 @@ func (s *testUnitTestSuit) SubstituteCol2CorCol(expr expression.Expression, colI
 		if _, ok := colIDs[x.UniqueID]; ok {
 			return &expression.CorrelatedColumn{Column: *x}, nil
 		}
-	default:
-		return x, nil
 	}
 	return expr, nil
 }
