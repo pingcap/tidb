@@ -201,10 +201,8 @@ func appendPartialRows(colIdx int, rows []Row, chk *Chunk, columns []*column) {
 func (c *Chunk) AppendPartialSameRows(colIdx int, row Row, rowsLen int) {
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
-		for j := 0; j < rowsLen; j++ {
-			chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
-			chkCol.length++
-		}
+		chkCol.appendMultiSameNullBitmap(!rowCol.isNull(row.idx), uint(rowsLen))
+		chkCol.length += rowsLen
 		if rowCol.isFixed() {
 			elemLen := len(rowCol.elemBuf)
 			start := row.idx * elemLen
