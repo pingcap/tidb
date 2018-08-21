@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
@@ -27,11 +28,13 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/sqlexec"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
 )
 
 var _ sessionctx.Context = (*Context)(nil)
+var _ sqlexec.SQLExecutor = (*Context)(nil)
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
@@ -44,6 +47,11 @@ type Context struct {
 	cancel      context.CancelFunc
 	sm          util.SessionManager
 	pcache      *kvcache.SimpleLRUCache
+}
+
+// Execute implements sqlexec.SQLExecutor Execute interface.
+func (c *Context) Execute(ctx context.Context, sql string) ([]ast.RecordSet, error) {
+	return nil, nil
 }
 
 // DDLOwnerChecker returns owner.DDLOwnerChecker.

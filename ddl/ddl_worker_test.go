@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
@@ -709,4 +710,25 @@ func (s *testDDLSuite) TestParallelDDL(c *C) {
 
 	tc = &TestDDLCallback{}
 	d.SetHook(tc)
+}
+
+func (s *testDDLSuite) TestDDLPackageExecuteSQL(c *C) {
+	store := testCreateStore(c, "test_run_sql")
+	defer store.Close()
+
+	RunWorker = true
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
+	testCheckOwner(c, d, true)
+	defer d.Stop()
+	worker := d.generalWorker()
+	c.Assert(worker, NotNil)
+
+	// In test environment, worker.ctxPool will be nil, and getSessionCtx will return mock.Context.
+	// We just test that can call
+	sessCtx, err := worker.getSessionCtx()
+	c.Assert(err, IsNil)
+	defer worker.putSessionCtx(sessCtx)
+	se := sessCtx.(sqlexec.SQLExecutor)
+	_, err = se.Execute(context.Background(), "create table t(a int);")
+	c.Assert(err, IsNil)
 }

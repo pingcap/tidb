@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -115,6 +116,9 @@ func (w *worker) close() {
 // getSessionCtx get sessionctx from context resource pool.
 // Please remember to call putSessionCtx after you getting the sessionctx.
 func (w *worker) getSessionCtx() (sessionctx.Context, error) {
+	if w.ctxPool == nil {
+		return mock.NewContext(), nil
+	}
 	resource, err := w.ctxPool.Get()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -128,7 +132,9 @@ func (w *worker) getSessionCtx() (sessionctx.Context, error) {
 
 // putSessionCtx return sessionctx to context resource pool.
 func (w *worker) putSessionCtx(ctx sessionctx.Context) {
-	w.ctxPool.Put(ctx.(pools.Resource))
+	if w.ctxPool != nil {
+		w.ctxPool.Put(ctx.(pools.Resource))
+	}
 }
 
 // start is used for async online schema changing, it will try to become the owner firstly,
