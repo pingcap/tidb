@@ -86,7 +86,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
-		"start", "global", "tables", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
+		"start", "global", "tables", "tablespace", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
@@ -2367,4 +2367,36 @@ func (s *testParserSuite) TestSideEffect(c *C) {
 
 	_, err = parser.ParseOneStmt("show tables;", "", "")
 	c.Assert(err, IsNil)
+}
+
+func (s *testParserSuite) TestTablePartition(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{"ALTER TABLE t1 ADD PARTITION (PARTITION `p5` VALUES LESS THAN (2010) COMMENT 'APSTART \\' APEND')", true},
+		{"ALTER TABLE t1 ADD PARTITION (PARTITION `p5` VALUES LESS THAN (2010) COMMENT = 'xxx')", true},
+		{`CREATE TABLE t1 (a int not null,b int not null,c int not null,primary key(a,b))
+		partition by range (a)
+		partitions 3
+		(partition x1 values less than (5),
+		 partition x2 values less than (10),
+		 partition x3 values less than maxvalue);`, true},
+		{"CREATE TABLE t1 (a int not null) partition by range (a) (partition x1 values less than (5) tablespace ts1)", true},
+		{`create table t (a int) partition by range (a)
+		  (PARTITION p0 VALUES LESS THAN (63340531200) ENGINE = MyISAM,
+		   PARTITION p1 VALUES LESS THAN (63342604800) ENGINE MyISAM)`, true},
+		{`create table t (a int) partition by range (a)
+		  (PARTITION p0 VALUES LESS THAN (63340531200) ENGINE = MyISAM COMMENT 'xxx',
+		   PARTITION p1 VALUES LESS THAN (63342604800) ENGINE = MyISAM)`, true},
+		{`create table t1 (a int) partition by range (a)
+		  (PARTITION p0 VALUES LESS THAN (63340531200) COMMENT 'xxx' ENGINE = MyISAM ,
+		   PARTITION p1 VALUES LESS THAN (63342604800) ENGINE = MyISAM)`, true},
+	}
+	s.RunTest(c, table)
+
+	// Check comment content.
+	parser := New()
+	stmt, err := parser.ParseOneStmt("create table t (id int) partition by range (id) (partition p0 values less than (10) comment 'check')", "", "")
+	c.Assert(err, IsNil)
+	createTable := stmt.(*ast.CreateTableStmt)
+	c.Assert(createTable.Partition.Definitions[0].Comment, Equals, "check")
 }
