@@ -589,23 +589,9 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
 	}
 
-	// add partition info here.
-	partitionInfo := tb.Meta().Partition
-	if partitionInfo != nil {
-		buf.WriteString(fmt.Sprintf("\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr))
-		for i, def := range partitionInfo.Definitions {
-			if i < len(partitionInfo.Definitions)-1 {
-				buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s,\n", def.Name, def.LessThan[0]))
-			} else {
-				if def.MaxValue {
-					buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s\n", def.Name, "MAXVALUE"))
-				} else {
-					buf.WriteString(fmt.Sprintf("  PARTITION %s VALUES LESS THAN %s\n", def.Name, def.LessThan[0]))
-				}
-			}
-		}
-		buf.WriteString(")")
-	}
+	// Partition info is truncated in release-2.0 branch.
+	// create table t (id int) partition by ... will become
+	// create table t (id int)
 
 	if hasAutoIncID {
 		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
