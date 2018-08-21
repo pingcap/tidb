@@ -210,9 +210,6 @@ func dumpBinaryDateTime(data []byte, t types.Time, loc *time.Location) ([]byte, 
 	}
 
 	year, mon, day := t.Time.Year(), t.Time.Month(), t.Time.Day()
-	if t.IsZero() {
-		year, mon, day = 1, int(time.January), 1
-	}
 	switch t.Type {
 	case mysql.TypeTimestamp, mysql.TypeDatetime:
 		data = append(data, 11)

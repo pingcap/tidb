@@ -1243,18 +1243,12 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	startKey := []byte("")
-	endKey := []byte("")
-	dbName := params[pDBName]
-	if len(dbName) > 0 {
-		tableID, err := h.getTableID(params[pDBName], params[pTableName])
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		startKey = tablecodec.EncodeTablePrefix(tableID)
-		endKey = tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
+	tableID, err := h.getTableID(params[pDBName], params[pTableName])
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	startKey := tablecodec.EncodeTablePrefix(tableID)
+	endKey := tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
 	return h.getMvccByStartTs(uint64(startTS), startKey, endKey)
 }
 
@@ -1311,7 +1305,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	allVersionsMap := map[domain.ServerVersionInfo]struct{}{}
-	allVersions := []domain.ServerVersionInfo{}
+	var allVersions []domain.ServerVersionInfo
 	for _, v := range allServersInfo {
 		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
 			continue

@@ -758,6 +758,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		{"2017-12-31 23:59:59", "00:00:01", "2018-01-01 00:00:00"},
 		{"2017-12-31 23:59:59", "1", "2018-01-01 00:00:00"},
 		{"2007-12-31 23:59:59.999999", "2 1:1:1.000002", "2008-01-03 01:01:01.000001"},
+		{"2018-08-16 20:21:01", "00:00:00.000001", "2018-08-16 20:21:01.000001"},
 	}
 	fc := funcs[ast.AddTime]
 	for _, t := range tbl {
@@ -770,6 +771,14 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		result, _ := d.ToString()
 		c.Assert(result, Equals, t.expect)
 	}
+
+	// This is a test for issue 7334
+	du := newDateArighmeticalUtil()
+	now, _, err := evalNowWithFsp(s.ctx, 0)
+	c.Assert(err, IsNil)
+	res, _, err := du.add(s.ctx, now, "1", "MICROSECOND")
+	c.Assert(err, IsNil)
+	c.Assert(res.Fsp, Equals, 6)
 
 	tbl = []struct {
 		Input         string
