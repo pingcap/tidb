@@ -354,9 +354,9 @@ func (coll *HistColl) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64)
 	if !ok || coll.Pseudo && col.NotAccurate() {
 		return true
 	}
-	if col.NDV > 0 && col.Len() == 0 {
+	if col.NDV > 0 && col.Len() == 0 && coll.HavePhysicalID {
 		sc.SetHistogramsNotLoad()
-		histogramNeededColumns.insert(tableColumnID{tableID: coll.PhysicalID, columnID: colID})
+		histogramNeededColumns.insert(tableColumnID{tableID: coll.PhysicalID, columnID: col.Info.ID})
 	}
 	return col.totalRowCount() == 0 || (col.NDV > 0 && col.Len() == 0)
 }
