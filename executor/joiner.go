@@ -413,26 +413,32 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 	if inners.Len() == 0 {
 		return false, nil
 	}
-	j.chk.Reset()
-	chkForJoin := j.chk
-	if len(j.conditions) == 0 {
-		chkForJoin = chk
-	}
+
+	match := false
+	var rowL, rowR chunk.Row
+	dst := j.chk
+	chunk.ShadowChkInit(dst)
 	inner, numToAppend := inners.Current(), j.maxChunkSize-chk.NumRows()
 	for ; inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
 		if j.outerIsRight {
-			j.makeJoinRowToChunk(chkForJoin, inner, outer)
+			rowL, rowR = inner, outer
 		} else {
-			j.makeJoinRowToChunk(chkForJoin, outer, inner)
+			rowL, rowR = outer, inner
 		}
-	}
-	if len(j.conditions) == 0 {
-		return true, nil
-	}
+		chunk.ShadowPartialRowOne(0, rowL, dst)
+		chunk.ShadowPartialRowOne(rowL.Len(), rowR, dst)
 
-	// reach here, chkForJoin is j.chk
-	matched, err := j.filter(chkForJoin, chk)
-	return matched, errors.Trace(err)
+		matched, err := expression.VectorizedFilterOneRow(j.ctx, j.conditions, dst.GetRow(0))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		if matched {
+			match = true
+			chk.AppendRow(dst.GetRow(0))
+		}
+
+	}
+	return match, nil
 }
 
 func (j *innerJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
