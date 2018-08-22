@@ -455,7 +455,13 @@ func parseBinaryTimestamp(pos int, paramValues []byte) (int, string) {
 	pos, dateTime := parseBinaryDateTime(pos, paramValues)
 	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 	pos += 4
-	return pos, fmt.Sprintf("%s.%06d", dateTime, microSecond)
+	var str string
+	if microSecond == 0 {
+		str = fmt.Sprintf("%s", dateTime)
+	} else {
+		str = fmt.Sprintf("%s.%06d", dateTime, microSecond)
+	}
+	return pos, str
 }
 
 func parseBinaryDuration(pos int, paramValues []byte, isNegative uint8) (int, string) {
@@ -471,7 +477,14 @@ func parseBinaryDuration(pos int, paramValues []byte, isNegative uint8) (int, st
 	pos++
 	seconds := uint8(paramValues[pos])
 	pos++
-	return pos, fmt.Sprintf("%s%d %02d:%02d:%02d", sign, days, hours, minutes, seconds)
+
+	var str string
+	if days == 0 {
+		str = fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
+	} else {
+		str = fmt.Sprintf("%s%d %02d:%02d:%02d", sign, days, hours, minutes, seconds)
+	}
+	return pos, str
 }
 
 func parseBinaryDurationWithMS(pos int, paramValues []byte,
