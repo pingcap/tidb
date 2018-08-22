@@ -283,6 +283,24 @@ func (t *Table) String() string {
 	return strings.Join(strs, "\n")
 }
 
+func (t *Table) indexStartWithColumnForDebugLog(colName string) *Index {
+	for _, index := range t.Indices {
+		if index.Info.Columns[0].Name.L == colName {
+			return index
+		}
+	}
+	return nil
+}
+
+func (t *Table) columnByNameForDebugLog(colName string) *Column {
+	for _, c := range t.Columns {
+		if c.Info.Name.L == colName {
+			return c
+		}
+	}
+	return nil
+}
+
 type tableColumnID struct {
 	tableID  int64
 	columnID int64

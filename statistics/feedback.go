@@ -845,17 +845,12 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 		colName := idx.Info.Columns[rangePosition].Name.L
 		var rangeString string
 		// prefer index stats over column stats
-		if idx, ok := t.colName2Idx[colName]; ok {
-			if t.Indices[idx] == nil {
-				return
-			}
-			rangeString = logForIndexRange(t.Indices[idx], &rang, -1, factor)
+		if idx := t.indexStartWithColumnForDebugLog(colName); idx != nil {
+			rangeString = logForIndexRange(idx, &rang, -1, factor)
+		} else if col := t.columnByNameForDebugLog(colName); col != nil {
+			rangeString = colRangeToStr(col, &rang, -1, factor)
 		} else {
-			id := t.colName2ID[colName]
-			if t.Columns[id] == nil {
-				return
-			}
-			rangeString = colRangeToStr(t.Columns[t.colName2ID[colName]], &rang, -1, factor)
+			return
 		}
 		log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
 			actual[i], equalityString, equalityCount, rangeString)
