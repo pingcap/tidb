@@ -180,19 +180,17 @@ func appendPartialRows(colIdx int, rows []Row, chk *Chunk, columns []*column) {
 	for _, row := range rows {
 		for i, rowCol := range columns {
 			chkCol := chk.columns[colIdx+i]
-
+			chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+			chkCol.length++
 			if rowCol.isFixed() {
 				elemLen := len(rowCol.elemBuf)
-				chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
 				offset := row.idx * elemLen
 				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
-				chkCol.length++
 			} else {
-				chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
 				start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
 				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
 				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
-				chkCol.length++
+
 			}
 		}
 	}
@@ -201,7 +199,7 @@ func appendPartialRows(colIdx int, rows []Row, chk *Chunk, columns []*column) {
 func (c *Chunk) AppendPartialSameRows(colIdx int, row Row, rowsLen int) {
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
-		chkCol.appendMultiSameNullBitmap(!rowCol.isNull(row.idx), uint(rowsLen))
+		chkCol.appendMultiSameNullBitmap(!rowCol.isNull(row.idx), rowsLen)
 		chkCol.length += rowsLen
 		if rowCol.isFixed() {
 			elemLen := len(rowCol.elemBuf)

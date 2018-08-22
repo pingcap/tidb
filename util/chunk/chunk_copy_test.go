@@ -131,7 +131,7 @@ func TestCopyColumnByColumn(t *testing.T) {
 	}
 }
 
-func TestCopy3(t *testing.T) {
+func TestCopyFieldByFieldOne(t *testing.T) {
 	it1, row, dst := prepareChks()
 
 	dst.Reset()
@@ -205,7 +205,7 @@ func BenchmarkCopyColumnByColumn(b *testing.B) {
 	}
 }
 
-func BenchmarkCopy3(b *testing.B) {
+func BenchmarkCopyFieldByFieldOne(b *testing.B) {
 	b.ReportAllocs()
 	it1, row, dst := prepareChks()
 
