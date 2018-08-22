@@ -143,11 +143,10 @@ func TestCopyFieldByFieldOne(t *testing.T) {
 		c.offsets = append(c.offsets, 0)
 		c.length = 1
 	}
-
 	rowIdx := 0
 	for ; lhs != it1.End(); lhs = it1.Next() {
-		appendPartialRow(0, lhs, dst)
-		appendPartialRow(lhs.Len(), row, dst)
+		appendPartialRowOne(0, lhs, dst)
+		appendPartialRowOne(lhs.Len(), row, dst)
 
 		if err := checkDstChkRow(dst.GetRow(0), rowIdx); err != nil {
 			t.Log(err)
@@ -157,7 +156,7 @@ func TestCopyFieldByFieldOne(t *testing.T) {
 	}
 }
 
-func appendPartialRow(colIdx int, row Row, dst *Chunk) {
+func appendPartialRowOne(colIdx int, row Row, dst *Chunk) {
 	for i, rowCol := range row.c.columns {
 		chkCol := dst.columns[colIdx+i]
 		if !rowCol.isNull(row.idx) {
@@ -219,8 +218,8 @@ func BenchmarkCopyFieldByFieldOne(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		lhs := it1.Begin()
 		for ; lhs != it1.End(); lhs = it1.Next() {
-			appendPartialRow(0, lhs, dst)
-			appendPartialRow(lhs.Len(), row, dst)
+			appendPartialRowOne(0, lhs, dst)
+			appendPartialRowOne(lhs.Len(), row, dst)
 		}
 	}
 }
