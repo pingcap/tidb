@@ -31,7 +31,7 @@ The `AggFunc` interface contains the following functions:
 - `ResetPartialResult` resets the partial result to the original state for a specific aggregate function. It converts the input `PartialResult` to the specific data structure which stores the partial result and then resets every field to the proper original state.
 - `UpdatePartialResult` updates the specific partial result for an aggregate function using the input rows which all belong to the same data group. It converts the `PartialResult` to the specific data structure which stores the partial result and then iterates on the input rows and updates that partial result according to the functionality and the state of the aggregate function.
 - `AppendFinalResult2Chunk` finalizes the partial result and appends the final result directly to the input `Chunk`. Like other operations, it converts the input `PartialResult` to the specific data structure firstly, calculates the final result and appends that final result to the `Chunk` provided.
-- `MergePartialResult` evaluates the final result using the input `PartialResults`. It converts the `PartialResults` `dst` and `src` to the same data structure firstly, merges the partial results and store the result in `dst`. 
+- `MergePartialResult` evaluates the final result using the input `PartialResults`. Suppose the input `PartialResults` names are `dst` and `src` respectively. It converts `dst` and `src` to the same data structure firstly, merges the partial results and store the result in `dst`. 
 
 The new framework uses the `Build()` function to build an executable aggregate function. Its input parameters are:
 - `aggFuncDesc`: the aggregate function representation used by the planner layer.
