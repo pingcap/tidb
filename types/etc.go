@@ -189,6 +189,15 @@ func TypeToStr(tp byte, cs string) (r string) {
 	return ts
 }
 
+// TypeToStrForErr converts a field to a string for the error messages.
+func TypeToStrForErr(tp byte) string {
+	ts := type2Str[tp]
+	if tp == mysql.TypeLong {
+		ts = strings.Replace(ts, "int", "integer", 1)
+	}
+	return ts
+}
+
 // EOFAsNil filtrates errors,
 // If err is equal to io.EOF returns nil.
 func EOFAsNil(err error) error {

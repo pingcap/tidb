@@ -660,6 +660,15 @@ func (s *testSuite) TestInsertIgnoreOnDup(c *C) {
 	r.Check(testkit.Rows("1 1", "2 2"))
 }
 
+func (s *testSuite) TestInsertErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (i int);")
+	_, err := tk.Exec("insert into t values ('a');")
+	c.Assert(err.Error() == "[table:1366]Incorrect integer value: 'a' for column 'i' at row 1", IsTrue, Commentf("obtain: %s", err.Error()))
+}
+
 func (s *testSuite) TestReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
