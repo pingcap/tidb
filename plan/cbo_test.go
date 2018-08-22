@@ -650,7 +650,8 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"    └─Projection_14 0.80 root concat(cast(t1.a), \",\", cast(t1.b))",
 			"      └─IndexLookUp_21 0.80 root ",
 			"        ├─IndexScan_18 1.00 cop table:t1, index:c, range: decided by [eq(t1.c, test.t.c)], keep order:false",
-			"        └─Selection_20 0.80 cop eq(t1.a, test.t.a)] [          └─TableScan_19 1.00 cop table:t, keep order:false",
+			"        └─Selection_20 0.80 cop eq(t1.a, test.t.a)",
+			"          └─TableScan_19 1.00 cop table:t, keep order:false",
 		))
 }
 
