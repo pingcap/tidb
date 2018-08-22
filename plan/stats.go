@@ -28,8 +28,7 @@ type statsInfo struct {
 	count       float64
 	cardinality []float64
 
-	histColl    statistics.HistColl
-	idx2Columns map[int][]int
+	histColl statistics.HistColl
 	// usePseudoStats indicates whether the statsInfo is calculated using the
 	// pseudo statistics on a table.
 	usePseudoStats bool
@@ -49,7 +48,6 @@ func (s *statsInfo) scale(factor float64) *statsInfo {
 		count:          s.count * factor,
 		cardinality:    make([]float64, len(s.cardinality)),
 		histColl:       s.histColl,
-		idx2Columns:    s.idx2Columns,
 		usePseudoStats: s.usePseudoStats,
 	}
 	for i := range profile.cardinality {

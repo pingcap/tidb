@@ -575,7 +575,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			if rangePosition >= len(colIDs) {
 				colID = -1
 			} else {
-				colID = coll.Idx2ColumnIDs[idxID][rangePosition]
+				colID = colIDs[rangePosition]
 			}
 			// prefer index stats over column stats
 			if idx, ok := coll.ColID2IdxID[colID]; ok {
