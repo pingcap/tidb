@@ -32,8 +32,6 @@ type Iterator interface {
 	// Next returns the next Row.
 	Next() Row
 
-	PreRows(i int)
-
 	// End returns the invalid end Row.
 	End() Row
 
@@ -75,11 +73,6 @@ func (it *iterator4Slice) Next() Row {
 	row := it.rows[it.cursor]
 	it.cursor++
 	return row
-}
-
-// PreRows implements the Iterator interface.
-func (it *iterator4Slice) PreRows(i int) {
-
 }
 
 // Current implements the Iterator interface.
@@ -134,14 +127,6 @@ func (it *Iterator4Chunk) Next() Row {
 	row := it.chk.GetRow(it.cursor)
 	it.cursor++
 	return row
-}
-
-// PreRows implements the Iterator interface.
-func (it *Iterator4Chunk) PreRows(i int) {
-	if it.cursor < i {
-		it.Begin()
-	}
-	it.cursor = it.cursor - i
 }
 
 // Current implements the Iterator interface.
@@ -211,11 +196,6 @@ func (it *iterator4List) Next() Row {
 	return row
 }
 
-// PreRows implements the Iterator interface.
-func (it *iterator4List) PreRows(i int) {
-
-}
-
 // Current implements the Iterator interface.
 func (it *iterator4List) Current() Row {
 	if (it.chkCursor == 0 && it.rowCursor == 0) || it.chkCursor > it.li.NumChunks() {
@@ -273,11 +253,6 @@ func (it *iterator4RowPtr) Next() Row {
 	row := it.li.GetRow(it.ptrs[it.cursor])
 	it.cursor++
 	return row
-}
-
-// PreRows implements the Iterator interface.
-func (it *iterator4RowPtr) PreRows(i int) {
-
 }
 
 // Current implements the Iterator interface.
