@@ -234,6 +234,15 @@ func (s *testSuite) TestAdmin(c *C) {
 	// For "checksum_with_index", we have two checksums, so the result will be 1^1 = 0.
 	// For "checksum_without_index", we only have one checksum, so the result will be 1.
 	res.Sort().Check(testkit.Rows("test checksum_with_index 0 2 2", "test checksum_without_index 1 1 1"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (c2 BOOL, PRIMARY KEY (c2));")
+	tk.MustExec("INSERT INTO t1 SET c2 = '0';")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c3 DATETIME NULL DEFAULT '2668-02-03 17:19:31';")
+	tk.MustExec("ALTER TABLE t1 ADD INDEX idx2 (c3);")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c4 bit(10) default 127;")
+	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
+	tk.MustExec("admin check table t1;")
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
