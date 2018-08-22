@@ -14,6 +14,8 @@
 package statistics
 
 import (
+	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -47,6 +49,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache
 		tbl := &Table{
 			HistColl: newHistColl,
 			Version:  row.GetUint64(0),
+			name:     getFullTableName(is, tableInfo),
 		}
 		tables[physicalID] = tbl
 	}
@@ -253,4 +256,15 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) error {
 	}
 	h.statsCache.Store(tables)
 	return nil
+}
+
+func getFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string {
+	for _, schema := range is.AllSchemas() {
+		if t, err := is.TableByName(schema.Name, tblInfo.Name); err == nil {
+			if t.Meta().ID == tblInfo.ID {
+				return schema.Name.O + "." + tblInfo.Name.O
+			}
+		}
+	}
+	return fmt.Sprintf("%d", tblInfo.ID)
 }

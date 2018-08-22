@@ -301,8 +301,8 @@ type DataSource struct {
 	possibleAccessPaths []*accessPath
 
 	// The data source may be a partition, rather than a real table.
-	isPartition bool
-	partitionID int64
+	isPartition     bool
+	physicalTableID int64
 }
 
 // accessPath tells how we access one index or just access table.

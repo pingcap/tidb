@@ -69,7 +69,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 	}
 
 	for _, t := range tests {
-		f, err := ParseSimpleExpr(s.ctx, t.exprStr, tblInfo)
+		f, err := ParseSimpleExprWithTableInfo(s.ctx, t.exprStr, tblInfo)
 		c.Assert(err, IsNil)
 		c.Assert(f.String(), Equals, t.result)
 	}
