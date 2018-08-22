@@ -10,6 +10,172 @@ var (
 	numRows = 1024
 )
 
+func TestCopyFieldByField(t *testing.T) {
+	it1, row, dst := prepareChks()
+
+	dst.Reset()
+	for lhs := it1.Begin(); lhs != it1.End(); lhs = it1.Next() {
+		dst.AppendRow(lhs)
+		dst.AppendPartialRow(lhs.Len(), row)
+	}
+	if err := checkDstChk(dst); err != nil {
+		t.Log(err)
+		t.Fail()
+	}
+}
+
+func TestCopyColumnByColumn(t *testing.T) {
+	it1, row, dst := prepareChks()
+
+	dst.Reset()
+	for it1.Begin(); it1.Current() != it1.End(); {
+		appendRightMultiRows(dst, it1, row, 128)
+	}
+	if err := checkDstChk(dst); err != nil {
+		t.Log(err)
+		t.Fail()
+	}
+}
+
+func TestCopyFieldByFieldOne(t *testing.T) {
+	it1, row, dst := prepareChks()
+
+	dst.Reset()
+
+	lhs := it1.Begin()
+
+	for _, c := range dst.columns {
+		c.nullBitmap = append(c.nullBitmap, 0)
+		c.offsets = append(c.offsets, 0)
+		c.length = 1
+	}
+	rowIdx := 0
+	for ; lhs != it1.End(); lhs = it1.Next() {
+		ShadowPartialRowOne(0, lhs, dst)
+		ShadowPartialRowOne(lhs.Len(), row, dst)
+
+		if err := checkDstChkRow(dst.GetRow(0), rowIdx); err != nil {
+			t.Log(err)
+			t.Fail()
+		}
+		rowIdx++
+	}
+}
+
+func BenchmarkCopyFieldByField(b *testing.B) {
+	b.ReportAllocs()
+	it1, row, dst := prepareChks()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		dst.Reset()
+		for lhs := it1.Begin(); lhs != it1.End(); lhs = it1.Next() {
+			dst.AppendRow(lhs)
+			dst.AppendPartialRow(lhs.Len(), row)
+		}
+	}
+}
+
+func BenchmarkCopyColumnByColumn(b *testing.B) {
+	b.ReportAllocs()
+	it1, row, dst := prepareChks()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		dst.Reset()
+		for it1.Begin(); it1.Current() != it1.End(); {
+			appendRightMultiRows(dst, it1, row, 128)
+		}
+	}
+}
+
+func BenchmarkCopyFieldByFieldOne(b *testing.B) {
+	b.ReportAllocs()
+	it1, row, dst := prepareChks()
+
+	b.ResetTimer()
+	for _, c := range dst.columns {
+		c.nullBitmap = append(c.nullBitmap, 0)
+		c.offsets = append(c.offsets, 0)
+		c.length = 1
+	}
+
+	for i := 0; i < b.N; i++ {
+		lhs := it1.Begin()
+		for ; lhs != it1.End(); lhs = it1.Next() {
+			ShadowPartialRowOne(0, lhs, dst)
+			ShadowPartialRowOne(lhs.Len(), row, dst)
+		}
+	}
+}
+
+func AppendPartialRows(c *Chunk, colIdx int, rowIt Iterator, maxLen int) int {
+	oldRowLen := c.columns[colIdx+0].length
+	columns := rowIt.Current().c.columns
+	rowsCap := 32
+	rows := make([]Row, 0, rowsCap)
+	for row, j := rowIt.Current(), 0; j < maxLen && row != rowIt.End(); row, j = rowIt.Next(), j+1 {
+		rows = append(rows, row)
+		if j%rowsCap == 0 {
+			appendPartialRows(colIdx, rows, c, columns)
+			rows = rows[:0]
+		}
+	}
+	appendPartialRows(colIdx, rows, c, columns)
+	return c.columns[colIdx+0].length - oldRowLen
+}
+
+func appendPartialRows(colIdx int, rows []Row, chk *Chunk, columns []*column) {
+	for _, row := range rows {
+		for i, rowCol := range columns {
+			chkCol := chk.columns[colIdx+i]
+			chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+			chkCol.length++
+			if rowCol.isFixed() {
+				elemLen := len(rowCol.elemBuf)
+				offset := row.idx * elemLen
+				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
+			} else {
+				start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
+				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
+				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+
+			}
+		}
+	}
+}
+
+func appendPartialSameRows(c *Chunk, colIdx int, row Row, rowsLen int) {
+	for i, rowCol := range row.c.columns {
+		chkCol := c.columns[colIdx+i]
+		chkCol.appendMultiSameNullBitmap(!rowCol.isNull(row.idx), rowsLen)
+		chkCol.length += rowsLen
+		if rowCol.isFixed() {
+			elemLen := len(rowCol.elemBuf)
+			start := row.idx * elemLen
+			end := start + elemLen
+			for j := 0; j < rowsLen; j++ {
+				chkCol.data = append(chkCol.data, rowCol.data[start:start+end]...)
+			}
+		} else {
+			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
+			for j := 0; j < rowsLen; j++ {
+				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
+				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+			}
+		}
+
+	}
+}
+
+func appendRightMultiRows(c *Chunk, lhser Iterator, rhs Row, maxLen int) int {
+	c.numVirtualRows += maxLen
+	lhsLen := lhser.Current().Len()
+	rowsLen := AppendPartialRows(c, 0, lhser, maxLen)
+	appendPartialSameRows(c, lhsLen, rhs, rowsLen)
+	return rowsLen
+}
+
 func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
@@ -102,124 +268,4 @@ func checkDstChkRow(row Row, j int) error {
 func printRow(row Row) {
 	fmt.Printf("%d\t%d\t%s\t%s\t%d\t%d\t%s\t%s \n", row.GetInt64(0), row.GetInt64(1), row.GetString(2), string(row.GetBytes(3)),
 		row.GetInt64(4), row.GetInt64(5), row.GetString(6), string(row.GetBytes(7)))
-}
-
-func TestCopyFieldByField(t *testing.T) {
-	it1, row, dst := prepareChks()
-
-	dst.Reset()
-	for lhs := it1.Begin(); lhs != it1.End(); lhs = it1.Next() {
-		dst.AppendRow(lhs)
-		dst.AppendPartialRow(lhs.Len(), row)
-	}
-	if err := checkDstChk(dst); err != nil {
-		t.Log(err)
-		t.Fail()
-	}
-}
-
-func TestCopyColumnByColumn(t *testing.T) {
-	it1, row, dst := prepareChks()
-
-	dst.Reset()
-	for it1.Begin(); it1.Current() != it1.End(); {
-		dst.AppendRightMultiRows(it1, row, 128)
-	}
-	if err := checkDstChk(dst); err != nil {
-		t.Log(err)
-		t.Fail()
-	}
-}
-
-func TestCopyFieldByFieldOne(t *testing.T) {
-	it1, row, dst := prepareChks()
-
-	dst.Reset()
-
-	lhs := it1.Begin()
-
-	for _, c := range dst.columns {
-		c.nullBitmap = append(c.nullBitmap, 0)
-		c.offsets = append(c.offsets, 0)
-		c.length = 1
-	}
-	rowIdx := 0
-	for ; lhs != it1.End(); lhs = it1.Next() {
-		appendPartialRowOne(0, lhs, dst)
-		appendPartialRowOne(lhs.Len(), row, dst)
-
-		if err := checkDstChkRow(dst.GetRow(0), rowIdx); err != nil {
-			t.Log(err)
-			t.Fail()
-		}
-		rowIdx++
-	}
-}
-
-func appendPartialRowOne(colIdx int, row Row, dst *Chunk) {
-	for i, rowCol := range row.c.columns {
-		chkCol := dst.columns[colIdx+i]
-		if !rowCol.isNull(row.idx) {
-			chkCol.nullBitmap[0] = 1
-		} else {
-			chkCol.nullBitmap[0] = 0
-		}
-
-		if rowCol.isFixed() {
-			elemLen := len(rowCol.elemBuf)
-			offset := row.idx * elemLen
-			chkCol.data = rowCol.data[offset : offset+elemLen]
-		} else {
-			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
-			chkCol.data = rowCol.data[start:end]
-			chkCol.offsets[1] = int32(len(chkCol.data))
-		}
-	}
-}
-
-func BenchmarkCopyFieldByField(b *testing.B) {
-	b.ReportAllocs()
-	it1, row, dst := prepareChks()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		dst.Reset()
-		for lhs := it1.Begin(); lhs != it1.End(); lhs = it1.Next() {
-			dst.AppendRow(lhs)
-			dst.AppendPartialRow(lhs.Len(), row)
-		}
-	}
-}
-
-func BenchmarkCopyColumnByColumn(b *testing.B) {
-	b.ReportAllocs()
-	it1, row, dst := prepareChks()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		dst.Reset()
-		for it1.Begin(); it1.Current() != it1.End(); {
-			dst.AppendRightMultiRows(it1, row, 128)
-		}
-	}
-}
-
-func BenchmarkCopyFieldByFieldOne(b *testing.B) {
-	b.ReportAllocs()
-	it1, row, dst := prepareChks()
-
-	b.ResetTimer()
-	for _, c := range dst.columns {
-		c.nullBitmap = append(c.nullBitmap, 0)
-		c.offsets = append(c.offsets, 0)
-		c.length = 1
-	}
-
-	for i := 0; i < b.N; i++ {
-		lhs := it1.Begin()
-		for ; lhs != it1.End(); lhs = it1.Next() {
-			appendPartialRowOne(0, lhs, dst)
-			appendPartialRowOne(lhs.Len(), row, dst)
-		}
-	}
 }

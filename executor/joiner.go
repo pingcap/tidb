@@ -172,15 +172,21 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 		return true, nil
 	}
 
+	var rowL, rowR chunk.Row
+	dst := j.chk
+	chunk.ShadowChkInit(dst)
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
-		j.chk.Reset()
 		if j.outerIsRight {
-			j.makeJoinRowToChunk(j.chk, inner, outer)
+			rowL = inner
+			rowR = outer
 		} else {
-			j.makeJoinRowToChunk(j.chk, outer, inner)
+			rowL = outer
+			rowR = inner
 		}
+		chunk.ShadowPartialRowOne(0, rowL, dst)
+		chunk.ShadowPartialRowOne(rowL.Len(), rowR, dst)
 
-		matched, err = expression.EvalBool(j.ctx, j.conditions, j.chk.GetRow(0))
+		matched, err = expression.EvalBool(j.ctx, j.conditions, dst.GetRow(0))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -211,15 +217,21 @@ func (j *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk 
 		return true, nil
 	}
 
+	var rowL, rowR chunk.Row
+	dst := j.chk
+	chunk.ShadowChkInit(dst)
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
-		j.chk.Reset()
 		if j.outerIsRight {
-			j.makeJoinRowToChunk(j.chk, inner, outer)
+			rowL = inner
+			rowR = outer
 		} else {
-			j.makeJoinRowToChunk(j.chk, outer, inner)
+			rowL = outer
+			rowR = inner
 		}
+		chunk.ShadowPartialRowOne(0, rowL, dst)
+		chunk.ShadowPartialRowOne(rowL.Len(), rowR, dst)
 
-		matched, err = expression.EvalBool(j.ctx, j.conditions, j.chk.GetRow(0))
+		matched, err = expression.EvalBool(j.ctx, j.conditions, dst.GetRow(0))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -251,11 +263,13 @@ func (j *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator,
 		return true, nil
 	}
 
+	dst := j.chk
+	chunk.ShadowChkInit(dst)
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
-		j.chk.Reset()
-		j.makeJoinRowToChunk(j.chk, outer, inner)
+		chunk.ShadowPartialRowOne(0, outer, dst)
+		chunk.ShadowPartialRowOne(outer.Len(), inner, dst)
 
-		matched, err = expression.EvalBool(j.ctx, j.conditions, j.chk.GetRow(0))
+		matched, err = expression.EvalBool(j.ctx, j.conditions, dst.GetRow(0))
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -294,10 +308,13 @@ func (j *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Itera
 		return true, nil
 	}
 
+	dst := j.chk
+	chunk.ShadowChkInit(dst)
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
-		j.chk.Reset()
-		j.makeJoinRowToChunk(j.chk, outer, inner)
-		matched, err := expression.EvalBool(j.ctx, j.conditions, j.chk.GetRow(0))
+		chunk.ShadowPartialRowOne(0, outer, dst)
+		chunk.ShadowPartialRowOne(outer.Len(), inner, dst)
+
+		matched, err := expression.EvalBool(j.ctx, j.conditions, dst.GetRow(0))
 
 		if err != nil {
 			return false, errors.Trace(err)

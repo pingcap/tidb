@@ -160,78 +160,34 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	}
 }
 
-func (c *Chunk) AppendPartialRows(colIdx int, rowIt Iterator, maxLen int) int {
-	oldRowLen := c.columns[colIdx+0].length
-	columns := rowIt.Current().c.columns
-	rowsCap := 32
-	rows := make([]Row, 0, rowsCap)
-	for row, j := rowIt.Current(), 0; j < maxLen && row != rowIt.End(); row, j = rowIt.Next(), j+1 {
-		rows = append(rows, row)
-		if j%rowsCap == 0 {
-			appendPartialRows(colIdx, rows, c, columns)
-			rows = rows[:0]
-		}
-	}
-	appendPartialRows(colIdx, rows, c, columns)
-	return c.columns[colIdx+0].length - oldRowLen
-}
-
-func appendPartialRows(colIdx int, rows []Row, chk *Chunk, columns []*column) {
-	for _, row := range rows {
-		for i, rowCol := range columns {
-			chkCol := chk.columns[colIdx+i]
-			chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
-			chkCol.length++
-			if rowCol.isFixed() {
-				elemLen := len(rowCol.elemBuf)
-				offset := row.idx * elemLen
-				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
-			} else {
-				start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
-				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
-				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
-
-			}
-		}
-	}
-}
-
-func (c *Chunk) AppendPartialSameRows(colIdx int, row Row, rowsLen int) {
+func ShadowPartialRowOne(colIdx int, row Row, dst *Chunk) {
 	for i, rowCol := range row.c.columns {
-		chkCol := c.columns[colIdx+i]
-		chkCol.appendMultiSameNullBitmap(!rowCol.isNull(row.idx), rowsLen)
-		chkCol.length += rowsLen
+		chkCol := dst.columns[colIdx+i]
+		if !rowCol.isNull(row.idx) {
+			chkCol.nullBitmap[0] = 1
+		} else {
+			chkCol.nullBitmap[0] = 0
+		}
+
 		if rowCol.isFixed() {
 			elemLen := len(rowCol.elemBuf)
-			start := row.idx * elemLen
-			end := start + elemLen
-			for j := 0; j < rowsLen; j++ {
-				chkCol.data = append(chkCol.data, rowCol.data[start:start+end]...)
-			}
+			offset := row.idx * elemLen
+			chkCol.data = rowCol.data[offset : offset+elemLen]
 		} else {
 			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
-			for j := 0; j < rowsLen; j++ {
-				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
-				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
-			}
+			chkCol.data = rowCol.data[start:end]
+			chkCol.offsets[1] = int32(len(chkCol.data))
 		}
-
 	}
 }
 
-func (c *Chunk) AppendRightMultiRows(lhser Iterator, rhs Row, maxLen int) int {
-	c.numVirtualRows += maxLen
-	lhsLen := lhser.Current().Len()
-	rowsLen := c.AppendPartialRows(0, lhser, maxLen)
-	c.AppendPartialSameRows(lhsLen, rhs, rowsLen)
-	return rowsLen
-}
-
-func (c *Chunk) AppendMultiRows(lhs Row, rhser Iterator, maxLen int) int {
-	c.numVirtualRows += maxLen
-	rowsLen := c.AppendPartialRows(lhs.Len(), rhser, maxLen)
-	c.AppendPartialSameRows(0, lhs, rowsLen)
-	return rowsLen
+func ShadowChkInit(chk *Chunk) {
+	chk.Reset()
+	for _, c := range chk.columns {
+		c.nullBitmap = append(c.nullBitmap, 0)
+		c.offsets = append(c.offsets, 0)
+		c.length = 1
+	}
 }
 
 // Append appends rows in [begin, end) in another Chunk to a Chunk.
