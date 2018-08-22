@@ -177,11 +177,9 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 	chunk.ShadowChkInit(dst)
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		if j.outerIsRight {
-			rowL = inner
-			rowR = outer
+			rowL, rowR = inner, outer
 		} else {
-			rowL = outer
-			rowR = inner
+			rowL, rowR = outer, inner
 		}
 		chunk.ShadowPartialRowOne(0, rowL, dst)
 		chunk.ShadowPartialRowOne(rowL.Len(), rowR, dst)
@@ -222,11 +220,9 @@ func (j *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk 
 	chunk.ShadowChkInit(dst)
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		if j.outerIsRight {
-			rowL = inner
-			rowR = outer
+			rowL, rowR = inner, outer
 		} else {
-			rowL = outer
-			rowR = inner
+			rowL, rowR = outer, inner
 		}
 		chunk.ShadowPartialRowOne(0, rowL, dst)
 		chunk.ShadowPartialRowOne(rowL.Len(), rowR, dst)
