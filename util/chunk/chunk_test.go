@@ -250,7 +250,7 @@ func newChunk(elemLen ...int8) *Chunk {
 		if l > 0 {
 			chk.addFixedLenColumn(l, 0)
 		} else {
-			chk.addVarLenColumn(-1, 0)
+			chk.addVarLenColumn(-1, 0, nil)
 		}
 	}
 	return chk

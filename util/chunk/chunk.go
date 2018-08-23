@@ -51,7 +51,7 @@ func NewFixedChunk(fields []*types.FieldType, cap, maxCap int) *Chunk {
 	chk.columns = make([]*column, 0, len(fields))
 	chk.numVirtualRows = 0
 	for _, f := range fields {
-		chk.addColumnByFieldType(getFixedLen(f), cap)
+		chk.addColumnByFieldType(getFixedLen(f), cap, nil)
 	}
 	chk.maxCap = maxCap
 	chk.maxRows = cap
@@ -68,7 +68,7 @@ func newFixedChunkByChunk(old *Chunk, cap, maxCap int) *Chunk {
 	chk.maxCap = maxCap
 	chk.maxRows = cap
 	for _, col := range old.columns {
-		chk.addColumnByFieldType(col.elemLen, cap)
+		chk.addColumnByFieldType(col.elemLen, cap, col)
 	}
 	if chk.maxRows > chk.maxCap {
 		chk.maxRows = chk.maxCap
@@ -104,22 +104,26 @@ func (c *Chunk) addFixedLenColumn(elemLen int8, initCap int) {
 }
 
 // addVarLenColumn adds a variable length column with initial data capacity.
-func (c *Chunk) addVarLenColumn(elemLen int8, initCap int) {
+func (c *Chunk) addVarLenColumn(elemLen int8, initCap int, old *column) {
+	lenPerElem := 4
+	if old != nil && old.length != 0 {
+		lenPerElem = len(old.data) / old.length
+	}
 	c.columns = append(c.columns, &column{
 		elemLen:    elemLen,
 		offsets:    make([]int32, 1, initCap+1),
-		data:       make([]byte, 0, initCap*4),
+		data:       make([]byte, 0, initCap*lenPerElem),
 		nullBitmap: make([]byte, 0, initCap>>3),
 	})
 }
 
 // addColumnByFieldType adds a column by field type.
-func (c *Chunk) addColumnByFieldType(fixedLen int8, initCap int) {
+func (c *Chunk) addColumnByFieldType(fixedLen int8, initCap int, old *column) {
 	if fixedLen != -1 {
 		c.addFixedLenColumn(fixedLen, initCap)
 		return
 	}
-	c.addVarLenColumn(fixedLen, initCap)
+	c.addVarLenColumn(fixedLen, initCap, old)
 }
 
 // MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".
