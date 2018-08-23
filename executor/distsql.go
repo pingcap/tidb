@@ -643,7 +643,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 		case w.workCh <- task:
 			w.resultCh <- task
 		}
-		chk = chk.Renew(fieldTypes)
+		chk = chunk.Renew(chk)
 	}
 }
 
@@ -759,7 +759,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			task.rows = append(task.rows, row)
 		}
-		chk = chk.Renew(tableReader.retTypes())
+		chk = chunk.Renew(chk)
 	}
 	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
 	task.memUsage += memUsage

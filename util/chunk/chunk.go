@@ -51,7 +51,7 @@ func NewFixedChunk(fields []*types.FieldType, cap, maxCap int) *Chunk {
 	chk.columns = make([]*column, 0, len(fields))
 	chk.numVirtualRows = 0
 	for _, f := range fields {
-		chk.addColumnByFieldType(f, cap)
+		chk.addColumnByFieldType(getFixedLen(f), cap)
 	}
 	chk.maxCap = maxCap
 	chk.maxRows = cap
@@ -61,29 +61,25 @@ func NewFixedChunk(fields []*types.FieldType, cap, maxCap int) *Chunk {
 	return chk
 }
 
-// Renew creates a new chunk with double capacity if full.
-func (c *Chunk) Renew(fields []*types.FieldType) *Chunk {
-	if c.NumRows() < c.maxRows || c.NumRows() == c.maxCap {
-		return NewFixedChunk(fields, c.NumRows(), c.maxCap)
+func newFixedChunkByChunk(old *Chunk, cap, maxCap int) *Chunk {
+	chk := new(Chunk)
+	chk.columns = make([]*column, 0, len(old.columns))
+	chk.numVirtualRows = 0
+	chk.maxCap = maxCap
+	chk.maxRows = cap
+	for _, col := range old.columns {
+		chk.addColumnByFieldType(col.elemLen, cap)
 	}
-	newMaxRows := c.maxRows * 2
-	if newMaxRows > c.maxCap {
-		newMaxRows = c.maxCap
+	if chk.maxRows > chk.maxCap {
+		chk.maxRows = chk.maxCap
 	}
-	return NewFixedChunk(fields, c.maxRows, newMaxRows)
+	return chk
 }
 
-// NewSize computes the next pull chunk capacity.
-// Only used for want to rename but could not get retTypes()
-func (c *Chunk) NewSize() int {
-	if c.NumRows() < c.maxRows || c.NumRows() == c.maxCap {
-		return c.NumRows()
-	}
-	c.maxRows = c.maxRows * 2
-	if c.maxRows > c.maxCap {
-		c.maxRows = c.maxCap
-	}
-	return c.maxRows
+// Renew creates a new chunk with double capacity if full.
+func Renew(c *Chunk) *Chunk {
+	_, nextMaxRows := c.needGrow()
+	return newFixedChunkByChunk(c, nextMaxRows, c.maxCap)
 }
 
 // MemoryUsage returns the total memory usage of a Chunk in B.
@@ -118,13 +114,12 @@ func (c *Chunk) addVarLenColumn(elemLen int8, initCap int) {
 }
 
 // addColumnByFieldType adds a column by field type.
-func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
-	numFixedBytes := getFixedLen(fieldTp)
-	if numFixedBytes != -1 {
-		c.addFixedLenColumn(numFixedBytes, initCap)
+func (c *Chunk) addColumnByFieldType(fixedLen int8, initCap int) {
+	if fixedLen != -1 {
+		c.addFixedLenColumn(fixedLen, initCap)
 		return
 	}
-	c.addVarLenColumn(-1, initCap)
+	c.addVarLenColumn(fixedLen, initCap)
 }
 
 // MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".

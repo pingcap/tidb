@@ -650,7 +650,7 @@ func init() {
 				row := r.GetDatumRow(exec.retTypes())
 				rows = append(rows, row)
 			}
-			chk = chk.Renew(exec.retTypes())
+			chk = chunk.Renew(chk)
 		}
 	}
 }

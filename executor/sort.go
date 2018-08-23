@@ -122,7 +122,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			break
 		}
 		e.rowChunks.Add(chk)
-		chk = chk.Renew(e.children[0].retTypes())
+		chk = chunk.Renew(chk)
 	}
 	return nil
 }

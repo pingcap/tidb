@@ -326,7 +326,7 @@ func (ow *outerWorker) buildTask(ctx context.Context, preTask *lookUpJoinTask) (
 	if preTask == nil {
 		outerResult = ow.executor.newChunk()
 	} else {
-		outerResult = preTask.outerResult.Renew(ow.executor.retTypes())
+		outerResult = chunk.Renew(preTask.outerResult)
 	}
 	encodedLookUpKeys := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, ow.initChunkSize, ow.ctx.GetSessionVars().MaxChunkSize)
 	task := &lookUpJoinTask{
@@ -533,7 +533,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			break
 		}
 		innerResult.Add(iw.executorChk)
-		iw.executorChk = iw.executorChk.Renew(innerExec.retTypes())
+		iw.executorChk = chunk.Renew(iw.executorChk)
 	}
 	task.innerResult = innerResult
 	return nil

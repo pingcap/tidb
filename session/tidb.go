@@ -221,7 +221,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs ast.RecordSet
 			rows = append(rows, row)
 		}
 		// Since we collect all the rows, we can not reuse the chunk.
-		chk = rs.NewFixedChunk(chk.NewSize())
+		chk = chunk.Renew(chk)
 	}
 	return rows, nil
 }

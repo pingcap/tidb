@@ -630,7 +630,7 @@ func drainRecordSet(ctx context.Context, rs ast.RecordSet) ([]chunk.Row, error) 
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		chk = rs.NewFixedChunk(chk.NewSize())
+		chk = chunk.Renew(chk)
 	}
 }
 

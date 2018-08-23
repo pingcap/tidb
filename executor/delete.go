@@ -133,7 +133,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			}
 			rowCount++
 		}
-		chk = chk.Renew(e.children[0].retTypes())
+		chk = chunk.Renew(chk)
 	}
 
 	return nil
@@ -201,7 +201,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
 			e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
 		}
-		chk = chk.Renew(e.children[0].retTypes())
+		chk = chunk.Renew(chk)
 	}
 
 	return errors.Trace(e.removeRowsInTblRowMap(tblRowMap))

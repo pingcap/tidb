@@ -270,7 +270,7 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context) (err error) {
 			return errors.Trace(err)
 		}
 		e.innerResult.Add(chk)
-		chk = chk.Renew(e.children[e.innerIdx].retTypes())
+		chk = chunk.Renew(chk)
 	}
 }
 

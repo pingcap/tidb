@@ -162,7 +162,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 			e.newRowsData = append(e.newRowsData, newRow)
 			globalRowIdx++
 		}
-		chk = chk.Renew(e.children[0].retTypes())
+		chk = chunk.Renew(chk)
 	}
 	return nil
 }
