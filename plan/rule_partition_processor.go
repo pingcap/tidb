@@ -14,12 +14,10 @@ package plan
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/ranger"
-	log "github.com/sirupsen/logrus"
 )
 
 // partitionProcessor rewrites the ast for table partition.
@@ -76,8 +74,10 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 
 	var partitionExprs []expression.Expression
+	var col *expression.Column
 	if table, ok := ds.table.(partitionTable); ok {
 		partitionExprs = table.PartitionExpr().Ranges
+		col = table.PartitionExpr().Column
 	}
 	if len(partitionExprs) == 0 {
 		return nil, errors.New("partition expression missing")
@@ -86,8 +86,6 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	// Rewrite data source to union all partitions, during which we may prune some
 	// partitions according to the filter conditions pushed to the DataSource.
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
-
-	col := partitionExprAccessColumn(partitionExprs[0])
 	for i, expr := range partitionExprs {
 		if col != nil {
 			// If the selection condition would never be satisified, prune that partition.
@@ -142,22 +140,4 @@ func (s *partitionProcessor) canBePrune(ctx sessionctx.Context, col *expression.
 		return false, errors.Trace(err)
 	}
 	return len(r) == 0, nil
-}
-
-// partitionExprAccessColumn extracts the column which is used by the partition expression.
-// If the partition expression is not a simple operation on one column, return nil.
-func partitionExprAccessColumn(expr expression.Expression) *expression.Column {
-	lt, ok := expr.(*expression.ScalarFunction)
-	if !ok || lt.FuncName.L != ast.LT {
-		// The partition expression is constructed by us, its format should always be
-		// expr < value, such as "id < 42", "timestamp(id) < maxvalue"
-		log.Warnf("illegal partition expr:%s", expr.String())
-		return nil
-	}
-	tmp := lt.GetArgs()[0]
-	col, ok := tmp.(*expression.Column)
-	if !ok {
-		return nil
-	}
-	return col
 }
