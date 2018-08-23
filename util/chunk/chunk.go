@@ -174,6 +174,7 @@ func BatchCopyJoinRowToChunk(isRight bool, inners []Row, outer Row, c *Chunk) {
 	c.numVirtualRows += len(inners)
 }
 
+// appendPartialRows appends multiple different rows to the chunk.
 func appendPartialRows(colIdx int, rows []Row, chk *Chunk) {
 	for _, row := range rows {
 		for i, rowCol := range row.c.columns {
@@ -193,21 +194,22 @@ func appendPartialRows(colIdx int, rows []Row, chk *Chunk) {
 	}
 }
 
-func appendPartialSameRows(colIdx int, row Row, rowsLen int, c *Chunk) {
+// appendPartialSameRows appends same row to the chunk with `rowNum` times.
+func appendPartialSameRows(colIdx int, row Row, rowNum int, c *Chunk) {
 	for i, rowCol := range row.c.columns {
 		chkCol := c.columns[colIdx+i]
-		chkCol.appendMultiSameNullBitmap(!rowCol.isNull(row.idx), rowsLen)
-		chkCol.length += rowsLen
+		chkCol.appendMultiSameNullBitmap(!rowCol.isNull(row.idx), rowNum)
+		chkCol.length += rowNum
 		if rowCol.isFixed() {
 			elemLen := len(rowCol.elemBuf)
 			start := row.idx * elemLen
 			end := start + elemLen
-			for j := 0; j < rowsLen; j++ {
+			for j := 0; j < rowNum; j++ {
 				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
 			}
 		} else {
 			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
-			for j := 0; j < rowsLen; j++ {
+			for j := 0; j < rowNum; j++ {
 				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
 				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
 			}
