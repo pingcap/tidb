@@ -101,7 +101,9 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 	return nil
 }
 
-// GetDefaultValue gets the default value.
+// GetDefaultValue gets the default value of the column.
+// Default value use to stored in DefaultValue field, but now,
+// bit type default value will store in DefaultValueBit for fix bit default value decode/encode bug.
 func (c *ColumnInfo) GetDefaultValue() interface{} {
 	if c.Tp == mysql.TypeBit && c.DefaultValueBit != nil {
 		return string(c.DefaultValueBit)
