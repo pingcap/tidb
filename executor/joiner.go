@@ -110,11 +110,11 @@ func newJoiner(ctx sessionctx.Context, joinType plan.JoinType,
 	case plan.AntiLeftOuterSemiJoin:
 		return &antiLeftOuterSemiJoiner{base}
 	case plan.LeftOuterJoin:
-		return &leftOuterJoiner{base}
+		return &leftOuterJoiner{base, make([]chunk.Row, 0, base.maxChunkSize)}
 	case plan.RightOuterJoin:
-		return &rightOuterJoiner{base}
+		return &rightOuterJoiner{base, make([]chunk.Row, 0, base.maxChunkSize)}
 	case plan.InnerJoin:
-		return &innerJoiner{base}
+		return &innerJoiner{base, make([]chunk.Row, 0, base.maxChunkSize)}
 	}
 	panic("unsupported join type in func newJoiner()")
 }
@@ -321,6 +321,7 @@ func (j *antiLeftOuterSemiJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk)
 
 type leftOuterJoiner struct {
 	baseJoiner
+	cacheRows []chunk.Row
 }
 
 // tryToMatch implements joiner interface.
@@ -328,7 +329,7 @@ func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 	if inners.Len() == 0 {
 		return false, nil
 	}
-	return j.tryToMatchInnerAndOuter(false, outer, inners, chk)
+	return j.tryToMatchInnerAndOuter(false, outer, inners, chk, j.cacheRows)
 }
 
 func (j *leftOuterJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
@@ -338,6 +339,7 @@ func (j *leftOuterJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 
 type rightOuterJoiner struct {
 	baseJoiner
+	cacheRows []chunk.Row
 }
 
 // tryToMatch implements joiner interface.
@@ -346,7 +348,7 @@ func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, ch
 		return false, nil
 	}
 
-	return j.tryToMatchInnerAndOuter(true, outer, inners, chk)
+	return j.tryToMatchInnerAndOuter(true, outer, inners, chk, j.cacheRows)
 }
 
 func (j *rightOuterJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
@@ -356,6 +358,7 @@ func (j *rightOuterJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
 
 type innerJoiner struct {
 	baseJoiner
+	cacheRows []chunk.Row
 }
 
 // tryToMatch implements joiner interface.
@@ -364,13 +367,13 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 		return false, nil
 	}
 
-	return j.tryToMatchInnerAndOuter(j.outerIsRight, outer, inners, chk)
+	return j.tryToMatchInnerAndOuter(j.outerIsRight, outer, inners, chk, j.cacheRows)
 }
 
 // tryToMatchInnerAndOuter does 2 things:
 // 1. Combine outer and inner row to join row.
 // 2. Evaluate the join row whether match the join conditions.
-func (j *baseJoiner) tryToMatchInnerAndOuter(isRight bool, outer chunk.Row, inners chunk.Iterator, outChk *chunk.Chunk) (bool, error) {
+func (j *baseJoiner) tryToMatchInnerAndOuter(isRight bool, outer chunk.Row, inners chunk.Iterator, outChk *chunk.Chunk, cacheRows []chunk.Row) (bool, error) {
 	match := false
 	numToAppend := j.maxChunkSize - outChk.NumRows()
 	for inner := inners.Current(); inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
@@ -382,9 +385,14 @@ func (j *baseJoiner) tryToMatchInnerAndOuter(isRight bool, outer chunk.Row, inne
 		}
 		if matched {
 			match = true
-			outChk.AppendRow(j.mutRow.ToRow())
+			cacheRows = append(cacheRows, inner)
+			if len(cacheRows) == cap(cacheRows) {
+				chunk.BatchCopyJoinRowToChunk(isRight, cacheRows, outer, outChk)
+				cacheRows = cacheRows[:0]
+			}
 		}
 	}
+	chunk.BatchCopyJoinRowToChunk(isRight, cacheRows, outer, outChk)
 	return match, nil
 }
 

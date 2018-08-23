@@ -160,6 +160,61 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	}
 }
 
+// BatchCopyJoinRowToChunk uses for join to batch copy inner rows and outer row to chunk.
+func BatchCopyJoinRowToChunk(isRight bool, inners []Row, outer Row, c *Chunk) {
+	if len(inners) == 0 {
+		return
+	}
+	innerIdx, outerIdx := 0, inners[0].Len()
+	if !isRight {
+		innerIdx, outerIdx = outer.Len(), 0
+	}
+	appendPartialRows(innerIdx, inners, c)
+	appendPartialSameRows(outerIdx, outer, len(inners), c)
+	c.numVirtualRows += len(inners)
+}
+
+func appendPartialRows(colIdx int, rows []Row, chk *Chunk) {
+	for _, row := range rows {
+		for i, rowCol := range row.c.columns {
+			chkCol := chk.columns[colIdx+i]
+			chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+			if rowCol.isFixed() {
+				elemLen := len(rowCol.elemBuf)
+				offset := row.idx * elemLen
+				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
+			} else {
+				start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
+				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
+				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+			}
+			chkCol.length++
+		}
+	}
+}
+
+func appendPartialSameRows(colIdx int, row Row, rowsLen int, c *Chunk) {
+	for i, rowCol := range row.c.columns {
+		chkCol := c.columns[colIdx+i]
+		chkCol.appendMultiSameNullBitmap(!rowCol.isNull(row.idx), rowsLen)
+		chkCol.length += rowsLen
+		if rowCol.isFixed() {
+			elemLen := len(rowCol.elemBuf)
+			start := row.idx * elemLen
+			end := start + elemLen
+			for j := 0; j < rowsLen; j++ {
+				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
+			}
+		} else {
+			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
+			for j := 0; j < rowsLen; j++ {
+				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
+				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+			}
+		}
+	}
+}
+
 // Append appends rows in [begin, end) in another Chunk to a Chunk.
 func (c *Chunk) Append(other *Chunk, begin, end int) {
 	for colID, src := range other.columns {
