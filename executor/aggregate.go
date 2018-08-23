@@ -16,10 +16,7 @@ package executor
 import (
 	"sync"
 
-	"fmt"
-
 	"github.com/juju/errors"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -30,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
-	"github.com/pingcap/tidb/util/tracing"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
 )
@@ -68,8 +64,6 @@ type HashAggPartialWorker struct {
 	// chk stores the input data from child,
 	// and is reused by childExec and partial worker.
 	chk *chunk.Chunk
-
-	trace opentracing.Span
 }
 
 // HashAggFinalWorker indicates the final workers of parallel hash agg execution,
@@ -85,8 +79,6 @@ type HashAggFinalWorker struct {
 	inputCh             chan *HashAggIntermData
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
-
-	trace opentracing.Span
 }
 
 // AfFinalResult indicates aggregation functions final result.
@@ -359,14 +351,12 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		if needShuffle {
 			w.shuffleIntermData(sc, finalConcurrency)
 		}
-		w.trace.Finish()
 		waitGroup.Done()
 	}()
 	for {
 		if !w.getChildInput() {
 			return
 		}
-		w.trace.LogKV("event", "update partial result")
 		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.aggCtxsMap)); err != nil {
 			w.globalOutputCh <- &AfFinalResult{err: errors.Trace(err)}
 			return
@@ -379,7 +369,6 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, finalConcurrency int) (err error) {
 	inputIter := chunk.NewIterator4Chunk(chk)
-	w.trace.LogKV("event", "iterating chunk's data")
 	for row := inputIter.Begin(); row != inputIter.End(); row = inputIter.Next() {
 		groupKey, err := w.getGroupKey(sc, row)
 		if err != nil {
@@ -399,7 +388,6 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 // We only support parallel execution for single-machine, so process of encode and decode can be skipped.
 func (w *HashAggPartialWorker) shuffleIntermData(sc *stmtctx.StatementContext, finalConcurrency int) {
 	groupKeysSlice := make([][][]byte, finalConcurrency)
-	w.trace.LogKV("event", "shuffling interm data")
 	for groupKey := range w.aggCtxsMap {
 		groupKeyBytes := []byte(groupKey)
 		finalWorkerIdx := int(murmur3.Sum32(groupKeyBytes)) % finalConcurrency
@@ -469,7 +457,6 @@ func (w *HashAggFinalWorker) consumeIntermData(sc *stmtctx.StatementContext) (er
 		ok                   bool
 		intermDataRowsBuffer [][]types.Datum
 	)
-	w.trace.LogKV("event", "consuming interm data")
 	for {
 		if input, ok = w.getPartialInput(); !ok {
 			return nil
@@ -540,7 +527,6 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
 	defer func() {
-		w.trace.Finish()
 		waitGroup.Done()
 	}()
 	sc := ctx.GetSessionVars().StmtCtx
@@ -553,14 +539,11 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	child := tracing.ChildSpanFromContxt(ctx, "hash_agg_exec")
-	defer child.Finish()
 
 	if e.isUnparallelExec {
 		return errors.Trace(e.unparallelExec(ctx, chk))
 	}
-	err := e.parallelExec(ctx, chk)
-	return errors.Trace(err)
+	return errors.Trace(e.parallelExec(ctx, chk))
 }
 
 func (e *HashAggExec) fetchChildData(ctx context.Context) {
@@ -614,9 +597,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 
 	partialWorkerWaitGroup := &sync.WaitGroup{}
 	partialWorkerWaitGroup.Add(len(e.partialWorkers))
-
 	for i := range e.partialWorkers {
-		e.partialWorkers[i].trace = tracing.ChildSpanFromContxt(ctx, fmt.Sprintf("hash_agg_exec_partial_worker_%d", i))
 		go e.partialWorkers[i].run(e.ctx, partialWorkerWaitGroup, len(e.finalWorkers))
 	}
 	go e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
@@ -624,7 +605,6 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	finalWorkerWaitGroup := &sync.WaitGroup{}
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	for i := range e.finalWorkers {
-		e.finalWorkers[i].trace = tracing.ChildSpanFromContxt(ctx, fmt.Sprintf("hash_agg_exec_final_worker_%d", i))
 		go e.finalWorkers[i].run(e.ctx, finalWorkerWaitGroup)
 	}
 	go e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
@@ -814,8 +794,6 @@ func (e *StreamAggExec) Close() error {
 func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
-	child := tracing.ChildSpanFromContxt(ctx, "stream_agg_exec")
-	defer child.Finish()
 	for !e.executed && chk.NumRows() < e.maxChunkSize {
 		err := e.consumeOneGroup(ctx, chk)
 		if err != nil {
@@ -823,7 +801,6 @@ func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return errors.Trace(err)
 		}
 	}
-	child.LogKV("event", "StreamAggExec is finished")
 	return nil
 }
 

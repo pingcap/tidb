@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/tracing"
 	"golang.org/x/net/context"
 )
 
@@ -62,7 +61,6 @@ type ProjectionExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ProjectionExec) Open(ctx context.Context) error {
-	_ = tracing.ChildSpanFromContxt(ctx, "projection_exec")
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -141,11 +139,6 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //  +------------------------------+       +----------------------+
 //
 func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	sp := tracing.ChildSpanFromContxt(ctx, "projection_exec")
-	defer func() {
-		sp.LogKV("event", "projection_exec is finished")
-		sp.Finish()
-	}()
 	chk.Reset()
 	if e.isUnparallelExec() {
 		return errors.Trace(e.unParallelExecute(ctx, chk))

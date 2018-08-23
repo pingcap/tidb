@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/tracing"
 	"golang.org/x/net/context"
 )
 
@@ -35,9 +34,6 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {
 		hook.(func(*kv.Request))(kvReq)
 	}
-
-	child := tracing.ChildSpanFromContxt(ctx, "distsql_select")
-	defer child.Finish()
 
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false

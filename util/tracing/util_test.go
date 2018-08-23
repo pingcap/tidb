@@ -103,5 +103,9 @@ func (s *testTraceSuite) TestTreeRelationship(c *C) {
 		c.Assert(collectedSpans[0].Operation, Equals, "test")
 		c.Assert(collectedSpans[1].Operation, Equals, "parent")
 		c.Assert(collectedSpans[2].Operation, Equals, "child")
+		// check tree relationship
+		// sp1 is parent of sp2. And sp2 is parent of sp3.
+		c.Assert(collectedSpans[1].ParentSpanID, Equals, collectedSpans[0].Context.SpanID)
+		c.Assert(collectedSpans[2].ParentSpanID, Equals, collectedSpans[1].Context.SpanID)
 	}
 }

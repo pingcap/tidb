@@ -15,8 +15,8 @@ package executor
 
 import (
 	"fmt"
+	"time"
 
-	"bytes"
 	"github.com/juju/errors"
 	"github.com/opentracing/basictracer-go"
 	opentracing "github.com/opentracing/opentracing-go"
@@ -26,8 +26,6 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"golang.org/x/net/context"
 )
-
-var traceColumns = append([]*types.FieldType{})
 
 // TraceExec represents a root executor of trace query.
 type TraceExec struct {
@@ -53,10 +51,11 @@ func (b *executorBuilder) buildTrace(v *plan.Trace) Executor {
 	}
 
 	pp, _ := v.StmtPlan.(plan.PhysicalPlan)
+	fmt.Println(pp.ExplainInfo())
 	e.children = make([]Executor, 0, len(pp.Children()))
 	for _, child := range pp.Children() {
 		switch p := child.(type) {
-		case *plan.PhysicalTableReader, *plan.PhysicalIndexReader, *plan.PhysicalIndexLookUpReader, *plan.PhysicalHashAgg, *plan.PhysicalProjection, *plan.PhysicalStreamAgg:
+		case *plan.PhysicalTableReader, *plan.PhysicalIndexReader, *plan.PhysicalIndexLookUpReader, *plan.PhysicalHashAgg, *plan.PhysicalProjection, *plan.PhysicalStreamAgg, *plan.PhysicalSort:
 			e.children = append(e.children, b.build(p))
 		default:
 			panic(fmt.Sprintf("%v is not supported", child))
@@ -74,7 +73,8 @@ func (e *TraceExec) Open(ctx context.Context) error {
 	e.rootTrace = tracing.NewRecordedTrace("trace_exec", func(sp basictracer.RawSpan) {
 		e.CollectedSpans = append(e.CollectedSpans, sp)
 	})
-	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)
+	// we actually don't care when underlying executor started. We only care how
+	// much time was spent
 	for _, child := range e.children {
 		err := child.Open(ctx)
 		if err != nil {
@@ -89,17 +89,6 @@ func (e *TraceExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func getPrefix(idx int, suffix string, opName string) string {
-	var buf bytes.Buffer
-	for i := 0; i < 2*idx; i++ {
-		buf.WriteString(" ")
-	}
-
-	buf.WriteString(suffix)
-	buf.WriteString(opName)
-	return buf.String()
-}
-
 // Next executes real query and collects span later.
 func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -107,6 +96,7 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
+	// store span into context
 	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)
 	if len(e.children) > 0 {
 		if err := e.children[0].Next(ctx, e.childrenResults[0]); err != nil {
@@ -117,46 +107,43 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	e.rootTrace.LogKV("event", "tracing completed")
 	e.rootTrace.Finish()
 	var rootSpan basictracer.RawSpan
+
 	treeSpans := make(map[uint64][]basictracer.RawSpan)
 	for _, sp := range e.CollectedSpans {
-		if spans, ok := treeSpans[sp.ParentSpanID]; ok {
-			treeSpans[sp.ParentSpanID] = append(spans, sp)
-		} else {
-			treeSpans[sp.ParentSpanID] = make([]basictracer.RawSpan, 0)
-		}
-		if sp.Context.SpanID == 0 {
+		treeSpans[sp.ParentSpanID] = append(treeSpans[sp.ParentSpanID], sp)
+		// if a span's parentSpanID is 0, then it is root span
+		// this is by design
+		if sp.ParentSpanID == 0 {
 			rootSpan = sp
 		}
 	}
 
-	// add root span here
-	dfsTree(rootSpan, treeSpans, "", chk)
+	dfsTree(rootSpan, treeSpans, "", false, chk)
 	e.exhausted = true
 	return nil
 }
 
-func dfsTree(span basictracer.RawSpan, tree map[uint64][]basictracer.RawSpan, prefix string, chk *chunk.Chunk) {
-	// each span has a operation name, start time and duration.
-	// add two empty string to prefix
+func dfsTree(span basictracer.RawSpan, tree map[uint64][]basictracer.RawSpan, prefix string, isLast bool, chk *chunk.Chunk) {
 	suffix := ""
-	hasChild := false
 	spans := tree[span.Context.SpanID]
-	if len(spans) > 0 {
-		hasChild = true
-		// prefix += "| "
-		suffix = "├─"
+	var newPrefix string
+	if span.ParentSpanID == 0 {
+		newPrefix = prefix
 	} else {
-		suffix = "└─"
-	}
-	fmt.Println("len of spans is ", len(spans))
-	for _, sp := range spans {
-		chk.AppendString(0, prefix+suffix+sp.Operation)
-		chk.AppendString(1, sp.Duration.String())
-		chk.AppendInt64(2, int64(sp.Context.SpanID))
-		if hasChild {
-			dfsTree(sp, tree, prefix+"| ", chk)
+		if len(tree[span.ParentSpanID]) > 0 && !isLast {
+			suffix = "├─"
+			newPrefix = prefix + "│ "
 		} else {
-			dfsTree(sp, tree, prefix+"  ", chk)
+			suffix = "└─"
+			newPrefix = prefix + "  "
 		}
+	}
+
+	chk.AppendString(0, prefix+suffix+span.Operation)
+	chk.AppendString(1, span.Start.Format(time.StampNano))
+	chk.AppendString(2, span.Duration.String())
+
+	for i, sp := range spans {
+		dfsTree(sp, tree, newPrefix, i == (len(spans))-1 /*last element of array*/, chk)
 	}
 }

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/tracing"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -212,8 +211,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	default:
 	}
 
-	child := tracing.ChildSpanFromContxt(b.ctx, "backoffer")
-	defer child.Finish()
+	b.ctx = ctx
 	metrics.TiKVBackoffCounter.WithLabelValues(typ.String()).Inc()
 	// Lazy initialize.
 	if b.fn == nil {
