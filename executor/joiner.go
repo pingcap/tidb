@@ -150,8 +150,8 @@ func makeShadowJoinRow(isRight bool, inner, outer chunk.Row, dst *chunk.Chunk) {
 	if !isRight {
 		inner, outer = outer, inner
 	}
-	chunk.ShadowPartialRow(0, inner, dst)
-	chunk.ShadowPartialRow(inner.Len(), outer, dst)
+	chunk.ShadowCopyPartialRow(0, inner, dst)
+	chunk.ShadowCopyPartialRow(inner.Len(), outer, dst)
 }
 
 func (j *baseJoiner) filter(input, output *chunk.Chunk) (matched bool, err error) {

@@ -237,15 +237,12 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 		selected = append(selected, true)
 	}
 	for _, filter := range filters {
-		isIntType := true
-		if filter.GetType().EvalType() != types.ETInt {
-			isIntType = false
-		}
+		isTypeInt := filter.GetType().EvalType() == types.ETInt
 		for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
 			if !selected[row.Idx()] {
 				continue
 			}
-			if isIntType {
+			if isTypeInt {
 				filterResult, isNull, err := filter.EvalInt(ctx, row)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -268,11 +265,8 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 func VectorizedFilterOneRow(ctx sessionctx.Context, filters []Expression, row chunk.Row) (bool, error) {
 	selected := true
 	for _, filter := range filters {
-		isIntType := true
-		if filter.GetType().EvalType() != types.ETInt {
-			isIntType = false
-		}
-		if isIntType {
+		isTypeInt := filter.GetType().EvalType() == types.ETInt
+		if isTypeInt {
 			filterResult, isNull, err := filter.EvalInt(ctx, row)
 			if err != nil {
 				return false, errors.Trace(err)

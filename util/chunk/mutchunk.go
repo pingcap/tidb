@@ -24,7 +24,7 @@ func NewMutChunk(colTypes []*types.FieldType) *MutChunk {
 	return NewChunkWithCapacity(colTypes, 1)
 }
 
-// MutChkInit init chk for ShadowPartialRow.
+// MutChkInit init chk for ShadowCopyPartialRow.
 // The chk chunk will only contain one row, so initial the nullBitMap , offsets and length first for performance.
 func MutChkInit(chk *MutChunk) {
 	chk.Reset()
@@ -35,9 +35,9 @@ func MutChkInit(chk *MutChunk) {
 	}
 }
 
-// ShadowPartialRow use shadow copy to instead of AppendPartialRow,
-// ShadowPartialRow appends a row to the mut chunk's first row.
-func ShadowPartialRow(colIdx int, row Row, dst *MutChunk) {
+// ShadowCopyPartialRow use shadow copy to instead of AppendPartialRow,
+// ShadowCopyPartialRow copies the data of row to the first row of dst.
+func ShadowCopyPartialRow(colIdx int, row Row, dst *MutChunk) {
 	for i, rowCol := range row.c.columns {
 		chkCol := dst.columns[colIdx+i]
 		if !rowCol.isNull(row.idx) {
