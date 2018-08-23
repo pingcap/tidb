@@ -55,13 +55,12 @@ func SpanFromContext(ctx context.Context) (sp opentracing.Span) {
 
 // ChildSpanFromContxt return a non-nil span. If span can be got from ctx, then returned span is
 // a child of such span. Otherwise, returned span is a noop span.
-func ChildSpanFromContxt(ctx context.Context, opName string) (sp opentracing.Span) {
+func ChildSpanFromContxt(ctx context.Context, opName string) (opentracing.Span, context.Context) {
 	if sp := opentracing.SpanFromContext(ctx); sp != nil {
 		if _, ok := sp.Tracer().(opentracing.NoopTracer); !ok {
 			child := opentracing.StartSpan(opName, opentracing.ChildOf(sp.Context()))
-			opentracing.ContextWithSpan(ctx, child)
-			return child
+			return child, opentracing.ContextWithSpan(ctx, child)
 		}
 	}
-	return noopSpan()
+	return noopSpan(), ctx
 }
