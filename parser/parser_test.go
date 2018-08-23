@@ -87,7 +87,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
 		"start", "global", "tables", "tablespace", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
-		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
+		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "partitions", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
@@ -2390,6 +2390,14 @@ func (s *testParserSuite) TestTablePartition(c *C) {
 		{`create table t1 (a int) partition by range (a)
 		  (PARTITION p0 VALUES LESS THAN (63340531200) COMMENT 'xxx' ENGINE = MyISAM ,
 		   PARTITION p1 VALUES LESS THAN (63342604800) ENGINE = MyISAM)`, true},
+		{`create table t (id int)
+		    partition by range (id)
+		    subpartition by key (id) subpartitions 2
+		    (partition p0 values less than (42))`, true},
+		{`create table t (id int)
+		    partition by range (id)
+		    subpartition by hash (id)
+		    (partition p0 values less than (42))`, true},
 	}
 	s.RunTest(c, table)
 
