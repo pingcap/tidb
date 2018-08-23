@@ -155,7 +155,7 @@ func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	return errors.Trace(err)
 }
 
-var errForbidDrop = errors.New("Hey, drop system database/table, are you sure?")
+var errForbidDrop = errors.New("Drop mysql tables is forbidden")
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	dbName := model.NewCIStr(s.Name)
@@ -191,26 +191,6 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	return errors.Trace(err)
 }
 
-var systemTables = map[string]struct{}{
-	"user":                 {},
-	"db":                   {},
-	"tables_priv":          {},
-	"columns_priv":         {},
-	"gc_delete_range":      {},
-	"gc_delete_range_done": {},
-}
-
-func isSystemTable(schema, table string) bool {
-	if schema != "mysql" {
-		return false
-	}
-
-	if _, ok := systemTables[table]; ok {
-		return true
-	}
-	return false
-}
-
 func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 	var notExistTables []string
 	for _, tn := range s.Tables {
@@ -232,7 +212,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
-		if isSystemTable(tn.Schema.L, tn.Name.L) {
+		if tn.Schema.L == "mysql" {
 			if !privileges.SkipWithGrant {
 				return errors.Trace(errForbidDrop)
 			}
