@@ -341,6 +341,8 @@ PARTITION BY RANGE ( id ) (
 
 	_, err := ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
 	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
+	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
@@ -428,7 +430,7 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "drop table if exists test.t1;")
+	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), `create table t1 (id int)
 							partition by range (id) (
