@@ -128,6 +128,9 @@ func (s *testSuite) TestCreateDropDatabase(c *C) {
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 	_, err = tk.Exec("select * from t;")
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+
+	_, err = tk.Exec("drop database mysql")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestCreateDropTable(c *C) {
@@ -137,6 +140,9 @@ func (s *testSuite) TestCreateDropTable(c *C) {
 	tk.MustExec("drop table if exists drop_test")
 	tk.MustExec("create table drop_test (a int)")
 	tk.MustExec("drop table drop_test")
+
+	_, err := tk.Exec("drop table mysql.user")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestCreateDropIndex(c *C) {
