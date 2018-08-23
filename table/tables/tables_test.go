@@ -422,3 +422,44 @@ PARTITION BY RANGE ( id ) (
 		c.Assert(pd.ID, Equals, p.GetPhysicalID())
 	}
 }
+
+func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
+	_, err := ts.se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "drop table if exists test.t1;")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), `create table t1 (id int)
+							partition by range (id) (
+							partition p0 values less than (4),
+							partition p1 values less than (7),
+							partition p3 values less than maxvalue)`)
+	c.Assert(err, IsNil)
+
+	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	type partitionExpr interface {
+		PartitionExpr() *tables.PartitionExpr
+	}
+	pe := tbl.(partitionExpr).PartitionExpr()
+	c.Assert(pe.Column.TblName.L, Equals, "t1")
+	c.Assert(pe.Column.ColName.L, Equals, "id")
+
+	ranges := []string{
+		"or(lt(t1.id, 4), isnull(t1.id))",
+		"and(lt(t1.id, 7), ge(t1.id, 4))",
+		"and(1, ge(t1.id, 7))",
+	}
+	upperBounds := []string{
+		"lt(t1.id, 4)",
+		"lt(t1.id, 7)",
+		"1",
+	}
+	for i, expr := range pe.Ranges {
+		c.Assert(expr.String(), Equals, ranges[i])
+	}
+	for i, expr := range pe.UpperBounds {
+		c.Assert(expr.String(), Equals, upperBounds[i])
+	}
+}

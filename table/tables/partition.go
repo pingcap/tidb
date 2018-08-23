@@ -101,6 +101,7 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 // Ranges: (x < y1 or x is null); (y1 <= x < y2); (y2 <= x < y3)
 // UpperBounds: (x < y1); (x < y2); (x < y3)
 type PartitionExpr struct {
+	// Column is the column appeared in the by range expression, partition pruning need this to work.
 	Column      *expression.Column
 	Ranges      []expression.Expression
 	UpperBounds []expression.Expression
@@ -132,7 +133,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		if i > 0 {
 			fmt.Fprintf(&buf, " and ((%s) >= (%s))", pi.Expr, pi.Definitions[i-1].LessThan[0])
 		} else {
-			// NULL will locates in the first partition, so its expression is (expr < value or expr is null).
+			// NULL will locate in the first partition, so its expression is (expr < value or expr is null).
 			fmt.Fprintf(&buf, " or ((%s) is null)", pi.Expr)
 
 			// Extracts the column of the partition expression, it will be used by partition prunning.
