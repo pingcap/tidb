@@ -161,8 +161,8 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 }
 
 // ShadowPartialRowOne use shadow copy to instead of AppendPartialRow,
-// ShadowPartialRowOne use to merge muti-rows to one row.
-// this dst chk can only contain one row. otherwise will be wrong.
+// ShadowPartialRowOne appends a row to the chunk's first row.
+// The dst chk can only contain one row. otherwise will be wrong.
 func ShadowPartialRowOne(colIdx int, row Row, dst *Chunk) {
 	for i, rowCol := range row.c.columns {
 		chkCol := dst.columns[colIdx+i]
@@ -185,6 +185,7 @@ func ShadowPartialRowOne(colIdx int, row Row, dst *Chunk) {
 }
 
 // ShadowChkInit init chk for ShadowPartialRowOne.
+// The chk chunk will only contain one row, so initial the nullBitMap , offsets and length first for performance.
 func ShadowChkInit(chk *Chunk) {
 	chk.Reset()
 	for _, c := range chk.columns {

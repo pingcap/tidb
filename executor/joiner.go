@@ -142,6 +142,8 @@ func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
 	chk.AppendPartialRow(lhs.Len(), rhs)
 }
 
+// makeShadowJoinRow combines inner, outer row into one join row and append to the chunk.
+// The result of join row will always append to the dst chunk's first row.
 func makeShadowJoinRow(isRight bool, inner, outer chunk.Row, dst *chunk.Chunk) {
 	if !isRight {
 		inner, outer = outer, inner
