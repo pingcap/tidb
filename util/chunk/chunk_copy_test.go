@@ -36,8 +36,8 @@ func TestCopyShadow(t *testing.T) {
 	}
 	rowIdx := 0
 	for ; lhs != it1.End(); lhs = it1.Next() {
-		ShadowPartialRowOne(0, lhs, dst)
-		ShadowPartialRowOne(lhs.Len(), row, dst)
+		ShadowPartialRow(0, lhs, dst)
+		ShadowPartialRow(lhs.Len(), row, dst)
 
 		if !checkDstChkRow(dst.GetRow(0), rowIdx) {
 			t.Fail()
@@ -74,8 +74,8 @@ func BenchmarkCopyShadow(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		lhs := it1.Begin()
 		for ; lhs != it1.End(); lhs = it1.Next() {
-			ShadowPartialRowOne(0, lhs, dst)
-			ShadowPartialRowOne(lhs.Len(), row, dst)
+			ShadowPartialRow(0, lhs, dst)
+			ShadowPartialRow(lhs.Len(), row, dst)
 		}
 	}
 }

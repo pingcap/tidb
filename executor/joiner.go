@@ -92,6 +92,7 @@ func newJoiner(ctx sessionctx.Context, joinType plan.JoinType,
 	colTypes = append(colTypes, lhsColTypes...)
 	colTypes = append(colTypes, rhsColTypes...)
 	base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
+	base.mutChk = chunk.NewMutChunk(colTypes)
 	base.selected = make([]bool, 0, chunk.InitialCapacity)
 	if joinType == plan.LeftOuterJoin || joinType == plan.RightOuterJoin {
 		innerColTypes := lhsColTypes
@@ -125,6 +126,7 @@ type baseJoiner struct {
 	defaultInner chunk.Row
 	outerIsRight bool
 	chk          *chunk.Chunk
+	mutChk       *chunk.MutChunk
 	selected     []bool
 	maxChunkSize int
 }
@@ -148,8 +150,8 @@ func makeShadowJoinRow(isRight bool, inner, outer chunk.Row, dst *chunk.Chunk) {
 	if !isRight {
 		inner, outer = outer, inner
 	}
-	chunk.ShadowPartialRowOne(0, inner, dst)
-	chunk.ShadowPartialRowOne(inner.Len(), outer, dst)
+	chunk.ShadowPartialRow(0, inner, dst)
+	chunk.ShadowPartialRow(inner.Len(), outer, dst)
 }
 
 func (j *baseJoiner) filter(input, output *chunk.Chunk) (matched bool, err error) {
@@ -182,8 +184,8 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 		return true, nil
 	}
 
-	dst := j.chk
-	chunk.ShadowChkInit(dst)
+	dst := j.mutChk
+	chunk.MutChkInit(dst)
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		makeShadowJoinRow(j.outerIsRight, inner, outer, dst)
 
@@ -218,8 +220,8 @@ func (j *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk 
 		return true, nil
 	}
 
-	dst := j.chk
-	chunk.ShadowChkInit(dst)
+	dst := j.mutChk
+	chunk.MutChkInit(dst)
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		makeShadowJoinRow(j.outerIsRight, inner, outer, dst)
 
@@ -255,8 +257,8 @@ func (j *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator,
 		return true, nil
 	}
 
-	dst := j.chk
-	chunk.ShadowChkInit(dst)
+	dst := j.mutChk
+	chunk.MutChkInit(dst)
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		makeShadowJoinRow(false, inner, outer, dst)
 
@@ -299,8 +301,8 @@ func (j *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Itera
 		return true, nil
 	}
 
-	dst := j.chk
-	chunk.ShadowChkInit(dst)
+	dst := j.mutChk
+	chunk.MutChkInit(dst)
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		makeShadowJoinRow(false, inner, outer, dst)
 
@@ -338,7 +340,7 @@ func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 	}
 
 	numToAppend := j.maxChunkSize - chk.NumRows()
-	return tryToMatchInerAndOuter(j.ctx, false, outer, inners, j.conditions, j.chk, chk, numToAppend)
+	return tryToMatchInerAndOuter(j.ctx, false, outer, inners, j.conditions, j.mutChk, chk, numToAppend)
 }
 
 func (j *leftOuterJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
@@ -357,7 +359,7 @@ func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, ch
 	}
 
 	numToAppend := j.maxChunkSize - chk.NumRows()
-	return tryToMatchInerAndOuter(j.ctx, true, outer, inners, j.conditions, j.chk, chk, numToAppend)
+	return tryToMatchInerAndOuter(j.ctx, true, outer, inners, j.conditions, j.mutChk, chk, numToAppend)
 }
 
 func (j *rightOuterJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
@@ -376,13 +378,13 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 	}
 
 	numToAppend := j.maxChunkSize - chk.NumRows()
-	return tryToMatchInerAndOuter(j.ctx, j.outerIsRight, outer, inners, j.conditions, j.chk, chk, numToAppend)
+	return tryToMatchInerAndOuter(j.ctx, j.outerIsRight, outer, inners, j.conditions, j.mutChk, chk, numToAppend)
 }
 
 func tryToMatchInerAndOuter(ctx sessionctx.Context, isRight bool, outer chunk.Row, inners chunk.Iterator, conditions []expression.Expression, midChk, outChk *chunk.Chunk, numToAppend int) (bool, error) {
 	match := false
 	dst := midChk
-	chunk.ShadowChkInit(dst)
+	chunk.MutChkInit(dst)
 
 	for inner := inners.Current(); inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
 		makeShadowJoinRow(isRight, inner, outer, dst)

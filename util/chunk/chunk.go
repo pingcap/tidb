@@ -160,41 +160,6 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	}
 }
 
-// ShadowPartialRowOne use shadow copy to instead of AppendPartialRow,
-// ShadowPartialRowOne appends a row to the chunk's first row.
-// The dst chk can only contain one row. otherwise will be wrong.
-func ShadowPartialRowOne(colIdx int, row Row, dst *Chunk) {
-	for i, rowCol := range row.c.columns {
-		chkCol := dst.columns[colIdx+i]
-		if !rowCol.isNull(row.idx) {
-			chkCol.nullBitmap[0] = 1
-		} else {
-			chkCol.nullBitmap[0] = 0
-		}
-
-		if rowCol.isFixed() {
-			elemLen := len(rowCol.elemBuf)
-			offset := row.idx * elemLen
-			chkCol.data = rowCol.data[offset : offset+elemLen]
-		} else {
-			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
-			chkCol.data = rowCol.data[start:end]
-			chkCol.offsets[1] = int32(len(chkCol.data))
-		}
-	}
-}
-
-// ShadowChkInit init chk for ShadowPartialRowOne.
-// The chk chunk will only contain one row, so initial the nullBitMap , offsets and length first for performance.
-func ShadowChkInit(chk *Chunk) {
-	chk.Reset()
-	for _, c := range chk.columns {
-		c.nullBitmap = append(c.nullBitmap, 0)
-		c.offsets = append(c.offsets, 0)
-		c.length = 1
-	}
-}
-
 // Append appends rows in [begin, end) in another Chunk to a Chunk.
 func (c *Chunk) Append(other *Chunk, begin, end int) {
 	for colID, src := range other.columns {
