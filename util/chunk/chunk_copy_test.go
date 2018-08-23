@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	numRows = 3
+	numRows = 1024
 )
 
 func TestCopyFieldByField(t *testing.T) {
@@ -40,11 +40,11 @@ func TestCopyShadow(t *testing.T) {
 	}
 }
 
-func TestCopyColumnByColumn(t *testing.T) {
+func TestCopyBatchColumnByColumn(t *testing.T) {
 	it1, row, dst := prepareChks()
 
 	dst.Reset()
-	rowsCap := 32
+	rowsCap := 1024
 	rows := make([]Row, 0, rowsCap)
 	for lhs := it1.Begin(); lhs != it1.End(); lhs = it1.Next() {
 		rows = append(rows, lhs)
@@ -87,7 +87,7 @@ func BenchmarkCopyShadow(b *testing.B) {
 	}
 }
 
-func BenchmarkCopyColumnByColumn(b *testing.B) {
+func BenchmarkCopyBatchColumnByColumn(b *testing.B) {
 	b.ReportAllocs()
 	it1, row, dst := prepareChks()
 

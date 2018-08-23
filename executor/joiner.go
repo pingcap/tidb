@@ -376,7 +376,7 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 func (j *baseJoiner) tryToMatchInnerAndOuter(isRight bool, outer chunk.Row, inners chunk.Iterator, outChk *chunk.Chunk, cacheRows []chunk.Row) (bool, error) {
 	match := false
 	numToAppend := j.maxChunkSize - outChk.NumRows()
-	for inner := inners.Current(); inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
+	for inner := inners.Current(); inner != inners.End() && numToAppend > 0; inner = inners.Next() {
 		j.makeJoinRow(isRight, inner, outer)
 
 		matched, err := expression.VectorizedFilterRow(j.ctx, j.conditions, j.mutRow.ToRow())
@@ -390,6 +390,7 @@ func (j *baseJoiner) tryToMatchInnerAndOuter(isRight bool, outer chunk.Row, inne
 				chunk.BatchCopyJoinRowToChunk(isRight, cacheRows, outer, outChk)
 				cacheRows = cacheRows[:0]
 			}
+			numToAppend--
 		}
 	}
 	chunk.BatchCopyJoinRowToChunk(isRight, cacheRows, outer, outChk)

@@ -176,20 +176,27 @@ func BatchCopyJoinRowToChunk(isRight bool, inners []Row, outer Row, c *Chunk) {
 
 // appendPartialRows appends multiple different rows to the chunk.
 func appendPartialRows(colIdx int, rows []Row, chk *Chunk) {
-	for _, row := range rows {
-		for i, rowCol := range row.c.columns {
-			chkCol := chk.columns[colIdx+i]
-			chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
-			if rowCol.isFixed() {
-				elemLen := len(rowCol.elemBuf)
+	columns := rows[0].c.columns
+	for i, rowCol := range columns {
+		chkCol := chk.columns[colIdx+i]
+		if rowCol.isFixed() {
+			elemLen := len(rowCol.elemBuf)
+			for _, row := range rows {
+				chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+				chkCol.length++
+
 				offset := row.idx * elemLen
 				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
-			} else {
+			}
+		} else {
+			for _, row := range rows {
+				chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+				chkCol.length++
+
 				start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
 				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
 				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
 			}
-			chkCol.length++
 		}
 	}
 }
