@@ -2,6 +2,8 @@ package chunk
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 	"testing"
 )
 
@@ -23,23 +25,14 @@ func TestCopyFieldByField(t *testing.T) {
 }
 
 func TestCopyShadow(t *testing.T) {
-	it1, row, dst := prepareChks()
+	it1, row, mutRow := prepareChksForShadowCopy()
 
-	dst.Reset()
-
-	lhs := it1.Begin()
-
-	for _, c := range dst.columns {
-		c.nullBitmap = append(c.nullBitmap, 0)
-		c.offsets = append(c.offsets, 0)
-		c.length = 1
-	}
 	rowIdx := 0
-	for ; lhs != it1.End(); lhs = it1.Next() {
-		ShadowCopyPartialRow(0, lhs, dst)
-		ShadowCopyPartialRow(lhs.Len(), row, dst)
+	for lhs := it1.Begin(); lhs != it1.End(); lhs = it1.Next() {
+		ShadowCopyPartialRow(0, lhs, mutRow)
+		ShadowCopyPartialRow(lhs.Len(), row, mutRow)
 
-		if !checkDstChkRow(dst.GetRow(0), rowIdx) {
+		if !checkDstChkRow(mutRow.ToRow(), rowIdx) {
 			t.Fail()
 		}
 		rowIdx++
@@ -62,20 +55,14 @@ func BenchmarkCopyFieldByField(b *testing.B) {
 
 func BenchmarkCopyShadow(b *testing.B) {
 	b.ReportAllocs()
-	it1, row, dst := prepareChks()
+	it1, row, mutRow := prepareChksForShadowCopy()
 
 	b.ResetTimer()
-	for _, c := range dst.columns {
-		c.nullBitmap = append(c.nullBitmap, 0)
-		c.offsets = append(c.offsets, 0)
-		c.length = 1
-	}
-
 	for i := 0; i < b.N; i++ {
 		lhs := it1.Begin()
 		for ; lhs != it1.End(); lhs = it1.Next() {
-			ShadowCopyPartialRow(0, lhs, dst)
-			ShadowCopyPartialRow(lhs.Len(), row, dst)
+			ShadowCopyPartialRow(0, lhs, mutRow)
+			ShadowCopyPartialRow(lhs.Len(), row, mutRow)
 		}
 	}
 }
@@ -116,6 +103,26 @@ func prepareChks() (it1 Iterator, row Row, dst *Chunk) {
 	it1.Begin()
 	dst = newChunkWithInitCap(numRows, 8, 8, 0, 0, 8, 8, 0, 0)
 	return it1, row, dst
+}
+
+func prepareChksForShadowCopy() (it1 Iterator, row Row, mutRow MutRow) {
+	chk1 := getChunk()
+	row = chk1.GetRow(0)
+	it1 = NewIterator4Chunk(chk1)
+	it1.Begin()
+
+	colTypes := make([]*types.FieldType, 0, 8)
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
+
+	mutRow = MutRowFromTypes(colTypes)
+	return it1, row, mutRow
 }
 
 func checkDstChk(dst *Chunk) bool {

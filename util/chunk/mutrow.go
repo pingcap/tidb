@@ -346,3 +346,27 @@ func setMutRowJSON(col *column, j json.BinaryJSON) {
 	copy(col.data[1:], j.Value)
 	col.offsets[1] = int32(dataLen)
 }
+
+// ShadowCopyPartialRow use shadow copy to instead of AppendPartialRow,
+// ShadowCopyPartialRow copies the data of row to the first row of dst.
+func ShadowCopyPartialRow(colIdx int, row Row, mutRow MutRow) {
+	dst := mutRow.c
+	for i, rowCol := range row.c.columns {
+		chkCol := dst.columns[colIdx+i]
+		if !rowCol.isNull(row.idx) {
+			chkCol.nullBitmap[0] = 1
+		} else {
+			chkCol.nullBitmap[0] = 0
+		}
+
+		if rowCol.isFixed() {
+			elemLen := len(rowCol.elemBuf)
+			offset := row.idx * elemLen
+			chkCol.data = rowCol.data[offset : offset+elemLen]
+		} else {
+			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
+			chkCol.data = rowCol.data[start:end]
+			chkCol.offsets[1] = int32(len(chkCol.data))
+		}
+	}
+}
