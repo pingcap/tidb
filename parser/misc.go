@@ -444,6 +444,8 @@ var tokenMap = map[string]int{
 	"STORED":                   stored,
 	"STRAIGHT_JOIN":            straightJoin,
 	"SUBDATE":                  subDate,
+	"SUBPARTITION":             subpartition,
+	"SUBPARTITIONS":            subpartitions,
 	"SUBSTR":                   substring,
 	"SUBSTRING":                substring,
 	"SUM":                      sum,
