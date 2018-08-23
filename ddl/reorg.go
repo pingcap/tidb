@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -282,7 +283,7 @@ func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (maxR
 	}
 	defer terror.Call(result.Close)
 
-	chk := chunk.NewChunkWithCapacity(getColumnsTypes(columns), 1)
+	chk := chunk.NewFixedChunk(getColumnsTypes(columns), 1, variable.DefMaxChunkSize)
 	err = result.Next(ctx, chk)
 	if err != nil {
 		return maxRowID, false, errors.Trace(err)

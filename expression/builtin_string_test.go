@@ -424,7 +424,7 @@ func (s *testEvaluatorSuite) TestRepeatSig(c *C) {
 	}
 
 	for _, t := range cases {
-		input := chunk.NewChunkWithCapacity(colTypes, 10)
+		input := chunk.NewFixedChunk(colTypes, 10, 1024)
 		input.AppendString(0, t.args[0].(string))
 		input.AppendInt64(1, t.args[1].(int64))
 
@@ -817,7 +817,7 @@ func (s *testEvaluatorSuite) TestSpaceSig(c *C) {
 	}
 	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
 	space := &builtinSpaceSig{base, 1000}
-	input := chunk.NewChunkWithCapacity(colTypes, 10)
+	input := chunk.NewFixedChunk(colTypes, 10, 1024)
 	input.AppendInt64(0, 6)
 	input.AppendInt64(0, 1001)
 	res, isNull, err := space.evalString(input.GetRow(0))
@@ -1401,7 +1401,7 @@ func (s *testEvaluatorSuite) TestRpadSig(c *C) {
 	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
 	rpad := &builtinRpadSig{base, 1000}
 
-	input := chunk.NewChunkWithCapacity(colTypes, 10)
+	input := chunk.NewFixedChunk(colTypes, 10, 1024)
 	input.AppendString(0, "abc")
 	input.AppendString(0, "abc")
 	input.AppendInt64(1, 6)
@@ -1717,7 +1717,7 @@ func (s *testEvaluatorSuite) TestFromBase64Sig(c *C) {
 		base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
 		fromBase64 := &builtinFromBase64Sig{base, test.maxAllowPacket}
 
-		input := chunk.NewChunkWithCapacity(colTypes, 1)
+		input := chunk.NewFixedChunk(colTypes, 1, 1024)
 		input.AppendString(0, test.args)
 		res, isNull, err := fromBase64.evalString(input.GetRow(0))
 		c.Assert(err, IsNil)
@@ -2052,7 +2052,7 @@ func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {
 		base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
 		toBase64 := &builtinToBase64Sig{base, test.maxAllowPacket}
 
-		input := chunk.NewChunkWithCapacity(colTypes, 1)
+		input := chunk.NewFixedChunk(colTypes, 1, 1024)
 		input.AppendString(0, test.args)
 		res, isNull, err := toBase64.evalString(input.GetRow(0))
 		c.Assert(err, IsNil)

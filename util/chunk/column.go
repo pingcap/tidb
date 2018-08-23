@@ -44,6 +44,7 @@ func (c *column) appendJSON(j json.BinaryJSON) {
 }
 
 type column struct {
+	elemLen    int8
 	length     int
 	nullCount  int
 	nullBitmap []byte
@@ -65,6 +66,24 @@ func (c *column) reset() {
 		c.offsets = c.offsets[:1]
 	}
 	c.data = c.data[:0]
+}
+
+func (c *column) eraseGrow(newCap int) {
+	c.length = 0
+	c.nullCount = 0
+	if c.elemLen == -1 {
+		lenPerElem := 4
+		if lastNumRows := c.length; lastNumRows != 0 {
+			lenPerElem = len(c.data) / lastNumRows
+		}
+		c.offsets = make([]int32, 1, newCap+1)
+		c.data = make([]byte, 0, newCap*lenPerElem)
+		c.nullBitmap = make([]byte, 0, newCap>>3)
+	} else {
+		c.elemBuf = make([]byte, c.elemLen)
+		c.data = make([]byte, 0, newCap*int(c.elemLen))
+		c.nullBitmap = make([]byte, 0, newCap>>3)
+	}
 }
 
 func (c *column) isNull(rowIdx int) bool {

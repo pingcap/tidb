@@ -127,7 +127,7 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
-	for i, batchSize := 0, us.ctx.GetSessionVars().MaxChunkSize; i < batchSize; i++ {
+	for i, batchSize := 0, chk.MaxRows(); i < batchSize; i++ {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
 			return errors.Trace(err)

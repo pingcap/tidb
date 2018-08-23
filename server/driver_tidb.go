@@ -330,6 +330,10 @@ func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
 	return trs.recordSet.NewChunk()
 }
 
+func (trs *tidbResultSet) NewFixedChunk(cap int) *chunk.Chunk {
+	return trs.recordSet.NewFixedChunk(cap)
+}
+
 func (trs *tidbResultSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return trs.recordSet.Next(ctx, chk)
 }

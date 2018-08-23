@@ -136,8 +136,8 @@ func (s *testChunkSuite) TestAppend(c *check.C) {
 	jsonObj, err := json.ParseBinaryFromString("{\"k1\":\"v1\"}")
 	c.Assert(err, check.IsNil)
 
-	src := NewChunkWithCapacity(fieldTypes, 32)
-	dst := NewChunkWithCapacity(fieldTypes, 32)
+	src := NewFixedChunk(fieldTypes, 32, 1024)
+	dst := NewFixedChunk(fieldTypes, 32, 1024)
 
 	src.AppendFloat32(0, 12.8)
 	src.AppendString(1, "abc")
@@ -191,7 +191,7 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 	jsonObj, err := json.ParseBinaryFromString("{\"k1\":\"v1\"}")
 	c.Assert(err, check.IsNil)
 
-	src := NewChunkWithCapacity(fieldTypes, 32)
+	src := NewFixedChunk(fieldTypes, 32, 1024)
 
 	for i := 0; i < 8; i++ {
 		src.AppendFloat32(0, 12.8)
@@ -234,7 +234,7 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 		cmpRes := json.CompareBinary(jsonElem, jsonObj)
 		c.Assert(cmpRes, check.Equals, 0)
 	}
-	chk := NewChunkWithCapacity(fieldTypes[:1], 1)
+	chk := NewFixedChunk(fieldTypes[:1], 1, 1024)
 	chk.AppendFloat32(0, 1.0)
 	chk.AppendFloat32(0, 1.0)
 	chk.TruncateTo(1)
@@ -244,13 +244,13 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 
 // newChunk creates a new chunk and initialize columns with element length.
 // 0 adds an varlen column, positive len add a fixed length column, negative len adds a interface column.
-func newChunk(elemLen ...int) *Chunk {
+func newChunk(elemLen ...int8) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
 		if l > 0 {
 			chk.addFixedLenColumn(l, 0)
 		} else {
-			chk.addVarLenColumn(0)
+			chk.addVarLenColumn(-1, 0)
 		}
 	}
 	return chk
@@ -302,7 +302,7 @@ var allTypes = []*types.FieldType{
 }
 
 func (s *testChunkSuite) TestCompare(c *check.C) {
-	chunk := NewChunkWithCapacity(allTypes, 32)
+	chunk := NewFixedChunk(allTypes, 32, 1024)
 	for i := 0; i < len(allTypes); i++ {
 		chunk.AppendNull(i)
 	}
@@ -395,7 +395,7 @@ func (s *testChunkSuite) TestGetDecimalDatum(c *check.C) {
 	sc := new(stmtctx.StatementContext)
 	decDatum, err := datum.ConvertTo(sc, decType)
 	c.Assert(err, check.IsNil)
-	chk := NewChunkWithCapacity([]*types.FieldType{decType}, 32)
+	chk := NewFixedChunk([]*types.FieldType{decType}, 32, 1024)
 	chk.AppendMyDecimal(0, decDatum.GetMysqlDecimal())
 	decFromChk := chk.GetRow(0).GetDatum(0, decType)
 	c.Assert(decDatum.Length(), check.Equals, decFromChk.Length())
@@ -411,7 +411,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
 
 	initCap := 10
-	chk := NewChunkWithCapacity(fieldTypes, initCap)
+	chk := NewFixedChunk(fieldTypes, initCap, 1024)
 
 	//cap(c.nullBitmap) + cap(c.offsets)*4 + cap(c.data) + cap(c.elemBuf)
 	colUsage := make([]int, len(fieldTypes))
@@ -455,6 +455,22 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
 	}
 	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+}
+
+func (s *testChunkSuite) TestChunkStringGrow(c *check.C) {
+	initCap := 1
+	chk := NewFixedChunk([]*types.FieldType{{Tp: mysql.TypeVarchar}, {Tp: mysql.TypeVarString}, {Tp: mysql.TypeString}}, initCap, 1024)
+	chk.AppendString(0, "12121")
+	chk.AppendString(1, "11211")
+	chk.AppendString(2, "21212")
+	chk.Reset()
+	c1, c2, c3 := cap(chk.columns[0].data), cap(chk.columns[1].data), cap(chk.columns[2].data)
+	chk.AppendString(0, "12121")
+	chk.AppendString(1, "11211")
+	chk.AppendString(2, "21212")
+	c.Assert(cap(chk.columns[0].data), check.Equals, c1)
+	c.Assert(cap(chk.columns[1].data), check.Equals, c2)
+	c.Assert(cap(chk.columns[2].data), check.Equals, c3)
 }
 
 func BenchmarkAppendInt(b *testing.B) {
@@ -509,7 +525,7 @@ func appendRow(chk *Chunk, row Row) {
 }
 
 func BenchmarkAppendBytes1024(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32, 1024)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 1024)
@@ -517,7 +533,7 @@ func BenchmarkAppendBytes1024(b *testing.B) {
 }
 
 func BenchmarkAppendBytes512(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32, 1024)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 512)
@@ -525,7 +541,7 @@ func BenchmarkAppendBytes512(b *testing.B) {
 }
 
 func BenchmarkAppendBytes256(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32, 1024)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 256)
@@ -533,7 +549,7 @@ func BenchmarkAppendBytes256(b *testing.B) {
 }
 
 func BenchmarkAppendBytes128(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32, 1024)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 128)
@@ -541,7 +557,7 @@ func BenchmarkAppendBytes128(b *testing.B) {
 }
 
 func BenchmarkAppendBytes64(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32, 1024)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 64)
@@ -549,7 +565,7 @@ func BenchmarkAppendBytes64(b *testing.B) {
 }
 
 func BenchmarkAppendBytes32(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32, 1024)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 32)
@@ -557,7 +573,7 @@ func BenchmarkAppendBytes32(b *testing.B) {
 }
 
 func BenchmarkAppendBytes16(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32, 1024)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 16)
@@ -565,7 +581,7 @@ func BenchmarkAppendBytes16(b *testing.B) {
 }
 
 func BenchmarkAppendBytes8(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32, 1024)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 8)
@@ -573,7 +589,7 @@ func BenchmarkAppendBytes8(b *testing.B) {
 }
 
 func BenchmarkAppendBytes4(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32, 1024)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 4)
@@ -581,7 +597,7 @@ func BenchmarkAppendBytes4(b *testing.B) {
 }
 
 func BenchmarkAppendBytes2(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32, 1024)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 2)
@@ -589,7 +605,7 @@ func BenchmarkAppendBytes2(b *testing.B) {
 }
 
 func BenchmarkAppendBytes1(b *testing.B) {
-	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
+	chk := NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32, 1024)
 	var bs = make([]byte, 256)
 	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 1)
@@ -627,7 +643,7 @@ func BenchmarkChunkMemoryUsage(b *testing.B) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
 
 	initCap := 10
-	chk := NewChunkWithCapacity(fieldTypes, initCap)
+	chk := NewFixedChunk(fieldTypes, initCap, 1024)
 	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 

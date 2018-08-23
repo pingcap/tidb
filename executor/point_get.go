@@ -196,5 +196,9 @@ func (e *PointGetExecutor) retTypes() []*types.FieldType {
 }
 
 func (e *PointGetExecutor) newChunk() *chunk.Chunk {
-	return chunk.NewChunkWithCapacity(e.retTypes(), 1)
+	return e.newFixedChunk(1)
+}
+
+func (e *PointGetExecutor) newFixedChunk(cap int) *chunk.Chunk {
+	return chunk.NewFixedChunk(e.retTypes(), cap, e.ctx.GetSessionVars().MaxChunkSize)
 }

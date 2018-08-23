@@ -68,6 +68,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.HashAggFinalConcurrency, Equals, DefTiDBHashAggFinalConcurrency)
 	c.Assert(vars.DistSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
 	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
+	c.Assert(vars.InitChunkSize, Equals, DefInitChunkSize)
 	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
 	c.Assert(vars.MemQuotaQuery, Equals, int64(config.GetGlobalConfig().MemQuotaQuery))
 	c.Assert(vars.MemQuotaHashJoin, Equals, int64(DefTiDBMemQuotaHashJoin))
@@ -171,8 +172,12 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	SetSessionSystemVar(v, TiDBBatchInsert, types.NewStringDatum("1"))
 	c.Assert(v.BatchInsert, IsTrue)
 
-	c.Assert(v.MaxChunkSize, Equals, 32)
+	c.Assert(v.MaxChunkSize, Equals, 1024)
 	SetSessionSystemVar(v, TiDBMaxChunkSize, types.NewStringDatum("2"))
+	c.Assert(v.MaxChunkSize, Equals, 2)
+
+	c.Assert(v.InitChunkSize, Equals, 32)
+	SetSessionSystemVar(v, TiDBInitChunkSize, types.NewStringDatum("2"))
 	c.Assert(v.MaxChunkSize, Equals, 2)
 
 	// Test case for TiDBConfig session variable.

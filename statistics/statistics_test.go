@@ -94,11 +94,15 @@ func (r *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (r *recordSet) NewChunk() *chunk.Chunk {
+	return r.NewFixedChunk(chunk.InitialCapacity)
+}
+
+func (r *recordSet) NewFixedChunk(cap int) *chunk.Chunk {
 	fields := make([]*types.FieldType, 0, len(r.fields))
 	for _, field := range r.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewChunkWithCapacity(fields, 32)
+	return chunk.NewFixedChunk(fields, cap, 1204)
 }
 
 func (r *recordSet) Close() error {
@@ -172,8 +176,8 @@ func encodeKey(key types.Datum) types.Datum {
 func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
 	ctx := context.Background()
+	chk := records.NewChunk()
 	for {
-		chk := records.NewChunk()
 		err := records.Next(ctx, chk)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
@@ -189,6 +193,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSe
 				return 0, nil, errors.Trace(err)
 			}
 		}
+		chk = records.NewFixedChunk(chk.NumRows())
 	}
 	return b.Count, b.hist, nil
 }

@@ -40,7 +40,7 @@ func (e *ExplainExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
-	numCurRows := mathutil.Min(e.maxChunkSize, len(e.rows)-e.cursor)
+	numCurRows := mathutil.Min(chk.MaxRows(), len(e.rows)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurRows; i++ {
 		for j := range e.rows[i] {
 			chk.AppendString(j, e.rows[i][j])

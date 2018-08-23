@@ -25,7 +25,7 @@ import (
 )
 
 func (s *testSuite) TestMergePartialResult4Count(c *C) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 5)
+	srcChk := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 5, 1024)
 	for i := int64(0); i < 5; i++ {
 		srcChk.AppendInt64(0, i)
 	}
@@ -45,7 +45,7 @@ func (s *testSuite) TestMergePartialResult4Count(c *C) {
 	// build final func for final phase.
 	finalCountFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
 	finalPr := finalCountFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+	resultChk := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1, 1024)
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -70,7 +70,7 @@ func (s *testSuite) TestMergePartialResult4Count(c *C) {
 }
 
 func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 5)
+	srcChk := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 5, 1024)
 	for i := int64(0); i < 5; i++ {
 		srcChk.AppendMyDecimal(0, types.NewDecFromInt(i))
 	}
@@ -92,7 +92,7 @@ func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
 	// build final func for final phase.
 	finalAvgFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
 	finalPr := finalAvgFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 1)
+	resultChk := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 1, 1024)
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -126,7 +126,7 @@ func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
 }
 
 func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 5)
+	srcChk := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 5, 1024)
 	for i := int64(0); i < 5; i++ {
 		srcChk.AppendFloat64(0, float64(i))
 	}
@@ -148,7 +148,7 @@ func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
 	// build final func for final phase.
 	finalAvgFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
 	finalPr := finalAvgFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1)
+	resultChk := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1, 1024)
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -182,7 +182,7 @@ func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
 }
 
 func (s *testSuite) TestMergePartialResult4SumDecimal(c *C) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 5)
+	srcChk := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 5, 1024)
 	for i := int64(0); i < 5; i++ {
 		srcChk.AppendMyDecimal(0, types.NewDecFromInt(i))
 	}
@@ -204,7 +204,7 @@ func (s *testSuite) TestMergePartialResult4SumDecimal(c *C) {
 	// build final func for final phase.
 	finalAvgFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
 	finalPr := finalAvgFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 1)
+	resultChk := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 1, 1024)
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -238,7 +238,7 @@ func (s *testSuite) TestMergePartialResult4SumDecimal(c *C) {
 }
 
 func (s *testSuite) TestMergePartialResult4SumFloat(c *C) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 5)
+	srcChk := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 5, 1024)
 	for i := int64(0); i < 5; i++ {
 		srcChk.AppendFloat64(0, float64(i))
 	}
@@ -260,7 +260,7 @@ func (s *testSuite) TestMergePartialResult4SumFloat(c *C) {
 	// build final func for final phase.
 	finalAvgFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
 	finalPr := finalAvgFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1)
+	resultChk := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1, 1024)
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -294,7 +294,7 @@ func (s *testSuite) TestMergePartialResult4SumFloat(c *C) {
 }
 
 func (s *testSuite) TestMergePartialResult4MaxFloat(c *C) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 5)
+	srcChk := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 5, 1024)
 	for i := int64(0); i < 5; i++ {
 		srcChk.AppendFloat64(0, float64(i))
 	}
@@ -316,7 +316,7 @@ func (s *testSuite) TestMergePartialResult4MaxFloat(c *C) {
 	// build final func for final phase.
 	finalAvgFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
 	finalPr := finalAvgFunc.AllocPartialResult()
-	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1)
+	resultChk := chunk.NewFixedChunk([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 1, 1024)
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {

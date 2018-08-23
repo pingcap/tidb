@@ -86,12 +86,11 @@ func newJoiner(ctx sessionctx.Context, joinType plan.JoinType,
 		ctx:          ctx,
 		conditions:   filter,
 		outerIsRight: outerIsRight,
-		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	colTypes := make([]*types.FieldType, 0, len(lhsColTypes)+len(rhsColTypes))
 	colTypes = append(colTypes, lhsColTypes...)
 	colTypes = append(colTypes, rhsColTypes...)
-	base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
+	base.chk = chunk.NewFixedChunk(colTypes, ctx.GetSessionVars().InitChunkSize, ctx.GetSessionVars().MaxChunkSize)
 	base.selected = make([]bool, 0, chunk.InitialCapacity)
 	if joinType == plan.LeftOuterJoin || joinType == plan.RightOuterJoin {
 		innerColTypes := lhsColTypes
@@ -126,7 +125,6 @@ type baseJoiner struct {
 	outerIsRight bool
 	chk          *chunk.Chunk
 	selected     []bool
-	maxChunkSize int
 }
 
 func (j *baseJoiner) initDefaultInner(innerTypes []*types.FieldType, defaultInner []types.Datum) {
@@ -337,7 +335,7 @@ func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 		chkForJoin = chk
 	}
 
-	numToAppend := j.maxChunkSize - chk.NumRows()
+	numToAppend := chk.MaxRows() - chk.NumRows()
 	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
 		j.makeJoinRowToChunk(chkForJoin, outer, inners.Current())
 		inners.Next()
@@ -372,7 +370,7 @@ func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, ch
 		chkForJoin = chk
 	}
 
-	numToAppend := j.maxChunkSize - chk.NumRows()
+	numToAppend := chk.MaxRows() - chk.NumRows()
 	for ; inners.Current() != inners.End() && numToAppend > 0; numToAppend-- {
 		j.makeJoinRowToChunk(chkForJoin, inners.Current(), outer)
 		inners.Next()
@@ -405,7 +403,7 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 	if len(j.conditions) == 0 {
 		chkForJoin = chk
 	}
-	inner, numToAppend := inners.Current(), j.maxChunkSize-chk.NumRows()
+	inner, numToAppend := inners.Current(), chk.MaxRows()-chk.NumRows()
 	for ; inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
 		if j.outerIsRight {
 			j.makeJoinRowToChunk(chkForJoin, inner, outer)

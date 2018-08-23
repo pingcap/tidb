@@ -44,8 +44,7 @@ func (r *streamResult) Fetch(context.Context) {}
 
 func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	for chk.NumRows() < maxChunkSize {
+	for chk.NumRows() < chk.MaxRows() {
 		err := r.readDataIfNecessary(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -114,9 +113,8 @@ func (r *streamResult) readDataIfNecessary(ctx context.Context) error {
 
 func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 	remainRowsData := r.curr.RowsData
-	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
-	for chk.NumRows() < maxChunkSize && len(remainRowsData) > 0 {
+	for chk.NumRows() < chk.MaxRows() && len(remainRowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
 			remainRowsData, err = decoder.DecodeOne(remainRowsData, i, r.fieldTypes[i])
 			if err != nil {

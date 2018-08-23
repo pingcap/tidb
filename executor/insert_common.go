@@ -252,7 +252,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 	fields := selectExec.retTypes()
 	chk := selectExec.newChunk()
 	iter := chunk.NewIterator4Chunk(chk)
-	rows := make([][]types.Datum, 0, e.ctx.GetSessionVars().MaxChunkSize)
+	rows := make([][]types.Datum, 0, chk.MaxRows())
 
 	sessVars := e.ctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()

@@ -69,7 +69,7 @@ func (s *testSuite) TestSelectNormal(c *C) {
 	response.Fetch(context.TODO())
 
 	// Test Next.
-	chk := chunk.NewChunkWithCapacity(colTypes, 32)
+	chk := chunk.NewFixedChunk(colTypes, 32, 1024)
 	numAllRows := 0
 	for {
 		err = response.Next(context.TODO(), chk)
@@ -121,7 +121,7 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 	response.Fetch(context.TODO())
 
 	// Test Next.
-	chk := chunk.NewChunkWithCapacity(colTypes, 32)
+	chk := chunk.NewFixedChunk(colTypes, 32, 1024)
 	numAllRows := 0
 	for {
 		err = response.Next(context.TODO(), chk)
@@ -257,7 +257,7 @@ func BenchmarkReadRowsData(b *testing.B) {
 	for i := 0; i < numCols; i++ {
 		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
 	}
-	chk := chunk.NewChunkWithCapacity(colTypes, numRows)
+	chk := chunk.NewFixedChunk(colTypes, numRows, numRows)
 
 	buffer := populateBuffer()
 
@@ -275,7 +275,7 @@ func BenchmarkDecodeToChunk(b *testing.B) {
 	for i := 0; i < numCols; i++ {
 		colTypes[i] = &types.FieldType{Tp: mysql.TypeLonglong}
 	}
-	chk := chunk.NewChunkWithCapacity(colTypes, numRows)
+	chk := chunk.NewFixedChunk(colTypes, numRows, numRows)
 
 	for rowOrdinal := 0; rowOrdinal < numRows; rowOrdinal++ {
 		for colOrdinal := 0; colOrdinal < numCols; colOrdinal++ {

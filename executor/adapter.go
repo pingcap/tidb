@@ -109,6 +109,11 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 	return a.executor.newChunk()
 }
 
+// NewChunk create a new chunk using NewFixedChunk function in chunk package.
+func (a *recordSet) NewFixedChunk(cap int) *chunk.Chunk {
+	return a.executor.newFixedChunk(cap)
+}
+
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.logSlowQuery(a.txnStartTS, a.lastErr == nil)
