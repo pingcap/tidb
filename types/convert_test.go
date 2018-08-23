@@ -696,7 +696,7 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 func (s *testTypeConvertSuite) TestConvertTime(c *C) {
 	timezones := []*time.Location{
 		time.UTC,
-		time.FixedZone("UTC", 3*3600),
+		time.FixedZone("", 3*3600),
 		time.Local,
 	}
 
