@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 const (
@@ -160,7 +161,8 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 }
 
 // checkCreatePartitionValue checks whether `less than value` is strictly increasing for each partition.
-func checkCreatePartitionValue(pi *model.PartitionInfo) error {
+// Side effect: it may simplify the partition range definition from a constant expression to an integer.
+func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo, pi *model.PartitionInfo) error {
 	defs := pi.Definitions
 	if len(defs) <= 1 {
 		return nil
@@ -169,15 +171,19 @@ func checkCreatePartitionValue(pi *model.PartitionInfo) error {
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	var prevRangeValue int
+	var prevRangeValue int64
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
 			return errors.Trace(ErrPartitionMaxvalue)
 		}
 
-		currentRangeValue, err := strconv.Atoi(defs[i].LessThan[0])
+		currentRangeValue, fromExpr, err := getRangeValue(ctx, tblInfo, defs[i].LessThan[0])
 		if err != nil {
-			return ErrNotAllowedTypeInPartition.GenByArgs(defs[i].LessThan[0])
+			return errors.Trace(err)
+		}
+		if fromExpr {
+			// Constant fold the expression.
+			defs[i].LessThan[0] = fmt.Sprintf("%d", currentRangeValue)
 		}
 
 		if i == 0 {
@@ -191,6 +197,28 @@ func checkCreatePartitionValue(pi *model.PartitionInfo) error {
 		prevRangeValue = currentRangeValue
 	}
 	return nil
+}
+
+// getRangeValue gets an integer from the range value string.
+// The returned boolean value indicates whether the input string is a constant expression.
+func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string) (int64, bool, error) {
+
+	if value, err := strconv.ParseInt(str, 10, 64); err == nil {
+		return value, false, nil
+	}
+
+	// The range value maybe not an integer, it could be a constant expression.
+	// For example, the following two cases are the same:
+	// PARTITION p0 VALUES LESS THAN (TO_SECONDS('2004-01-01'))
+	// PARTITION p0 VALUES LESS THAN (63340531200)
+	if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
+		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		if err2 == nil && isNull == false {
+			return res, true, nil
+		}
+	}
+
+	return 0, false, ErrNotAllowedTypeInPartition.GenByArgs(str)
 }
 
 // validRangePartitionType checks the type supported by the range partitioning key.

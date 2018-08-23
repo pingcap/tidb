@@ -827,6 +827,11 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	// for char_length
 	result = tk.MustQuery(`select char_length(null), char_length("Hello"), char_length("a中b文c"), char_length(123),char_length(12.3456);`)
 	result.Check(testkit.Rows("<nil> 5 5 3 7"))
+	result = tk.MustQuery(`select char_length(null), char_length("Hello"), char_length("a 中 b 文 c"), char_length("НОЧЬ НА ОКРАИНЕ МОСКВЫ");`)
+	result.Check(testkit.Rows("<nil> 5 9 22"))
+	// for char_length, binary string type
+	result = tk.MustQuery(`select char_length(null), char_length(binary("Hello")), char_length(binary("a 中 b 文 c")), char_length(binary("НОЧЬ НА ОКРАИНЕ МОСКВЫ"));`)
+	result.Check(testkit.Rows("<nil> 5 13 41"))
 
 	// for elt
 	result = tk.MustQuery(`select elt(0, "abc", "def"), elt(2, "hello", "中文", "tidb"), elt(4, "hello", "中文",
@@ -920,6 +925,13 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("2 0 3 0"))
 	result = tk.MustQuery(`select field("abc", "a", 1), field(1.3, "1.3", 1.5);`)
 	result.Check(testkit.Rows("1 1"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a decimal(11, 8), b decimal(11,8))")
+	tk.MustExec("insert into t values('114.57011441','38.04620115'), ('-38.04620119', '38.04620115');")
+	result = tk.MustQuery("select a,b,concat_ws(',',a,b) from t")
+	result.Check(testkit.Rows("114.57011441 38.04620115 114.57011441,38.04620115",
+		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
 }
 
 func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
