@@ -50,6 +50,7 @@ type column struct {
 	offsets    []int32
 	data       []byte
 	elemBuf    []byte
+	elemLen    int8
 }
 
 func (c *column) isFixed() bool {
@@ -140,4 +141,22 @@ func (c *column) appendBytes(b []byte) {
 func (c *column) appendTime(t types.Time) {
 	writeTime(c.elemBuf, t)
 	c.finishAppendFixed()
+}
+
+func (c *column) eraseGrow(newCap int) {
+	c.length = 0
+	c.nullCount = 0
+	if c.elemLen == -1 {
+		lenPerElem := 4
+		if c.length != 0 {
+			lenPerElem = len(c.data) / c.length
+		}
+		c.offsets = make([]int32, 1, newCap+1)
+		c.data = make([]byte, 0, newCap*lenPerElem)
+		c.nullBitmap = make([]byte, 0, newCap>>3)
+	} else {
+		c.elemBuf = make([]byte, c.elemLen)
+		c.data = make([]byte, 0, newCap*int(c.elemLen))
+		c.nullBitmap = make([]byte, 0, newCap>>3)
+	}
 }

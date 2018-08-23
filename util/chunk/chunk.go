@@ -30,6 +30,10 @@ type Chunk struct {
 	// numVirtualRows indicates the number of virtual rows, which have zero column.
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int
+	// capacity indicate the max number of rows that the chunk want to hold.
+	// The accurate row count after executor.Next is guaranteed by executor implement.
+	// It is used only during executor's execution, and be grow by `Renew` or `Reset`.
+	capacity int
 }
 
 // Capacity constants.
@@ -39,11 +43,41 @@ const (
 
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
 func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
+	return New(fields, cap, cap) //FIX ME in continue PR, this keep every thing same.
+}
+
+// New creates a new chunk.
+//  cap: the max number of rows that the chunk want to hold.
+//  capLimit: the max limit for max number of rows.
+func New(fields []*types.FieldType, cap, capLimit int) *Chunk {
 	chk := new(Chunk)
 	chk.columns = make([]*column, 0, len(fields))
 	chk.numVirtualRows = 0
 	for _, f := range fields {
-		chk.addColumnByFieldType(f, cap)
+		chk.addColumnByFieldType(getFixedLen(f), cap, nil)
+	}
+	chk.capacity = cap
+	if chk.capacity > capLimit {
+		chk.capacity = capLimit
+	}
+	return chk
+}
+
+// Renew recreates a new chunk base on old chunk.
+//   chk: old chunk(often used in previous call).
+//   capLimit: the max limit for max number of rows.
+func Renew(chk *Chunk, capLimit int) *Chunk {
+	_, nextCapacity := checkCapacity(chk, capLimit, true)
+	return newChunkByChunk(chk, nextCapacity)
+}
+
+func newChunkByChunk(old *Chunk, cap int) *Chunk {
+	chk := new(Chunk)
+	chk.columns = make([]*column, 0, len(old.columns))
+	chk.numVirtualRows = 0
+	chk.capacity = cap
+	for _, col := range old.columns {
+		chk.addColumnByFieldType(col.elemLen, cap, col)
 	}
 	return chk
 }
@@ -60,31 +94,36 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 }
 
 // addFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
-func (c *Chunk) addFixedLenColumn(elemLen, initCap int) {
+func (c *Chunk) addFixedLenColumn(elemLen int8, initCap int) {
 	c.columns = append(c.columns, &column{
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, initCap*elemLen),
+		data:       make([]byte, 0, initCap*int(elemLen)),
 		nullBitmap: make([]byte, 0, initCap>>3),
+		elemLen:    elemLen,
 	})
 }
 
 // addVarLenColumn adds a variable length column with initial data capacity.
-func (c *Chunk) addVarLenColumn(initCap int) {
+func (c *Chunk) addVarLenColumn(elemLen int8, initCap int, old *column) {
+	guessElemLen := 4
+	if old != nil && old.length != 0 {
+		guessElemLen = len(old.data) / old.length
+	}
 	c.columns = append(c.columns, &column{
 		offsets:    make([]int32, 1, initCap+1),
-		data:       make([]byte, 0, initCap*4),
+		data:       make([]byte, 0, initCap*guessElemLen),
 		nullBitmap: make([]byte, 0, initCap>>3),
+		elemLen:    elemLen,
 	})
 }
 
 // addColumnByFieldType adds a column by field type.
-func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
-	numFixedBytes := getFixedLen(fieldTp)
+func (c *Chunk) addColumnByFieldType(numFixedBytes int8, initCap int, old *column) {
 	if numFixedBytes != -1 {
 		c.addFixedLenColumn(numFixedBytes, initCap)
 		return
 	}
-	c.addVarLenColumn(initCap)
+	c.addVarLenColumn(numFixedBytes, initCap, old)
 }
 
 // MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".
@@ -112,10 +151,71 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
-	for _, c := range c.columns {
-		c.reset()
+	c.GrowReset(c.capacity)
+}
+
+// GrowReset resets the chunk and grow capacity if need.
+// TODO: this method will be used in continue PR.
+func (c *Chunk) GrowReset(capLimit int) {
+	if c.columns == nil {
+		return
+	}
+	needResize, nextCapacity := checkCapacity(c, capLimit, false)
+	if needResize {
+		c.capacity = nextCapacity
+	}
+	for _, col := range c.columns {
+		if needResize {
+			col.eraseGrow(nextCapacity)
+		} else {
+			col.reset()
+		}
 	}
 	c.numVirtualRows = 0
+}
+
+// checkCapacity checks and return suitable capacity in next execution.
+func checkCapacity(c *Chunk, capLimit int, tryReduce bool) (needResize bool, nextCapacity int) {
+	currSize, nextCapacity := c.NumRows(), c.capacity
+	if currSize == 0 {
+		return false, nextCapacity
+	}
+	if currSize >= c.capacity && currSize < capLimit {
+		nextCapacity = c.capacity * 2
+		if nextCapacity > capLimit {
+			nextCapacity = capLimit
+		}
+		return true, nextCapacity
+	}
+	if tryReduce && currSize < c.capacity {
+		nextCapacity = powerOf2Capacity(currSize, capLimit)
+		if nextCapacity > capLimit {
+			nextCapacity = capLimit
+		}
+	}
+	return false, nextCapacity
+}
+
+// Returns a power of two size for the given target size.
+func powerOf2Capacity(size, capLimit int) int {
+	n := size - 1
+	n |= n >> 1
+	n |= n >> 2
+	n |= n >> 4
+	n |= n >> 8
+	n |= n >> 16
+	if n < 0 {
+		return 1
+	}
+	if n >= capLimit {
+		return capLimit
+	}
+	return n + 1
+}
+
+// Capacity return the max number of rows that chunk want to hold.
+func (c *Chunk) Capacity() int {
+	return c.capacity
 }
 
 // NumCols returns the number of columns in the chunk.
