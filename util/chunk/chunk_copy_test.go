@@ -2,7 +2,6 @@ package chunk
 
 import (
 	"fmt"
-	"github.com/juju/errors"
 	"testing"
 )
 
@@ -18,21 +17,7 @@ func TestCopyFieldByField(t *testing.T) {
 		dst.AppendRow(lhs)
 		dst.AppendPartialRow(lhs.Len(), row)
 	}
-	if err := checkDstChk(dst); err != nil {
-		t.Log(err)
-		t.Fail()
-	}
-}
-
-func TestCopyColumnByColumn(t *testing.T) {
-	it1, row, dst := prepareChks()
-
-	dst.Reset()
-	for it1.Begin(); it1.Current() != it1.End(); {
-		appendRightMultiRows(dst, it1, row, 128)
-	}
-	if err := checkDstChk(dst); err != nil {
-		t.Log(err)
+	if !checkDstChk(dst) {
 		t.Fail()
 	}
 }
@@ -54,8 +39,7 @@ func TestCopyShadow(t *testing.T) {
 		ShadowPartialRowOne(0, lhs, dst)
 		ShadowPartialRowOne(lhs.Len(), row, dst)
 
-		if err := checkDstChkRow(dst.GetRow(0), rowIdx); err != nil {
-			t.Log(err)
+		if !checkDstChkRow(dst.GetRow(0), rowIdx) {
 			t.Fail()
 		}
 		rowIdx++
@@ -72,19 +56,6 @@ func BenchmarkCopyFieldByField(b *testing.B) {
 		for lhs := it1.Begin(); lhs != it1.End(); lhs = it1.Next() {
 			dst.AppendRow(lhs)
 			dst.AppendPartialRow(lhs.Len(), row)
-		}
-	}
-}
-
-func BenchmarkCopyColumnByColumn(b *testing.B) {
-	b.ReportAllocs()
-	it1, row, dst := prepareChks()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		dst.Reset()
-		for it1.Begin(); it1.Current() != it1.End(); {
-			appendRightMultiRows(dst, it1, row, 128)
 		}
 	}
 }
@@ -107,73 +78,6 @@ func BenchmarkCopyShadow(b *testing.B) {
 			ShadowPartialRowOne(lhs.Len(), row, dst)
 		}
 	}
-}
-
-func AppendPartialRows(c *Chunk, colIdx int, rowIt Iterator, maxLen int) int {
-	oldRowLen := c.columns[colIdx+0].length
-	columns := rowIt.Current().c.columns
-	rowsCap := 32
-	rows := make([]Row, 0, rowsCap)
-	for row, j := rowIt.Current(), 0; j < maxLen && row != rowIt.End(); row, j = rowIt.Next(), j+1 {
-		rows = append(rows, row)
-		if j%rowsCap == 0 {
-			appendPartialRows(colIdx, rows, c, columns)
-			rows = rows[:0]
-		}
-	}
-	appendPartialRows(colIdx, rows, c, columns)
-	return c.columns[colIdx+0].length - oldRowLen
-}
-
-func appendPartialRows(colIdx int, rows []Row, chk *Chunk, columns []*column) {
-	for _, row := range rows {
-		for i, rowCol := range columns {
-			chkCol := chk.columns[colIdx+i]
-			chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
-			chkCol.length++
-			if rowCol.isFixed() {
-				elemLen := len(rowCol.elemBuf)
-				offset := row.idx * elemLen
-				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
-			} else {
-				start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
-				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
-				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
-
-			}
-		}
-	}
-}
-
-func appendPartialSameRows(c *Chunk, colIdx int, row Row, rowsLen int) {
-	for i, rowCol := range row.c.columns {
-		chkCol := c.columns[colIdx+i]
-		chkCol.appendMultiSameNullBitmap(!rowCol.isNull(row.idx), rowsLen)
-		chkCol.length += rowsLen
-		if rowCol.isFixed() {
-			elemLen := len(rowCol.elemBuf)
-			start := row.idx * elemLen
-			end := start + elemLen
-			for j := 0; j < rowsLen; j++ {
-				chkCol.data = append(chkCol.data, rowCol.data[start:start+end]...)
-			}
-		} else {
-			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
-			for j := 0; j < rowsLen; j++ {
-				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
-				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
-			}
-		}
-
-	}
-}
-
-func appendRightMultiRows(c *Chunk, lhser Iterator, rhs Row, maxLen int) int {
-	c.numVirtualRows += maxLen
-	lhsLen := lhser.Current().Len()
-	rowsLen := AppendPartialRows(c, 0, lhser, maxLen)
-	appendPartialSameRows(c, lhsLen, rhs, rowsLen)
-	return rowsLen
 }
 
 func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
@@ -214,58 +118,50 @@ func prepareChks() (it1 Iterator, row Row, dst *Chunk) {
 	return it1, row, dst
 }
 
-func checkDstChk(dst *Chunk) error {
+func checkDstChk(dst *Chunk) bool {
 	for i := 0; i < 8; i++ {
 		if dst.columns[i].length != numRows {
-			return errors.Errorf("col-%d length no equal", i)
+			return false
 		}
 	}
 	for j := 0; j < numRows; j++ {
 		row := dst.GetRow(j)
-		if err := checkDstChkRow(row, j); err != nil {
-			return err
+		if !checkDstChkRow(row, j) {
+			return false
 		}
 	}
-	return nil
+	return true
 }
-func checkDstChkRow(row Row, j int) error {
+func checkDstChkRow(row Row, j int) bool {
 	if row.GetInt64(0) != int64(j) {
-		return errors.Errorf("row-%d col-%d expect: %d, but get: %d", j, 0, j, row.GetInt64(0))
+		return false
 	}
 	if j%3 == 0 {
 		if !row.IsNull(1) {
-			return errors.Errorf("row-%d col-%d expect: null, but get: not null", j, 1)
+			return false
 		}
 	} else {
 		if row.GetInt64(1) != int64(j) {
-			return errors.Errorf("row-%d col-%d expect: %d, but get: %d", j, 1, j, row.GetInt64(1))
+			return false
 		}
 	}
-
 	if row.GetString(2) != fmt.Sprintf("abcd-%d", j) {
-		return errors.Errorf("row-%d col-%d expect: %s, but get: %s", j, 2, fmt.Sprintf("abcd-%d", j), row.GetString(2))
+		return false
 	}
 	if string(row.GetBytes(3)) != fmt.Sprintf("01234567890zxcvbnmqwer-%d", j) {
-		return errors.Errorf("row-%d col-%d expect: %s, but get: %s", j, 3, fmt.Sprintf("01234567890zxcvbnmqwer-%d", j), string(row.GetBytes(3)))
+		return false
 	}
-
 	if row.GetInt64(4) != 0 {
-		return errors.Errorf("row-%d col-%d expect: %d, but get: %d", j, 4, 0, row.GetInt64(0))
+		return false
 	}
-
 	if !row.IsNull(5) {
-		return errors.Errorf("row-%d col-%d expect: null, but get: not null", j, 5)
+		return false
 	}
 	if row.GetString(6) != fmt.Sprintf("abcd-%d", 0) {
-		return errors.Errorf("row-%d col-%d expect: %s, but get: %s", j, 6, fmt.Sprintf("abcd-%d", 0), row.GetString(6))
+		return false
 	}
 	if string(row.GetBytes(7)) != fmt.Sprintf("01234567890zxcvbnmqwer-%d", 0) {
-		return errors.Errorf("row-%d col-%d expect: %s, but get: %s", j, 7, fmt.Sprintf("01234567890zxcvbnmqwer-%d", 0), string(row.GetBytes(7)))
+		return false
 	}
-	return nil
-}
-
-func printRow(row Row) {
-	fmt.Printf("%d\t%d\t%s\t%s\t%d\t%d\t%s\t%s \n", row.GetInt64(0), row.GetInt64(1), row.GetString(2), string(row.GetBytes(3)),
-		row.GetInt64(4), row.GetInt64(5), row.GetString(6), string(row.GetBytes(7)))
+	return true
 }
