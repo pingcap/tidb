@@ -2,9 +2,10 @@ package chunk
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
-	"testing"
 )
 
 var (
@@ -29,8 +30,8 @@ func TestCopyShadow(t *testing.T) {
 
 	rowIdx := 0
 	for lhs := it1.Begin(); lhs != it1.End(); lhs = it1.Next() {
-		ShadowCopyPartialRow(0, lhs, mutRow)
-		ShadowCopyPartialRow(lhs.Len(), row, mutRow)
+		mutRow.ShadowCopyPartialRow(0, lhs)
+		mutRow.ShadowCopyPartialRow(lhs.Len(), row)
 
 		if !checkDstChkRow(mutRow.ToRow(), rowIdx) {
 			t.Fail()
@@ -61,8 +62,8 @@ func BenchmarkCopyShadow(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		lhs := it1.Begin()
 		for ; lhs != it1.End(); lhs = it1.Next() {
-			ShadowCopyPartialRow(0, lhs, mutRow)
-			ShadowCopyPartialRow(lhs.Len(), row, mutRow)
+			mutRow.ShadowCopyPartialRow(0, lhs)
+			mutRow.ShadowCopyPartialRow(lhs.Len(), row)
 		}
 	}
 }

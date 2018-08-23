@@ -147,8 +147,8 @@ func makeShadowJoinRow(isRight bool, inner, outer chunk.Row, mutRow chunk.MutRow
 	if !isRight {
 		inner, outer = outer, inner
 	}
-	chunk.ShadowCopyPartialRow(0, inner, mutRow)
-	chunk.ShadowCopyPartialRow(inner.Len(), outer, mutRow)
+	mutRow.ShadowCopyPartialRow(0, inner)
+	mutRow.ShadowCopyPartialRow(inner.Len(), outer)
 }
 
 func (j *baseJoiner) filter(input, output *chunk.Chunk) (matched bool, err error) {
@@ -375,7 +375,7 @@ func tryToMatchInerAndOuter(ctx sessionctx.Context, isRight bool, outer chunk.Ro
 	for inner := inners.Current(); inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
 		makeShadowJoinRow(isRight, inner, outer, mutRow)
 
-		matched, err := expression.VectorizedFilterOneRow(ctx, conditions, mutRow.ToRow())
+		matched, err := expression.VectorizedFilterRow(ctx, conditions, mutRow.ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}

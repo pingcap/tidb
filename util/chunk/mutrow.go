@@ -349,8 +349,8 @@ func setMutRowJSON(col *column, j json.BinaryJSON) {
 
 // ShadowCopyPartialRow use shadow copy to instead of AppendPartialRow,
 // ShadowCopyPartialRow copies the data of row to the mutRow.
-func ShadowCopyPartialRow(colIdx int, row Row, mutRow MutRow) {
-	dst := mutRow.c
+func (mr MutRow) ShadowCopyPartialRow(colIdx int, row Row) {
+	dst := mr.c
 	for i, rowCol := range row.c.columns {
 		chkCol := dst.columns[colIdx+i]
 		if !rowCol.isNull(row.idx) {
