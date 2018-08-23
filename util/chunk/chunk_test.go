@@ -248,9 +248,9 @@ func newChunk(elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
 		if l > 0 {
-			chk.addFixedLenColumn(l, 0)
+			chk.addFixedLenColumn(int8(l), 0)
 		} else {
-			chk.addVarLenColumn(0)
+			chk.addVarLenColumn(-1, 0, nil)
 		}
 	}
 	return chk
@@ -640,5 +640,211 @@ func BenchmarkChunkMemoryUsage(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		chk.MemoryUsage()
+	}
+}
+
+type mockExec struct {
+	x   int
+	ret int
+}
+
+func (x *mockExec) Next(chk *Chunk, resize bool) {
+	if resize {
+		chk.GrowReset(1024)
+	} else {
+		chk.Reset()
+	}
+	for chk.NumRows() < chk.Capacity() {
+		x.x++
+		if x.x > x.ret {
+			break
+		}
+		chk.AppendInt64(0, 1)
+	}
+}
+
+func BenchmarkChunkRenewConsumeExec10000000In1024Slice(b *testing.B) {
+	b.ReportAllocs()
+	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := &mockExec{ret: 10000000}
+		for {
+			e.Next(chk, false)
+			if chk.NumRows() == 0 {
+				break
+			}
+			chk = New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
+		}
+	}
+}
+
+func BenchmarkChunkRenewConsumeExec10000000In32Slice(b *testing.B) {
+	b.ReportAllocs()
+	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := &mockExec{ret: 10000000}
+		for {
+			e.Next(chk, false)
+			if chk.NumRows() == 0 {
+				break
+			}
+			chk = New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
+		}
+	}
+}
+
+func BenchmarkChunkRenewConsumeExec10000000InGrow(b *testing.B) {
+	b.ReportAllocs()
+	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := &mockExec{ret: 10000000}
+		for {
+			e.Next(chk, true)
+			if chk.NumRows() == 0 {
+				break
+			}
+			chk = Renew(chk, 1024)
+		}
+	}
+}
+
+func BenchmarkChunkRestConsumeExec10000000In1024Slice(b *testing.B) {
+	b.ReportAllocs()
+	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := &mockExec{ret: 10000000}
+		for {
+			e.Next(chk, false)
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+	}
+}
+
+func BenchmarkChunkResetConsumeExec10000000In32Slice(b *testing.B) {
+	b.ReportAllocs()
+	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := &mockExec{ret: 10000000}
+		for {
+			e.Next(chk, false)
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+	}
+}
+
+func BenchmarkChunkResetConsumeExec10000000InGrow(b *testing.B) {
+	b.ReportAllocs()
+	chk := New([]*types.FieldType{{Tp: mysql.TypeFloat}}, 32, 1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := &mockExec{ret: 10000000}
+		for {
+			e.Next(chk, true)
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+	}
+}
+
+func BenchmarkChunkRenewConsumeExec10In1024Slice(b *testing.B) {
+	b.ReportAllocs()
+	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := &mockExec{ret: 10}
+		for {
+			e.Next(chk, false)
+			if chk.NumRows() == 0 {
+				break
+			}
+			chk = New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
+		}
+	}
+}
+
+func BenchmarkChunkRenewConsumeExec10In32Slice(b *testing.B) {
+	b.ReportAllocs()
+	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := &mockExec{ret: 10}
+		for {
+			e.Next(chk, false)
+			if chk.NumRows() == 0 {
+				break
+			}
+			chk = New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
+		}
+	}
+}
+
+func BenchmarkChunkRenewConsumeExec10InGrow(b *testing.B) {
+	b.ReportAllocs()
+	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := &mockExec{ret: 10}
+		for {
+			e.Next(chk, true)
+			if chk.NumRows() == 0 {
+				break
+			}
+			chk = Renew(chk, 1024)
+		}
+	}
+}
+
+func BenchmarkChunkRestConsumeExec10In1024Slice(b *testing.B) {
+	b.ReportAllocs()
+	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := &mockExec{ret: 10}
+		for {
+			e.Next(chk, false)
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+	}
+}
+
+func BenchmarkChunkResetConsumeExec10In32Slice(b *testing.B) {
+	b.ReportAllocs()
+	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := &mockExec{ret: 10}
+		for {
+			e.Next(chk, false)
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+	}
+}
+
+func BenchmarkChunkResetConsumeExec10InGrow(b *testing.B) {
+	b.ReportAllocs()
+	chk := New([]*types.FieldType{{Tp: mysql.TypeFloat}}, 32, 1024)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e := &mockExec{ret: 10}
+		for {
+			e.Next(chk, true)
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
 	}
 }
