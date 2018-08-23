@@ -143,6 +143,7 @@ func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
 }
 
 // makeJoinRow combines inner, outer row into mutRow.
+// combines will uses shadow copy inner and outer row data to mutRow.
 func (j *baseJoiner) makeJoinRow(isRightJoin bool, inner, outer chunk.Row) {
 	if !isRightJoin {
 		inner, outer = outer, inner
