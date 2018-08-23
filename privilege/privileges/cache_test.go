@@ -200,6 +200,12 @@ func (s *testCacheSuite) TestAbnormalMySQLTable(c *C) {
 	c.Assert(err, IsNil)
 	defer se.Close()
 
+	saveSkipWithGrant := privileges.SkipWithGrant
+	defer func() {
+		privileges.SkipWithGrant = saveSkipWithGrant
+	}()
+	privileges.SkipWithGrant = true
+
 	// Simulate the case mysql.user is synchronized from MySQL.
 	mustExec(c, se, "DROP TABLE mysql.user;")
 	mustExec(c, se, "USE mysql;")

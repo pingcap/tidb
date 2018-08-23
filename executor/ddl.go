@@ -192,12 +192,12 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 }
 
 var systemTables = map[string]struct{}{
-	"user":                 struct{}{},
-	"db":                   struct{}{},
-	"tables_priv":          struct{}{},
-	"columns_priv":         struct{}{},
-	"gc_delete_range":      struct{}{},
-	"gc_delete_range_done": struct{}{},
+	"user":                 {},
+	"db":                   {},
+	"tables_priv":          {},
+	"columns_priv":         {},
+	"gc_delete_range":      {},
+	"gc_delete_range_done": {},
 }
 
 func isSystemTable(schema, table string) bool {
