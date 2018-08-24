@@ -373,7 +373,7 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 func (j *baseJoiner) tryToMatchInnerAndOuter(isRight bool, outer chunk.Row, inners chunk.Iterator, outChk *chunk.Chunk) (bool, error) {
 	match := false
 	numToAppend := j.maxChunkSize - outChk.NumRows()
-	for inner := inners.Current(); inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
+	for inner := inners.Current(); inner != inners.End() && numToAppend > 0; inner = inners.Next() {
 		j.makeJoinRow(isRight, inner, outer)
 
 		matched, err := expression.FilterRow(j.ctx, j.conditions, j.shadowRow.ToRow())
@@ -382,6 +382,7 @@ func (j *baseJoiner) tryToMatchInnerAndOuter(isRight bool, outer chunk.Row, inne
 		}
 		if matched {
 			match = true
+			numToAppend--
 			outChk.AppendRow(j.shadowRow.ToRow())
 		}
 	}
