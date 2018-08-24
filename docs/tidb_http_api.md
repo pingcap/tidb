@@ -70,12 +70,6 @@
     curl http://{TiDBIP}:10080/mvcc/txn/{startTS}/{db}/{table}
     ```
 
-1. Get MVCC Information of the key with a specified handle ID
-
-    ```shell
-    curl http://{TiDBIP}:10080/mvcc/txn/{startTS}
-    ```
-
 1. Get MVCC Information by a hex value
 
     ```shell
@@ -94,6 +88,18 @@ timezone.*
 
     ```shell
     curl http://{TiDBIP}:10080/settings
+    ```
+
+1. Get TiDB server information.
+
+    ```shell
+    curl http://{TiDBIP}:10080/info
+    ```
+
+1. Get TiDB cluster all servers information.
+
+    ```shell
+    curl http://{TiDBIP}:10080/info/all
     ```
 
 1. Enable/Disable TiDB server general log

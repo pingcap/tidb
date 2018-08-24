@@ -2616,6 +2616,8 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 
 	if goTime.Nanosecond() == 0 {
 		date.Fsp = 0
+	} else {
+		date.Fsp = 6
 	}
 
 	date.Time = types.FromGoTime(goTime)
@@ -2639,6 +2641,8 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 
 	if goTime.Nanosecond() == 0 {
 		date.Fsp = 0
+	} else {
+		date.Fsp = 6
 	}
 
 	date.Time = types.FromGoTime(goTime)
@@ -5406,7 +5410,7 @@ func (b *builtinLastDaySig) evalTime(row chunk.Row) (types.Time, bool, error) {
 // getExpressionFsp calculates the fsp from given expression.
 func getExpressionFsp(ctx sessionctx.Context, expression Expression) (int, error) {
 	constExp, isConstant := expression.(*Constant)
-	if isConstant && types.IsString(expression.GetType()) && !isTemporalColumn(expression) {
+	if isConstant && types.IsString(expression.GetType().Tp) && !isTemporalColumn(expression) {
 		str, isNil, err := constExp.EvalString(ctx, chunk.Row{})
 		if isNil || err != nil {
 			return 0, errors.Trace(err)

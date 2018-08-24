@@ -116,7 +116,10 @@ func (s *testMainSuite) TestTrimSQL(c *C) {
 func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	begin := time.Now()
 	RegisterStore("dummy", &brokenStore{})
-	_, err := newStoreWithRetry("dummy://dummy-store", 3)
+	store, err := newStoreWithRetry("dummy://dummy-store", 3)
+	if store != nil {
+		defer store.Close()
+	}
 	c.Assert(err, NotNil)
 	elapse := time.Since(begin)
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
