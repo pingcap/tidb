@@ -21,14 +21,16 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // Error instances.
 var (
-	ErrUnsupportedType = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
+	ErrUnsupportedType = terror.ClassOptimizer.New(CodeUnsupportedType, "Unsupported type")
 )
 
 // Error codes.
@@ -36,9 +38,12 @@ const (
 	CodeUnsupportedType terror.ErrCode = 1
 )
 
-// Range type.
+// RangeType is alias for int.
+type RangeType int
+
+// RangeType constants.
 const (
-	IntRangeType = iota
+	IntRangeType RangeType = iota
 	ColumnRangeType
 	IndexRangeType
 )
@@ -120,14 +125,18 @@ var fullRange = []point{
 	{value: types.MaxValueDatum()},
 }
 
-// FullIntRange is (-∞, +∞) for IntColumnRange.
-func FullIntRange() []IntColumnRange {
-	return []IntColumnRange{{LowVal: math.MinInt64, HighVal: math.MaxInt64}}
+// FullIntRange is used for table range. Since table range cannot accept MaxValueDatum as the max value.
+// So we need to set it to MaxInt64.
+func FullIntRange(isUnsigned bool) []*Range {
+	if isUnsigned {
+		return []*Range{{LowVal: []types.Datum{types.NewUintDatum(0)}, HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)}}}
+	}
+	return []*Range{{LowVal: []types.Datum{types.NewIntDatum(math.MinInt64)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
 }
 
-// FullIndexRange is (-∞, +∞) for IndexRange.
-func FullIndexRange() []*IndexRange {
-	return []*IndexRange{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+// FullRange is (-∞, +∞) for Range.
+func FullRange() []*Range {
+	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
 }
 
 // builder is the range builder struct.
@@ -150,7 +159,7 @@ func (r *builder) build(expr expression.Expression) []point {
 }
 
 func (r *builder) buildFromConstant(expr *expression.Constant) []point {
-	dt, err := expr.Eval(nil)
+	dt, err := expr.Eval(chunk.Row{})
 	if err != nil {
 		r.err = err
 		return nil
@@ -185,11 +194,16 @@ func (r *builder) buildFromColumn(expr *expression.Column) []point {
 func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
-	var value types.Datum
-	var op string
-	var err error
-	if v, ok := expr.GetArgs()[0].(*expression.Constant); ok {
-		value, err = v.Eval(nil)
+	var (
+		op    string
+		value types.Datum
+		err   error
+	)
+	if _, ok := expr.GetArgs()[0].(*expression.Column); ok {
+		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
+		op = expr.FuncName.L
+	} else {
+		value, err = expr.GetArgs()[0].Eval(chunk.Row{})
 		switch expr.FuncName.L {
 		case ast.GE:
 			op = ast.LE
@@ -202,9 +216,6 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		default:
 			op = expr.FuncName.L
 		}
-	} else {
-		value, err = expr.GetArgs()[1].(*expression.Constant).Eval(nil)
-		op = expr.FuncName.L
 	}
 	if err != nil {
 		return nil
@@ -294,7 +305,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 			r.err = ErrUnsupportedType.Gen("expr:%v is not constant", e)
 			return fullRange, hasNull
 		}
-		dt, err := v.Eval(nil)
+		dt, err := v.Eval(chunk.Row{})
 		if err != nil {
 			r.err = ErrUnsupportedType.Gen("expr:%v is not evaluated", e)
 			return fullRange, hasNull
@@ -330,7 +341,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
-	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(nil)
+	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(chunk.Row{})
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange
@@ -346,7 +357,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		return []point{startPoint, endPoint}
 	}
 	lowValue := make([]byte, 0, len(pattern))
-	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(nil)
+	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(chunk.Row{})
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange
@@ -414,11 +425,27 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
+		var (
+			isUnsignedIntCol bool
+			nonNegativePos   int
+		)
 		rangePoints, hasNull := r.buildFromIn(expr)
 		if hasNull {
 			return nil
 		}
-		retRangePoints := make([]point, 0, len(rangePoints)+2)
+		if x, ok := expr.GetArgs()[0].(*expression.Column); ok {
+			isUnsignedIntCol = mysql.HasUnsignedFlag(x.RetType.Flag) && mysql.IsIntegerType(x.RetType.Tp)
+		}
+		// negative ranges can be directly ignored for unsigned int columns.
+		if isUnsignedIntCol {
+			for nonNegativePos = 0; nonNegativePos < len(rangePoints); nonNegativePos += 2 {
+				if rangePoints[nonNegativePos].value.Kind() == types.KindUint64 || rangePoints[nonNegativePos].value.GetInt64() >= 0 {
+					break
+				}
+			}
+			rangePoints = rangePoints[nonNegativePos:]
+		}
+		retRangePoints := make([]point, 0, 2+len(rangePoints))
 		previousValue := types.Datum{}
 		for i := 0; i < len(rangePoints); i += 2 {
 			retRangePoints = append(retRangePoints, point{value: previousValue, start: true, excl: true})

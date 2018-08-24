@@ -18,12 +18,10 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/sessionctx"
 )
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
@@ -34,7 +32,9 @@ const (
 	flagEliminateProjection
 	flagBuildKeyInfo
 	flagDecorrelate
+	flagMaxMinEliminate
 	flagPredicatePushDown
+	flagPartitionProcessor
 	flagAggregationOptimize
 	flagPushDownTopN
 )
@@ -44,28 +44,35 @@ var optRuleList = []logicalOptRule{
 	&projectionEliminater{},
 	&buildKeySolver{},
 	&decorrelateSolver{},
+	&maxMinEliminator{},
 	&ppdSolver{},
+	&partitionProcessor{},
 	&aggregationOptimizer{},
 	&pushDownTopNOptimizer{},
 }
 
 // logicalOptRule means a logical optimizing rule, which contains decorrelate, ppd, column pruning, etc.
 type logicalOptRule interface {
-	optimize(LogicalPlan, context.Context) (LogicalPlan, error)
+	optimize(LogicalPlan) (LogicalPlan, error)
 }
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+	fp := tryFastPlan(ctx, node)
+	if fp != nil {
+		return fp, nil
+	}
 	ctx.GetSessionVars().PlanID = 0
+	ctx.GetSessionVars().PlanColumnID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 	}
-	p := builder.build(node)
-	if builder.err != nil {
-		return nil, errors.Trace(builder.err)
+	p, err := builder.build(node)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	// Maybe it's better to move this to Preprocess, but check privilege need table
@@ -77,9 +84,8 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 	}
 
 	if logic, ok := p.(LogicalPlan); ok {
-		return doOptimize(builder.optFlag, logic, ctx)
+		return doOptimize(builder.optFlag, logic)
 	}
-	p.ResolveIndices()
 	if execPlan, ok := p.(*Execute); ok {
 		err := execPlan.optimizePreparedPlan(ctx, is)
 		return p, errors.Trace(err)
@@ -88,16 +94,17 @@ func Optimize(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Pla
 }
 
 // BuildLogicalPlan used to build logical plan from ast.Node.
-func BuildLogicalPlan(ctx context.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
+	ctx.GetSessionVars().PlanColumnID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 	}
-	p := builder.build(node)
-	if builder.err != nil {
-		return nil, errors.Trace(builder.err)
+	p, err := builder.build(node)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	return p, nil
 }
@@ -111,15 +118,15 @@ func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	return true
 }
 
-func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (PhysicalPlan, error) {
-	logic, err := logicalOptimize(flag, logic, ctx)
+func doOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
+	logic, err := logicalOptimize(flag, logic)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if !AllowCartesianProduct && existsCartesianProduct(logic) {
 		return nil, errors.Trace(ErrCartesianProductUnsupported)
 	}
-	physical, err := dagPhysicalOptimize(logic)
+	physical, err := physicalOptimize(logic)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -127,7 +134,7 @@ func doOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (PhysicalPl
 	return finalPlan, nil
 }
 
-func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (LogicalPlan, error) {
+func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 	var err error
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
@@ -136,7 +143,7 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (Logic
 		if flag&(1<<uint(i)) == 0 {
 			continue
 		}
-		logic, err = rule.optimize(logic, ctx)
+		logic, err = rule.optimize(logic)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -144,17 +151,28 @@ func logicalOptimize(flag uint64, logic LogicalPlan, ctx context.Context) (Logic
 	return logic, errors.Trace(err)
 }
 
-func dagPhysicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
+func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
+	if _, err := logic.deriveStats(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	logic.preparePossibleProperties()
-	logic.prepareStatsProfile()
-	t, err := logic.convert2NewPhysicalPlan(&requiredProp{taskTp: rootTaskType, expectedCnt: math.MaxFloat64})
+
+	prop := &requiredProp{
+		taskTp:      rootTaskType,
+		expectedCnt: math.MaxFloat64,
+	}
+
+	t, err := logic.findBestTask(prop)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p := t.plan()
-	rebuildSchema(p)
-	p.ResolveIndices()
-	return p, nil
+	if t.invalid() {
+		return nil, ErrInternal.GenByArgs("Can't find a proper physical plan for this query")
+	}
+
+	t.plan().ResolveIndices()
+	return t.plan(), nil
 }
 
 func existsCartesianProduct(p LogicalPlan) bool {
@@ -162,61 +180,13 @@ func existsCartesianProduct(p LogicalPlan) bool {
 		return join.JoinType == InnerJoin || join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin
 	}
 	for _, child := range p.Children() {
-		if existsCartesianProduct(child.(LogicalPlan)) {
+		if existsCartesianProduct(child) {
 			return true
 		}
 	}
 	return false
 }
 
-// Optimizer error codes.
-const (
-	CodeOperandColumns      terror.ErrCode = 1
-	CodeInvalidWildCard                    = 3
-	CodeUnsupported                        = 4
-	CodeInvalidGroupFuncUse                = 5
-	CodeStmtNotFound                       = 7
-	CodeWrongParamCount                    = 8
-	CodeSchemaChanged                      = 9
-
-	// MySQL error code.
-	CodeIllegalReference     = mysql.ErrIllegalReference
-	CodeNoDB                 = mysql.ErrNoDB
-	CodeUnknownExplainFormat = mysql.ErrUnknownExplainFormat
-	CodeWrongGroupField      = mysql.ErrWrongGroupField
-	CodeDupFieldName         = mysql.ErrDupFieldName
-	CodeNonUpdatableTable    = mysql.ErrNonUpdatableTable
-)
-
-// Optimizer base errors.
-var (
-	ErrOperandColumns              = terror.ClassOptimizer.New(CodeOperandColumns, "Operand should contain %d column(s)")
-	ErrInvalidWildCard             = terror.ClassOptimizer.New(CodeInvalidWildCard, "Wildcard fields without any table name appears in wrong place")
-	ErrCartesianProductUnsupported = terror.ClassOptimizer.New(CodeUnsupported, "Cartesian product is unsupported")
-	ErrInvalidGroupFuncUse         = terror.ClassOptimizer.New(CodeInvalidGroupFuncUse, "Invalid use of group function")
-	ErrIllegalReference            = terror.ClassOptimizer.New(CodeIllegalReference, mysql.MySQLErrName[mysql.ErrIllegalReference])
-	ErrNoDB                        = terror.ClassOptimizer.New(CodeNoDB, "No database selected")
-	ErrUnknownExplainFormat        = terror.ClassOptimizer.New(CodeUnknownExplainFormat, mysql.MySQLErrName[mysql.ErrUnknownExplainFormat])
-	ErrStmtNotFound                = terror.ClassOptimizer.New(CodeStmtNotFound, "Prepared statement not found")
-	ErrWrongParamCount             = terror.ClassOptimizer.New(CodeWrongParamCount, "Wrong parameter count")
-	ErrSchemaChanged               = terror.ClassOptimizer.New(CodeSchemaChanged, "Schema has changed")
-	ErrWrongGroupField             = terror.ClassOptimizer.New(CodeWrongGroupField, mysql.MySQLErrName[mysql.ErrWrongGroupField])
-	ErrDupFieldName                = terror.ClassOptimizer.New(CodeDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
-	ErrNonUpdatableTable           = terror.ClassOptimizer.New(CodeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
-)
-
 func init() {
-	mySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeOperandColumns:       mysql.ErrOperandColumns,
-		CodeInvalidWildCard:      mysql.ErrParse,
-		CodeInvalidGroupFuncUse:  mysql.ErrInvalidGroupFuncUse,
-		CodeIllegalReference:     mysql.ErrIllegalReference,
-		CodeNoDB:                 mysql.ErrNoDB,
-		CodeUnknownExplainFormat: mysql.ErrUnknownExplainFormat,
-		CodeWrongGroupField:      mysql.ErrWrongGroupField,
-		CodeDupFieldName:         mysql.ErrDupFieldName,
-		CodeNonUpdatableTable:    mysql.ErrUnknownTable,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mySQLErrCodes
 	expression.EvalAstExpr = evalAstExpr
 }

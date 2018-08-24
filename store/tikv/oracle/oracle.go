@@ -16,13 +16,13 @@ package oracle
 import (
 	"time"
 
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Oracle is the interface that provides strictly ascending timestamps.
 type Oracle interface {
-	GetTimestamp(ctx goctx.Context) (uint64, error)
-	GetTimestampAsync(ctx goctx.Context) Future
+	GetTimestamp(ctx context.Context) (uint64, error)
+	GetTimestampAsync(ctx context.Context) Future
 	IsExpired(lockTimestamp uint64, TTL uint64) bool
 	Close()
 }
@@ -47,4 +47,9 @@ func ExtractPhysical(ts uint64) int64 {
 // GetPhysical returns physical from an instant time with millisecond precision.
 func GetPhysical(t time.Time) int64 {
 	return t.UnixNano() / int64(time.Millisecond)
+}
+
+// EncodeTSO encodes a millisecond into tso.
+func EncodeTSO(ts int64) uint64 {
+	return uint64(ts) << physicalShiftBits
 }

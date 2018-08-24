@@ -25,8 +25,9 @@ import (
 
 // UserIdentity represents username and hostname.
 type UserIdentity struct {
-	Username string
-	Hostname string
+	Username    string
+	Hostname    string
+	CurrentUser bool
 }
 
 // String converts UserIdentity to the format user@host.

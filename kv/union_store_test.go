@@ -27,7 +27,7 @@ type testUnionStoreSuite struct {
 }
 
 func (s *testUnionStoreSuite) SetUpTest(c *C) {
-	s.store = NewMemDbBuffer()
+	s.store = NewMemDbBuffer(DefaultTxnMembufCap)
 	s.us = NewUnionStore(&mockSnapshot{s.store})
 }
 
@@ -119,7 +119,7 @@ func (s *testUnionStoreSuite) TestLazyConditionCheck(c *C) {
 	s.us.SetOption(PresumeKeyNotExists, nil)
 	s.us.SetOption(PresumeKeyNotExistsError, ErrNotExist)
 	_, err = s.us.Get([]byte("2"))
-	c.Assert(terror.ErrorEqual(err, ErrNotExist), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrNotExist), IsTrue, Commentf("err %v", err))
 
 	err = s.us.CheckLazyConditionPairs()
 	c.Assert(err, NotNil)

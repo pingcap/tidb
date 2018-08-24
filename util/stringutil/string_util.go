@@ -14,11 +14,11 @@
 package stringutil
 
 import (
-	"bytes"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // ErrSyntax indicates that a value does not have the right syntax for the target type.
@@ -236,16 +236,7 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 	return sIdx == len(str)
 }
 
-// RemoveBlanks removes all blanks, returns a new string.
-func RemoveBlanks(s string) string {
-	var buf = new(bytes.Buffer)
-	var cbuf [6]byte
-	for _, c := range s {
-		if c == rune(' ') || c == rune('\t') || c == rune('\r') || c == rune('\n') {
-			continue
-		}
-		len := utf8.EncodeRune(cbuf[0:], c)
-		buf.Write(cbuf[0:len])
-	}
-	return buf.String()
+// Copy deep copies a string.
+func Copy(src string) string {
+	return string(hack.Slice(src))
 }

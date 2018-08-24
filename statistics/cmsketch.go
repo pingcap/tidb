@@ -19,6 +19,7 @@ import (
 
 	"github.com/cznic/sortutil"
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -53,16 +54,33 @@ func (c *CMSketch) InsertBytes(bytes []byte) {
 	}
 }
 
-func (c *CMSketch) queryValue(val types.Datum) (uint32, error) {
-	bytes, err := codec.EncodeValue(nil, val)
+// setValue sets the count for value that hashed into (h1, h2).
+func (c *CMSketch) setValue(h1, h2 uint64, count uint32) {
+	oriCount := c.queryHashValue(h1, h2)
+	c.count += uint64(count) - uint64(oriCount)
+	// let it overflow naturally
+	deltaCount := count - oriCount
+	for i := range c.table {
+		j := (h1 + h2*uint64(i)) % uint64(c.width)
+		c.table[i][j] = c.table[i][j] + deltaCount
+	}
+}
+
+func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (uint32, error) {
+	bytes, err := codec.EncodeValue(sc, nil, val)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return c.queryBytes(bytes), nil
+	return c.QueryBytes(bytes), nil
 }
 
-func (c *CMSketch) queryBytes(bytes []byte) uint32 {
+// QueryBytes is used to query the count of specified bytes.
+func (c *CMSketch) QueryBytes(bytes []byte) uint32 {
 	h1, h2 := murmur3.Sum128(bytes)
+	return c.queryHashValue(h1, h2)
+}
+
+func (c *CMSketch) queryHashValue(h1, h2 uint64) uint32 {
 	vals := make([]uint32, c.depth)
 	min := uint32(math.MaxUint32)
 	for i := range c.table {
@@ -113,6 +131,9 @@ func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 
 // CMSketchFromProto converts CMSketch from its protobuf representation.
 func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
+	if protoSketch == nil {
+		return nil
+	}
 	c := NewCMSketch(int32(len(protoSketch.Rows)), int32(len(protoSketch.Rows[0].Counters)))
 	for i, row := range protoSketch.Rows {
 		c.count = 0
@@ -154,7 +175,10 @@ func (c *CMSketch) TotalCount() uint64 {
 
 // Equal tests if two CM Sketch equal, it is only used for test.
 func (c *CMSketch) Equal(rc *CMSketch) bool {
-	if c.width != rc.width || c.depth != rc.depth {
+	if c == nil || rc == nil {
+		return c == nil && rc == nil
+	}
+	if c.width != rc.width || c.depth != rc.depth || c.count != rc.count {
 		return false
 	}
 	for i := range c.table {
@@ -165,4 +189,16 @@ func (c *CMSketch) Equal(rc *CMSketch) bool {
 		}
 	}
 	return true
+}
+
+func (c *CMSketch) copy() *CMSketch {
+	if c == nil {
+		return nil
+	}
+	tbl := make([][]uint32, c.depth)
+	for i := range tbl {
+		tbl[i] = make([]uint32, c.width)
+		copy(tbl[i], c.table[i])
+	}
+	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl}
 }

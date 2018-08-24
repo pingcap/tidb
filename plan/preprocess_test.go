@@ -16,16 +16,17 @@ package plan_test
 import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
-	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testValidatorSuite{})
@@ -75,9 +76,8 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("[schema:1068]Multiple primary key defined")},
 		{"create table t(c1 int not null, c2 int not null, primary key(c1), primary key(c2))", true,
 			errors.New("[schema:1068]Multiple primary key defined")},
-		{"alter table t auto_increment=1", true, errors.New("[autoid:3]No support for setting auto_increment using alter_table")},
-		{"alter table t add column c int auto_increment key, auto_increment=10", true,
-			errors.New("[autoid:3]No support for setting auto_increment using alter_table")},
+		{"alter table t auto_increment=1", true, nil},
+		{"alter table t add column c int auto_increment key, auto_increment=10", true, nil},
 		{"alter table t add column c int auto_increment key", true, nil},
 		{"alter table t add column char4294967295 char(255)", true, nil},
 		{"create table t (c float(53))", true, nil},
@@ -98,10 +98,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("[types:1439]Display width out of range for column 'c' (max = 4294967295)")},
 		{"alter table t add column c float(4294967296)", true,
 			errors.New("[types:1439]Display width out of range for column 'c' (max = 4294967295)")},
-		{"create table t (c float(54))", true,
-			errors.New("[types:1063]Incorrect column specifier for column 'c'")},
-		{"alter table t add column c float(54)", true,
-			errors.New("[types:1063]Incorrect column specifier for column 'c'")},
 		{"create table t (set65 set ('1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30','31','32','33','34','35','36','37','38','39','40','41','42','43','44','45','46','47','48','49','50','51','52','53','54','55','56','57','58','59','60','61','62','63','64','65'))", true,
 			errors.New("[types:1097]Too many strings for column set65 and SET")},
 		{"alter table t add column set65 set ('1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29','30','31','32','33','34','35','36','37','38','39','40','41','42','43','44','45','46','47','48','49','50','51','52','53','54','55','56','57','58','59','60','61','62','63','64','65')", true,
@@ -118,6 +114,8 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("[types:1074]Column length too big for column 'c' (max = 16383); use BLOB or TEXT instead")},
 		{"alter table t add column c varchar(4294967295) CHARACTER SET ascii", true,
 			errors.New("[types:1074]Column length too big for column 'c' (max = 65535); use BLOB or TEXT instead")},
+		{"create table t", false, ddl.ErrTableMustHaveColumns},
+		{"create table t (unique(c))", false, ddl.ErrTableMustHaveColumns},
 
 		{"create table `t ` (a int)", true, errors.New("[ddl:1103]Incorrect table name 't '")},
 		{"create table `` (a int)", true, errors.New("[ddl:1103]Incorrect table name ''")},
@@ -139,6 +137,8 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"alter table t change column a `a ` int", true, errors.New("[ddl:1166]Incorrect column name 'a '")},
 		{"create index idx on `t ` (a)", true, errors.New("[ddl:1103]Incorrect table name 't '")},
 		{"create index idx on  `` (a)", true, errors.New("[ddl:1103]Incorrect table name ''")},
+		{"rename table t to ``", false, errors.New("[ddl:1103]Incorrect table name ''")},
+		{"rename table `` to t", false, errors.New("[ddl:1103]Incorrect table name ''")},
 
 		// issue 3844
 		{`create table t (a set("a, b", "c, d"))`, true, errors.New("[types:1367]Illegal set 'a, b' value found during parsing")},
@@ -164,6 +164,36 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		// issue 4472
 		{`select sum(distinct(if('a', (select adddate(elt(999, count(*)), interval 1 day)), .1))) as foo;`, true, nil},
 		{`select sum(1 in (select count(1)))`, true, nil},
+
+		// issue 5529
+		{"CREATE TABLE `t` (`id` int(11) NOT NULL AUTO_INCREMENT, `a` decimal(100,4) DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin", false, types.ErrTooBigPrecision},
+		{"CREATE TABLE `t` (`id` int(11) NOT NULL AUTO_INCREMENT, `a` decimal(65,4) DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin", true, nil},
+		{"CREATE TABLE `t` (`id` int(11) NOT NULL AUTO_INCREMENT, `a` decimal(65,31) DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin", false, types.ErrTooBigScale},
+		{"CREATE TABLE `t` (`id` int(11) NOT NULL AUTO_INCREMENT, `a` decimal(66,31) DEFAULT NULL, PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin", false, types.ErrTooBigScale},
+		{"alter table t modify column a DECIMAL(66,30);", false, types.ErrTooBigPrecision},
+		{"alter table t modify column a DECIMAL(65,31);", false, types.ErrTooBigScale},
+		{"alter table t modify column a DECIMAL(65,30);", true, nil},
+
+		{"CREATE TABLE t (a float(255, 30))", true, nil},
+		{"CREATE TABLE t (a double(255, 30))", true, nil},
+		{"CREATE TABLE t (a float(256, 30))", false, types.ErrTooBigPrecision},
+		{"CREATE TABLE t (a float(255, 31))", false, types.ErrTooBigScale},
+		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigPrecision},
+		{"CREATE TABLE t (a double(255, 31))", false, types.ErrTooBigScale},
+
+		// FIXME: temporary 'not implemented yet' test for 'CREATE TABLE ... SELECT' (issue 4754)
+		{"CREATE TABLE t SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"CREATE TABLE t (m int) SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"CREATE TABLE t IGNORE SELECT * FROM u UNION SELECT * from v", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"CREATE TABLE t (m int) REPLACE AS (SELECT * FROM u) UNION (SELECT * FROM v)", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+
+		{"select * from ( select 1 ) a, (select 2) a;", false, plan.ErrNonUniqTable},
+		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, plan.ErrNonUniqTable},
+		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, plan.ErrNonUniqTable},
+		{"select * from ( select 1 ) a join (select 2) b join (select 3) a;", false, plan.ErrNonUniqTable},
+		{"select * from ( select 1 ) a, (select 2) b;", true, nil},
+		{"select * from (select * from ( select 1 ) a join (select 2) b) b join (select 3) a;", false, nil},
+		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
 	}
 
 	store, dom, err := newStoreWithBootstrap()
@@ -172,18 +202,18 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := tidb.CreateSession4Test(store)
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
-	_, err = se.Execute(goctx.Background(), "use test")
+	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	ctx := se.(context.Context)
+	ctx := se.(sessionctx.Context)
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plan.MockTable()})
 	for _, tt := range tests {
-		stmts, err1 := tidb.Parse(ctx, tt.sql)
+		stmts, err1 := session.Parse(ctx, tt.sql)
 		c.Assert(err1, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
 		err = plan.Preprocess(ctx, stmt, is, tt.inPrepare)
-		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
+		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("sql: %s, err:%v", tt.sql, err))
 	}
 }

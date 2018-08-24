@@ -241,6 +241,7 @@ const (
 	ColumnOptionFulltext
 	ColumnOptionComment
 	ColumnOptionGenerated
+	ColumnOptionReference
 )
 
 // ColumnOption is used for parsing column constraint info from SQL.
@@ -248,11 +249,14 @@ type ColumnOption struct {
 	node
 
 	Tp ColumnOptionType
+	// Expr is used for ColumnOptionDefaultValue/ColumnOptionOnUpdateColumnOptionGenerated.
 	// For ColumnOptionDefaultValue or ColumnOptionOnUpdate, it's the target value.
 	// For ColumnOptionGenerated, it's the target expression.
 	Expr ExprNode
 	// Stored is only for ColumnOptionGenerated, default is false.
 	Stored bool
+	// Refer is used for foreign key.
+	Refer *ReferenceDef
 }
 
 // Accept implements Node Accept interface.
@@ -399,6 +403,9 @@ type CreateTableStmt struct {
 	Cols        []*ColumnDef
 	Constraints []*Constraint
 	Options     []*TableOption
+	Partition   *PartitionOptions
+	OnDuplicate OnDuplicateCreateTableSelectType
+	Select      ResultSetNode
 }
 
 // Accept implements Node Accept interface.
@@ -434,6 +441,14 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Constraints[i] = node.(*Constraint)
 	}
+	if n.Select != nil {
+		node, ok := n.Select.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Select = node.(ResultSetNode)
+	}
+
 	return v.Leave(n)
 }
 
@@ -470,8 +485,9 @@ type RenameTableStmt struct {
 
 	OldTable *TableName
 	NewTable *TableName
+
+	// TableToTables is only useful for syncer which depends heavily on tidb parser to do some dirty work for now.
 	// TODO: Refactor this when you are going to add full support for multiple schema changes.
-	// Currently it is only useful for syncer which depends heavily on tidb parser to do some dirty work.
 	TableToTables []*TableToTable
 }
 
@@ -636,6 +652,8 @@ const (
 	TableOptionDelayKeyWrite
 	TableOptionRowFormat
 	TableOptionStatsPersistent
+	TableOptionShardRowID
+	TableOptionPackKeys
 )
 
 // RowFormat types
@@ -646,6 +664,17 @@ const (
 	RowFormatCompressed
 	RowFormatRedundant
 	RowFormatCompact
+)
+
+// OnDuplicateCreateTableSelectType is the option that handle unique key values in 'CREATE TABLE ... SELECT'.
+// See https://dev.mysql.com/doc/refman/5.7/en/create-table-select.html
+type OnDuplicateCreateTableSelectType int
+
+// OnDuplicateCreateTableSelect types
+const (
+	OnDuplicateCreateTableSelectError OnDuplicateCreateTableSelectType = iota
+	OnDuplicateCreateTableSelectIgnore
+	OnDuplicateCreateTableSelectReplace
 )
 
 // TableOption is used for parsing table option from SQL.
@@ -708,6 +737,11 @@ const (
 	AlterTableRenameTable
 	AlterTableAlterColumn
 	AlterTableLock
+	AlterTableAlgorithm
+	AlterTableRenameIndex
+	AlterTableForce
+	AlterTableAddPartitions
+	AlterTableDropPartition
 
 // TODO: Add more actions
 )
@@ -728,15 +762,19 @@ const (
 type AlterTableSpec struct {
 	node
 
-	Tp            AlterTableType
-	Name          string
-	Constraint    *Constraint
-	Options       []*TableOption
-	NewTable      *TableName
-	NewColumns    []*ColumnDef
-	OldColumnName *ColumnName
-	Position      *ColumnPosition
-	LockType      LockType
+	Tp              AlterTableType
+	Name            string
+	Constraint      *Constraint
+	Options         []*TableOption
+	NewTable        *TableName
+	NewColumns      []*ColumnDef
+	OldColumnName   *ColumnName
+	Position        *ColumnPosition
+	LockType        LockType
+	Comment         string
+	FromKey         model.CIStr
+	ToKey           model.CIStr
+	PartDefinitions []*PartitionDefinition
 }
 
 // Accept implements Node Accept interface.
@@ -836,4 +874,20 @@ func (n *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n.Table = node.(*TableName)
 	return v.Leave(n)
+}
+
+// PartitionDefinition defines a single partition.
+type PartitionDefinition struct {
+	Name     model.CIStr
+	LessThan []ExprNode
+	MaxValue bool
+	Comment  string
+}
+
+// PartitionOptions specifies the partition options.
+type PartitionOptions struct {
+	Tp          model.PartitionType
+	Expr        ExprNode
+	ColumnNames []*ColumnName
+	Definitions []*PartitionDefinition
 }

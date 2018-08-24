@@ -18,11 +18,11 @@
 package table
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
@@ -39,8 +39,18 @@ const (
 	MemoryTable
 )
 
+const (
+	// DirtyTableAddRow is the constant for dirty table operation type.
+	DirtyTableAddRow = iota
+	// DirtyTableDeleteRow is the constant for dirty table operation type.
+	DirtyTableDeleteRow
+	// DirtyTableTruncate is the constant for dirty table operation type.
+	DirtyTableTruncate
+)
+
 var (
-	errColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, "column can not be null")
+	// ErrColumnCantNull is used for inserting null to a not null column.
+	ErrColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, mysql.MySQLErrName[mysql.ErrBadNull])
 	errUnknownColumn   = terror.ClassTable.New(codeUnknownColumn, "unknown column")
 	errDuplicateColumn = terror.ClassTable.New(codeDuplicateColumn, "duplicate column")
 
@@ -66,7 +76,11 @@ var (
 	// ErrInvalidRecordKey returns for invalid record key.
 	ErrInvalidRecordKey = terror.ClassTable.New(codeInvalidRecordKey, "invalid record key")
 	// ErrTruncateWrongValue returns for truncate wrong value for field.
-	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "Incorrect value")
+	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "incorrect value")
+	// ErrTruncatedWrongValueForField returns for truncate wrong value for field.
+	ErrTruncatedWrongValueForField = terror.ClassTable.New(codeTruncateWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
+	// ErrTrgInvalidCreationCtx happens when inserting a value outside the table partitions.
+	ErrTrgInvalidCreationCtx = terror.ClassTable.New(codeTrgInvalidCreationCtx, "locate partition failed")
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -75,13 +89,13 @@ type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool,
 // Table is used to retrieve and modify rows in table.
 type Table interface {
 	// IterRecords iterates records in the table and calls fn.
-	IterRecords(ctx context.Context, startKey kv.Key, cols []*Column, fn RecordIterFunc) error
+	IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*Column, fn RecordIterFunc) error
 
 	// RowWithCols returns a row that contains the given cols.
-	RowWithCols(ctx context.Context, h int64, cols []*Column) ([]types.Datum, error)
+	RowWithCols(ctx sessionctx.Context, h int64, cols []*Column) ([]types.Datum, error)
 
 	// Row returns a row for all columns.
-	Row(ctx context.Context, h int64) ([]types.Datum, error)
+	Row(ctx sessionctx.Context, h int64) ([]types.Datum, error)
 
 	// Cols returns the columns of the table which is used in select.
 	Cols() []*Column
@@ -112,34 +126,50 @@ type Table interface {
 	RecordKey(h int64) kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	// skipHandleCheck indicate that recordID in r has been checked as not duplicate already.
-	AddRecord(ctx context.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error)
+	// skipHandleCheck indicates that recordID in r has been checked as not duplicate already.
+	AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
-	UpdateRecord(ctx context.Context, h int64, currData, newData []types.Datum, touched []bool) error
+	UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx context.Context, h int64, r []types.Datum) error
+	RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error
 
 	// AllocAutoID allocates an auto_increment ID for a new row.
-	AllocAutoID(ctx context.Context) (int64, error)
+	AllocAutoID(ctx sessionctx.Context) (int64, error)
 
 	// Allocator returns Allocator.
-	Allocator(ctx context.Context) autoid.Allocator
+	Allocator(ctx sessionctx.Context) autoid.Allocator
 
 	// RebaseAutoID rebases the auto_increment ID base.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
-	RebaseAutoID(ctx context.Context, newBase int64, allocIDs bool) error
+	RebaseAutoID(ctx sessionctx.Context, newBase int64, allocIDs bool) error
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 
 	// Seek returns the handle greater or equal to h.
-	Seek(ctx context.Context, h int64) (handle int64, found bool, err error)
+	Seek(ctx sessionctx.Context, h int64) (handle int64, found bool, err error)
 
 	// Type returns the type of table
 	Type() Type
+}
+
+// PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
+// PhysicalID is a ID that can be used to construct a key ranges, all the data in the key range belongs to the corresponding PhysicalTable.
+// For a non-partitioned table, its PhysicalID equals to its TableID; For a partition of a partitioned table, its PhysicalID is the partition's ID.
+type PhysicalTable interface {
+	Table
+	GetPhysicalID() int64
+}
+
+// PartitionedTable is a Table, and it has a GetPartition() method.
+// GetPartition() gets the partition from a partition table by a physical table ID,
+type PartitionedTable interface {
+	Table
+	GetPartition(physicalID int64) PhysicalTable
+	GetPartitionByRow(sessionctx.Context, []types.Datum) (Table, error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
@@ -161,11 +191,14 @@ const (
 	codeIndexStateCantNone   = 8
 	codeInvalidRecordKey     = 9
 
-	codeColumnCantNull     = 1048
+	codeColumnCantNull     = mysql.ErrBadNull
 	codeUnknownColumn      = 1054
 	codeDuplicateColumn    = 1110
 	codeNoDefaultValue     = 1364
 	codeTruncateWrongValue = 1366
+	// MySQL error code, "Trigger creation context of table `%-.64s`.`%-.64s` is invalid".
+	// It may happen when inserting some data outside of all table partitions.
+	codeTrgInvalidCreationCtx = 1604
 )
 
 // Slice is used for table sorting.
@@ -181,11 +214,12 @@ func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 
 func init() {
 	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeColumnCantNull:     mysql.ErrBadNull,
-		codeUnknownColumn:      mysql.ErrBadField,
-		codeDuplicateColumn:    mysql.ErrFieldSpecifiedTwice,
-		codeNoDefaultValue:     mysql.ErrNoDefaultForField,
-		codeTruncateWrongValue: mysql.ErrTruncatedWrongValueForField,
+		codeColumnCantNull:        mysql.ErrBadNull,
+		codeUnknownColumn:         mysql.ErrBadField,
+		codeDuplicateColumn:       mysql.ErrFieldSpecifiedTwice,
+		codeNoDefaultValue:        mysql.ErrNoDefaultForField,
+		codeTruncateWrongValue:    mysql.ErrTruncatedWrongValueForField,
+		codeTrgInvalidCreationCtx: mysql.ErrTrgInvalidCreationCtx,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
 }

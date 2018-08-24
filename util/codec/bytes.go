@@ -68,8 +68,11 @@ func EncodeBytes(b []byte, data []byte) []byte {
 	return result
 }
 
-func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
-	data := make([]byte, 0, len(b))
+func decodeBytes(b []byte, buf []byte, reverse bool) ([]byte, []byte, error) {
+	if buf == nil {
+		buf = make([]byte, 0, len(b))
+	}
+	buf = buf[:0]
 	for {
 		if len(b) < encGroupSize+1 {
 			return nil, nil, errors.New("insufficient bytes to decode value")
@@ -91,7 +94,7 @@ func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
 		}
 
 		realGroupSize := encGroupSize - padCount
-		data = append(data, group[:realGroupSize]...)
+		buf = append(buf, group[:realGroupSize]...)
 		b = b[encGroupSize+1:]
 
 		if padCount != 0 {
@@ -109,15 +112,16 @@ func decodeBytes(b []byte, reverse bool) ([]byte, []byte, error) {
 		}
 	}
 	if reverse {
-		reverseBytes(data)
+		reverseBytes(buf)
 	}
-	return b, data, nil
+	return b, buf, nil
 }
 
 // DecodeBytes decodes bytes which is encoded by EncodeBytes before,
 // returns the leftover bytes and decoded value if no error.
-func DecodeBytes(b []byte) ([]byte, []byte, error) {
-	return decodeBytes(b, false)
+// `buf` is used to buffer data to avoid the cost of makeslice in decodeBytes when DecodeBytes is called by Decoder.DecodeOne.
+func DecodeBytes(b []byte, buf []byte) ([]byte, []byte, error) {
+	return decodeBytes(b, buf, false)
 }
 
 // EncodeBytesDesc first encodes bytes using EncodeBytes, then bitwise reverses
@@ -131,8 +135,8 @@ func EncodeBytesDesc(b []byte, data []byte) []byte {
 
 // DecodeBytesDesc decodes bytes which is encoded by EncodeBytesDesc before,
 // returns the leftover bytes and decoded value if no error.
-func DecodeBytesDesc(b []byte) ([]byte, []byte, error) {
-	return decodeBytes(b, true)
+func DecodeBytesDesc(b []byte, buf []byte) ([]byte, []byte, error) {
+	return decodeBytes(b, buf, true)
 }
 
 // EncodeCompactBytes joins bytes with its length into a byte slice. It is more

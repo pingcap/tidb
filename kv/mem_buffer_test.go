@@ -43,11 +43,11 @@ type testKVSuite struct {
 
 func (s *testKVSuite) SetUpSuite(c *C) {
 	s.bs = make([]MemBuffer, 1)
-	s.bs[0] = NewMemDbBuffer()
+	s.bs[0] = NewMemDbBuffer(DefaultTxnMembufCap)
 }
 
 func (s *testKVSuite) ResetMembuffers() {
-	s.bs[0] = NewMemDbBuffer()
+	s.bs[0] = NewMemDbBuffer(DefaultTxnMembufCap)
 }
 
 func insertData(c *C, buffer MemBuffer) {
@@ -152,7 +152,7 @@ func (s *testKVSuite) TestNewIterator(c *C) {
 
 func (s *testKVSuite) TestIterNextUntil(c *C) {
 	defer testleak.AfterTest(c)()
-	buffer := NewMemDbBuffer()
+	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
 	insertData(c, buffer)
 
 	iter, err := buffer.Seek(nil)
@@ -209,7 +209,7 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 }
 
 func (s *testKVSuite) TestBufferLimit(c *C) {
-	buffer := NewMemDbBuffer().(*memDbBuffer)
+	buffer := NewMemDbBuffer(DefaultTxnMembufCap).(*memDbBuffer)
 	buffer.bufferSizeLimit = 1000
 	buffer.entrySizeLimit = 500
 	var err error
@@ -222,7 +222,7 @@ func (s *testKVSuite) TestBufferLimit(c *C) {
 	err = buffer.Set([]byte("yz"), make([]byte, 499))
 	c.Assert(err, NotNil) // buffer size limit
 
-	buffer = NewMemDbBuffer().(*memDbBuffer)
+	buffer = NewMemDbBuffer(DefaultTxnMembufCap).(*memDbBuffer)
 	buffer.bufferLenLimit = 10
 	for i := 0; i < 10; i++ {
 		err = buffer.Set([]byte{byte(i)}, []byte{byte(i)})
@@ -239,7 +239,7 @@ func BenchmarkMemDbBufferSequential(b *testing.B) {
 	for i := 0; i < opCnt; i++ {
 		data[i] = encodeInt(i)
 	}
-	buffer := NewMemDbBuffer()
+	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
 	benchmarkSetGet(b, buffer, data)
 	b.ReportAllocs()
 }
@@ -250,20 +250,20 @@ func BenchmarkMemDbBufferRandom(b *testing.B) {
 		data[i] = encodeInt(i)
 	}
 	shuffle(data)
-	buffer := NewMemDbBuffer()
+	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
 	benchmarkSetGet(b, buffer, data)
 	b.ReportAllocs()
 }
 
 func BenchmarkMemDbIter(b *testing.B) {
-	buffer := NewMemDbBuffer()
+	buffer := NewMemDbBuffer(DefaultTxnMembufCap)
 	benchIterator(b, buffer)
 	b.ReportAllocs()
 }
 
 func BenchmarkMemDbCreation(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		NewMemDbBuffer()
+		NewMemDbBuffer(DefaultTxnMembufCap)
 	}
 	b.ReportAllocs()
 }

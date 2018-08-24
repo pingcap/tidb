@@ -44,10 +44,12 @@ func TestGC(t *testing.T) {
 		})
 	}
 	wg.Wait()
+
 	time.Sleep(300 * time.Millisecond)
 	gp.Go(func() {}) // To trigger count change.
+
 	gp.Lock()
-	count := gp.count
+	count := len(gp.stack)
 	gp.Unlock()
 	if count > 1 {
 		t.Error("all goroutines should be recycled", count)

@@ -1,3 +1,16 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package aggregation
 
 import (
@@ -11,29 +24,32 @@ import (
 // distinctChecker stores existing keys and checks if given data is distinct.
 type distinctChecker struct {
 	existingKeys *mvmap.MVMap
-	buf          []byte
+	key          []byte
+	vals         [][]byte
+	sc           *stmtctx.StatementContext
 }
 
 // createDistinctChecker creates a new distinct checker.
-func createDistinctChecker() *distinctChecker {
+func createDistinctChecker(sc *stmtctx.StatementContext) *distinctChecker {
 	return &distinctChecker{
 		existingKeys: mvmap.NewMVMap(),
+		sc:           sc,
 	}
 }
 
 // Check checks if values is distinct.
 func (d *distinctChecker) Check(values []types.Datum) (bool, error) {
-	d.buf = d.buf[:0]
+	d.key = d.key[:0]
 	var err error
-	d.buf, err = codec.EncodeValue(d.buf, values...)
+	d.key, err = codec.EncodeValue(d.sc, d.key, values...)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	v := d.existingKeys.Get(d.buf)
-	if v != nil {
+	d.vals = d.existingKeys.Get(d.key, d.vals[:0])
+	if len(d.vals) > 0 {
 		return false, nil
 	}
-	d.existingKeys.Put(d.buf, []byte{})
+	d.existingKeys.Put(d.key, []byte{})
 	return true, nil
 }
 
@@ -52,7 +68,7 @@ func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.
 			data = types.NewDecimalDatum(d)
 		}
 	case types.KindMysqlDecimal:
-		data = v
+		data = types.CopyDatum(v)
 	default:
 		var f float64
 		f, err = v.ToFloat64(sc)

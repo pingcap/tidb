@@ -16,7 +16,7 @@ package kv
 import (
 	"sync"
 
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // InjectionConfig is used for fault injections for KV components.
@@ -99,13 +99,21 @@ func (t *InjectedTransaction) Get(k Key) ([]byte, error) {
 }
 
 // Commit returns an error if cfg.commitError is set.
-func (t *InjectedTransaction) Commit(ctx goctx.Context) error {
+func (t *InjectedTransaction) Commit(ctx context.Context) error {
 	t.cfg.RLock()
 	defer t.cfg.RUnlock()
 	if t.cfg.commitError != nil {
 		return t.cfg.commitError
 	}
 	return t.Transaction.Commit(ctx)
+}
+
+// GetSnapshot implements Transaction GetSnapshot method.
+func (t *InjectedTransaction) GetSnapshot() Snapshot {
+	return &InjectedSnapshot{
+		Snapshot: t.Transaction.GetSnapshot(),
+		cfg:      t.cfg,
+	}
 }
 
 // InjectedSnapshot wraps a Snapshot with injections.
@@ -122,4 +130,14 @@ func (t *InjectedSnapshot) Get(k Key) ([]byte, error) {
 		return nil, t.cfg.getError
 	}
 	return t.Snapshot.Get(k)
+}
+
+// BatchGet returns an error if cfg.getError is set.
+func (t *InjectedSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
+	t.cfg.RLock()
+	defer t.cfg.RUnlock()
+	if t.cfg.getError != nil {
+		return nil, t.cfg.getError
+	}
+	return t.Snapshot.BatchGet(keys)
 }

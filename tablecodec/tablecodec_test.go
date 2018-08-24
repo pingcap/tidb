@@ -14,11 +14,14 @@
 package tablecodec
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
 
+	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -72,7 +75,8 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(row, colIDs, time.Local)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -81,11 +85,10 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	for _, col := range cols {
 		colMap[col.id] = col.tp
 	}
-	r, err := DecodeRow(bs, colMap, time.Local)
+	r, err := DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 3)
-	sc := new(stmtctx.StatementContext)
 	// Compare decoded row and original row
 	for i, col := range cols {
 		v, ok := r[col.id]
@@ -97,7 +100,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 
 	// colMap may contains more columns than encoded row.
 	colMap[4] = types.NewFieldType(mysql.TypeFloat)
-	r, err = DecodeRow(bs, colMap, time.Local)
+	r, err = DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 3)
@@ -112,7 +115,7 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	// colMap may contains less columns than encoded row.
 	delete(colMap, 3)
 	delete(colMap, 4)
-	r, err = DecodeRow(bs, colMap, time.Local)
+	r, err = DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, 2)
@@ -128,11 +131,11 @@ func (s *testTableCodecSuite) TestRowCodec(c *C) {
 	}
 
 	// Make sure empty row return not nil value.
-	bs, err = EncodeRow([]types.Datum{}, []int64{}, time.Local)
+	bs, err = EncodeRow(sc, []types.Datum{}, []int64{}, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, HasLen, 1)
 
-	r, err = DecodeRow(bs, colMap, time.Local)
+	r, err = DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, IsNil)
 }
@@ -150,7 +153,8 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	row := make([]types.Datum, colLen)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
-	ts, err := types.ParseTimestamp(nil, "2016-06-23 11:30:45")
+	ts, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC},
+		"2016-06-23 11:30:45")
 	c.Assert(err, IsNil)
 	row[2] = types.NewDatum(ts)
 	du, err := types.ParseDuration("12:59:59.999999", 6)
@@ -162,7 +166,8 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(row, colIDs, time.Local)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -171,11 +176,10 @@ func (s *testTableCodecSuite) TestTimeCodec(c *C) {
 	for _, col := range cols {
 		colMap[col.id] = col.tp
 	}
-	r, err := DecodeRow(bs, colMap, time.Local)
+	r, err := DecodeRow(bs, colMap, time.UTC)
 	c.Assert(err, IsNil)
 	c.Assert(r, NotNil)
 	c.Assert(r, HasLen, colLen)
-	sc := new(stmtctx.StatementContext)
 	// Compare decoded row and original row
 	for i, col := range cols {
 		v, ok := r[col.id]
@@ -200,19 +204,20 @@ func (s *testTableCodecSuite) TestCutRow(c *C) {
 	row[1] = types.NewBytesDatum([]byte("abc"))
 	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
 
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	data := make([][]byte, 3)
-	data[0], err = EncodeValue(row[0], time.Local)
+	data[0], err = EncodeValue(sc, row[0])
 	c.Assert(err, IsNil)
-	data[1], err = EncodeValue(row[1], time.Local)
+	data[1], err = EncodeValue(sc, row[1])
 	c.Assert(err, IsNil)
-	data[2], err = EncodeValue(row[2], time.Local)
+	data[2], err = EncodeValue(sc, row[2])
 	c.Assert(err, IsNil)
 	// Encode
 	colIDs := make([]int64, 0, 3)
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeRow(row, colIDs, time.Local)
+	bs, err := EncodeRow(sc, row, colIDs, nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(bs, NotNil)
 
@@ -235,7 +240,8 @@ func (s *testTableCodecSuite) TestCutKeyNew(c *C) {
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
-	encodedValue, err := codec.EncodeKey(nil, values...)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	c.Assert(err, IsNil)
 	tableID := int64(4)
 	indexID := int64(5)
@@ -257,7 +263,8 @@ func (s *testTableCodecSuite) TestCutKey(c *C) {
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
-	encodedValue, err := codec.EncodeKey(nil, values...)
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	c.Assert(err, IsNil)
 	tableID := int64(4)
 	indexID := int64(5)
@@ -272,6 +279,17 @@ func (s *testTableCodecSuite) TestCutKey(c *C) {
 	}
 	_, handleVal, _ := codec.DecodeOne(handleBytes)
 	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
+}
+
+func (s *testTableCodecSuite) TestDecodeBadDecical(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal")
+	dec := types.NewDecFromStringForTest("0.111")
+	b, err := codec.EncodeDecimal(nil, dec, 0, 0)
+	c.Assert(err, IsNil)
+	// Expect no panic.
+	_, _, err = codec.DecodeOne(b)
+	c.Assert(err, NotNil)
 }
 
 func (s *testTableCodecSuite) TestIndexKey(c *C) {
@@ -319,4 +337,52 @@ func (s *testTableCodecSuite) TestReplaceRecordKeyTableID(c *C) {
 	tTableID, _, _, err = DecodeKeyHead(tableKey)
 	c.Assert(err, IsNil)
 	c.Assert(tTableID, Equals, tableID)
+}
+
+func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
+	tableID := int64(4)
+	indexID := int64(5)
+	values := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewBytesDatum([]byte("abc")),
+		types.NewFloat64Datum(123.45),
+		// MysqlTime is not supported.
+		// types.NewTimeDatum(types.Time{
+		// 	Time: types.FromGoTime(time.Now()),
+		// 	Fsp:  6,
+		// 	Type: mysql.TypeTimestamp,
+		// }),
+	}
+	var valueStrs []string
+	for _, v := range values {
+		str, err := v.ToString()
+		if err != nil {
+			str = fmt.Sprintf("%d-%v", v.Kind(), v.GetValue())
+		}
+		valueStrs = append(valueStrs, str)
+	}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	encodedValue, err := codec.EncodeKey(sc, nil, values...)
+	c.Assert(err, IsNil)
+	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
+
+	decodeTableID, decodeIndexID, decodeValues, err := DecodeIndexKey(indexKey)
+	c.Assert(err, IsNil)
+	c.Assert(decodeTableID, Equals, tableID)
+	c.Assert(decodeIndexID, Equals, indexID)
+	c.Assert(decodeValues, DeepEquals, valueStrs)
+}
+
+func BenchmarkHasTablePrefix(b *testing.B) {
+	k := kv.Key("foobar")
+	for i := 0; i < b.N; i++ {
+		hasTablePrefix(k)
+	}
+}
+
+func BenchmarkHasTablePrefixBuiltin(b *testing.B) {
+	k := kv.Key("foobar")
+	for i := 0; i < b.N; i++ {
+		k.HasPrefix(tablePrefix)
+	}
 }

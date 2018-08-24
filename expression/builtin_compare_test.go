@@ -19,69 +19,57 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 	defer testleak.AfterTest(c)()
-
-	colInt := &Column{
-		ColName: model.NewCIStr("a"),
-		RetType: types.NewFieldType(mysql.TypeLong),
-	}
-
-	conOne := &Constant{
-		Value:   types.NewFloat64Datum(1.0),
-		RetType: types.NewFieldType(mysql.TypeDouble),
-	}
-
-	conOnePointOne := &Constant{
-		Value:   types.NewFloat64Datum(1.1),
-		RetType: types.NewFieldType(mysql.TypeDouble),
-	}
-
+	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong).build()
 	tests := []struct {
-		arg0     Expression
-		arg1     Expression
-		funcName string
-		result   string
+		exprStr string
+		result  string
 	}{
-		{colInt, conOne, ast.LT, "lt(a, 1)"},
-		{colInt, conOne, ast.LE, "le(a, 1)"},
-		{colInt, conOne, ast.GT, "gt(a, 1)"},
-		{colInt, conOne, ast.GE, "ge(a, 1)"},
-		{colInt, conOne, ast.EQ, "eq(a, 1)"},
-		{colInt, conOne, ast.NullEQ, "nulleq(a, 1)"},
-		{colInt, conOne, ast.NE, "ne(a, 1)"},
-		{colInt, conOnePointOne, ast.LT, "lt(a, 2)"},
-		{colInt, conOnePointOne, ast.LE, "le(a, 1)"},
-		{colInt, conOnePointOne, ast.GT, "gt(a, 1)"},
-		{colInt, conOnePointOne, ast.GE, "ge(a, 2)"},
-		{colInt, conOnePointOne, ast.EQ, "eq(cast(a), 1.1)"},
-		{colInt, conOnePointOne, ast.NullEQ, "nulleq(cast(a), 1.1)"},
-		{colInt, conOnePointOne, ast.NE, "ne(cast(a), 1.1)"},
-		{conOne, colInt, ast.LT, "lt(1, a)"},
-		{conOne, colInt, ast.LE, "le(1, a)"},
-		{conOne, colInt, ast.GT, "gt(1, a)"},
-		{conOne, colInt, ast.GE, "ge(1, a)"},
-		{conOne, colInt, ast.EQ, "eq(1, a)"},
-		{conOne, colInt, ast.NullEQ, "nulleq(1, a)"},
-		{conOne, colInt, ast.NE, "ne(1, a)"},
-		{conOnePointOne, colInt, ast.LT, "lt(1, a)"},
-		{conOnePointOne, colInt, ast.LE, "le(2, a)"},
-		{conOnePointOne, colInt, ast.GT, "gt(2, a)"},
-		{conOnePointOne, colInt, ast.GE, "ge(1, a)"},
-		{conOnePointOne, colInt, ast.EQ, "eq(1.1, cast(a))"},
-		{conOnePointOne, colInt, ast.NullEQ, "nulleq(1.1, cast(a))"},
-		{conOnePointOne, colInt, ast.NE, "ne(1.1, cast(a))"},
+		{"a < '1.0'", "lt(a, 1)"},
+		{"a <= '1.0'", "le(a, 1)"},
+		{"a > '1'", "gt(a, 1)"},
+		{"a >= '1'", "ge(a, 1)"},
+		{"a = '1'", "eq(a, 1)"},
+		{"a <=> '1'", "nulleq(a, 1)"},
+		{"a != '1'", "ne(a, 1)"},
+		{"a < '1.1'", "lt(a, 2)"},
+		{"a <= '1.1'", "le(a, 1)"},
+		{"a > 1.1", "gt(a, 1)"},
+		{"a >= '1.1'", "ge(a, 2)"},
+		{"a = '1.1'", "0"},
+		{"a <=> '1.1'", "0"},
+		{"a != '1.1'", "ne(cast(a), 1.1)"},
+		{"'1' < a", "lt(1, a)"},
+		{"'1' <= a", "le(1, a)"},
+		{"'1' > a", "gt(1, a)"},
+		{"'1' >= a", "ge(1, a)"},
+		{"'1' = a", "eq(1, a)"},
+		{"'1' <=> a", "nulleq(1, a)"},
+		{"'1' != a", "ne(1, a)"},
+		{"'1.1' < a", "lt(1, a)"},
+		{"'1.1' <= a", "le(2, a)"},
+		{"'1.1' > a", "gt(2, a)"},
+		{"'1.1' >= a", "ge(1, a)"},
+		{"'1.1' = a", "0"},
+		{"'1.1' <=> a", "0"},
+		{"'1.1' != a", "ne(1.1, cast(a))"},
+		{"'123456789123456711111189' = a", "0"},
+		{"123456789123456789.12345 = a", "0"},
+		// This cast can not be eliminated,
+		// since converting "aaaa" to an int will cause DataTruncate error.
+		{"'aaaa'=a", "eq(cast(aaaa), cast(a))"},
 	}
 
 	for _, t := range tests {
-		f, err := NewFunction(s.ctx, t.funcName, types.NewFieldType(mysql.TypeUnspecified), t.arg0, t.arg1)
+		f, err := ParseSimpleExprWithTableInfo(s.ctx, t.exprStr, tblInfo)
 		c.Assert(err, IsNil)
 		c.Assert(f.String(), Equals, t.result)
 	}
@@ -93,7 +81,7 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
 	timeVal := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}
 	durationVal := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second)}
-	jsonVal := json.CreateJSON("123")
+	jsonVal := json.CreateBinary("123")
 	// test cases for generating function signatures.
 	tests := []struct {
 		arg0     interface{}
@@ -149,7 +137,7 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 		args := bf.getArgs()
 		c.Assert(args[0].GetType().Tp, Equals, t.tp)
 		c.Assert(args[1].GetType().Tp, Equals, t.tp)
-		res, isNil, err := bf.evalInt(nil)
+		res, isNil, err := bf.evalInt(chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isNil, IsFalse)
 		c.Assert(res, Equals, t.expected)
@@ -191,7 +179,7 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		{[]interface{}{1, types.NewDecFromFloatForTest(123.456)}, types.NewDecFromInt(1), false, false},
 		{[]interface{}{nil, duration}, duration, false, false},
 		{[]interface{}{nil, tm, nil}, tm, false, false},
-		{[]interface{}{nil, dt, nil}, dt.String(), false, false},
+		{[]interface{}{nil, dt, nil}, dt, false, false},
 		{[]interface{}{tm, dt}, tm, false, false},
 	}
 
@@ -199,7 +187,7 @@ func (s *testEvaluatorSuite) TestCoalesce(c *C) {
 		f, err := newFunctionForTest(s.ctx, ast.Coalesce, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 
 		if t.getErr {
 			c.Assert(err, NotNil)
@@ -254,7 +242,7 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		fc := funcs[ast.Interval]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t.args))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v.GetInt64(), Equals, t.ret)
 	}
@@ -312,7 +300,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 	} {
 		f0, err := newFunctionForTest(s.ctx, ast.Greatest, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err := f0.Eval(nil)
+		d, err := f0.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -326,7 +314,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 
 		f1, err := newFunctionForTest(s.ctx, ast.Least, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
-		d, err = f1.Eval(nil)
+		d, err = f1.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {

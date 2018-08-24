@@ -94,6 +94,7 @@ func (s *Scanner) reset(sql string) {
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.stmtStartPos = 0
+	s.specialComment = nil
 }
 
 func (s *Scanner) stmtText() string {
@@ -334,16 +335,24 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 	ch0 := s.r.peek()
 	if ch0 == '*' {
 		s.r.inc()
+		startWithAsterisk := false
 		for {
 			ch0 = s.r.readByte()
+			if startWithAsterisk && ch0 == '/' {
+				// Meets */, means comment end.
+				break
+			} else if ch0 == '*' {
+				startWithAsterisk = true
+			} else {
+				startWithAsterisk = false
+			}
+
 			if ch0 == unicode.ReplacementChar && s.r.eof() {
 				// unclosed comment
 				s.errs = append(s.errs, ParseErrorWith(s.r.data(&pos), s.r.p.Line))
 				return
 			}
-			if ch0 == '*' && s.r.readByte() == '/' {
-				break
-			}
+
 		}
 
 		comment := s.r.data(&pos)
@@ -408,8 +417,26 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
 	s.r.inc()
 	ch1 := s.r.peek()
-	if isIdentFirstChar(ch1) {
-		s.r.incAsLongAs(isIdentChar)
+	if ch1 == '\'' || ch1 == '"' {
+		nTok, nPos, nLit := startString(s)
+		if nTok == stringLit {
+			tok = singleAtIdentifier
+			pos = nPos
+			lit = nLit
+		} else {
+			tok = int('@')
+		}
+	} else if ch1 == '`' {
+		nTok, nPos, nLit := scanQuotedIdent(s)
+		if nTok == quotedIdentifier {
+			tok = singleAtIdentifier
+			pos = nPos
+			lit = nLit
+		} else {
+			tok = int('@')
+		}
+	} else if isUserVarChar(ch1) {
+		s.r.incAsLongAs(isUserVarChar)
 		tok, lit = singleAtIdentifier, s.r.data(&pos)
 	} else if ch1 == '@' {
 		s.r.inc()
@@ -426,7 +453,7 @@ func startWithAt(s *Scanner) (tok int, pos Pos, lit string) {
 		s.r.incAsLongAs(isIdentChar)
 		tok, lit = doubleAtIdentifier, s.r.data(&pos)
 	} else {
-		tok = int('@')
+		tok, lit = singleAtIdentifier, s.r.data(&pos)
 	}
 	return
 }

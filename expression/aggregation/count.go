@@ -15,53 +15,19 @@ package aggregation
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type countFunction struct {
 	aggFunction
 }
 
-// Clone implements Aggregation interface.
-func (cf *countFunction) Clone() Aggregation {
-	nf := *cf
-	for i, arg := range cf.Args {
-		nf.Args[i] = arg.Clone()
-	}
-	return &nf
-}
-
-// CalculateDefaultValue implements Aggregation interface.
-func (cf *countFunction) CalculateDefaultValue(schema *expression.Schema, ctx context.Context) (d types.Datum, valid bool) {
-	for _, arg := range cf.Args {
-		result := expression.EvaluateExprWithNull(ctx, schema, arg)
-		if con, ok := result.(*expression.Constant); ok {
-			if con.Value.IsNull() {
-				return types.NewDatum(0), true
-			}
-		} else {
-			return d, false
-		}
-	}
-	return types.NewDatum(1), true
-}
-
-// GetType implements Aggregation interface.
-func (cf *countFunction) GetType() *types.FieldType {
-	ft := types.NewFieldType(mysql.TypeLonglong)
-	ft.Flen = 21
-	types.SetBinChsClnFlag(ft)
-	return ft
-}
-
 // Update implements Aggregation interface.
-func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (cf *countFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	var datumBuf []types.Datum
-	if cf.Distinct {
+	if cf.HasDistinct {
 		datumBuf = make([]types.Datum, 0, len(cf.Args))
 	}
 	for _, a := range cf.Args {
@@ -69,18 +35,18 @@ func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementCo
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if value.GetValue() == nil {
+		if value.IsNull() {
 			return nil
 		}
-		if cf.mode == FinalMode {
-			ctx.Count += value.GetInt64()
+		if cf.Mode == FinalMode || cf.Mode == Partial2Mode {
+			evalCtx.Count += value.GetInt64()
 		}
-		if cf.Distinct {
+		if cf.HasDistinct {
 			datumBuf = append(datumBuf, value)
 		}
 	}
-	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(datumBuf)
+	if cf.HasDistinct {
+		d, err := evalCtx.DistinctChecker.Check(datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -88,19 +54,26 @@ func (cf *countFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementCo
 			return nil
 		}
 	}
-	if cf.mode == CompleteMode {
-		ctx.Count++
+	if cf.Mode == CompleteMode || cf.Mode == Partial1Mode {
+		evalCtx.Count++
 	}
 	return nil
 }
 
+func (cf *countFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+	if cf.HasDistinct {
+		evalCtx.DistinctChecker = createDistinctChecker(sc)
+	}
+	evalCtx.Count = 0
+}
+
 // GetResult implements Aggregation interface.
-func (cf *countFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
-	d.SetInt64(ctx.Count)
+func (cf *countFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
+	d.SetInt64(evalCtx.Count)
 	return d
 }
 
 // GetPartialResult implements Aggregation interface.
-func (cf *countFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
-	return []types.Datum{cf.GetResult(ctx)}
+func (cf *countFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{cf.GetResult(evalCtx)}
 }

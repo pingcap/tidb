@@ -18,10 +18,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestTxStructure(t *testing.T) {
@@ -37,7 +37,7 @@ type testTxStructureSuite struct {
 
 func (s *testTxStructureSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.store = store
 }
@@ -45,7 +45,7 @@ func (s *testTxStructureSuite) SetUpSuite(c *C) {
 func (s *testTxStructureSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
-	testleak.AfterTest(c)
+	testleak.AfterTest(c)()
 }
 
 func (s *testTxStructureSuite) TestString(c *C) {
@@ -83,7 +83,7 @@ func (s *testTxStructureSuite) TestString(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
@@ -98,11 +98,21 @@ func (s *testTxStructureSuite) TestList(c *C) {
 	err = tx.LPush(key, []byte("3"), []byte("2"), []byte("1"))
 	c.Assert(err, IsNil)
 
+	// Test LGetAll.
+	err = tx.LPush(key, []byte("11"))
+	c.Assert(err, IsNil)
+	values, err := tx.LGetAll(key)
+	c.Assert(err, IsNil)
+	c.Assert(values, DeepEquals, [][]byte{[]byte("3"), []byte("2"), []byte("1"), []byte("11")})
+	value, err := tx.LPop(key)
+	c.Assert(err, IsNil)
+	c.Assert(value, DeepEquals, []byte("11"))
+
 	l, err := tx.LLen(key)
 	c.Assert(err, IsNil)
 	c.Assert(l, Equals, int64(3))
 
-	value, err := tx.LIndex(key, 1)
+	value, err = tx.LIndex(key, 1)
 	c.Assert(err, IsNil)
 	c.Assert(value, DeepEquals, []byte("2"))
 
@@ -165,7 +175,7 @@ func (s *testTxStructureSuite) TestList(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(l, Equals, int64(0))
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
@@ -324,7 +334,7 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(value, DeepEquals, []byte("2"))
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {

@@ -14,39 +14,51 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
 
 // Error instances.
 var (
+	// All the exported errors are defined here:
 	ErrIncorrectParameterCount = terror.ClassExpression.New(mysql.ErrWrongParamcountToNativeFct, mysql.MySQLErrName[mysql.ErrWrongParamcountToNativeFct])
 	ErrDivisionByZero          = terror.ClassExpression.New(mysql.ErrDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
+	ErrRegexp                  = terror.ClassExpression.New(mysql.ErrRegexp, mysql.MySQLErrName[mysql.ErrRegexp])
+	ErrOperandColumns          = terror.ClassExpression.New(mysql.ErrOperandColumns, mysql.MySQLErrName[mysql.ErrOperandColumns])
+	ErrCutValueGroupConcat     = terror.ClassExpression.New(mysql.ErrCutValueGroupConcat, mysql.MySQLErrName[mysql.ErrCutValueGroupConcat])
 
-	errFunctionNotExists   = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
-	errZlibZData           = terror.ClassTypes.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
-	errIncorrectArgs       = terror.ClassExpression.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
-	errUnknownCharacterSet = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
-	errDefaultValue        = terror.ClassExpression.New(mysql.ErrInvalidDefault, "invalid default value")
+	// All the un-exported errors are defined here:
+	errFunctionNotExists             = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
+	errZlibZData                     = terror.ClassTypes.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
+	errIncorrectArgs                 = terror.ClassExpression.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
+	errUnknownCharacterSet           = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
+	errDefaultValue                  = terror.ClassExpression.New(mysql.ErrInvalidDefault, "invalid default value")
+	errDeprecatedSyntaxNoReplacement = terror.ClassExpression.New(mysql.ErrWarnDeprecatedSyntaxNoReplacement, mysql.MySQLErrName[mysql.ErrWarnDeprecatedSyntaxNoReplacement])
+	errBadField                      = terror.ClassExpression.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
+	errWarnAllowedPacketOverflowed   = terror.ClassExpression.New(mysql.ErrWarnAllowedPacketOverflowed, mysql.MySQLErrName[mysql.ErrWarnAllowedPacketOverflowed])
 )
 
 func init() {
 	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrWrongParamcountToNativeFct: mysql.ErrWrongParamcountToNativeFct,
-		mysql.ErrDivisionByZero:             mysql.ErrDivisionByZero,
-		mysql.ErrSpDoesNotExist:             mysql.ErrSpDoesNotExist,
-		mysql.ErrZlibZData:                  mysql.ErrZlibZData,
-		mysql.ErrWrongArguments:             mysql.ErrWrongArguments,
-		mysql.ErrUnknownCharacterSet:        mysql.ErrUnknownCharacterSet,
-		mysql.ErrInvalidDefault:             mysql.ErrInvalidDefault,
+		mysql.ErrWrongParamcountToNativeFct:        mysql.ErrWrongParamcountToNativeFct,
+		mysql.ErrDivisionByZero:                    mysql.ErrDivisionByZero,
+		mysql.ErrSpDoesNotExist:                    mysql.ErrSpDoesNotExist,
+		mysql.ErrZlibZData:                         mysql.ErrZlibZData,
+		mysql.ErrWrongArguments:                    mysql.ErrWrongArguments,
+		mysql.ErrUnknownCharacterSet:               mysql.ErrUnknownCharacterSet,
+		mysql.ErrInvalidDefault:                    mysql.ErrInvalidDefault,
+		mysql.ErrWarnDeprecatedSyntaxNoReplacement: mysql.ErrWarnDeprecatedSyntaxNoReplacement,
+		mysql.ErrOperandColumns:                    mysql.ErrOperandColumns,
+		mysql.ErrRegexp:                            mysql.ErrRegexp,
+		mysql.ErrWarnAllowedPacketOverflowed:       mysql.ErrWarnAllowedPacketOverflowed,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }
 
 // handleInvalidTimeError reports error or warning depend on the context.
-func handleInvalidTimeError(ctx context.Context, err error) error {
+func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 	if err == nil || !(terror.ErrorEqual(err, types.ErrInvalidTimeFormat) || types.ErrIncorrectDatetimeValue.Equal(err)) {
 		return err
 	}
@@ -59,7 +71,7 @@ func handleInvalidTimeError(ctx context.Context, err error) error {
 }
 
 // handleDivisionByZeroError reports error or warning depend on the context.
-func handleDivisionByZeroError(ctx context.Context) error {
+func handleDivisionByZeroError(ctx sessionctx.Context) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	if sc.InInsertStmt || sc.InUpdateOrDeleteStmt {
 		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {

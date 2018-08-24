@@ -18,15 +18,16 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/mocktikv"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -38,8 +39,9 @@ var _ = Suite(&testMySQLConstSuite{})
 
 type testMySQLConstSuite struct {
 	cluster   *mocktikv.Cluster
-	mvccStore *mocktikv.MvccStore
+	mvccStore mocktikv.MVCCStore
 	store     kv.Storage
+	dom       *domain.Domain
 	*parser.Parser
 }
 
@@ -52,27 +54,28 @@ func (s *testMySQLConstSuite) SetUpSuite(c *C) {
 	if useMockTikv {
 		s.cluster = mocktikv.NewCluster()
 		mocktikv.BootstrapWithSingleStore(s.cluster)
-		s.mvccStore = mocktikv.NewMvccStore()
-		store, err := tikv.NewMockTikvStore(
-			tikv.WithCluster(s.cluster),
-			tikv.WithMVCCStore(s.mvccStore),
+		s.mvccStore = mocktikv.MustNewMVCCStore()
+		store, err := mockstore.NewMockTikvStore(
+			mockstore.WithCluster(s.cluster),
+			mockstore.WithMVCCStore(s.mvccStore),
 		)
 		c.Assert(err, IsNil)
 		s.store = store
-		tidb.SetSchemaLease(0)
-		tidb.SetStatsLease(0)
-	} else {
-		store, err := tidb.NewStore("memory://test/test")
-		c.Assert(err, IsNil)
-		s.store = store
+		session.SetSchemaLease(0)
+		session.SetStatsLease(0)
 	}
-	_, err := tidb.BootstrapSession(s.store)
+	var err error
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 }
 
-func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
-	defer testleak.AfterTest(c)()
+func (s *testMySQLConstSuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
+	testleak.AfterTest(c)()
+}
 
+func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
 	positiveCases := []struct {
 		arg string
 	}{
@@ -105,8 +108,6 @@ func (s *testMySQLConstSuite) TestGetSQLMode(c *C) {
 }
 
 func (s *testMySQLConstSuite) TestSQLMode(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tests := []struct {
 		arg                           string
 		hasNoZeroDateMode             bool
@@ -160,24 +161,24 @@ func (s *testMySQLConstSuite) TestPipesAsConcatMode(c *C) {
 
 func (s *testMySQLConstSuite) TestNoUnsignedSubtractionMode(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	tk.MustExec("set sql_mode='NO_UNSIGNED_SUBTRACTION'")
 	r := tk.MustQuery("SELECT CAST(0 as UNSIGNED) - 1;")
 	r.Check(testkit.Rows("-1"))
 	rs, _ := tk.Exec("SELECT CAST(18446744073709551615 as UNSIGNED) - 1;")
-	_, err := tidb.GetRows4Test(goCtx, rs)
+	_, err := session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT 1 - CAST(18446744073709551615 as UNSIGNED);")
-	_, err = tidb.GetRows4Test(goCtx, rs)
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT CAST(-1 as UNSIGNED) - 1")
-	_, err = tidb.GetRows4Test(goCtx, rs)
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
 	rs, _ = tk.Exec("SELECT CAST(9223372036854775808 as UNSIGNED) - 1")
-	_, err = tidb.GetRows4Test(goCtx, rs)
+	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(rs.Close(), IsNil)
 }
@@ -300,4 +301,21 @@ func (s *testMySQLConstSuite) TestNoBackslashEscapesMode(c *C) {
 	tk.MustExec("set sql_mode='NO_BACKSLASH_ESCAPES'")
 	r = tk.MustQuery("SELECT '\\\\'")
 	r.Check(testkit.Rows("\\\\"))
+}
+
+func (s *testMySQLConstSuite) TestServerStatus(c *C) {
+	tests := []struct {
+		arg            uint16
+		IsCursorExists bool
+	}{
+		{0, false},
+		{mysql.ServerStatusInTrans | mysql.ServerStatusNoBackslashEscaped, false},
+		{mysql.ServerStatusCursorExists, true},
+		{mysql.ServerStatusCursorExists | mysql.ServerStatusLastRowSend, true},
+	}
+
+	for _, t := range tests {
+		ret := mysql.HasCursorExistsFlag(t.arg)
+		c.Assert(ret, Equals, t.IsCursorExists)
+	}
 }

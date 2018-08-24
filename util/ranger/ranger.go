@@ -14,20 +14,44 @@
 package ranger
 
 import (
+	"bytes"
 	"math"
+	"sort"
+	"unicode/utf8"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/codec"
 )
 
-// points2IndexRanges build index ranges from range points.
-// Only the first column in the index is built, extra column ranges will be appended by
-// appendPoints2IndexRanges.
-func points2IndexRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*IndexRange, error) {
-	indexRanges := make([]*IndexRange, 0, len(rangePoints)/2)
+func validInterval(sc *stmtctx.StatementContext, low, high point) (bool, error) {
+	l, err := codec.EncodeKey(sc, nil, low.value)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if low.excl {
+		l = []byte(kv.Key(l).PrefixNext())
+	}
+	r, err := codec.EncodeKey(sc, nil, high.value)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if !high.excl {
+		r = []byte(kv.Key(r).PrefixNext())
+	}
+	return bytes.Compare(l, r) < 0, nil
+}
+
+// points2Ranges build index ranges from range points.
+// Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
+func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*Range, error) {
+	ranges := make([]*Range, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sc, rangePoints[i], tp)
 		if err != nil {
@@ -37,22 +61,27 @@ func points2IndexRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *t
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		less, err := rangePointLess(sc, startPoint, endPoint)
+		less, err := validInterval(sc, startPoint, endPoint)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if !less {
 			continue
 		}
-		ir := &IndexRange{
+		// If column has not null flag, [null, null] should be removed.
+		if mysql.HasNotNullFlag(tp.Flag) && endPoint.value.Kind() == types.KindNull {
+			continue
+		}
+
+		ran := &Range{
 			LowVal:      []types.Datum{startPoint.value},
 			LowExclude:  startPoint.excl,
 			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
 		}
-		indexRanges = append(indexRanges, ir)
+		ranges = append(ranges, ran)
 	}
-	return indexRanges, nil
+	return ranges, nil
 }
 
 func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType) (point, error) {
@@ -100,13 +129,13 @@ func convertPoint(sc *stmtctx.StatementContext, point point, tp *types.FieldType
 	return point, nil
 }
 
-// appendPoints2IndexRanges appends additional column ranges for multi-column index.
+// appendPoints2Ranges appends additional column ranges for multi-column index.
 // The additional column ranges can only be appended to point ranges.
 // for example we have an index (a, b), if the condition is (a > 1 and b = 2)
 // then we can not build a conjunctive ranges for this index.
-func appendPoints2IndexRanges(sc *stmtctx.StatementContext, origin []*IndexRange, rangePoints []point,
-	ft *types.FieldType) ([]*IndexRange, error) {
-	var newIndexRanges []*IndexRange
+func appendPoints2Ranges(sc *stmtctx.StatementContext, origin []*Range, rangePoints []point,
+	ft *types.FieldType) ([]*Range, error) {
+	var newIndexRanges []*Range
 	for i := 0; i < len(origin); i++ {
 		oRange := origin[i]
 		if !oRange.IsPoint(sc) {
@@ -122,9 +151,9 @@ func appendPoints2IndexRanges(sc *stmtctx.StatementContext, origin []*IndexRange
 	return newIndexRanges, nil
 }
 
-func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *IndexRange, rangePoints []point,
-	ft *types.FieldType) ([]*IndexRange, error) {
-	newRanges := make([]*IndexRange, 0, len(rangePoints)/2)
+func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *Range, rangePoints []point,
+	ft *types.FieldType) ([]*Range, error) {
+	newRanges := make([]*Range, 0, len(rangePoints)/2)
 	for i := 0; i < len(rangePoints); i += 2 {
 		startPoint, err := convertPoint(sc, rangePoints[i], ft)
 		if err != nil {
@@ -134,7 +163,7 @@ func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *IndexRange, r
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		less, err := rangePointLess(sc, startPoint, endPoint)
+		less, err := validInterval(sc, startPoint, endPoint)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -150,7 +179,7 @@ func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *IndexRange, r
 		copy(highVal, origin.HighVal)
 		highVal[len(origin.HighVal)] = endPoint.value
 
-		ir := &IndexRange{
+		ir := &Range{
 			LowVal:      lowVal,
 			LowExclude:  startPoint.excl,
 			HighVal:     highVal,
@@ -161,96 +190,59 @@ func appendPoints2IndexRange(sc *stmtctx.StatementContext, origin *IndexRange, r
 	return newRanges, nil
 }
 
-// points2TableRanges will construct the range slice with the given range points
-func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point) ([]IntColumnRange, error) {
-	tableRanges := make([]IntColumnRange, 0, len(rangePoints)/2)
-	for i := 0; i < len(rangePoints); i += 2 {
-		startPoint := rangePoints[i]
-		if startPoint.value.IsNull() || startPoint.value.Kind() == types.KindMinNotNull {
-			if startPoint.value.IsNull() {
-				startPoint.excl = false
-			}
-			startPoint.value.SetInt64(math.MinInt64)
-		}
-		startInt, err := startPoint.value.ToInt64(sc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		startDatum := types.NewDatum(startInt)
-		cmp, err := startDatum.CompareDatum(sc, &startPoint.value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if cmp < 0 || (cmp == 0 && startPoint.excl) {
-			if startInt == math.MaxInt64 {
-				continue
-			}
-			startInt++
-		}
-		endPoint := rangePoints[i+1]
-		if endPoint.value.IsNull() {
-			continue
-		} else if endPoint.value.Kind() == types.KindMaxValue {
-			endPoint.value.SetInt64(math.MaxInt64)
-		}
-		endInt, err := endPoint.value.ToInt64(sc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		endDatum := types.NewDatum(endInt)
-		cmp, err = endDatum.CompareDatum(sc, &endPoint.value)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if cmp > 0 || (cmp == 0 && endPoint.excl) {
-			if endInt == math.MinInt64 {
-				continue
-			}
-			endInt--
-		}
-		if startInt > endInt {
-			continue
-		}
-		tableRanges = append(tableRanges, IntColumnRange{LowVal: startInt, HighVal: endInt})
+// points2TableRanges build ranges for table scan from range points.
+// It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
+func points2TableRanges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.FieldType) ([]*Range, error) {
+	ranges := make([]*Range, 0, len(rangePoints)/2)
+	var minValueDatum, maxValueDatum types.Datum
+	// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
+	if mysql.HasUnsignedFlag(tp.Flag) {
+		minValueDatum.SetUint64(0)
+		maxValueDatum.SetUint64(math.MaxUint64)
+	} else {
+		minValueDatum.SetInt64(math.MinInt64)
+		maxValueDatum.SetInt64(math.MaxInt64)
 	}
-	return tableRanges, nil
-}
-
-func points2ColumnRanges(sc *stmtctx.StatementContext, points []point, tp *types.FieldType) ([]*ColumnRange, error) {
-	columnRanges := make([]*ColumnRange, 0, len(points)/2)
-	for i := 0; i < len(points); i += 2 {
-		startPoint, err := convertPoint(sc, points[i], tp)
+	for i := 0; i < len(rangePoints); i += 2 {
+		startPoint, err := convertPoint(sc, rangePoints[i], tp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		endPoint, err := convertPoint(sc, points[i+1], tp)
+		if startPoint.value.Kind() == types.KindNull {
+			startPoint.value = minValueDatum
+			startPoint.excl = false
+		} else if startPoint.value.Kind() == types.KindMinNotNull {
+			startPoint.value = minValueDatum
+		}
+		endPoint, err := convertPoint(sc, rangePoints[i+1], tp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		less, err := rangePointLess(sc, startPoint, endPoint)
+		if endPoint.value.Kind() == types.KindMaxValue {
+			endPoint.value = maxValueDatum
+		} else if endPoint.value.Kind() == types.KindNull {
+			continue
+		}
+		less, err := validInterval(sc, startPoint, endPoint)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if !less {
 			continue
 		}
-		cr := &ColumnRange{
-			Low:      startPoint.value,
-			LowExcl:  startPoint.excl,
-			High:     endPoint.value,
-			HighExcl: endPoint.excl,
+		ran := &Range{
+			LowVal:      []types.Datum{startPoint.value},
+			LowExclude:  startPoint.excl,
+			HighVal:     []types.Datum{endPoint.value},
+			HighExclude: endPoint.excl,
 		}
-		columnRanges = append(columnRanges, cr)
+		ranges = append(ranges, ran)
 	}
-	return columnRanges, nil
+	return ranges, nil
 }
 
-// buildTableRange will build range of pk for PhysicalTableScan
-func buildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext) ([]IntColumnRange, error) {
-	if len(accessConditions) == 0 {
-		return FullIntRange(), nil
-	}
-
+// BuildTableRange will build range of pk for PhysicalTableScan
+func BuildTableRange(accessConditions []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
 	rb := builder{sc: sc}
 	rangePoints := fullRange
 	for _, cond := range accessConditions {
@@ -259,17 +251,18 @@ func buildTableRange(accessConditions []expression.Expression, sc *stmtctx.State
 			return nil, errors.Trace(rb.err)
 		}
 	}
-	ranges, err := points2TableRanges(sc, rangePoints)
+	newTp := newFieldType(tp)
+	ranges, err := points2TableRanges(sc, rangePoints, newTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return ranges, nil
 }
 
-// buildColumnRange builds the range for sampling histogram to calculate the row count.
-func buildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*ColumnRange, error) {
+// BuildColumnRange builds the range for sampling histogram to calculate the row count.
+func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContext, tp *types.FieldType) ([]*Range, error) {
 	if len(conds) == 0 {
-		return []*ColumnRange{{Low: types.Datum{}, High: types.MaxValueDatum()}}, nil
+		return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}, nil
 	}
 
 	rb := builder{sc: sc}
@@ -280,34 +273,38 @@ func buildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 			return nil, errors.Trace(rb.err)
 		}
 	}
-	ranges, err := points2ColumnRanges(sc, rangePoints, tp)
+	newTp := newFieldType(tp)
+	ranges, err := points2Ranges(sc, rangePoints, newTp)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return ranges, nil
 }
 
-func buildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, lengths []int,
-	accessCondition []expression.Expression) ([]*IndexRange, error) {
+// buildCNFIndexRange builds the range for index where the top layer is CNF.
+func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, newTp []*types.FieldType, lengths []int,
+	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
 	rb := builder{sc: sc}
 	var (
-		ranges       []*IndexRange
-		eqAndInCount int
-		err          error
+		ranges []*Range
+		err    error
 	)
-	for eqAndInCount = 0; eqAndInCount < len(accessCondition) && eqAndInCount < len(cols); eqAndInCount++ {
-		if sf, ok := accessCondition[eqAndInCount].(*expression.ScalarFunction); !ok || (sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In) {
+	for _, col := range cols {
+		newTp = append(newTp, newFieldType(col.RetType))
+	}
+	for i := 0; i < eqAndInCount; i++ {
+		if sf, ok := accessCondition[i].(*expression.ScalarFunction); !ok || (sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In) {
 			break
 		}
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessCondition[eqAndInCount])
+		point := rb.build(accessCondition[i])
 		if rb.err != nil {
 			return nil, errors.Trace(rb.err)
 		}
-		if eqAndInCount == 0 {
-			ranges, err = points2IndexRanges(sc, point, cols[eqAndInCount].RetType)
+		if i == 0 {
+			ranges, err = points2Ranges(sc, point, newTp[i])
 		} else {
-			ranges, err = appendPoints2IndexRanges(sc, ranges, point, cols[eqAndInCount].RetType)
+			ranges, err = appendPoints2Ranges(sc, ranges, point, newTp[i])
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -322,9 +319,9 @@ func buildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, le
 		}
 	}
 	if eqAndInCount == 0 {
-		ranges, err = points2IndexRanges(sc, rangePoints, cols[0].RetType)
+		ranges, err = points2Ranges(sc, rangePoints, newTp[0])
 	} else if eqAndInCount < len(accessCondition) {
-		ranges, err = appendPoints2IndexRanges(sc, ranges, rangePoints, cols[eqAndInCount].RetType)
+		ranges, err = appendPoints2Ranges(sc, ranges, rangePoints, newTp[eqAndInCount])
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -332,7 +329,7 @@ func buildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, le
 
 	// Take prefix index into consideration.
 	if hasPrefix(lengths) {
-		fixPrefixColRange(ranges, lengths)
+		fixPrefixColRange(ranges, lengths, newTp)
 	}
 
 	if len(ranges) > 0 && len(ranges[0].LowVal) < len(cols) {
@@ -354,6 +351,58 @@ func buildIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, le
 	return ranges, nil
 }
 
+type sortRange struct {
+	originalValue *Range
+	encodedStart  []byte
+	encodedEnd    []byte
+}
+
+func unionRanges(sc *stmtctx.StatementContext, ranges []*Range) ([]*Range, error) {
+	if len(ranges) == 0 {
+		return nil, nil
+	}
+	objects := make([]*sortRange, 0, len(ranges))
+	for _, ran := range ranges {
+		left, err := codec.EncodeKey(sc, nil, ran.LowVal...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if ran.LowExclude {
+			left = kv.Key(left).PrefixNext()
+		}
+		right, err := codec.EncodeKey(sc, nil, ran.HighVal...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if !ran.HighExclude {
+			right = kv.Key(right).PrefixNext()
+		}
+		objects = append(objects, &sortRange{originalValue: ran, encodedStart: left, encodedEnd: right})
+	}
+	sort.Slice(objects, func(i, j int) bool {
+		return bytes.Compare(objects[i].encodedStart, objects[j].encodedStart) < 0
+	})
+	ranges = ranges[:0]
+	lastRange := objects[0]
+	for i := 1; i < len(objects); i++ {
+		// For two intervals [a, b], [c, d], we have guaranteed that a >= c. If b >= c. Then two intervals are overlapped.
+		// And this two can be merged as [a, max(b, d)].
+		// Otherwise they aren't overlapped.
+		if bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) >= 0 {
+			if bytes.Compare(lastRange.encodedEnd, objects[i].encodedEnd) < 0 {
+				lastRange.encodedEnd = objects[i].encodedEnd
+				lastRange.originalValue.HighVal = objects[i].originalValue.HighVal
+				lastRange.originalValue.HighExclude = objects[i].originalValue.HighExclude
+			}
+		} else {
+			ranges = append(ranges, lastRange.originalValue)
+			lastRange = objects[i]
+		}
+	}
+	ranges = append(ranges, lastRange.originalValue)
+	return ranges, nil
+}
+
 func hasPrefix(lengths []int) bool {
 	for _, l := range lengths {
 		if l != types.UnspecifiedLength {
@@ -363,83 +412,57 @@ func hasPrefix(lengths []int) bool {
 	return false
 }
 
-func fixPrefixColRange(ranges []*IndexRange, lengths []int) {
+func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) {
 	for _, ran := range ranges {
 		for i := 0; i < len(ran.LowVal); i++ {
-			fixRangeDatum(&ran.LowVal[i], lengths[i])
+			fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
 		}
 		ran.LowExclude = false
 		for i := 0; i < len(ran.HighVal); i++ {
-			fixRangeDatum(&ran.HighVal[i], lengths[i])
+			fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
 		}
 		ran.HighExclude = false
 	}
 }
 
-func fixRangeDatum(v *types.Datum, length int) {
+func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) {
 	// If this column is prefix and the prefix length is smaller than the range, cut it.
-	if length != types.UnspecifiedLength && length < len(v.GetBytes()) {
-		v.SetBytes(v.GetBytes()[:length])
+	// In case of UTF8, prefix should be cut by characters rather than bytes
+	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+		colCharset := tp.Charset
+		colValue := v.GetBytes()
+		isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+		if isUTF8Charset {
+			if length != types.UnspecifiedLength && utf8.RuneCount(colValue) > length {
+				rs := bytes.Runes(colValue)
+				truncateStr := string(rs[:length])
+				// truncate value and limit its length
+				v.SetString(truncateStr)
+			}
+		} else if length != types.UnspecifiedLength && len(colValue) > length {
+			// truncate value and limit its length
+			v.SetBytes(colValue[:length])
+		}
 	}
 }
 
-// BuildRange is a method which can calculate IntColumnRange, ColumnRange, IndexRange.
-func BuildRange(sc *stmtctx.StatementContext, conds []expression.Expression, rangeType int, cols []*expression.Column,
-	lengths []int) (retRanges []Range, _ error) {
-	if rangeType == IntRangeType {
-		ranges, err := buildTableRange(conds, sc)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		retRanges = make([]Range, 0, len(ranges))
-		for _, ran := range ranges {
-			retRanges = append(retRanges, ran)
-		}
-	} else if rangeType == ColumnRangeType {
-		ranges, err := buildColumnRange(conds, sc, cols[0].RetType)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		retRanges = make([]Range, 0, len(ranges))
-		for _, ran := range ranges {
-			retRanges = append(retRanges, ran)
-		}
-	} else if rangeType == IndexRangeType {
-		ranges, err := buildIndexRange(sc, cols, lengths, conds)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		retRanges = make([]Range, 0, len(ranges))
-		for _, ran := range ranges {
-			retRanges = append(retRanges, ran)
-		}
+// We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
+// Obviously the constant is bigger than MaxInt32, so we will get overflow error if we use the FieldType of column a.
+func newFieldType(tp *types.FieldType) *types.FieldType {
+	switch tp.Tp {
+	// To avoid overflow error.
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		newTp := types.NewFieldType(mysql.TypeLonglong)
+		newTp.Flag = tp.Flag
+		newTp.Charset = tp.Charset
+		return newTp
+	// To avoid data truncate error.
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
+		newTp := types.NewFieldType(tp.Tp)
+		newTp.Charset = tp.Charset
+		return newTp
+	default:
+		return tp
 	}
-	return
-}
-
-// Ranges2IntRanges changes []Range to []IntColumnRange
-func Ranges2IntRanges(ranges []Range) []IntColumnRange {
-	retRanges := make([]IntColumnRange, 0, len(ranges))
-	for _, ran := range ranges {
-		retRanges = append(retRanges, ran.Convert2IntRange())
-	}
-	return retRanges
-}
-
-// Ranges2ColumnRanges changes []Range to []*ColumnRange
-func Ranges2ColumnRanges(ranges []Range) []*ColumnRange {
-	retRanges := make([]*ColumnRange, 0, len(ranges))
-	for _, ran := range ranges {
-		retRanges = append(retRanges, ran.Convert2ColumnRange())
-	}
-	return retRanges
-}
-
-// Ranges2IndexRanges changes []Range to []*IndexRange
-func Ranges2IndexRanges(ranges []Range) []*IndexRange {
-	retRanges := make([]*IndexRange, 0, len(ranges))
-	for _, ran := range ranges {
-		retRanges = append(retRanges, ran.Convert2IndexRange())
-	}
-	return retRanges
 }

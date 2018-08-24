@@ -59,13 +59,13 @@ func (s *testConsistentSuite) TestKeywordConsistent(c *C) {
 	keywordCount := len(reservedKeywords) + len(unreservedKeywords) + len(notKeywordTokens) + len(tidbKeywords)
 	c.Assert(len(tokenMap)-len(aliases), Equals, keywordCount)
 
-	unreservedCollectionDef := extratKeywordsFromCollectionDef(content, "\nUnReservedKeyword:")
+	unreservedCollectionDef := extractKeywordsFromCollectionDef(content, "\nUnReservedKeyword:")
 	c.Assert(unreservedKeywords, DeepEquals, unreservedCollectionDef)
 
-	notKeywordTokensCollectionDef := extratKeywordsFromCollectionDef(content, "\nNotKeywordToken:")
+	notKeywordTokensCollectionDef := extractKeywordsFromCollectionDef(content, "\nNotKeywordToken:")
 	c.Assert(notKeywordTokens, DeepEquals, notKeywordTokensCollectionDef)
 
-	tidbKeywordsCollectionDef := extratKeywordsFromCollectionDef(content, "\nTiDBKeyword:")
+	tidbKeywordsCollectionDef := extractKeywordsFromCollectionDef(content, "\nTiDBKeyword:")
 	c.Assert(tidbKeywords, DeepEquals, tidbKeywordsCollectionDef)
 }
 
@@ -101,7 +101,7 @@ func extractKeywords(content, startMarker, endMarker string) []string {
 	return extractQuotedWords(lines)
 }
 
-func extratKeywordsFromCollectionDef(content, startMarker string) []string {
+func extractKeywordsFromCollectionDef(content, startMarker string) []string {
 	keywordSection := extractMiddle(content, startMarker, "\n\n")
 	words := strings.Split(keywordSection, "|")
 	return extractQuotedWords(words)

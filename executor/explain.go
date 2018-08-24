@@ -13,28 +13,39 @@
 
 package executor
 
-import goctx "golang.org/x/net/context"
+import (
+	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/util/chunk"
+	"golang.org/x/net/context"
+)
 
 // ExplainExec represents an explain executor.
 type ExplainExec struct {
 	baseExecutor
 
-	rows   []Row
+	rows   [][]string
 	cursor int
-}
-
-// Next implements Execution Next interface.
-func (e *ExplainExec) Next(goCtx goctx.Context) (Row, error) {
-	if e.cursor >= len(e.rows) {
-		return nil, nil
-	}
-	row := e.rows[e.cursor]
-	e.cursor++
-	return row, nil
 }
 
 // Close implements the Executor Close interface.
 func (e *ExplainExec) Close() error {
 	e.rows = nil
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *ExplainExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.cursor >= len(e.rows) {
+		return nil
+	}
+
+	numCurRows := mathutil.Min(e.maxChunkSize, len(e.rows)-e.cursor)
+	for i := e.cursor; i < e.cursor+numCurRows; i++ {
+		for j := range e.rows[i] {
+			chk.AppendString(j, e.rows[i][j])
+		}
+	}
+	e.cursor += numCurRows
 	return nil
 }

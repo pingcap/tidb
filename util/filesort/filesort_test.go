@@ -115,7 +115,7 @@ func (s *testFileSortSuite) TestInMemory(c *C) {
 	bufSize := 40             // hold up to 40 items per file
 	byDesc := make([]bool, keySize)
 	for i := range byDesc {
-		byDesc[i] = (r.Intn(2) == 0)
+		byDesc[i] = r.Intn(2) == 0
 	}
 
 	var (
@@ -165,7 +165,7 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 	bufSize := 40             // hold up to 40 items per file
 	byDesc := make([]bool, keySize)
 	for i := range byDesc {
-		byDesc[i] = (r.Intn(2) == 0)
+		byDesc[i] = r.Intn(2) == 0
 	}
 
 	var (
@@ -215,7 +215,7 @@ func (s *testFileSortSuite) TestMultipleWorkers(c *C) {
 	bufSize := 40             // hold up to 40 items per file
 	byDesc := make([]bool, keySize)
 	for i := range byDesc {
-		byDesc[i] = (r.Intn(2) == 0)
+		byDesc[i] = r.Intn(2) == 0
 	}
 
 	var (

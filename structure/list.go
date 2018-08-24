@@ -136,6 +136,26 @@ func (t *TxStructure) LLen(key []byte) (int64, error) {
 	return meta.RIndex - meta.LIndex, errors.Trace(err)
 }
 
+// LGetAll gets all elements of this list in order from right to left.
+func (t *TxStructure) LGetAll(key []byte) ([][]byte, error) {
+	metaKey := t.encodeListMetaKey(key)
+	meta, err := t.loadListMeta(metaKey)
+	if err != nil || meta.IsEmpty() {
+		return nil, errors.Trace(err)
+	}
+
+	length := int(meta.RIndex - meta.LIndex)
+	elements := make([][]byte, 0, length)
+	for index := meta.RIndex - 1; index >= meta.LIndex; index-- {
+		e, err := t.reader.Get(t.encodeListDataKey(key, index))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		elements = append(elements, e)
+	}
+	return elements, nil
+}
+
 // LIndex gets an element from a list by its index.
 func (t *TxStructure) LIndex(key []byte, index int64) ([]byte, error) {
 	metaKey := t.encodeListMetaKey(key)

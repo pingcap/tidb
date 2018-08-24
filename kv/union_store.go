@@ -60,17 +60,17 @@ type conditionPair struct {
 // snapshot for read.
 type unionStore struct {
 	*BufferStore
-	snapshot           Snapshot                    // for read
-	lazyConditionPairs map[string](*conditionPair) // for delay check
+	snapshot           Snapshot                  // for read
+	lazyConditionPairs map[string]*conditionPair // for delay check
 	opts               options
 }
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
-		BufferStore:        NewBufferStore(snapshot),
+		BufferStore:        NewBufferStore(snapshot, DefaultTxnMembufCap),
 		snapshot:           snapshot,
-		lazyConditionPairs: make(map[string](*conditionPair)),
+		lazyConditionPairs: make(map[string]*conditionPair),
 		opts:               make(map[Option]interface{}),
 	}
 }
@@ -97,8 +97,10 @@ func (it invalidIterator) Value() []byte {
 
 func (it invalidIterator) Close() {}
 
+// lazyMemBuffer wraps a MemBuffer which is to be initialized when it is modified.
 type lazyMemBuffer struct {
-	mb MemBuffer
+	mb  MemBuffer
+	cap int
 }
 
 func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
@@ -111,7 +113,7 @@ func (lmb *lazyMemBuffer) Get(k Key) ([]byte, error) {
 
 func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 	if lmb.mb == nil {
-		lmb.mb = NewMemDbBuffer()
+		lmb.mb = NewMemDbBuffer(lmb.cap)
 	}
 
 	return lmb.mb.Set(key, value)
@@ -119,7 +121,7 @@ func (lmb *lazyMemBuffer) Set(key Key, value []byte) error {
 
 func (lmb *lazyMemBuffer) Delete(k Key) error {
 	if lmb.mb == nil {
-		lmb.mb = NewMemDbBuffer()
+		lmb.mb = NewMemDbBuffer(lmb.cap)
 	}
 
 	return lmb.mb.Delete(k)
@@ -151,6 +153,16 @@ func (lmb *lazyMemBuffer) Len() int {
 		return 0
 	}
 	return lmb.mb.Len()
+}
+
+func (lmb *lazyMemBuffer) Reset() {
+	if lmb.mb != nil {
+		lmb.mb.Reset()
+	}
+}
+
+func (lmb *lazyMemBuffer) SetCap(cap int) {
+	lmb.cap = cap
 }
 
 // Get implements the Retriever interface.
@@ -232,8 +244,18 @@ func (us *unionStore) GetOption(opt Option) interface{} {
 	return us.opts[opt]
 }
 
+// GetMemBuffer return the MemBuffer binding to this UnionStore.
 func (us *unionStore) GetMemBuffer() MemBuffer {
 	return us.BufferStore.MemBuffer
+}
+
+// SetCap sets membuffer capability.
+func (us *unionStore) SetCap(cap int) {
+	us.BufferStore.SetCap(cap)
+}
+
+func (us *unionStore) Reset() {
+	us.BufferStore.Reset()
 }
 
 type options map[Option]interface{}

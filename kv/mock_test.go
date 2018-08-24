@@ -15,7 +15,7 @@ package kv
 
 import (
 	. "github.com/pingcap/check"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(testMockSuite{})
@@ -49,7 +49,7 @@ func (s testMockSuite) TestInterface(c *C) {
 		transaction.Seek(Key("lock"))
 		transaction.SeekReverse(Key("lock"))
 	}
-	transaction.Commit(goctx.Background())
+	transaction.Commit(context.Background())
 
 	transaction, err = storage.Begin()
 	c.Check(err, IsNil)

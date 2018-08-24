@@ -33,13 +33,13 @@ func (s *testMyTimeSuite) TestWeekBehaviour(c *C) {
 
 func (s *testMyTimeSuite) TestWeek(c *C) {
 	tests := []struct {
-		Input  mysqlTime
+		Input  MysqlTime
 		Mode   int
 		Expect int
 	}{
-		{mysqlTime{2008, 2, 20, 0, 0, 0, 0}, 0, 7},
-		{mysqlTime{2008, 2, 20, 0, 0, 0, 0}, 1, 8},
-		{mysqlTime{2008, 12, 31, 0, 0, 0, 0}, 1, 53},
+		{MysqlTime{2008, 2, 20, 0, 0, 0, 0}, 0, 7},
+		{MysqlTime{2008, 2, 20, 0, 0, 0, 0}, 1, 8},
+		{MysqlTime{2008, 12, 31, 0, 0, 0, 0}, 1, 53},
 	}
 
 	for ith, tt := range tests {
@@ -59,35 +59,35 @@ func (s *testMyTimeSuite) TestCalcDaynr(c *C) {
 
 func (s *testMyTimeSuite) TestCalcTimeDiff(c *C) {
 	tests := []struct {
-		T1     mysqlTime
-		T2     mysqlTime
+		T1     MysqlTime
+		T2     MysqlTime
 		Sign   int
-		Expect mysqlTime
+		Expect MysqlTime
 	}{
 		// calcTimeDiff can be used for month = 0.
 		{
-			mysqlTime{2006, 0, 1, 12, 23, 21, 0},
-			mysqlTime{2006, 0, 3, 21, 23, 22, 0},
+			MysqlTime{2006, 0, 1, 12, 23, 21, 0},
+			MysqlTime{2006, 0, 3, 21, 23, 22, 0},
 			1,
-			mysqlTime{0, 0, 0, 57, 0, 1, 0},
+			MysqlTime{0, 0, 0, 57, 0, 1, 0},
 		},
 		{
-			mysqlTime{0, 0, 0, 21, 23, 24, 0},
-			mysqlTime{0, 0, 0, 11, 23, 22, 0},
+			MysqlTime{0, 0, 0, 21, 23, 24, 0},
+			MysqlTime{0, 0, 0, 11, 23, 22, 0},
 			1,
-			mysqlTime{0, 0, 0, 10, 0, 2, 0},
+			MysqlTime{0, 0, 0, 10, 0, 2, 0},
 		},
 		{
-			mysqlTime{0, 0, 0, 1, 2, 3, 0},
-			mysqlTime{0, 0, 0, 5, 2, 0, 0},
+			MysqlTime{0, 0, 0, 1, 2, 3, 0},
+			MysqlTime{0, 0, 0, 5, 2, 0, 0},
 			-1,
-			mysqlTime{0, 0, 0, 6, 4, 3, 0},
+			MysqlTime{0, 0, 0, 6, 4, 3, 0},
 		},
 	}
 
 	for i, tt := range tests {
-		seconds, microseconds, _ := calcTimeDiff(&tt.T1, &tt.T2, tt.Sign)
-		var result mysqlTime
+		seconds, microseconds, _ := calcTimeDiff(tt.T1, tt.T2, tt.Sign)
+		var result MysqlTime
 		calcTimeFromSec(&result, seconds, microseconds)
 		c.Assert(result, Equals, tt.Expect, Commentf("%d failed.", i))
 	}
@@ -95,20 +95,20 @@ func (s *testMyTimeSuite) TestCalcTimeDiff(c *C) {
 
 func (s *testMyTimeSuite) TestCompareTime(c *C) {
 	tests := []struct {
-		T1     mysqlTime
-		T2     mysqlTime
+		T1     MysqlTime
+		T2     MysqlTime
 		Expect int
 	}{
-		{mysqlTime{0, 0, 0, 0, 0, 0, 0}, mysqlTime{0, 0, 0, 0, 0, 0, 0}, 0},
-		{mysqlTime{0, 0, 0, 0, 1, 0, 0}, mysqlTime{0, 0, 0, 0, 0, 0, 0}, 1},
-		{mysqlTime{2006, 1, 2, 3, 4, 5, 6}, mysqlTime{2016, 1, 2, 3, 4, 5, 0}, -1},
-		{mysqlTime{0, 0, 0, 11, 22, 33, 0}, mysqlTime{0, 0, 0, 12, 21, 33, 0}, -1},
-		{mysqlTime{9999, 12, 30, 23, 59, 59, 999999}, mysqlTime{0, 1, 2, 3, 4, 5, 6}, 1},
+		{MysqlTime{0, 0, 0, 0, 0, 0, 0}, MysqlTime{0, 0, 0, 0, 0, 0, 0}, 0},
+		{MysqlTime{0, 0, 0, 0, 1, 0, 0}, MysqlTime{0, 0, 0, 0, 0, 0, 0}, 1},
+		{MysqlTime{2006, 1, 2, 3, 4, 5, 6}, MysqlTime{2016, 1, 2, 3, 4, 5, 0}, -1},
+		{MysqlTime{0, 0, 0, 11, 22, 33, 0}, MysqlTime{0, 0, 0, 12, 21, 33, 0}, -1},
+		{MysqlTime{9999, 12, 30, 23, 59, 59, 999999}, MysqlTime{0, 1, 2, 3, 4, 5, 6}, 1},
 	}
 
 	for _, tt := range tests {
-		c.Assert(compareTime(&tt.T1, &tt.T2), Equals, tt.Expect)
-		c.Assert(compareTime(&tt.T2, &tt.T1), Equals, -tt.Expect)
+		c.Assert(compareTime(tt.T1, tt.T2), Equals, tt.Expect)
+		c.Assert(compareTime(tt.T2, tt.T1), Equals, -tt.Expect)
 	}
 }
 
@@ -143,67 +143,67 @@ func (s *testMyTimeSuite) TestGetDateFromDaynr(c *C) {
 
 func (s *testMyTimeSuite) TestMixDateAndTime(c *C) {
 	tests := []struct {
-		date   mysqlTime
-		time   mysqlTime
+		date   MysqlTime
+		time   MysqlTime
 		neg    bool
-		expect mysqlTime
+		expect MysqlTime
 	}{
 		{
-			date:   mysqlTime{1896, 3, 4, 0, 0, 0, 0},
-			time:   mysqlTime{0, 0, 0, 12, 23, 24, 5},
+			date:   MysqlTime{1896, 3, 4, 0, 0, 0, 0},
+			time:   MysqlTime{0, 0, 0, 12, 23, 24, 5},
 			neg:    false,
-			expect: mysqlTime{1896, 3, 4, 12, 23, 24, 5},
+			expect: MysqlTime{1896, 3, 4, 12, 23, 24, 5},
 		},
 		{
-			date:   mysqlTime{1896, 3, 4, 0, 0, 0, 0},
-			time:   mysqlTime{0, 0, 0, 24, 23, 24, 5},
+			date:   MysqlTime{1896, 3, 4, 0, 0, 0, 0},
+			time:   MysqlTime{0, 0, 0, 24, 23, 24, 5},
 			neg:    false,
-			expect: mysqlTime{1896, 3, 5, 0, 23, 24, 5},
+			expect: MysqlTime{1896, 3, 5, 0, 23, 24, 5},
 		},
 		{
-			date:   mysqlTime{2016, 12, 31, 0, 0, 0, 0},
-			time:   mysqlTime{0, 0, 0, 24, 0, 0, 0},
+			date:   MysqlTime{2016, 12, 31, 0, 0, 0, 0},
+			time:   MysqlTime{0, 0, 0, 24, 0, 0, 0},
 			neg:    false,
-			expect: mysqlTime{2017, 1, 1, 0, 0, 0, 0},
+			expect: MysqlTime{2017, 1, 1, 0, 0, 0, 0},
 		},
 		{
-			date:   mysqlTime{2016, 12, 0, 0, 0, 0, 0},
-			time:   mysqlTime{0, 0, 0, 24, 0, 0, 0},
+			date:   MysqlTime{2016, 12, 0, 0, 0, 0, 0},
+			time:   MysqlTime{0, 0, 0, 24, 0, 0, 0},
 			neg:    false,
-			expect: mysqlTime{2016, 12, 1, 0, 0, 0, 0},
+			expect: MysqlTime{2016, 12, 1, 0, 0, 0, 0},
 		},
 		{
-			date:   mysqlTime{2017, 1, 12, 3, 23, 15, 0},
-			time:   mysqlTime{0, 0, 0, 2, 21, 10, 0},
+			date:   MysqlTime{2017, 1, 12, 3, 23, 15, 0},
+			time:   MysqlTime{0, 0, 0, 2, 21, 10, 0},
 			neg:    true,
-			expect: mysqlTime{2017, 1, 12, 1, 2, 5, 0},
+			expect: MysqlTime{2017, 1, 12, 1, 2, 5, 0},
 		},
 	}
 
 	for ith, t := range tests {
 		mixDateAndTime(&t.date, &t.time, t.neg)
-		c.Assert(compareTime(&t.date, &t.expect), Equals, 0, Commentf("%d", ith))
+		c.Assert(compareTime(t.date, t.expect), Equals, 0, Commentf("%d", ith))
 	}
 }
 
 func (s *testMyTimeSuite) TestIsLeapYear(c *C) {
 	tests := []struct {
-		T      mysqlTime
+		T      MysqlTime
 		Expect bool
 	}{
-		{mysqlTime{1960, 1, 1, 0, 0, 0, 0}, true},
-		{mysqlTime{1963, 2, 21, 0, 0, 0, 0}, false},
-		{mysqlTime{2008, 11, 25, 0, 0, 0, 0}, true},
-		{mysqlTime{2017, 4, 24, 0, 0, 0, 0}, false},
-		{mysqlTime{1988, 2, 29, 0, 0, 0, 0}, true},
-		{mysqlTime{2000, 3, 15, 0, 0, 0, 0}, true},
-		{mysqlTime{1992, 5, 3, 0, 0, 0, 0}, true},
-		{mysqlTime{2024, 10, 1, 0, 0, 0, 0}, true},
-		{mysqlTime{2016, 6, 29, 0, 0, 0, 0}, true},
-		{mysqlTime{2015, 6, 29, 0, 0, 0, 0}, false},
-		{mysqlTime{2014, 9, 31, 0, 0, 0, 0}, false},
-		{mysqlTime{2001, 12, 7, 0, 0, 0, 0}, false},
-		{mysqlTime{1989, 7, 6, 0, 0, 0, 0}, false},
+		{MysqlTime{1960, 1, 1, 0, 0, 0, 0}, true},
+		{MysqlTime{1963, 2, 21, 0, 0, 0, 0}, false},
+		{MysqlTime{2008, 11, 25, 0, 0, 0, 0}, true},
+		{MysqlTime{2017, 4, 24, 0, 0, 0, 0}, false},
+		{MysqlTime{1988, 2, 29, 0, 0, 0, 0}, true},
+		{MysqlTime{2000, 3, 15, 0, 0, 0, 0}, true},
+		{MysqlTime{1992, 5, 3, 0, 0, 0, 0}, true},
+		{MysqlTime{2024, 10, 1, 0, 0, 0, 0}, true},
+		{MysqlTime{2016, 6, 29, 0, 0, 0, 0}, true},
+		{MysqlTime{2015, 6, 29, 0, 0, 0, 0}, false},
+		{MysqlTime{2014, 9, 31, 0, 0, 0, 0}, false},
+		{MysqlTime{2001, 12, 7, 0, 0, 0, 0}, false},
+		{MysqlTime{1989, 7, 6, 0, 0, 0, 0}, false},
 	}
 
 	for _, tt := range tests {

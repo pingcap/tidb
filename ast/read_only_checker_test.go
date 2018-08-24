@@ -38,4 +38,7 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 
 	stmt = &ExplainStmt{}
 	c.Assert(IsReadOnly(stmt), IsTrue)
+
+	stmt = &DoStmt{}
+	c.Assert(IsReadOnly(stmt), IsTrue)
 }

@@ -24,6 +24,9 @@ var (
 	ErrBodyMissing = errors.New("response body is missing")
 )
 
+// mismatchClusterID represents the message that the cluster ID of the PD client does not match the PD.
+const mismatchClusterID = "mismatch cluster id"
+
 // TiDB decides whether to retry transaction by checking if error message contains
 // string "try again later" literally.
 // In TiClient we use `errors.Annotate(err, txnRetryableMark)` to direct TiDB to
@@ -44,12 +47,13 @@ var (
 
 func init() {
 	tikvMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrTiKVServerTimeout:  mysql.ErrTiKVServerTimeout,
-		mysql.ErrResolveLockTimeout: mysql.ErrResolveLockTimeout,
-		mysql.ErrPDServerTimeout:    mysql.ErrPDServerTimeout,
-		mysql.ErrRegionUnavailable:  mysql.ErrRegionUnavailable,
-		mysql.ErrTiKVServerBusy:     mysql.ErrTiKVServerBusy,
-		mysql.ErrGCTooEarly:         mysql.ErrGCTooEarly,
+		mysql.ErrTiKVServerTimeout:   mysql.ErrTiKVServerTimeout,
+		mysql.ErrResolveLockTimeout:  mysql.ErrResolveLockTimeout,
+		mysql.ErrPDServerTimeout:     mysql.ErrPDServerTimeout,
+		mysql.ErrRegionUnavailable:   mysql.ErrRegionUnavailable,
+		mysql.ErrTiKVServerBusy:      mysql.ErrTiKVServerBusy,
+		mysql.ErrGCTooEarly:          mysql.ErrGCTooEarly,
+		mysql.ErrTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassTiKV] = tikvMySQLErrCodes
 }

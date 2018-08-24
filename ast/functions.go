@@ -222,22 +222,23 @@ const (
 	FindInSet       = "find_in_set"
 
 	// information functions
-	Benchmark    = "benchmark"
-	Charset      = "charset"
-	Coercibility = "coercibility"
-	Collation    = "collation"
-	ConnectionID = "connection_id"
-	CurrentUser  = "current_user"
-	Database     = "database"
-	FoundRows    = "found_rows"
-	LastInsertId = "last_insert_id"
-	RowCount     = "row_count"
-	Schema       = "schema"
-	SessionUser  = "session_user"
-	SystemUser   = "system_user"
-	User         = "user"
-	Version      = "version"
-	TiDBVersion  = "tidb_version"
+	Benchmark      = "benchmark"
+	Charset        = "charset"
+	Coercibility   = "coercibility"
+	Collation      = "collation"
+	ConnectionID   = "connection_id"
+	CurrentUser    = "current_user"
+	Database       = "database"
+	FoundRows      = "found_rows"
+	LastInsertId   = "last_insert_id"
+	RowCount       = "row_count"
+	Schema         = "schema"
+	SessionUser    = "session_user"
+	SystemUser     = "system_user"
+	User           = "user"
+	Version        = "version"
+	TiDBVersion    = "tidb_version"
+	TiDBIsDDLOwner = "tidb_is_ddl_owner"
 
 	// control functions
 	If     = "if"
@@ -314,14 +315,35 @@ type FuncCallExpr struct {
 
 // Format the ExprNode into a Writer.
 func (n *FuncCallExpr) Format(w io.Writer) {
-	fmt.Fprintf(w, "%s(", n.FnName.String())
-	for i, arg := range n.Args {
-		arg.Format(w)
-		if i != len(n.Args)-1 {
-			fmt.Fprintf(w, ", ")
+	fmt.Fprintf(w, "%s(", n.FnName.L)
+	if !n.specialFormatArgs(w) {
+		for i, arg := range n.Args {
+			arg.Format(w)
+			if i != len(n.Args)-1 {
+				fmt.Fprint(w, ", ")
+			}
 		}
 	}
-	fmt.Fprintf(w, ")")
+	fmt.Fprint(w, ")")
+}
+
+// specialFormatArgs formats argument list for some special functions.
+func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
+	switch n.FnName.L {
+	case DateAdd, DateSub, AddDate, SubDate:
+		n.Args[0].Format(w)
+		fmt.Fprint(w, ", INTERVAL ")
+		n.Args[1].Format(w)
+		fmt.Fprintf(w, " %s", n.Args[2].GetDatum().GetString())
+		return true
+	case TimestampAdd, TimestampDiff:
+		fmt.Fprintf(w, "%s, ", n.Args[0].GetDatum().GetString())
+		n.Args[1].Format(w)
+		fmt.Fprint(w, ", ")
+		n.Args[2].Format(w)
+		return true
+	}
+	return false
 }
 
 // Accept implements Node interface.
@@ -367,19 +389,19 @@ type FuncCastExpr struct {
 func (n *FuncCastExpr) Format(w io.Writer) {
 	switch n.FunctionType {
 	case CastFunction:
-		fmt.Fprintf(w, "CAST(")
+		fmt.Fprint(w, "CAST(")
 		n.Expr.Format(w)
-		fmt.Fprintf(w, " AS ")
+		fmt.Fprint(w, " AS ")
 		n.Tp.FormatAsCastType(w)
-		fmt.Fprintf(w, ")")
+		fmt.Fprint(w, ")")
 	case CastConvertFunction:
-		fmt.Fprintf(w, "CONVERT(")
+		fmt.Fprint(w, "CONVERT(")
 		n.Expr.Format(w)
-		fmt.Fprintf(w, ", ")
+		fmt.Fprint(w, ", ")
 		n.Tp.FormatAsCastType(w)
-		fmt.Fprintf(w, ")")
+		fmt.Fprint(w, ")")
 	case CastBinaryOperator:
-		fmt.Fprintf(w, "BINARY ")
+		fmt.Fprint(w, "BINARY ")
 		n.Expr.Format(w)
 	}
 }
@@ -442,6 +464,8 @@ const (
 	AggFuncMin = "min"
 	// AggFuncGroupConcat is the name of group_concat function.
 	AggFuncGroupConcat = "group_concat"
+	// AggFuncBitOr is the name of bit_or function.
+	AggFuncBitOr = "bit_or"
 	// AggFuncBitXor is the name of bit_xor function.
 	AggFuncBitXor = "bit_xor"
 	// AggFuncBitAnd is the name of bit_and function.

@@ -14,24 +14,28 @@
 package ddl
 
 import (
+	"context"
 	"math"
-	"sync"
+	"sync/atomic"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	log "github.com/sirupsen/logrus"
 )
 
 const maxPrefixLength = 3072
@@ -45,7 +49,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 	sumLength := 0
 
 	for _, ic := range idxColNames {
-		col := findCol(columns, ic.Column.Name.O)
+		col := model.FindColumnInfo(columns, ic.Column.Name.O)
 		if col == nil {
 			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
 		}
@@ -93,8 +97,8 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 					sumLength += col.Flen
 				}
 			} else {
-				if len, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
-					sumLength += len
+				if length, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
+					sumLength += length
 				} else {
 					return nil, errUnknownTypeLength.GenByArgs(col.FieldType.Tp)
 				}
@@ -102,8 +106,8 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 				// Special case for time fraction.
 				if types.IsTypeFractionable(col.FieldType.Tp) &&
 					col.FieldType.Decimal != types.UnspecifiedLength {
-					if len, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
-						sumLength += len
+					if length, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
+						sumLength += length
 					} else {
 						return nil, errUnknownFractionLength.GenByArgs(col.FieldType.Tp, col.FieldType.Decimal)
 					}
@@ -174,10 +178,58 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	}
 }
 
-func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
+func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
+	if fromIdx := findIndexByName(from.L, tbl.Indices); fromIdx == nil {
+		return false, errors.Trace(infoschema.ErrKeyNotExists.GenByArgs(from.O, tbl.Name))
+	}
+	// Take case-sensitivity into account, if `FromKey` and  `ToKey` are the same, nothing need to be changed
+	if from.O == to.O {
+		return true, nil
+	}
+	// If spec.FromKey.L == spec.ToKey.L, we operate on the same index(case-insensitive) and change its name (case-sensitive)
+	// e.g: from `inDex` to `IndEX`. Otherwise, we try to rename an index to another different index which already exists,
+	// that's illegal by rule.
+	if toIdx := findIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
+		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenByArgs(toIdx.Name.O))
+	}
+	return false, nil
+}
+
+func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var from, to model.CIStr
+	if err := job.DecodeArgs(&from, &to); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	// Double check. See function `RenameIndex` in ddl_api.go
+	duplicate, err := validateRenameIndex(from, to, tblInfo)
+	if duplicate {
+		return ver, nil
+	}
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	idx := findIndexByName(from.L, tblInfo.Indices)
+	idx.Name = to
+	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = d.onDropIndex(t, job)
+		ver, err = onDropIndex(t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -206,7 +258,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
-		return ver, errDupKeyName.Gen("index already exist %s", indexName)
+		return ver, ErrDupKeyName.Gen("index already exist %s", indexName)
 	}
 
 	if indexInfo == nil {
@@ -231,6 +283,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		indexInfo.Unique = unique
 		indexInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
+		log.Infof("[ddl] add index, run DDL job %s, index info %#v", job, indexInfo)
 	}
 	originalState := indexInfo.State
 	switch indexInfo.State {
@@ -238,46 +291,37 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 		// none -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		indexInfo.State = model.StateDeleteOnly
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		job.SchemaState = model.StateWriteOnly
 		indexInfo.State = model.StateWriteOnly
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		job.SchemaState = model.StateWriteReorganization
 		indexInfo.State = model.StateWriteReorganization
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		var tbl table.Table
-		tbl, err = d.getTable(schemaID, tblInfo)
+		tbl, err = getTable(d.store, schemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
 		var reorgInfo *reorgInfo
-		reorgInfo, err = d.getReorgInfo(t, job)
+		reorgInfo, err = getReorgInfo(d, t, job, tbl)
 		if err != nil || reorgInfo.first {
-			if err == nil {
-				// Get the first handle of this table.
-				err = iterateSnapshotRows(d.store, tbl, reorgInfo.SnapshotVer, math.MinInt64,
-					func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
-						reorgInfo.Handle = h
-						return false, nil
-					})
-				return ver, errors.Trace(t.UpdateDDLReorgHandle(reorgInfo.Job, reorgInfo.Handle))
-			}
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
 			return ver, errors.Trace(err)
 		}
 
-		err = d.runReorgJob(t, job, func() error {
-			return d.addTableIndex(tbl, indexInfo, reorgInfo, job)
+		err = w.runReorgJob(t, reorgInfo, d.lease, func() error {
+			return w.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 		if err != nil {
 			if errWaitReorgTimeout.Equal(err) {
@@ -286,27 +330,24 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 			}
 			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) {
 				log.Warnf("[ddl] run DDL job %v err %v, convert job to rollback job", job, err)
-				ver, err = d.convert2RollbackJob(t, job, tblInfo, indexInfo, err)
+				ver, err = convert2RollbackJob(t, job, tblInfo, indexInfo, err)
 			}
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-			cleanNotify(d.reorgCtx.notifyCancelReorgJob)
+			w.reorgCtx.cleanNotifyReorgCancel()
 			return ver, errors.Trace(err)
 		}
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-		cleanNotify(d.reorgCtx.notifyCancelReorgJob)
+		w.reorgCtx.cleanNotifyReorgCancel()
 
 		indexInfo.State = model.StatePublic
 		// Set column index flag.
 		addIndexColumnFlag(tblInfo, indexInfo)
-
-		job.SchemaState = model.StatePublic
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		// Finish this job.
-		job.State = model.JobStateDone
-		job.BinlogInfo.AddTableInfo(ver, tblInfo)
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
 		err = ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
 	}
@@ -314,7 +355,7 @@ func (d *ddl) onCreateIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	return ver, errors.Trace(err)
 }
 
-func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (ver int64, _ error) {
+func convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
 	job.State = model.JobStateRollingback
 	job.Args = []interface{}{indexInfo.Name}
 	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
@@ -324,7 +365,7 @@ func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	indexInfo.State = model.StateDeleteOnly
 	originalState := indexInfo.State
 	job.SchemaState = model.StateDeleteOnly
-	_, err1 := updateTableInfo(t, job, tblInfo, originalState)
+	ver, err1 := updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	if err1 != nil {
 		return ver, errors.Trace(err1)
 	}
@@ -336,7 +377,7 @@ func (d *ddl) convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	return ver, errors.Trace(err)
 }
 
-func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
@@ -361,17 +402,17 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		indexInfo.State = model.StateWriteOnly
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		indexInfo.State = model.StateDeleteOnly
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		indexInfo.State = model.StateDeleteReorganization
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
@@ -384,77 +425,119 @@ func (d *ddl) onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Set column index flag.
 		dropIndexColumnFlag(tblInfo, indexInfo)
 
-		job.SchemaState = model.StateNone
-		ver, err = updateTableInfo(t, job, tblInfo, originalState)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != model.StateNone)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
 		// Finish this job.
 		if job.IsRollingback() {
-			job.State = model.JobStateRollbackDone
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+			job.Args[0] = indexInfo.ID
 		} else {
-			job.State = model.JobStateDone
-			d.asyncNotifyEvent(&ddlutil.Event{Tp: model.ActionDropIndex, TableInfo: tblInfo, IndexInfo: indexInfo})
+			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
 		}
-		job.BinlogInfo.AddTableInfo(ver, tblInfo)
-		job.Args = append(job.Args, indexInfo.ID)
 	default:
 		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
 	}
 	return ver, errors.Trace(err)
 }
 
-func (w *worker) fetchRowColVals(txn kv.Transaction, t table.Table, colMap map[int64]*types.FieldType) (
-	[]*indexRecord, *taskResult) {
-	startTime := time.Now()
-	w.idxRecords = w.idxRecords[:0]
-	ret := &taskResult{outOfRangeHandle: w.taskRange.endHandle}
-	isEnd := true
-	err := iterateSnapshotRows(w.ctx.GetStore(), t, txn.StartTS(), w.taskRange.startHandle,
-		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
-			if h >= w.taskRange.endHandle {
-				ret.outOfRangeHandle = h
-				isEnd = false
-				return false, nil
-			}
-			indexRecord := &indexRecord{handle: h, key: rowKey}
-			err1 := w.getIndexRecord(t, colMap, rawRecord, indexRecord)
-			if err1 != nil {
-				return false, errors.Trace(err1)
-			}
-			w.idxRecords = append(w.idxRecords, indexRecord)
-			return true, nil
-		})
-	if err != nil {
-		ret.err = errors.Trace(err)
-		return nil, ret
-	}
+const (
+	// DefaultTaskHandleCnt is default batch size of adding indices.
+	DefaultTaskHandleCnt = 128
+)
 
-	if isEnd {
-		ret.isAllDone = true
-	}
-	ret.count = len(w.idxRecords)
-	log.Debugf("[ddl] txn %v fetches handle info %v, ret %v, takes time %v", txn.StartTS(), w.taskRange, ret, time.Since(startTime))
-
-	return w.idxRecords, ret
+// indexRecord is the record information of an index.
+type indexRecord struct {
+	handle int64
+	key    []byte        // It's used to lock a record. Record it to reduce the encoding time.
+	vals   []types.Datum // It's the index values.
+	skip   bool          // skip indicates that the index key is already exists, we should not add it.
 }
 
-func (w *worker) getIndexRecord(t table.Table, colMap map[int64]*types.FieldType, rawRecord []byte, idxRecord *indexRecord) error {
+type addIndexWorker struct {
+	id          int
+	ddlWorker   *worker
+	batchCnt    int
+	sessCtx     sessionctx.Context
+	taskCh      chan *reorgIndexTask
+	resultCh    chan *addIndexResult
+	index       table.Index
+	table       table.Table
+	colFieldMap map[int64]*types.FieldType
+	closed      bool
+	priority    int
+
+	// The following attributes are used to reduce memory allocation.
+	defaultVals        []types.Datum
+	idxRecords         []*indexRecord
+	rowMap             map[int64]types.Datum
+	idxKeyBufs         [][]byte
+	batchCheckKeys     []kv.Key
+	distinctCheckFlags []bool
+}
+
+type reorgIndexTask struct {
+	physicalTableID int64
+	startHandle     int64
+	endHandle       int64
+	// endIncluded indicates whether the range include the endHandle.
+	// When the last handle is math.MaxInt64, set endIncluded to true to
+	// tell worker backfilling index of endHandle.
+	endIncluded bool
+}
+
+type addIndexResult struct {
+	addedCount int
+	scanCount  int
+	nextHandle int64
+	err        error
+}
+
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
+	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+	return &addIndexWorker{
+		id:          id,
+		ddlWorker:   worker,
+		batchCnt:    DefaultTaskHandleCnt,
+		sessCtx:     sessCtx,
+		taskCh:      make(chan *reorgIndexTask, 1),
+		resultCh:    make(chan *addIndexResult, 1),
+		index:       index,
+		table:       t,
+		colFieldMap: colFieldMap,
+		priority:    kv.PriorityLow,
+		defaultVals: make([]types.Datum, len(t.Cols())),
+		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
+	}
+}
+
+func (w *addIndexWorker) close() {
+	if !w.closed {
+		w.closed = true
+		close(w.taskCh)
+	}
+}
+
+// getIndexRecord gets index columns values from raw binary value row.
+func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecord []byte) (*indexRecord, error) {
+	t := w.table
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
-	_, err := tablecodec.DecodeRowWithMap(rawRecord, colMap, time.UTC, w.rowMap)
+	_, err := tablecodec.DecodeRowWithMap(rawRecord, w.colFieldMap, time.UTC, w.rowMap)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	for j, v := range idxInfo.Columns {
 		col := cols[v.Offset]
 		if col.IsPKHandleColumn(t.Meta()) {
 			if mysql.HasUnsignedFlag(col.Flag) {
-				idxVal[j].SetUint64(uint64(idxRecord.handle))
+				idxVal[j].SetUint64(uint64(handle))
 			} else {
-				idxVal[j].SetInt64(idxRecord.handle)
+				idxVal[j].SetInt64(handle)
 			}
 			continue
 		}
@@ -465,242 +548,598 @@ func (w *worker) getIndexRecord(t table.Table, colMap map[int64]*types.FieldType
 			delete(w.rowMap, col.ID)
 			continue
 		}
-		idxColumnVal, err = tables.GetColDefaultValue(w.ctx, col, w.defaultVals)
+		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		idxVal[j] = idxColumnVal
 	}
-	idxRecord.vals = idxVal
+	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal}
+	return idxRecord, nil
+}
+
+// getNextHandle gets next handle of entry that we are going to process.
+func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) (nextHandle int64) {
+	if !taskDone {
+		// The task is not done. So we need to pick the last processed entry's handle and add one.
+		return w.idxRecords[len(w.idxRecords)-1].handle + 1
+	}
+
+	// The task is done. So we need to choose a handle outside this range.
+	// Some corner cases should be considered:
+	// - The end of task range is MaxInt64.
+	// - The end of the task is excluded in the range.
+	if taskRange.endHandle == math.MaxInt64 || !taskRange.endIncluded {
+		return taskRange.endHandle
+	}
+
+	return taskRange.endHandle + 1
+}
+
+// fetchRowColVals fetch w.batchCnt count rows that need to backfill indices, and build the corresponding indexRecord slice.
+// fetchRowColVals returns:
+// 1. The corresponding indexRecord slice.
+// 2. Next handle of entry that we need to process.
+// 3. Boolean indicates whether the task is done.
+// 4. error occurs in fetchRowColVals. nil if no error occurs.
+func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*indexRecord, int64, bool, error) {
+	// TODO: use tableScan to prune columns.
+	w.idxRecords = w.idxRecords[:0]
+	startTime := time.Now()
+
+	// taskDone means that the added handle is out of taskRange.endHandle.
+	taskDone := false
+	oprStartTime := startTime
+	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle,
+		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
+			oprEndTime := time.Now()
+			w.logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in fetchRowColVals", 0)
+			oprStartTime = oprEndTime
+
+			if !taskRange.endIncluded {
+				taskDone = handle >= taskRange.endHandle
+			} else {
+				taskDone = handle > taskRange.endHandle
+			}
+
+			if taskDone || len(w.idxRecords) >= w.batchCnt {
+				return false, nil
+			}
+
+			idxRecord, err1 := w.getIndexRecord(handle, recordKey, rawRow)
+			if err1 != nil {
+				return false, errors.Trace(err1)
+			}
+
+			w.idxRecords = append(w.idxRecords, idxRecord)
+			if handle == taskRange.endHandle {
+				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
+				taskDone = true
+				return false, nil
+			}
+			return true, nil
+		})
+
+	if len(w.idxRecords) == 0 {
+		taskDone = true
+	}
+
+	log.Debugf("[ddl] txn %v fetches handle info %v, takes time %v", txn.StartTS(), taskRange, time.Since(startTime))
+	return w.idxRecords, w.getNextHandle(taskRange, taskDone), taskDone, errors.Trace(err)
+}
+
+func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
+	if threshold == 0 {
+		threshold = atomic.LoadUint32(&variable.DDLSlowOprThreshold)
+	}
+
+	if elapsed >= time.Duration(threshold)*time.Millisecond {
+		log.Infof("[ddl-reorg][SLOW-OPERATIONS] elapsed time: %v, message: %v", elapsed, slowMsg)
+	}
+}
+
+func (w *addIndexWorker) initBatchCheckBufs(batchCount int) {
+	if len(w.idxKeyBufs) < batchCount {
+		w.idxKeyBufs = make([][]byte, batchCount)
+	}
+
+	w.batchCheckKeys = w.batchCheckKeys[:0]
+	w.distinctCheckFlags = w.distinctCheckFlags[:0]
+}
+
+func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
+	idxInfo := w.index.Meta()
+	if !idxInfo.Unique {
+		// non-unique key need not to check, just overwrite it,
+		// because in most case, backfilling indices is not exists.
+		return nil
+	}
+
+	w.initBatchCheckBufs(len(idxRecords))
+	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
+	for i, record := range idxRecords {
+		idxKey, distinct, err := w.index.GenIndexKey(stmtCtx, record.vals, record.handle, w.idxKeyBufs[i])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// save the buffer to reduce memory allocations.
+		w.idxKeyBufs[i] = idxKey
+
+		w.batchCheckKeys = append(w.batchCheckKeys, idxKey)
+		w.distinctCheckFlags = append(w.distinctCheckFlags, distinct)
+	}
+
+	batchVals, err := kv.BatchGetValues(txn, w.batchCheckKeys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// 1. unique-key is duplicate and the handle is equal, skip it.
+	// 2. unique-key is duplicate and the handle is not equal, return duplicate error.
+	// 3. non-unique-key is duplicate, skip it.
+	for i, key := range w.batchCheckKeys {
+		if val, found := batchVals[string(key)]; found {
+			if w.distinctCheckFlags[i] {
+				handle, err1 := tables.DecodeHandle(val)
+				if err1 != nil {
+					return errors.Trace(err1)
+				}
+
+				if handle != idxRecords[i].handle {
+					return errors.Trace(kv.ErrKeyExists)
+				}
+			}
+			idxRecords[i].skip = true
+		} else {
+			// The keys in w.batchCheckKeys also maybe duplicate,
+			// so we need to backfill the not found key into `batchVals` map.
+			if w.distinctCheckFlags[i] {
+				batchVals[string(key)] = tables.EncodeHandle(idxRecords[i].handle)
+			}
+		}
+	}
+	// Constrains is already checked.
+	stmtCtx.BatchCheck = true
 	return nil
 }
 
-const (
-	minTaskHandledCnt    = 32 // minTaskHandledCnt is the minimum number of handles per batch.
-	defaultTaskHandleCnt = 128
-	maxTaskHandleCnt     = 1 << 20 // maxTaskHandleCnt is the maximum number of handles per batch.
-	defaultWorkers       = 16
-)
+// backfillIndexInTxn will backfill table index in a transaction, lock corresponding rowKey, if the value of rowKey is changed,
+// indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
+// backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
+// TODO: make w.batchCnt can be modified by system variable.
+func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, taskDone bool, addedCount, scanCount int, errInTxn error) {
+	oprStartTime := time.Now()
+	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
+		addedCount = 0
+		scanCount = 0
+		txn.SetOption(kv.Priority, w.priority)
 
-// taskResult is the result of the task.
-type taskResult struct {
-	count            int   // The number of records that has been processed in the task.
-	outOfRangeHandle int64 // This is the handle out of the range.
-	isAllDone        bool  // If all rows are all done.
-	err              error
-}
-
-// indexRecord is the record information of an index.
-type indexRecord struct {
-	handle int64
-	key    []byte        // It's used to lock a record. Record it to reduce the encoding time.
-	vals   []types.Datum // It's the index values.
-}
-
-type worker struct {
-	id          int
-	ctx         context.Context
-	index       table.Index
-	defaultVals []types.Datum  // It's used to reduce the number of new slice.
-	idxRecords  []*indexRecord // It's used to reduce the number of new slice.
-	taskRange   handleInfo     // Every task's handle range.
-	taskRet     *taskResult
-	batchSize   int
-	rowMap      map[int64]types.Datum // It's the index column values map. It is used to reduce the number of making map.
-}
-
-func newWorker(ctx context.Context, id, batch, colsLen, indexColsLen int) *worker {
-	return &worker{
-		id:          id,
-		ctx:         ctx,
-		batchSize:   batch,
-		idxRecords:  make([]*indexRecord, 0, batch),
-		defaultVals: make([]types.Datum, colsLen),
-		rowMap:      make(map[int64]types.Datum, indexColsLen),
-	}
-}
-
-func (w *worker) setTaskNewRange(startHandle, endHandle int64) {
-	w.taskRange.startHandle = startHandle
-	w.taskRange.endHandle = endHandle
-}
-
-// handleInfo records the range of [start handle, end handle) that is used in a task.
-type handleInfo struct {
-	startHandle int64
-	endHandle   int64
-}
-
-func getEndHandle(baseHandle, batch int64) int64 {
-	if baseHandle >= math.MaxInt64-batch {
-		return math.MaxInt64
-	}
-	return baseHandle + batch
-}
-
-// addTableIndex adds index into table.
-// TODO: Move this to doc or wiki.
-// How to add index in reorganization state?
-// Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
-// The handle range size is defaultTaskHandleCnt.
-// Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
-// The operation flow of the each task of data is as follows:
-//  1. Open a goroutine. Traverse the snapshot to obtain the handle range, while accessing the corresponding row key and
-// raw index value. Then notify to start the next task.
-//  2. Decode this task of raw index value to get the corresponding index value.
-//  3. Deal with these index records one by one. If the index record exists, skip to the next row.
-// If the index doesn't exist, create the index and then continue to handle the next row.
-//  4. When the handle of a range is completed, return the corresponding task result.
-// The above operations are completed in a transaction.
-// When concurrent tasks are processed, the task result returned by each task is sorted by the worker number. Then traverse the
-// task results, get the total number of rows in the concurrent task and update the processed handle value. If
-// an error message is displayed, exit the traversal.
-// Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (d *ddl) addTableIndex(t table.Table, indexInfo *model.IndexInfo, reorgInfo *reorgInfo, job *model.Job) error {
-	cols := t.Cols()
-	colMap := make(map[int64]*types.FieldType)
-	for _, v := range indexInfo.Columns {
-		col := cols[v.Offset]
-		colMap[col.ID] = &col.FieldType
-	}
-	workerCnt := defaultWorkers
-	addedCount := job.GetRowCount()
-	baseHandle, logStartHandle := reorgInfo.Handle, reorgInfo.Handle
-
-	workers := make([]*worker, workerCnt)
-	for i := 0; i < workerCnt; i++ {
-		ctx := d.newContext()
-		workers[i] = newWorker(ctx, i, defaultTaskHandleCnt, len(cols), len(colMap))
-		// Make sure every worker has its own index buffer.
-		workers[i].index = tables.NewIndexWithBuffer(t.Meta(), indexInfo)
-	}
-	for {
-		startTime := time.Now()
-		wg := sync.WaitGroup{}
-		currentBatchSize := int64(workers[0].batchSize)
-		for i := 0; i < workerCnt; i++ {
-			wg.Add(1)
-			endHandle := getEndHandle(baseHandle, currentBatchSize)
-			workers[i].setTaskNewRange(baseHandle, endHandle)
-			// TODO: Consider one worker to one goroutine.
-			go workers[i].doBackfillIndexTask(t, colMap, &wg)
-			baseHandle = endHandle
-		}
-		wg.Wait()
-
-		taskAddedCount, nextHandle, isEnd, err := getCountAndHandle(workers)
-		addedCount += taskAddedCount
-		sub := time.Since(startTime).Seconds()
-		if err == nil {
-			err = d.isReorgRunnable()
-		}
+		var (
+			idxRecords []*indexRecord
+			err        error
+		)
+		idxRecords, nextHandle, taskDone, err = w.fetchRowColVals(txn, handleRange)
 		if err != nil {
-			// Update the reorg handle that has been processed.
-			err1 := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
-				return errors.Trace(reorgInfo.UpdateHandle(txn, nextHandle))
-			})
-			log.Warnf("[ddl] total added index for %d rows, this task [%d,%d) add index for %d failed %v, batch %d, take time %v, update handle err %v",
-				addedCount, logStartHandle, nextHandle, taskAddedCount, err, currentBatchSize, sub, err1)
 			return errors.Trace(err)
 		}
-		d.reorgCtx.setRowCountAndHandle(addedCount, nextHandle)
-		batchHandleDataHistogram.WithLabelValues(batchAddIdx).Observe(sub)
-		log.Infof("[ddl] total added index for %d rows, this task [%d,%d) added index for %d rows, batch %d, take time %v",
-			addedCount, logStartHandle, nextHandle, taskAddedCount, currentBatchSize, sub)
 
-		if isEnd {
-			return nil
-		}
-		baseHandle, logStartHandle = nextHandle, nextHandle
-	}
-}
-
-func getCountAndHandle(workers []*worker) (int64, int64, bool, error) {
-	taskAddedCount, nextHandle := int64(0), workers[0].taskRange.startHandle
-	var err error
-	var isEnd bool
-	starvingWorkers := 0
-	largerDefaultWorkers := 0
-	for _, worker := range workers {
-		ret := worker.taskRet
-		if ret.err != nil {
-			err = ret.err
-			break
-		}
-		taskAddedCount += int64(ret.count)
-		if ret.count < minTaskHandledCnt {
-			starvingWorkers++
-		} else if ret.count > defaultTaskHandleCnt {
-			largerDefaultWorkers++
-		}
-		nextHandle = ret.outOfRangeHandle
-		isEnd = ret.isAllDone
-	}
-
-	// Adjust the worker's batch size.
-	halfWorkers := len(workers) / 2
-	if starvingWorkers >= halfWorkers && workers[0].batchSize < maxTaskHandleCnt {
-		// If the index data is discrete, we need to increase the batch size to speed up.
-		for _, worker := range workers {
-			worker.batchSize *= 2
-		}
-	} else if largerDefaultWorkers >= halfWorkers && workers[0].batchSize > defaultTaskHandleCnt {
-		// If the batch size exceeds the limit after we increase it,
-		// we need to decrease the batch size to reduce write conflict.
-		for _, worker := range workers {
-			worker.batchSize /= 2
-		}
-	}
-	return taskAddedCount, nextHandle, isEnd, errors.Trace(err)
-}
-
-func (w *worker) doBackfillIndexTask(t table.Table, colMap map[int64]*types.FieldType, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	startTime := time.Now()
-	var ret *taskResult
-	err := kv.RunInNewTxn(w.ctx.GetStore(), true, func(txn kv.Transaction) error {
-		ret = w.doBackfillIndexTaskInTxn(t, txn, colMap)
-		return errors.Trace(ret.err)
-	})
-	if err != nil {
-		ret.err = errors.Trace(err)
-	}
-
-	w.taskRet = ret
-	log.Debugf("[ddl] add index completes backfill index task %v takes time %v err %v",
-		w.taskRange, time.Since(startTime), ret.err)
-}
-
-// doBackfillIndexTaskInTxn deals with a part of backfilling index data in a Transaction.
-// This part of the index data rows is defaultTaskHandleCnt.
-func (w *worker) doBackfillIndexTaskInTxn(t table.Table, txn kv.Transaction, colMap map[int64]*types.FieldType) *taskResult {
-	idxRecords, taskRet := w.fetchRowColVals(txn, t, colMap)
-	if taskRet.err != nil {
-		taskRet.err = errors.Trace(taskRet.err)
-		return taskRet
-	}
-
-	for _, idxRecord := range idxRecords {
-		log.Debugf("[ddl] txn %v backfill index handle...%v", txn.StartTS(), idxRecord.handle)
-		err := txn.LockKeys(idxRecord.key)
+		err = w.batchCheckUniqueKey(txn, idxRecords)
 		if err != nil {
-			taskRet.err = errors.Trace(err)
-			return taskRet
+			return errors.Trace(err)
 		}
 
-		// Create the index.
-		handle, err := w.index.Create(txn, idxRecord.vals, idxRecord.handle)
-		if err != nil {
-			if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
-				// Index already exists, skip it.
+		for _, idxRecord := range idxRecords {
+			scanCount++
+			// The index is already exists, we skip it, no needs to backfill it.
+			// The following update, delete, insert on these rows, TiDB can handle it correctly.
+			if idxRecord.skip {
 				continue
 			}
-			taskRet.err = errors.Trace(err)
-			return taskRet
+
+			// Lock the row key to notify us that someone delete or update the row,
+			// then we should not backfill the index of it, otherwise the adding index is redundant.
+			err := txn.LockKeys(idxRecord.key)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// Create the index.
+			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
+			if err != nil {
+				if kv.ErrKeyExists.Equal(err) && idxRecord.handle == handle {
+					// Index already exists, skip it.
+					continue
+				}
+
+				return errors.Trace(err)
+			}
+			addedCount++
+		}
+
+		return nil
+	})
+	w.logSlowOperations(time.Since(oprStartTime), "backfillIndexInTxn", 3000)
+
+	return
+}
+
+// handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
+func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *addIndexResult {
+	handleRange := *task
+	result := &addIndexResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
+	lastLogCount := 0
+	startTime := time.Now()
+
+	for {
+		addedCount := 0
+		nextHandle, taskDone, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
+		if err == nil {
+			// Because reorgIndexTask may run a long time,
+			// we should check whether this ddl job is still runnable.
+			err = w.ddlWorker.isReorgRunnable(d)
+		}
+		if err != nil {
+			result.err = err
+			return result
+		}
+
+		result.nextHandle = nextHandle
+		result.addedCount += addedCount
+		result.scanCount += scanCount
+		w.ddlWorker.reorgCtx.increaseRowCount(int64(addedCount))
+
+		if result.scanCount-lastLogCount >= 30000 {
+			lastLogCount = result.scanCount
+			log.Infof("[ddl-reorg] worker(%v), finish batch addedCount:%v backfill, task addedCount:%v, task scanCount:%v, nextHandle:%v",
+				w.id, addedCount, result.addedCount, result.scanCount, nextHandle)
+		}
+
+		handleRange.startHandle = nextHandle
+		if taskDone {
+			break
 		}
 	}
-	return taskRet
+	rightParenthesis := ")"
+	if task.endIncluded {
+		rightParenthesis = "]"
+	}
+	log.Infof("[ddl-reorg] worker(%v), finish region %v ranges [%v,%v%s, addedCount:%v, scanCount:%v, nextHandle:%v, elapsed time(s):%v",
+		w.id, task.physicalTableID, task.startHandle, task.endHandle, rightParenthesis, result.addedCount, result.scanCount, result.nextHandle, time.Since(startTime).Seconds())
+
+	return result
+}
+
+var gofailMockAddindexErrOnceGuard bool
+
+func (w *addIndexWorker) run(d *ddlCtx) {
+	log.Infof("[ddl-reorg] worker[%v] start", w.id)
+	defer func() {
+		r := recover()
+		if r != nil {
+			buf := util.GetStack()
+			log.Errorf("[ddl-reorg] addIndexWorker %v %s", r, buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+		}
+		w.resultCh <- &addIndexResult{err: errReorgPanic}
+	}()
+	for {
+		task, more := <-w.taskCh
+		if !more {
+			break
+		}
+
+		log.Debug("[ddl-reorg] got backfill index task:#v", task)
+		// gofail: var mockAddIndexErr bool
+		//if w.id == 0 && mockAddIndexErr && !gofailMockAddindexErrOnceGuard {
+		//	gofailMockAddindexErrOnceGuard = true
+		//	result := &addIndexResult{addedCount: 0, nextHandle: 0, err: errors.Errorf("mock add index error")}
+		//	w.resultCh <- result
+		//	continue
+		//}
+
+		result := w.handleBackfillTask(d, task)
+		w.resultCh <- result
+	}
+	log.Infof("[ddl-reorg] worker[%v] exit", w.id)
+}
+
+func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64]*types.FieldType {
+	cols := t.Cols()
+	colFieldMap := make(map[int64]*types.FieldType, len(indexInfo.Columns))
+	for _, v := range indexInfo.Columns {
+		col := cols[v.Offset]
+		colFieldMap[col.ID] = &col.FieldType
+	}
+	return colFieldMap
+}
+
+// splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
+// to speed up adding index in table with disperse handle.
+// The `t` should be a non-partitioned table or a partition.
+func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endHandle int64) ([]kv.KeyRange, error) {
+	startRecordKey := t.RecordKey(startHandle)
+	endRecordKey := t.RecordKey(endHandle).Next()
+
+	log.Infof("[ddl-reorg] split partition %v range [%v, %v] from PD", t.GetPhysicalID(), startHandle, endHandle)
+	kvRange := kv.KeyRange{StartKey: startRecordKey, EndKey: endRecordKey}
+	s, ok := store.(tikv.Storage)
+	if !ok {
+		// Only support split ranges in tikv.Storage now.
+		return []kv.KeyRange{kvRange}, nil
+	}
+
+	maxSleep := 10000 // ms
+	bo := tikv.NewBackoffer(context.Background(), maxSleep)
+	ranges, err := tikv.SplitRegionRanges(bo, s.GetRegionCache(), []kv.KeyRange{kvRange})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(ranges) == 0 {
+		return nil, errors.Trace(errInvalidSplitRegionRanges)
+	}
+	return ranges, nil
+}
+
+func decodeHandleRange(keyRange kv.KeyRange) (int64, int64, error) {
+	_, startHandle, err := tablecodec.DecodeRecordKey(keyRange.StartKey)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	_, endHandle, err := tablecodec.DecodeRecordKey(keyRange.EndKey)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+
+	return startHandle, endHandle, nil
+}
+
+func closeAddIndexWorkers(workers []*addIndexWorker) {
+	for _, worker := range workers {
+		worker.close()
+	}
+}
+
+func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAddedCount *int64, startHandle int64) (int64, int64, error) {
+	var (
+		addedCount int64
+		nextHandle = startHandle
+		firstErr   error
+	)
+	for i := 0; i < taskCnt; i++ {
+		worker := workers[i]
+		result := <-worker.resultCh
+		if firstErr == nil && result.err != nil {
+			firstErr = result.err
+			// We should wait all working workers exits, any way.
+			continue
+		}
+
+		if result.err != nil {
+			log.Warnf("[ddl-reorg] worker[%v] return err:%v", i, result.err)
+		}
+
+		if firstErr == nil {
+			*totalAddedCount += int64(result.addedCount)
+			addedCount += int64(result.addedCount)
+			nextHandle = result.nextHandle
+		}
+	}
+
+	return nextHandle, addedCount, errors.Trace(firstErr)
+}
+
+// handleReorgTasks sends tasks to workers, and waits for all the running workers to return results,
+// there are taskCnt running workers.
+func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, batchTasks []*reorgIndexTask) error {
+	for i, task := range batchTasks {
+		workers[i].taskCh <- task
+	}
+
+	startHandle := batchTasks[0].startHandle
+	taskCnt := len(batchTasks)
+	startTime := time.Now()
+	nextHandle, taskAddedCount, err := w.waitTaskResults(workers, taskCnt, totalAddedCount, startHandle)
+	elapsedTime := time.Since(startTime).Seconds()
+	if err == nil {
+		err = w.isReorgRunnable(reorgInfo.d)
+	}
+
+	if err != nil {
+		// update the reorg handle that has been processed.
+		err1 := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
+			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID))
+		})
+		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime)
+		log.Warnf("[ddl-reorg] total added index for %d rows, this task [%d,%d) add index for %d failed %v, take time %v, update handle err %v",
+			*totalAddedCount, startHandle, nextHandle, taskAddedCount, err, elapsedTime, err1)
+		return errors.Trace(err)
+	}
+
+	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
+	w.reorgCtx.setNextHandle(nextHandle)
+	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime)
+	log.Infof("[ddl-reorg] total added index for %d rows, this task [%d,%d) added index for %d rows, take time %v",
+		*totalAddedCount, startHandle, nextHandle, taskAddedCount, elapsedTime)
+	return nil
+}
+
+// sendRangeTaskToWorkers sends tasks to workers, and returns remaining kvRanges that is not handled.
+func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker, reorgInfo *reorgInfo, totalAddedCount *int64, kvRanges []kv.KeyRange) ([]kv.KeyRange, error) {
+	batchTasks := make([]*reorgIndexTask, 0, len(workers))
+	physicalTableID := reorgInfo.PhysicalTableID
+
+	// Build reorg indices tasks.
+	for _, keyRange := range kvRanges {
+		startHandle, endHandle, err := decodeHandleRange(keyRange)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		endKey := t.RecordKey(endHandle)
+		endIncluded := false
+		if endKey.Cmp(keyRange.EndKey) < 0 {
+			endIncluded = true
+		}
+		task := &reorgIndexTask{physicalTableID, startHandle, endHandle, endIncluded}
+		batchTasks = append(batchTasks, task)
+
+		if len(batchTasks) >= len(workers) {
+			break
+		}
+	}
+
+	if len(batchTasks) == 0 {
+		return nil, nil
+	}
+
+	// Wait tasks finish.
+	err := w.handleReorgTasks(reorgInfo, totalAddedCount, workers, batchTasks)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if len(batchTasks) < len(kvRanges) {
+		// there are kvRanges not handled.
+		remains := kvRanges[len(batchTasks):]
+		return remains, nil
+	}
+
+	return nil, nil
+}
+
+// buildIndexForReorgInfo build backfilling tasks from [reorgInfo.StartHandle, reorgInfo.EndHandle),
+// and send these tasks to add index workers, till we finish adding the indices.
+func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, workers []*addIndexWorker, job *model.Job, reorgInfo *reorgInfo) error {
+	totalAddedCount := job.GetRowCount()
+
+	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
+	for {
+		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startHandle, endHandle)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		log.Infof("[ddl-reorg] start to reorg index of %v region ranges, handle range:[%v, %v).", len(kvRanges), startHandle, endHandle)
+		remains, err := w.sendRangeTaskToWorkers(t, workers, reorgInfo, &totalAddedCount, kvRanges)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if len(remains) == 0 {
+			break
+		}
+		startHandle, _, err = decodeHandleRange(remains[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// addPhysicalTableIndex handles the add index reorganization state for a non-partitioned table or a partition.
+// For a partitioned table, it should be handled partition by partition.
+//
+// How to add index in reorganization state?
+// Concurrently process the defaultTaskHandleCnt tasks. Each task deals with a handle range of the index record.
+// The handle range is split from PD regions now. Each worker deal with a region table key range one time.
+// Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
+// The operation flow is as follows:
+//	1. Open numbers of defaultWorkers goroutines.
+//	2. Split table key range from PD regions.
+//	3. Send tasks to running workers by workers's task channel. Each task deals with a region key ranges.
+//	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
+// The above operations are completed in a transaction.
+// Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
+func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+	job := reorgInfo.Job
+	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
+	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
+
+	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
+	workerCnt := variable.GetDDLReorgWorkerCounter()
+	idxWorkers := make([]*addIndexWorker, workerCnt)
+	for i := 0; i < int(workerCnt); i++ {
+		sessCtx := newContext(reorgInfo.d.store)
+		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, colFieldMap)
+		idxWorkers[i].priority = job.Priority
+		go idxWorkers[i].run(reorgInfo.d)
+	}
+	defer closeAddIndexWorkers(idxWorkers)
+	err := w.buildIndexForReorgInfo(t, idxWorkers, job, reorgInfo)
+	return errors.Trace(err)
+}
+
+// addTableIndex handles the add index reorganization state for a table.
+func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *reorgInfo) error {
+	var err error
+	if tbl, ok := t.(table.PartitionedTable); ok {
+		var finish bool
+		for !finish {
+			p := tbl.GetPartition(reorgInfo.PhysicalTableID)
+			if p == nil {
+				return errors.Errorf("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
+			}
+			err = w.addPhysicalTableIndex(p, idx, reorgInfo)
+			if err != nil {
+				break
+			}
+			finish, err = w.updateReorgInfo(tbl, reorgInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	} else {
+		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), idx, reorgInfo)
+	}
+	return errors.Trace(err)
+}
+
+// updateReorgInfo will find the next partition according to current reorgInfo.
+// If no more partitions, or table t is not a partitioned table, returns true to
+// indicate that the reorganize work is finished.
+func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bool, error) {
+	pi := t.Meta().GetPartitionInfo()
+	if pi == nil {
+		return true, nil
+	}
+
+	pid, err := findNextPartitionID(reorg.PhysicalTableID, pi.Definitions)
+	if err != nil {
+		// Fatal error, should not run here.
+		log.Errorf("[ddl-reorg] update reorg fail, %v error stack: %s", t, errors.ErrorStack(err))
+		return false, errors.Trace(err)
+	}
+	if pid == 0 {
+		// Next partition does not exist, all the job done.
+		return true, nil
+	}
+
+	start, end, err := getTableRange(reorg.d, t.GetPartition(pid), reorg.Job.SnapshotVer, reorg.Job.Priority)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	log.Infof("[ddl-reorg] job %v update reorgInfo partition %d range [%d %d]", reorg.Job.ID, pid, start, end)
+	reorg.StartHandle, reorg.EndHandle, reorg.PhysicalTableID = start, end, pid
+
+	// Write the reorg info to store so the whole reorganize process can recover from panic.
+	err = kv.RunInNewTxn(reorg.d.store, true, func(txn kv.Transaction) error {
+		return errors.Trace(reorg.UpdateReorgMeta(txn, reorg.StartHandle, reorg.EndHandle, reorg.PhysicalTableID))
+	})
+	return false, errors.Trace(err)
+}
+
+// findNextPartitionID finds the next partition ID in the PartitionDefinition array.
+// Returns 0 if current partition is already the last one.
+func findNextPartitionID(currentPartition int64, defs []model.PartitionDefinition) (int64, error) {
+	for i, def := range defs {
+		if currentPartition == def.ID {
+			if i == len(defs)-1 {
+				return 0, nil
+			}
+			return defs[i+1].ID, nil
+		}
+	}
+	return 0, errors.Errorf("partition id not found %d", currentPartition)
 }
 
 func findIndexByName(idxName string, indices []*model.IndexInfo) *model.IndexInfo {
@@ -720,13 +1159,14 @@ func allocateIndexID(tblInfo *model.TableInfo) int64 {
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h int64, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotRows(store kv.Storage, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
+func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version uint64, seekHandle int64, fn recordIterFunc) error {
 	ver := kv.Version{Ver: version}
+
 	snap, err := store.GetSnapshot(ver)
+	snap.SetPriority(priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	firstKey := t.RecordKey(seekHandle)
 	it, err := snap.Seek(firstKey)
 	if err != nil {

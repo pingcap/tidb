@@ -1,0 +1,11 @@
+port = 4001
+lease = "0"
+
+[log]
+level = "error"
+
+[status]
+status-port = 10081
+
+[performance]
+stats-lease = "0"

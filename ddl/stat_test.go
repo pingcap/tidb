@@ -20,12 +20,20 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testStatSuite{})
 
 type testStatSuite struct {
+}
+
+func (s *testStatSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testStatSuite) TearDownSuite(c *C) {
+	testleak.AfterTest(c)()
 }
 
 func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
@@ -36,11 +44,10 @@ func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
 }
 
 func (s *testStatSuite) TestStat(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 
-	d := testNewDDL(goctx.Background(), nil, store, nil, nil, testLease)
+	d := testNewDDL(context.Background(), nil, store, nil, nil, testLease)
 	defer d.Stop()
 
 	time.Sleep(testLease)
@@ -77,7 +84,8 @@ LOOP:
 		case <-ticker.C:
 			d.close()
 			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
-			d.start(goctx.Background())
+			d.start(context.Background(), nil)
+			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
 			c.Assert(err, IsNil)
 			// TODO: Get this information from etcd.

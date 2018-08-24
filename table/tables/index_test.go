@@ -15,32 +15,41 @@ package tables_test
 
 import (
 	"io"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ = Suite(&testIndexSuite{})
 
 type testIndexSuite struct {
-	s kv.Storage
+	s   kv.Storage
+	dom *domain.Domain
 }
 
 func (s *testIndexSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
+	s.dom, err = session.BootstrapSession(store)
+	c.Assert(err, IsNil)
 }
 
 func (s *testIndexSuite) TearDownSuite(c *C) {
+	s.dom.Close()
 	err := s.s.Close()
 	c.Assert(err, IsNil)
 	testleak.AfterTest(c)()
@@ -60,14 +69,15 @@ func (s *testIndexSuite) TestIndex(c *C) {
 			},
 		},
 	}
-	index := tables.NewIndex(tblInfo, tblInfo.Indices[0])
+	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	// Test ununiq index.
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
 	values := types.MakeDatums(1, 2)
-	_, err = index.Create(txn, values, 1)
+	mockCtx := mock.NewContext()
+	_, err = index.Create(mockCtx, txn, values, 1)
 	c.Assert(err, IsNil)
 
 	it, err := index.SeekFirst(txn)
@@ -80,54 +90,54 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(getValues[1].GetInt64(), Equals, int64(2))
 	c.Assert(h, Equals, int64(1))
 	it.Close()
-
-	exist, _, err := index.Exist(txn, values, 100)
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	exist, _, err := index.Exist(sc, txn, values, 100)
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsFalse)
 
-	exist, _, err = index.Exist(txn, values, 1)
+	exist, _, err = index.Exist(sc, txn, values, 1)
 	c.Assert(err, IsNil)
 	c.Assert(exist, IsTrue)
 
-	err = index.Delete(txn, values, 1)
+	err = index.Delete(sc, txn, values, 1)
 	c.Assert(err, IsNil)
 
 	it, err = index.SeekFirst(txn)
 	c.Assert(err, IsNil)
 
 	_, _, err = it.Next()
-	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
+	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
 	it.Close()
 
-	_, err = index.Create(txn, values, 0)
+	_, err = index.Create(mockCtx, txn, values, 0)
 	c.Assert(err, IsNil)
 
 	_, err = index.SeekFirst(txn)
 	c.Assert(err, IsNil)
 
-	_, hit, err := index.Seek(txn, values)
+	_, hit, err := index.Seek(sc, txn, values)
 	c.Assert(err, IsNil)
 	c.Assert(hit, IsTrue)
 
 	err = index.Drop(txn)
 	c.Assert(err, IsNil)
 
-	it, hit, err = index.Seek(txn, values)
+	it, hit, err = index.Seek(sc, txn, values)
 	c.Assert(err, IsNil)
 	c.Assert(hit, IsFalse)
 
 	_, _, err = it.Next()
-	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
+	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
 	it.Close()
 
 	it, err = index.SeekFirst(txn)
 	c.Assert(err, IsNil)
 
 	_, _, err = it.Next()
-	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
+	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
 	it.Close()
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
 	tblInfo = &model.TableInfo{
@@ -144,16 +154,16 @@ func (s *testIndexSuite) TestIndex(c *C) {
 			},
 		},
 	}
-	index = tables.NewIndex(tblInfo, tblInfo.Indices[0])
+	index = tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	// Test uniq index.
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 
-	_, err = index.Create(txn, values, 1)
+	_, err = index.Create(mockCtx, txn, values, 1)
 	c.Assert(err, IsNil)
 
-	_, err = index.Create(txn, values, 2)
+	_, err = index.Create(mockCtx, txn, values, 2)
 	c.Assert(err, NotNil)
 
 	it, err = index.SeekFirst(txn)
@@ -167,21 +177,35 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(h, Equals, int64(1))
 	it.Close()
 
-	exist, h, err = index.Exist(txn, values, 1)
+	exist, h, err = index.Exist(sc, txn, values, 1)
 	c.Assert(err, IsNil)
 	c.Assert(h, Equals, int64(1))
 	c.Assert(exist, IsTrue)
 
-	exist, h, err = index.Exist(txn, values, 2)
+	exist, h, err = index.Exist(sc, txn, values, 2)
 	c.Assert(err, NotNil)
 	c.Assert(h, Equals, int64(1))
 	c.Assert(exist, IsTrue)
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 
-	_, err = index.FetchValues(make([]types.Datum, 0))
+	_, err = index.FetchValues(make([]types.Datum, 0), nil)
 	c.Assert(err, NotNil)
+
+	// Test the function of Next when the value of unique key is nil.
+	values2 := types.MakeDatums(nil, nil)
+	_, err = index.Create(mockCtx, txn, values2, 2)
+	c.Assert(err, IsNil)
+	it, err = index.SeekFirst(txn)
+	c.Assert(err, IsNil)
+	getValues, h, err = it.Next()
+	c.Assert(err, IsNil)
+	c.Assert(getValues, HasLen, 2)
+	c.Assert(getValues[0].GetInterface(), Equals, nil)
+	c.Assert(getValues[1].GetInterface(), Equals, nil)
+	c.Assert(h, Equals, int64(2))
+	it.Close()
 }
 
 func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
@@ -192,23 +216,30 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 				ID:   2,
 				Name: model.NewCIStr("test"),
 				Columns: []*model.IndexColumn{
-					{},
-					{},
+					{Offset: 1},
+					{Offset: 2},
 				},
 			},
 		},
+		Columns: []*model.ColumnInfo{
+			{Offset: 0},
+			{Offset: 1},
+			{Offset: 2},
+		},
 	}
-	index := tables.NewIndex(tblInfo, tblInfo.Indices[0])
+	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
+	mockCtx := mock.NewContext()
 	values := types.MakeDatums("abc", "def")
-	_, err = index.Create(txn, values, 1)
+	_, err = index.Create(mockCtx, txn, values, 1)
 	c.Assert(err, IsNil)
 
-	index2 := tables.NewIndex(tblInfo, tblInfo.Indices[0])
-	iter, hit, err := index2.Seek(txn, types.MakeDatums("abc", nil))
+	index2 := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	iter, hit, err := index2.Seek(sc, txn, types.MakeDatums("abc", nil))
 	c.Assert(err, IsNil)
 	defer iter.Close()
 	c.Assert(hit, IsFalse)

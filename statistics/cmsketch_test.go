@@ -14,16 +14,19 @@
 package statistics
 
 import (
+	"math"
 	"math/rand"
+	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {
-	bytes, err := codec.EncodeValue(nil, *val)
+	bytes, err := codec.EncodeValue(nil, nil, *val)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -47,13 +50,14 @@ func buildCMSketchAndMap(d, w int32, seed int64, total, imax uint64, s float64) 
 }
 
 func averageAbsoluteError(cms *CMSketch, mp map[int64]uint32) (uint64, error) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	var total uint64
 	for num, count := range mp {
-		estimate, err := cms.queryValue(types.NewIntDatum(num))
+		estimate, err := cms.queryValue(sc, types.NewIntDatum(num))
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		diff := uint32(0)
+		var diff uint32
 		if count > estimate {
 			diff = count - estimate
 		} else {
@@ -82,7 +86,7 @@ func (s *testStatisticsSuite) TestCMSketch(c *C) {
 			avgError:   63,
 		},
 	}
-	d, w := int32(8), int32(2048)
+	d, w := int32(5), int32(2048)
 	total, imax := uint64(1000000), uint64(10000000)
 	for _, t := range tests {
 		lSketch, lMap, err := buildCMSketchAndMap(d, w, 0, total, imax, t.zipfFactor)
@@ -109,10 +113,16 @@ func (s *testStatisticsSuite) TestCMSketch(c *C) {
 }
 
 func (s *testStatisticsSuite) TestCMSketchCoding(c *C) {
-	lSketch, _, err := buildCMSketchAndMap(8, 2048, 0, 1000, 1000, 1.1)
-	c.Assert(err, IsNil)
+	lSketch := NewCMSketch(5, 2048)
+	lSketch.count = 2048 * math.MaxUint32
+	for i := range lSketch.table {
+		for j := range lSketch.table[i] {
+			lSketch.table[i][j] = math.MaxUint32
+		}
+	}
 	bytes, err := encodeCMSketch(lSketch)
 	c.Assert(err, IsNil)
+	c.Assert(len(bytes), Equals, 61455)
 	rSketch, err := decodeCMSketch(bytes)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)

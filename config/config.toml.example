@@ -3,51 +3,69 @@
 # TiDB server host.
 host = "0.0.0.0"
 
+# tidb server advertise IP.
+advertise-address = ""
+
 # TiDB server port.
 port = 4000
 
-# Registered store name, [memory, goleveldb, boltdb, tikv, mocktikv]
+# Registered store name, [tikv, mocktikv]
 store = "mocktikv"
 
 # TiDB storage path.
 path = "/tmp/tidb"
 
 # The socket file to use for connection.
-#socket = ""
-
-# Socket file to write binlog.
-#binlog-socket = ""
+socket = ""
 
 # Run ddl worker on this tidb-server.
 run-ddl = true
 
 # Schema lease duration, very dangerous to change only if you know what you do.
-lease = "10s"
+lease = "45s"
 
-# When create table, split a separated region for it.
-# split-table = false
+# When create table, split a separated region for it. It is recommended to
+# turn off this option if there will be a large number of tables created.
+split-table = true
 
 # The limit of concurrent executed sessions.
-# token-limit = 1000
+token-limit = 1000
 
-# Enable chunk executors.
-enable-chunk = true
+# Only print a log when out of memory quota.
+# Valid options: ["log", "cancel"]
+oom-action = "log"
+
+# Set the memory quota for a query in bytes. Default: 32GB
+mem-quota-query = 34359738368
+
+# Enable coprocessor streaming.
+enable-streaming = false
+
+# Set system variable 'lower_case_table_names'
+lower-case-table-names = 2
+
+# Make "kill query" behavior compatible with MySQL. It's not recommend to
+# turn on this option when TiDB server is behind a proxy.
+compatible-kill-query = false
 
 [log]
-# Log level: info, debug, warn, error, fatal.
+# Log level: debug, info, warn, error, fatal.
 level = "info"
 
 # Log format, one of json, text, console.
 format = "text"
 
-# Disable automatic timestamps in output
+# Disable automatic timestamp in output
 disable-timestamp = false
 
-# Stores slow query log into seperate files.
-#slow-query-file = ""
+# Stores slow query log into separated files.
+slow-query-file = ""
 
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
+
+# Queries with internal result greater than this value will be logged.
+expensive-threshold = 10000
 
 # Maximum query length recorded in log.
 query-log-max-len = 2048
@@ -57,27 +75,36 @@ query-log-max-len = 2048
 # Log file name.
 filename = ""
 
-# Max log file size in MB.
-#max-size = 300
+# Max log file size in MB (upper limit to 4096MB).
+max-size = 300
 
-# Max log file keep days.
-#max-days = 28
+# Max log file keep days. No clean up by default.
+max-days = 0
 
-# Maximum number of old log files to retain.
-#max-backups = 7
+# Maximum number of old log files to retain. No clean up by default.
+max-backups = 0
 
 # Rotate log by day
 log-rotate = true
 
 [security]
-# Path of file that contains list of trusted SSL CAs.
+# Path of file that contains list of trusted SSL CAs for connection with mysql client.
 ssl-ca = ""
 
-# Path of file that contains X509 certificate in PEM format.
+# Path of file that contains X509 certificate in PEM format for connection with mysql client.
 ssl-cert = ""
 
-# Path of file that contains X509 key in PEM format.
+# Path of file that contains X509 key in PEM format for connection with mysql client.
 ssl-key = ""
+
+# Path of file that contains list of trusted SSL CAs for connection with cluster components.
+cluster-ssl-ca = ""
+
+# Path of file that contains X509 certificate in PEM format for connection with cluster components.
+cluster-ssl-cert = ""
+
+# Path of file that contains X509 key in PEM format for connection with cluster components.
+cluster-ssl-key = ""
 
 [status]
 # If enable status report HTTP service.
@@ -93,36 +120,32 @@ metrics-addr = ""
 metrics-interval = 15
 
 [performance]
+# Max CPUs to use, 0 use number of CPUs in the machine.
+max-procs = 0
+# StmtCountLimit limits the max count of statement inside a transaction.
+stmt-count-limit = 5000
+
 # Set keep alive option for tcp connection.
 tcp-keep-alive = true
-
-# The maximum number of retries when commit a transaction.
-retry-limit = 10
-
-# The number of goroutines that participate joining.
-join-concurrency = 5
 
 # Whether support cartesian product.
 cross-join = true
 
-# Stats lease duration, which inflences the time of analyze and stats load.
+# Stats lease duration, which influences the time of analyze and stats load.
 stats-lease = "3s"
 
 # Run auto analyze worker on this tidb-server.
 run-auto-analyze = true
 
-[xprotocol]
-# Start TiDB x server.
-xserver = false
+# Probability to use the query feedback to update stats, 0 or 1 for always false/true.
+feedback-probability = 0.05
 
-# TiDB x protocol server host.
-xhost = "0.0.0.0"
+# The max number of query feedback that cache in memory.
+query-feedback-limit = 1024
 
-# TiDB x protocol server port.
-xport = 14000
-
-# The socket file to use for x protocol connection.
-xsocket = ""
+# Pseudo stats will be used if the ratio between the modify count and
+# row count in statistics of a table is greater than it.
+pseudo-estimate-ratio = 0.8
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -131,11 +154,6 @@ networks = ""
 
 # PROXY protocol header read timeout, unit is second
 header-timeout = 5
-
-[plan-cache]
-enabled = false
-capacity = 2560
-shards = 256
 
 [prepared-plan-cache]
 enabled = false
@@ -195,3 +213,32 @@ local-agent-host-port = ""
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
 grpc-connection-count = 16
+
+# After a duration of this time in seconds if the client doesn't see any activity it pings
+# the server to see if the transport is still alive.
+grpc-keepalive-time = 10
+
+# After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
+# and if no activity is seen even after that the connection is closed.
+grpc-keepalive-timeout = 3
+
+# max time for commit command, must be twice bigger than raft election timeout.
+commit-timeout = "41s"
+
+[txn-local-latches]
+# Enable local latches for transactions. Enable it when
+# there are lots of conflicts between transactions.
+enabled = false
+capacity = 10240000
+
+[binlog]
+
+# Socket file to write binlog.
+binlog-socket = ""
+
+# WriteTimeout specifies how long it will wait for writing binlog to pump.
+write-timeout = "15s"
+
+# If IgnoreError is true, when writting binlog meets error, TiDB would stop writting binlog,
+# but still provide service.
+ignore-error = false

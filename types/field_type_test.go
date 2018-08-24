@@ -239,7 +239,7 @@ func (s *testFieldTypeSuite) TestAggFieldType(c *C) {
 		aggTp = AggFieldType([]*FieldType{fts[i], fts[i]})
 		switch fts[i].Tp {
 		case mysql.TypeDate:
-			c.Assert(aggTp.Tp, Equals, mysql.TypeNewDate)
+			c.Assert(aggTp.Tp, Equals, mysql.TypeDate)
 		case mysql.TypeJSON:
 			c.Assert(aggTp.Tp, Equals, mysql.TypeJSON)
 		case mysql.TypeEnum, mysql.TypeSet, mysql.TypeVarString:

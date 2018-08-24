@@ -19,19 +19,19 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 )
 
 // Preprocess resolves table names of the node, and checks some statements validation.
-func Preprocess(ctx context.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
-	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare}
+func Preprocess(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, inPrepare bool) error {
+	v := preprocessor{is: is, ctx: ctx, inPrepare: inPrepare, tableAliasInJoin: make([]map[string]interface{}, 0, 0)}
 	node.Accept(&v)
 	return errors.Trace(v.err)
 }
@@ -40,11 +40,17 @@ func Preprocess(ctx context.Context, node ast.Node, is infoschema.InfoSchema, in
 // ast Nodes parsed from parser.
 type preprocessor struct {
 	is        infoschema.InfoSchema
-	ctx       context.Context
+	ctx       sessionctx.Context
 	err       error
 	inPrepare bool
-	// When visiting create/drop table statement.
+	// inCreateOrDropTable is true when visiting create/drop table statement.
 	inCreateOrDropTable bool
+
+	// tableAliasInJoin is a stack that keeps the table alias names for joins.
+	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
+	tableAliasInJoin []map[string]interface{}
+
+	parentIsJoin bool
 }
 
 func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
@@ -57,6 +63,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropTableGrammar(node)
 	case *ast.RenameTableStmt:
 		p.inCreateOrDropTable = true
+		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
@@ -68,8 +75,14 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
+	case *ast.UnionSelectList:
+		p.checkUnionSelectList(node)
 	case *ast.DeleteTableList:
 		return in, true
+	case *ast.Join:
+		p.checkNonUniqTableAlias(node)
+	default:
+		p.parentIsJoin = false
 	}
 	return in, p.err != nil
 }
@@ -79,6 +92,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 	case *ast.CreateTableStmt:
 		p.inCreateOrDropTable = false
 		p.checkAutoIncrement(x)
+		p.checkContainDotColumn(x)
 	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.inCreateOrDropTable = false
 	case *ast.ParamMarkerExpr:
@@ -102,6 +116,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	case *ast.TableName:
 		p.handleTableName(x)
+	case *ast.Join:
+		if len(p.tableAliasInJoin) > 0 {
+			p.tableAliasInJoin = p.tableAliasInJoin[:len(p.tableAliasInJoin)-1]
+		}
 	}
 
 	return in, p.err == nil
@@ -205,6 +223,25 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	}
 }
 
+// checkUnionSelectList checks union's selectList.
+// refer: https://dev.mysql.com/doc/refman/5.7/en/union.html
+// "To apply ORDER BY or LIMIT to an individual SELECT, place the clause inside the parentheses that enclose the SELECT."
+func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
+	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
+		if sel.IsInBraces {
+			continue
+		}
+		if sel.Limit != nil {
+			p.err = ErrWrongUsage.GenByArgs("UNION", "LIMIT")
+			return
+		}
+		if sel.OrderBy != nil {
+			p.err = ErrWrongUsage.GenByArgs("UNION", "ORDER BY")
+			return
+		}
+	}
+}
+
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
 		p.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
@@ -218,17 +255,11 @@ func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 }
 
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
-	if stmt.Table == nil {
-		p.err = ddl.ErrWrongTableName.GenByArgs("")
-		return
-	}
-
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
 		return
 	}
-
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
@@ -262,19 +293,50 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			}
 		}
 	}
+	if stmt.Select != nil {
+		// FIXME: a temp error noticing 'not implemented' (issue 4754)
+		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
+		return
+	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
+		p.err = ddl.ErrTableMustHaveColumns
+		return
+	}
 }
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
-	if stmt.Tables == nil {
-		p.err = ddl.ErrWrongTableName.GenByArgs("")
-		return
-	}
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenByArgs(t.Name.String())
 			return
 		}
 	}
+}
+
+func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
+	if !p.parentIsJoin {
+		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
+	}
+	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
+	if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
+		p.err = err
+		return
+	}
+	if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
+		p.err = err
+		return
+	}
+	p.parentIsJoin = true
+}
+
+func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]interface{}) error {
+	if ts, ok := node.(*ast.TableSource); ok {
+		_, exists := tableAliases[ts.AsName.L]
+		if len(ts.AsName.L) != 0 && exists {
+			return ErrNonUniqTable.GenByArgs(ts.AsName)
+		}
+		tableAliases[ts.AsName.L] = nil
+	}
+	return nil
 }
 
 func isPrimary(ops []*ast.ColumnOption) int {
@@ -295,12 +357,22 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNames)
 }
 
-func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
-	if stmt.Table == nil {
-		p.err = ddl.ErrWrongTableName.GenByArgs("")
+func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
+	oldTable := stmt.OldTable.Name.String()
+	newTable := stmt.NewTable.Name.String()
+
+	if isIncorrectName(oldTable) {
+		p.err = ddl.ErrWrongTableName.GenByArgs(oldTable)
 		return
 	}
 
+	if isIncorrectName(newTable) {
+		p.err = ddl.ErrWrongTableName.GenByArgs(newTable)
+		return
+	}
+}
+
+func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
@@ -315,9 +387,8 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				return
 			}
 		}
-		if len(spec.NewColumns) > 0 && spec.NewColumns[0] != nil {
-			if err := checkColumn(spec.NewColumns[0]); err != nil {
-				p.err = err
+		for _, colDef := range spec.NewColumns {
+			if p.err = checkColumn(colDef); p.err != nil {
 				return
 			}
 		}
@@ -333,13 +404,6 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			default:
 				// Nothing to do now.
 			}
-		case ast.AlterTableOption:
-			for _, opt := range spec.Options {
-				if opt.Tp == ast.TableOptionAutoIncrement {
-					p.err = ErrAlterAutoID
-					return
-				}
-			}
 		default:
 			// Nothing to do now.
 		}
@@ -348,14 +412,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 
 // checkDuplicateColumnName checks if index exists duplicated columns.
 func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
-	for i := 0; i < len(indexColNames); i++ {
-		name1 := indexColNames[i].Column.Name
-		for j := i + 1; j < len(indexColNames); j++ {
-			name2 := indexColNames[j].Column.Name
-			if name1.L == name2.L {
-				return infoschema.ErrColumnExists.GenByArgs(name2)
-			}
+	colNames := make(map[string]struct{}, len(indexColNames))
+	for _, indexColName := range indexColNames {
+		name := indexColName.Column.Name
+		if _, ok := colNames[name.L]; ok {
+			return infoschema.ErrColumnExists.GenByArgs(name)
 		}
+		colNames[name.L] = struct{}{}
 	}
 	return nil
 }
@@ -415,9 +478,12 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > maxFlen {
 			return types.ErrTooBigFieldLength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
 		}
-	case mysql.TypeDouble:
-		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.PrecisionForDouble {
-			return types.ErrWrongFieldSpec.Gen("Incorrect column specifier for column '%s'", colDef.Name.Name.O)
+	case mysql.TypeFloat, mysql.TypeDouble:
+		if tp.Decimal > mysql.MaxFloatingTypeScale {
+			return types.ErrTooBigScale.GenByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
+		}
+		if tp.Flen > mysql.MaxFloatingTypeWidth {
+			return types.ErrTooBigPrecision.GenByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
 		}
 	case mysql.TypeSet:
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
@@ -429,13 +495,21 @@ func checkColumn(colDef *ast.ColumnDef) error {
 				return types.ErrIllegalValueForType.GenByArgs(types.TypeStr(tp.Tp), str)
 			}
 		}
+	case mysql.TypeNewDecimal:
+		if tp.Decimal > mysql.MaxDecimalScale {
+			return types.ErrTooBigScale.GenByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
+		}
+
+		if tp.Flen > mysql.MaxDecimalWidth {
+			return types.ErrTooBigPrecision.GenByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
+		}
 	default:
 		// TODO: Add more types.
 	}
 	return nil
 }
 
-// isNowSymFunc checks whether defaul value is a NOW() builtin function.
+// isDefaultValNowSymFunc checks whether defaul value is a NOW() builtin function.
 func isDefaultValNowSymFunc(expr ast.ExprNode) bool {
 	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
 		// Default value NOW() is transformed to CURRENT_TIMESTAMP() in parser.
@@ -462,6 +536,7 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 	return false
 }
 
+// isIncorrectName checks if the identifier is incorrect.
 // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 func isIncorrectName(name string) bool {
 	if len(name) == 0 {
@@ -471,6 +546,25 @@ func isIncorrectName(name string) bool {
 		return true
 	}
 	return false
+}
+
+// checkContainDotColumn checks field contains the table name.
+// for example :create table t (c1.c2 int default null).
+func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
+	tName := stmt.Table.Name.String()
+	sName := stmt.Table.Schema.String()
+
+	for _, colDef := range stmt.Cols {
+		// check schema and table names.
+		if colDef.Name.Schema.O != sName && len(colDef.Name.Schema.O) != 0 {
+			p.err = ddl.ErrWrongDBName.GenByArgs(colDef.Name.Schema.O)
+			return
+		}
+		if colDef.Name.Table.O != tName && len(colDef.Name.Table.O) != 0 {
+			p.err = ddl.ErrWrongTableName.GenByArgs(colDef.Name.Table.O)
+			return
+		}
+	}
 }
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
@@ -506,6 +600,14 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 		}
 	} else if node.Table != nil && node.Table.Schema.L == "" {
 		node.Table.Schema = model.NewCIStr(node.DBName)
+	}
+	if node.User != nil && node.User.CurrentUser {
+		// Fill the Username and Hostname with the current user.
+		currentUser := p.ctx.GetSessionVars().User
+		if currentUser != nil {
+			node.User.Username = currentUser.Username
+			node.User.Hostname = currentUser.Hostname
+		}
 	}
 }
 

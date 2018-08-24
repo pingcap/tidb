@@ -27,7 +27,7 @@ var (
 	ddlOwnerLastUpdateTS = "ddl_owner_last_update_ts"
 	ddlJobID             = "ddl_job_id"
 	ddlJobAction         = "ddl_job_action"
-	ddlJobLastUpdateTS   = "ddl_job_last_update_ts"
+	ddlJobStartTS        = "ddl_job_start_ts"
 	ddlJobState          = "ddl_job_state"
 	ddlJobError          = "ddl_job_error"
 	ddlJobRows           = "ddl_job_row_count"
@@ -65,23 +65,26 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 
 	m[ddlSchemaVersion] = ddlInfo.SchemaVer
 	// TODO: Get the owner information.
-	if ddlInfo.Job != nil {
-		m[ddlJobID] = ddlInfo.Job.ID
-		m[ddlJobAction] = ddlInfo.Job.Type.String()
-		m[ddlJobLastUpdateTS] = ddlInfo.Job.LastUpdateTS / 1e9
-		m[ddlJobState] = ddlInfo.Job.State.String()
-		m[ddlJobRows] = ddlInfo.Job.RowCount
-		if ddlInfo.Job.Error == nil {
-			m[ddlJobError] = ""
-		} else {
-			m[ddlJobError] = ddlInfo.Job.Error.Error()
-		}
-		m[ddlJobSchemaState] = ddlInfo.Job.SchemaState.String()
-		m[ddlJobSchemaID] = ddlInfo.Job.SchemaID
-		m[ddlJobTableID] = ddlInfo.Job.TableID
-		m[ddlJobSnapshotVer] = ddlInfo.Job.SnapshotVer
-		m[ddlJobReorgHandle] = ddlInfo.ReorgHandle
-		m[ddlJobArgs] = ddlInfo.Job.Args
+	if len(ddlInfo.Jobs) == 0 {
+		return m, nil
 	}
+	// TODO: Add all job infromation if needed.
+	job := ddlInfo.Jobs[0]
+	m[ddlJobID] = job.ID
+	m[ddlJobAction] = job.Type.String()
+	m[ddlJobStartTS] = job.StartTS / 1e9 // unit: second
+	m[ddlJobState] = job.State.String()
+	m[ddlJobRows] = job.RowCount
+	if job.Error == nil {
+		m[ddlJobError] = ""
+	} else {
+		m[ddlJobError] = job.Error.Error()
+	}
+	m[ddlJobSchemaState] = job.SchemaState.String()
+	m[ddlJobSchemaID] = job.SchemaID
+	m[ddlJobTableID] = job.TableID
+	m[ddlJobSnapshotVer] = job.SnapshotVer
+	m[ddlJobReorgHandle] = ddlInfo.ReorgHandle
+	m[ddlJobArgs] = job.Args
 	return m, nil
 }

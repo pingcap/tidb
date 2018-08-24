@@ -15,7 +15,6 @@ package mysql
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = Suite(&testTypeSuite{})
@@ -23,7 +22,6 @@ var _ = Suite(&testTypeSuite{})
 type testTypeSuite struct{}
 
 func (s *testTypeSuite) TestFlags(c *C) {
-	defer testleak.AfterTest(c)()
 	c.Assert(HasNotNullFlag(NotNullFlag), IsTrue)
 	c.Assert(HasUniKeyFlag(UniqueKeyFlag), IsTrue)
 	c.Assert(HasNotNullFlag(NotNullFlag), IsTrue)

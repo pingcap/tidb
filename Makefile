@@ -1,28 +1,29 @@
-### Makefile for tidb
-
+PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
 
 # Ensure GOPATH is set before running build process.
 ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
+FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1 } }'
 
 CURDIR := $(shell pwd)
-path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(CURDIR)/_vendor:$(GOPATH)))
+path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH)))
 export PATH := $(path_to_add):$(PATH)
 
 GO        := go
-GOBUILD   := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
-GOTEST    := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) test -p 3
-OVERALLS  := GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 overalls
+GOBUILD   := CGO_ENABLED=0 $(GO) build $(BUILD_FLAG)
+GOTEST    := CGO_ENABLED=1 $(GO) test -p 3
+OVERALLS  := CGO_ENABLED=1 overalls
 GOVERALLS := goveralls
 
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
-PACKAGES  := $$(go list ./...| grep -vE "vendor")
-FILES     := $$(find . -name "*.go" | grep -vE "vendor")
-TOPDIRS   := $$(ls -d */ | grep -vE "vendor")
+PACKAGE_LIST  := go list ./...| grep -vE "vendor"
+PACKAGES  := $$($(PACKAGE_LIST))
+PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
+FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go" | grep -vE "vendor")
 
 GOFAIL_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail enable)
 GOFAIL_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|vendor)" | xargs gofail disable)
@@ -31,12 +32,19 @@ LDFLAGS += -X "github.com/pingcap/tidb/mysql.TiDBReleaseVersion=$(shell git desc
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb/util/printer.GoVersion=$(shell go version)"
+
+TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
+
+CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
 
 .PHONY: all build update parser clean todo test gotest interpreter server dev benchkv benchraw check parserlib checklist
 
 default: server buildsucc
+
+server-admin-check: server_check buildsucc
 
 buildsucc:
 	@echo Build TiDB Server successfully!
@@ -72,25 +80,44 @@ parserlib: parser/parser.go
 parser/parser.go: parser/parser.y
 	make parser
 
-check: errcheck
-	go get github.com/golang/lint/golint
+# The retool tools.json is setup from hack/retool-install.sh
+check-setup:
+	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
+	@retool sync
 
-	@echo "vet"
-	@ go tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
-	@ go tool vet -all -shadow *.go 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
-	@echo "golint"
-	@ golint ./... 2>&1 | grep -vE 'context\.Context|LastInsertId|NewLexer|\.pb\.go' | awk '{print} END{if(NR>0) {exit 1}}'
+check: check-setup fmt lint vet
+
+# These need to be fixed before they can be ran regularly
+check-fail: goword check-static check-slow
+
+fmt:
 	@echo "gofmt (simplify)"
-	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@gofmt -s -l -w $(FILES) 2>&1 | grep -v "vendor|parser/parser.go" | $(FAIL_ON_STDOUT)
 
 goword:
-	go get github.com/chzchzchz/goword
-	@echo "goword"
-	@ goword $(FILES) | awk '{print} END{if(NR>0) {exit 1}}'
+	retool do goword $(FILES) 2>&1 | $(FAIL_ON_STDOUT)
 
-errcheck:
-	go get github.com/kisielk/errcheck
-	@ GOPATH=$(CURDIR)/_vendor:$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+check-static:
+	@ # vet and fmt have problems with vendor when ran through metalinter
+	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all --deadline 120s \
+	  --enable misspell \
+	  --enable megacheck \
+	  --enable ineffassign \
+ 	  $$($(PACKAGE_DIRECTORIES))
+
+check-slow:
+	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all \
+	  --enable errcheck \
+	  $$($(PACKAGE_DIRECTORIES))
+	CGO_ENABLED=0 retool do gosec $$($(PACKAGE_DIRECTORIES))
+
+lint:
+	@echo "linting"
+	@CGO_ENABLED=0 retool do revive -formatter friendly -config revive.toml $(PACKAGES)
+
+vet:
+	@echo "vet"
+	@retool do govet -all -shadow $$($(PACKAGE_DIRECTORIES)) 2>&1 | $(FAIL_ON_STDOUT)
 
 clean:
 	$(GO) clean -i ./...
@@ -102,47 +129,71 @@ todo:
 	@grep -n BUG */*.go parser/parser.y || true
 	@grep -n println */*.go parser/parser.y || true
 
-test: checklist gotest
+test: checklist gotest explaintest
+
+explaintest: server
+	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 gotest: parserlib
+	go get github.com/etcd-io/gofail
+	@$(GOFAIL_ENABLE)
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
 	@export log_level=error; \
 	go get github.com/go-playground/overalls
 	go get github.com/mattn/goveralls
-	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,_vendor'
-	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile
+	$(OVERALLS) -project=github.com/pingcap/tidb -covermode=count -ignore='.git,vendor,cmd,docs,LICENSES' || { $(GOFAIL_DISABLE); exit 1; }
+	$(GOVERALLS) -service=travis-ci -coverprofile=overalls.coverprofile || { $(GOFAIL_DISABLE); exit 1; }
 else
 	@echo "Running in native mode."
-	go get github.com/coreos/gofail
-	@$(GOFAIL_ENABLE)
 	@export log_level=error; \
-	$(GOTEST) -cover $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
-	@$(GOFAIL_DISABLE)
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 endif
+	@$(GOFAIL_DISABLE)
 
 race: parserlib
+	go get github.com/etcd-io/gofail
+	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -check.exclude="TestFail" -race $(PACKAGES)
+	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
+	@$(GOFAIL_DISABLE)
 
 leak: parserlib
+	go get github.com/etcd-io/gofail
+	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -check.exclude="TestFail" -tags leak $(PACKAGES)
+	$(GOTEST) -tags leak $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
+	@$(GOFAIL_DISABLE)
 
 tikv_integration_test: parserlib
-	$(GOTEST) -check.exclude="TestFail" ./store/tikv/. -with-tikv=true
+	go get github.com/etcd-io/gofail
+	@$(GOFAIL_ENABLE)
+	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
+	@$(GOFAIL_DISABLE)
 
 RACE_FLAG = 
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
-	GOBUILD   = GOPATH=$(CURDIR)/_vendor:$(GOPATH) CGO_ENABLED=1 $(GO) build
+	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
+endif
+
+CHECK_FLAG = 
+ifeq ("$(WITH_CHECK)", "1")
+	CHECK_FLAG = $(TEST_LDFLAGS)
 endif
 
 server: parserlib
 ifeq ($(TARGET), "")
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o bin/tidb-server tidb-server/main.go
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server tidb-server/main.go
 else
-	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
+endif
+
+server_check: parserlib
+ifeq ($(TARGET), "")
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server tidb-server/main.go
+else
+	$(GOBUILD) $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' tidb-server/main.go
 endif
 
 benchkv:
@@ -154,28 +205,27 @@ benchraw:
 benchdb:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/benchdb cmd/benchdb/main.go
 
+importer:
+	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/importer ./cmd/importer
+
 update:
-	which glide >/dev/null || curl https://glide.sh/get | sh
-	which glide-vc || go get -v -u github.com/sgotti/glide-vc
-	rm -r vendor && mv _vendor/src vendor || true
-	rm -rf _vendor
+	which dep 2>/dev/null || go get -u github.com/golang/dep/cmd/dep
 ifdef PKG
-	glide get -s -v --skip-test ${PKG}
+	dep ensure -add ${PKG}
 else
-	glide update -s -v -u --skip-test
+	dep ensure -update
 endif
 	@echo "removing test files"
-	glide vc --only-code --no-tests
-	mkdir -p _vendor
-	mv vendor _vendor/src
+	dep prune
+	bash ./hack/clean_vendor.sh
 
 checklist:
 	cat checklist.md
 
 gofail-enable:
-	# Converting gofail failpoints...
+# Converting gofail failpoints...
 	@$(GOFAIL_ENABLE)
 
 gofail-disable:
-	# Restoring gofail failpoints...
+# Restoring gofail failpoints...
 	@$(GOFAIL_DISABLE)

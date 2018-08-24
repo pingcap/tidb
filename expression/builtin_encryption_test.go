@@ -19,7 +19,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -44,7 +46,7 @@ func (s *testEvaluatorSuite) TestAESEncrypt(c *C) {
 		str := types.NewDatum(tt.origin)
 		key := types.NewDatum(tt.key)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, key}))
-		crypt, err := evalBuiltinFunc(f, nil)
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
 	}
@@ -58,7 +60,7 @@ func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 		cryptStr := fromHex(test.crypt)
 		key := types.NewDatum(test.key)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{cryptStr, key}))
-		str, err := evalBuiltinFunc(f, nil)
+		str, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(str, DeepEquals, types.NewDatum(test.origin))
 	}
@@ -70,12 +72,12 @@ func (s *testEvaluatorSuite) testNullInput(c *C, fnName string) {
 	arg := types.NewStringDatum("str")
 	var argNull types.Datum
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, argNull}))
-	crypt, err := evalBuiltinFunc(f, nil)
+	crypt, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull, arg}))
-	crypt, err = evalBuiltinFunc(f, nil)
+	crypt, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
 }
@@ -118,7 +120,7 @@ func (s *testEvaluatorSuite) TestSha1Hash(c *C) {
 	for _, tt := range sha1Tests {
 		in := types.NewDatum(tt.origin)
 		f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{in}))
-		crypt, err := evalBuiltinFunc(f, nil)
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		res, err := crypt.ToString()
 		c.Assert(err, IsNil)
@@ -127,7 +129,7 @@ func (s *testEvaluatorSuite) TestSha1Hash(c *C) {
 	// test NULL input for sha
 	var argNull types.Datum
 	f, _ := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{argNull}))
-	crypt, err := evalBuiltinFunc(f, nil)
+	crypt, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(crypt.IsNull(), IsTrue)
 }
@@ -160,7 +162,7 @@ func (s *testEvaluatorSuite) TestSha2Hash(c *C) {
 		str := types.NewDatum(tt.origin)
 		hashLength := types.NewDatum(tt.hashLength)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, hashLength}))
-		crypt, err := evalBuiltinFunc(f, nil)
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		if tt.validCase {
 			res, err := crypt.ToString()
@@ -193,7 +195,7 @@ func (s *testEvaluatorSuite) TestMD5Hash(c *C) {
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.MD5, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
 			c.Assert(err, NotNil)
 		} else {
@@ -215,26 +217,26 @@ func (s *testEvaluatorSuite) TestRandomBytes(c *C) {
 	fc := funcs[ast.RandomBytes]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(32)}))
 	c.Assert(err, IsNil)
-	out, err := evalBuiltinFunc(f, nil)
+	out, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(len(out.GetBytes()), Equals, 32)
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(1025)}))
 	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, nil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, NotNil)
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(-32)}))
 	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, nil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, NotNil)
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(0)}))
 	c.Assert(err, IsNil)
-	_, err = evalBuiltinFunc(f, nil)
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, NotNil)
 
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(nil)}))
 	c.Assert(err, IsNil)
-	out, err = evalBuiltinFunc(f, nil)
+	out, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(len(out.GetBytes()), Equals, 0)
 }
@@ -263,7 +265,7 @@ func (s *testEvaluatorSuite) TestCompress(c *C) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
 		c.Assert(err, IsNil, Commentf("%v", test))
-		out, err := evalBuiltinFunc(f, nil)
+		out, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", test))
 		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
 	}
@@ -293,7 +295,7 @@ func (s *testEvaluatorSuite) TestUncompress(c *C) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
 		c.Assert(err, IsNil, Commentf("%v", test))
-		out, err := evalBuiltinFunc(f, nil)
+		out, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", test))
 		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
 	}
@@ -323,7 +325,7 @@ func (s *testEvaluatorSuite) TestUncompressLength(c *C) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg}))
 		c.Assert(err, IsNil, Commentf("%v", test))
-		out, err := evalBuiltinFunc(f, nil)
+		out, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil, Commentf("%v", test))
 		c.Assert(out, DeepEquals, types.NewDatum(test.expect), Commentf("%v", test))
 	}
@@ -336,24 +338,38 @@ func (s *testEvaluatorSuite) TestPassword(c *C) {
 		expected string
 		isNil    bool
 		getErr   bool
+		getWarn  bool
 	}{
-		{nil, "", false, false},
-		{"", "", false, false},
-		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", false, false},
-		{123, "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257", false, false},
-		{1.23, "*A589EEBA8D3F9E1A34A7EE518FAC4566BFAD5BB6", false, false},
-		{types.NewDecFromFloatForTest(123.123), "*B15B84262DB34BFB2C817A45A55C405DC7C52BB1", false, false},
+		{nil, "", false, false, false},
+		{"", "", false, false, false},
+		{"abc", "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", false, false, true},
+		{123, "*23AE809DDACAF96AF0FD78ED04B6A265E05AA257", false, false, true},
+		{1.23, "*A589EEBA8D3F9E1A34A7EE518FAC4566BFAD5BB6", false, false, true},
+		{types.NewDecFromFloatForTest(123.123), "*B15B84262DB34BFB2C817A45A55C405DC7C52BB1", false, false, true},
 	}
 
+	warnCount := len(s.ctx.GetSessionVars().StmtCtx.GetWarnings())
 	for _, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.PasswordFunc, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
-		d, err := f.Eval(nil)
+		d, err := f.Eval(chunk.Row{})
 		c.Assert(err, IsNil)
 		if t.isNil {
 			c.Assert(d.Kind(), Equals, types.KindNull)
 		} else {
 			c.Assert(d.GetString(), Equals, t.expected)
+		}
+
+		warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+		if t.getWarn {
+			c.Assert(len(warnings), Equals, warnCount+1)
+
+			lastWarn := warnings[len(warnings)-1]
+			c.Assert(terror.ErrorEqual(errDeprecatedSyntaxNoReplacement, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+
+			warnCount = len(warnings)
+		} else {
+			c.Assert(len(warnings), Equals, warnCount)
 		}
 	}
 

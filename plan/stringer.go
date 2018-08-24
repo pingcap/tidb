@@ -25,12 +25,23 @@ func ToString(p Plan) string {
 }
 
 func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
-	if len(in.Children()) > 1 {
-		idxs = append(idxs, len(strs))
-	}
+	switch x := in.(type) {
+	case LogicalPlan:
+		if len(x.Children()) > 1 {
+			idxs = append(idxs, len(strs))
+		}
 
-	for _, c := range in.Children() {
-		strs, idxs = toString(c, strs, idxs)
+		for _, c := range x.Children() {
+			strs, idxs = toString(c, strs, idxs)
+		}
+	case PhysicalPlan:
+		if len(x.Children()) > 1 {
+			idxs = append(idxs, len(strs))
+		}
+
+		for _, c := range x.Children() {
+			strs, idxs = toString(c, strs, idxs)
+		}
 	}
 
 	var str string
@@ -47,26 +58,10 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		children := strs[idx:]
 		strs = strs[:idx]
 		idxs = idxs[:last]
-		if x.SmallChildIdx == 0 {
+		if x.InnerChildIdx == 0 {
 			str = "RightHashJoin{" + strings.Join(children, "->") + "}"
 		} else {
 			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
-		}
-		for _, eq := range x.EqualConditions {
-			l := eq.GetArgs()[0].String()
-			r := eq.GetArgs()[1].String()
-			str += fmt.Sprintf("(%s,%s)", l, r)
-		}
-	case *PhysicalHashSemiJoin:
-		last := len(idxs) - 1
-		idx := idxs[last]
-		children := strs[idx:]
-		strs = strs[:idx]
-		idxs = idxs[:last]
-		if x.WithAux {
-			str = "SemiJoinWithAux{" + strings.Join(children, "->") + "}"
-		} else {
-			str = "SemiJoin{" + strings.Join(children, "->") + "}"
 		}
 		for _, eq := range x.EqualConditions {
 			l := eq.GetArgs()[0].String()
@@ -97,9 +92,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			id = "MergeInnerJoin"
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"
-		for _, eq := range x.EqualConditions {
-			l := eq.GetArgs()[0].String()
-			r := eq.GetArgs()[1].String()
+		for i := range x.LeftKeys {
+			l := x.LeftKeys[i].String()
+			r := x.RightKeys[i].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalApply, *PhysicalApply:
@@ -109,8 +104,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "Apply{" + strings.Join(children, "->") + "}"
-	case *LogicalExists, *PhysicalExists:
-		str = "Exists"
 	case *LogicalMaxOneRow, *PhysicalMaxOneRow:
 		str = "MaxOneRow"
 	case *LogicalLimit, *PhysicalLimit:
@@ -147,10 +140,14 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "UnionAll{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 	case *DataSource:
-		if x.TableAsName != nil && x.TableAsName.L != "" {
-			str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
+		if x.isPartition {
+			str = fmt.Sprintf("Partition(%d)", x.physicalTableID)
 		} else {
-			str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
+			if x.TableAsName != nil && x.TableAsName.L != "" {
+				str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
+			} else {
+				str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
+			}
 		}
 	case *LogicalSelection:
 		str = fmt.Sprintf("Sel(%s)", x.Conditions)
@@ -201,15 +198,15 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Analyze{"
 		var children []string
 		for _, idx := range x.IdxTasks {
-			children = append(children, fmt.Sprintf("Index(%s.%s)", idx.TableInfo.Name.O, idx.IndexInfo.Name.O))
+			children = append(children, fmt.Sprintf("Index(%s)", idx.IndexInfo.Name.O))
 		}
 		for _, col := range x.ColTasks {
 			var colNames []string
 			if col.PKInfo != nil {
-				colNames = append(colNames, fmt.Sprintf("%s.%s", col.TableInfo.Name.O, col.PKInfo.Name.O))
+				colNames = append(colNames, fmt.Sprintf("%s", col.PKInfo.Name.O))
 			}
 			for _, c := range col.ColsInfo {
-				colNames = append(colNames, fmt.Sprintf("%s.%s", col.TableInfo.Name.O, c.Name.O))
+				colNames = append(colNames, fmt.Sprintf("%s", c.Name.O))
 			}
 			children = append(children, fmt.Sprintf("Table(%s)", strings.Join(colNames, ", ")))
 		}

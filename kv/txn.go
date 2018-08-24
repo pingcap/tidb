@@ -18,11 +18,14 @@ import (
 	"math/rand"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
-	goctx "golang.org/x/net/context"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
 )
+
+// ContextKey is the type of context's key
+type ContextKey string
 
 // RunInNewTxn will run the f in a new transaction environment.
 func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) error {
@@ -31,31 +34,33 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 		originalTxnTS uint64
 		txn           Transaction
 	)
-	for i := 0; i < maxRetryCnt; i++ {
+	for i := uint(0); i < maxRetryCnt; i++ {
 		txn, err = store.Begin()
 		if err != nil {
 			log.Errorf("[kv] RunInNewTxn error - %v", err)
 			return errors.Trace(err)
 		}
 
+		// originalTxnTS is used to trace the original transaction when the function is retryable.
 		if i == 0 {
 			originalTxnTS = txn.StartTS()
 		}
 
 		err = f(txn)
-		if retryable && IsRetryableError(err) {
-			log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
-			err1 := txn.Rollback()
-			terror.Log(errors.Trace(err1))
-			continue
-		}
 		if err != nil {
 			err1 := txn.Rollback()
 			terror.Log(errors.Trace(err1))
+			if retryable && IsRetryableError(err) {
+				log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
+				continue
+			}
 			return errors.Trace(err)
 		}
 
-		err = txn.Commit(goctx.Background())
+		err = txn.Commit(context.Background())
+		if err == nil {
+			break
+		}
 		if retryable && IsRetryableError(err) {
 			log.Warnf("[kv] Retry txn %v original txn %v err %v", txn, originalTxnTS, err)
 			err1 := txn.Rollback()
@@ -63,17 +68,14 @@ func RunInNewTxn(store Storage, retryable bool, f func(txn Transaction) error) e
 			BackOff(i)
 			continue
 		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-		break
+		return errors.Trace(err)
 	}
 	return errors.Trace(err)
 }
 
 var (
-	// Max retry count in RunInNewTxn
-	maxRetryCnt = 100
+	// maxRetryCnt represents maximum retry times in RunInNewTxn.
+	maxRetryCnt uint = 100
 	// retryBackOffBase is the initial duration, in microsecond, a failed transaction stays dormancy before it retries
 	retryBackOffBase = 1
 	// retryBackOffCap is the max amount of duration, in microsecond, a failed transaction stays dormancy before it retries
@@ -83,9 +85,43 @@ var (
 // BackOff Implements exponential backoff with full jitter.
 // Returns real back off time in microsecond.
 // See http://www.awsarchitectureblog.com/2015/03/backoff.html.
-func BackOff(attempts int) int {
+func BackOff(attempts uint) int {
 	upper := int(math.Min(float64(retryBackOffCap), float64(retryBackOffBase)*math.Pow(2.0, float64(attempts))))
 	sleep := time.Duration(rand.Intn(upper)) * time.Millisecond
 	time.Sleep(sleep)
 	return int(sleep)
+}
+
+// BatchGetValues gets values in batch.
+// The values from buffer in transaction and the values from the storage node are merged together.
+func BatchGetValues(txn Transaction, keys []Key) (map[string][]byte, error) {
+	if txn.IsReadOnly() {
+		return txn.GetSnapshot().BatchGet(keys)
+	}
+	bufferValues := make([][]byte, len(keys))
+	shrinkKeys := make([]Key, 0, len(keys))
+	for i, key := range keys {
+		val, err := txn.GetMemBuffer().Get(key)
+		if IsErrNotFound(err) {
+			shrinkKeys = append(shrinkKeys, key)
+			continue
+		}
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(val) != 0 {
+			bufferValues[i] = val
+		}
+	}
+	storageValues, err := txn.GetSnapshot().BatchGet(shrinkKeys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for i, key := range keys {
+		if bufferValues[i] == nil {
+			continue
+		}
+		storageValues[string(key)] = bufferValues[i]
+	}
+	return storageValues, nil
 }

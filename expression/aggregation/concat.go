@@ -17,53 +17,70 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 type concatFunction struct {
 	aggFunction
+	separator string
+	sepInited bool
+	maxLen    uint64
+	// According to MySQL, a 'group_concat' function generates exactly one 'truncated' warning during its life time, no matter
+	// how many group actually truncated. 'truncated' acts as a sentinel to indicate whether this warning has already been
+	// generated.
+	truncated bool
 }
 
-// Clone implements Aggregation interface.
-func (cf *concatFunction) Clone() Aggregation {
-	nf := *cf
-	for i, arg := range cf.Args {
-		nf.Args[i] = arg.Clone()
-	}
-	return &nf
-}
-
-// GetType implements Aggregation interface.
-func (cf *concatFunction) GetType() *types.FieldType {
-	return types.NewFieldType(mysql.TypeVarString)
-}
-
-func (cf *concatFunction) writeValue(ctx *AggEvaluateContext, val types.Datum) {
+func (cf *concatFunction) writeValue(evalCtx *AggEvaluateContext, val types.Datum) {
 	if val.Kind() == types.KindBytes {
-		ctx.Buffer.Write(val.GetBytes())
+		evalCtx.Buffer.Write(val.GetBytes())
 	} else {
-		ctx.Buffer.WriteString(fmt.Sprintf("%v", val.GetValue()))
+		evalCtx.Buffer.WriteString(fmt.Sprintf("%v", val.GetValue()))
 	}
+}
+
+func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row chunk.Row) error {
+	sepArg := cf.Args[len(cf.Args)-1]
+	sepDatum, err := sepArg.Eval(row)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if sepDatum.IsNull() {
+		return errors.Errorf("Invalid separator argument.")
+	}
+	cf.separator, err = sepDatum.ToString()
+	return errors.Trace(err)
 }
 
 // Update implements Aggregation interface.
-func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	datumBuf := make([]types.Datum, 0, len(cf.Args))
-	for _, a := range cf.Args {
-		value, err := a.Eval(row)
+	if !cf.sepInited {
+		err := cf.initSeparator(sc, row)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if value.GetValue() == nil {
+		cf.sepInited = true
+	}
+
+	// The last parameter is the concat separator, we only concat the first "len(cf.Args)-1" parameters.
+	for i, length := 0, len(cf.Args)-1; i < length; i++ {
+		value, err := cf.Args[i].Eval(row)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if value.IsNull() {
 			return nil
 		}
 		datumBuf = append(datumBuf, value)
 	}
-	if cf.Distinct {
-		d, err := ctx.DistinctChecker.Check(datumBuf)
+	if cf.HasDistinct {
+		d, err := evalCtx.DistinctChecker.Check(datumBuf)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -71,30 +88,46 @@ func (cf *concatFunction) Update(ctx *AggEvaluateContext, sc *stmtctx.StatementC
 			return nil
 		}
 	}
-	if ctx.Buffer == nil {
-		ctx.Buffer = &bytes.Buffer{}
+	if evalCtx.Buffer == nil {
+		evalCtx.Buffer = &bytes.Buffer{}
 	} else {
-		// now use comma separator
-		ctx.Buffer.WriteString(",")
+		evalCtx.Buffer.WriteString(cf.separator)
 	}
 	for _, val := range datumBuf {
-		cf.writeValue(ctx, val)
+		cf.writeValue(evalCtx, val)
 	}
-	// TODO: if total length is greater than global var group_concat_max_len, truncate it.
+	if cf.maxLen > 0 && uint64(evalCtx.Buffer.Len()) > cf.maxLen {
+		i := mathutil.MaxInt
+		if uint64(i) > cf.maxLen {
+			i = int(cf.maxLen)
+		}
+		evalCtx.Buffer.Truncate(i)
+		if !cf.truncated {
+			sc.AppendWarning(expression.ErrCutValueGroupConcat)
+		}
+		cf.truncated = true
+	}
 	return nil
 }
 
 // GetResult implements Aggregation interface.
-func (cf *concatFunction) GetResult(ctx *AggEvaluateContext) (d types.Datum) {
-	if ctx.Buffer != nil {
-		d.SetString(ctx.Buffer.String())
+func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
+	if evalCtx.Buffer != nil {
+		d.SetString(evalCtx.Buffer.String())
 	} else {
 		d.SetNull()
 	}
 	return d
 }
 
+func (cf *concatFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+	if cf.HasDistinct {
+		evalCtx.DistinctChecker = createDistinctChecker(sc)
+	}
+	evalCtx.Buffer = nil
+}
+
 // GetPartialResult implements Aggregation interface.
-func (cf *concatFunction) GetPartialResult(ctx *AggEvaluateContext) []types.Datum {
-	return []types.Datum{cf.GetResult(ctx)}
+func (cf *concatFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{cf.GetResult(evalCtx)}
 }

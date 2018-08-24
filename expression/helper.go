@@ -14,14 +14,15 @@
 package expression
 
 import (
+	"math"
 	"strings"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx/varsutil"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 )
@@ -42,7 +43,7 @@ func IsCurrentTimestampExpr(e ast.ExprNode) bool {
 }
 
 // GetTimeValue gets the time value with type tp.
-func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types.Datum, err error) {
+func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d types.Datum, err error) {
 	value := types.Time{
 		Type: tp,
 		Fsp:  fsp,
@@ -57,9 +58,9 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 	case string:
 		upperX := strings.ToUpper(x)
 		if upperX == strings.ToUpper(ast.CurrentTimestamp) {
-			value.Time = types.FromGoTime(defaultTime)
+			value.Time = types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond))
 			if tp == mysql.TypeTimestamp {
-				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
+				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
 				if err != nil {
 					return d, errors.Trace(err)
 				}
@@ -98,7 +99,7 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 		return d, errors.Trace(errDefaultValue)
 	case *ast.UnaryOperationExpr:
 		// support some expression, like `-1`
-		v, err := EvalAstExpr(x, ctx)
+		v, err := EvalAstExpr(ctx, x)
 		if err != nil {
 			return d, errors.Trace(err)
 		}
@@ -115,14 +116,11 @@ func GetTimeValue(ctx context.Context, v interface{}, tp byte, fsp int) (d types
 	default:
 		return d, nil
 	}
-	if tp == mysql.TypeTimestamp {
-		value.TimeZone = ctx.GetSessionVars().GetTimeZone()
-	}
 	d.SetMysqlTime(value)
 	return d, nil
 }
 
-func getSystemTimestamp(ctx context.Context) (time.Time, error) {
+func getSystemTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	now := time.Now()
 
 	if ctx == nil {
@@ -130,7 +128,7 @@ func getSystemTimestamp(ctx context.Context) (time.Time, error) {
 	}
 
 	sessionVars := ctx.GetSessionVars()
-	timestampStr, err := varsutil.GetSessionSystemVar(sessionVars, "timestamp")
+	timestampStr, err := variable.GetSessionSystemVar(sessionVars, "timestamp")
 	if err != nil {
 		return now, errors.Trace(err)
 	}

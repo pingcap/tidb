@@ -34,15 +34,15 @@ type cacheEntry struct {
 
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.
 type SimpleLRUCache struct {
-	capacity int64
-	size     int64
+	capacity uint
+	size     uint
 	elements map[string]*list.Element
 	cache    *list.List
 }
 
 // NewSimpleLRUCache creates a SimpleLRUCache object, whose capacity is "capacity".
 // NOTE: "capacity" should be a positive value.
-func NewSimpleLRUCache(capacity int64) *SimpleLRUCache {
+func NewSimpleLRUCache(capacity uint) *SimpleLRUCache {
 	if capacity <= 0 {
 		panic("capacity of LRU Cache should be positive.")
 	}

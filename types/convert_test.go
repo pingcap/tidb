@@ -156,7 +156,14 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(vv.(Duration).String(), Equals, "10:11:12.1")
 
-	vt, err := ParseTime(nil, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
+	vd, err := ParseTime(nil, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2)
+	c.Assert(vd.String(), Equals, "2010-10-10 10:11:11.12")
+	c.Assert(err, IsNil)
+	v, err = Convert(vd, ft)
+	c.Assert(err, IsNil)
+	c.Assert(v.(Duration).String(), Equals, "10:11:11.1")
+
+	vt, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2)
 	c.Assert(vt.String(), Equals, "2010-10-10 10:11:11.12")
 	c.Assert(err, IsNil)
 	v, err = Convert(vt, ft)
@@ -173,13 +180,6 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	vv, err = Convert(v, ft)
 	c.Assert(err, IsNil)
 	c.Assert(vv.(Time).String(), Equals, "2010-10-10 10:11:11.1")
-
-	// For mysql.TypeNewDate.
-	ft = NewFieldType(mysql.TypeNewDate)
-	ft.Decimal = 3
-	v, err = Convert("2010-10-10 10:11:11.12345", ft)
-	c.Assert(err, IsNil)
-	c.Assert(v.(Time).String(), Equals, "2010-10-10 10:11:11.123")
 
 	// For TypeLonglong
 	ft = NewFieldType(mysql.TypeLonglong)
@@ -238,20 +238,20 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(err, IsNil, Commentf(errors.ErrorStack(err)))
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("3.1415926", ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
 	c.Assert(v.(*MyDecimal).String(), Equals, "3.1416")
 	v, err = Convert("99999", ft)
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
 	c.Assert(v.(*MyDecimal).String(), Equals, "9999.9999")
 	v, err = Convert("-10000", ft)
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
 	c.Assert(v.(*MyDecimal).String(), Equals, "-9999.9999")
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
 	sc := new(stmtctx.StatementContext)
 	v, err = d.ToDecimal(sc)
-	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrBadNumber), IsTrue, Commentf("err %v", err))
 
 	sc.IgnoreTruncate = true
 	v, err = d.ToDecimal(sc)
@@ -288,7 +288,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	_, err = Convert("d", ft)
 	c.Assert(err, NotNil)
 	v, err = Convert(4, ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
 	c.Assert(v, DeepEquals, Enum{})
 
 	ft = NewFieldType(mysql.TypeSet)
@@ -330,7 +330,8 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, Enum{Name: "a", Value: 1}, "a")
 	testToString(c, Set{Name: "a", Value: 1}, "a")
 
-	t, err := ParseTime(nil, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
+	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC},
+		"2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
 	testToString(c, t, "2011-11-10 11:11:11.999999")
 
@@ -342,7 +343,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	ft.Flen = 10
 	ft.Decimal = 5
 	v, err := Convert(3.1415926, ft)
-	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrTruncated), IsTrue, Commentf("err %v", err))
 	testToString(c, v, "3.14159")
 
 	_, err = ToString(&invalidMockType{})
@@ -384,7 +385,7 @@ func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr 
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToInt(sc, str)
 	if expectErr != nil {
-		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, expect)
@@ -396,7 +397,7 @@ func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectEr
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToUint(sc, str)
 	if expectErr != nil {
-		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, expect)
@@ -408,7 +409,7 @@ func testStrToFloat(c *C, str string, expect float64, truncateAsErr bool, expect
 	sc.IgnoreTruncate = !truncateAsErr
 	val, err := StrToFloat(sc, str)
 	if expectErr != nil {
-		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue)
+		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, expect)
@@ -477,6 +478,7 @@ func accept(c *C, tp byte, value interface{}, unsigned bool, expected string) {
 	}
 	d := NewDatum(value)
 	sc := new(stmtctx.StatementContext)
+	sc.TimeZone = time.UTC
 	sc.IgnoreTruncate = true
 	casted, err := d.ConvertTo(sc, ft)
 	c.Assert(err, IsNil, Commentf("%v", ft))
@@ -625,12 +627,12 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeDuration, "10:11:12", "10:11:12")
 	signedAccept(c, mysql.TypeDuration, ZeroDatetime, "00:00:00")
 	signedAccept(c, mysql.TypeDuration, ZeroDuration, "00:00:00")
+	signedAccept(c, mysql.TypeDuration, 0, "00:00:00")
 
 	signedDeny(c, mysql.TypeDate, "2012-08-x", "0000-00-00")
 	signedDeny(c, mysql.TypeDatetime, "2012-08-x", "0000-00-00 00:00:00")
 	signedDeny(c, mysql.TypeTimestamp, "2012-08-x", "0000-00-00 00:00:00")
 	signedDeny(c, mysql.TypeDuration, "2012-08-x", "00:00:00")
-	signedDeny(c, mysql.TypeDuration, 0, "<nil>")
 
 	// string from string
 	signedAccept(c, mysql.TypeString, "abc", "abc")
@@ -683,9 +685,9 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		c.Assert(err, IsNil)
 	}
 	_, err := floatStrToIntStr("1e9223372036854775807")
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
 	_, err = floatStrToIntStr("1e21")
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
 }
 
 // TestConvertTime tests time related conversion.
@@ -694,7 +696,7 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 func (s *testTypeConvertSuite) TestConvertTime(c *C) {
 	timezones := []*time.Location{
 		time.UTC,
-		time.FixedZone("UTC", 3*3600),
+		time.FixedZone("", 3*3600),
 		time.Local,
 	}
 
@@ -714,24 +716,24 @@ func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
 		expect Time
 	}{
 		{
-			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: sc.TimeZone},
+			input:  Time{Type: mysql.TypeDatetime, Time: raw},
 			target: NewFieldType(mysql.TypeTimestamp),
-			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw},
 		},
 		{
-			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: nil},
+			input:  Time{Type: mysql.TypeDatetime, Time: raw},
 			target: NewFieldType(mysql.TypeTimestamp),
-			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw},
 		},
 		{
-			input:  Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: time.UTC},
+			input:  Time{Type: mysql.TypeDatetime, Time: raw},
 			target: NewFieldType(mysql.TypeTimestamp),
-			expect: Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			expect: Time{Type: mysql.TypeTimestamp, Time: raw},
 		},
 		{
-			input:  Time{Type: mysql.TypeTimestamp, Time: raw, TimeZone: sc.TimeZone},
+			input:  Time{Type: mysql.TypeTimestamp, Time: raw},
 			target: NewFieldType(mysql.TypeDatetime),
-			expect: Time{Type: mysql.TypeDatetime, Time: raw, TimeZone: nil},
+			expect: Time{Type: mysql.TypeDatetime, Time: raw},
 		},
 	}
 
@@ -743,9 +745,6 @@ func testConvertTimeTimeZone(c *C, sc *stmtctx.StatementContext) {
 		t := nd.GetMysqlTime()
 		c.Assert(t.Type, Equals, test.expect.Type)
 		c.Assert(t.Time, Equals, test.expect.Time)
-		if test.expect.Type == mysql.TypeTimestamp {
-			c.Assert(t.TimeZone, Equals, test.expect.TimeZone)
-		}
 	}
 }
 
@@ -767,7 +766,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToInt(c *C) {
 		{`"1234"`, 1234},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseFromString(tt.In)
+		j, err := json.ParseBinaryFromString(tt.In)
 		c.Assert(err, IsNil)
 
 		casted, _ := ConvertJSONToInt(new(stmtctx.StatementContext), j, false)
@@ -793,7 +792,7 @@ func (s *testTypeConvertSuite) TestConvertJSONToFloat(c *C) {
 		{`"1234"`, 1234},
 	}
 	for _, tt := range tests {
-		j, err := json.ParseFromString(tt.In)
+		j, err := json.ParseBinaryFromString(tt.In)
 		c.Assert(err, IsNil)
 		casted, _ := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
 		c.Assert(casted, Equals, tt.Out)
@@ -825,35 +824,28 @@ func (s *testTypeConvertSuite) TestNumberToDuration(c *C) {
 	}
 
 	for _, tc := range testCases {
-		t, err := NumberToDuration(tc.number, tc.fsp)
+		dur, err := NumberToDuration(tc.number, tc.fsp)
 		if tc.hasErr {
 			c.Assert(err, NotNil)
 			continue
 		}
 		c.Assert(err, IsNil)
-		c.Assert(t.Time.Year(), Equals, tc.year)
-		c.Assert(t.Time.Month(), Equals, tc.month)
-		c.Assert(t.Time.Day(), Equals, tc.day)
-		c.Assert(t.Time.Hour(), Equals, tc.hour)
-		c.Assert(t.Time.Minute(), Equals, tc.minute)
-		c.Assert(t.Time.Second(), Equals, tc.second)
+		c.Assert(dur.Hour(), Equals, tc.hour)
+		c.Assert(dur.Minute(), Equals, tc.minute)
+		c.Assert(dur.Second(), Equals, tc.second)
 	}
 
 	var testCases1 = []struct {
 		number int64
-		neg    bool
 		dur    time.Duration
 	}{
-		{171222, false, 17*time.Hour + 12*time.Minute + 22*time.Second},
-		{-171222, true, -(17*time.Hour + 12*time.Minute + 22*time.Second)},
+		{171222, 17*time.Hour + 12*time.Minute + 22*time.Second},
+		{-171222, -(17*time.Hour + 12*time.Minute + 22*time.Second)},
 	}
 
 	for _, tc := range testCases1 {
-		t, err := NumberToDuration(tc.number, 0)
+		dur, err := NumberToDuration(tc.number, 0)
 		c.Assert(err, IsNil)
-		c.Assert(t.IsNegative(), Equals, tc.neg)
-		d, err1 := t.ConvertToDuration()
-		c.Assert(err1, IsNil)
-		c.Assert(d.Duration, Equals, tc.dur)
+		c.Assert(dur.Duration, Equals, tc.dur)
 	}
 }

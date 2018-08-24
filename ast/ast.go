@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 // Node is the basic element of the AST.
@@ -83,6 +83,12 @@ type ExprNode interface {
 	Format(w io.Writer)
 }
 
+// OptBinary is used for parser.
+type OptBinary struct {
+	IsBinary bool
+	Charset  string
+}
+
 // FuncNode represents function call expression node.
 type FuncNode interface {
 	ExprNode
@@ -137,17 +143,11 @@ type RecordSet interface {
 	// Fields gets result fields.
 	Fields() []*ResultField
 
-	// Next returns the next row, nil row means there is no more to return.
-	Next(goCtx goctx.Context) (row types.Row, err error)
-
-	// NextChunk reads records into chunk.
-	NextChunk(chk *chunk.Chunk) error
+	// Next reads records into chunk.
+	Next(ctx context.Context, chk *chunk.Chunk) error
 
 	// NewChunk creates a new chunk with initial capacity.
 	NewChunk() *chunk.Chunk
-
-	// SupportChunk check if the RecordSet supports Chunk structure.
-	SupportChunk() bool
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
@@ -155,7 +155,7 @@ type RecordSet interface {
 }
 
 // RowToDatums converts row to datum slice.
-func RowToDatums(row types.Row, fields []*ResultField) []types.Datum {
+func RowToDatums(row chunk.Row, fields []*ResultField) []types.Datum {
 	datums := make([]types.Datum, len(fields))
 	for i, f := range fields {
 		datums[i] = row.GetDatum(i, &f.Column.FieldType)
@@ -186,7 +186,7 @@ type Statement interface {
 	OriginText() string
 
 	// Exec executes SQL and gets a Recordset.
-	Exec(goCtx goctx.Context) (RecordSet, error)
+	Exec(ctx context.Context) (RecordSet, error)
 
 	// IsPrepared returns whether this statement is prepared statement.
 	IsPrepared() bool
@@ -195,7 +195,7 @@ type Statement interface {
 	IsReadOnly() bool
 
 	// RebuildPlan rebuilds the plan of the statement.
-	RebuildPlan() error
+	RebuildPlan() (schemaVersion int64, err error)
 }
 
 // Visitor visits a Node.

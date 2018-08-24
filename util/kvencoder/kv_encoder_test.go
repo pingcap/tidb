@@ -18,13 +18,17 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
+	"time"
+
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/store/mockstore"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -40,12 +44,12 @@ func TestT(t *testing.T) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	tidb.SetSchemaLease(0)
-	dom, err := tidb.BootstrapSession(store)
+	session.SetSchemaLease(0)
+	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }
 
@@ -116,15 +120,15 @@ func (s *testKvEncoderSuite) runTestSQL(c *C, tkExpect *testkit.TestKit, encoder
 		}
 
 		emptyValCount := 0
-		for i, kv := range kvPairs {
+		for i, row := range kvPairs {
 			expectKey := kvPairsExpect[i].Key
-			if bytes.HasPrefix(kv.Key, tablecodec.TablePrefix()) {
+			if bytes.HasPrefix(row.Key, tablecodec.TablePrefix()) {
 				expectKey = tablecodec.ReplaceRecordKeyTableID(expectKey, tableID)
 			}
-			c.Assert(bytes.Compare(kv.Key, expectKey), Equals, 0, Commentf(comment))
-			c.Assert(bytes.Compare(kv.Val, kvPairsExpect[i].Val), Equals, 0, Commentf(comment))
+			c.Assert(bytes.Compare(row.Key, expectKey), Equals, 0, Commentf(comment))
+			c.Assert(bytes.Compare(row.Val, kvPairsExpect[i].Val), Equals, 0, Commentf(comment))
 
-			if len(kv.Val) == 0 {
+			if len(row.Val) == 0 {
 				emptyValCount++
 			}
 		}
@@ -213,10 +217,10 @@ func (s *testKvEncoderSuite) TestInsertPkIsHandle(c *C) {
 	s.runTestSQL(c, tkExpect, encoder, sqls, tableID)
 
 	schemaSQL = `create table t2(
-		id int auto_increment, 
-		a char(10), 
-		b datetime default NULL, 
-		primary key(id), 
+		id int auto_increment,
+		a char(10),
+		b datetime default NULL,
+		primary key(id),
 		key a_idx(a),
 		unique b_idx(b))
 		`
@@ -232,6 +236,65 @@ func (s *testKvEncoderSuite) TestInsertPkIsHandle(c *C) {
 		{"insert into t2 values(3, 'test', '2017-11-28 23:59:59')", 0, 3, 1},
 	}
 	s.runTestSQL(c, tkExpect, encoder, sqls, tableID)
+}
+
+type prepareTestCase struct {
+	sql       string
+	formatSQL string
+	param     []interface{}
+}
+
+func makePrepareTestCase(sql, formatSQL string, param ...interface{}) prepareTestCase {
+	return prepareTestCase{sql, formatSQL, param}
+}
+
+func (s *testKvEncoderSuite) TestPrepareEncode(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	defer dom.Close()
+
+	alloc := NewAllocator()
+	encoder, err := New("test", alloc)
+	c.Assert(err, IsNil)
+	defer encoder.Close()
+
+	schemaSQL := "create table t(id int auto_increment, a char(10), primary key(id))"
+	err = encoder.ExecDDLSQL(schemaSQL)
+	c.Assert(err, IsNil)
+
+	cases := []prepareTestCase{
+		makePrepareTestCase("insert into t values(1, 'test')", "insert into t values(?, ?)", 1, "test"),
+		makePrepareTestCase("insert into t(a) values('test')", "insert into t(a) values(?)", "test"),
+		makePrepareTestCase("insert into t(a) values('test'), ('test1')", "insert into t(a) values(?), (?)", "test", "test1"),
+		makePrepareTestCase("insert into t(id, a) values(3, 'test')", "insert into t(id, a) values(?, ?)", 3, "test"),
+	}
+	tableID := int64(1)
+
+	for _, ca := range cases {
+		s.comparePrepareAndNormalEncode(c, alloc, tableID, encoder, ca.sql, ca.formatSQL, ca.param...)
+	}
+}
+
+func (s *testKvEncoderSuite) comparePrepareAndNormalEncode(c *C, alloc autoid.Allocator, tableID int64, encoder KvEncoder, sql, prepareFormat string, param ...interface{}) {
+	comment := fmt.Sprintf("sql:%v", sql)
+	baseID := alloc.Base()
+	kvPairsExpect, affectedRowsExpect, err := encoder.Encode(sql, tableID)
+	c.Assert(err, IsNil, Commentf(comment))
+
+	stmtID, err := encoder.PrepareStmt(prepareFormat)
+	c.Assert(err, IsNil, Commentf(comment))
+	alloc.(*Allocator).Reset(baseID)
+	kvPairs, affectedRows, err := encoder.EncodePrepareStmt(tableID, stmtID, param...)
+	c.Assert(err, IsNil, Commentf(comment))
+	c.Assert(affectedRows, Equals, affectedRowsExpect, Commentf(comment))
+	c.Assert(len(kvPairs), Equals, len(kvPairsExpect), Commentf(comment))
+
+	for i, kvPair := range kvPairs {
+		kvPairExpect := kvPairsExpect[i]
+		c.Assert(bytes.Compare(kvPair.Key, kvPairExpect.Key), Equals, 0, Commentf(comment))
+		c.Assert(bytes.Compare(kvPair.Val, kvPairExpect.Val), Equals, 0, Commentf(comment))
+	}
 }
 
 func (s *testKvEncoderSuite) TestInsertPkIsNotHandle(c *C) {
@@ -302,26 +365,26 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 		baseID := alloc.Base()
 		kvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
-		alloc.Rebase(tableID, baseID, false)
+		alloc.Reset(baseID)
 		retryKvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		c.Assert(len(kvPairs), Equals, len(retryKvPairs))
-		for i, kv := range kvPairs {
-			c.Assert(bytes.Compare(kv.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
-			c.Assert(bytes.Compare(kv.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
+		for i, row := range kvPairs {
+			c.Assert(bytes.Compare(row.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
+			c.Assert(bytes.Compare(row.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
 		}
 	}
 
-	// specify id, it must be the same kv
+	// specify id, it must be the same row
 	sql := "insert into t(id, a) values(5, 'test')"
 	kvPairs, _, err := encoder.Encode(sql, tableID)
 	c.Assert(err, IsNil, Commentf("sql:%s", sql))
 	retryKvPairs, _, err := encoder.Encode(sql, tableID)
 	c.Assert(err, IsNil, Commentf("sql:%s", sql))
 	c.Assert(len(kvPairs), Equals, len(retryKvPairs))
-	for i, kv := range kvPairs {
-		c.Assert(bytes.Compare(kv.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
-		c.Assert(bytes.Compare(kv.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
+	for i, row := range kvPairs {
+		c.Assert(bytes.Compare(row.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
+		c.Assert(bytes.Compare(row.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
 	}
 
 	schemaSQL = `create table t1(
@@ -348,15 +411,63 @@ func (s *testKvEncoderSuite) TestRetryWithAllocator(c *C) {
 		baseID := alloc.Base()
 		kvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
-		alloc.Rebase(tableID, baseID, false)
+		alloc.Reset(baseID)
 		retryKvPairs, _, err1 := encoder.Encode(sql, tableID)
 		c.Assert(err1, IsNil, Commentf("sql:%s", sql))
 		c.Assert(len(kvPairs), Equals, len(retryKvPairs))
-		for i, kv := range kvPairs {
-			c.Assert(bytes.Compare(kv.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
-			c.Assert(bytes.Compare(kv.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
+		for i, row := range kvPairs {
+			c.Assert(bytes.Compare(row.Key, retryKvPairs[i].Key), Equals, 0, Commentf(sql))
+			c.Assert(bytes.Compare(row.Val, retryKvPairs[i].Val), Equals, 0, Commentf(sql))
 		}
 	}
+}
+
+func (s *testKvEncoderSuite) TestAllocatorRebase(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	defer dom.Close()
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	alloc := NewAllocator()
+	var tableID int64 = 1
+	encoder, err := New("test", alloc)
+	err = alloc.Rebase(tableID, 100, false)
+	c.Assert(err, IsNil)
+	defer encoder.Close()
+	c.Assert(alloc.Base(), Equals, int64(100))
+
+	schemaSQL := `create table t(
+		id int auto_increment,
+		a char(10),
+		primary key(id))`
+	tk.MustExec(schemaSQL)
+	c.Assert(encoder.ExecDDLSQL(schemaSQL), IsNil)
+
+	sql := "insert into t(id, a) values(1000, 'test')"
+	encoder.Encode(sql, tableID)
+	c.Assert(alloc.Base(), Equals, int64(1000))
+
+	sql = "insert into t(a) values('test')"
+	encoder.Encode(sql, tableID)
+	c.Assert(alloc.Base(), Equals, int64(1001))
+
+	sql = "insert into t(id, a) values(2000, 'test')"
+	encoder.Encode(sql, tableID)
+	c.Assert(alloc.Base(), Equals, int64(2000))
+}
+
+func (s *testKvEncoderSuite) TestAllocatorRebaseSmaller(c *C) {
+	alloc := NewAllocator()
+	alloc.Rebase(1, 10, false)
+	c.Assert(alloc.Base(), Equals, int64(10))
+	alloc.Rebase(1, 100, false)
+	c.Assert(alloc.Base(), Equals, int64(100))
+	alloc.Rebase(1, 1, false)
+	c.Assert(alloc.Base(), Equals, int64(100))
+	alloc.Reset(1)
+	c.Assert(alloc.Base(), Equals, int64(1))
 }
 
 func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
@@ -365,10 +476,10 @@ func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 	defer encoder.Close()
 
 	schemaSQL := `create table t(
-		id int auto_increment, 
-		a char(10), 
-		b char(10) default NULL, 
-		primary key(id), 
+		id int auto_increment,
+		a char(10),
+		b char(10) default NULL,
+		primary key(id),
 		key a_idx(a))
 		`
 	encoder.ExecDDLSQL(schemaSQL)
@@ -384,31 +495,32 @@ func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 	handle := int64(1)
 	expectRecordKey := tablecodec.EncodeRecordKey(tablePrefix, handle)
 
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	indexPrefix := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-	expectIdxKey := []byte{}
+	expectIdxKey := make([]byte, 0)
 	expectIdxKey = append(expectIdxKey, []byte(indexPrefix)...)
-	expectIdxKey, err = codec.EncodeKey(expectIdxKey, types.NewDatum([]byte("a")))
+	expectIdxKey, err = codec.EncodeKey(sc, expectIdxKey, types.NewDatum([]byte("a")))
 	c.Assert(err, IsNil)
-	expectIdxKey, err = codec.EncodeKey(expectIdxKey, types.NewDatum(handle))
+	expectIdxKey, err = codec.EncodeKey(sc, expectIdxKey, types.NewDatum(handle))
 	c.Assert(err, IsNil)
 
-	for _, kv := range kvPairs {
-		tID, iID, isRecordKey, err1 := tablecodec.DecodeKeyHead(kv.Key)
+	for _, row := range kvPairs {
+		tID, iID, isRecordKey, err1 := tablecodec.DecodeKeyHead(row.Key)
 		c.Assert(err1, IsNil)
 		c.Assert(tID, Equals, tableID)
 		if isRecordKey {
-			c.Assert(bytes.Compare(kv.Key, expectRecordKey), Equals, 0)
+			c.Assert(bytes.Compare(row.Key, expectRecordKey), Equals, 0)
 		} else {
 			c.Assert(iID, Equals, indexID)
-			c.Assert(bytes.Compare(kv.Key, expectIdxKey), Equals, 0)
+			c.Assert(bytes.Compare(row.Key, expectIdxKey), Equals, 0)
 		}
 	}
 
 	// unique index key
 	schemaSQL = `create table t1(
-		id int auto_increment, 
-		a char(10), 
-		primary key(id), 
+		id int auto_increment,
+		a char(10),
+		primary key(id),
 		unique a_idx(a))
 		`
 	encoder.ExecDDLSQL(schemaSQL)
@@ -426,18 +538,18 @@ func (s *testKvEncoderSuite) TestSimpleKeyEncode(c *C) {
 	indexPrefix = tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 	expectIdxKey = []byte{}
 	expectIdxKey = append(expectIdxKey, []byte(indexPrefix)...)
-	expectIdxKey, err = codec.EncodeKey(expectIdxKey, types.NewDatum([]byte("a")))
+	expectIdxKey, err = codec.EncodeKey(sc, expectIdxKey, types.NewDatum([]byte("a")))
 	c.Assert(err, IsNil)
 
-	for _, kv := range kvPairs {
-		tID, iID, isRecordKey, err1 := tablecodec.DecodeKeyHead(kv.Key)
+	for _, row := range kvPairs {
+		tID, iID, isRecordKey, err1 := tablecodec.DecodeKeyHead(row.Key)
 		c.Assert(err1, IsNil)
 		c.Assert(tID, Equals, tableID)
 		if isRecordKey {
-			c.Assert(bytes.Compare(kv.Key, expectRecordKey), Equals, 0)
+			c.Assert(bytes.Compare(row.Key, expectRecordKey), Equals, 0)
 		} else {
 			c.Assert(iID, Equals, indexID)
-			c.Assert(bytes.Compare(kv.Key, expectIdxKey), Equals, 0)
+			c.Assert(bytes.Compare(row.Key, expectIdxKey), Equals, 0)
 		}
 	}
 }
@@ -496,4 +608,97 @@ func (s *testKvEncoderSuite) TestEncodeMetaAutoID(c *C) {
 
 	c.Assert(bytes.Compare(kvPair.Key, expectKey), Equals, 0)
 	c.Assert(bytes.Compare(kvPair.Val, expectVal), Equals, 0)
+}
+
+func (s *testKvEncoderSuite) TestGetSetSystemVariable(c *C) {
+	encoder, err := New("test", nil)
+	c.Assert(err, IsNil)
+	defer encoder.Close()
+
+	err = encoder.SetSystemVariable("sql_mode", "")
+	c.Assert(err, IsNil)
+
+	val, ok := encoder.GetSystemVariable("sql_mode")
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, "")
+
+	sqlMode := "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION"
+	err = encoder.SetSystemVariable("sql_mode", sqlMode)
+	c.Assert(err, IsNil)
+
+	val, ok = encoder.GetSystemVariable("sql_mode")
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, sqlMode)
+
+	val, ok = encoder.GetSystemVariable("SQL_MODE")
+	c.Assert(ok, IsTrue)
+	c.Assert(val, Equals, sqlMode)
+}
+
+func (s *testKvEncoderSuite) TestDisableStrictSQLMode(c *C) {
+	sql := "create table `ORDER-LINE` (" +
+		"  ol_w_id         integer   not null," +
+		"  ol_d_id         integer   not null," +
+		"  ol_o_id         integer   not null," +
+		"  ol_number       integer   not null," +
+		"  ol_i_id         integer   not null," +
+		"  ol_delivery_d   timestamp DEFAULT CURRENT_TIMESTAMP," +
+		"  ol_amount       decimal(6,2)," +
+		"  ol_supply_w_id  integer," +
+		"  ol_quantity     decimal(2,0)," +
+		"  ol_dist_info    char(24)," +
+		"  primary key (ol_w_id, ol_d_id, ol_o_id, ol_number)" +
+		");"
+
+	encoder, err := New("test", nil)
+	c.Assert(err, IsNil)
+	defer encoder.Close()
+
+	err = encoder.ExecDDLSQL(sql)
+	c.Assert(err, IsNil)
+	tableID := int64(1)
+	sql = "insert into `ORDER-LINE` values(2, 1, 1, 1, 1, 'NULL', 1, 1, 1, '1');"
+	_, _, err = encoder.Encode(sql, tableID)
+	c.Assert(err, NotNil)
+
+	err = encoder.SetSystemVariable("sql_mode", "")
+	c.Assert(err, IsNil)
+
+	sql = "insert into `ORDER-LINE` values(2, 1, 1, 1, 1, 'NULL', 1, 1, 1, '1');"
+	_, _, err = encoder.Encode(sql, tableID)
+	c.Assert(err, IsNil)
+}
+
+func (s *testKvEncoderSuite) TestRefCount(c *C) {
+	var err error
+	var a [10]KvEncoder
+	for i := 0; i < 10; i++ {
+		a[i], err = New("test", nil)
+		c.Assert(err, IsNil)
+	}
+	dom1 := domGlobal
+	c.Assert(refCount, Equals, int64(10))
+	a[0].Close()
+	a[1].Close()
+	dom2 := domGlobal
+	c.Assert(refCount, Equals, int64(8))
+	c.Assert(dom1, Equals, dom2)
+
+	for i := 2; i < 9; i++ {
+		a[i].Close()
+	}
+	dom3 := domGlobal
+	c.Assert(refCount, Equals, int64(1))
+	c.Assert(dom3, Equals, dom2)
+
+	a[9].Close()
+	c.Assert(refCount, Equals, int64(0))
+
+	tmp, err := New("test", nil)
+	c.Assert(err, IsNil)
+	dom4 := domGlobal
+	c.Assert(dom4 == dom3, IsFalse)
+	c.Assert(refCount, Equals, int64(1))
+	tmp.Close()
+	c.Assert(refCount, Equals, int64(0))
 }

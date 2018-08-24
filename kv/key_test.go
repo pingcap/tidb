@@ -15,8 +15,10 @@ package kv
 
 import (
 	"bytes"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testleak"
@@ -29,13 +31,14 @@ type testKeySuite struct {
 
 func (s *testKeySuite) TestPartialNext(c *C) {
 	defer testleak.AfterTest(c)()
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	// keyA represents a multi column index.
-	keyA, err := codec.EncodeValue(nil, types.NewDatum("abc"), types.NewDatum("def"))
+	keyA, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"), types.NewDatum("def"))
 	c.Check(err, IsNil)
-	keyB, err := codec.EncodeValue(nil, types.NewDatum("abca"), types.NewDatum("def"))
+	keyB, err := codec.EncodeValue(sc, nil, types.NewDatum("abca"), types.NewDatum("def"))
 
 	// We only use first column value to seek.
-	seekKey, err := codec.EncodeValue(nil, types.NewDatum("abc"))
+	seekKey, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"))
 	c.Check(err, IsNil)
 
 	nextKey := Key(seekKey).Next()

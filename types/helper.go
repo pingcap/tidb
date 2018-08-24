@@ -128,12 +128,17 @@ func myMinInt8(a, b int8) int8 {
 	return b
 }
 
+const (
+	maxUint    = uint64(math.MaxUint64)
+	uintCutOff = maxUint/uint64(10) + 1
+	intCutOff  = uint64(math.MaxInt64) + 1
+)
+
 // strToInt converts a string to an integer in best effort.
-// TODO: handle overflow and add unittest.
 func strToInt(str string) (int64, error) {
 	str = strings.TrimSpace(str)
 	if len(str) == 0 {
-		return 0, nil
+		return 0, ErrTruncated
 	}
 	negative := false
 	i := 0
@@ -143,16 +148,47 @@ func strToInt(str string) (int64, error) {
 	} else if str[i] == '+' {
 		i++
 	}
-	r := int64(0)
+
+	var (
+		err    error
+		hasNum = false
+	)
+	r := uint64(0)
 	for ; i < len(str); i++ {
 		if !unicode.IsDigit(rune(str[i])) {
+			err = ErrTruncated
 			break
 		}
-		r = r*10 + int64(str[i]-'0')
+		hasNum = true
+		if r >= uintCutOff {
+			r = 0
+			err = errors.Trace(ErrBadNumber)
+			break
+		}
+		r = r * uint64(10)
+
+		r1 := r + uint64(str[i]-'0')
+		if r1 < r || r1 > maxUint {
+			r = 0
+			err = errors.Trace(ErrBadNumber)
+			break
+		}
+		r = r1
 	}
+	if !hasNum {
+		err = ErrTruncated
+	}
+
+	if !negative && r >= intCutOff {
+		return math.MaxInt64, errors.Trace(ErrBadNumber)
+	}
+
+	if negative && r > intCutOff {
+		return math.MinInt64, errors.Trace(ErrBadNumber)
+	}
+
 	if negative {
 		r = -r
 	}
-	// TODO: if i < len(str), we should return an error.
-	return r, nil
+	return int64(r), err
 }

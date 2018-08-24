@@ -700,7 +700,7 @@ const (
 	ErrPathLength                                                   = 1680
 	ErrWarnDeprecatedSyntaxNoReplacement                            = 1681
 	ErrWrongNativeTableStructure                                    = 1682
-	ErrWrongPerfschemaUsage                                         = 1683
+	ErrWrongPerfSchemaUsage                                         = 1683
 	ErrWarnISSkippedTable                                           = 1684
 	ErrInsideTransactionPreventsSwitchBinlogDirect                  = 1685
 	ErrStoredFunctionPreventsSwitchBinlogDirect                     = 1686
@@ -890,6 +890,11 @@ const (
 	ErrInvalidJSONPath                                              = 3143
 	ErrInvalidJSONData                                              = 3146
 	ErrJSONUsedAsKey                                                = 3152
+
+	// TiDB self-defined errors.
+	ErrMemExceedThreshold = 8001
+	ErrForUpdateCantRetry = 8002
+	ErrAdminCheckTable    = 8003
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout    = 9001

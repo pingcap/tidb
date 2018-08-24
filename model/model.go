@@ -14,10 +14,14 @@
 package model
 
 import (
+	"encoding/json"
 	"strings"
+	"time"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // SchemaState is the state for schema elements.
@@ -31,9 +35,9 @@ const (
 	// StateWriteOnly means we can use any write operation on this schema element,
 	// but outer can't read the changed data.
 	StateWriteOnly
-	// StateWriteReorganization means we are re-organizating whole data after write only state.
+	// StateWriteReorganization means we are re-organizing whole data after write only state.
 	StateWriteReorganization
-	// StateDeleteReorganization means we are re-organizating whole data after delete only state.
+	// StateDeleteReorganization means we are re-organizing whole data after delete only state.
 	StateDeleteReorganization
 	// StatePublic means this schema element is ok for all write and read operations.
 	StatePublic
@@ -83,12 +87,24 @@ func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
 }
 
+// FindColumnInfo finds ColumnInfo in cols by name.
+func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
+	name = strings.ToLower(name)
+	for _, col := range cols {
+		if col.Name.L == name {
+			return col
+		}
+	}
+
+	return nil
+}
+
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
 // for use of execution phase.
 const ExtraHandleID = -1
 
 // ExtraHandleName is the name of ExtraHandle Column.
-var ExtraHandleName = NewCIStr("_rowid")
+var ExtraHandleName = NewCIStr("_tidb_rowid")
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
@@ -106,6 +122,9 @@ type TableInfo struct {
 	AutoIncID   int64         `json:"auto_inc_id"`
 	MaxColumnID int64         `json:"max_col_id"`
 	MaxIndexID  int64         `json:"max_idx_id"`
+	// UpdateTS is used to record the timestamp of updating the table's schema information.
+	// These changing schema operations don't include 'truncate table' and 'rename table'.
+	UpdateTS uint64 `json:"update_timestamp"`
 	// OldSchemaID :
 	// Because auto increment ID has schemaID as prefix,
 	// We need to save original schemaID to keep autoID unchanged
@@ -113,6 +132,24 @@ type TableInfo struct {
 	// TODO: Remove it.
 	// Now it only uses for compatibility with the old version that already uses this field.
 	OldSchemaID int64 `json:"old_schema_id,omitempty"`
+
+	// ShardRowIDBits specify if the implicit row ID is sharded.
+	ShardRowIDBits uint64
+
+	Partition *PartitionInfo `json:"partition"`
+}
+
+// GetPartitionInfo returns the partition information.
+func (t *TableInfo) GetPartitionInfo() *PartitionInfo {
+	if t.Partition != nil && t.Partition.Enable {
+		return t.Partition
+	}
+	return nil
+}
+
+// GetUpdateTime gets the table's updating time.
+func (t *TableInfo) GetUpdateTime() time.Time {
+	return TSConvert2Time(t.UpdateTS)
 }
 
 // GetDBID returns the schema ID that is used to create an allocator.
@@ -169,6 +206,22 @@ func (t *TableInfo) GetPkColInfo() *ColumnInfo {
 	return nil
 }
 
+// Cols returns the columns of the table in public state.
+func (t *TableInfo) Cols() []*ColumnInfo {
+	publicColumns := make([]*ColumnInfo, len(t.Columns))
+	maxOffset := -1
+	for _, col := range t.Columns {
+		if col.State != StatePublic {
+			continue
+		}
+		publicColumns[col.Offset] = col
+		if maxOffset < col.Offset {
+			maxOffset = col.Offset
+		}
+	}
+	return publicColumns[0 : maxOffset+1]
+}
+
 // NewExtraHandleColInfo mocks a column info for extra handle column.
 func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
@@ -176,6 +229,8 @@ func NewExtraHandleColInfo() *ColumnInfo {
 		Name: ExtraHandleName,
 	}
 	colInfo.Flag = mysql.PriKeyFlag
+	colInfo.Tp = mysql.TypeLonglong
+	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	return colInfo
 }
 
@@ -189,6 +244,52 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 		}
 	}
 	return false
+}
+
+// PartitionType is the type for PartitionInfo
+type PartitionType int
+
+// Partition types.
+const (
+	PartitionTypeRange PartitionType = 1
+	PartitionTypeHash  PartitionType = 2
+	PartitionTypeList  PartitionType = 3
+)
+
+func (p PartitionType) String() string {
+	switch p {
+	case PartitionTypeRange:
+		return "RANGE"
+	case PartitionTypeHash:
+		return "HASH"
+	case PartitionTypeList:
+		return "LIST"
+	default:
+		return ""
+	}
+
+}
+
+// PartitionInfo provides table partition info.
+type PartitionInfo struct {
+	Type    PartitionType `json:"type"`
+	Expr    string        `json:"expr"`
+	Columns []CIStr       `json:"columns"`
+
+	// User may already creates table with partition but table partition is not
+	// yet supported back then. When Enable is true, write/read need use tid
+	// rather than pid.
+	Enable bool `json:"enable"`
+
+	Definitions []PartitionDefinition `json:"definitions"`
+}
+
+// PartitionDefinition defines a single partition.
+type PartitionDefinition struct {
+	ID       int64    `json:"id"`
+	Name     CIStr    `json:"name"`
+	LessThan []string `json:"less_than"`
+	Comment  string   `json:"comment,omitempty"`
 }
 
 // IndexColumn provides index column info.
@@ -308,6 +409,14 @@ func (db *DBInfo) Clone() *DBInfo {
 	return &newInfo
 }
 
+// Copy shallow copies DBInfo.
+func (db *DBInfo) Copy() *DBInfo {
+	newInfo := *db
+	newInfo.Tables = make([]*TableInfo, len(db.Tables))
+	copy(newInfo.Tables, db.Tables)
+	return &newInfo
+}
+
 // CIStr is case insensitive string.
 type CIStr struct {
 	O string `json:"O"` // Original string.
@@ -324,4 +433,92 @@ func NewCIStr(s string) (cs CIStr) {
 	cs.O = s
 	cs.L = strings.ToLower(s)
 	return
+}
+
+// UnmarshalJSON implements the user defined unmarshal method.
+// CIStr can be unmarshaled from a single string, so PartitionDefinition.Name
+// in this change https://github.com/pingcap/tidb/pull/6460/files would be
+// compatible during TiDB upgrading.
+func (cis *CIStr) UnmarshalJSON(b []byte) error {
+	type T CIStr
+	if err := json.Unmarshal(b, (*T)(cis)); err == nil {
+		return nil
+	}
+
+	// Unmarshal CIStr from a single string.
+	err := json.Unmarshal(b, &cis.O)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cis.L = strings.ToLower(cis.O)
+	return nil
+}
+
+// ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
+func ColumnsToProto(columns []*ColumnInfo, pkIsHandle bool) []*tipb.ColumnInfo {
+	cols := make([]*tipb.ColumnInfo, 0, len(columns))
+	for _, c := range columns {
+		col := ColumnToProto(c)
+		// TODO: Here `PkHandle`'s meaning is changed, we will change it to `IsHandle` when tikv's old select logic
+		// is abandoned.
+		if (pkIsHandle && mysql.HasPriKeyFlag(c.Flag)) || c.ID == ExtraHandleID {
+			col.PkHandle = true
+		} else {
+			col.PkHandle = false
+		}
+		cols = append(cols, col)
+	}
+	return cols
+}
+
+// IndexToProto converts a model.IndexInfo to a tipb.IndexInfo.
+func IndexToProto(t *TableInfo, idx *IndexInfo) *tipb.IndexInfo {
+	pi := &tipb.IndexInfo{
+		TableId: t.ID,
+		IndexId: idx.ID,
+		Unique:  idx.Unique,
+	}
+	cols := make([]*tipb.ColumnInfo, 0, len(idx.Columns)+1)
+	for _, c := range idx.Columns {
+		cols = append(cols, ColumnToProto(t.Columns[c.Offset]))
+	}
+	if t.PKIsHandle {
+		// Coprocessor needs to know PKHandle column info, so we need to append it.
+		for _, col := range t.Columns {
+			if mysql.HasPriKeyFlag(col.Flag) {
+				colPB := ColumnToProto(col)
+				colPB.PkHandle = true
+				cols = append(cols, colPB)
+				break
+			}
+		}
+	}
+	pi.Columns = cols
+	return pi
+}
+
+// ColumnToProto converts model.ColumnInfo to tipb.ColumnInfo.
+func ColumnToProto(c *ColumnInfo) *tipb.ColumnInfo {
+	pc := &tipb.ColumnInfo{
+		ColumnId:  c.ID,
+		Collation: collationToProto(c.FieldType.Collate),
+		ColumnLen: int32(c.FieldType.Flen),
+		Decimal:   int32(c.FieldType.Decimal),
+		Flag:      int32(c.Flag),
+		Elems:     c.Elems,
+	}
+	pc.Tp = int32(c.FieldType.Tp)
+	return pc
+}
+
+// TODO: update it when more collate is supported.
+func collationToProto(c string) int32 {
+	v := mysql.CollationNames[c]
+	if v == mysql.BinaryCollationID {
+		return int32(mysql.BinaryCollationID)
+	}
+	// We only support binary and utf8_bin collation.
+	// Setting other collations to utf8_bin for old data compatibility.
+	// For the data created when we didn't enforce utf8_bin collation in create table.
+	return int32(mysql.DefaultCollationID)
 }

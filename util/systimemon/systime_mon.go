@@ -16,20 +16,27 @@ package systimemon
 import (
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 // StartMonitor calls systimeErrHandler if system time jump backward.
-func StartMonitor(now func() time.Time, systimeErrHandler func()) {
+func StartMonitor(now func() time.Time, systimeErrHandler func(), successCallback func()) {
 	log.Info("start system time monitor")
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
+	tickCount := 0
 	for {
 		last := now().UnixNano()
 		<-tick.C
 		if now().UnixNano() < last {
 			log.Errorf("system time jump backward, last:%v", last)
 			systimeErrHandler()
+		}
+		// call sucessCallback per second.
+		tickCount++
+		if tickCount >= 10 {
+			tickCount = 0
+			successCallback()
 		}
 	}
 }

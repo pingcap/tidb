@@ -16,17 +16,14 @@ package privileges
 import (
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
-	"github.com/pingcap/tidb/context"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	log "github.com/sirupsen/logrus"
 )
-
-// Enable enables the new privilege check feature.
-var Enable = true
 
 // SkipWithGrant causes the server to start without using the privilege system at all.
 var SkipWithGrant = false
@@ -54,7 +51,7 @@ type UserPrivileges struct {
 
 // RequestVerification implements the Manager interface.
 func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysql.PrivilegeType) bool {
-	if !Enable || SkipWithGrant {
+	if SkipWithGrant {
 		return true
 	}
 
@@ -121,7 +118,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 
 // DBIsVisible implements the Manager interface.
 func (p *UserPrivileges) DBIsVisible(db string) bool {
-	if !Enable || SkipWithGrant {
+	if SkipWithGrant {
 		return true
 	}
 	mysqlPriv := p.Handle.Get()
@@ -135,7 +132,7 @@ func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 }
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
-func (p *UserPrivileges) ShowGrants(ctx context.Context, user *auth.UserIdentity) ([]string, error) {
+func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) ([]string, error) {
 	mysqlPrivilege := p.Handle.Get()
 	return mysqlPrivilege.showGrants(user.Username, user.Hostname), nil
 }

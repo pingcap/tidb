@@ -29,28 +29,33 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/store/tikv"
-	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/mockstore"
+	"golang.org/x/net/context"
 )
 
 type TidbTestSuite struct {
 	tidbdrv *TiDBDriver
 	server  *Server
+	domain  *domain.Domain
+	store   kv.Storage
 }
 
 var suite = new(TidbTestSuite)
 var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	store, err := tikv.NewMockTikvStore()
-	tidb.SetStatsLease(0)
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore()
+	session.SetStatsLease(0)
 	c.Assert(err, IsNil)
-	_, err = tidb.BootstrapSession(store)
+	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
-	ts.tidbdrv = NewTiDBDriver(store)
+	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cfg := config.NewConfig()
 	cfg.Port = 4001
 	cfg.Status.ReportStatus = true
@@ -69,6 +74,12 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {
+	if ts.store != nil {
+		ts.store.Close()
+	}
+	if ts.domain != nil {
+		ts.domain.Close()
+	}
 	if ts.server != nil {
 		ts.server.Close()
 	}
@@ -93,6 +104,11 @@ func (ts *TidbTestSuite) TestSpecialType(c *C) {
 func (ts *TidbTestSuite) TestPreparedString(c *C) {
 	c.Parallel()
 	runTestPreparedString(c)
+}
+
+func (ts *TidbTestSuite) TestPreparedTimestamp(c *C) {
+	c.Parallel()
+	runTestPreparedTimestamp(c)
 }
 
 func (ts *TidbTestSuite) TestLoadData(c *C) {
@@ -145,7 +161,7 @@ func (ts *TidbTestSuite) TestMultiStatements(c *C) {
 func (ts *TidbTestSuite) TestSocket(c *C) {
 	cfg := config.NewConfig()
 	cfg.Socket = "/tmp/tidbtest.sock"
-	cfg.Status.StatusPort = 10091
+	cfg.Status.ReportStatus = false
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -227,11 +243,11 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 // See https://godoc.org/github.com/go-sql-driver/mysql#RegisterTLSConfig for details.
 func registerTLSConfig(configName string, caCertPath string, clientCertPath string, clientKeyPath string, serverName string, verifyServer bool) error {
 	rootCertPool := x509.NewCertPool()
-	pem, err := ioutil.ReadFile(caCertPath)
+	data, err := ioutil.ReadFile(caCertPath)
 	if err != nil {
 		return err
 	}
-	if ok := rootCertPool.AppendCertsFromPEM(pem); !ok {
+	if ok := rootCertPool.AppendCertsFromPEM(data); !ok {
 		return errors.New("Failed to append PEM")
 	}
 	clientCert := make([]tls.Certificate, 0, 1)
@@ -254,11 +270,11 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
 	c.Assert(err, IsNil)
-	_, _, err = generateCert(1, "TiDB Server Certificate", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
 	c.Assert(err, IsNil)
 	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key.pem", "/tmp/client-cert.pem")
 	c.Assert(err, IsNil)
-	err = registerTLSConfig("client-certificate", "/tmp/ca-cert.pem", "/tmp/client-cert.pem", "/tmp/client-key.pem", "TiDB Server Certificate", true)
+	err = registerTLSConfig("client-certificate", "/tmp/ca-cert.pem", "/tmp/client-cert.pem", "/tmp/client-key.pem", "tidb-server", true)
 	c.Assert(err, IsNil)
 
 	defer func() {
@@ -277,8 +293,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	}
 	cfg := config.NewConfig()
 	cfg.Port = 4002
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 10091
+	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
 	go server.Run()
@@ -295,8 +310,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	}
 	cfg = config.NewConfig()
 	cfg.Port = 4003
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 10091
+	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCert: "/tmp/server-cert.pem",
 		SSLKey:  "/tmp/server-key.pem",
@@ -314,7 +328,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.Addr = "localhost:4003"
 	}
 	err = runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
-	c.Assert(err, IsNil)
+	c.Assert(err, IsNil, Commentf("%v", errors.ErrorStack(err)))
 	runTestRegression(c, connOverrider, "TLSRegression")
 	server.Close()
 
@@ -325,8 +339,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	}
 	cfg = config.NewConfig()
 	cfg.Port = 4004
-	cfg.Status.ReportStatus = true
-	cfg.Status.StatusPort = 10091
+	cfg.Status.ReportStatus = false
 	cfg.Security = config.Security{
 		SSLCA:   "/tmp/ca-cert.pem",
 		SSLCert: "/tmp/server-cert.pem",
@@ -361,12 +374,12 @@ func (ts *TidbTestSuite) TestClientWithCollation(c *C) {
 
 func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	// issue #4540
-	ctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
-	_, err = ctx.Execute(goctx.Background(), "use test;")
+	_, err = qctx.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
 
-	goCtx := goctx.Background()
+	ctx := context.Background()
 	testSQL := "CREATE TABLE `t1` (" +
 		"`a` char(36) NOT NULL," +
 		"`b` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP," +
@@ -396,24 +409,115 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 		"`z` decimal(20, 4)," +
 		"PRIMARY KEY (`a`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
-	_, err = ctx.Execute(goCtx, testSQL)
+	_, err = qctx.Execute(ctx, testSQL)
 	c.Assert(err, IsNil)
-	rs, err := ctx.Execute(goCtx, "show create table t1")
-	row, err := rs[0].Next(goCtx)
+	rs, err := qctx.Execute(ctx, "show create table t1")
+	chk := rs[0].NewChunk()
+	err = rs[0].Next(ctx, chk)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
-	c.Assert(int(cols[1].ColumnLength), Equals, len(row.GetString(1))*tmysql.MaxBytesOfCharacter)
+	c.Assert(int(cols[1].ColumnLength), Equals, len(chk.GetRow(0).GetString(1))*tmysql.MaxBytesOfCharacter)
 
 	// for issue#5246
-	rs, err = ctx.Execute(goCtx, "select y, z from t1")
+	rs, err = qctx.Execute(ctx, "select y, z from t1")
 	c.Assert(err, IsNil)
 	cols = rs[0].Columns()
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 21)
 	c.Assert(int(cols[1].ColumnLength), Equals, 22)
+}
+
+func (ts *TidbTestSuite) TestShowTablesFlen(c *C) {
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	testSQL := "create table abcdefghijklmnopqrstuvwxyz (i int)"
+	_, err = qctx.Execute(ctx, testSQL)
+	c.Assert(err, IsNil)
+	rs, err := qctx.Execute(ctx, "show tables")
+	chk := rs[0].NewChunk()
+	err = rs[0].Next(ctx, chk)
+	c.Assert(err, IsNil)
+	cols := rs[0].Columns()
+	c.Assert(err, IsNil)
+	c.Assert(len(cols), Equals, 1)
+	c.Assert(int(cols[0].ColumnLength), Equals, 26*tmysql.MaxBytesOfCharacter)
+}
+
+func checkColNames(c *C, columns []*ColumnInfo, names ...string) {
+	for i, name := range names {
+		c.Assert(columns[i].Name, Equals, name)
+		c.Assert(columns[i].OrgName, Equals, name)
+	}
+}
+
+func (ts *TidbTestSuite) TestFieldList(c *C) {
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	_, err = qctx.Execute(context.Background(), "use test;")
+	c.Assert(err, IsNil)
+
+	ctx := context.Background()
+	testSQL := `create table t (
+		c_bit bit(10),
+		c_int_d int,
+		c_bigint_d bigint,
+		c_float_d float,
+		c_double_d double,
+		c_decimal decimal(6, 3),
+		c_datetime datetime(2),
+		c_time time(3),
+		c_date date,
+		c_timestamp timestamp(4) DEFAULT CURRENT_TIMESTAMP(4),
+		c_char char(20),
+		c_varchar varchar(20),
+		c_text_d text,
+		c_binary binary(20),
+		c_blob_d blob,
+		c_set set('a', 'b', 'c'),
+		c_enum enum('a', 'b', 'c'),
+		c_json JSON,
+		c_year year
+	)`
+	_, err = qctx.Execute(ctx, testSQL)
+	c.Assert(err, IsNil)
+	colInfos, err := qctx.FieldList("t")
+	c.Assert(err, IsNil)
+	c.Assert(len(colInfos), Equals, 19)
+
+	checkColNames(c, colInfos, "c_bit", "c_int_d", "c_bigint_d", "c_float_d",
+		"c_double_d", "c_decimal", "c_datetime", "c_time", "c_date", "c_timestamp",
+		"c_char", "c_varchar", "c_text_d", "c_binary", "c_blob_d", "c_set", "c_enum",
+		"c_json", "c_year")
+
+	for _, cols := range colInfos {
+		c.Assert(cols.Schema, Equals, "test")
+	}
+
+	for _, cols := range colInfos {
+		c.Assert(cols.Table, Equals, "t")
+	}
+
+	for i, col := range colInfos {
+		switch i {
+		case 10, 11, 12, 15, 16:
+			// c_char char(20), c_varchar varchar(20), c_text_d text,
+			// c_set set('a', 'b', 'c'), c_enum enum('a', 'b', 'c')
+			c.Assert(col.Charset, Equals, uint16(tmysql.CharsetIDs["utf8"]), Commentf("index %d", i))
+			continue
+		}
+
+		c.Assert(col.Charset, Equals, uint16(tmysql.CharsetIDs["binary"]), Commentf("index %d", i))
+	}
+
+	// c_decimal decimal(6, 3)
+	c.Assert(colInfos[5].Decimal, Equals, uint8(3))
 }
 
 func (ts *TidbTestSuite) TestSumAvg(c *C) {

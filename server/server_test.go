@@ -25,13 +25,13 @@ import (
 	"testing"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
+	log "github.com/sirupsen/logrus"
 )
 
 func TestT(t *testing.T) {
@@ -123,6 +123,24 @@ func (dbt *DBTest) fail(method, query string, err error) {
 	dbt.Fatalf("Error on %s %s: %s", method, query, err.Error())
 }
 
+func (dbt *DBTest) mustPrepare(query string) *sql.Stmt {
+	stmt, err := dbt.db.Prepare(query)
+	dbt.Assert(err, IsNil, Commentf("Prepare %s", query))
+	return stmt
+}
+
+func (dbt *DBTest) mustExecPrepared(stmt *sql.Stmt, args ...interface{}) sql.Result {
+	res, err := stmt.Exec(args...)
+	dbt.Assert(err, IsNil, Commentf("Execute prepared with args: %s", args))
+	return res
+}
+
+func (dbt *DBTest) mustQueryPrepared(stmt *sql.Stmt, args ...interface{}) *sql.Rows {
+	rows, err := stmt.Query(args...)
+	dbt.Assert(err, IsNil, Commentf("Query prepared with args: %s", args))
+	return rows
+}
+
 func (dbt *DBTest) mustExec(query string, args ...interface{}) (res sql.Result) {
 	res, err := dbt.db.Exec(query, args...)
 	dbt.Assert(err, IsNil, Commentf("Exec %s", query))
@@ -204,7 +222,7 @@ func runTestRegression(c *C, overrider configOverrider, dbName string) {
 
 		dbt.mustQueryRows("SELECT 1")
 
-		b := []byte{}
+		var b = make([]byte, 0)
 		if err := dbt.db.QueryRow("SELECT ?", b).Scan(&b); err != nil {
 			dbt.Fatal(err)
 		}
@@ -302,6 +320,30 @@ func runTestPreparedString(t *C) {
 	})
 }
 
+// This test case does not really cover binary timestamp format, because MySQL driver in golang
+// does not use this format. MySQL driver in golang will convert the timestamp to a string.
+// This case guarantees it could work.
+func runTestPreparedTimestamp(t *C) {
+	runTestsOnNewDB(t, nil, "prepared_timestamp", func(dbt *DBTest) {
+		dbt.mustExec("create table test (a timestamp, b time)")
+		dbt.mustExec("set time_zone='+00:00'")
+		insertStmt := dbt.mustPrepare("insert test values (?, ?)")
+		defer insertStmt.Close()
+		vts := time.Unix(1, 1)
+		vt := time.Unix(-1, 1)
+		dbt.mustExecPrepared(insertStmt, vts, vt)
+		selectStmt := dbt.mustPrepare("select * from test where a = ? and b = ?")
+		defer selectStmt.Close()
+		rows := dbt.mustQueryPrepared(selectStmt, vts, vt)
+		t.Assert(rows.Next(), IsTrue)
+		var outA, outB string
+		err := rows.Scan(&outA, &outB)
+		t.Assert(err, IsNil)
+		t.Assert(outA, Equals, "1970-01-01 00:00:01")
+		t.Assert(outB, Equals, "23:59:59")
+	})
+}
+
 func runTestLoadData(c *C, server *Server) {
 	// create a file and write data.
 	path := "/tmp/load_data_test.csv"
@@ -321,6 +363,11 @@ func runTestLoadData(c *C, server *Server) {
 		"xxx row4_col1	- 		900\n" +
 		"xxx row5_col1	- 	row5_col3")
 	c.Assert(err, IsNil)
+
+	originalTxnTotalSizeLimit := kv.TxnTotalSizeLimit
+	// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
+	kv.TxnTotalSizeLimit = 10240
+	defer func() { kv.TxnTotalSizeLimit = originalTxnTotalSizeLimit }()
 
 	// support ClientLocalFiles capability
 	runTestsOnNewDB(c, func(config *mysql.Config) {
@@ -490,21 +537,22 @@ func runTestErrorCode(c *C) {
 		_, err = txn2.Exec("select * from tbl_not_exists;")
 		checkErrorCode(c, err, tmysql.ErrNoSuchTable)
 		_, err = txn2.Exec("create database test;")
-		checkErrorCode(c, err, tmysql.ErrDBCreateExists)
+		// Make tests stable. Some times the error may be the ErrInfoSchemaChanged.
+		checkErrorCode(c, err, tmysql.ErrDBCreateExists, tmysql.ErrUnknown)
 		_, err = txn2.Exec("create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent)
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrUnknown)
 		_, err = txn2.Exec("create table test (c int);")
-		checkErrorCode(c, err, tmysql.ErrTableExists)
+		checkErrorCode(c, err, tmysql.ErrTableExists, tmysql.ErrUnknown)
 		_, err = txn2.Exec("drop table unknown_table;")
-		checkErrorCode(c, err, tmysql.ErrBadTable)
+		checkErrorCode(c, err, tmysql.ErrBadTable, tmysql.ErrUnknown)
 		_, err = txn2.Exec("drop database unknown_db;")
-		checkErrorCode(c, err, tmysql.ErrDBDropExists)
+		checkErrorCode(c, err, tmysql.ErrDBDropExists, tmysql.ErrUnknown)
 		_, err = txn2.Exec("create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa (a int);")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent)
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrUnknown)
 		_, err = txn2.Exec("create table long_column_table (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int);")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent)
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrUnknown)
 		_, err = txn2.Exec("alter table test add aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int;")
-		checkErrorCode(c, err, tmysql.ErrTooLongIdent)
+		checkErrorCode(c, err, tmysql.ErrTooLongIdent, tmysql.ErrUnknown)
 
 		// Optimizer errors
 		_, err = txn2.Exec("select *, * from test;")
@@ -526,10 +574,20 @@ func runTestErrorCode(c *C) {
 	})
 }
 
-func checkErrorCode(c *C, e error, code uint16) {
+func checkErrorCode(c *C, e error, codes ...uint16) {
 	me, ok := e.(*mysql.MySQLError)
 	c.Assert(ok, IsTrue, Commentf("err: %v", e))
-	c.Assert(me.Number, Equals, code)
+	if len(codes) == 1 {
+		c.Assert(me.Number, Equals, codes[0])
+	}
+	isMatchCode := false
+	for _, code := range codes {
+		if me.Number == code {
+			isMatchCode = true
+			break
+		}
+	}
+	c.Assert(isMatchCode, IsTrue, Commentf("got err %v, expected err codes %v", me, codes))
 }
 
 func runTestAuth(c *C) {
@@ -704,16 +762,17 @@ func runTestStmtCount(t *C) {
 		dbt.mustExec("execute stmt1")
 		dbt.mustExec("prepare stmt2 from 'select * from test'")
 		dbt.mustExec("execute stmt2")
+		dbt.mustExec("replace into test(a) values(6);")
 
 		currentStmtCnt := getStmtCnt(string(getMetrics(t)))
-		t.Assert(currentStmtCnt[executor.CreateTable], Equals, originStmtCnt[executor.CreateTable]+1)
-		t.Assert(currentStmtCnt[executor.Insert], Equals, originStmtCnt[executor.Insert]+5)
-		deleteLabel := "DeleteTableFull"
-		t.Assert(currentStmtCnt[deleteLabel], Equals, originStmtCnt[deleteLabel]+1)
-		updateLabel := "UpdateTableFull"
-		t.Assert(currentStmtCnt[updateLabel], Equals, originStmtCnt[updateLabel]+2)
-		selectLabel := "SelectTableFull"
-		t.Assert(currentStmtCnt[selectLabel], Equals, originStmtCnt[selectLabel]+2)
+		t.Assert(currentStmtCnt["CreateTable"], Equals, originStmtCnt["CreateTable"]+1)
+		t.Assert(currentStmtCnt["Insert"], Equals, originStmtCnt["Insert"]+5)
+		t.Assert(currentStmtCnt["Delete"], Equals, originStmtCnt["Delete"]+1)
+		t.Assert(currentStmtCnt["Update"], Equals, originStmtCnt["Update"]+2)
+		t.Assert(currentStmtCnt["Select"], Equals, originStmtCnt["Select"]+3)
+		t.Assert(currentStmtCnt["Prepare"], Equals, originStmtCnt["Prepare"]+2)
+		t.Assert(currentStmtCnt["Execute"], Equals, originStmtCnt["Execute"]+2)
+		t.Assert(currentStmtCnt["Replace"], Equals, originStmtCnt["Replace"]+1)
 	})
 }
 
@@ -758,7 +817,7 @@ func getMetrics(t *C) []byte {
 
 func getStmtCnt(content string) (stmtCnt map[string]int) {
 	stmtCnt = make(map[string]int)
-	r, _ := regexp.Compile("tidb_executor_statement_node_total{type=\"([A-Z|a-z|-]+)\"} (\\d+)")
+	r, _ := regexp.Compile("tidb_executor_statement_total{type=\"([A-Z|a-z|-]+)\"} (\\d+)")
 	matchResult := r.FindAllStringSubmatch(content, -1)
 	for _, v := range matchResult {
 		cnt, _ := strconv.Atoi(v[2])
@@ -769,7 +828,7 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 
 const retryTime = 100
 
-func waitUntilServerOnline(statusPort int) {
+func waitUntilServerOnline(statusPort uint) {
 	// connect server
 	retry := 0
 	for ; retry < retryTime; retry++ {

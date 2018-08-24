@@ -72,8 +72,10 @@ type Join struct {
 	On *OnCondition
 	// Using represents join using clause.
 	Using []*ColumnName
-	// NaturalJoin represents join is natural join
+	// NaturalJoin represents join is natural join.
 	NaturalJoin bool
+	// StraightJoin represents a straight join.
+	StraightJoin bool
 }
 
 // Accept implements Node Accept interface.
@@ -182,7 +184,7 @@ func (n *DeleteTableList) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// OnCondition represetns JOIN on condition.
+// OnCondition represents JOIN on condition.
 type OnCondition struct {
 	node
 
@@ -472,8 +474,12 @@ type SelectStmt struct {
 	Limit *Limit
 	// LockTp is the lock type
 	LockTp SelectLockType
-	// TableHints represents the level Optimizer Hint
+	// TableHints represents the table level Optimizer Hint for join type
 	TableHints []*TableOptimizerHint
+	// IsAfterUnionDistinct indicates whether it's a stmt after "union distinct".
+	IsAfterUnionDistinct bool
+	// IsInBraces indicates whether it's a stmt in brace.
+	IsInBraces bool
 }
 
 // Accept implements Node Accept interface.
@@ -585,7 +591,6 @@ type UnionStmt struct {
 	dmlNode
 	resultSetNode
 
-	Distinct   bool
 	SelectList *UnionSelectList
 	OrderBy    *OrderByClause
 	Limit      *Limit
@@ -784,11 +789,13 @@ type DeleteStmt struct {
 	Where        ExprNode
 	Order        *OrderByClause
 	Limit        *Limit
-	LowPriority  bool
+	Priority     mysql.PriorityEnum
 	IgnoreErr    bool
 	Quick        bool
 	IsMultiTable bool
 	BeforeFrom   bool
+	// TableHints represents the table level Optimizer Hint for join type.
+	TableHints []*TableOptimizerHint
 }
 
 // Accept implements Node Accept interface.
@@ -845,9 +852,10 @@ type UpdateStmt struct {
 	Where         ExprNode
 	Order         *OrderByClause
 	Limit         *Limit
-	LowPriority   bool
+	Priority      mysql.PriorityEnum
 	IgnoreErr     bool
 	MultipleTable bool
+	TableHints    []*TableOptimizerHint
 }
 
 // Accept implements Node Accept interface.
@@ -953,8 +961,12 @@ const (
 	ShowStatsMeta
 	ShowStatsHistograms
 	ShowStatsBuckets
+	ShowStatsHealthy
 	ShowPlugins
 	ShowProfiles
+	ShowMasterStatus
+	ShowPrivileges
+	ShowErrors
 )
 
 // ShowStmt is a statement to provide information about databases, tables, columns and so on.

@@ -16,6 +16,8 @@ package table
 import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -30,19 +32,21 @@ type Index interface {
 	// Meta returns IndexInfo.
 	Meta() *model.IndexInfo
 	// Create supports insert into statement.
-	Create(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error)
+	Create(ctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (int64, error)
 	// Delete supports delete from statement.
-	Delete(m kv.Mutator, indexedValues []types.Datum, h int64) error
+	Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues []types.Datum, h int64) error
 	// Drop supports drop table, drop index statements.
 	Drop(rm kv.RetrieverMutator) error
 	// Exist supports check index exists or not.
-	Exist(rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (bool, int64, error)
+	Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, indexedValues []types.Datum, h int64) (bool, int64, error)
 	// GenIndexKey generates an index key.
-	GenIndexKey(indexedValues []types.Datum, h int64) (key []byte, distinct bool, err error)
+	GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h int64, buf []byte) (key []byte, distinct bool, err error)
 	// Seek supports where clause.
-	Seek(r kv.Retriever, indexedValues []types.Datum) (iter IndexIterator, hit bool, err error)
+	Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues []types.Datum) (iter IndexIterator, hit bool, err error)
 	// SeekFirst supports aggregate min and ascend order by.
 	SeekFirst(r kv.Retriever) (iter IndexIterator, err error)
 	// FetchValues fetched index column values in a row.
-	FetchValues(row []types.Datum) (columns []types.Datum, err error)
+	// Param columns is a reused buffer, if it is not nil, FetchValues will fill the index values in it,
+	// and return the buffer, if it is nil, FetchValues will allocate the buffer instead.
+	FetchValues(row []types.Datum, columns []types.Datum) ([]types.Datum, error)
 }

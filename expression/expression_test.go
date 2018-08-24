@@ -14,10 +14,13 @@
 package expression
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -25,7 +28,7 @@ import (
 func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 	defer testleak.AfterTest(c)()
 
-	res := NewValuesFunc(0, types.NewFieldType(mysql.TypeLonglong), s.ctx)
+	res := NewValuesFunc(s.ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	c.Assert(res.FuncName.O, Equals, "values")
 	c.Assert(res.RetType.Tp, Equals, mysql.TypeLonglong)
 	_, ok := res.Function.(*builtinValuesIntSig)
@@ -34,47 +37,103 @@ func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 
 func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	defer testleak.AfterTest(c)()
+	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong).add("col1", mysql.TypeLonglong).build()
+	schema := tableInfoToSchemaForTest(tblInfo)
+	col0 := schema.Columns[0]
+	col1 := schema.Columns[1]
+	schema.Columns = schema.Columns[:1]
+	innerIfNull, err := newFunctionForTest(s.ctx, ast.Ifnull, col1, One.Clone())
+	c.Assert(err, IsNil)
+	outerIfNull, err := newFunctionForTest(s.ctx, ast.Ifnull, col0, innerIfNull)
+	c.Assert(err, IsNil)
 
-	col0 := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: 0, Position: 0, ColName: model.NewCIStr("col0")}
-	col1 := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), FromID: 0, Position: 1, ColName: model.NewCIStr("col1")}
-	ifnullInner := newFunction(ast.Ifnull, col1, One)
-	ifnullOuter := newFunction(ast.Ifnull, col0, ifnullInner)
-
-	// ifnull(null, ifnull(col1, 1))
-	schema := &Schema{Columns: []*Column{col0}}
-	res := EvaluateExprWithNull(s.ctx, schema, ifnullOuter)
-	c.Assert(res.String(), Equals, "ifnull(<nil>, ifnull(col1, 1))")
+	res := EvaluateExprWithNull(s.ctx, schema, outerIfNull)
+	c.Assert(res.String(), Equals, "ifnull(col1, 1)")
 
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
-	res = EvaluateExprWithNull(s.ctx, schema, ifnullOuter)
-	c.Assert(res.Equal(One, s.ctx), IsTrue)
+	res = EvaluateExprWithNull(s.ctx, schema, outerIfNull)
+	c.Assert(res.Equal(s.ctx, One), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestConstant(c *C) {
 	defer testleak.AfterTest(c)()
 
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	c.Assert(Zero.IsCorrelated(), IsFalse)
-	c.Assert(Zero.Decorrelate(nil).Equal(Zero, s.ctx), IsTrue)
-	c.Assert(Zero.HashCode(), DeepEquals, []byte{0x8, 0x0})
-	c.Assert(Zero.Equal(One, s.ctx), IsFalse)
+	c.Assert(Zero.Decorrelate(nil).Equal(s.ctx, Zero), IsTrue)
+	c.Assert(Zero.HashCode(sc), DeepEquals, []byte{0x0, 0x8, 0x0})
+	c.Assert(Zero.Equal(s.ctx, One), IsFalse)
 	res, err := Zero.MarshalJSON()
 	c.Assert(err, IsNil)
 	c.Assert(res, DeepEquals, []byte{0x22, 0x30, 0x22})
 }
 
-func (s *testEvaluatorSuite) TestIsHybridType(c *C) {
+func (s *testEvaluatorSuite) TestIsBinaryLiteral(c *C) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeEnum)}
-	c.Assert(IsHybridType(col), IsTrue)
+	c.Assert(IsBinaryLiteral(col), IsFalse)
 	col.RetType.Tp = mysql.TypeSet
-	c.Assert(IsHybridType(col), IsTrue)
+	c.Assert(IsBinaryLiteral(col), IsFalse)
 	col.RetType.Tp = mysql.TypeBit
-	c.Assert(IsHybridType(col), IsTrue)
+	c.Assert(IsBinaryLiteral(col), IsFalse)
 	col.RetType.Tp = mysql.TypeDuration
-	c.Assert(IsHybridType(col), IsFalse)
+	c.Assert(IsBinaryLiteral(col), IsFalse)
 
 	con := &Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewBinaryLiteralDatum([]byte{byte(0), byte(1)})}
-	c.Assert(IsHybridType(con), IsTrue)
+	c.Assert(IsBinaryLiteral(con), IsTrue)
 	con.Value = types.NewIntDatum(1)
-	c.Assert(IsHybridType(con), IsFalse)
+	c.Assert(IsBinaryLiteral(con), IsFalse)
+}
+
+type testTableBuilder struct {
+	tableName   string
+	columnNames []string
+	tps         []byte
+}
+
+func newTestTableBuilder(tableName string) *testTableBuilder {
+	return &testTableBuilder{tableName: tableName}
+}
+
+func (builder *testTableBuilder) add(name string, tp byte) *testTableBuilder {
+	builder.columnNames = append(builder.columnNames, name)
+	builder.tps = append(builder.tps, tp)
+	return builder
+}
+
+func (builder *testTableBuilder) build() *model.TableInfo {
+	ti := &model.TableInfo{
+		ID:    1,
+		Name:  model.NewCIStr(builder.tableName),
+		State: model.StatePublic,
+	}
+	for i, colName := range builder.columnNames {
+		tp := builder.tps[i]
+		fieldType := types.NewFieldType(tp)
+		fieldType.Flen, fieldType.Decimal = mysql.GetDefaultFieldLengthAndDecimal(tp)
+		fieldType.Charset, fieldType.Collate = types.DefaultCharsetForType(tp)
+		ti.Columns = append(ti.Columns, &model.ColumnInfo{
+			ID:        int64(i + 1),
+			Name:      model.NewCIStr(colName),
+			Offset:    i,
+			FieldType: *fieldType,
+			State:     model.StatePublic,
+		})
+	}
+	return ti
+}
+
+func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
+	columns := tableInfo.Columns
+	schema := NewSchema(make([]*Column, 0, len(columns))...)
+	for i, col := range columns {
+		schema.Append(&Column{
+			UniqueID: i,
+			TblName:  tableInfo.Name,
+			ColName:  col.Name,
+			ID:       col.ID,
+			RetType:  &col.FieldType,
+		})
+	}
+	return schema
 }

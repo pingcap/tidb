@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -23,9 +24,13 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestTruncateTable(c *C) {
@@ -62,24 +67,32 @@ func (s *testSuite) TestCreateTable(c *C) {
 	tk.MustExec(`create table issue312_2 (c float(25));`)
 	rs, err := tk.Exec(`desc issue312_1`)
 	c.Assert(err, IsNil)
-	goCtx := goctx.Background()
+	ctx := context.Background()
+	chk := rs.NewChunk()
+	it := chunk.NewIterator4Chunk(chk)
 	for {
-		row, err1 := rs.Next(goCtx)
+		err1 := rs.Next(ctx, chk)
 		c.Assert(err1, IsNil)
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		c.Assert(row.GetString(1), Equals, "float")
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			c.Assert(row.GetString(1), Equals, "float")
+		}
 	}
 	rs, err = tk.Exec(`desc issue312_2`)
 	c.Assert(err, IsNil)
+	chk = rs.NewChunk()
+	it = chunk.NewIterator4Chunk(chk)
 	for {
-		row, err1 := rs.Next(goCtx)
+		err1 := rs.Next(ctx, chk)
 		c.Assert(err1, IsNil)
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		c.Assert(row.GetString(1), Equals, "double")
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			c.Assert(chk.GetRow(0).GetString(1), Equals, "double")
+		}
 	}
 
 	// table option is auto-increment
@@ -145,8 +158,10 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	now := time.Now().Add(-time.Duration(1 * time.Second)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
-	row, err := r.Next(goctx.Background())
+	chk := r.NewChunk()
+	err = r.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
+	row := chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(now, GreaterEqual, row.GetTime(0).String())
 	tk.MustExec("alter table alter_test add column c3 varchar(50) default 'CURRENT_TIMESTAMP'")
@@ -333,4 +348,82 @@ func (s *testSuite) TestTooLargeIdentifierLength(c *C) {
 	tk.MustExec(fmt.Sprintf("drop index %s on t", indexName1))
 	_, err = tk.Exec(fmt.Sprintf("create index %s on t(c)", indexName2))
 	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
+}
+
+func (s *testSuite) TestShardRowIDBits(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int) shard_row_id_bits = 15")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert t values (%d)", i))
+	}
+	tbl, err := domain.GetDomain(tk.Se).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	var hasShardedID bool
+	var count int
+	c.Assert(tk.Se.NewTxn(), IsNil)
+	err = tbl.IterRecords(tk.Se, tbl.FirstKey(), nil, func(h int64, rec []types.Datum, cols []*table.Column) (more bool, err error) {
+		c.Assert(h, GreaterEqual, int64(0))
+		first8bits := h >> 56
+		if first8bits > 0 {
+			hasShardedID = true
+		}
+		count++
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 100)
+	c.Assert(hasShardedID, IsTrue)
+
+	// Test that audo_increment column can not use shard_row_id_bits.
+	_, err = tk.Exec("create table auto (id int not null auto_increment primary key) shard_row_id_bits = 4")
+	c.Assert(err, NotNil)
+	tk.MustExec("create table auto (id int not null auto_increment primary key) shard_row_id_bits = 0")
+	_, err = tk.Exec("alter table auto shard_row_id_bits = 4")
+	c.Assert(err, NotNil)
+	tk.MustExec("alter table auto shard_row_id_bits = 0")
+}
+
+func (s *testSuite) TestMaxHandleAddIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
+	tk.MustExec(fmt.Sprintf("insert into t values(%v, 1)", math.MaxInt64))
+	tk.MustExec(fmt.Sprintf("insert into t values(%v, 1)", math.MinInt64))
+	tk.MustExec("alter table t add index idx_b(b)")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("create table t1(a bigint UNSIGNED PRIMARY KEY, b int)")
+	tk.MustExec(fmt.Sprintf("insert into t1 values(%v, 1)", uint64(math.MaxUint64)))
+	tk.MustExec(fmt.Sprintf("insert into t1 values(%v, 1)", 0))
+	tk.MustExec("alter table t1 add index idx_b(b)")
+	tk.MustExec("admin check table t1")
+}
+
+func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 1")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(1))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
+	_, err := tk.Exec("set tidb_ddl_reorg_worker_cnt = invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
+	_, err = tk.Exec("set tidb_ddl_reorg_worker_cnt = -1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	res := tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
+	res.Check(testkit.Rows("100"))
+
+	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
+	res.Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBDDLReorgWorkerCount)))
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
+	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
+	res.Check(testkit.Rows("100"))
 }

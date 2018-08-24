@@ -35,4 +35,8 @@ func (*testSysVarSuite) TestSysVar(c *C) {
 
 	f = GetSysVar("wrong-var-name")
 	c.Assert(f, IsNil)
+
+	f = GetSysVar("explicit_defaults_for_timestamp")
+	c.Assert(f, NotNil)
+	c.Assert(f.Value, Equals, "ON")
 }

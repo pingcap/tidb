@@ -15,9 +15,10 @@ package ddl_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"golang.org/x/net/context"
@@ -28,13 +29,15 @@ type testDDLTableSplitSuite struct{}
 var _ = Suite(&testDDLTableSplitSuite{})
 
 func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(0)
+	defer store.Close()
+	session.SetSchemaLease(0)
+	session.SetStatsLease(0)
 	ddl.EnableSplitTableRegion = true
-	dom, err := tidb.BootstrapSession(store)
+	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	ddl.EnableSplitTableRegion = false
 	infoSchema := dom.InfoSchema()
 	c.Assert(infoSchema, NotNil)
@@ -46,7 +49,7 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 		GetRegionCache() *tikv.RegionCache
 	}
 	cache := store.(kvStore).GetRegionCache()
-	loc, err := cache.LocateKey(tikv.NewBackoffer(5000, context.Background()), regionStartKey)
+	loc, err := cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
 	c.Assert(err, IsNil)
 	c.Assert(loc.StartKey, BytesEquals, []byte(regionStartKey))
 }

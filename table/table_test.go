@@ -21,9 +21,9 @@ var _ = Suite(&testTableSuite{})
 
 type testTableSuite struct{}
 
-func (ts *testTableSuite) TestSlice(c *C) {
+func (t *testTableSuite) TestSlice(c *C) {
 	sl := make(Slice, 2)
-	len := sl.Len()
-	c.Assert(len, Equals, 2)
+	length := sl.Len()
+	c.Assert(length, Equals, 2)
 	sl.Swap(0, 1)
 }

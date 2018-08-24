@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 )
 
 // BinaryLiteral is the internal type for storing bit / hex literal type.
@@ -57,14 +58,14 @@ func NewBinaryLiteralFromUint(value uint64, byteSize int) BinaryLiteral {
 	if byteSize != -1 && (byteSize < 1 || byteSize > 8) {
 		panic("Invalid byteSize")
 	}
-	bytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(bytes, value)
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, value)
 	if byteSize == -1 {
-		bytes = trimLeadingZeroBytes(bytes)
+		buf = trimLeadingZeroBytes(buf)
 	} else {
-		bytes = bytes[8-byteSize:]
+		buf = buf[8-byteSize:]
 	}
-	return bytes
+	return buf
 }
 
 // String implements fmt.Stringer interface.
@@ -100,21 +101,38 @@ func (b BinaryLiteral) ToBitLiteralString(trimLeadingZero bool) string {
 }
 
 // ToInt returns the int value for the literal.
-func (b BinaryLiteral) ToInt() (uint64, error) {
-	bytes := trimLeadingZeroBytes(b)
-	length := len(bytes)
+func (b BinaryLiteral) ToInt(sc *stmtctx.StatementContext) (uint64, error) {
+	buf := trimLeadingZeroBytes(b)
+	length := len(buf)
 	if length == 0 {
 		return 0, nil
 	}
 	if length > 8 {
-		return math.MaxUint64, ErrTruncated
+		var err error = ErrTruncatedWrongVal.GenByArgs("BINARY", b)
+		if sc != nil {
+			err = sc.HandleTruncate(err)
+		}
+		return math.MaxUint64, err
 	}
 	// Note: the byte-order is BigEndian.
-	val := uint64(bytes[0])
+	val := uint64(buf[0])
 	for i := 1; i < length; i++ {
-		val = (val << 8) | uint64(bytes[i])
+		val = (val << 8) | uint64(buf[i])
 	}
 	return val, nil
+}
+
+// Compare compares BinaryLiteral to another one
+func (b BinaryLiteral) Compare(b2 BinaryLiteral) int {
+	bufB := trimLeadingZeroBytes(b)
+	bufB2 := trimLeadingZeroBytes(b2)
+	if len(bufB) > len(bufB2) {
+		return 1
+	}
+	if len(bufB) < len(bufB2) {
+		return -1
+	}
+	return bytes.Compare(bufB, bufB2)
 }
 
 // ParseBitStr parses bit string.
@@ -142,7 +160,7 @@ func ParseBitStr(s string) (BinaryLiteral, error) {
 	alignedLength := (len(s) + 7) &^ 7
 	s = ("00000000" + s)[len(s)+8-alignedLength:] // Pad with zero (slice from `-alignedLength`)
 	byteLength := len(s) >> 3
-	bytes := make([]byte, byteLength)
+	buf := make([]byte, byteLength)
 
 	for i := 0; i < byteLength; i++ {
 		strPosition := i << 3
@@ -150,10 +168,10 @@ func ParseBitStr(s string) (BinaryLiteral, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		bytes[i] = byte(val)
+		buf[i] = byte(val)
 	}
 
-	return bytes, nil
+	return buf, nil
 }
 
 // NewBitLiteral parses bit string as BitLiteral type.
@@ -192,11 +210,11 @@ func ParseHexStr(s string) (BinaryLiteral, error) {
 	if len(s)%2 != 0 {
 		s = "0" + s
 	}
-	bytes, err := hex.DecodeString(s)
+	buf, err := hex.DecodeString(s)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return bytes, nil
+	return buf, nil
 }
 
 // NewHexLiteral parses hexadecimal string as HexLiteral type.

@@ -14,6 +14,9 @@
 package config
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"io/ioutil"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -22,30 +25,54 @@ import (
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 
+// Config number limitations
+const (
+	MaxLogFileSize = 4096 // MB
+)
+
+// Valid config maps
+var (
+	ValidStorage = map[string]bool{
+		"mocktikv": true,
+		"tikv":     true,
+	}
+	// checkTableBeforeDrop enable to execute `admin check table` before `drop table`.
+	CheckTableBeforeDrop = false
+	// checkBeforeDropLDFlag is a go build flag.
+	checkBeforeDropLDFlag = "None"
+)
+
 // Config contains configuration options.
 type Config struct {
-	Host         string `toml:"host" json:"host"`
-	Port         int    `toml:"port" json:"port"`
-	Store        string `toml:"store" json:"store"`
-	Path         string `toml:"path" json:"path"`
-	Socket       string `toml:"socket" json:"socket"`
-	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
-	Lease        string `toml:"lease" json:"lease"`
-	RunDDL       bool   `toml:"run-ddl" json:"run-ddl"`
-	SplitTable   bool   `toml:"split-table" json:"split-table"`
-	TokenLimit   int    `toml:"token-limit" json:"token-limit"`
-	EnableChunk  bool   `toml:"enable-chunk" json:"enable-chunk"`
+	Host             string          `toml:"host" json:"host"`
+	AdvertiseAddress string          `toml:"advertise-address" json:"advertise-address"`
+	Port             uint            `toml:"port" json:"port"`
+	Store            string          `toml:"store" json:"store"`
+	Path             string          `toml:"path" json:"path"`
+	Socket           string          `toml:"socket" json:"socket"`
+	Lease            string          `toml:"lease" json:"lease"`
+	RunDDL           bool            `toml:"run-ddl" json:"run-ddl"`
+	SplitTable       bool            `toml:"split-table" json:"split-table"`
+	TokenLimit       uint            `toml:"token-limit" json:"token-limit"`
+	OOMAction        string          `toml:"oom-action" json:"oom-action"`
+	MemQuotaQuery    int64           `toml:"mem-quota-query" json:"mem-quota-query"`
+	EnableStreaming  bool            `toml:"enable-streaming" json:"enable-streaming"`
+	TxnLocalLatches  TxnLocalLatches `toml:"txn-local-latches" json:"txn-local-latches"`
+	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
+	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
+	LowerCaseTableNames int `toml:"lower-case-table-names" json:"lower-case-table-names"`
 
-	Log               Log               `toml:"log" json:"log"`
-	Security          Security          `toml:"security" json:"security"`
-	Status            Status            `toml:"status" json:"status"`
-	Performance       Performance       `toml:"performance" json:"performance"`
-	XProtocol         XProtocol         `toml:"xprotocol" json:"xprotocol"`
-	PlanCache         PlanCache         `toml:"plan-cache" json:"plan-cache"`
-	PreparedPlanCache PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
-	OpenTracing       OpenTracing       `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol     ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
-	TiKVClient        TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Log                 Log               `toml:"log" json:"log"`
+	Security            Security          `toml:"security" json:"security"`
+	Status              Status            `toml:"status" json:"status"`
+	Performance         Performance       `toml:"performance" json:"performance"`
+	XProtocol           XProtocol         `toml:"xprotocol" json:"xprotocol"`
+	PreparedPlanCache   PreparedPlanCache `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing         OpenTracing       `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol       ProxyProtocol     `toml:"proxy-protocol" json:"proxy-protocol"`
+	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
+	Binlog              Binlog            `toml:"binlog" json:"binlog"`
+	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
 }
 
 // Log is the log section of config.
@@ -59,9 +86,10 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile  string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold  int    `toml:"slow-threshold" json:"slow-threshold"`
-	QueryLogMaxLen int    `toml:"query-log-max-len" json:"query-log-max-len"`
+	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold      uint   `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen     uint   `toml:"query-log-max-len" json:"query-log-max-len"`
 }
 
 // Security is the security section of the config.
@@ -70,45 +98,92 @@ type Security struct {
 	SSLCA          string `toml:"ssl-ca" json:"ssl-ca"`
 	SSLCert        string `toml:"ssl-cert" json:"ssl-cert"`
 	SSLKey         string `toml:"ssl-key" json:"ssl-key"`
+	ClusterSSLCA   string `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert string `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey  string `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+}
+
+// ToTLSConfig generates tls's config based on security section of the config.
+func (s *Security) ToTLSConfig() (*tls.Config, error) {
+	var tlsConfig *tls.Config
+	if len(s.ClusterSSLCA) != 0 {
+		var certificates = make([]tls.Certificate, 0)
+		if len(s.ClusterSSLCert) != 0 && len(s.ClusterSSLKey) != 0 {
+			// Load the client certificates from disk
+			certificate, err := tls.LoadX509KeyPair(s.ClusterSSLCert, s.ClusterSSLKey)
+			if err != nil {
+				return nil, errors.Errorf("could not load client key pair: %s", err)
+			}
+			certificates = append(certificates, certificate)
+		}
+
+		// Create a certificate pool from the certificate authority
+		certPool := x509.NewCertPool()
+		ca, err := ioutil.ReadFile(s.ClusterSSLCA)
+		if err != nil {
+			return nil, errors.Errorf("could not read ca certificate: %s", err)
+		}
+
+		// Append the certificates from the CA
+		if !certPool.AppendCertsFromPEM(ca) {
+			return nil, errors.New("failed to append ca certs")
+		}
+
+		tlsConfig = &tls.Config{
+			Certificates: certificates,
+			RootCAs:      certPool,
+		}
+	}
+
+	return tlsConfig, nil
 }
 
 // Status is the status section of the config.
 type Status struct {
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
-	StatusPort      int    `toml:"status-port" json:"status-port"`
+	StatusPort      uint   `toml:"status-port" json:"status-port"`
 	MetricsAddr     string `toml:"metrics-addr" json:"metrics-addr"`
-	MetricsInterval int    `toml:"metrics-interval" json:"metrics-interval"`
+	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
 }
 
 // Performance is the performance section of the config.
 type Performance struct {
-	TCPKeepAlive    bool   `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	RetryLimit      int    `toml:"retry-limit" json:"retry-limit"`
-	JoinConcurrency int    `toml:"join-concurrency" json:"join-concurrency"`
-	CrossJoin       bool   `toml:"cross-join" json:"cross-join"`
-	StatsLease      string `toml:"stats-lease" json:"stats-lease"`
-	RunAutoAnalyze  bool   `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	MaxProcs            uint    `toml:"max-procs" json:"max-procs"`
+	TCPKeepAlive        bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
+	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
+	RunAutoAnalyze      bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
+	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
+	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 }
 
 // XProtocol is the XProtocol section of the config.
 type XProtocol struct {
 	XServer bool   `toml:"xserver" json:"xserver"`
 	XHost   string `toml:"xhost" json:"xhost"`
-	XPort   int    `toml:"xport" json:"xport"`
+	XPort   uint   `toml:"xport" json:"xport"`
 	XSocket string `toml:"xsocket" json:"xsocket"`
 }
 
 // PlanCache is the PlanCache section of the config.
 type PlanCache struct {
-	Enabled  bool  `toml:"enabled" json:"enabled"`
-	Capacity int64 `toml:"capacity" json:"capacity"`
-	Shards   int64 `toml:"shards" json:"shards"`
+	Enabled  bool `toml:"enabled" json:"enabled"`
+	Capacity uint `toml:"capacity" json:"capacity"`
+	Shards   uint `toml:"shards" json:"shards"`
+}
+
+// TxnLocalLatches is the TxnLocalLatches section of the config.
+type TxnLocalLatches struct {
+	Enabled  bool `toml:"enabled" json:"enabled"`
+	Capacity uint `toml:"capacity" json:"capacity"`
 }
 
 // PreparedPlanCache is the PreparedPlanCache section of the config.
 type PreparedPlanCache struct {
-	Enabled  bool  `toml:"enabled" json:"enabled"`
-	Capacity int64 `toml:"capacity" json:"capacity"`
+	Enabled  bool `toml:"enabled" json:"enabled"`
+	Capacity uint `toml:"capacity" json:"capacity"`
 }
 
 // OpenTracing is the opentracing section of the config.
@@ -145,33 +220,61 @@ type ProxyProtocol struct {
 	// * means all networks.
 	Networks string `toml:"networks" json:"networks"`
 	// PROXY protocol header read timeout, Unit is second.
-	HeaderTimeout int `toml:"header-timeout" json:"header-timeout"`
+	HeaderTimeout uint `toml:"header-timeout" json:"header-timeout"`
 }
 
 // TiKVClient is the config for tikv client.
 type TiKVClient struct {
 	// GrpcConnectionCount is the max gRPC connections that will be established
 	// with each tikv-server.
-	GrpcConnectionCount int `toml:"grpc-connection-count" json:"grpc-connection-count"`
+	GrpcConnectionCount uint `toml:"grpc-connection-count" json:"grpc-connection-count"`
+	// After a duration of this time in seconds if the client doesn't see any activity it pings
+	// the server to see if the transport is still alive.
+	GrpcKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
+	// After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
+	// and if no activity is seen even after that the connection is closed.
+	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
+	// CommitTimeout is the max time which command 'commit' will wait.
+	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
+}
+
+// Binlog is the config for binlog.
+type Binlog struct {
+	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
+	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
+	// If IgnoreError is true, when writting binlog meets error, TiDB would
+	// ignore the error.
+	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
 }
 
 var defaultConf = Config{
-	Host:        "0.0.0.0",
-	Port:        4000,
-	Store:       "mocktikv",
-	Path:        "/tmp/tidb",
-	RunDDL:      true,
-	Lease:       "10s",
-	TokenLimit:  1000,
-	EnableChunk: true,
+	Host:             "0.0.0.0",
+	AdvertiseAddress: "",
+	Port:             4000,
+	Store:            "mocktikv",
+	Path:             "/tmp/tidb",
+	RunDDL:           true,
+	SplitTable:       true,
+	Lease:            "45s",
+	TokenLimit:       1000,
+	OOMAction:        "log",
+	MemQuotaQuery:    32 << 30,
+	EnableStreaming:  false,
+	TxnLocalLatches: TxnLocalLatches{
+		Enabled:  false,
+		Capacity: 10240000,
+	},
+	LowerCaseTableNames: 2,
 	Log: Log{
 		Level:  "info",
 		Format: "text",
 		File: logutil.FileLogConfig{
 			LogRotate: true,
+			MaxSize:   logutil.DefaultLogMaxSize,
 		},
-		SlowThreshold:  300,
-		QueryLogMaxLen: 2048,
+		SlowThreshold:      300,
+		ExpensiveThreshold: 10000,
+		QueryLogMaxLen:     2048,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -179,25 +282,22 @@ var defaultConf = Config{
 		MetricsInterval: 15,
 	},
 	Performance: Performance{
-		TCPKeepAlive:    true,
-		RetryLimit:      10,
-		JoinConcurrency: 5,
-		CrossJoin:       true,
-		StatsLease:      "3s",
-		RunAutoAnalyze:  true,
+		TCPKeepAlive:        true,
+		CrossJoin:           true,
+		StatsLease:          "3s",
+		RunAutoAnalyze:      true,
+		StmtCountLimit:      5000,
+		FeedbackProbability: 0.05,
+		QueryFeedbackLimit:  1024,
+		PseudoEstimateRatio: 0.8,
 	},
 	XProtocol: XProtocol{
-		XHost: "0.0.0.0",
-		XPort: 14000,
+		XHost: "",
+		XPort: 0,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
-	},
-	PlanCache: PlanCache{
-		Enabled:  false,
-		Capacity: 2560,
-		Shards:   256,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:  false,
@@ -212,7 +312,13 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount: 16,
+		GrpcConnectionCount:  16,
+		GrpcKeepAliveTime:    10,
+		GrpcKeepAliveTimeout: 3,
+		CommitTimeout:        "41s",
+	},
+	Binlog: Binlog{
+		WriteTimeout: "15s",
 	},
 }
 
@@ -271,3 +377,18 @@ func (t *OpenTracing) ToTracingConfig() *tracing.Configuration {
 	ret.Sampler.SamplingRefreshInterval = t.Sampler.SamplingRefreshInterval
 	return ret
 }
+
+func init() {
+	if checkBeforeDropLDFlag == "1" {
+		CheckTableBeforeDrop = true
+	}
+}
+
+// The following constants represents the valid action configurations for OOMAction.
+// NOTE: Althrough the values is case insensitiv, we should use lower-case
+// strings because the configuration value will be transformed to lower-case
+// string and compared with these constants in the further usage.
+const (
+	OOMActionCancel = "cancel"
+	OOMActionLog    = "log"
+)

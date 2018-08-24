@@ -28,7 +28,7 @@ var (
 	TiDBReleaseVersion = "None"
 
 	// ServerVersion is the version information of this tidb-server in MySQL's format.
-	ServerVersion = fmt.Sprintf("5.7.1-TiDB-%s", TiDBReleaseVersion)
+	ServerVersion = fmt.Sprintf("5.7.10-TiDB-%s", TiDBReleaseVersion)
 )
 
 // Header information.
@@ -55,29 +55,34 @@ const (
 	ServerPSOutParams              uint16 = 0x1000
 )
 
+// HasCursorExistsFlag return true if cursor exists indicated by server status.
+func HasCursorExistsFlag(serverStatus uint16) bool {
+	return serverStatus&ServerStatusCursorExists > 0
+}
+
 // Identifier length limitations.
 // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 const (
 	// MaxPayloadLen is the max packet payload length.
-	MaxPayloadLen int = 1<<24 - 1
+	MaxPayloadLen = 1<<24 - 1
 	// MaxTableNameLength is max length of table name identifier.
-	MaxTableNameLength int = 64
+	MaxTableNameLength = 64
 	// MaxDatabaseNameLength is max length of database name identifier.
-	MaxDatabaseNameLength int = 64
+	MaxDatabaseNameLength = 64
 	// MaxColumnNameLength is max length of column name identifier.
-	MaxColumnNameLength int = 64
+	MaxColumnNameLength = 64
 	// MaxKeyParts is max length of key parts.
-	MaxKeyParts int = 16
+	MaxKeyParts = 16
 	// MaxIndexIdentifierLen is max length of index identifier.
-	MaxIndexIdentifierLen int = 64
+	MaxIndexIdentifierLen = 64
 	// MaxConstraintIdentifierLen is max length of constrain identifier.
-	MaxConstraintIdentifierLen int = 64
+	MaxConstraintIdentifierLen = 64
 	// MaxViewIdentifierLen is max length of view identifier.
-	MaxViewIdentifierLen int = 64
+	MaxViewIdentifierLen = 64
 	// MaxAliasIdentifierLen is max length of alias identifier.
-	MaxAliasIdentifierLen int = 256
+	MaxAliasIdentifierLen = 256
 	// MaxUserDefinedVariableLen is max length of user-defined variable.
-	MaxUserDefinedVariableLen int = 64
+	MaxUserDefinedVariableLen = 64
 )
 
 // ErrTextLength error text length limit.
@@ -217,6 +222,7 @@ const (
 )
 
 // AllPrivMask is the mask for PrivilegeType with all bits set to 1.
+// If it's passed to RequestVerification, it means any privilege would be OK.
 const AllPrivMask = AllPriv - 1
 
 // MySQL type maximum length.
@@ -227,6 +233,8 @@ const (
 
 	MaxIntWidth             = 20
 	MaxRealWidth            = 23
+	MaxFloatingTypeScale    = 30
+	MaxFloatingTypeWidth    = 255
 	MaxDecimalScale         = 30
 	MaxDecimalWidth         = 65
 	MaxDateWidth            = 10 // YYYY-MM-DD.
@@ -242,12 +250,6 @@ const (
 const (
 	MaxFieldCharLength    = 255
 	MaxFieldVarCharLength = 65535
-)
-
-// MySQL precision.
-const (
-	PrecisionForDouble = 53
-	PrecisionForFloat  = 24
 )
 
 // MaxTypeSetMembers is the number of set members.

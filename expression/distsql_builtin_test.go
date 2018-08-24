@@ -20,20 +20,33 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	log "github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testEvalSuite{})
 
-type testEvalSuite struct{}
+type testEvalSuite struct {
+	colID int
+}
+
+func (s *testEvalSuite) SetUpSuite(c *C) {
+	s.colID = 0
+}
+
+func (s *testEvalSuite) allocColID() int {
+	s.colID++
+	return s.colID
+}
 
 // TestEval test expr.Eval().
 // TODO: add more tests.
 func (s *testEvalSuite) TestEval(c *C) {
-	row := types.DatumRow{types.NewDatum(100)}
+	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(100)}).ToRow()
 	fieldTps := make([]*types.FieldType, 1)
-	fieldTps[0] = types.NewFieldType(mysql.TypeDouble)
+	fieldTps[0] = types.NewFieldType(mysql.TypeLonglong)
 	tests := []struct {
 		expr   *tipb.Expr
 		result types.Datum
@@ -78,199 +91,6 @@ func (s *testEvalSuite) TestEval(c *C) {
 		{
 			columnExpr(0),
 			types.NewIntDatum(100),
-		},
-		// Comparison operations.
-		{
-			buildExpr(tipb.ExprType_LT, types.NewIntDatum(100), types.NewIntDatum(1)),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_LT, types.NewIntDatum(1), types.NewIntDatum(100)),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_LT, types.NewIntDatum(100), types.Datum{}),
-			types.Datum{},
-		},
-		{
-			buildExpr(tipb.ExprType_LE, types.NewIntDatum(100), types.NewIntDatum(1)),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_LE, types.NewIntDatum(1), types.NewIntDatum(1)),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_LE, types.NewIntDatum(100), types.Datum{}),
-			types.Datum{},
-		},
-		{
-			buildExpr(tipb.ExprType_EQ, types.NewIntDatum(100), types.NewIntDatum(1)),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_EQ, types.NewIntDatum(100), types.NewIntDatum(100)),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_EQ, types.NewIntDatum(100), types.Datum{}),
-			types.Datum{},
-		},
-		{
-			buildExpr(tipb.ExprType_NE, types.NewIntDatum(100), types.NewIntDatum(100)),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_NE, types.NewIntDatum(100), types.NewIntDatum(1)),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_NE, types.NewIntDatum(100), types.Datum{}),
-			types.Datum{},
-		},
-		{
-			buildExpr(tipb.ExprType_GE, types.NewIntDatum(1), types.NewIntDatum(100)),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_GE, types.NewIntDatum(100), types.NewIntDatum(100)),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_GE, types.NewIntDatum(100), types.Datum{}),
-			types.Datum{},
-		},
-		{
-			buildExpr(tipb.ExprType_GT, types.NewIntDatum(100), types.NewIntDatum(100)),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_GT, types.NewIntDatum(100), types.NewIntDatum(1)),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_GT, types.NewIntDatum(100), types.Datum{}),
-			types.Datum{},
-		},
-		{
-			buildExpr(tipb.ExprType_NullEQ, types.NewIntDatum(1), types.Datum{}),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_NullEQ, types.Datum{}, types.Datum{}),
-			types.NewIntDatum(1),
-		},
-		// Logic operation.
-		{
-			buildExpr(tipb.ExprType_And, types.NewIntDatum(0), types.NewIntDatum(1)),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_And, buildExpr(tipb.ExprType_And, types.NewIntDatum(1), types.NewIntDatum(1)), buildExpr(tipb.ExprType_And, types.NewIntDatum(0), types.NewIntDatum(1))),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_And, types.NewIntDatum(1), types.NewIntDatum(1)),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_And, types.NewIntDatum(0), types.Datum{}),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_And, types.Datum{}, types.NewIntDatum(0)),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_And, types.NewIntDatum(1), types.Datum{}),
-			types.Datum{},
-		},
-		{
-			buildExpr(tipb.ExprType_Or, types.NewIntDatum(0), types.NewIntDatum(0)),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_Or, types.NewIntDatum(0), types.NewIntDatum(1)),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_Or, types.NewIntDatum(0), types.Datum{}),
-			types.Datum{},
-		},
-		{
-			buildExpr(tipb.ExprType_Or, types.NewIntDatum(1), types.Datum{}),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_Or, types.Datum{}, types.NewIntDatum(1)),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_And,
-				buildExpr(tipb.ExprType_EQ, types.NewIntDatum(1), types.NewIntDatum(1)),
-				buildExpr(tipb.ExprType_EQ, types.NewIntDatum(1), types.NewIntDatum(1))),
-			types.NewIntDatum(1),
-		},
-		{
-			notExpr(datumExpr(types.NewIntDatum(1))),
-			types.NewIntDatum(0),
-		},
-		{
-			notExpr(datumExpr(types.NewIntDatum(0))),
-			types.NewIntDatum(1),
-		},
-		{
-			notExpr(datumExpr(types.Datum{})),
-			types.Datum{},
-		},
-		// Arithmetic operation.
-		{
-			buildExpr(tipb.ExprType_Plus, types.NewIntDatum(-1), types.NewIntDatum(1)),
-			types.NewIntDatum(0),
-		},
-		{
-			buildExpr(tipb.ExprType_Plus, types.NewIntDatum(-1), types.NewFloat64Datum(1.5)),
-			types.NewFloat64Datum(0.5),
-		},
-		{
-			buildExpr(tipb.ExprType_Minus, types.NewIntDatum(-1), types.NewIntDatum(1)),
-			types.NewIntDatum(-2),
-		},
-		{
-			buildExpr(tipb.ExprType_Minus, types.NewIntDatum(-1), types.NewFloat64Datum(1.5)),
-			types.NewFloat64Datum(-2.5),
-		},
-		{
-			buildExpr(tipb.ExprType_Mul, types.NewFloat64Datum(-1), types.NewFloat64Datum(1)),
-			types.NewFloat64Datum(-1),
-		},
-		{
-			buildExpr(tipb.ExprType_Mul, types.NewFloat64Datum(-1.5), types.NewFloat64Datum(2)),
-			types.NewFloat64Datum(-3),
-		},
-		{
-			buildExpr(tipb.ExprType_Div, types.NewFloat64Datum(-3), types.NewFloat64Datum(2)),
-			types.NewFloat64Datum(-1.5),
-		},
-		{
-			buildExpr(tipb.ExprType_Div, types.NewFloat64Datum(-3), types.NewFloat64Datum(0)),
-			types.NewDatum(nil),
-		},
-		{
-			buildExpr(tipb.ExprType_IntDiv, types.NewIntDatum(3), types.NewIntDatum(2)),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_IntDiv, types.NewFloat64Datum(3.0), types.NewFloat64Datum(1.9)),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_Mod, types.NewIntDatum(3), types.NewIntDatum(2)),
-			types.NewIntDatum(1),
-		},
-		{
-			buildExpr(tipb.ExprType_Mod, types.NewFloat64Datum(3.0), types.NewFloat64Datum(1.9)),
-			types.NewFloat64Datum(1.1),
 		},
 	}
 	sc := new(stmtctx.StatementContext)
@@ -327,7 +147,11 @@ func datumExpr(d types.Datum) *tipb.Expr {
 		expr.Val = codec.EncodeInt(nil, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlDecimal:
 		expr.Tp = tipb.ExprType_MysqlDecimal
-		expr.Val = codec.EncodeDecimal(nil, d)
+		var err error
+		expr.Val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
+		if err != nil {
+			log.Warnf("err happened when EncodeDecimal in datumExpr:%s", err.Error())
+		}
 	default:
 		expr.Tp = tipb.ExprType_Null
 	}
@@ -339,48 +163,4 @@ func columnExpr(columnID int64) *tipb.Expr {
 	expr.Tp = tipb.ExprType_ColumnRef
 	expr.Val = codec.EncodeInt(nil, columnID)
 	return expr
-}
-
-func notExpr(value interface{}) *tipb.Expr {
-	expr := new(tipb.Expr)
-	expr.Tp = tipb.ExprType_Not
-	switch x := value.(type) {
-	case types.Datum:
-		expr.Children = []*tipb.Expr{datumExpr(x)}
-	case *tipb.Expr:
-		expr.Children = []*tipb.Expr{x}
-	}
-	return expr
-}
-
-func (s *testEvalSuite) TestEvalIsNull(c *C) {
-	null, trueAns, falseAns := types.Datum{}, types.NewIntDatum(1), types.NewIntDatum(0)
-	tests := []struct {
-		expr   *tipb.Expr
-		result types.Datum
-	}{
-		{
-			expr:   buildExpr(tipb.ExprType_IsNull, types.NewStringDatum("abc")),
-			result: falseAns,
-		},
-		{
-			expr:   buildExpr(tipb.ExprType_IsNull, null),
-			result: trueAns,
-		},
-		{
-			expr:   buildExpr(tipb.ExprType_IsNull, types.NewIntDatum(0)),
-			result: falseAns,
-		},
-	}
-	sc := new(stmtctx.StatementContext)
-	for _, tt := range tests {
-		expr, err := PBToExpr(tt.expr, nil, sc)
-		c.Assert(err, IsNil, Commentf("%v", tt))
-		result, err := expr.Eval(nil)
-		c.Assert(err, IsNil, Commentf("%v", tt))
-		c.Assert(result.Kind(), Equals, tt.result.Kind(), Commentf("%v", tt))
-		cmp, err := result.CompareDatum(sc, &tt.result)
-		c.Assert(err, IsNil, Commentf("%v", tt))
-		c.Assert(cmp, Equals, 0, Commentf("%v", tt))
-	}
 }

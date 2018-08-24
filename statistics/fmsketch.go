@@ -17,6 +17,7 @@ import (
 	"hash"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -61,8 +62,8 @@ func (s *FMSketch) insertHashValue(hashVal uint64) {
 }
 
 // InsertValue inserts a value into the FM sketch.
-func (s *FMSketch) InsertValue(value types.Datum) error {
-	bytes, err := codec.EncodeValue(nil, value)
+func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) error {
+	bytes, err := codec.EncodeValue(sc, nil, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -75,10 +76,10 @@ func (s *FMSketch) InsertValue(value types.Datum) error {
 	return nil
 }
 
-func buildFMSketch(values []types.Datum, maxSize int) (*FMSketch, int64, error) {
+func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize int) (*FMSketch, int64, error) {
 	s := NewFMSketch(maxSize)
 	for _, value := range values {
-		err := s.InsertValue(value)
+		err := s.InsertValue(sc, value)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}

@@ -17,7 +17,7 @@ import (
 	"sync/atomic"
 
 	"github.com/juju/errors"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 var _ Manager = &mockManager{}
@@ -28,11 +28,11 @@ var _ Manager = &mockManager{}
 type mockManager struct {
 	owner  int32
 	id     string // id is the ID of manager.
-	cancel goctx.CancelFunc
+	cancel context.CancelFunc
 }
 
 // NewMockManager creates a new mock Manager.
-func NewMockManager(id string, cancel goctx.CancelFunc) Manager {
+func NewMockManager(id string, cancel context.CancelFunc) Manager {
 	return &mockManager{
 		id:     id,
 		cancel: cancel,
@@ -64,7 +64,7 @@ func (m *mockManager) Cancel() {
 }
 
 // GetOwnerID implements Manager.GetOwnerID interface.
-func (m *mockManager) GetOwnerID(ctx goctx.Context) (string, error) {
+func (m *mockManager) GetOwnerID(ctx context.Context) (string, error) {
 	if m.IsOwner() {
 		return m.ID(), nil
 	}
@@ -72,7 +72,7 @@ func (m *mockManager) GetOwnerID(ctx goctx.Context) (string, error) {
 }
 
 // CampaignOwner implements Manager.CampaignOwner interface.
-func (m *mockManager) CampaignOwner(_ goctx.Context) error {
+func (m *mockManager) CampaignOwner(_ context.Context) error {
 	m.SetOwner(true)
 	return nil
 }

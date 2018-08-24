@@ -2,39 +2,43 @@
 
 [![Build Status](https://travis-ci.org/pingcap/tidb.svg?branch=master)](https://travis-ci.org/pingcap/tidb)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb)](https://goreportcard.com/report/github.com/pingcap/tidb)
-![Project Status](https://img.shields.io/badge/version-1.0-green.svg)
+![GitHub release](https://img.shields.io/github/release/pingcap/tidb.svg)
 [![CircleCI Status](https://circleci.com/gh/pingcap/tidb.svg?style=shield)](https://circleci.com/gh/pingcap/tidb)
 [![Coverage Status](https://coveralls.io/repos/github/pingcap/tidb/badge.svg?branch=master)](https://coveralls.io/github/pingcap/tidb?branch=master)
 
 ## What is TiDB?
 
-TiDB (The pronunciation is: /'taɪdiːbi:/ tai-D-B, etymology: titanium) is a Hybrid Transactional/Analytical Processing (HTAP) database. Inspired by the design of Google F1 and Google Spanner, TiDB features infinite horizontal scalability, strong consistency, and high availability. The goal of TiDB is to serve as a one-stop solution for online transactions and analyses.
+TiDB (The pronunciation is: /'taɪdiːbi:/ tai-D-B, etymology: titanium) is an open-source distributed scalable Hybrid Transactional and Analytical Processing (HTAP) database. It features infinite horizontal scalability, strong consistency, and high availability. TiDB is MySQL compatible and serves as a one-stop data warehouse for both OLTP (Online Transactional Processing) and OLAP (Online Analytical Processing) workloads.
 
 - __Horizontal scalability__
 
-Grow TiDB as your business grows. You can increase the capacity for storage and computation simply by adding more machines.
+    TiDB provides horizontal scalability simply by adding new nodes. Never worry about infrastructure capacity ever again.
 
-- __Compatible with MySQL protocol__
+- __MySQL compatibility__
 
-Use TiDB as MySQL. You can replace MySQL with TiDB to power your application without changing a single line of code in most cases.
+    Easily replace MySQL with TiDB to power your applications without changing a single line of code in most cases and still benefit from the MySQL ecosystem.
 
-- __Automatic Failover and high availability__
+- __Distributed transaction__
 
-Your data and applications are always-on. TiDB automatically handles malfunctions and protects your applications from machine failures or even downtime of an entire data-center.
+    TiDB is your source of truth, guaranteeing ACID compliance, so your data is accurate and reliable anytime, anywhere.
 
-- __Consistent distributed transactions__
+- __Cloud Native__
 
-Think of TiDB as a single-machine RDBMS. You can start a transaction that crosses multiple machines without worrying about consistency. TiDB makes your application code simple and robust.
+    TiDB is designed to work in the cloud -- public, private, or hybrid -- making deployment, provisioning, and maintenance drop-dead simple.
 
-- __Online DDL__
+- __No more ETL__
 
-Evolve TiDB schemas as your requirement changes. You can add new columns and indexes without stopping or affecting the on-going operations.
+    ETL (Extract, Transform and Load) is no longer necessary with TiDB's hybrid OLTP/OLAP architecture, enabling you to create new values for your users, easier and faster.
 
-- __Multiple storage engine support__
+- __High availability__
 
-Power TiDB with your most favorite engines. TiDB supports local storage engines such as GolevelDB and BoltDB, as well as [TiKV](https://github.com/pingcap/tikv), a distributed storage engine.
+    With TiDB, your data and applications are always on and continuously available, so your users are never disappointed.
 
 For more details, see [How we build TiDB](https://pingcap.github.io/blog/2016/10/17/how-we-build-tidb/).
+
+## Adopters
+
+You can view the list of TiDB adopters [here](https://github.com/pingcap/docs/blob/master/adopters.md).
 
 ## Roadmap
 
@@ -59,6 +63,7 @@ for details on submitting patches and the contribution workflow.
 
 ## Connect with us
 
+- [**Contact PingCAP Team**](http://bit.ly/contact_us_via_github)
 - **Twitter**: [@PingCAP](https://twitter.com/PingCAP)
 - **Reddit**: https://www.reddit.com/r/TiDB/
 - **Stack Overflow**: https://stackoverflow.com/questions/tagged/tidb

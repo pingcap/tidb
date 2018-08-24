@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/perfschema"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -43,7 +43,7 @@ type testSuite struct {
 
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -178,6 +178,22 @@ func (*testSuite) TestT(c *C) {
 	tb, err = is.TableByName(model.NewCIStr("information_schema"), model.NewCIStr("partitions"))
 	c.Assert(err, IsNil)
 	c.Assert(tb, NotNil)
+
+	err = kv.RunInNewTxn(store, true, func(txn kv.Transaction) error {
+		meta.NewMeta(txn).CreateTable(dbID, tblInfo)
+		return errors.Trace(err)
+	})
+	c.Assert(err, IsNil)
+	txn, err = store.Begin()
+	c.Assert(err, IsNil)
+	_, err = builder.ApplyDiff(meta.NewMeta(txn), &model.SchemaDiff{Type: model.ActionRenameTable, SchemaID: dbID, TableID: tbID, OldSchemaID: dbID})
+	c.Assert(err, IsNil)
+	txn.Rollback()
+	builder.Build()
+	is = handle.Get()
+	schema, ok = is.SchemaByID(dbID)
+	c.Assert(ok, IsTrue)
+	c.Assert(len(schema.Tables), Equals, 1)
 }
 
 func checkApplyCreateNonExistsSchemaDoesNotPanic(c *C, txn kv.Transaction, builder *infoschema.Builder) {
@@ -198,7 +214,7 @@ func (testSuite) TestConcurrent(c *C) {
 	storeCount := 5
 	stores := make([]kv.Storage, storeCount)
 	for i := 0; i < storeCount; i++ {
-		store, err := tikv.NewMockTikvStore()
+		store, err := mockstore.NewMockTikvStore()
 		c.Assert(err, IsNil)
 		stores[i] = store
 	}
@@ -221,7 +237,7 @@ func (testSuite) TestConcurrent(c *C) {
 // TestInfoTables makes sure that all tables of information_schema could be found in infoschema handle.
 func (*testSuite) TestInfoTables(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	handle := infoschema.NewHandle(store)
@@ -262,6 +278,7 @@ func (*testSuite) TestInfoTables(c *C) {
 		"OPTIMIZER_TRACE",
 		"TABLESPACES",
 		"COLLATION_CHARACTER_SET_APPLICABILITY",
+		"PROCESSLIST",
 	}
 	for _, t := range info_tables {
 		tb, err1 := is.TableByName(model.NewCIStr(infoschema.Name), model.NewCIStr(t))

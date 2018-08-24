@@ -19,18 +19,20 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"sort"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
 	"github.com/juju/errors"
-	lumberjack "gopkg.in/natefinch/lumberjack.v2"
+	log "github.com/sirupsen/logrus"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 const (
 	defaultLogTimeFormat = "2006/01/02 15:04:05.000"
-	defaultLogMaxSize    = 300 // MB
-	defaultLogFormat     = "text"
-	defaultLogLevel      = log.InfoLevel
+	// DefaultLogMaxSize is the default size of log files.
+	DefaultLogMaxSize = 300 // MB
+	defaultLogFormat  = "text"
+	defaultLogLevel   = log.InfoLevel
 )
 
 // FileLogConfig serializes file log related config in toml/json.
@@ -40,11 +42,11 @@ type FileLogConfig struct {
 	// Is log rotate enabled. TODO.
 	LogRotate bool `toml:"log-rotate" json:"log-rotate"`
 	// Max size for a single file, in MB.
-	MaxSize int `toml:"max-size" json:"max-size"`
+	MaxSize uint `toml:"max-size" json:"max-size"`
 	// Max log keep days, default is never deleting.
-	MaxDays int `toml:"max-days" json:"max-days"`
+	MaxDays uint `toml:"max-days" json:"max-days"`
 	// Maximum number of old log files to retain.
-	MaxBackups int `toml:"max-backups" json:"max-backups"`
+	MaxBackups uint `toml:"max-backups" json:"max-backups"`
 }
 
 // LogConfig serializes log related config in toml/json.
@@ -63,7 +65,7 @@ type LogConfig struct {
 
 // isSKippedPackageName tests wether path name is on log library calling stack.
 func isSkippedPackageName(name string) bool {
-	return strings.Contains(name, "github.com/Sirupsen/logrus") ||
+	return strings.Contains(name, "github.com/sirupsen/logrus") ||
 		strings.Contains(name, "github.com/coreos/pkg/capnslog")
 }
 
@@ -130,10 +132,11 @@ func logTypeToColor(level log.Level) string {
 	return "[0;37"
 }
 
-// textFormatter is for compatability with ngaut/log
+// textFormatter is for compatibility with ngaut/log
 type textFormatter struct {
 	DisableTimestamp bool
 	EnableColors     bool
+	EnableEntryOrder bool
 }
 
 // Format implements logrus.Formatter
@@ -157,11 +160,26 @@ func (f *textFormatter) Format(entry *log.Entry) ([]byte, error) {
 		fmt.Fprintf(b, "%s:%v:", file, entry.Data["line"])
 	}
 	fmt.Fprintf(b, " [%s] %s", entry.Level.String(), entry.Message)
-	for k, v := range entry.Data {
-		if k != "file" && k != "line" {
-			fmt.Fprintf(b, " %v=%v", k, v)
+
+	if f.EnableEntryOrder {
+		keys := make([]string, 0, len(entry.Data))
+		for k := range entry.Data {
+			if k != "file" && k != "line" {
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(b, " %v=%v", k, entry.Data[k])
+		}
+	} else {
+		for k, v := range entry.Data {
+			if k != "file" && k != "line" {
+				fmt.Fprintf(b, " %v=%v", k, v)
+			}
 		}
 	}
+
 	b.WriteByte('\n')
 
 	if f.EnableColors {
@@ -205,15 +223,15 @@ func initFileLog(cfg *FileLogConfig, logger *log.Logger) error {
 		}
 	}
 	if cfg.MaxSize == 0 {
-		cfg.MaxSize = defaultLogMaxSize
+		cfg.MaxSize = DefaultLogMaxSize
 	}
 
 	// use lumberjack to logrotate
 	output := &lumberjack.Logger{
 		Filename:   cfg.Filename,
-		MaxSize:    cfg.MaxSize,
-		MaxBackups: cfg.MaxBackups,
-		MaxAge:     cfg.MaxDays,
+		MaxSize:    int(cfg.MaxSize),
+		MaxBackups: int(cfg.MaxBackups),
+		MaxAge:     int(cfg.MaxDays),
 		LocalTime:  true,
 	}
 
@@ -228,7 +246,7 @@ func initFileLog(cfg *FileLogConfig, logger *log.Logger) error {
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
 var SlowQueryLogger = log.StandardLogger()
 
-// InitLogger initalizes PD's logger.
+// InitLogger initializes PD's logger.
 func InitLogger(cfg *LogConfig) error {
 	log.SetLevel(stringToLogLevel(cfg.Level))
 	log.AddHook(&contextHook{})
@@ -255,7 +273,12 @@ func InitLogger(cfg *LogConfig) error {
 		hooks := make(log.LevelHooks)
 		hooks.Add(&contextHook{})
 		SlowQueryLogger.Hooks = hooks
-		SlowQueryLogger.Formatter = formatter
+		slowQueryFormatter := stringToLogFormatter(cfg.Format, cfg.DisableTimestamp)
+		ft, ok := slowQueryFormatter.(*textFormatter)
+		if ok {
+			ft.EnableEntryOrder = true
+		}
+		SlowQueryLogger.Formatter = slowQueryFormatter
 	}
 
 	return nil

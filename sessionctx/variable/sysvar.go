@@ -17,8 +17,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/charset"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -56,20 +59,26 @@ func GetSysVar(name string) *SysVar {
 
 // Variable error codes.
 const (
-	CodeUnknownStatusVar terror.ErrCode = 1
-	CodeUnknownSystemVar terror.ErrCode = 1193
-	CodeIncorrectScope   terror.ErrCode = 1238
-	CodeUnknownTimeZone  terror.ErrCode = 1298
-	CodeReadOnly         terror.ErrCode = 1621
+	CodeUnknownStatusVar    terror.ErrCode = 1
+	CodeUnknownSystemVar    terror.ErrCode = mysql.ErrUnknownSystemVariable
+	CodeIncorrectScope      terror.ErrCode = mysql.ErrIncorrectGlobalLocalVar
+	CodeUnknownTimeZone     terror.ErrCode = mysql.ErrUnknownTimeZone
+	CodeReadOnly            terror.ErrCode = mysql.ErrVariableIsReadonly
+	CodeWrongValueForVar    terror.ErrCode = mysql.ErrWrongValueForVar
+	CodeWrongTypeForVar     terror.ErrCode = mysql.ErrWrongTypeForVar
+	CodeTruncatedWrongValue terror.ErrCode = mysql.ErrTruncatedWrongValue
 )
 
 // Variable errors
 var (
-	UnknownStatusVar   = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
-	UnknownSystemVar   = terror.ClassVariable.New(CodeUnknownSystemVar, "unknown system variable '%s'")
-	ErrIncorrectScope  = terror.ClassVariable.New(CodeIncorrectScope, "Incorrect variable scope")
-	ErrUnknownTimeZone = terror.ClassVariable.New(CodeUnknownTimeZone, "unknown or incorrect time zone: %s")
-	ErrReadOnly        = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
+	UnknownStatusVar       = terror.ClassVariable.New(CodeUnknownStatusVar, "unknown status variable")
+	UnknownSystemVar       = terror.ClassVariable.New(CodeUnknownSystemVar, mysql.MySQLErrName[mysql.ErrUnknownSystemVariable])
+	ErrIncorrectScope      = terror.ClassVariable.New(CodeIncorrectScope, mysql.MySQLErrName[mysql.ErrIncorrectGlobalLocalVar])
+	ErrUnknownTimeZone     = terror.ClassVariable.New(CodeUnknownTimeZone, mysql.MySQLErrName[mysql.ErrUnknownTimeZone])
+	ErrReadOnly            = terror.ClassVariable.New(CodeReadOnly, "variable is read only")
+	ErrWrongValueForVar    = terror.ClassVariable.New(CodeWrongValueForVar, mysql.MySQLErrName[mysql.ErrWrongValueForVar])
+	ErrWrongTypeForVar     = terror.ClassVariable.New(CodeWrongTypeForVar, mysql.MySQLErrName[mysql.ErrWrongTypeForVar])
+	ErrTruncatedWrongValue = terror.ClassVariable.New(CodeTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 )
 
 func init() {
@@ -77,13 +86,17 @@ func init() {
 	for _, v := range defaultSysVars {
 		SysVars[v.Name] = v
 	}
+	initSynonymsSysVariables()
 
 	// Register terror to mysql error map.
 	mySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeUnknownSystemVar: mysql.ErrUnknownSystemVariable,
-		CodeIncorrectScope:   mysql.ErrIncorrectGlobalLocalVar,
-		CodeUnknownTimeZone:  mysql.ErrUnknownTimeZone,
-		CodeReadOnly:         mysql.ErrVariableIsReadonly,
+		CodeUnknownSystemVar:    mysql.ErrUnknownSystemVariable,
+		CodeIncorrectScope:      mysql.ErrIncorrectGlobalLocalVar,
+		CodeUnknownTimeZone:     mysql.ErrUnknownTimeZone,
+		CodeReadOnly:            mysql.ErrVariableIsReadonly,
+		CodeWrongValueForVar:    mysql.ErrWrongValueForVar,
+		CodeWrongTypeForVar:     mysql.ErrWrongTypeForVar,
+		CodeTruncatedWrongValue: mysql.ErrTruncatedWrongValue,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassVariable] = mySQLErrCodes
 }
@@ -98,32 +111,32 @@ func boolToIntStr(b bool) string {
 // we only support MySQL now
 var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "gtid_mode", "OFF"},
-	{ScopeGlobal, "flush_time", "0"},
-	{ScopeSession, "pseudo_slave_mode", ""},
+	{ScopeGlobal, FlushTime, "0"},
+	{ScopeSession, PseudoSlaveMode, ""},
 	{ScopeNone, "performance_schema_max_mutex_classes", "200"},
-	{ScopeGlobal | ScopeSession, "low_priority_updates", "OFF"},
-	{ScopeGlobal | ScopeSession, "session_track_gtids", ""},
+	{ScopeGlobal | ScopeSession, LowPriorityUpdates, "0"},
+	{ScopeGlobal | ScopeSession, SessionTrackGtids, "OFF"},
 	{ScopeGlobal | ScopeSession, "ndbinfo_max_rows", ""},
 	{ScopeGlobal | ScopeSession, "ndb_index_stat_option", ""},
-	{ScopeGlobal | ScopeSession, "old_passwords", "0"},
+	{ScopeGlobal | ScopeSession, OldPasswords, "0"},
 	{ScopeNone, "innodb_version", "5.6.25"},
-	{ScopeGlobal, "max_connections", "151"},
-	{ScopeGlobal | ScopeSession, "big_tables", "OFF"},
+	{ScopeGlobal, MaxConnections, "151"},
+	{ScopeGlobal | ScopeSession, BigTables, "0"},
 	{ScopeNone, "skip_external_locking", "ON"},
 	{ScopeGlobal, "slave_pending_jobs_size_max", "16777216"},
 	{ScopeNone, "innodb_sync_array_size", "1"},
 	{ScopeSession, "rand_seed2", ""},
 	{ScopeGlobal, "validate_password_number_count", "1"},
 	{ScopeSession, "gtid_next", ""},
-	{ScopeGlobal | ScopeSession, "sql_select_limit", "18446744073709551615"},
+	{ScopeGlobal | ScopeSession, SQLSelectLimit, "18446744073709551615"},
 	{ScopeGlobal, "ndb_show_foreign_key_mock_tables", ""},
 	{ScopeNone, "multi_range_count", "256"},
-	{ScopeGlobal | ScopeSession, "default_week_format", "0"},
+	{ScopeGlobal | ScopeSession, DefaultWeekFormat, "0"},
 	{ScopeGlobal | ScopeSession, "binlog_error_action", "IGNORE_ERROR"},
 	{ScopeGlobal, "slave_transaction_retries", "10"},
 	{ScopeGlobal | ScopeSession, "default_storage_engine", "InnoDB"},
 	{ScopeNone, "ft_query_expansion_limit", "20"},
-	{ScopeGlobal, "max_connect_errors", "100"},
+	{ScopeGlobal, MaxConnectErrors, "100"},
 	{ScopeGlobal, "sync_binlog", "0"},
 	{ScopeNone, "max_digest_length", "1024"},
 	{ScopeNone, "innodb_force_load_corrupted", "OFF"},
@@ -133,25 +146,25 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "log_backward_compatible_user_definitions", ""},
 	{ScopeNone, "lc_messages_dir", "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/"},
 	{ScopeGlobal, "ft_boolean_syntax", "+ -><()~*:\"\"&|"},
-	{ScopeGlobal, "table_definition_cache", "1400"},
-	{ScopeNone, "skip_name_resolve", "OFF"},
+	{ScopeGlobal, TableDefinitionCache, "-1"},
+	{ScopeNone, SkipNameResolve, "0"},
 	{ScopeNone, "performance_schema_max_file_handles", "32768"},
 	{ScopeSession, "transaction_allow_batching", ""},
 	{ScopeGlobal | ScopeSession, SQLModeVar, mysql.DefaultSQLMode},
 	{ScopeNone, "performance_schema_max_statement_classes", "168"},
 	{ScopeGlobal, "server_id", "0"},
 	{ScopeGlobal, "innodb_flushing_avg_loops", "30"},
-	{ScopeGlobal | ScopeSession, "tmp_table_size", "16777216"},
+	{ScopeGlobal | ScopeSession, TmpTableSize, "16777216"},
 	{ScopeGlobal, "innodb_max_purge_lag", "0"},
 	{ScopeGlobal | ScopeSession, "preload_buffer_size", "32768"},
 	{ScopeGlobal, "slave_checkpoint_period", "300"},
-	{ScopeGlobal, "check_proxy_users", ""},
+	{ScopeGlobal, CheckProxyUsers, "0"},
 	{ScopeNone, "have_query_cache", "YES"},
 	{ScopeGlobal, "innodb_flush_log_at_timeout", "1"},
 	{ScopeGlobal, "innodb_max_undo_log_size", ""},
 	{ScopeGlobal | ScopeSession, "range_alloc_block_size", "4096"},
-	{ScopeGlobal, "connect_timeout", "10"},
-	{ScopeGlobal | ScopeSession, "collation_server", "latin1_swedish_ci"},
+	{ScopeGlobal, ConnectTimeout, "10"},
+	{ScopeGlobal | ScopeSession, "collation_server", charset.CollationUTF8},
 	{ScopeNone, "have_rtree_keys", "YES"},
 	{ScopeGlobal, "innodb_old_blocks_pct", "37"},
 	{ScopeGlobal, "innodb_file_format", "Antelope"},
@@ -161,8 +174,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_ft_sort_pll_degree", "2"},
 	{ScopeNone, "thread_stack", "262144"},
 	{ScopeGlobal, "relay_log_info_repository", "FILE"},
-	{ScopeGlobal | ScopeSession, "sql_log_bin", "ON"},
-	{ScopeGlobal, "super_read_only", ""},
+	{ScopeGlobal | ScopeSession, SQLLogBin, "1"},
+	{ScopeGlobal, "super_read_only", "OFF"},
 	{ScopeGlobal | ScopeSession, "max_delayed_threads", "20"},
 	{ScopeNone, "protocol_version", "10"},
 	{ScopeGlobal | ScopeSession, "new", "OFF"},
@@ -180,7 +193,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_log_write_ahead_size", ""},
 	{ScopeNone, "innodb_log_group_home_dir", "./"},
 	{ScopeNone, "performance_schema_events_statements_history_size", "10"},
-	{ScopeGlobal, "general_log", "OFF"},
+	{ScopeGlobal, GeneralLog, "0"},
 	{ScopeGlobal, "validate_password_dictionary_file", ""},
 	{ScopeGlobal, "binlog_order_commits", "ON"},
 	{ScopeGlobal, "master_verify_checksum", "OFF"},
@@ -208,15 +221,15 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_autoinc_lock_mode", "1"},
 	{ScopeGlobal, "slave_net_timeout", "3600"},
 	{ScopeGlobal, "key_buffer_size", "8388608"},
-	{ScopeGlobal | ScopeSession, "foreign_key_checks", "ON"},
+	{ScopeGlobal | ScopeSession, ForeignKeyChecks, "1"},
 	{ScopeGlobal, "host_cache_size", "279"},
-	{ScopeGlobal, "delay_key_write", "ON"},
+	{ScopeGlobal, DelayKeyWrite, "ON"},
 	{ScopeNone, "metadata_locks_cache_size", "1024"},
 	{ScopeNone, "innodb_force_recovery", "0"},
 	{ScopeGlobal, "innodb_file_format_max", "Antelope"},
 	{ScopeGlobal | ScopeSession, "debug", ""},
 	{ScopeGlobal, "log_warnings", "1"},
-	{ScopeGlobal, "offline_mode", ""},
+	{ScopeGlobal, OfflineMode, "0"},
 	{ScopeGlobal | ScopeSession, "innodb_strict_mode", "OFF"},
 	{ScopeGlobal, "innodb_rollback_segments", "128"},
 	{ScopeGlobal | ScopeSession, "join_buffer_size", "262144"},
@@ -249,7 +262,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "thread_concurrency", "10"},
 	{ScopeGlobal | ScopeSession, "query_prealloc_size", "8192"},
 	{ScopeNone, "relay_log_space_limit", "0"},
-	{ScopeGlobal | ScopeSession, "max_user_connections", "0"},
+	{ScopeGlobal | ScopeSession, MaxUserConnections, "0"},
 	{ScopeNone, "performance_schema_max_thread_classes", "50"},
 	{ScopeGlobal, "innodb_api_trx_level", "0"},
 	{ScopeNone, "disconnect_on_expired_password", "ON"},
@@ -283,7 +296,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "query_cache_wlock_invalidate", "OFF"},
 	{ScopeGlobal | ScopeSession, "sql_buffer_result", "OFF"},
 	{ScopeGlobal | ScopeSession, "character_set_filesystem", "binary"},
-	{ScopeGlobal | ScopeSession, "collation_database", "latin1_swedish_ci"},
+	{ScopeGlobal | ScopeSession, "collation_database", charset.CollationUTF8},
 	{ScopeGlobal | ScopeSession, "auto_increment_increment", "1"},
 	{ScopeGlobal | ScopeSession, "max_heap_table_size", "16777216"},
 	{ScopeGlobal | ScopeSession, "div_precision_increment", "4"},
@@ -302,9 +315,9 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_max_socket_classes", "10"},
 	{ScopeNone, "performance_schema_max_stage_classes", "150"},
 	{ScopeGlobal, "innodb_purge_batch_size", "300"},
-	{ScopeNone, "have_profiling", "YES"},
+	{ScopeNone, "have_profiling", "NO"},
 	{ScopeGlobal, "slave_checkpoint_group", "512"},
-	{ScopeGlobal | ScopeSession, "character_set_client", "latin1"},
+	{ScopeGlobal | ScopeSession, "character_set_client", charset.CharsetUTF8},
 	{ScopeNone, "slave_load_tmpdir", "/var/tmp/"},
 	{ScopeGlobal, "innodb_buffer_pool_dump_now", "OFF"},
 	{ScopeGlobal, "relay_log_purge", "ON"},
@@ -313,12 +326,12 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "ndb_optimization_delay", ""},
 	{ScopeGlobal, "innodb_ft_num_word_optimize", "2000"},
 	{ScopeGlobal | ScopeSession, "max_join_size", "18446744073709551615"},
-	{ScopeNone, "core_file", "OFF"},
+	{ScopeNone, CoreFile, "0"},
 	{ScopeGlobal | ScopeSession, "max_seeks_for_key", "18446744073709551615"},
 	{ScopeNone, "innodb_log_buffer_size", "8388608"},
 	{ScopeGlobal, "delayed_insert_timeout", "300"},
 	{ScopeGlobal, "max_relay_log_size", "0"},
-	{ScopeGlobal | ScopeSession, "max_sort_length", "1024"},
+	{ScopeGlobal | ScopeSession, MaxSortLength, "1024"},
 	{ScopeNone, "metadata_locks_hash_instances", "8"},
 	{ScopeGlobal, "ndb_eventbuffer_free_percent", ""},
 	{ScopeNone, "large_files_support", "ON"},
@@ -379,7 +392,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "binlog_direct_non_transactional_updates", "OFF"},
 	{ScopeGlobal, "innodb_change_buffering", "all"},
 	{ScopeGlobal | ScopeSession, "sql_big_selects", "ON"},
-	{ScopeGlobal | ScopeSession, CharacterSetResults, "latin1"},
+	{ScopeGlobal | ScopeSession, CharacterSetResults, charset.CharsetUTF8},
 	{ScopeGlobal, "innodb_max_purge_lag_delay", "0"},
 	{ScopeGlobal | ScopeSession, "session_track_schema", ""},
 	{ScopeGlobal, "innodb_io_capacity_max", "2000"},
@@ -391,7 +404,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "net_write_timeout", "60"},
 	{ScopeGlobal, "innodb_buffer_pool_load_abort", "OFF"},
 	{ScopeGlobal | ScopeSession, "tx_isolation", "REPEATABLE-READ"},
-	{ScopeGlobal | ScopeSession, "collation_connection", "latin1_swedish_ci"},
+	{ScopeGlobal | ScopeSession, "transaction_isolation", "REPEATABLE-READ"},
+	{ScopeGlobal | ScopeSession, "collation_connection", charset.CollationUTF8},
 	{ScopeGlobal, "rpl_semi_sync_master_timeout", ""},
 	{ScopeGlobal | ScopeSession, "transaction_prealloc_size", "4096"},
 	{ScopeNone, "slave_skip_errors", "OFF"},
@@ -457,7 +471,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "lock_wait_timeout", "31536000"},
 	{ScopeGlobal | ScopeSession, "read_buffer_size", "131072"},
 	{ScopeNone, "innodb_read_io_threads", "4"},
-	{ScopeGlobal | ScopeSession, "max_sp_recursion_depth", "0"},
+	{ScopeGlobal | ScopeSession, MaxSpRecursionDepth, "0"},
 	{ScopeNone, "ignore_builtin_innodb", "OFF"},
 	{ScopeGlobal, "rpl_semi_sync_master_enabled", ""},
 	{ScopeGlobal, "slow_query_log_file", "/usr/local/mysql/data/localhost-slow.log"},
@@ -486,14 +500,15 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "max_points_in_geometry", ""},
 	{ScopeGlobal, "innodb_stats_sample_pages", "8"},
 	{ScopeGlobal | ScopeSession, "profiling_history_size", "15"},
-	{ScopeGlobal | ScopeSession, "character_set_database", "latin1"},
+	{ScopeGlobal | ScopeSession, "character_set_database", charset.CharsetUTF8},
 	{ScopeNone, "have_symlink", "YES"},
 	{ScopeGlobal | ScopeSession, "storage_engine", "InnoDB"},
 	{ScopeGlobal | ScopeSession, "sql_log_off", "OFF"},
-	{ScopeNone, "explicit_defaults_for_timestamp", "OFF"},
+	{ScopeNone, "explicit_defaults_for_timestamp", "ON"},
 	{ScopeNone, "performance_schema_events_waits_history_size", "10"},
 	{ScopeGlobal, "log_syslog_tag", ""},
 	{ScopeGlobal | ScopeSession, "tx_read_only", "0"},
+	{ScopeGlobal | ScopeSession, "transaction_read_only", "0"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_point", ""},
 	{ScopeGlobal, "innodb_undo_log_truncate", ""},
 	{ScopeNone, "simplified_binlog_gtid_recovery", "OFF"},
@@ -553,7 +568,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "back_log", "80"},
 	{ScopeNone, "lower_case_file_system", "ON"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_no_slave", ""},
-	{ScopeGlobal | ScopeSession, "group_concat_max_len", "1024"},
+	{ScopeGlobal | ScopeSession, GroupConcatMaxLen, "1024"},
 	{ScopeSession, "pseudo_thread_id", ""},
 	{ScopeNone, "socket", "/tmp/myssock"},
 	{ScopeNone, "have_dynamic_loading", "YES"},
@@ -564,10 +579,10 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "flush", "OFF"},
 	{ScopeGlobal | ScopeSession, "eq_range_index_dive_limit", "10"},
 	{ScopeNone, "performance_schema_events_stages_history_size", "10"},
-	{ScopeGlobal | ScopeSession, "character_set_connection", "latin1"},
+	{ScopeGlobal | ScopeSession, "character_set_connection", charset.CharsetUTF8},
 	{ScopeGlobal, "myisam_use_mmap", "OFF"},
 	{ScopeGlobal | ScopeSession, "ndb_join_pushdown", ""},
-	{ScopeGlobal | ScopeSession, "character_set_server", "latin1"},
+	{ScopeGlobal | ScopeSession, "character_set_server", charset.CharsetUTF8},
 	{ScopeGlobal, "validate_password_special_char_count", "1"},
 	{ScopeNone, "performance_schema_max_thread_instances", "402"},
 	{ScopeGlobal, "slave_rows_search_algorithms", "TABLE_SCAN,INDEX_SCAN"},
@@ -586,38 +601,80 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_undo_directory", "."},
 	{ScopeNone, "bind_address", "*"},
 	{ScopeGlobal, "innodb_sync_spin_loops", "30"},
-	{ScopeGlobal | ScopeSession, "sql_safe_updates", "OFF"},
+	{ScopeGlobal | ScopeSession, SQLSafeUpdates, "0"},
 	{ScopeNone, "tmpdir", "/var/tmp/"},
 	{ScopeGlobal, "innodb_thread_concurrency", "0"},
 	{ScopeGlobal, "slave_allow_batching", "OFF"},
 	{ScopeGlobal, "innodb_buffer_pool_dump_pct", ""},
 	{ScopeGlobal | ScopeSession, "lc_time_names", "en_US"},
 	{ScopeGlobal | ScopeSession, "max_statement_time", ""},
-	{ScopeGlobal | ScopeSession, "end_markers_in_json", "OFF"},
-	{ScopeGlobal, "avoid_temporal_upgrade", "OFF"},
+	{ScopeGlobal | ScopeSession, EndMakersInJSON, "0"},
+	{ScopeGlobal, AvoidTemporalUpgrade, "0"},
 	{ScopeGlobal, "key_cache_age_threshold", "300"},
 	{ScopeGlobal, "innodb_status_output", "OFF"},
 	{ScopeSession, "identity", ""},
 	{ScopeGlobal | ScopeSession, "min_examined_row_limit", "0"},
 	{ScopeGlobal, "sync_frm", "ON"},
 	{ScopeGlobal, "innodb_online_alter_log_max_size", "134217728"},
+	{ScopeSession, WarningCount, "0"},
+	{ScopeSession, ErrorCount, "0"},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, ""},
-	{ScopeSession, TiDBSkipConstraintCheck, "0"},
 	{ScopeSession, TiDBOptAggPushDown, boolToIntStr(DefOptAggPushDown)},
-	{ScopeSession, TiDBOptInSubqUnFolding, boolToIntStr(DefOptInSubqUnfolding)},
-	{ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
+	{ScopeGlobal, TiDBAutoAnalyzeRatio, strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64)},
+	{ScopeSession, TiDBChecksumTableConcurrency, strconv.Itoa(DefChecksumTableConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBDistSQLScanConcurrency, strconv.Itoa(DefDistSQLScanConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBOptInSubqUnFolding, boolToIntStr(DefOptInSubqUnfolding)},
 	{ScopeGlobal | ScopeSession, TiDBIndexJoinBatchSize, strconv.Itoa(DefIndexJoinBatchSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupSize, strconv.Itoa(DefIndexLookupSize)},
 	{ScopeGlobal | ScopeSession, TiDBIndexLookupConcurrency, strconv.Itoa(DefIndexLookupConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBIndexLookupJoinConcurrency, strconv.Itoa(DefIndexLookupJoinConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBIndexSerialScanConcurrency, strconv.Itoa(DefIndexSerialScanConcurrency)},
-	{ScopeGlobal | ScopeSession, TiDBMaxRowCountForINLJ, strconv.Itoa(DefMaxRowCountForINLJ)},
 	{ScopeGlobal | ScopeSession, TiDBSkipUTF8Check, boolToIntStr(DefSkipUTF8Check)},
 	{ScopeSession, TiDBBatchInsert, boolToIntStr(DefBatchInsert)},
 	{ScopeSession, TiDBBatchDelete, boolToIntStr(DefBatchDelete)},
+	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
-	{ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
+	{ScopeGlobal | ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
+	{ScopeSession, TIDBMemQuotaQuery, strconv.FormatInt(config.GetGlobalConfig().MemQuotaQuery, 10)},
+	{ScopeSession, TIDBMemQuotaHashJoin, strconv.FormatInt(DefTiDBMemQuotaHashJoin, 10)},
+	{ScopeSession, TIDBMemQuotaMergeJoin, strconv.FormatInt(DefTiDBMemQuotaMergeJoin, 10)},
+	{ScopeSession, TIDBMemQuotaSort, strconv.FormatInt(DefTiDBMemQuotaSort, 10)},
+	{ScopeSession, TIDBMemQuotaTopn, strconv.FormatInt(DefTiDBMemQuotaTopn, 10)},
+	{ScopeSession, TIDBMemQuotaIndexLookupReader, strconv.FormatInt(DefTiDBMemQuotaIndexLookupReader, 10)},
+	{ScopeSession, TIDBMemQuotaIndexLookupJoin, strconv.FormatInt(DefTiDBMemQuotaIndexLookupJoin, 10)},
+	{ScopeSession, TIDBMemQuotaNestedLoopApply, strconv.FormatInt(DefTiDBMemQuotaNestedLoopApply, 10)},
+	{ScopeSession, TiDBEnableStreaming, "0"},
+	{ScopeSession, TxnIsolationOneShot, ""},
+	{ScopeSession, TiDBEnableTablePartition, "0"},
+	{ScopeGlobal | ScopeSession, TiDBHashJoinConcurrency, strconv.Itoa(DefTiDBHashJoinConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBProjectionConcurrency, strconv.Itoa(DefTiDBProjectionConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBHashAggPartialConcurrency, strconv.Itoa(DefTiDBHashAggPartialConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBHashAggFinalConcurrency, strconv.Itoa(DefTiDBHashAggFinalConcurrency)},
+	{ScopeGlobal | ScopeSession, TiDBBackoffLockFast, strconv.Itoa(kv.DefBackoffLockFast)},
+	{ScopeGlobal | ScopeSession, TiDBRetryLimit, strconv.Itoa(DefTiDBRetryLimit)},
+	{ScopeGlobal | ScopeSession, TiDBDisableTxnAutoRetry, boolToIntStr(DefTiDBDisableTxnAutoRetry)},
+	{ScopeSession, TiDBOptimizerSelectivityLevel, strconv.Itoa(DefTiDBOptimizerSelectivityLevel)},
+	/* The following variable is defined as session scope but is actually server scope. */
+	{ScopeSession, TiDBGeneralLog, strconv.Itoa(DefTiDBGeneralLog)},
+	{ScopeSession, TiDBConfig, ""},
+	{ScopeGlobal | ScopeSession, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
+	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
+}
+
+// SynonymsSysVariables is synonyms of system variables.
+var SynonymsSysVariables = map[string][]string{}
+
+func addSynonymsSysVariables(synonyms ...string) {
+	for _, s := range synonyms {
+		SynonymsSysVariables[s] = synonyms
+	}
+}
+
+func initSynonymsSysVariables() {
+	addSynonymsSysVariables("tx_isolation", "transaction_isolation")
+	addSynonymsSysVariables("tx_read_only", "transaction_read_only")
 }
 
 // SetNamesVariables is the system variable names related to set names statements.
@@ -636,6 +693,68 @@ const (
 	CharsetDatabase = "character_set_database"
 	// CollationDatabase is the name for collation_database system variable.
 	CollationDatabase = "collation_database"
+	// GeneralLog is the name for 'general_log' system variable.
+	GeneralLog = "general_log"
+	// AvoidTemporalUpgrade is the name for 'avoid_temporal_upgrade' system variable.
+	AvoidTemporalUpgrade = "avoid_temporal_upgrade"
+	// BigTables is the name for 'big_tables' system variable.
+	BigTables = "big_tables"
+	// CheckProxyUsers is the name for 'check_proxy_users' system variable.
+	CheckProxyUsers = "check_proxy_users"
+	// CoreFile is the name for 'core_file' system variable.
+	CoreFile = "core_file"
+	// DefaultWeekFormat is the name for 'default_week_format' system variable.
+	DefaultWeekFormat = "default_week_format"
+	// GroupConcatMaxLen is the name for 'group_concat_max_len' system variable.
+	GroupConcatMaxLen = "group_concat_max_len"
+	// DelayKeyWrite is the name for 'delay_key_write' system variable.
+	DelayKeyWrite = "delay_key_write"
+	// EndMakersInJSON is the name for 'end_markers_in_json' system variable.
+	EndMakersInJSON = "end_markers_in_json"
+	// SQLLogBin is the name for 'sql_log_bin' system variable.
+	SQLLogBin = "sql_log_bin"
+	// MaxSortLength is the name for 'max_sort_length' system variable.
+	MaxSortLength = "max_sort_length"
+	// MaxSpRecursionDepth is the name for 'max_sp_recursion_depth' system variable.
+	MaxSpRecursionDepth = "max_sp_recursion_depth"
+	// MaxUserConnections is the name for 'max_user_connections' system variable.
+	MaxUserConnections = "max_user_connections"
+	// OfflineMode is the name for 'offline_mode' system variable.
+	OfflineMode = "offline_mode"
+	// InteractiveTimeout is the name for 'interactive_timeout' system variable.
+	InteractiveTimeout = "interactive_timeout"
+	// FlushTime is the name for 'flush_time' system variable.
+	FlushTime = "flush_time"
+	// PseudoSlaveMode is the name for 'pseudo_slave_mode' system variable.
+	PseudoSlaveMode = "pseudo_slave_mode"
+	// LowPriorityUpdates is the name for 'low_priority_updates' system variable.
+	LowPriorityUpdates = "low_priority_updates"
+	// SessionTrackGtids is the name for 'session_track_gtids' system variable.
+	SessionTrackGtids = "session_track_gtids"
+	// OldPasswords is the name for 'old_passwords' system variable.
+	OldPasswords = "old_passwords"
+	// MaxConnections is the name for 'max_connections' system variable.
+	MaxConnections = "max_connections"
+	// SkipNameResolve is the name for 'skip_name_resolve' system variable.
+	SkipNameResolve = "skip_name_resolve"
+	// ForeignKeyChecks is the name for 'foreign_key_checks' system variable.
+	ForeignKeyChecks = "foreign_key_checks"
+	// SQLSafeUpdates is the name for 'sql_safe_updates' system variable.
+	SQLSafeUpdates = "sql_safe_updates"
+	// WarningCount is the name for 'warning_count' system variable.
+	WarningCount = "warning_count"
+	// ErrorCount is the name for 'error_count' system variable.
+	ErrorCount = "error_count"
+	// SQLSelectLimit is the name for 'sql_select_limit' system variable.
+	SQLSelectLimit = "sql_select_limit"
+	// MaxConnectErrors is the name for 'max_connect_errors' system variable.
+	MaxConnectErrors = "max_connect_errors"
+	// TableDefinitionCache is the name for 'table_definition_cache' system variable.
+	TableDefinitionCache = "table_definition_cache"
+	// TmpTableSize is the name for 'tmp_table_size' system variable.
+	TmpTableSize = "tmp_table_size"
+	// ConnectTimeout is the name for 'connect_timeout' system variable.
+	ConnectTimeout = "connect_timeout"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

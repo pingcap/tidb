@@ -25,7 +25,7 @@ func isLetter(ch rune) bool {
 }
 
 func isDigit(ch rune) bool {
-	return (ch >= '0' && ch <= '9')
+	return ch >= '0' && ch <= '9'
 }
 
 func isIdentChar(ch rune) bool {
@@ -36,8 +36,8 @@ func isIdentExtend(ch rune) bool {
 	return ch >= 0x80 && ch <= '\uffff'
 }
 
-func isIdentFirstChar(ch rune) bool {
-	return isLetter(ch) || ch == '_'
+func isUserVarChar(ch rune) bool {
+	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
 }
 
 type trieNode struct {
@@ -102,6 +102,8 @@ func init() {
 	initTokenByte('\\', int('\\'))
 	initTokenByte('?', paramMarker)
 	initTokenByte('=', eq)
+	initTokenByte('{', int('{'))
+	initTokenByte('}', int('}'))
 
 	initTokenString("||", pipes)
 	initTokenString("&&", andand)
@@ -176,6 +178,7 @@ var tokenMap = map[string]int{
 	"CHARSET":           charsetKwd,
 	"CHECK":             check,
 	"CHECKSUM":          checksum,
+	"CLEANUP":           cleanup,
 	"CLIENT":            client,
 	"COALESCE":          coalesce,
 	"COLLATE":           collate,
@@ -192,6 +195,7 @@ var tokenMap = map[string]int{
 	"CONSISTENT":        consistent,
 	"CONSTRAINT":        constraint,
 	"CONVERT":           convert,
+	"COPY":              copyKwd,
 	"COUNT":             count,
 	"CREATE":            create,
 	"CROSS":             cross,
@@ -285,6 +289,7 @@ var tokenMap = map[string]int{
 	"INDEXES":           indexes,
 	"INFILE":            infile,
 	"INNER":             inner,
+	"INPLACE":           inplace,
 	"INSERT":            insert,
 	"INT":               intType,
 	"INT1":              int1Type,
@@ -299,6 +304,7 @@ var tokenMap = map[string]int{
 	"IS":                is,
 	"ISOLATION":         isolation,
 	"JOBS":              jobs,
+	"JOB":               job,
 	"JOIN":              join,
 	"JSON":              jsonType,
 	"KEY":               key,
@@ -317,11 +323,14 @@ var tokenMap = map[string]int{
 	"LOCALTIME":         localTime,
 	"LOCALTIMESTAMP":    localTs,
 	"LOCK":              lock,
+	"LONG":              long,
 	"LONGBLOB":          longblobType,
 	"LONGTEXT":          longtextType,
 	"LOW_PRIORITY":      lowPriority,
+	"MASTER":            master,
 	"MAX":               max,
 	"MAX_CONNECTIONS_PER_HOUR": maxConnectionsPerHour,
+	"MAX_EXECUTION_TIME":       maxExecutionTime,
 	"MAX_QUERIES_PER_HOUR":     maxQueriesPerHour,
 	"MAX_ROWS":                 maxRows,
 	"MAX_UPDATES_PER_HOUR":     maxUpdatesPerHour,
@@ -359,6 +368,7 @@ var tokenMap = map[string]int{
 	"OR":                       or,
 	"ORDER":                    order,
 	"OUTER":                    outer,
+	"PACK_KEYS":                packKeys,
 	"PARTITION":                partition,
 	"PARTITIONS":               partitions,
 	"PASSWORD":                 password,
@@ -374,8 +384,11 @@ var tokenMap = map[string]int{
 	"PROFILES":                 profiles,
 	"QUARTER":                  quarter,
 	"QUERY":                    query,
+	"QUERIES":                  queries,
 	"QUICK":                    quick,
+	"SHARD_ROW_ID_BITS":        shardRowIDBits,
 	"RANGE":                    rangeKwd,
+	"RECOVER":                  recover,
 	"READ":                     read,
 	"REAL":                     realType,
 	"REDUNDANT":                redundant,
@@ -406,6 +419,7 @@ var tokenMap = map[string]int{
 	"SERIALIZABLE":             serializable,
 	"SESSION":                  session,
 	"SET":                      set,
+	"SEPARATOR":                separator,
 	"SHARE":                    share,
 	"SHARED":                   shared,
 	"SHOW":                     show,
@@ -423,18 +437,22 @@ var tokenMap = map[string]int{
 	"STATS":                    stats,
 	"STATS_BUCKETS":            statsBuckets,
 	"STATS_HISTOGRAMS":         statsHistograms,
+	"STATS_HEALTHY":            statsHealthy,
 	"STATS_META":               statsMeta,
 	"STATS_PERSISTENT":         statsPersistent,
 	"STATUS":                   status,
 	"STORED":                   stored,
 	"STRAIGHT_JOIN":            straightJoin,
 	"SUBDATE":                  subDate,
+	"SUBPARTITION":             subpartition,
+	"SUBPARTITIONS":            subpartitions,
 	"SUBSTR":                   substring,
 	"SUBSTRING":                substring,
 	"SUM":                      sum,
 	"SUPER":                    super,
 	"TABLE":                    tableKwd,
 	"TABLES":                   tables,
+	"TABLESPACE":               tablespace,
 	"TEMPORARY":                temporary,
 	"TEMPTABLE":                temptable,
 	"TERMINATED":               terminated,
@@ -442,6 +460,7 @@ var tokenMap = map[string]int{
 	"THAN":                     than,
 	"THEN":                     then,
 	"TIDB":                     tidb,
+	"TIDB_HJ":                  tidbHJ,
 	"TIDB_INLJ":                tidbINLJ,
 	"TIDB_SMJ":                 tidbSMJ,
 	"TIME":                     timeType,
@@ -452,6 +471,7 @@ var tokenMap = map[string]int{
 	"TINYINT":                  tinyIntType,
 	"TINYTEXT":                 tinytextType,
 	"TO":                       to,
+	"TRACE":                    trace,
 	"TRAILING":                 trailing,
 	"TRANSACTION":              transaction,
 	"TRIGGER":                  trigger,
@@ -482,6 +502,7 @@ var tokenMap = map[string]int{
 	"VIEW":                     view,
 	"VIRTUAL":                  virtual,
 	"WARNINGS":                 warnings,
+	"ERRORS":                   identSQLErrors,
 	"WEEK":                     week,
 	"WHEN":                     when,
 	"WHERE":                    where,

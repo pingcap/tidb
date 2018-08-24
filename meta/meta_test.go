@@ -14,15 +14,16 @@
 package meta_test
 
 import (
+	"math"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"golang.org/x/net/context"
 )
 
 func TestT(t *testing.T) {
@@ -37,7 +38,7 @@ type testSuite struct {
 
 func (s *testSuite) TestMeta(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -219,13 +220,13 @@ func (s *testSuite) TestMeta(c *C) {
 	readDiff, err := t.GetSchemaDiff(schemaDiff.Version)
 	c.Assert(readDiff, DeepEquals, schemaDiff)
 
-	err = txn.Commit(goctx.Background())
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }
 
 func (s *testSuite) TestSnapshot(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -234,7 +235,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	m.GenGlobalID()
 	n, _ := m.GetGlobalID()
 	c.Assert(n, Equals, int64(1))
-	txn.Commit(goctx.Background())
+	txn.Commit(context.Background())
 
 	ver1, _ := store.CurrentVersion()
 	time.Sleep(time.Millisecond)
@@ -243,7 +244,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 	m.GenGlobalID()
 	n, _ = m.GetGlobalID()
 	c.Assert(n, Equals, int64(2))
-	txn.Commit(goctx.Background())
+	txn.Commit(context.Background())
 
 	snapshot, _ := store.GetSnapshot(ver1)
 	snapMeta := meta.NewSnapshotMeta(snapshot)
@@ -255,7 +256,7 @@ func (s *testSuite) TestSnapshot(c *C) {
 
 func (s *testSuite) TestDDL(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := tikv.NewMockTikvStore()
+	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -273,25 +274,43 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(n, Equals, int64(1))
 
-	v, err := t.GetDDLJob(0)
+	v, err := t.GetDDLJobByIdx(0)
 	c.Assert(err, IsNil)
 	c.Assert(v, DeepEquals, job)
-	v, err = t.GetDDLJob(1)
+	v, err = t.GetDDLJobByIdx(1)
 	c.Assert(err, IsNil)
 	c.Assert(v, IsNil)
 	job.ID = 2
-	err = t.UpdateDDLJob(0, job)
+	err = t.UpdateDDLJob(0, job, true)
 	c.Assert(err, IsNil)
 
-	err = t.UpdateDDLReorgHandle(job, 1)
+	err = t.UpdateDDLReorgStartHandle(job, 1)
 	c.Assert(err, IsNil)
 
-	h, err := t.GetDDLReorgHandle(job)
+	i, j, k, err := t.GetDDLReorgHandle(job)
 	c.Assert(err, IsNil)
-	c.Assert(h, Equals, int64(1))
+	c.Assert(i, Equals, int64(1))
+	c.Assert(j, Equals, int64(math.MaxInt64))
+	c.Assert(k, Equals, int64(0))
+
+	err = t.UpdateDDLReorgHandle(job, 1, 2, 3)
+	c.Assert(err, IsNil)
+
+	i, j, k, err = t.GetDDLReorgHandle(job)
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(1))
+	c.Assert(j, Equals, int64(2))
+	c.Assert(k, Equals, int64(3))
 
 	err = t.RemoveDDLReorgHandle(job)
 	c.Assert(err, IsNil)
+
+	i, j, k, err = t.GetDDLReorgHandle(job)
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, int64(0))
+	// The default value for endHandle is MaxInt64, not 0.
+	c.Assert(j, Equals, int64(math.MaxInt64))
+	c.Assert(k, Equals, int64(0))
 
 	v, err = t.DeQueueDDLJob()
 	c.Assert(err, IsNil)
@@ -311,6 +330,16 @@ func (s *testSuite) TestDDL(c *C) {
 		lastID = job.ID
 	}
 
-	err = txn.Commit(goctx.Background())
+	// Test GetAllDDLJobsInQueue.
+	err = t.EnQueueDDLJob(job)
+	job1 := &model.Job{ID: 2}
+	err = t.EnQueueDDLJob(job1)
+	c.Assert(err, IsNil)
+	jobs, err := t.GetAllDDLJobsInQueue()
+	c.Assert(err, IsNil)
+	expectJobs := []*model.Job{job, job1}
+	c.Assert(jobs, DeepEquals, expectJobs)
+
+	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }

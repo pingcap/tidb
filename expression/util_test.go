@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"testing"
+
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -40,17 +42,17 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err := SubstituteCorCol2Constant(plus2)
 	c.Assert(err, check.IsNil)
-	c.Assert(ret.Equal(ans1, ctx), check.IsTrue)
+	c.Assert(ret.Equal(ctx, ans1), check.IsTrue)
 	col1 := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err = SubstituteCorCol2Constant(col1)
 	c.Assert(err, check.IsNil)
 	ans2 := col1
-	c.Assert(ret.Equal(ans2, ctx), check.IsTrue)
+	c.Assert(ret.Equal(ctx, ans2), check.IsTrue)
 	plus3 := newFunction(ast.Plus, plus2, col1)
 	ret, err = SubstituteCorCol2Constant(plus3)
 	c.Assert(err, check.IsNil)
 	ans3 := newFunction(ast.Plus, ans1, col1)
-	c.Assert(ret.Equal(ans3, ctx), check.IsTrue)
+	c.Assert(ret.Equal(ctx, ans3), check.IsTrue)
 }
 
 func (s *testUtilSuite) TestPushDownNot(c *check.C) {
@@ -66,6 +68,41 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	neFunc := newFunction(ast.NE, col, One)
 	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
-	ret := PushDownNot(notFunc, false, ctx)
-	c.Assert(ret.Equal(orFunc2, ctx), check.IsTrue)
+	ret := PushDownNot(ctx, notFunc, false)
+	c.Assert(ret.Equal(ctx, orFunc2), check.IsTrue)
+}
+
+func (s *testUtilSuite) TestFilter(c *check.C) {
+	conditions := []Expression{
+		newFunction(ast.EQ, newColumn(0), newColumn(1)),
+		newFunction(ast.EQ, newColumn(1), newColumn(2)),
+		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+	}
+	result := make([]Expression, 0, 5)
+	result = Filter(result, conditions, isLogicOrFunction)
+	c.Assert(result, check.HasLen, 1)
+}
+
+func isLogicOrFunction(e Expression) bool {
+	if f, ok := e.(*ScalarFunction); ok {
+		return f.FuncName.L == ast.LogicOr
+	}
+	return false
+}
+
+func BenchmarkExtractColumns(b *testing.B) {
+	conditions := []Expression{
+		newFunction(ast.EQ, newColumn(0), newColumn(1)),
+		newFunction(ast.EQ, newColumn(1), newColumn(2)),
+		newFunction(ast.EQ, newColumn(2), newColumn(3)),
+		newFunction(ast.EQ, newColumn(3), newLonglong(1)),
+		newFunction(ast.LogicOr, newLonglong(1), newColumn(0)),
+	}
+	expr := ComposeCNFCondition(mock.NewContext(), conditions...)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ExtractColumns(expr)
+	}
+	b.ReportAllocs()
 }

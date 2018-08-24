@@ -15,11 +15,10 @@ package plan
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -27,12 +26,12 @@ import (
 )
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *basePhysicalPlan) ToPB(_ context.Context) (*tipb.Executor, error) {
+func (p *basePhysicalPlan) ToPB(_ sessionctx.Context) (*tipb.Executor, error) {
 	return nil, errors.Errorf("plan %s fails converts to PB", p.basePlan.ExplainID())
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalHashAgg) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalHashAgg) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	aggExec := &tipb.Aggregation{
@@ -45,7 +44,20 @@ func (p *PhysicalHashAgg) ToPB(ctx context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalSelection) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalStreamAgg) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
+	sc := ctx.GetSessionVars().StmtCtx
+	client := ctx.GetClient()
+	aggExec := &tipb.Aggregation{
+		GroupBy: expression.ExpressionsToPBList(sc, p.GroupByItems, client),
+	}
+	for _, aggFunc := range p.AggFuncs {
+		aggExec.AggFunc = append(aggExec.AggFunc, aggregation.AggFuncToPBExpr(sc, client, aggFunc))
+	}
+	return &tipb.Executor{Tp: tipb.ExecType_TypeStreamAgg, Aggregation: aggExec}, nil
+}
+
+// ToPB implements PhysicalPlan ToPB interface.
+func (p *PhysicalSelection) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	selExec := &tipb.Selection{
@@ -55,7 +67,7 @@ func (p *PhysicalSelection) ToPB(ctx context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalTopN) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalTopN) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	client := ctx.GetClient()
 	topNExec := &tipb.TopN{
@@ -68,7 +80,7 @@ func (p *PhysicalTopN) ToPB(ctx context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalLimit) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalLimit) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	limitExec := &tipb.Limit{
 		Limit: p.Count,
 	}
@@ -76,20 +88,20 @@ func (p *PhysicalLimit) ToPB(ctx context.Context) (*tipb.Executor, error) {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalTableScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	columns := p.Columns
 	tsExec := &tipb.TableScan{
 		TableId: p.Table.ID,
-		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Columns: model.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
-	err := setPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
+	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, errors.Trace(err)
 }
 
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of
 // range and index are equal.
-func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.IndexRange) bool {
+func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 	// If the index is (c1, c2) but the query range only contains c1, it is not a unique get.
 	if !idx.Unique {
 		return false
@@ -103,22 +115,20 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.IndexRange) bool {
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
+func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
 	columns := make([]*model.ColumnInfo, 0, p.schema.Len())
+	tableColumns := p.Table.Cols()
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
-			columns = append(columns, &model.ColumnInfo{
-				ID:   model.ExtraHandleID,
-				Name: model.NewCIStr("_rowid"),
-			})
+			columns = append(columns, model.NewExtraHandleColInfo())
 		} else {
-			columns = append(columns, p.Table.Columns[col.Position])
+			columns = append(columns, model.FindColumnInfo(tableColumns, col.ColName.L))
 		}
 	}
 	idxExec := &tipb.IndexScan{
 		TableId: p.Table.ID,
 		IndexId: p.Index.ID,
-		Columns: distsql.ColumnsToProto(columns, p.Table.PKIsHandle),
+		Columns: model.ColumnsToProto(columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
 	unique := checkCoverIndex(p.Index, p.Ranges)
@@ -126,7 +136,8 @@ func (p *PhysicalIndexScan) ToPB(ctx context.Context) (*tipb.Executor, error) {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }
 
-func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
+// SetPBColumnsDefaultValue sets the default values of tipb.ColumnInfos.
+func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnInfo, columns []*model.ColumnInfo) error {
 	for i, c := range columns {
 		if c.OriginDefaultValue == nil {
 			continue
@@ -141,10 +152,22 @@ func setPBColumnsDefaultValue(ctx context.Context, pbColumns []*tipb.ColumnInfo,
 			return errors.Trace(err)
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(d, ctx.GetSessionVars().GetTimeZone())
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(ctx.GetSessionVars().StmtCtx, d)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	return nil
+}
+
+// SupportStreaming returns true if a pushed down operation supports using coprocessor streaming API.
+// Note that this function handle pushed down physical plan only! It's called in constructDAGReq.
+// Some plans are difficult (if possible) to implement streaming, and some are pointless to do so.
+// TODO: Support more kinds of physical plan.
+func SupportStreaming(p PhysicalPlan) bool {
+	switch p.(type) {
+	case *PhysicalTableScan, *PhysicalIndexScan, *PhysicalSelection:
+		return true
+	}
+	return false
 }

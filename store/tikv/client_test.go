@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 )
 
 func TestT(t *testing.T) {
@@ -25,23 +26,24 @@ func TestT(t *testing.T) {
 }
 
 type testClientSuite struct {
+	OneByOneSuite
 }
 
 var _ = Suite(&testClientSuite{})
 
 func (s *testClientSuite) TestConn(c *C) {
-	client := newRPCClient()
+	client := newRPCClient(config.Security{})
 
 	addr := "127.0.0.1:6379"
-	conn1, err := client.getConn(addr)
+	conn1, err := client.getConnArray(addr)
 	c.Assert(err, IsNil)
 
-	conn2, err := client.getConn(addr)
+	conn2, err := client.getConnArray(addr)
 	c.Assert(err, IsNil)
-	c.Assert(conn2, Not(Equals), conn1)
+	c.Assert(conn2.Get(), Not(Equals), conn1.Get())
 
 	client.Close()
-	conn3, err := client.getConn(addr)
+	conn3, err := client.getConnArray(addr)
 	c.Assert(err, NotNil)
 	c.Assert(conn3, IsNil)
 }

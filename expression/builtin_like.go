@@ -17,8 +17,9 @@ import (
 	"regexp"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/context"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -38,7 +39,7 @@ type likeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *likeFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -54,22 +55,27 @@ type builtinLikeSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinLikeSig) Clone() builtinFunc {
+	newSig := &builtinLikeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a builtinLikeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
 // NOTE: Currently tikv's like function is case sensitive, so we keep its behavior here.
-func (b *builtinLikeSig) evalInt(row types.Row) (int64, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	valStr, isNull, err := b.args[0].EvalString(row, sc)
+func (b *builtinLikeSig) evalInt(row chunk.Row) (int64, bool, error) {
+	valStr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
 
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
-	patternStr, isNull, err := b.args[1].EvalString(row, sc)
+	patternStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
-	val, isNull, err := b.args[2].EvalInt(row, sc)
+	val, isNull, err := b.args[2].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
@@ -83,7 +89,7 @@ type regexpFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *regexpFunctionClass) getFunction(ctx context.Context, args []Expression) (builtinFunc, error) {
+func (c *regexpFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -102,15 +108,19 @@ type builtinRegexpBinarySig struct {
 	baseBuiltinFunc
 }
 
-func (b *builtinRegexpBinarySig) evalInt(row types.Row) (int64, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
+func (b *builtinRegexpBinarySig) Clone() builtinFunc {
+	newSig := &builtinRegexpBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
 
-	expr, isNull, err := b.args[0].EvalString(row, sc)
+func (b *builtinRegexpBinarySig) evalInt(row chunk.Row) (int64, bool, error) {
+	expr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, true, errors.Trace(err)
 	}
 
-	pat, isNull, err := b.args[1].EvalString(row, sc)
+	pat, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, true, errors.Trace(err)
 	}
@@ -118,7 +128,7 @@ func (b *builtinRegexpBinarySig) evalInt(row types.Row) (int64, bool, error) {
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
 	re, err := regexp.Compile(pat)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, ErrRegexp.GenByArgs(err.Error())
 	}
 	return boolToInt64(re.MatchString(expr)), false, nil
 }
@@ -127,17 +137,21 @@ type builtinRegexpSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinRegexpSig) Clone() builtinFunc {
+	newSig := &builtinRegexpSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals `expr REGEXP pat`, or `expr RLIKE pat`.
 // See https://dev.mysql.com/doc/refman/5.7/en/regexp.html#operator_regexp
-func (b *builtinRegexpSig) evalInt(row types.Row) (int64, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-
-	expr, isNull, err := b.args[0].EvalString(row, sc)
+func (b *builtinRegexpSig) evalInt(row chunk.Row) (int64, bool, error) {
+	expr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, true, errors.Trace(err)
 	}
 
-	pat, isNull, err := b.args[1].EvalString(row, sc)
+	pat, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return 0, true, errors.Trace(err)
 	}
@@ -145,7 +159,7 @@ func (b *builtinRegexpSig) evalInt(row types.Row) (int64, bool, error) {
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
 	re, err := regexp.Compile("(?i)" + pat)
 	if err != nil {
-		return 0, true, errors.Trace(err)
+		return 0, true, ErrRegexp.GenByArgs(err.Error())
 	}
 	return boolToInt64(re.MatchString(expr)), false, nil
 }

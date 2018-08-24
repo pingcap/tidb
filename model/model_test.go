@@ -14,7 +14,10 @@
 package model
 
 import (
+	"encoding/json"
+	"fmt"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
@@ -70,7 +73,7 @@ func (*testModelSuite) TestModelBasic(c *C) {
 		ID:          1,
 		Name:        NewCIStr("t"),
 		Charset:     "utf8",
-		Collate:     "utf8",
+		Collate:     "utf8_bin",
 		Columns:     []*ColumnInfo{column},
 		Indices:     []*IndexInfo{index},
 		ForeignKeys: []*FKInfo{fk},
@@ -81,7 +84,7 @@ func (*testModelSuite) TestModelBasic(c *C) {
 		ID:      1,
 		Name:    NewCIStr("test"),
 		Charset: "utf8",
-		Collate: "utf8",
+		Collate: "utf8_bin",
 		Tables:  []*TableInfo{table},
 	}
 
@@ -102,6 +105,8 @@ func (*testModelSuite) TestModelBasic(c *C) {
 	c.Assert(tp.String(), Equals, "")
 	has := index.HasPrefixIndex()
 	c.Assert(has, Equals, true)
+	t := table.GetUpdateTime()
+	c.Assert(t, Equals, TSConvert2Time(table.UpdateTS))
 
 	// Corner cases
 	column.Flag ^= mysql.PriKeyFlag
@@ -121,17 +126,60 @@ func (*testModelSuite) TestModelBasic(c *C) {
 	c.Assert(no, Equals, false)
 }
 
+func (*testModelSuite) TestJobStartTime(c *C) {
+	job := &Job{
+		ID:         123,
+		BinlogInfo: &HistoryInfo{},
+	}
+	t := time.Unix(0, 0)
+	c.Assert(t, Equals, TSConvert2Time(job.StartTS))
+	ret := fmt.Sprintf("%s", job)
+	c.Assert(job.String(), Equals, ret)
+}
+
 func (*testModelSuite) TestJobCodec(c *C) {
 	type A struct {
 		Name string
 	}
 	job := &Job{
 		ID:         1,
+		TableID:    2,
+		SchemaID:   1,
 		BinlogInfo: &HistoryInfo{},
 		Args:       []interface{}{NewCIStr("a"), A{Name: "abc"}},
 	}
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: NewCIStr("test_history_tbl")})
+
+	// Test IsDependentOn.
+	// job: table ID is 2
+	// job1: table ID is 2
+	var err error
+	job1 := &Job{
+		ID:         2,
+		TableID:    2,
+		SchemaID:   1,
+		Type:       ActionRenameTable,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{int64(3), NewCIStr("new_table_name")},
+	}
+	job1.RawArgs, err = json.Marshal(job1.Args)
+	c.Assert(err, IsNil)
+	isDependent, err := job.IsDependentOn(job1)
+	c.Assert(err, IsNil)
+	c.Assert(isDependent, IsTrue)
+	// job1: rename table, old schema ID is 3
+	// job2: create schema, schema ID is 3
+	job2 := &Job{
+		ID:         3,
+		TableID:    3,
+		SchemaID:   3,
+		Type:       ActionCreateSchema,
+		BinlogInfo: &HistoryInfo{},
+	}
+	isDependent, err = job2.IsDependentOn(job1)
+	c.Assert(err, IsNil)
+	c.Assert(isDependent, IsTrue)
 
 	c.Assert(job.IsCancelled(), Equals, false)
 	b, err := job.Encode(false)
@@ -180,6 +228,7 @@ func (*testModelSuite) TestJobCodec(c *C) {
 	c.Assert(job.IsFinished(), IsTrue)
 	c.Assert(job.IsRunning(), IsFalse)
 	c.Assert(job.IsSynced(), IsFalse)
+	c.Assert(job.IsRollbackDone(), IsFalse)
 	job.SetRowCount(3)
 	c.Assert(job.GetRowCount(), Equals, int64(3))
 }
@@ -237,4 +286,22 @@ func (testModelSuite) TestString(c *C) {
 		str := v.act.String()
 		c.Assert(str, Equals, v.result)
 	}
+}
+
+func (testModelSuite) TestUnmarshalCIStr(c *C) {
+	var ci CIStr
+
+	// Test unmarshal CIStr from a single string.
+	str := "aaBB"
+	buf, err := json.Marshal(str)
+	c.Assert(err, IsNil)
+	ci.UnmarshalJSON(buf)
+	c.Assert(ci.O, Equals, str)
+	c.Assert(ci.L, Equals, "aabb")
+
+	buf, err = json.Marshal(ci)
+	c.Assert(string(buf), Equals, `{"O":"aaBB","L":"aabb"}`)
+	ci.UnmarshalJSON(buf)
+	c.Assert(ci.O, Equals, str)
+	c.Assert(ci.L, Equals, "aabb")
 }

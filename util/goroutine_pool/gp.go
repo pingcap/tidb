@@ -22,9 +22,7 @@ import (
 
 // Pool is a struct to represent goroutine pool.
 type Pool struct {
-	head        goroutine
-	tail        *goroutine
-	count       int
+	stack       []*goroutine
 	idleTimeout time.Duration
 	sync.Mutex
 }
@@ -32,7 +30,6 @@ type Pool struct {
 // goroutine is actually a background goroutine, with a channel binded for communication.
 type goroutine struct {
 	ch     chan func()
-	next   *goroutine
 	status int32
 }
 
@@ -46,8 +43,8 @@ const (
 func New(idleTimeout time.Duration) *Pool {
 	pool := &Pool{
 		idleTimeout: idleTimeout,
+		stack:       make([]*goroutine, 0, 64),
 	}
-	pool.tail = &pool.head
 	return pool
 }
 
@@ -66,20 +63,14 @@ func (pool *Pool) Go(f func()) {
 
 func (pool *Pool) get() *goroutine {
 	pool.Lock()
-	head := &pool.head
-	if head.next == nil {
+	if len(pool.stack) == 0 {
 		pool.Unlock()
 		return pool.alloc()
 	}
 
-	ret := head.next
-	head.next = ret.next
-	if ret == pool.tail {
-		pool.tail = head
-	}
-	pool.count--
+	ret := pool.stack[len(pool.stack)-1]
+	pool.stack = pool.stack[:len(pool.stack)-1]
 	pool.Unlock()
-	ret.next = nil
 	return ret
 }
 
@@ -94,9 +85,12 @@ func (pool *Pool) alloc() *goroutine {
 func (g *goroutine) put(pool *Pool) {
 	g.status = statusIdle
 	pool.Lock()
-	pool.tail.next = g
-	pool.tail = g
-	pool.count++
+
+	// Recycle dead goroutine space.
+	i := 0
+	for ; i < len(pool.stack) && atomic.LoadInt32(&pool.stack[i].status) == statusDead; i++ {
+	}
+	pool.stack = append(pool.stack[i:], g)
 	pool.Unlock()
 }
 

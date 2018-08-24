@@ -15,21 +15,43 @@ package ddl
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/util/testleak"
-	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/sessionctx"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/net/context"
 )
+
+type TestInterceptor struct {
+	*BaseInterceptor
+
+	OnGetInfoSchemaExported func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema
+}
+
+func (ti *TestInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+	if ti.OnGetInfoSchemaExported != nil {
+		return ti.OnGetInfoSchemaExported(ctx, is)
+	}
+
+	return ti.BaseInterceptor.OnGetInfoSchema(ctx, is)
+}
 
 type TestDDLCallback struct {
 	*BaseCallback
 
-	onJobRunBefore       func(*model.Job)
-	onJobUpdated         func(*model.Job)
-	OnJobUpdatedExported func(*model.Job)
-	onWatched            func(ctx goctx.Context)
+	onJobRunBefore         func(*model.Job)
+	OnJobRunBeforeExported func(*model.Job)
+	onJobUpdated           func(*model.Job)
+	OnJobUpdatedExported   func(*model.Job)
+	onWatched              func(ctx context.Context)
 }
 
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
+	log.Infof("on job run before, job %v", job)
+	if tc.OnJobRunBeforeExported != nil {
+		tc.OnJobRunBeforeExported(job)
+		return
+	}
 	if tc.onJobRunBefore != nil {
 		tc.onJobRunBefore(job)
 		return
@@ -39,6 +61,7 @@ func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
 }
 
 func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
+	log.Infof("on job updated, job %v", job)
 	if tc.OnJobUpdatedExported != nil {
 		tc.OnJobUpdatedExported(job)
 		return
@@ -51,7 +74,7 @@ func (tc *TestDDLCallback) OnJobUpdated(job *model.Job) {
 	tc.BaseCallback.OnJobUpdated(job)
 }
 
-func (tc *TestDDLCallback) OnWatched(ctx goctx.Context) {
+func (tc *TestDDLCallback) OnWatched(ctx context.Context) {
 	if tc.onWatched != nil {
 		tc.onWatched(ctx)
 		return
@@ -61,7 +84,6 @@ func (tc *TestDDLCallback) OnWatched(ctx goctx.Context) {
 }
 
 func (s *testDDLSuite) TestCallback(c *C) {
-	defer testleak.AfterTest(c)()
 	cb := &BaseCallback{}
 	c.Assert(cb.OnChanged(nil), IsNil)
 	cb.OnJobRunBefore(nil)

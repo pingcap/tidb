@@ -3,7 +3,7 @@ language: go
 go_import_path: github.com/pingcap/tidb
 
 go:
-  - 1.9.x
+  - "1.10"
 
 # https://docs.travis-ci.com/user/customizing-the-build/#Rows-that-are-Allowed-to-Fail
 env:
@@ -14,7 +14,7 @@ env:
 matrix:
   fast_finish: true
   allow_failures:
-    - go: 1.9.x
+    - go: "1.10"
       env: TRAVIS_COVERAGE=1
 
 before_install:  
