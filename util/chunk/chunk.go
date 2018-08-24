@@ -15,12 +15,12 @@ package chunk
 
 import (
 	"encoding/binary"
+	"math/bits"
 	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util"
 )
 
 // Chunk stores multiple rows of data in Apache Arrow format.
@@ -59,7 +59,7 @@ func New(fields []*types.FieldType, cap, capLimit int) *Chunk {
 		chk.columns = append(chk.columns, newColumn(getFixedLen(f), cap, nil))
 	}
 	chk.numVirtualRows = 0
-	chk.capacity = mathutil.Min(chk.capacity, capLimit)
+	chk.capacity = mathutil.Min(cap, capLimit)
 	return chk
 }
 
@@ -68,20 +68,24 @@ func New(fields []*types.FieldType, cap, capLimit int) *Chunk {
 //   capLimit: the max limit for max number of rows.
 //
 //  this method will be used in call Executor#Next many times with a new chunk situation.
-//  so it will `checkCapacity` to get a new cap then create a new chunk, whatever happens.
+//  so it will `calculateResetCap` to get a new cap then create a new chunk, whatever happens.
 func Renew(chk *Chunk, capLimit int) *Chunk {
-	_, newCap := checkCapacity(chk, capLimit, true)
+	newCap := calculateRenewCap(chk, capLimit)
 	newChk := new(Chunk)
-	newChk.columns = resizeColumns(chk.columns, newCap)
+	newChk.columns = renewColumns(chk.columns, newCap)
 	newChk.numVirtualRows = 0
 	newChk.capacity = newCap
 	return newChk
 }
 
-func resizeColumns(oldCol []*column, cap int) []*column {
+func renewColumns(oldCol []*column, cap int) []*column {
 	columns := make([]*column, 0, len(oldCol))
 	for _, col := range oldCol {
-		columns = append(columns, newColumn(col.elemLen, cap, col))
+		elemLen := varElemLen
+		if col.isFixed() {
+			elemLen = len(col.elemBuf)
+		}
+		columns = append(columns, newColumn(elemLen, cap, col))
 	}
 	return columns
 }
@@ -98,12 +102,11 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 }
 
 // newFixedLenColumn creates a fixed length column with elemLen and initial data capacity.
-func newFixedLenColumn(elemLen int8, initCap int) *column {
+func newFixedLenColumn(elemLen, initCap int) *column {
 	return &column{
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, initCap*int(elemLen)),
+		data:       make([]byte, 0, initCap*elemLen),
 		nullBitmap: make([]byte, 0, initCap>>3),
-		elemLen:    elemLen,
 	}
 }
 
@@ -120,12 +123,11 @@ func newVarLenColumn(initCap int, old *column) *column {
 		offsets:    make([]int32, 1, initCap+1),
 		data:       make([]byte, 0, initCap*estimatedElemLen),
 		nullBitmap: make([]byte, 0, initCap>>3),
-		elemLen:    varElemLen,
 	}
 }
 
 // newColumn creates a column by field type.
-func newColumn(elemLen int8, initCap int, old *column) *column {
+func newColumn(elemLen, initCap int, old *column) *column {
 	if elemLen != varElemLen {
 		return newFixedLenColumn(elemLen, initCap)
 	}
@@ -166,8 +168,8 @@ func (c *Chunk) GrowAndReset(capLimit int) {
 	if c.columns == nil {
 		return
 	}
-	needScaleUp, newCap := checkCapacity(c, capLimit, false)
-	if !needScaleUp {
+	requireRenewCol, newCap := calculateResetCap(c, capLimit)
+	if !requireRenewCol {
 		for _, col := range c.columns {
 			col.reset()
 		}
@@ -175,38 +177,43 @@ func (c *Chunk) GrowAndReset(capLimit int) {
 		return
 	}
 	c.capacity = newCap
-	c.columns = resizeColumns(c.columns, newCap)
+	c.columns = renewColumns(c.columns, newCap)
 	c.numVirtualRows = 0
 }
 
-// checkCapacity checks and return suitable capacity in next execution.
-//
-//    the suitable capacity is determined by this table:
+// calculateResetCap checks and return whether need scale up and suitable capacity execution.
+//  It works like:
+//      keep old value if capacity == capLimit or chk isn't full, and no need renew columns.
+//      old value x 2  if chk is full, and need renew columns.
+func calculateResetCap(c *Chunk, capLimit int) (requireRenewCol bool, newCap int) {
+	if c.capacity == capLimit || c.NumRows() < c.capacity {
+		return false, c.capacity
+	}
+	return true, mathutil.Min(c.capacity*2, capLimit)
+}
 
-//      condition                            needScaleUp      newCapacity
-//      -------------------------------------------------------------
-//      chk size is empty                       No           keep old cap
-//      chk cap is over limit                   No           keep old cap(=capLimit)
-//      chk size is full                        Yes          old cap x 2(not over capLimit)
-//      chk size is not full & !tryScaleDown    No           keep old cap
-//      chk size is not full & tryScaleDown     No           power of 2 for old chk size
-//
-//    tryScaleDown is an optimization for Renew() situation in which we will reallocate memory in every loop,
-//    and check `chk.NumRows == 0` to stop loop, so for last loop we can use a small chunk to check.
-//    but for Reset() situation in which the chunk keep reusing reallocate a smaller chunk is expensive in most situation.
-//
-func checkCapacity(c *Chunk, capLimit int, tryScaleDown bool) (needScaleUp bool, newCap int) {
-	currSize, newCap := c.NumRows(), c.capacity
-	if currSize == 0 || c.capacity > capLimit {
-		return false, newCap
+// calculateResetCap checks and return suitable capacity in next execution.
+//  It works like:
+//      using next power of 2 for renew if currSize < cap
+//      using capacity limit if full but capacity already meet capLimit
+//      using oldcap x 2 if chk is full but less than capLimit
+func calculateRenewCap(c *Chunk, capLimit int) int {
+	currSize := c.NumRows()
+	if currSize < c.capacity {
+		return NextPowerOfTwo(currSize)
 	}
-	if currSize >= c.capacity {
-		return true, mathutil.Min(c.capacity*2, capLimit)
+	if c.capacity == capLimit {
+		return capLimit
 	}
-	if tryScaleDown && currSize < c.capacity {
-		newCap = int(util.NextPowerOfTwo(int32(currSize)))
+	return mathutil.Min(c.capacity*2, capLimit)
+}
+
+// NextPowerOfTwo returns next power of two size for the given target cap.
+func NextPowerOfTwo(cap int) int {
+	if cap < 1 {
+		return 1
 	}
-	return false, newCap
+	return 1 << uint(bits.Len64(uint64(cap)-1))
 }
 
 // Capacity return the max number of rows that chunk want to hold.

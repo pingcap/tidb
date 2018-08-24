@@ -53,22 +53,3 @@ func GetStack() []byte {
 	buf = buf[:stackSize]
 	return buf
 }
-
-const maxCapacity int32 = 1 << 30
-
-// NextPowerOfTwo returns next power of two size for the given target cap.
-func NextPowerOfTwo(cap int32) int32 {
-	n := cap - 1
-	n |= n >> 1
-	n |= n >> 2
-	n |= n >> 4
-	n |= n >> 8
-	n |= n >> 16
-	if n < 0 {
-		return 1
-	}
-	if n > maxCapacity {
-		return maxCapacity
-	}
-	return n + 1
-}

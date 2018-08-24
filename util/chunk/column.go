@@ -50,7 +50,6 @@ type column struct {
 	offsets    []int32
 	data       []byte
 	elemBuf    []byte
-	elemLen    int8
 }
 
 func (c *column) isFixed() bool {

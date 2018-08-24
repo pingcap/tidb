@@ -248,7 +248,7 @@ func newChunk(elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
 		if l > 0 {
-			chk.columns = append(chk.columns, newFixedLenColumn(int8(l), 0))
+			chk.columns = append(chk.columns, newFixedLenColumn(l, 0))
 		} else {
 			chk.columns = append(chk.columns, newVarLenColumn(0, nil))
 		}
@@ -455,6 +455,22 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
 	}
 	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+}
+
+func (s testChunkSuite) TestNextPowerOfTwo(c *check.C) {
+	tests := []struct {
+		input, output int
+	}{
+		{0, 1},
+		{-10, 1},
+		{1, 1},
+		{2, 2},
+		{3, 4},
+		{5, 8},
+	}
+	for _, test := range tests {
+		c.Assert(NextPowerOfTwo(test.input), check.Equals, test.output)
+	}
 }
 
 func BenchmarkAppendInt(b *testing.B) {

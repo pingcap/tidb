@@ -124,7 +124,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *column, ordinal int) (remained 
 	}
 
 	// decode offsets.
-	numFixedBytes := int(getFixedLen(c.colTypes[ordinal]))
+	numFixedBytes := getFixedLen(c.colTypes[ordinal])
 	numDataBytes := numFixedBytes * col.length
 	if numFixedBytes == -1 {
 		numOffsetBytes := (col.length + 1) * 4
@@ -163,7 +163,7 @@ func (c *Codec) bytesToI32Slice(b []byte) (i32s []int32) {
 	return i32s
 }
 
-func getFixedLen(colType *types.FieldType) int8 {
+func getFixedLen(colType *types.FieldType) int {
 	switch colType.Tp {
 	case mysql.TypeFloat:
 		return 4
@@ -175,7 +175,7 @@ func getFixedLen(colType *types.FieldType) int8 {
 	case mysql.TypeNewDecimal:
 		return types.MyDecimalStructSize
 	default:
-		return varElemLen
+		return -1
 	}
 }
 
