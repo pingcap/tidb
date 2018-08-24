@@ -17,6 +17,7 @@ import (
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
+	"math"
 )
 
 var _ = Suite(&testMiscSuite{})
@@ -67,4 +68,22 @@ func (s testMiscSuite) TestRunWithRetry(c *C) {
 	})
 	c.Assert(err, NotNil)
 	c.Assert(cnt, Equals, 1)
+}
+
+func (s testMiscSuite) TestNextPowerOfTwo(c *C) {
+	tests := []struct {
+		input, output int32
+	}{
+		{0, 1},
+		{-10, 1},
+		{1, 1},
+		{2, 2},
+		{3, 4},
+		{5, 8},
+		{maxCapacity + 1, maxCapacity},
+		{math.MaxInt32, maxCapacity},
+	}
+	for _, test := range tests {
+		c.Assert(NextPowerOfTwo(test.input), Equals, test.output)
+	}
 }

@@ -248,9 +248,9 @@ func newChunk(elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
 		if l > 0 {
-			chk.addFixedLenColumn(int8(l), 0)
+			chk.columns = append(chk.columns, newFixedLenColumn(int8(l), 0))
 		} else {
-			chk.addVarLenColumn(-1, 0, nil)
+			chk.columns = append(chk.columns, newVarLenColumn(0, nil))
 		}
 	}
 	return chk
@@ -650,7 +650,7 @@ type mockExec struct {
 
 func (x *mockExec) Next(chk *Chunk, resize bool) {
 	if resize {
-		chk.GrowReset(1024)
+		chk.GrowAndReset(1024)
 	} else {
 		chk.Reset()
 	}

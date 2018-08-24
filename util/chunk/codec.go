@@ -175,7 +175,7 @@ func getFixedLen(colType *types.FieldType) int8 {
 	case mysql.TypeNewDecimal:
 		return types.MyDecimalStructSize
 	default:
-		return -1
+		return varElemLen
 	}
 }
 
