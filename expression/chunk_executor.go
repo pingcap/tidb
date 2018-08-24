@@ -236,37 +236,29 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 	for i, numRows := 0, iterator.Len(); i < numRows; i++ {
 		selected = append(selected, true)
 	}
-	var err error
-	for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
-		if !selected[row.Idx()] {
-			continue
-		}
-		selected[row.Idx()], err = VectorizedFilterRow(ctx, filters, row)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	return selected, nil
-}
-
-// VectorizedFilterRow applies a list of filters to a row.
-func VectorizedFilterRow(ctx sessionctx.Context, filters []Expression, row chunk.Row) (bool, error) {
-	selected := true
 	for _, filter := range filters {
-		isTypeInt := filter.GetType().EvalType() == types.ETInt
-		if isTypeInt {
-			filterResult, isNull, err := filter.EvalInt(ctx, row)
-			if err != nil {
-				return false, errors.Trace(err)
+		isIntType := true
+		if filter.GetType().EvalType() != types.ETInt {
+			isIntType = false
+		}
+		for row := iterator.Begin(); row != iterator.End(); row = iterator.Next() {
+			if !selected[row.Idx()] {
+				continue
 			}
-			selected = selected && !isNull && (filterResult != 0)
-		} else {
-			// TODO: should rewrite the filter to `cast(expr as SIGNED) != 0` and always use `EvalInt`.
-			bVal, err := EvalBool(ctx, []Expression{filter}, row)
-			if err != nil {
-				return false, errors.Trace(err)
+			if isIntType {
+				filterResult, isNull, err := filter.EvalInt(ctx, row)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				selected[row.Idx()] = selected[row.Idx()] && !isNull && (filterResult != 0)
+			} else {
+				// TODO: should rewrite the filter to `cast(expr as SIGNED) != 0` and always use `EvalInt`.
+				bVal, err := EvalBool(ctx, []Expression{filter}, row)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				selected[row.Idx()] = selected[row.Idx()] && bVal
 			}
-			selected = selected && bVal
 		}
 	}
 	return selected, nil

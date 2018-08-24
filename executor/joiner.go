@@ -376,7 +376,7 @@ func (j *baseJoiner) tryToMatchInnerAndOuter(isRight bool, outer chunk.Row, inne
 	for inner := inners.Current(); inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
 		j.makeJoinRow(isRight, inner, outer)
 
-		matched, err := expression.VectorizedFilterRow(j.ctx, j.conditions, j.mutRow.ToRow())
+		matched, err := expression.EvalBool(j.ctx, j.conditions, j.mutRow.ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
