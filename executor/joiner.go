@@ -91,7 +91,7 @@ func newJoiner(ctx sessionctx.Context, joinType plan.JoinType,
 	colTypes := make([]*types.FieldType, 0, len(lhsColTypes)+len(rhsColTypes))
 	colTypes = append(colTypes, lhsColTypes...)
 	colTypes = append(colTypes, rhsColTypes...)
-	base.mutRow = chunk.MutRowFromTypes(colTypes)
+	base.shadowRow = chunk.MutRowFromTypes(colTypes)
 	base.selected = make([]bool, 0, chunk.InitialCapacity)
 	if joinType == plan.LeftOuterJoin || joinType == plan.RightOuterJoin {
 		innerColTypes := lhsColTypes
@@ -124,7 +124,7 @@ type baseJoiner struct {
 	conditions   []expression.Expression
 	defaultInner chunk.Row
 	outerIsRight bool
-	mutRow       chunk.MutRow
+	shadowRow    chunk.MutRow
 	selected     []bool
 	maxChunkSize int
 }
@@ -142,14 +142,14 @@ func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
 	chk.AppendPartialRow(lhs.Len(), rhs)
 }
 
-// makeJoinRow combines inner, outer row into mutRow.
-// combines will uses shadow copy inner and outer row data to mutRow.
+// makeJoinRow combines inner, outer row into shadowRow.
+// combines will uses shadow copy inner and outer row data to shadowRow.
 func (j *baseJoiner) makeJoinRow(isRightJoin bool, inner, outer chunk.Row) {
 	if !isRightJoin {
 		inner, outer = outer, inner
 	}
-	j.mutRow.ShadowCopyPartialRow(0, inner)
-	j.mutRow.ShadowCopyPartialRow(inner.Len(), outer)
+	j.shadowRow.ShallowCopyPartialRow(0, inner)
+	j.shadowRow.ShallowCopyPartialRow(inner.Len(), outer)
 }
 
 func (j *baseJoiner) filter(input, output *chunk.Chunk) (matched bool, err error) {
@@ -185,7 +185,7 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.makeJoinRow(j.outerIsRight, inner, outer)
 
-		matched, err = expression.EvalBool(j.ctx, j.conditions, j.mutRow.ToRow())
+		matched, err = expression.EvalBool(j.ctx, j.conditions, j.shadowRow.ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -219,7 +219,7 @@ func (j *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk 
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.makeJoinRow(j.outerIsRight, inner, outer)
 
-		matched, err = expression.EvalBool(j.ctx, j.conditions, j.mutRow.ToRow())
+		matched, err = expression.EvalBool(j.ctx, j.conditions, j.shadowRow.ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -254,7 +254,7 @@ func (j *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator,
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.makeJoinRow(false, inner, outer)
 
-		matched, err = expression.EvalBool(j.ctx, j.conditions, j.mutRow.ToRow())
+		matched, err = expression.EvalBool(j.ctx, j.conditions, j.shadowRow.ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -296,7 +296,7 @@ func (j *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Itera
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.makeJoinRow(false, inner, outer)
 
-		matched, err := expression.EvalBool(j.ctx, j.conditions, j.mutRow.ToRow())
+		matched, err := expression.EvalBool(j.ctx, j.conditions, j.shadowRow.ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -372,14 +372,14 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 
 // tryToMatchInnerAndOuter does 2 things:
 // 1. Combine outer and inner row to join row.
-// 2. Evaluate the join row whether match the join conditions.
+// 2. Check whether the join row matches the join conditions, if so, append it to the `outChk`.
 func (j *baseJoiner) tryToMatchInnerAndOuter(isRight bool, outer chunk.Row, inners chunk.Iterator, outChk *chunk.Chunk, cacheRows []chunk.Row) (bool, error) {
 	match := false
 	numToAppend := j.maxChunkSize - outChk.NumRows()
-	for inner := inners.Current(); inner != inners.End() && numToAppend > 0; inner, numToAppend = inners.Next(), numToAppend-1 {
+	for inner := inners.Current(); inner != inners.End() && numToAppend > 0; inner = inners.Next() {
 		j.makeJoinRow(isRight, inner, outer)
 
-		matched, err := expression.VectorizedFilterRow(j.ctx, j.conditions, j.mutRow.ToRow())
+		matched, err := expression.FilterRow(j.ctx, j.conditions, j.shadowRow.ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -390,6 +390,7 @@ func (j *baseJoiner) tryToMatchInnerAndOuter(isRight bool, outer chunk.Row, inne
 				chunk.BatchCopyJoinRowToChunk(isRight, cacheRows, outer, outChk)
 				cacheRows = cacheRows[:0]
 			}
+			numToAppend--
 		}
 	}
 	chunk.BatchCopyJoinRowToChunk(isRight, cacheRows, outer, outChk)

@@ -30,8 +30,8 @@ func TestCopyShadow(t *testing.T) {
 
 	rowIdx := 0
 	for lhs := it1.Begin(); lhs != it1.End(); lhs = it1.Next() {
-		mutRow.ShadowCopyPartialRow(0, lhs)
-		mutRow.ShadowCopyPartialRow(lhs.Len(), row)
+		mutRow.ShallowCopyPartialRow(0, lhs)
+		mutRow.ShallowCopyPartialRow(lhs.Len(), row)
 
 		if !checkDstChkRow(mutRow.ToRow(), rowIdx) {
 			t.Fail()
@@ -81,8 +81,8 @@ func BenchmarkCopyShadow(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		lhs := it1.Begin()
 		for ; lhs != it1.End(); lhs = it1.Next() {
-			mutRow.ShadowCopyPartialRow(0, lhs)
-			mutRow.ShadowCopyPartialRow(lhs.Len(), row)
+			mutRow.ShallowCopyPartialRow(0, lhs)
+			mutRow.ShallowCopyPartialRow(lhs.Len(), row)
 		}
 	}
 }
@@ -106,18 +106,6 @@ func BenchmarkCopyBatchColumnByColumn(b *testing.B) {
 		}
 		BatchCopyJoinRowToChunk(true, rows, row, dst)
 	}
-}
-
-func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
-	chk := &Chunk{}
-	for _, l := range elemLen {
-		if l > 0 {
-			chk.addFixedLenColumn(l, cap)
-		} else {
-			chk.addVarLenColumn(cap)
-		}
-	}
-	return chk
 }
 
 func getChunk() *Chunk {
