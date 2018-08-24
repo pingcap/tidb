@@ -170,9 +170,8 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 func constructTimeZone(name string, offset int) (*time.Location, error) {
 	if name != "" {
 		return LocCache.getLoc(name)
-	} else {
-		return time.FixedZone("", offset), nil
 	}
+	return time.FixedZone("", offset), nil
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {

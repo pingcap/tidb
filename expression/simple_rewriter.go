@@ -56,6 +56,33 @@ func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo
 	return rewriter.pop(), nil
 }
 
+func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *Schema) ([]Expression, error) {
+	exprStr = "select " + exprStr
+	stmts, err := parser.New().Parse(exprStr, "", "")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
+	exprs := make([]Expression, 0, len(fields))
+	for _, field := range fields {
+		expr, err := RewriteSimpleExprWithSchema(ctx, field.Expr, schema)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		exprs = append(exprs, expr)
+	}
+	return exprs, nil
+}
+
+func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema) (Expression, error) {
+	rewriter := &simpleRewriter{ctx: ctx, schema: schema}
+	expr.Accept(rewriter)
+	if rewriter.err != nil {
+		return nil, errors.Trace(rewriter.err)
+	}
+	return rewriter.pop(), nil
+}
+
 func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
 	col := sr.schema.FindColumnByName(nodeColName.Name.Name.L)
 	if col != nil {

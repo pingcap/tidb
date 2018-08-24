@@ -2160,8 +2160,32 @@ func (c *charLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, errors.Trace(argsErr)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	if types.IsBinaryStr(args[0].GetType()) {
+		sig := &builtinCharLengthBinarySig{bf}
+		return sig, nil
+	}
 	sig := &builtinCharLengthSig{bf}
 	return sig, nil
+}
+
+type builtinCharLengthBinarySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinCharLengthBinarySig) Clone() builtinFunc {
+	newSig := &builtinCharLengthBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinCharLengthSig for binary string type.
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char-length
+func (b *builtinCharLengthBinarySig) evalInt(row chunk.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, errors.Trace(err)
+	}
+	return int64(len(val)), false, nil
 }
 
 type builtinCharLengthSig struct {
@@ -2174,7 +2198,7 @@ func (b *builtinCharLengthSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals a builtinCharLengthSig.
+// evalInt evals a builtinCharLengthSig for non-binary string type.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char-length
 func (b *builtinCharLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
