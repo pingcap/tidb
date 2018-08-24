@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"time"
 )
 
 func (s *testChunkSuite) TestMutRow(c *check.C) {
@@ -136,21 +137,30 @@ func BenchmarkMutRowFromValues(b *testing.B) {
 }
 
 func (s *testChunkSuite) TestMutRowShadowCopyPartialRow(c *check.C) {
-	colTypes := make([]*types.FieldType, 0, 8)
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
+	colTypes := make([]*types.FieldType, 0, 3)
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
-	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeTimestamp})
 
 	mutRow := MutRowFromTypes(colTypes)
-	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()
+	row := MutRowFromValues("abc", 123, types.ZeroTimestamp).ToRow()
 	mutRow.ShadowCopyPartialRow(0, row)
-	c.Assert(row.GetString(0), check.DeepEquals, mutRow.ToRow().GetString(0))
-	c.Assert(row.GetString(1), check.DeepEquals, mutRow.ToRow().GetString(1))
-	c.Assert(row.GetInt64(2), check.DeepEquals, mutRow.ToRow().GetInt64(2))
-	c.Assert(row.GetInt64(3), check.DeepEquals, mutRow.ToRow().GetInt64(3))
-	c.Assert(row.GetTime(4), check.DeepEquals, mutRow.ToRow().GetTime(4))
+	c.Assert(row.GetString(0), check.Equals, mutRow.ToRow().GetString(0))
+	c.Assert(row.GetInt64(1), check.Equals, mutRow.ToRow().GetInt64(1))
+	c.Assert(row.GetTime(2), check.DeepEquals, mutRow.ToRow().GetTime(2))
+
+	row.c.Reset()
+	d := types.NewStringDatum("dfg")
+	row.c.AppendDatum(0, &d)
+	d = types.NewIntDatum(567)
+	row.c.AppendDatum(1, &d)
+	d = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeTimestamp})
+	row.c.AppendDatum(2, &d)
+
+	c.Assert(d.GetMysqlTime(), check.DeepEquals, mutRow.ToRow().GetTime(2))
+	c.Assert(row.GetString(0), check.Equals, mutRow.ToRow().GetString(0))
+	c.Assert(row.GetInt64(1), check.Equals, mutRow.ToRow().GetInt64(1))
+	c.Assert(row.GetTime(2), check.DeepEquals, mutRow.ToRow().GetTime(2))
 }
 
 var rowsNum = 1024
@@ -166,6 +176,7 @@ func BenchmarkMutRowShadowCopyPartialRow(b *testing.B) {
 
 	mutRow := MutRowFromTypes(colTypes)
 	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < rowsNum; j++ {
 			mutRow.ShadowCopyPartialRow(0, row)
@@ -177,6 +188,7 @@ func BenchmarkChunkAppendPartialRow(b *testing.B) {
 	b.ReportAllocs()
 	chk := newChunkWithInitCap(rowsNum, 0, 0, 8, 8, 16)
 	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		chk.Reset()
 		for j := 0; j < rowsNum; j++ {
