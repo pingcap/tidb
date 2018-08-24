@@ -8,10 +8,6 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-var (
-	numRows = 1024
-)
-
 func TestCopyFieldByField(t *testing.T) {
 	it1, row, dst := prepareChks()
 
@@ -37,20 +33,6 @@ func TestCopyShadow(t *testing.T) {
 			t.Fail()
 		}
 		rowIdx++
-	}
-}
-
-func BenchmarkCopyFieldByField(b *testing.B) {
-	b.ReportAllocs()
-	it1, row, dst := prepareChks()
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		dst.Reset()
-		for lhs := it1.Begin(); lhs != it1.End(); lhs = it1.Next() {
-			dst.AppendRow(lhs)
-			dst.AppendPartialRow(lhs.Len(), row)
-		}
 	}
 }
 
@@ -81,8 +63,8 @@ func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
 }
 
 func getChunk() *Chunk {
-	chk := newChunkWithInitCap(numRows, 8, 8, 0, 0)
-	for i := 0; i < numRows; i++ {
+	chk := newChunkWithInitCap(rowsNum, 8, 8, 0, 0)
+	for i := 0; i < rowsNum; i++ {
 		//chk.AppendNull(0)
 		chk.AppendInt64(0, int64(i))
 		if i%3 == 0 {
@@ -102,7 +84,7 @@ func prepareChks() (it1 Iterator, row Row, dst *Chunk) {
 	row = chk1.GetRow(0)
 	it1 = NewIterator4Chunk(chk1)
 	it1.Begin()
-	dst = newChunkWithInitCap(numRows, 8, 8, 0, 0, 8, 8, 0, 0)
+	dst = newChunkWithInitCap(rowsNum, 8, 8, 0, 0, 8, 8, 0, 0)
 	return it1, row, dst
 }
 
@@ -129,11 +111,11 @@ func prepareChksForShadowCopy() (it1 Iterator, row Row, mutRow MutRow) {
 
 func checkDstChk(dst *Chunk) bool {
 	for i := 0; i < 8; i++ {
-		if dst.columns[i].length != numRows {
+		if dst.columns[i].length != rowsNum {
 			return false
 		}
 	}
-	for j := 0; j < numRows; j++ {
+	for j := 0; j < rowsNum; j++ {
 		row := dst.GetRow(j)
 		if !checkDstChkRow(row, j) {
 			return false

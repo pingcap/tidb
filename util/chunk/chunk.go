@@ -182,7 +182,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 	c.numVirtualRows += end - begin
 }
 
-// TruncateTo truncates rows from tail to head in a Chunk to "numRows" rows.
+// TruncateTo truncates rows from tail to head in a Chunk to "rowsNum" rows.
 func (c *Chunk) TruncateTo(numRows int) {
 	for _, col := range c.columns {
 		if col.isFixed() {

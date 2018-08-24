@@ -134,3 +134,53 @@ func BenchmarkMutRowFromValues(b *testing.B) {
 		MutRowFromValues(values)
 	}
 }
+
+func (s *testChunkSuite) TestMutRowShadowCopyPartialRow(c *check.C) {
+	colTypes := make([]*types.FieldType, 0, 8)
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+
+	mutRow := MutRowFromTypes(colTypes)
+	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()
+	mutRow.ShadowCopyPartialRow(0, row)
+	c.Assert(row.GetString(0), check.DeepEquals, mutRow.ToRow().GetString(0))
+	c.Assert(row.GetString(1), check.DeepEquals, mutRow.ToRow().GetString(1))
+	c.Assert(row.GetInt64(2), check.DeepEquals, mutRow.ToRow().GetInt64(2))
+	c.Assert(row.GetInt64(3), check.DeepEquals, mutRow.ToRow().GetInt64(3))
+	c.Assert(row.GetTime(4), check.DeepEquals, mutRow.ToRow().GetTime(4))
+}
+
+var rowsNum = 1024
+
+func BenchmarkMutRowShadowCopyPartialRow(b *testing.B) {
+	b.ReportAllocs()
+	colTypes := make([]*types.FieldType, 0, 8)
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+
+	mutRow := MutRowFromTypes(colTypes)
+	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < rowsNum; j++ {
+			mutRow.ShadowCopyPartialRow(0, row)
+		}
+	}
+}
+
+func BenchmarkChunkAppendPartialRow(b *testing.B) {
+	b.ReportAllocs()
+	chk := newChunkWithInitCap(rowsNum, 0, 0, 8, 8, 16)
+	row := MutRowFromValues("abc", "abcdefg", 123, 456, types.ZeroDatetime).ToRow()
+	for i := 0; i < b.N; i++ {
+		chk.Reset()
+		for j := 0; j < rowsNum; j++ {
+			chk.AppendPartialRow(0, row)
+		}
+	}
+}
