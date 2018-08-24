@@ -215,7 +215,7 @@ func encodeInt(v int64) *types.Datum {
 
 func (s *testFeedbackSuite) TestFeedbackEncoding(c *C) {
 	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLong), 0, 0)
-	q := &QueryFeedback{hist: hist}
+	q := &QueryFeedback{hist: hist, tp: pkType}
 	q.feedback = append(q.feedback, feedback{encodeInt(0), encodeInt(3), 1, 0})
 	q.feedback = append(q.feedback, feedback{encodeInt(0), encodeInt(5), 1, 0})
 	val, err := encodeFeedback(q)

@@ -198,7 +198,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	metrics.StatsInaccuracyRate.Observe(rate)
 	s.Lock()
 	defer s.Unlock()
-	isIndex := q.hist.isIndexHist()
+	isIndex := q.tp == indexType
 	s.rateMap.update(q.tableID, q.hist.ID, rate, isIndex)
 	if len(s.feedback) < MaxQueryFeedbackCount {
 		s.feedback = append(s.feedback, q)
@@ -364,7 +364,14 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 	var err error
 	var successCount int
 	for _, fb := range h.feedback {
-		err = h.dumpFeedbackToKV(fb)
+		if fb.tp == pkType {
+			err = h.dumpFeedbackToKV(fb)
+		} else {
+			t, ok := h.statsCache.Load().(statsCache)[fb.tableID]
+			if ok {
+				err = dumpFeedbackForIndex(h, fb, t)
+			}
+		}
 		if err != nil {
 			break
 		}
@@ -381,7 +388,7 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 		return nil
 	}
 	var isIndex int64
-	if fb.hist.isIndexHist() {
+	if fb.tp == indexType {
 		isIndex = 1
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
@@ -415,7 +422,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 		}
 		tblStats := h.GetTableStats(table.Meta())
 		newTblStats := tblStats.copy()
-		if fb.hist.isIndexHist() {
+		if fb.tp == indexType {
 			idx, ok := tblStats.Indices[fb.hist.ID]
 			if !ok {
 				continue
@@ -552,7 +559,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		}
 	}
 	// Update the NDV of primary key column.
-	if table.Meta().PKIsHandle && isIndex == 0 {
+	if table.Meta().PKIsHandle && q.tp == pkType {
 		hist.NDV = int64(hist.totalRowCount())
 	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
