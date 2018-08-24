@@ -54,8 +54,8 @@ func (s *testUnitTestSuit) SubstituteCol2CorCol(expr expression.Expression, colI
 			}
 			newArgs = append(newArgs, newArg)
 		}
-		newSf := expression.NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
-		return newSf, nil
+		newSf, err := expression.NewFunction(x.GetCtx(), x.FuncName.L, x.GetType(), newArgs...)
+		return newSf, errors.Trace(err)
 	case *expression.Column:
 		if _, ok := colIDs[x.UniqueID]; ok {
 			return &expression.CorrelatedColumn{Column: *x}, nil
