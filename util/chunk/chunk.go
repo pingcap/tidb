@@ -160,6 +160,70 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	}
 }
 
+// BatchCopyJoinRowToChunk uses for join to batch copy inner rows and outer row to chunk.
+func BatchCopyJoinRowToChunk(isRight bool, inners []Row, outer Row, c *Chunk) {
+	if len(inners) == 0 {
+		return
+	}
+	innerIdx, outerIdx := 0, inners[0].Len()
+	if !isRight {
+		innerIdx, outerIdx = outer.Len(), 0
+	}
+	appendPartialRows(innerIdx, inners, c)
+	appendPartialSameRows(outerIdx, outer, len(inners), c)
+	c.numVirtualRows += len(inners)
+}
+
+// appendPartialRows appends multiple different rows to the chunk.
+func appendPartialRows(colIdx int, rows []Row, chk *Chunk) {
+	columns := rows[0].c.columns
+	for i, rowCol := range columns {
+		chkCol := chk.columns[colIdx+i]
+		if rowCol.isFixed() {
+			elemLen := len(rowCol.elemBuf)
+			for _, row := range rows {
+				chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+				chkCol.length++
+
+				offset := row.idx * elemLen
+				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
+			}
+		} else {
+			for _, row := range rows {
+				chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+				chkCol.length++
+
+				start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
+				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
+				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+			}
+		}
+	}
+}
+
+// appendPartialSameRows appends same row to the chunk with `rowNum` times.
+func appendPartialSameRows(colIdx int, row Row, rowNum int, c *Chunk) {
+	for i, rowCol := range row.c.columns {
+		chkCol := c.columns[colIdx+i]
+		chkCol.appendMultiSameNullBitmap(!rowCol.isNull(row.idx), rowNum)
+		chkCol.length += rowNum
+		if rowCol.isFixed() {
+			elemLen := len(rowCol.elemBuf)
+			start := row.idx * elemLen
+			end := start + elemLen
+			for j := 0; j < rowNum; j++ {
+				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
+			}
+		} else {
+			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+1]
+			for j := 0; j < rowNum; j++ {
+				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
+				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+			}
+		}
+	}
+}
+
 // Append appends rows in [begin, end) in another Chunk to a Chunk.
 func (c *Chunk) Append(other *Chunk, begin, end int) {
 	for colID, src := range other.columns {
@@ -182,7 +246,7 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 	c.numVirtualRows += end - begin
 }
 
-// TruncateTo truncates rows from tail to head in a Chunk to "numRows" rows.
+// TruncateTo truncates rows from tail to head in a Chunk to "rowsNum" rows.
 func (c *Chunk) TruncateTo(numRows int) {
 	for _, col := range c.columns {
 		if col.isFixed() {
