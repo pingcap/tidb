@@ -117,6 +117,7 @@ func prepareChksForShadowCopy() (it1 Iterator, row Row, mutRow MutRow) {
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
+
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})

@@ -347,12 +347,11 @@ func setMutRowJSON(col *column, j json.BinaryJSON) {
 	col.offsets[1] = int32(dataLen)
 }
 
-// ShadowCopyPartialRow use shadow copy to instead of AppendPartialRow,
-// ShadowCopyPartialRow copies the data of row to the mutRow.
+// ShadowCopyPartialRow shadow copies the data of `row` to MutRow.
 func (mr MutRow) ShadowCopyPartialRow(colIdx int, row Row) {
-	dst := mr.c
+	chk := mr.c
 	for i, rowCol := range row.c.columns {
-		chkCol := dst.columns[colIdx+i]
+		chkCol := chk.columns[colIdx+i]
 		if !rowCol.isNull(row.idx) {
 			chkCol.nullBitmap[0] = 1
 		} else {

@@ -369,7 +369,7 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 
 // tryToMatchInnerAndOuter does 2 things:
 // 1. Combine outer and inner row to join row.
-// 2. Evaluate the join row whether match the join conditions.
+// 2. Check whether the join row matches the join conditions, if so, append it to the `outChk`.
 func (j *baseJoiner) tryToMatchInnerAndOuter(isRight bool, outer chunk.Row, inners chunk.Iterator, outChk *chunk.Chunk) (bool, error) {
 	match := false
 	numToAppend := j.maxChunkSize - outChk.NumRows()
