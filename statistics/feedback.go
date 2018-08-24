@@ -845,10 +845,10 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 		colName := idx.Info.Columns[rangePosition].Name.L
 		var rangeString string
 		// prefer index stats over column stats
-		if idx := t.indexStartWithColumnForDebugLog(colName); idx != nil {
-			rangeString = logForIndexRange(idx, &rang, -1, factor)
-		} else if col := t.columnByNameForDebugLog(colName); col != nil {
-			rangeString = colRangeToStr(col, &rang, -1, factor)
+		if idxHist := t.indexStartWithColumnForDebugLog(colName); idxHist != nil {
+			rangeString = logForIndexRange(idxHist, &rang, -1, factor)
+		} else if colHist := t.columnByNameForDebugLog(colName); colHist != nil {
+			rangeString = colRangeToStr(colHist, &rang, -1, factor)
 		} else {
 			return
 		}
