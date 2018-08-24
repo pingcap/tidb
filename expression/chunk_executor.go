@@ -263,3 +263,26 @@ func VectorizedFilter(ctx sessionctx.Context, filters []Expression, iterator *ch
 	}
 	return selected, nil
 }
+
+// FilterRow applies a list of filters to a row.
+func FilterRow(ctx sessionctx.Context, filters []Expression, row chunk.Row) (bool, error) {
+	selected := true
+	for _, filter := range filters {
+		isTypeInt := filter.GetType().EvalType() == types.ETInt
+		if isTypeInt {
+			filterResult, isNull, err := filter.EvalInt(ctx, row)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			selected = selected && !isNull && (filterResult != 0)
+		} else {
+			// TODO: should rewrite the filter to `cast(expr as SIGNED) != 0` and always use `EvalInt`.
+			bVal, err := EvalBool(ctx, []Expression{filter}, row)
+			if err != nil {
+				return false, errors.Trace(err)
+			}
+			selected = selected && bVal
+		}
+	}
+	return selected, nil
+}

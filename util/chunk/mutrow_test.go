@@ -144,7 +144,7 @@ func (s *testChunkSuite) TestMutRowShadowCopyPartialRow(c *check.C) {
 
 	mutRow := MutRowFromTypes(colTypes)
 	row := MutRowFromValues("abc", 123, types.ZeroTimestamp).ToRow()
-	mutRow.ShadowCopyPartialRow(0, row)
+	mutRow.ShallowCopyPartialRow(0, row)
 	c.Assert(row.GetString(0), check.Equals, mutRow.ToRow().GetString(0))
 	c.Assert(row.GetInt64(1), check.Equals, mutRow.ToRow().GetInt64(1))
 	c.Assert(row.GetTime(2), check.DeepEquals, mutRow.ToRow().GetTime(2))
@@ -179,7 +179,7 @@ func BenchmarkMutRowShadowCopyPartialRow(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for j := 0; j < rowsNum; j++ {
-			mutRow.ShadowCopyPartialRow(0, row)
+			mutRow.ShallowCopyPartialRow(0, row)
 		}
 	}
 }

@@ -347,8 +347,8 @@ func setMutRowJSON(col *column, j json.BinaryJSON) {
 	col.offsets[1] = int32(dataLen)
 }
 
-// ShadowCopyPartialRow shadow copies the data of `row` to MutRow.
-func (mr MutRow) ShadowCopyPartialRow(colIdx int, row Row) {
+// ShallowCopyPartialRow shadow copies the data of `row` to MutRow.
+func (mr MutRow) ShallowCopyPartialRow(colIdx int, row Row) {
 	chk := mr.c
 	for i, rowCol := range row.c.columns {
 		chkCol := chk.columns[colIdx+i]
