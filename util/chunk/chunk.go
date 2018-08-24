@@ -56,7 +56,12 @@ func New(fields []*types.FieldType, cap, capLimit int) *Chunk {
 	chk := new(Chunk)
 	chk.columns = make([]*column, 0, len(fields))
 	for _, f := range fields {
-		chk.columns = append(chk.columns, newColumn(getFixedLen(f), cap, nil))
+		elemLen := getFixedLen(f)
+		if elemLen == varElemLen {
+			chk.columns = append(chk.columns, newFixedLenColumn(elemLen, cap))
+		} else {
+			chk.columns = append(chk.columns, newVarLenColumn(cap, nil))
+		}
 	}
 	chk.numVirtualRows = 0
 	chk.capacity = mathutil.Min(cap, capLimit)
@@ -81,11 +86,11 @@ func Renew(chk *Chunk, capLimit int) *Chunk {
 func renewColumns(oldCol []*column, cap int) []*column {
 	columns := make([]*column, 0, len(oldCol))
 	for _, col := range oldCol {
-		elemLen := varElemLen
 		if col.isFixed() {
-			elemLen = len(col.elemBuf)
+			columns = append(columns, newFixedLenColumn(len(col.elemBuf), cap))
+		} else {
+			columns = append(columns, newVarLenColumn(cap, col))
 		}
-		columns = append(columns, newColumn(elemLen, cap, col))
 	}
 	return columns
 }
@@ -115,23 +120,15 @@ func newVarLenColumn(initCap int, old *column) *column {
 	estimatedElemLen := 4
 	// for varLenColumn(e.g. varchar) we could not take the accuracy length of element,
 	// so, in first executor.Next we using a experience value --- 4(so it maybe make `runtime.growslice`)
-	// but in continue Next call we estimated length as AVG elemLen of previous call.
+	// but in continue Next call we estimated length as AVG x 1.5 elemLen of previous call.
 	if old != nil && old.length != 0 {
-		estimatedElemLen = len(old.data) / old.length
+		estimatedElemLen = (len(old.data) + len(old.data)/2) / old.length
 	}
 	return &column{
 		offsets:    make([]int32, 1, initCap+1),
 		data:       make([]byte, 0, initCap*estimatedElemLen),
 		nullBitmap: make([]byte, 0, initCap>>3),
 	}
-}
-
-// newColumn creates a column by field type.
-func newColumn(elemLen, initCap int, old *column) *column {
-	if elemLen != varElemLen {
-		return newFixedLenColumn(elemLen, initCap)
-	}
-	return newVarLenColumn(initCap, old)
 }
 
 // MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".
@@ -159,7 +156,10 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
-	c.GrowAndReset(c.capacity)
+	for _, col := range c.columns {
+		col.reset()
+	}
+	c.numVirtualRows = 0
 }
 
 // GrowAndReset resets the chunk and grow capacity if need.
@@ -170,10 +170,7 @@ func (c *Chunk) GrowAndReset(capLimit int) {
 	}
 	requireRenewCol, newCap := calculateResetCap(c, capLimit)
 	if !requireRenewCol {
-		for _, col := range c.columns {
-			col.reset()
-		}
-		c.numVirtualRows = 0
+		c.Reset()
 		return
 	}
 	c.capacity = newCap
@@ -192,7 +189,7 @@ func calculateResetCap(c *Chunk, capLimit int) (requireRenewCol bool, newCap int
 	return true, mathutil.Min(c.capacity*2, capLimit)
 }
 
-// calculateResetCap checks and return suitable capacity in next execution.
+// calculateRenewCap checks and return suitable capacity in next execution.
 //  It works like:
 //      using next power of 2 for renew if currSize < cap
 //      using capacity limit if full but capacity already meet capLimit
