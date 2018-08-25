@@ -260,7 +260,7 @@
     "go-tipb",
     "sharedbytes"
   ]
-  revision = "015341a07dc30de16a7cca0fc77231ccacc4b397"
+  revision = "5e46e0ec647edfee8fe001c5b51609460fb655bf"
 
 [[projects]]
   name = "github.com/prometheus/client_golang"
