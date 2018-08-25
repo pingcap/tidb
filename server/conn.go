@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
@@ -1033,8 +1034,8 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	fetchedRows := rs.GetFetchedRows()
 
 	// if fetchedRows is not enough, getting data from recordSet.
+	chk := rs.NewFixedChunk(cc.chunkCapacity(fetchSize))
 	for len(fetchedRows) < fetchSize {
-		chk := rs.NewChunk()
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, chk)
 		if err != nil {
@@ -1048,6 +1049,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		for i := 0; i < rowCount; i++ {
 			fetchedRows = append(fetchedRows, chk.GetRow(i))
 		}
+		chk = rs.NewFixedChunk(cc.chunkCapacity(fetchSize - len(fetchedRows)))
 	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
@@ -1082,6 +1084,13 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		}
 	}
 	return errors.Trace(cc.writeEOF(serverStatus))
+}
+
+func (cc *clientConn) chunkCapacity(wantSize int) int {
+	if wantSize > variable.DefMaxChunkSize {
+		return variable.DefMaxChunkSize
+	}
+	return wantSize
 }
 
 func (cc *clientConn) writeMultiResultset(ctx context.Context, rss []ResultSet, binary bool) error {

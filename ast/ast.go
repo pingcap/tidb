@@ -146,8 +146,11 @@ type RecordSet interface {
 	// Next reads records into chunk.
 	Next(ctx context.Context, chk *chunk.Chunk) error
 
-	// NewChunk creates a new chunk with initial capacity.
+	// NewChunk creates a new chunk with default capacity.
 	NewChunk() *chunk.Chunk
+
+	// NewFixedChunk creates a new chunk with given capacity.
+	NewFixedChunk(cap int) *chunk.Chunk
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.

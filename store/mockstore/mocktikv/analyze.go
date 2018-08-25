@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -225,11 +226,15 @@ func (e *analyzeColumnsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
+	return e.NewFixedChunk(1)
+}
+
+func (e *analyzeColumnsExec) NewFixedChunk(cap int) *chunk.Chunk {
 	fields := make([]*types.FieldType, 0, len(e.fields))
 	for _, field := range e.fields {
 		fields = append(fields, &field.Column.FieldType)
 	}
-	return chunk.NewChunkWithCapacity(fields, 1)
+	return chunk.NewFixedChunk(fields, cap, variable.DefMaxChunkSize)
 }
 
 // Close implements the ast.RecordSet Close interface.

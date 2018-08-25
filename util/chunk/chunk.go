@@ -30,22 +30,56 @@ type Chunk struct {
 	// numVirtualRows indicates the number of virtual rows, which have zero column.
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int
+	maxRows        int
+	maxCap         int
 }
 
 // Capacity constants.
 const (
-	InitialCapacity = 32
+	InitialCapacity    = 32
+	VoidCapacity       = -1
+	PerChunkSizeInList = 1024
 )
 
-// NewChunkWithCapacity creates a new chunk with field types and capacity.
-func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
+// NewFixedChunk creates a new chunk with field types and capacity.
+func NewFixedChunk(fields []*types.FieldType, cap, maxCap int) *Chunk {
 	chk := new(Chunk)
+	// void capacity will return a void chunk without allocate columns.
+	if cap == VoidCapacity {
+		return chk
+	}
 	chk.columns = make([]*column, 0, len(fields))
 	chk.numVirtualRows = 0
 	for _, f := range fields {
-		chk.addColumnByFieldType(f, cap)
+		chk.addColumnByFieldType(getFixedLen(f), cap, nil)
+	}
+	chk.maxCap = maxCap
+	chk.maxRows = cap
+	if chk.maxRows > chk.maxCap {
+		chk.maxRows = chk.maxCap
 	}
 	return chk
+}
+
+func newFixedChunkByChunk(old *Chunk, cap, maxCap int) *Chunk {
+	chk := new(Chunk)
+	chk.columns = make([]*column, 0, len(old.columns))
+	chk.numVirtualRows = 0
+	chk.maxCap = maxCap
+	chk.maxRows = cap
+	for _, col := range old.columns {
+		chk.addColumnByFieldType(col.elemLen, cap, col)
+	}
+	if chk.maxRows > chk.maxCap {
+		chk.maxRows = chk.maxCap
+	}
+	return chk
+}
+
+// Renew creates a new chunk with double capacity if full.
+func Renew(c *Chunk) *Chunk {
+	_, nextMaxRows := c.needGrow()
+	return newFixedChunkByChunk(c, nextMaxRows, c.maxCap)
 }
 
 // MemoryUsage returns the total memory usage of a Chunk in B.
@@ -60,31 +94,36 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 }
 
 // addFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
-func (c *Chunk) addFixedLenColumn(elemLen, initCap int) {
+func (c *Chunk) addFixedLenColumn(elemLen int8, initCap int) {
 	c.columns = append(c.columns, &column{
+		elemLen:    elemLen,
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, initCap*elemLen),
+		data:       make([]byte, 0, initCap*int(elemLen)),
 		nullBitmap: make([]byte, 0, initCap>>3),
 	})
 }
 
 // addVarLenColumn adds a variable length column with initial data capacity.
-func (c *Chunk) addVarLenColumn(initCap int) {
+func (c *Chunk) addVarLenColumn(elemLen int8, initCap int, old *column) {
+	lenPerElem := 4
+	if old != nil && old.length != 0 {
+		lenPerElem = len(old.data) / old.length
+	}
 	c.columns = append(c.columns, &column{
+		elemLen:    elemLen,
 		offsets:    make([]int32, 1, initCap+1),
-		data:       make([]byte, 0, initCap*4),
+		data:       make([]byte, 0, initCap*lenPerElem),
 		nullBitmap: make([]byte, 0, initCap>>3),
 	})
 }
 
 // addColumnByFieldType adds a column by field type.
-func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
-	numFixedBytes := getFixedLen(fieldTp)
-	if numFixedBytes != -1 {
-		c.addFixedLenColumn(numFixedBytes, initCap)
+func (c *Chunk) addColumnByFieldType(fixedLen int8, initCap int, old *column) {
+	if fixedLen != -1 {
+		c.addFixedLenColumn(fixedLen, initCap)
 		return
 	}
-	c.addVarLenColumn(initCap)
+	c.addVarLenColumn(fixedLen, initCap, old)
 }
 
 // MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".
@@ -112,10 +151,36 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
-	for _, c := range c.columns {
-		c.reset()
+	if c.columns == nil {
+		return
+	}
+	needGrow, newMaxRows := c.needGrow()
+	if needGrow {
+		c.maxRows = newMaxRows
+	}
+	for _, col := range c.columns {
+		if needGrow {
+			col.eraseGrow(c.maxRows)
+		} else {
+			col.reset()
+		}
 	}
 	c.numVirtualRows = 0
+}
+
+func (c *Chunk) needGrow() (needGrow bool, newMaxRows int) {
+	numRows, maxRows := c.NumRows(), c.maxRows
+	if numRows == 0 {
+		return false, maxRows
+	}
+	if numRows >= c.maxRows && numRows < c.maxCap {
+		maxRows = c.maxRows * 2
+		if maxRows > c.maxCap {
+			maxRows = c.maxCap
+		}
+		return true, maxRows
+	}
+	return false, maxRows
 }
 
 // NumCols returns the number of columns in the chunk.
@@ -129,6 +194,11 @@ func (c *Chunk) NumRows() int {
 		return c.numVirtualRows
 	}
 	return c.columns[0].length
+}
+
+// MaxRows return the max number of rows in the chunk.
+func (c *Chunk) MaxRows() int {
+	return c.maxRows
 }
 
 // GetRow gets the Row in the chunk with the row index.

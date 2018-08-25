@@ -260,16 +260,17 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context) (err error) {
-	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.initChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
+	chk := e.children[e.innerIdx].newChunk()
 	for {
-		chk := e.children[e.innerIdx].newChunk()
 		err = e.innerExec.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			return errors.Trace(err)
 		}
 		e.innerResult.Add(chk)
+		chk = chunk.Renew(chk)
 	}
 }
 
@@ -410,7 +411,7 @@ func (e *HashJoinExec) joinMatchedOuterRow2Chunk(workerID uint, outerRow chunk.R
 		}
 		hasMatch = hasMatch || matched
 
-		if joinResult.chk.NumRows() == e.maxChunkSize {
+		if joinResult.chk.NumRows() == joinResult.chk.MaxRows() {
 			ok := true
 			e.joinResultCh <- joinResult
 			ok, joinResult = e.getNewJoinResult(workerID)
@@ -455,7 +456,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 				return false, joinResult
 			}
 		}
-		if joinResult.chk.NumRows() == e.maxChunkSize {
+		if joinResult.chk.NumRows() == joinResult.chk.MaxRows() {
 			e.joinResultCh <- joinResult
 			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
@@ -598,7 +599,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerRows = e.innerRows[:0]
 	e.outerChunk = e.outerExec.newChunk()
 	e.innerChunk = e.innerExec.newChunk()
-	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.initChunkSize)
 
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -633,7 +634,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 			return &outerRow, nil
 		} else if e.outer {
 			e.joiner.onMissMatch(outerRow, chk)
-			if chk.NumRows() == e.maxChunkSize {
+			if chk.NumRows() == chk.MaxRows() {
 				return nil, nil
 			}
 		}
@@ -698,7 +699,7 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err e
 		matched, err := e.joiner.tryToMatch(*e.outerRow, e.innerIter, chk)
 		e.hasMatch = e.hasMatch || matched
 
-		if err != nil || chk.NumRows() == e.maxChunkSize {
+		if err != nil || chk.NumRows() == chk.MaxRows() {
 			return errors.Trace(err)
 		}
 	}

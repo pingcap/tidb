@@ -29,7 +29,8 @@ func (s *testChunkSuite) TestList(c *check.C) {
 		types.NewFieldType(mysql.TypeLonglong),
 	}
 	l := NewList(fields, 2)
-	srcChunk := NewChunkWithCapacity(fields, 32)
+	l.maxRowPerChunk = 2
+	srcChunk := NewFixedChunk(fields, 32, 1024)
 	srcChunk.AppendInt64(0, 1)
 	srcRow := srcChunk.GetRow(0)
 
@@ -52,7 +53,7 @@ func (s *testChunkSuite) TestList(c *check.C) {
 
 	// Test add chunk then append row.
 	l.Reset()
-	nChunk := NewChunkWithCapacity(fields, 32)
+	nChunk := NewFixedChunk(fields, 32, 1024)
 	nChunk.AppendNull(0)
 	l.Add(nChunk)
 	ptr := l.AppendRow(srcRow)
@@ -65,7 +66,7 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	// Test iteration.
 	l.Reset()
 	for i := 0; i < 5; i++ {
-		tmp := NewChunkWithCapacity(fields, 32)
+		tmp := NewFixedChunk(fields, 32, 1024)
 		tmp.AppendInt64(0, int64(i))
 		l.AppendRow(tmp.GetRow(0))
 	}
@@ -93,7 +94,7 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	maxChunkSize := 2
-	srcChk := NewChunkWithCapacity(fieldTypes, maxChunkSize)
+	srcChk := NewFixedChunk(fieldTypes, maxChunkSize, 1024)
 	srcChk.AppendFloat32(0, 12.4)
 	srcChk.AppendString(1, "123")
 	srcChk.AppendJSON(2, jsonObj)
@@ -121,7 +122,7 @@ func BenchmarkListMemoryUsage(b *testing.B) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDatetime})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
 
-	chk := NewChunkWithCapacity(fieldTypes, 2)
+	chk := NewFixedChunk(fieldTypes, 2, 1024)
 	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 	chk.AppendFloat64(0, 123.123)

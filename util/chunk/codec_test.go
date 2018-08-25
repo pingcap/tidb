@@ -31,6 +31,7 @@ type testCodecSuite struct{}
 func (s *testCodecSuite) TestCodec(c *check.C) {
 	numCols := 6
 	numRows := 10
+	maxRows := 1024
 
 	colTypes := make([]*types.FieldType, 0, numCols)
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
@@ -40,7 +41,7 @@ func (s *testCodecSuite) TestCodec(c *check.C) {
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeNewDecimal})
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeJSON})
 
-	oldChk := NewChunkWithCapacity(colTypes, numRows)
+	oldChk := NewFixedChunk(colTypes, numRows, maxRows)
 	for i := 0; i < numRows; i++ {
 		str := fmt.Sprintf("%d.12345", i)
 		oldChk.AppendNull(0)
@@ -54,7 +55,7 @@ func (s *testCodecSuite) TestCodec(c *check.C) {
 	codec := NewCodec(colTypes)
 	buffer := codec.Encode(oldChk)
 
-	newChk := NewChunkWithCapacity(colTypes, numRows)
+	newChk := NewFixedChunk(colTypes, numRows, maxRows)
 	remained := codec.DecodeToChunk(buffer, newChk)
 
 	c.Assert(len(remained), check.Equals, 0)
@@ -167,7 +168,7 @@ func BenchmarkDecodeToChunkWithVariableType(b *testing.B) {
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeNewDecimal})
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeJSON})
 
-	chk := NewChunkWithCapacity(colTypes, numRows)
+	chk := NewFixedChunk(colTypes, numRows, numRows)
 	for i := 0; i < numRows; i++ {
 		str := fmt.Sprintf("%d.12345", i)
 		chk.AppendNull(0)

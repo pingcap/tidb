@@ -21,11 +21,12 @@ import (
 
 // List holds a slice of chunks, use to append rows with max chunk size properly handled.
 type List struct {
-	fieldTypes   []*types.FieldType
-	maxChunkSize int
-	length       int
-	chunks       []*Chunk
-	freelist     []*Chunk
+	fieldTypes     []*types.FieldType
+	maxRowPerChunk int
+	newChkSize     int
+	length         int
+	chunks         []*Chunk
+	freelist       []*Chunk
 
 	memTracker  *memory.Tracker // track memory usage.
 	consumedIdx int             // chunk index in "chunks", has been consumed.
@@ -39,12 +40,13 @@ type RowPtr struct {
 }
 
 // NewList creates a new List with field types and max chunk size.
-func NewList(fieldTypes []*types.FieldType, maxChunkSize int) *List {
+func NewList(fieldTypes []*types.FieldType, newChkSize int) *List {
 	l := &List{
-		fieldTypes:   fieldTypes,
-		maxChunkSize: maxChunkSize,
-		memTracker:   memory.NewTracker("chunk.List", -1),
-		consumedIdx:  -1,
+		fieldTypes:     fieldTypes,
+		newChkSize:     newChkSize,
+		maxRowPerChunk: PerChunkSizeInList,
+		memTracker:     memory.NewTracker("chunk.List", -1),
+		consumedIdx:    -1,
 	}
 	return l
 }
@@ -72,7 +74,7 @@ func (l *List) GetChunk(chkIdx int) *Chunk {
 // AppendRow appends a row to the List, the row is copied to the List.
 func (l *List) AppendRow(row Row) RowPtr {
 	chkIdx := len(l.chunks) - 1
-	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.maxChunkSize || chkIdx == l.consumedIdx {
+	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.maxRowPerChunk || chkIdx == l.consumedIdx {
 		newChk := l.allocChunk()
 		l.chunks = append(l.chunks, newChk)
 		if chkIdx != l.consumedIdx {
@@ -91,7 +93,7 @@ func (l *List) AppendRow(row Row) RowPtr {
 // Add adds a chunk to the List, the chunk may be modified later by the list.
 // Caller must make sure the input chk is not empty and not used any more and has the same field types.
 func (l *List) Add(chk *Chunk) {
-	// FixMe: we should avoid add a Chunk that chk.NumRows() > list.maxChunkSize.
+	// FixMe: we should avoid add a Chunk that chk.NumRows() > sessionVars.MaxChunkSize.
 	if chk.NumRows() == 0 {
 		panic("chunk appended to List should have at least 1 row")
 	}
@@ -115,7 +117,11 @@ func (l *List) allocChunk() (chk *Chunk) {
 		chk.Reset()
 		return
 	}
-	return NewChunkWithCapacity(l.fieldTypes, l.maxChunkSize)
+	newChk := NewFixedChunk(l.fieldTypes, l.newChkSize, l.maxRowPerChunk)
+	if l.newChkSize < l.maxRowPerChunk {
+		l.newChkSize *= 2
+	}
+	return newChk
 }
 
 // GetRow gets a Row from the list by RowPtr.

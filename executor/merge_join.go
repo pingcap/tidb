@@ -233,7 +233,7 @@ func compareChunkRow(cmpFuncs []chunk.CompareFunc, lhsRow, rhsRow chunk.Row, lhs
 	return 0
 }
 
-func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
+func (e *MergeJoinExec) prepare(ctx context.Context, maxRows int) error {
 	err := e.innerTable.init(ctx, e.childrenResults[e.outerIdx^1])
 	if err != nil {
 		return errors.Trace(err)
@@ -247,7 +247,7 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 	// init outer table.
 	e.outerTable.chk = e.childrenResults[e.outerIdx]
 	e.outerTable.iter = chunk.NewIterator4Chunk(e.outerTable.chk)
-	e.outerTable.selected = make([]bool, 0, e.maxChunkSize)
+	e.outerTable.selected = make([]bool, 0, maxRows)
 
 	err = e.fetchNextOuterRows(ctx)
 	if err != nil {
@@ -263,12 +263,12 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 func (e *MergeJoinExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.prepared {
-		if err := e.prepare(ctx, chk); err != nil {
+		if err := e.prepare(ctx, chk.MaxRows()); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	for chk.NumRows() < e.maxChunkSize {
+	for chk.NumRows() < chk.MaxRows() {
 		hasMore, err := e.joinToChunk(ctx, chk)
 		if err != nil || !hasMore {
 			return errors.Trace(err)
@@ -278,6 +278,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasMore bool, err error) {
+	maxRows := chk.MaxRows()
 	for {
 		if e.outerTable.row == e.outerTable.iter.End() {
 			err = e.fetchNextOuterRows(ctx)
@@ -307,7 +308,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			e.outerTable.row = e.outerTable.iter.Next()
 			e.outerTable.hasMatch = false
 
-			if chk.NumRows() == e.maxChunkSize {
+			if chk.NumRows() == maxRows {
 				return true, nil
 			}
 			continue
@@ -327,7 +328,7 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			e.innerIter4Row.Begin()
 		}
 
-		if chk.NumRows() >= e.maxChunkSize {
+		if chk.NumRows() >= maxRows {
 			return true, errors.Trace(err)
 		}
 	}

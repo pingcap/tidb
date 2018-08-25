@@ -935,7 +935,7 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		datums = append(datums, types.NewDatum(t.value))
 	}
 	rowCount := 3
-	decoder := NewDecoder(chunk.NewChunkWithCapacity(tps, 32), time.Local)
+	decoder := NewDecoder(chunk.NewFixedChunk(tps, 32, 1024), time.Local)
 	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 		encoded, err := EncodeValue(sc, nil, datums...)
 		c.Assert(err, IsNil)

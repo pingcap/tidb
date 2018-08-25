@@ -87,7 +87,7 @@ func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.cursor >= e.result.NumRows() {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.maxChunkSize, e.result.NumRows()-e.cursor)
+	numCurBatch := mathutil.Min(chk.MaxRows(), e.result.NumRows()-e.cursor)
 	chk.Append(e.result, e.cursor, e.cursor+numCurBatch)
 	e.cursor += numCurBatch
 	return nil

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -85,7 +86,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		NullCount:         nullCount,
 		LastUpdateVersion: version,
 		tp:                tp,
-		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
+		Bounds:            chunk.NewFixedChunk([]*types.FieldType{tp}, 2*bucketSize, variable.DefMaxChunkSize),
 		Buckets:           make([]Bucket, 0, bucketSize),
 		TotColSize:        totColSize,
 	}
@@ -141,7 +142,7 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64) {
 // DecodeTo decodes the histogram bucket values into `tp`.
 func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) error {
 	oldIter := chunk.NewIterator4Chunk(hg.Bounds)
-	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, oldIter.Len())
+	hg.Bounds = chunk.NewFixedChunk([]*types.FieldType{tp}, oldIter.Len(), variable.DefMaxChunkSize)
 	hg.tp = tp
 	for row := oldIter.Begin(); row != oldIter.End(); row = oldIter.Next() {
 		datum, err := tablecodec.DecodeColumnValue(row.GetBytes(0), tp, timeZone)
@@ -468,7 +469,7 @@ func (hg *Histogram) totalRowCount() float64 {
 // mergeBuckets is used to merge every two neighbor buckets.
 func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	curBuck := 0
-	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.tp}, bucketIdx)
+	c := chunk.NewFixedChunk([]*types.FieldType{hg.tp}, bucketIdx, variable.DefMaxChunkSize)
 	for i := 0; i+1 <= bucketIdx; i += 2 {
 		hg.Buckets[curBuck] = hg.Buckets[i+1]
 		c.AppendDatum(0, hg.GetLower(i))
@@ -609,7 +610,7 @@ func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 
 func (hg *Histogram) popFirstBucket() {
 	hg.Buckets = hg.Buckets[1:]
-	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.tp, hg.tp}, hg.Bounds.NumRows()-2)
+	c := chunk.NewFixedChunk([]*types.FieldType{hg.tp, hg.tp}, hg.Bounds.NumRows()-2, variable.DefMaxChunkSize)
 	c.Append(hg.Bounds, 2, hg.Bounds.NumRows())
 	hg.Bounds = c
 }

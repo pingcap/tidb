@@ -1004,6 +1004,7 @@ func newCtxForPartitionExpr() sessionctx.Context {
 		sessionVars: variable.NewSessionVars(),
 	}
 	sctx.sessionVars.MaxChunkSize = 2
+	sctx.sessionVars.InitChunkSize = 2
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
 	return sctx
 }

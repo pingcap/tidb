@@ -339,6 +339,7 @@ func NewSessionVars() *SessionVars {
 		IndexJoinBatchSize: DefIndexJoinBatchSize,
 		IndexLookupSize:    DefIndexLookupSize,
 		MaxChunkSize:       DefMaxChunkSize,
+		InitChunkSize:      DefInitChunkSize,
 		DMLBatchSize:       DefDMLBatchSize,
 	}
 	var enableStreaming string
@@ -543,6 +544,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
+	case TiDBInitChunkSize:
+		s.InitChunkSize = tidbOptPositiveInt32(val, DefInitChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
@@ -660,4 +663,7 @@ type BatchSize struct {
 
 	// MaxChunkSize defines max row count of a Chunk during query execution.
 	MaxChunkSize int
+
+	// InitChunkSize defines init capacity of a Chunk during query execution.
+	InitChunkSize int
 }

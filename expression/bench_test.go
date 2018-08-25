@@ -46,6 +46,7 @@ func (h *benchHelper) init() {
 	h.ctx = mock.NewContext()
 	h.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
 	h.ctx.GetSessionVars().MaxChunkSize = numRows
+	h.ctx.GetSessionVars().InitChunkSize = numRows
 
 	h.inputTypes = make([]*types.FieldType, 0, 10)
 	h.inputTypes = append(h.inputTypes, &types.FieldType{
@@ -84,7 +85,7 @@ func (h *benchHelper) init() {
 		})
 	}
 
-	h.inputChunk = chunk.NewChunkWithCapacity(h.inputTypes, numRows)
+	h.inputChunk = chunk.NewFixedChunk(h.inputTypes, numRows, 1024)
 	for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 		h.inputChunk.AppendInt64(0, 4)
 		h.inputChunk.AppendFloat64(1, 2.019)
@@ -159,7 +160,7 @@ func (h *benchHelper) init() {
 		h.outputTypes = append(h.outputTypes, h.exprs[i].GetType())
 	}
 
-	h.outputChunk = chunk.NewChunkWithCapacity(h.outputTypes, numRows)
+	h.outputChunk = chunk.NewFixedChunk(h.outputTypes, numRows, 1024)
 }
 
 func BenchmarkVectorizedExecute(b *testing.B) {

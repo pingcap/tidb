@@ -1659,13 +1659,12 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 	s.cluster.SplitTable(s.mvccStore, tbl.Meta().ID, 10)
 
 	tk.Se.GetSessionVars().DistSQLScanConcurrency = 1
-	tk.MustExec("set tidb_max_chunk_size = 2")
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", variable.DefMaxChunkSize))
 	}()
 	rs, err := tk.Exec("select * from chk")
 	c.Assert(err, IsNil)
-	chk := rs.NewChunk()
+	chk := rs.NewFixedChunk(2)
 	var count int
 	var numChunks int
 	for {
@@ -1682,7 +1681,7 @@ func (s *testSchemaSuite) TestTableReaderChunk(c *C) {
 		numChunks++
 	}
 	c.Assert(count, Equals, 100)
-	c.Assert(numChunks, Equals, 50)
+	c.Assert(numChunks, Equals, 6)
 	rs.Close()
 }
 

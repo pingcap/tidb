@@ -34,16 +34,14 @@ type aggPartialResultMapper map[string][]aggfuncs.PartialResult
 
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 type baseHashAggWorker struct {
-	finishCh     <-chan struct{}
-	aggFuncs     []aggfuncs.AggFunc
-	maxChunkSize int
+	finishCh <-chan struct{}
+	aggFuncs []aggfuncs.AggFunc
 }
 
-func newBaseHashAggWorker(finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, maxChunkSize int) baseHashAggWorker {
+func newBaseHashAggWorker(finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc) baseHashAggWorker {
 	return baseHashAggWorker{
-		finishCh:     finishCh,
-		aggFuncs:     aggFuncs,
-		maxChunkSize: maxChunkSize,
+		finishCh: finishCh,
+		aggFuncs: aggFuncs,
 	}
 }
 
@@ -78,6 +76,7 @@ type HashAggFinalWorker struct {
 	inputCh             chan *HashAggIntermData
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
+	batchSize           int
 }
 
 // AfFinalResult indicates aggregation functions final result.
@@ -264,7 +263,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
-			baseHashAggWorker: newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.maxChunkSize),
+			baseHashAggWorker: newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs),
 			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
@@ -284,7 +283,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	// Init final workers.
 	for i := 0; i < finalConcurrency; i++ {
 		e.finalWorkers[i] = HashAggFinalWorker{
-			baseHashAggWorker:   newBaseHashAggWorker(e.finishCh, e.FinalAggFuncs, e.maxChunkSize),
+			baseHashAggWorker:   newBaseHashAggWorker(e.finishCh, e.FinalAggFuncs),
 			partialResultMap:    make(aggPartialResultMapper, 0),
 			groupSet:            mvmap.NewMVMap(),
 			groupVals:           make([][]byte, 0, 8),
@@ -293,6 +292,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			finalResultHolderCh: make(chan *chunk.Chunk, 1),
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
 			mutableRow:          chunk.MutRowFromTypes(e.retTypes()),
+			batchSize:           1024, // TODO: need configurable?
 		}
 		e.finalWorkers[i].finalResultHolderCh <- e.newChunk()
 	}
@@ -434,11 +434,11 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			return nil
 		}
 		if intermDataBuffer == nil {
-			intermDataBuffer = make([][]aggfuncs.PartialResult, 0, w.maxChunkSize)
+			intermDataBuffer = make([][]aggfuncs.PartialResult, 0, w.batchSize)
 		}
-		// Consume input in batches, size of every batch is less than w.maxChunkSize.
+		// Consume input in batches, size of every batch is less than w.batchSize.
 		for reachEnd := false; !reachEnd; {
-			intermDataBuffer, groupKeys, reachEnd = input.getPartialResultBatch(sc, intermDataBuffer[:0], w.aggFuncs, w.maxChunkSize)
+			intermDataBuffer, groupKeys, reachEnd = input.getPartialResultBatch(sc, intermDataBuffer[:0], w.aggFuncs, w.batchSize)
 			for i, groupKey := range groupKeys {
 				if len(w.groupSet.Get(groupKey, w.groupVals[:0])) == 0 {
 					w.groupSet.Put(groupKey, []byte{})
@@ -477,7 +477,7 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 		if len(w.aggFuncs) == 0 {
 			result.SetNumVirtualRows(result.NumRows() + 1)
 		}
-		if result.NumRows() == w.maxChunkSize {
+		if result.NumRows() == result.MaxRows() {
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 			result, finished = w.receiveFinalResultHolder()
 			if finished {
@@ -643,7 +643,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 		for i, af := range e.PartialAggFuncs {
 			af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk)
 		}
-		if chk.NumRows() == e.maxChunkSize {
+		if chk.NumRows() == chk.MaxRows() {
 			return nil
 		}
 	}
@@ -764,7 +764,7 @@ func (e *StreamAggExec) Close() error {
 func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
-	for !e.executed && chk.NumRows() < e.maxChunkSize {
+	for !e.executed && chk.NumRows() < chk.MaxRows() {
 		err := e.consumeOneGroup(ctx, chk)
 		if err != nil {
 			e.executed = true

@@ -125,6 +125,7 @@ type PreparedStatement interface {
 type ResultSet interface {
 	Columns() []*ColumnInfo
 	NewChunk() *chunk.Chunk
+	NewFixedChunk(cap int) *chunk.Chunk
 	Next(context.Context, *chunk.Chunk) error
 	StoreFetchedRows(rows []chunk.Row)
 	GetFetchedRows() []chunk.Row
