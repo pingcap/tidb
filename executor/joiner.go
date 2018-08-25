@@ -142,19 +142,12 @@ func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
 	chk.AppendPartialRow(lhs.Len(), rhs)
 }
 
-func (j *baseJoiner) filter(input, output *chunk.Chunk) (matched bool, err error) {
+func (j *baseJoiner) filter(input, output *chunk.Chunk) (err error) {
 	j.selected, err = expression.VectorizedFilter(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
 	if err != nil {
-		return false, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	for i := 0; i < len(j.selected); i++ {
-		if !j.selected[i] {
-			continue
-		}
-		matched = true
-		output.AppendRow(input.GetRow(i))
-	}
-	return matched, nil
+	return nil
 }
 
 type semiJoiner struct {
@@ -347,8 +340,12 @@ func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 	}
 
 	// reach here, chkForJoin is j.chk
-	matched, err := j.filter(chkForJoin, chk)
-	return matched, errors.Trace(err)
+	err := j.filter(chkForJoin, chk)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	matched := chunk.BatchCopyJoinRowToChunk(false, chkForJoin, outer, chk, j.selected)
+	return matched, nil
 }
 
 func (j *leftOuterJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
@@ -381,9 +378,12 @@ func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, ch
 		return true, nil
 	}
 
-	// reach here, chkForJoin is j.chk
-	matched, err := j.filter(chkForJoin, chk)
-	return matched, errors.Trace(err)
+	err := j.filter(chkForJoin, chk)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	matched := chunk.BatchCopyJoinRowToChunk(true, chkForJoin, outer, chk, j.selected)
+	return matched, nil
 }
 
 func (j *rightOuterJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {
@@ -418,8 +418,13 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 	}
 
 	// reach here, chkForJoin is j.chk
-	matched, err := j.filter(chkForJoin, chk)
-	return matched, errors.Trace(err)
+	err := j.filter(chkForJoin, chk)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	matched := chunk.BatchCopyJoinRowToChunk(j.outerIsRight, chkForJoin, outer, chk, j.selected)
+	return matched, nil
+
 }
 
 func (j *innerJoiner) onMissMatch(outer chunk.Row, chk *chunk.Chunk) {

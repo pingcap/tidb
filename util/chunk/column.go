@@ -85,6 +85,34 @@ func (c *column) appendNullBitmap(on bool) {
 	}
 }
 
+func (c *column) appendMultiSameNullBitmap(on bool, num int) {
+	l := ((c.length + num - 1) >> 3) - len(c.nullBitmap)
+	for i := 0; i <= l; i++ {
+		c.nullBitmap = append(c.nullBitmap, 0)
+	}
+	if on {
+		idx := c.length >> 3
+		pos := uint(c.length) & 7
+		for num > 0 {
+			if pos == 0 && num > 8 {
+				c.nullBitmap[idx] = 0xff
+				idx++
+				num = num - 8
+			} else {
+				c.nullBitmap[idx] |= byte(1 << pos)
+				pos++
+				num--
+				if pos == 8 {
+					pos = 0
+					idx++
+				}
+			}
+		}
+	} else {
+		c.nullCount += num
+	}
+}
+
 func (c *column) appendNull() {
 	c.appendNullBitmap(false)
 	if c.isFixed() {
