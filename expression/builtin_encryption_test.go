@@ -86,6 +86,7 @@ func (s *testEvaluatorSuite) TestAESDecrypt(c *C) {
 }
 
 func (s *testEvaluatorSuite) testAmbiguousInput(c *C, fnName string) {
+	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum("aes-128-ecb"))
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	var argNull types.Datum
@@ -101,10 +102,10 @@ func (s *testEvaluatorSuite) testAmbiguousInput(c *C, fnName string) {
 
 	// test for modes that require init_vector
 	variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.BlockEncryptionMode, types.NewDatum("aes-128-cbc"))
-	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg}))
-	crypt, err = evalBuiltinFunc(f, chunk.Row{})
+	_, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg}))
 	c.Assert(err, NotNil)
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{arg, arg, types.NewStringDatum("iv < 16 bytes")}))
+	c.Assert(err, IsNil)
 	crypt, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, NotNil)
 

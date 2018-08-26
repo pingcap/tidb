@@ -60,7 +60,9 @@ var (
 
 var (
 	_ builtinFunc = &builtinAesDecryptSig{}
+	_ builtinFunc = &builtinAesDecryptIVSig{}
 	_ builtinFunc = &builtinAesEncryptSig{}
+	_ builtinFunc = &builtinAesEncryptIVSig{}
 	_ builtinFunc = &builtinCompressSig{}
 	_ builtinFunc = &builtinMD5Sig{}
 	_ builtinFunc = &builtinPasswordSig{}
@@ -109,13 +111,21 @@ func (c *aesDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	bf.tp.Flen = args[0].GetType().Flen // At most.
 	types.SetBinChsClnFlag(bf.tp)
 
-	modeName, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
-	mode, exists := aesModes[strings.ToLower(modeName)]
+	blockMode, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	mode, exists := aesModes[strings.ToLower(blockMode)]
 	if !exists {
-		return nil, errors.Errorf("unsupported block encryption mode - %v", modeName)
+		return nil, errors.Errorf("unsupported block encryption mode - %v", blockMode)
 	}
-	sig := &builtinAesDecryptSig{bf, mode}
-	return sig, nil
+	if mode.ivRequired {
+		if len(args) != 3 {
+			return nil, ErrIncorrectParameterCount.GenByArgs("aes_decrypt")
+		}
+		return &builtinAesDecryptIVSig{bf, mode}, nil
+	} else if len(args) == 3 {
+		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenByArgs("IV"))
+	}
+	return &builtinAesDecryptSig{bf, mode}, nil
 }
 
 type builtinAesDecryptSig struct {
@@ -144,32 +154,59 @@ func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 
-	var iv string
-	if b.ivRequired {
-		if len(b.args) != 3 {
-			return "", true, ErrIncorrectParameterCount.GenByArgs("aes_decrypt")
-		}
-		iv, isNull, err = b.args[2].EvalString(b.ctx, row)
-		if isNull || err != nil {
-			return "", true, errors.Trace(err)
-		}
-		if len(iv) < ivSize {
-			return "", true, errIncorrectArgs.Gen("The initialization vector supplied to aes_decrypt is too short. Must be at least 16 bytes long")
-		}
-		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
-		iv = iv[0:ivSize]
-	} else {
-		if len(b.args) == 3 {
-			// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenByArgs("IV"))
-		}
-	}
-
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
 	var plainText []byte
 	switch b.modeName {
 	case "ecb":
 		plainText, err = encrypt.AESDecryptWithECB([]byte(cryptStr), key)
+	default:
+		return "", true, errors.Errorf("unsupported block encryption mode - %v", b.modeName)
+	}
+	if err != nil {
+		return "", true, nil
+	}
+	return string(plainText), false, nil
+}
+
+type builtinAesDecryptIVSig struct {
+	baseBuiltinFunc
+	*aesModeAttr
+}
+
+func (b *builtinAesDecryptIVSig) Clone() builtinFunc {
+	newSig := &builtinAesDecryptIVSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.aesModeAttr = b.aesModeAttr
+	return newSig
+}
+
+// evalString evals AES_DECRYPT(crypt_str, key_key, iv).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
+func (b *builtinAesDecryptIVSig) evalString(row chunk.Row) (string, bool, error) {
+	// According to doc: If either function argument is NULL, the function returns NULL.
+	cryptStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	iv, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	if len(iv) < aes.BlockSize {
+		return "", true, errIncorrectArgs.Gen("The initialization vector supplied to aes_decrypt is too short. Must be at least 16 bytes long")
+	}
+	// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
+	iv = iv[0:aes.BlockSize]
+
+	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
+	var plainText []byte
+	switch b.modeName {
 	case "cbc":
 		plainText, err = encrypt.AESDecryptWithCBC([]byte(cryptStr), key, []byte(iv))
 	default:
@@ -197,13 +234,21 @@ func (c *aesEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	bf.tp.Flen = aes.BlockSize * (args[0].GetType().Flen/aes.BlockSize + 1) // At most.
 	types.SetBinChsClnFlag(bf.tp)
 
-	modeName, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
-	mode, exists := aesModes[strings.ToLower(modeName)]
+	blockMode, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	mode, exists := aesModes[strings.ToLower(blockMode)]
 	if !exists {
-		return nil, errors.Errorf("unsupported block encryption mode - %v", modeName)
+		return nil, errors.Errorf("unsupported block encryption mode - %v", blockMode)
 	}
-	sig := &builtinAesEncryptSig{bf, mode}
-	return sig, nil
+	if mode.ivRequired {
+		if len(args) != 3 {
+			return nil, ErrIncorrectParameterCount.GenByArgs("aes_encrypt")
+		}
+		return &builtinAesEncryptIVSig{bf, mode}, nil
+	} else if len(args) == 3 {
+		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenByArgs("IV"))
+	}
+	return &builtinAesEncryptSig{bf, mode}, nil
 }
 
 type builtinAesEncryptSig struct {
@@ -232,32 +277,59 @@ func (b *builtinAesEncryptSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 
-	var iv string
-	if b.ivRequired {
-		if len(b.args) != 3 {
-			return "", true, ErrIncorrectParameterCount.GenByArgs("aes_encrypt")
-		}
-		iv, isNull, err = b.args[2].EvalString(b.ctx, row)
-		if isNull || err != nil {
-			return "", true, errors.Trace(err)
-		}
-		if len(iv) < aes.BlockSize {
-			return "", true, errIncorrectArgs.Gen("The initialization vector supplied to aes_encrypt is too short. Must be at least 16 bytes long")
-		}
-		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
-		iv = iv[0:aes.BlockSize]
-	} else {
-		if len(b.args) == 3 {
-			// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenByArgs("IV"))
-		}
-	}
-
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
 	var cipherText []byte
 	switch b.modeName {
 	case "ecb":
 		cipherText, err = encrypt.AESEncryptWithECB([]byte(str), key)
+	default:
+		return "", true, errors.Errorf("unsupported block encryption mode - %v", b.modeName)
+	}
+	if err != nil {
+		return "", true, nil
+	}
+	return string(cipherText), false, nil
+}
+
+type builtinAesEncryptIVSig struct {
+	baseBuiltinFunc
+	*aesModeAttr
+}
+
+func (b *builtinAesEncryptIVSig) Clone() builtinFunc {
+	newSig := &builtinAesEncryptIVSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.aesModeAttr = b.aesModeAttr
+	return newSig
+}
+
+// evalString evals AES_ENCRYPT(str, key_str, iv).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
+func (b *builtinAesEncryptIVSig) evalString(row chunk.Row) (string, bool, error) {
+	// According to doc: If either function argument is NULL, the function returns NULL.
+	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	iv, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+	if len(iv) < aes.BlockSize {
+		return "", true, errIncorrectArgs.Gen("The initialization vector supplied to aes_encrypt is too short. Must be at least 16 bytes long")
+	}
+	// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
+	iv = iv[0:aes.BlockSize]
+
+	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
+	var cipherText []byte
+	switch b.modeName {
 	case "cbc":
 		cipherText, err = encrypt.AESEncryptWithCBC([]byte(str), key, []byte(iv))
 	default:
