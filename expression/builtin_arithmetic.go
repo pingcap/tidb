@@ -730,12 +730,29 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row chunk.Row) (int64, bool, 
 }
 
 func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
+	sc := s.ctx.GetSessionVars().StmtCtx
 	a, isNull, err := s.args[0].EvalDecimal(s.ctx, row)
+	// Its behavior is consistent with MySQL.
+	if terror.ErrorEqual(err, types.ErrTruncated) {
+		err = nil
+	}
+	if terror.ErrorEqual(err, types.ErrOverflow) {
+		newErr := errTruncatedWrongValue.GenByArgs("DECIMAL", s.args[0])
+		err = sc.HandleOverflow(newErr, newErr)
+	}
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
 
 	b, isNull, err := s.args[1].EvalDecimal(s.ctx, row)
+	// Its behavior is consistent with MySQL.
+	if terror.ErrorEqual(err, types.ErrTruncated) {
+		err = nil
+	}
+	if terror.ErrorEqual(err, types.ErrOverflow) {
+		newErr := errTruncatedWrongValue.GenByArgs("DECIMAL", s.args[1])
+		err = sc.HandleOverflow(newErr, newErr)
+	}
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
 	}
@@ -744,6 +761,13 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (int64, bo
 	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
 	if err == types.ErrDivByZero {
 		return 0, true, errors.Trace(handleDivisionByZeroError(s.ctx))
+	}
+	if err == types.ErrTruncated {
+		err = sc.HandleTruncate(errTruncatedWrongValue.GenByArgs("DECIMAL", c))
+	}
+	if err == types.ErrOverflow {
+		newErr := errTruncatedWrongValue.GenByArgs("DECIMAL", c)
+		err = sc.HandleOverflow(newErr, newErr)
 	}
 	if err != nil {
 		return 0, true, errors.Trace(err)
