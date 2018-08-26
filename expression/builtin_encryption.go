@@ -71,9 +71,12 @@ var (
 	_ builtinFunc = &builtinUncompressedLengthSig{}
 )
 
-// IVSize indicates the initialization vector supplied to aes_decrypt
-const IVSize = aes.BlockSize
+// ivSize indicates the initialization vector supplied to aes_decrypt
+const ivSize = aes.BlockSize
 
+// aesModeAttr indicates that the key length and iv attribute for specific block_encryption_mode.
+// keySize is the key length in bits and mode is the encryption mode.
+// ivRequired indicates that initialization vector is required or not.
 type aesModeAttr struct {
 	modeName   string
 	keySize    int
@@ -81,7 +84,7 @@ type aesModeAttr struct {
 }
 
 var aesModes = map[string]*aesModeAttr{
-	//TODO support more modes
+	//TODO support more modes, permitted mode values are: ECB, CBC, CFB1, CFB8, CFB128, OFB
 	"aes-128-ecb": {"ecb", 16, false},
 	"aes-192-ecb": {"ecb", 24, false},
 	"aes-256-ecb": {"ecb", 32, false},
@@ -105,17 +108,25 @@ func (c *aesDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
 	bf.tp.Flen = args[0].GetType().Flen // At most.
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinAesDecryptSig{bf}
+
+	modeName, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	mode, exists := aesModes[strings.ToLower(modeName)]
+	if !exists {
+		return nil, errors.Errorf("unsupported block encryption mode - %v", modeName)
+	}
+	sig := &builtinAesDecryptSig{bf, mode}
 	return sig, nil
 }
 
 type builtinAesDecryptSig struct {
 	baseBuiltinFunc
+	*aesModeAttr
 }
 
 func (b *builtinAesDecryptSig) Clone() builtinFunc {
 	newSig := &builtinAesDecryptSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.aesModeAttr = b.aesModeAttr
 	return newSig
 }
 
@@ -134,12 +145,7 @@ func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	var iv string
-	modeName, _ := b.ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
-	mode, exists := aesModes[strings.ToLower(modeName)]
-	if !exists {
-		return "", true, errors.Errorf("unsupported block encryption mode - %v", modeName)
-	}
-	if mode.ivRequired {
+	if b.ivRequired {
 		if len(b.args) != 3 {
 			return "", true, ErrIncorrectParameterCount.GenByArgs("aes_decrypt")
 		}
@@ -147,11 +153,11 @@ func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 		if isNull || err != nil {
 			return "", true, errors.Trace(err)
 		}
-		if len(iv) < IVSize {
+		if len(iv) < ivSize {
 			return "", true, errIncorrectArgs.Gen("The initialization vector supplied to aes_decrypt is too short. Must be at least 16 bytes long")
 		}
 		// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
-		iv = iv[0:IVSize]
+		iv = iv[0:ivSize]
 	} else {
 		if len(b.args) == 3 {
 			// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
@@ -159,15 +165,15 @@ func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 	}
 
-	key := encrypt.DeriveKeyMySQL([]byte(keyStr), mode.keySize)
+	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
 	var plainText []byte
-	switch mode.modeName {
+	switch b.modeName {
 	case "ecb":
 		plainText, err = encrypt.AESDecryptWithECB([]byte(cryptStr), key)
 	case "cbc":
 		plainText, err = encrypt.AESDecryptWithCBC([]byte(cryptStr), key, []byte(iv))
 	default:
-		return "", true, errors.Errorf("unsupported block encryption mode - %v", mode.modeName)
+		return "", true, errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
 	if err != nil {
 		return "", true, nil
@@ -190,17 +196,25 @@ func (c *aesEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argTps...)
 	bf.tp.Flen = aes.BlockSize * (args[0].GetType().Flen/aes.BlockSize + 1) // At most.
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinAesEncryptSig{bf}
+
+	modeName, _ := ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
+	mode, exists := aesModes[strings.ToLower(modeName)]
+	if !exists {
+		return nil, errors.Errorf("unsupported block encryption mode - %v", modeName)
+	}
+	sig := &builtinAesEncryptSig{bf, mode}
 	return sig, nil
 }
 
 type builtinAesEncryptSig struct {
 	baseBuiltinFunc
+	*aesModeAttr
 }
 
 func (b *builtinAesEncryptSig) Clone() builtinFunc {
 	newSig := &builtinAesEncryptSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.aesModeAttr = b.aesModeAttr
 	return newSig
 }
 
@@ -219,12 +233,7 @@ func (b *builtinAesEncryptSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	var iv string
-	modeName, _ := b.ctx.GetSessionVars().GetSystemVar(variable.BlockEncryptionMode)
-	mode, exists := aesModes[strings.ToLower(modeName)]
-	if !exists {
-		return "", true, errors.Errorf("unsupported block encryption mode - %v", modeName)
-	}
-	if mode.ivRequired {
+	if b.ivRequired {
 		if len(b.args) != 3 {
 			return "", true, ErrIncorrectParameterCount.GenByArgs("aes_encrypt")
 		}
@@ -244,15 +253,15 @@ func (b *builtinAesEncryptSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 	}
 
-	key := encrypt.DeriveKeyMySQL([]byte(keyStr), mode.keySize)
+	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
 	var cipherText []byte
-	switch mode.modeName {
+	switch b.modeName {
 	case "ecb":
 		cipherText, err = encrypt.AESEncryptWithECB([]byte(str), key)
 	case "cbc":
 		cipherText, err = encrypt.AESEncryptWithCBC([]byte(str), key, []byte(iv))
 	default:
-		return "", true, errors.Errorf("unsupported block encryption mode - %v", mode.modeName)
+		return "", true, errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
 	if err != nil {
 		return "", true, nil
