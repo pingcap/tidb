@@ -729,36 +729,26 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row chunk.Row) (int64, bool, 
 	return ret, err != nil, errors.Trace(err)
 }
 
-func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (ret int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
-	a, isNull, err := s.args[0].EvalDecimal(s.ctx, row)
-	// Its behavior is consistent with MySQL.
-	if terror.ErrorEqual(err, types.ErrTruncated) {
-		err = nil
-	}
-	if terror.ErrorEqual(err, types.ErrOverflow) {
-		newErr := errTruncatedWrongValue.GenByArgs("DECIMAL", s.args[0])
-		err = sc.HandleOverflow(newErr, newErr)
-	}
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
-	}
-
-	b, isNull, err := s.args[1].EvalDecimal(s.ctx, row)
-	// Its behavior is consistent with MySQL.
-	if terror.ErrorEqual(err, types.ErrTruncated) {
-		err = nil
-	}
-	if terror.ErrorEqual(err, types.ErrOverflow) {
-		newErr := errTruncatedWrongValue.GenByArgs("DECIMAL", s.args[1])
-		err = sc.HandleOverflow(newErr, newErr)
-	}
-	if isNull || err != nil {
-		return 0, isNull, errors.Trace(err)
+	var num [2]*types.MyDecimal
+	for i, arg := range s.args[0:2] {
+		num[i], isNull, err = arg.EvalDecimal(s.ctx, row)
+		// Its behavior is consistent with MySQL.
+		if terror.ErrorEqual(err, types.ErrTruncated) {
+			err = nil
+		}
+		if terror.ErrorEqual(err, types.ErrOverflow) {
+			newErr := errTruncatedWrongValue.GenByArgs("DECIMAL", arg)
+			err = sc.HandleOverflow(newErr, newErr)
+		}
+		if isNull || err != nil {
+			return 0, isNull, errors.Trace(err)
+		}
 	}
 
 	c := &types.MyDecimal{}
-	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
+	err = types.DecimalDiv(num[0], num[1], c, types.DivFracIncr)
 	if err == types.ErrDivByZero {
 		return 0, true, errors.Trace(handleDivisionByZeroError(s.ctx))
 	}
@@ -773,7 +763,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (int64, bo
 		return 0, true, errors.Trace(err)
 	}
 
-	ret, err := c.ToInt()
+	ret, err = c.ToInt()
 	// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 	if err == types.ErrOverflow {
 		return 0, true, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("(%s DIV %s)", s.args[0].String(), s.args[1].String()))
