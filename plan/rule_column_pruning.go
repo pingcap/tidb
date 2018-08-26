@@ -34,7 +34,7 @@ func getUsedList(usedCols []*expression.Column, schema *expression.Schema) []boo
 	for _, col := range usedCols {
 		idx := schema.ColumnIndex(col)
 		if idx == -1 {
-			log.Errorf("Can't find column %s from schema %s.", col, schema)
+			log.Errorf("Can't find column %s from schema %s.", col.String(), schema.String())
 		}
 		used[idx] = true
 	}

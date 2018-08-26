@@ -103,7 +103,7 @@ check-static:
 	  --enable misspell \
 	  --enable megacheck \
 	  --enable ineffassign \
- 	  $$($(PACKAGE_DIRECTORIES))
+	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:
 	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all \

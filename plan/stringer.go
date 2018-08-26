@@ -156,9 +156,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *LogicalProjection, *PhysicalProjection:
 		str = "Projection"
 	case *LogicalTopN:
-		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
+		str = fmt.Sprintf("TopN(%v,%d,%d)", x.ByItems, x.Offset, x.Count)
 	case *PhysicalTopN:
-		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
+		str = fmt.Sprintf("TopN(%v,%d,%d)", x.ByItems, x.Offset, x.Count)
 	case *LogicalTableDual, *PhysicalTableDual:
 		str = "Dual"
 	case *PhysicalHashAgg:
@@ -192,7 +192,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		for i := range x.OuterJoinKeys {
 			l := x.OuterJoinKeys[i]
 			r := x.InnerJoinKeys[i]
-			str += fmt.Sprintf("(%s,%s)", l, r)
+			str += fmt.Sprintf("(%s,%s)", l.String(), r.String())
 		}
 	case *Analyze:
 		str = "Analyze{"

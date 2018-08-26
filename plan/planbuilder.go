@@ -398,7 +398,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 		return nil, errors.Errorf("index %s do not exist", as.Index)
 	}
 	if idx.State != model.StatePublic {
-		return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
+		return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.State.String())
 	}
 
 	id := 1
