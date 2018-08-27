@@ -914,7 +914,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			return errors.Trace(err)
 		}
 
-		if err = checkPartitionFuncValid(s.Partition.Expr); err != nil {
+		if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
 			return errors.Trace(err)
 		}
 
