@@ -542,7 +542,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBCurrentTS, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
-		s.MaxChunkSize = chunk.NextPowerOfTwo(tidbOptPositiveInt32(val, DefMaxChunkSize))
+		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
