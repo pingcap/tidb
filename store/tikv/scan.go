@@ -100,6 +100,11 @@ func (s *Scanner) Next() error {
 			s.Close()
 			return errors.Trace(err)
 		}
+
+		if len(s.Value()) == 0 && !s.keyOnly {
+			// nil stands for NotExist, go to next KV pair.
+			continue
+		}
 		return nil
 	}
 }
