@@ -91,8 +91,6 @@ func newJoiner(ctx sessionctx.Context, joinType plan.JoinType,
 	colTypes := make([]*types.FieldType, 0, len(lhsColTypes)+len(rhsColTypes))
 	colTypes = append(colTypes, lhsColTypes...)
 	colTypes = append(colTypes, rhsColTypes...)
-	base.shadowRow = chunk.MutRowFromTypes(colTypes)
-	base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
 	base.selected = make([]bool, 0, chunk.InitialCapacity)
 	if joinType == plan.LeftOuterJoin || joinType == plan.RightOuterJoin {
 		innerColTypes := lhsColTypes
@@ -103,18 +101,25 @@ func newJoiner(ctx sessionctx.Context, joinType plan.JoinType,
 	}
 	switch joinType {
 	case plan.SemiJoin:
+		base.shadowRow = chunk.MutRowFromTypes(colTypes)
 		return &semiJoiner{base}
 	case plan.AntiSemiJoin:
+		base.shadowRow = chunk.MutRowFromTypes(colTypes)
 		return &antiSemiJoiner{base}
 	case plan.LeftOuterSemiJoin:
+		base.shadowRow = chunk.MutRowFromTypes(colTypes)
 		return &leftOuterSemiJoiner{base}
 	case plan.AntiLeftOuterSemiJoin:
+		base.shadowRow = chunk.MutRowFromTypes(colTypes)
 		return &antiLeftOuterSemiJoiner{base}
 	case plan.LeftOuterJoin:
+		base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
 		return &leftOuterJoiner{base}
 	case plan.RightOuterJoin:
+		base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
 		return &rightOuterJoiner{base}
 	case plan.InnerJoin:
+		base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
 		return &innerJoiner{base}
 	}
 	panic("unsupported join type in func newJoiner()")
@@ -144,8 +149,7 @@ func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
 	chk.AppendPartialRow(lhs.Len(), rhs)
 }
 
-// makeJoinRow combines inner, outer row into shadowRow.
-// combines will uses shadow copy inner and outer row data to shadowRow.
+// makeJoinRow shallow copies `inner` and `outer` into `shallowRow`.
 func (j *baseJoiner) makeJoinRow(isRightJoin bool, inner, outer chunk.Row) {
 	if !isRightJoin {
 		inner, outer = outer, inner
