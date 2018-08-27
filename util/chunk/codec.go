@@ -163,6 +163,9 @@ func (c *Codec) bytesToI32Slice(b []byte) (i32s []int32) {
 	return i32s
 }
 
+// varElemLn indicates column is variable length column.
+const varElemLen = -1
+
 func getFixedLen(colType *types.FieldType) int {
 	switch colType.Tp {
 	case mysql.TypeFloat:
@@ -175,7 +178,7 @@ func getFixedLen(colType *types.FieldType) int {
 	case mysql.TypeNewDecimal:
 		return types.MyDecimalStructSize
 	default:
-		return -1
+		return varElemLen
 	}
 }
 

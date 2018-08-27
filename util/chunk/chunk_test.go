@@ -659,20 +659,20 @@ func BenchmarkChunkMemoryUsage(b *testing.B) {
 	}
 }
 
-type mockExec struct {
-	x   int
-	ret int
+type seqNumberGenerateExec struct {
+	seq          int
+	genCountSize int
 }
 
-func (x *mockExec) Next(chk *Chunk, resize bool) {
+func (x *seqNumberGenerateExec) Next(chk *Chunk, resize bool) {
 	if resize {
 		chk.GrowAndReset(1024)
 	} else {
 		chk.Reset()
 	}
 	for chk.NumRows() < chk.Capacity() {
-		x.x++
-		if x.x > x.ret {
+		x.seq++
+		if x.seq > x.genCountSize {
 			break
 		}
 		chk.AppendInt64(0, 1)
@@ -684,7 +684,7 @@ func BenchmarkChunkRenewConsumeExec10000000In1024Slice(b *testing.B) {
 	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e := &mockExec{ret: 10000000}
+		e := &seqNumberGenerateExec{genCountSize: 10000000}
 		for {
 			e.Next(chk, false)
 			if chk.NumRows() == 0 {
@@ -700,7 +700,7 @@ func BenchmarkChunkRenewConsumeExec10000000In32Slice(b *testing.B) {
 	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e := &mockExec{ret: 10000000}
+		e := &seqNumberGenerateExec{genCountSize: 10000000}
 		for {
 			e.Next(chk, false)
 			if chk.NumRows() == 0 {
@@ -716,7 +716,7 @@ func BenchmarkChunkRenewConsumeExec10000000InGrow(b *testing.B) {
 	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e := &mockExec{ret: 10000000}
+		e := &seqNumberGenerateExec{genCountSize: 10000000}
 		for {
 			e.Next(chk, true)
 			if chk.NumRows() == 0 {
@@ -732,7 +732,7 @@ func BenchmarkChunkRestConsumeExec10000000In1024Slice(b *testing.B) {
 	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e := &mockExec{ret: 10000000}
+		e := &seqNumberGenerateExec{genCountSize: 10000000}
 		for {
 			e.Next(chk, false)
 			if chk.NumRows() == 0 {
@@ -747,7 +747,7 @@ func BenchmarkChunkResetConsumeExec10000000In32Slice(b *testing.B) {
 	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e := &mockExec{ret: 10000000}
+		e := &seqNumberGenerateExec{genCountSize: 10000000}
 		for {
 			e.Next(chk, false)
 			if chk.NumRows() == 0 {
@@ -762,7 +762,7 @@ func BenchmarkChunkResetConsumeExec10000000InGrow(b *testing.B) {
 	chk := New([]*types.FieldType{{Tp: mysql.TypeFloat}}, 32, 1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e := &mockExec{ret: 10000000}
+		e := &seqNumberGenerateExec{genCountSize: 10000000}
 		for {
 			e.Next(chk, true)
 			if chk.NumRows() == 0 {
@@ -777,7 +777,7 @@ func BenchmarkChunkRenewConsumeExec10In1024Slice(b *testing.B) {
 	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e := &mockExec{ret: 10}
+		e := &seqNumberGenerateExec{genCountSize: 10}
 		for {
 			e.Next(chk, false)
 			if chk.NumRows() == 0 {
@@ -793,7 +793,7 @@ func BenchmarkChunkRenewConsumeExec10In32Slice(b *testing.B) {
 	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e := &mockExec{ret: 10}
+		e := &seqNumberGenerateExec{genCountSize: 10}
 		for {
 			e.Next(chk, false)
 			if chk.NumRows() == 0 {
@@ -809,7 +809,7 @@ func BenchmarkChunkRenewConsumeExec10InGrow(b *testing.B) {
 	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e := &mockExec{ret: 10}
+		e := &seqNumberGenerateExec{genCountSize: 10}
 		for {
 			e.Next(chk, true)
 			if chk.NumRows() == 0 {
@@ -825,7 +825,7 @@ func BenchmarkChunkRestConsumeExec10In1024Slice(b *testing.B) {
 	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e := &mockExec{ret: 10}
+		e := &seqNumberGenerateExec{genCountSize: 10}
 		for {
 			e.Next(chk, false)
 			if chk.NumRows() == 0 {
@@ -840,7 +840,7 @@ func BenchmarkChunkResetConsumeExec10In32Slice(b *testing.B) {
 	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e := &mockExec{ret: 10}
+		e := &seqNumberGenerateExec{genCountSize: 10}
 		for {
 			e.Next(chk, false)
 			if chk.NumRows() == 0 {
@@ -855,7 +855,7 @@ func BenchmarkChunkResetConsumeExec10InGrow(b *testing.B) {
 	chk := New([]*types.FieldType{{Tp: mysql.TypeFloat}}, 32, 1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		e := &mockExec{ret: 10}
+		e := &seqNumberGenerateExec{genCountSize: 10}
 		for {
 			e.Next(chk, true)
 			if chk.NumRows() == 0 {
