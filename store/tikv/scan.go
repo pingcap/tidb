@@ -96,12 +96,13 @@ func (s *Scanner) Next() error {
 				continue
 			}
 		}
-		if err := s.resolveCurrentLock(bo); err != nil {
+		resolved, err := s.resolveCurrentLock(bo)
+		if err != nil {
 			s.Close()
 			return errors.Trace(err)
 		}
 
-		if len(s.Value()) == 0 && !s.keyOnly {
+		if resolved && len(s.Value()) == 0 {
 			// nil stands for NotExist, go to next KV pair.
 			continue
 		}
@@ -118,18 +119,18 @@ func (s *Scanner) startTS() uint64 {
 	return s.snapshot.version.Ver
 }
 
-func (s *Scanner) resolveCurrentLock(bo *Backoffer) error {
+func (s *Scanner) resolveCurrentLock(bo *Backoffer) (bool, error) {
 	current := s.cache[s.idx]
 	if current.GetError() == nil {
-		return nil
+		return false, nil
 	}
 	val, err := s.snapshot.get(bo, kv.Key(current.Key))
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	current.Error = nil
 	current.Value = val
-	return nil
+	return true, nil
 }
 
 func (s *Scanner) getData(bo *Backoffer) error {
