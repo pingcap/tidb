@@ -1190,33 +1190,16 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 		return errors.Trace(err)
 	}
 
-	tableCols := insertPlan.Table.Cols()
-	var insertCols []*table.Column
-
-	if len(insertPlan.Columns) > 0 {
-		colNames := make([]string, 0, len(tableCols))
-		for _, col := range insertPlan.Columns {
-			colNames = append(colNames, col.Name.O)
-		}
-		for _, col := range insertPlan.GenCols.Columns {
-			colNames = append(colNames, col.Name.O)
-		}
-		insertCols, err = table.FindCols(tableCols, colNames, insertPlan.Table.Meta().PKIsHandle)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		insertCols = tableCols
-	}
-
-	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(tableCols))...)
+	// schema4NewRow is the schema for the newly created data record based on
+	// the result of the select statement.
+	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
 	for i, selCol := range insertPlan.SelectPlan.Schema().Columns {
-		ordinal := insertCols[i].Offset
+		ordinal := affectedValuesCols[i].Offset
 		schema4NewRow.Columns[ordinal] = &expression.Column{}
 		*schema4NewRow.Columns[ordinal] = *selCol
 
 		schema4NewRow.Columns[ordinal].RetType = &types.FieldType{}
-		*schema4NewRow.Columns[ordinal].RetType = insertCols[i].FieldType
+		*schema4NewRow.Columns[ordinal].RetType = affectedValuesCols[i].FieldType
 	}
 	for i := range schema4NewRow.Columns {
 		if schema4NewRow.Columns[i] == nil {
