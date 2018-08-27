@@ -56,7 +56,7 @@ func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo
 	return rewriter.pop(), nil
 }
 
-// ParseSimpleExprWithSchema parses simple expression string to Expression.
+// ParseSimpleExprsWithSchema parses simple expression string to Expression.
 // The expression string must only reference the column in the given schema.
 func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *Schema) ([]Expression, error) {
 	exprStr = "select " + exprStr
