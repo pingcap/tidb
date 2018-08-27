@@ -71,7 +71,7 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 //   chk: old chunk(often used in previous call).
 //   maxChunkSize: the max limit for max number of rows.
 //
-//  this method will be used in the situation when calling call Executor#Next many times with a new chunk situation.
+//  this method will be used in the situation when calling call Executor#Next many times with a new chunk.
 //  so it will `calculateCapForRenew` to get a new cap then create a new chunk.
 func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 	newCap := calculateCapForRenew(chk, maxChunkSize)
@@ -119,7 +119,7 @@ func newFixedLenColumn(elemLen, initCap int) *column {
 // newVarLenColumn creates a variable length column with initial data capacity.
 func newVarLenColumn(initCap int, old *column) *column {
 	estimatedElemLen := 4
-	// for varLenColumn(e.g. varchar) we could not take the accuracy length of element,
+	// For varLenColumn(e.g. varchar) we could not take the accuracy length of element,
 	// so, in first executor.Next we using a experience value --- 4(so it maybe make `runtime.growslice`)
 	// but in continue Next call we estimated length as AVG x 1.5 elemLen of previous call.
 	if old != nil && old.length != 0 {
