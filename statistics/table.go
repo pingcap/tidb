@@ -487,7 +487,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 	}
 	for id, colHist := range coll.Columns {
 		uniqueID, ok := colInfoID2UniqueID[id]
-		// If this column is not in datasource's schema, it won't be used in this query.
+		// Collect the statistics by the given columns.
 		if ok {
 			newColHistMap[uniqueID] = colHist
 		}
