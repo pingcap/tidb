@@ -25,12 +25,10 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/mock"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -64,24 +62,24 @@ type worker struct {
 	quitCh   chan struct{}
 	wg       sync.WaitGroup
 
-	// ctxPool is used to new sessions to execute SQL in ddl package.
-	ctxPool         *pools.ResourcePool
-	reorgCtx        *reorgCtx // reorgCtx is used for reorganization.
+	sessGenerator   *sessionGenerator // sessGenerator is used to new sessions to execute SQL in ddl package.
+	reorgCtx        *reorgCtx         // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 }
 
 func newWorker(tp workerType, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
+	sessGenerator := &sessionGenerator{ctxPool}
 	worker := &worker{
-		id:       atomic.AddInt32(&ddlWorkerID, 1),
-		tp:       tp,
-		ddlJobCh: make(chan struct{}, 1),
-		quitCh:   make(chan struct{}),
-		reorgCtx: &reorgCtx{notifyCancelReorgJob: 0},
-		ctxPool:  ctxPool,
+		id:            atomic.AddInt32(&ddlWorkerID, 1),
+		tp:            tp,
+		ddlJobCh:      make(chan struct{}, 1),
+		quitCh:        make(chan struct{}),
+		reorgCtx:      &reorgCtx{notifyCancelReorgJob: 0},
+		sessGenerator: sessGenerator,
 	}
 
 	if ctxPool != nil {
-		worker.delRangeManager = newDelRangeManager(store, ctxPool)
+		worker.delRangeManager = newDelRangeManager(store, sessGenerator)
 		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", !store.SupportDeleteRange())
 	} else {
 		worker.delRangeManager = newMockDelRangeManager()
@@ -109,32 +107,9 @@ func (w *worker) String() string {
 func (w *worker) close() {
 	close(w.quitCh)
 	w.delRangeManager.clear()
+	w.sessGenerator.close()
 	w.wg.Wait()
 	log.Infof("[ddl-%s] close DDL worker", w)
-}
-
-// getSessionCtx get sessionctx from context resource pool.
-// Please remember to call putSessionCtx after you getting the sessionctx.
-func (w *worker) getSessionCtx() (sessionctx.Context, error) {
-	if w.ctxPool == nil {
-		return mock.NewContext(), nil
-	}
-	resource, err := w.ctxPool.Get()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	ctx := resource.(sessionctx.Context)
-	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
-	ctx.GetSessionVars().InRestrictedSQL = true
-	return ctx, nil
-}
-
-// putSessionCtx return sessionctx to context resource pool.
-func (w *worker) putSessionCtx(ctx sessionctx.Context) {
-	if w.ctxPool != nil {
-		w.ctxPool.Put(ctx.(pools.Resource))
-	}
 }
 
 // start is used for async online schema changing, it will try to become the owner firstly,

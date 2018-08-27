@@ -725,10 +725,10 @@ func (s *testDDLSuite) TestDDLPackageExecuteSQL(c *C) {
 
 	// In test environment, worker.ctxPool will be nil, and getSessionCtx will return mock.Context.
 	// We just test that can use it to call sqlexec.SQLExecutor.Execute.
-	sessCtx, err := worker.getSessionCtx()
+	sess, err := worker.sessGenerator.getSessionCtx()
 	c.Assert(err, IsNil)
-	defer worker.putSessionCtx(sessCtx)
-	se := sessCtx.(sqlexec.SQLExecutor)
+	defer worker.sessGenerator.putSessionCtx(sess)
+	se := sess.(sqlexec.SQLExecutor)
 	_, err = se.Execute(context.Background(), "create table t(a int);")
 	c.Assert(err, IsNil)
 }
