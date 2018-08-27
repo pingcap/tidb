@@ -284,6 +284,15 @@ type PartitionInfo struct {
 	Definitions []PartitionDefinition `json:"definitions"`
 }
 
+func (pi *PartitionInfo) GetNameByID(id int64) string {
+	for _, def := range pi.Definitions {
+		if id == def.ID {
+			return def.Name.L
+		}
+	}
+	return ""
+}
+
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
 	ID       int64    `json:"id"`
