@@ -354,7 +354,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			pos++
 			switch length {
 			case 0:
-				args[i] = "0"
+				args[i] = "00000000000000"
 			case 4:
 				pos, args[i] = parseBinaryDate(pos, paramValues)
 			case 7:

@@ -120,7 +120,7 @@ func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
 				[]byte{0x00},
 			},
 			nil,
-			"0",
+			"00000000000000",
 		},
 		// Tests for time
 		{
