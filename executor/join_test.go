@@ -14,11 +14,17 @@
 package executor_test
 
 import (
+	"bytes"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
 )
@@ -909,4 +915,85 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 		`1.01`,
 		`2.02`,
 	))
+}
+
+func getChk() (*chunk.Chunk, []*types.FieldType) {
+	numRows := 1024
+	colTypes := make([]*types.FieldType, 0, 8)
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeDatetime})
+
+	chk := chunk.NewChunkWithCapacity(colTypes, numRows)
+	for i := 0; i < numRows; i++ {
+		row := chunk.MutRowFromValues("abc", "abcdefg", i, i+1, types.ZeroDatetime).ToRow()
+		chk.AppendRow(row)
+	}
+	return chk, colTypes
+}
+
+func TestGetJoinKeyFromChunk(t *testing.T) {
+	chk, colTypes := getChk()
+	numRows := chk.NumRows()
+	keyColIdx := []int{0, 1, 2, 3, 4}
+	keysBuf := make([][]byte, 0, numRows)
+	hasNulls := make([]bool, numRows)
+	keyBuf := make([]byte, 0, 64)
+
+	for i := 0; i < numRows; i++ {
+		keysBuf = append(keysBuf, make([]byte, 0, 64))
+	}
+	keysBuf, _ = codec.HashChunk(nil, keysBuf, chk, hasNulls, numRows, colTypes, keyColIdx)
+	for j := 0; j < numRows; j++ {
+		keyBuf = keyBuf[:0]
+		keyBuf, _ = codec.HashChunkRow(nil, keyBuf, chk.GetRow(j), colTypes, keyColIdx)
+		bytes.Compare(keyBuf, keysBuf[j])
+		if len(keyBuf) == 0 {
+			t.Fail()
+		}
+	}
+}
+
+func BenchmarkGetJoinKeyFromChunk(b *testing.B) {
+	b.ReportAllocs()
+	chk, colTypes := getChk()
+	numRows := chk.NumRows()
+	keyColIdx := []int{0, 1, 2, 3, 4}
+	b.ResetTimer()
+	keysBuf := make([][]byte, 0, numRows)
+	hasNulls := make([]bool, numRows)
+	numChks := 10
+
+	for i := 0; i < numRows; i++ {
+		keysBuf = append(keysBuf, make([]byte, 0, 64))
+	}
+	for i := 0; i < b.N; i++ {
+		for k := 0; k < numChks; k++ {
+			for j := 0; j < numRows; j++ {
+				hasNulls[j] = false
+				keysBuf[j] = keysBuf[j][:0]
+			}
+			keysBuf, _ = codec.HashChunk(nil, keysBuf, chk, hasNulls, numRows, colTypes, keyColIdx)
+		}
+	}
+}
+
+func BenchmarkGetJoinKeyFromChkRow(b *testing.B) {
+	b.ReportAllocs()
+	chk, colTypes := getChk()
+	numRows := chk.NumRows()
+	keyColIdx := []int{0, 1, 2, 3, 4}
+	b.ResetTimer()
+	keyBuf := make([]byte, 0, 64)
+	numChks := 10
+	for i := 0; i < b.N; i++ {
+		for k := 0; k < numChks; k++ {
+			for j := 0; j < numRows; j++ {
+				keyBuf = keyBuf[:0]
+				keyBuf, _ = codec.HashChunkRow(nil, keyBuf, chk.GetRow(j), colTypes, keyColIdx)
+			}
+		}
+	}
 }
