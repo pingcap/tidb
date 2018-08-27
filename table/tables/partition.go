@@ -98,14 +98,17 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 //      p1 values less than (y1)
 //      p2 values less than (y2)
 //      p3 values less than (y3))
-// Ranges: (x < y1); (y1 <= x < y2); (y2 <= x < y3)
+// Ranges: (x < y1 or x is null); (y1 <= x < y2); (y2 <= x < y3)
 // UpperBounds: (x < y1); (x < y2); (x < y3)
 type PartitionExpr struct {
+	// Column is the column appeared in the by range expression, partition pruning need this to work.
+	Column      *expression.Column
 	Ranges      []expression.Expression
 	UpperBounds []expression.Expression
 }
 
 func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
+	var column *expression.Column
 	// The caller should assure partition info is not nil.
 	pi := tblInfo.GetPartitionInfo()
 	ctx := mock.NewContext()
@@ -129,6 +132,19 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 
 		if i > 0 {
 			fmt.Fprintf(&buf, " and ((%s) >= (%s))", pi.Expr, pi.Definitions[i-1].LessThan[0])
+		} else {
+			// NULL will locate in the first partition, so its expression is (expr < value or expr is null).
+			fmt.Fprintf(&buf, " or ((%s) is null)", pi.Expr)
+
+			// Extracts the column of the partition expression, it will be used by partition prunning.
+			if tmp, err1 := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, tblInfo); err1 == nil {
+				if col, ok := tmp.(*expression.Column); ok {
+					column = col
+				}
+			}
+			if column == nil {
+				log.Warnf("partition pruning won't work on this expr:%s", pi.Expr)
+			}
 		}
 
 		expr, err = expression.ParseSimpleExprWithTableInfo(ctx, buf.String(), tblInfo)
@@ -141,6 +157,7 @@ func generatePartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 		buf.Reset()
 	}
 	return &PartitionExpr{
+		Column:      column,
 		Ranges:      partitionPruneExprs,
 		UpperBounds: locateExprs,
 	}, nil

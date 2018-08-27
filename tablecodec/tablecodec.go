@@ -441,6 +441,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 				return datum, errors.Trace(err)
 			}
 		}
+		datum.SetUint64(0)
 		datum.SetMysqlTime(t)
 		return datum, nil
 	case mysql.TypeDuration: //duration should read fsp from column meta data
@@ -465,6 +466,7 @@ func unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 	case mysql.TypeBit:
 		val := datum.GetUint64()
 		byteSize := (ft.Flen + 7) >> 3
+		datum.SetUint64(0)
 		datum.SetMysqlBit(types.NewBinaryLiteralFromUint(val, byteSize))
 	}
 	return datum, nil
