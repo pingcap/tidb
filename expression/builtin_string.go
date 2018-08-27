@@ -3170,21 +3170,30 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[3].GetType(), bf.tp)
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	if types.IsBinaryStr(args[0].GetType()) {
-		sig = &builtinInsertBinarySig{bf}
+		sig = &builtinInsertBinarySig{bf, maxAllowedPacket}
 	} else {
-		sig = &builtinInsertSig{bf}
+		sig = &builtinInsertSig{bf, maxAllowedPacket}
 	}
 	return sig, nil
 }
 
 type builtinInsertBinarySig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinInsertBinarySig) Clone() builtinFunc {
 	newSig := &builtinInsertBinarySig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -3216,6 +3225,10 @@ func (b *builtinInsertBinarySig) evalString(row chunk.Row) (string, bool, error)
 	}
 
 	if length > strLength-pos+1 || length < 0 {
+		if uint64(pos-1+int64(len(newstr)))*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("insert", b.maxAllowedPacket))
+			return "", true, nil
+		}
 		return str[0:pos-1] + newstr, false, nil
 	}
 	return str[0:pos-1] + newstr + str[pos+length-1:], false, nil
@@ -3223,11 +3236,13 @@ func (b *builtinInsertBinarySig) evalString(row chunk.Row) (string, bool, error)
 
 type builtinInsertSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinInsertSig) Clone() builtinFunc {
 	newSig := &builtinInsertSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -3260,6 +3275,10 @@ func (b *builtinInsertSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	if length > runeLength-pos+1 || length < 0 {
+		if uint64(pos-1+int64(len(newstr)))*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("insert", b.maxAllowedPacket))
+			return "", true, nil
+		}
 		return string(runes[0:pos-1]) + newstr, false, nil
 	}
 	return string(runes[0:pos-1]) + newstr + string(runes[pos+length-1:]), false, nil
