@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -155,7 +154,7 @@ func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	return errors.Trace(err)
 }
 
-var errForbidDrop = errors.New("Drop mysql tables is forbidden")
+var errForbidDrop = errors.New("Drop tidb system tables is forbidden")
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	dbName := model.NewCIStr(s.Name)
@@ -163,9 +162,7 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	// Protect important system table from been dropped by a mistake.
 	// I can hardly find a case that a user really need to do this.
 	if dbName.L == "mysql" {
-		if !privileges.SkipWithGrant {
-			return errors.Trace(errForbidDrop)
-		}
+		return errors.Trace(errForbidDrop)
 	}
 
 	err := domain.GetDomain(e.ctx).DDL().DropSchema(e.ctx, dbName)
@@ -191,6 +188,22 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	return errors.Trace(err)
 }
 
+var systemTables = map[string]struct{}{
+	"tidb":                 {},
+	"gc_delete_range":      {},
+	"gc_delete_range_done": {},
+}
+
+func isSystemTable(schema, table string) bool {
+	if schema != "mysql" {
+		return false
+	}
+	if _, ok := systemTables[table]; ok {
+		return true
+	}
+	return false
+}
+
 func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 	var notExistTables []string
 	for _, tn := range s.Tables {
@@ -212,10 +225,8 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
-		if tn.Schema.L == "mysql" {
-			if !privileges.SkipWithGrant {
-				return errors.Trace(errForbidDrop)
-			}
+		if isSystemTable(tn.Schema.L, tn.Name.L) {
+			return errors.Trace(errForbidDrop)
 		}
 
 		if config.CheckTableBeforeDrop {

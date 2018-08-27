@@ -141,7 +141,7 @@ func (s *testSuite) TestCreateDropTable(c *C) {
 	tk.MustExec("create table drop_test (a int)")
 	tk.MustExec("drop table drop_test")
 
-	_, err := tk.Exec("drop table mysql.user")
+	_, err := tk.Exec("drop table mysql.gc_delete_range")
 	c.Assert(err, NotNil)
 }
 
