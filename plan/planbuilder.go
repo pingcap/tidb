@@ -498,6 +498,9 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 	default:
 		return nil, ErrUnsupportedType.Gen("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
+
+	// Admin command can only be executed by administrator.
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
 	return ret, nil
 }
 

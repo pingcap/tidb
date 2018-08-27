@@ -538,6 +538,17 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 			best: "Dual->Projection",
 			is:   is1,
 		},
+		{
+			// NULL will be located in the first partition.
+			sql:  "select * from t where t.h is null",
+			best: "Partition(41)->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h is null or t.h > 70",
+			best: "UnionAll{Partition(41)->Partition(44)}->Projection",
+			is:   is1,
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
