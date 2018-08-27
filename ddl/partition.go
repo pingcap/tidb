@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -103,28 +104,43 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) 
 }
 
 // checkPartitionFuncValid checks partition function validly.
-func checkPartitionFuncValid(expr ast.ExprNode) error {
+func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	switch v := expr.(type) {
-	case *ast.CaseExpr:
-		return ErrPartitionFunctionIsNotAllowed
+	case *ast.FuncCastExpr, *ast.CaseExpr:
+		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.FuncCallExpr:
 		// check function which allowed in partitioning expressions
 		// see https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
 		switch v.FnName.L {
 		case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Day, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Extract, ast.Floor,
 			ast.Hour, ast.MicroSecond, ast.Minute, ast.Mod, ast.Month, ast.Quarter, ast.Second, ast.TimeToSec, ast.ToDays,
-			ast.ToSeconds, ast.UnixTimestamp, ast.Weekday, ast.Year, ast.YearWeek:
+			ast.ToSeconds, ast.Weekday, ast.Year, ast.YearWeek:
 			return nil
-		default:
-			return ErrPartitionFunctionIsNotAllowed
+		case ast.UnixTimestamp:
+			if len(v.Args) == 1 {
+				col, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, v.Args[0])
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if col.GetType().Tp != mysql.TypeTimestamp {
+					return errors.Trace(errWrongExprInPartitionFunc)
+				}
+				return nil
+			}
 		}
+		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.BinaryOperationExpr:
 		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
 		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
-		if v.Op == opcode.Div {
-			return ErrPartitionFunctionIsNotAllowed
+		switch v.Op {
+		case opcode.Or, opcode.And, opcode.Xor, opcode.LeftShift, opcode.RightShift, opcode.BitNeg, opcode.Div:
+			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
 		return nil
+	case *ast.UnaryOperationExpr:
+		if v.Op == opcode.BitNeg {
+			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		}
 	}
 	return nil
 }
