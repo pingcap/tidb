@@ -1221,6 +1221,33 @@ func (s *testEvaluatorSuite) TestCharLength(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
 	}
+
+	// Test binary string
+	tbl = []struct {
+		input  interface{}
+		result interface{}
+	}{
+		{"33", 2},   // string
+		{"你好", 6},   // mb string
+		{"CAFÉ", 5}, // mb string
+		{"", 0},     // mb string
+		{nil, nil},  // nil
+	}
+	for _, v := range tbl {
+		fc := funcs[ast.CharLength]
+		arg := s.datumsToConstants(types.MakeDatums(v.input))
+		tp := arg[0].GetType()
+		tp.Tp = mysql.TypeVarString
+		tp.Charset = charset.CharsetBin
+		tp.Collate = charset.CollationBin
+		tp.Flen = types.UnspecifiedLength
+		tp.Flag = mysql.BinaryFlag
+		f, err := fc.getFunction(s.ctx, arg)
+		c.Assert(err, IsNil)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(v.result))
+	}
 }
 
 func (s *testEvaluatorSuite) TestFindInSet(c *C) {

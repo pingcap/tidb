@@ -39,10 +39,13 @@ var _ = Suite(&testStatsUpdateSuite{})
 type testStatsUpdateSuite struct {
 	store kv.Storage
 	do    *domain.Domain
+	hook  logHook
 }
 
 func (s *testStatsUpdateSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	log.AddHook(&s.hook)
 	var err error
 	s.store, s.do, err = newStoreWithBootstrap(0)
 	c.Assert(err, IsNil)
@@ -633,6 +636,85 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
 }
 
+func (s *testStatsUpdateSuite) TestQueryFeedbackForPartition(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec(`create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))
+			    partition by range (a) (
+			    partition p0 values less than (3),
+			    partition p1 values less than (6))`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(3,4),(4,1),(5,6)")
+	testKit.MustExec("analyze table t")
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	h := s.do.StatsHandle()
+	statistics.FeedbackProbability = 1
+	tests := []struct {
+		sql     string
+		hist    string
+		idxCols int
+	}{
+		{
+			// test primary key feedback
+			sql: "select * from t where t.a <= 5",
+			hist: "column:1 ndv:2 totColSize:0\n" +
+				"num: 1 lower_bound: -9223372036854775808 upper_bound: 1 repeats: 0\n" +
+				"num: 1 lower_bound: 2 upper_bound: 5 repeats: 0",
+			idxCols: 0,
+		},
+		{
+			// test index feedback by double read
+			sql: "select * from t use index(idx) where t.b <= 5",
+			hist: "index:1 ndv:1\n" +
+				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0",
+			idxCols: 1,
+		},
+		{
+			// test index feedback by single read
+			sql: "select b from t use index(idx) where t.b <= 5",
+			hist: "index:1 ndv:1\n" +
+				"num: 2 lower_bound: -inf upper_bound: 6 repeats: 0",
+			idxCols: 1,
+		},
+	}
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	pi := tblInfo.GetPartitionInfo()
+	c.Assert(pi, NotNil)
+
+	// This test will check the result of partition p0.
+	var pid int64
+	for _, def := range pi.Definitions {
+		if def.Name.L == "p0" {
+			pid = def.ID
+			break
+		}
+	}
+
+	for i, t := range tests {
+		testKit.MustQuery(t.sql)
+		c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+		c.Assert(err, IsNil)
+		h.Update(is)
+		tbl := h.GetPartitionStats(tblInfo, pid)
+		if t.idxCols == 0 {
+			c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, tests[i].hist)
+		} else {
+			c.Assert(tbl.Indices[tblInfo.Indices[0].ID].ToString(1), Equals, tests[i].hist)
+		}
+	}
+	testKit.MustExec("drop table t")
+}
+
 func (s *testStatsUpdateSuite) TestUpdateSystemTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -796,11 +878,9 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 		},
 	}
 	log.SetLevel(log.DebugLevel)
-	var hook logHook
-	log.AddHook(&hook)
 	for _, t := range tests {
-		hook.results = ""
+		s.hook.results = ""
 		testKit.MustQuery(t.sql)
-		c.Assert(hook.results, Equals, t.result)
+		c.Assert(s.hook.results, Equals, t.result)
 	}
 }
