@@ -732,7 +732,7 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(row chunk.Row) (int64, bool, 
 func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (ret int64, isNull bool, err error) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	var num [2]*types.MyDecimal
-	for i, arg := range s.args[0:2] {
+	for i, arg := range s.args {
 		num[i], isNull, err = arg.EvalDecimal(s.ctx, row)
 		// Its behavior is consistent with MySQL.
 		if terror.ErrorEqual(err, types.ErrTruncated) {
