@@ -249,9 +249,8 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			args[i] = nil
 			continue
 		}
-		if boundParamLength := len(boundParams[i]); boundParamLength != 0 {
-			// Trim out the last ending byte.
-			args[i] = boundParams[i][:boundParamLength-1]
+		if boundParams[i] != nil {
+			args[i] = boundParams[i]
 			continue
 		}
 
@@ -510,8 +509,7 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 	}
 
 	paramID := int(binary.LittleEndian.Uint16(data[4:6]))
-	// Append an extra 0 to the end to distinguish no data and no parameter.
-	return stmt.AppendParam(paramID, append(data[6:], 0))
+	return stmt.AppendParam(paramID, data[6:])
 }
 
 func (cc *clientConn) handleStmtReset(data []byte) (err error) {
