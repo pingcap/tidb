@@ -136,7 +136,7 @@ func BenchmarkMutRowFromValues(b *testing.B) {
 	}
 }
 
-func (s *testChunkSuite) TestMutRowShadowCopyPartialRow(c *check.C) {
+func (s *testChunkSuite) TestMutRowShallowCopyPartialRow(c *check.C) {
 	colTypes := make([]*types.FieldType, 0, 3)
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeLonglong})
@@ -165,7 +165,7 @@ func (s *testChunkSuite) TestMutRowShadowCopyPartialRow(c *check.C) {
 
 var rowsNum = 1024
 
-func BenchmarkMutRowShadowCopyPartialRow(b *testing.B) {
+func BenchmarkMutRowShallowCopyPartialRow(b *testing.B) {
 	b.ReportAllocs()
 	colTypes := make([]*types.FieldType, 0, 8)
 	colTypes = append(colTypes, &types.FieldType{Tp: mysql.TypeVarString})

@@ -101,16 +101,16 @@ func newJoiner(ctx sessionctx.Context, joinType plan.JoinType,
 	}
 	switch joinType {
 	case plan.SemiJoin:
-		base.shadowRow = chunk.MutRowFromTypes(colTypes)
+		base.shallowRow = chunk.MutRowFromTypes(colTypes)
 		return &semiJoiner{base}
 	case plan.AntiSemiJoin:
-		base.shadowRow = chunk.MutRowFromTypes(colTypes)
+		base.shallowRow = chunk.MutRowFromTypes(colTypes)
 		return &antiSemiJoiner{base}
 	case plan.LeftOuterSemiJoin:
-		base.shadowRow = chunk.MutRowFromTypes(colTypes)
+		base.shallowRow = chunk.MutRowFromTypes(colTypes)
 		return &leftOuterSemiJoiner{base}
 	case plan.AntiLeftOuterSemiJoin:
-		base.shadowRow = chunk.MutRowFromTypes(colTypes)
+		base.shallowRow = chunk.MutRowFromTypes(colTypes)
 		return &antiLeftOuterSemiJoiner{base}
 	case plan.LeftOuterJoin:
 		base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
@@ -131,7 +131,7 @@ type baseJoiner struct {
 	defaultInner chunk.Row
 	outerIsRight bool
 	chk          *chunk.Chunk
-	shadowRow    chunk.MutRow
+	shallowRow   chunk.MutRow
 	selected     []bool
 	maxChunkSize int
 }
@@ -154,8 +154,8 @@ func (j *baseJoiner) makeJoinRow(isRightJoin bool, inner, outer chunk.Row) {
 	if !isRightJoin {
 		inner, outer = outer, inner
 	}
-	j.shadowRow.ShallowCopyPartialRow(0, inner)
-	j.shadowRow.ShallowCopyPartialRow(inner.Len(), outer)
+	j.shallowRow.ShallowCopyPartialRow(0, inner)
+	j.shallowRow.ShallowCopyPartialRow(inner.Len(), outer)
 }
 
 func (j *baseJoiner) filter(input, output *chunk.Chunk) (matched bool, err error) {
@@ -191,7 +191,7 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.makeJoinRow(j.outerIsRight, inner, outer)
 
-		matched, err = expression.EvalBool(j.ctx, j.conditions, j.shadowRow.ToRow())
+		matched, err = expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -225,7 +225,7 @@ func (j *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk 
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.makeJoinRow(j.outerIsRight, inner, outer)
 
-		matched, err = expression.EvalBool(j.ctx, j.conditions, j.shadowRow.ToRow())
+		matched, err = expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -260,7 +260,7 @@ func (j *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator,
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.makeJoinRow(false, inner, outer)
 
-		matched, err = expression.EvalBool(j.ctx, j.conditions, j.shadowRow.ToRow())
+		matched, err = expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -302,7 +302,7 @@ func (j *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Itera
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
 		j.makeJoinRow(false, inner, outer)
 
-		matched, err := expression.EvalBool(j.ctx, j.conditions, j.shadowRow.ToRow())
+		matched, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
