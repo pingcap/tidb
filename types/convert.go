@@ -275,7 +275,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	}
 	if exp > 0 && int64(intCnt) > (math.MaxInt64-int64(exp)) {
 		// (exp + incCnt) overflows MaxInt64.
-		sc.AppendError(ErrOverflow.GenByArgs("BIGINT", oriStr))
+		sc.AppendWarning(ErrOverflow.GenByArgs("BIGINT", oriStr))
 		return validFloat[:eIdx], nil
 	}
 	intCnt += exp
@@ -293,7 +293,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		extraZeroCount := intCnt - len(digits)
 		if extraZeroCount > 20 {
 			// Return overflow to avoid allocating too much memory.
-			sc.AppendError(ErrOverflow.GenByArgs("BIGINT", oriStr))
+			sc.AppendWarning(ErrOverflow.GenByArgs("BIGINT", oriStr))
 			return validFloat[:eIdx], nil
 		}
 		validInt = string(digits) + strings.Repeat("0", extraZeroCount)
