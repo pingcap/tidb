@@ -253,7 +253,6 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 			}
 			return nil
 		}
-
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
@@ -279,12 +278,23 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		tableID := job.TableID
 		var indexName interface{}
 		var indexID int64
-		if err := job.DecodeArgs(&indexName, &indexID); err != nil {
+		var partitionIDs []int64
+		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
-		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-		return doInsert(s, job.ID, indexID, startKey, endKey, now)
+		if len(partitionIDs) > 0 {
+			for _, pid := range partitionIDs {
+				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
+				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
+				if err := doInsert(s, job.ID, indexID, startKey, endKey, now); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		} else {
+			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+			return doInsert(s, job.ID, indexID, startKey, endKey, now)
+		}
 	}
 	return nil
 }

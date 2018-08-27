@@ -376,10 +376,13 @@ import (
 	start		"START"
 	statsPersistent	"STATS_PERSISTENT"
 	status		"STATUS"
+	subpartition	"SUBPARTITION"
+	subpartitions	"SUBPARTITIONS"
 	super		"SUPER"
 	some 		"SOME"
 	global		"GLOBAL"
 	tables		"TABLES"
+	tablespace	"TABLESPACE"
 	temporary	"TEMPORARY"
 	temptable	"TEMPTABLE"
 	textType	"TEXT"
@@ -681,9 +684,10 @@ import (
 	PartitionDefinitionListOpt	"Partition definition list option"
 	PartitionOpt			"Partition option"
 	PartitionNumOpt			"PARTITION NUM option"
-	PartDefCommentOpt		"Partition comment"
 	PartDefValuesOpt		"VALUES {LESS THAN {(expr | value_list) | MAXVALUE} | IN {value_list}"
-	PartDefStorageOpt		"ENGINE = xxx or empty"
+	PartDefOptionsOpt		"PartDefOptionList option"
+	PartDefOptionList		"PartDefOption list"
+	PartDefOption			"COMMENT [=] xxx | TABLESPACE [=] tablespace_name | ENGINE [=] xxx"
 	PasswordOpt			"Password option"
 	ColumnPosition			"Column position [First|After ColumnName]"
 	PrepareSQL			"Prepare statement sql string"
@@ -719,6 +723,8 @@ import (
 	StatsPersistentVal		"stats_persistent value"
 	StringName			"string literal or identifier"
 	StringList 			"string list"
+	SubPartitionOpt			"SubPartition option"
+	SubPartitionNumOpt		"SubPartition NUM option"
 	Symbol				"Constraint Symbol"
 	TableAsName			"table alias name"
 	TableAsNameOpt 			"table alias name optional"
@@ -1794,11 +1800,11 @@ PartitionOpt:
 	{
 		$$ = nil
 	}
-|	"PARTITION" "BY" "RANGE" '(' Expression ')' PartitionNumOpt  PartitionDefinitionListOpt
+|	"PARTITION" "BY" "RANGE" '(' Expression ')' PartitionNumOpt SubPartitionOpt PartitionDefinitionListOpt
 	{
 		var defs []*ast.PartitionDefinition
-		if $8 != nil {
-			defs = $8.([]*ast.PartitionDefinition)
+		if $9 != nil {
+			defs = $9.([]*ast.PartitionDefinition)
 		}
 		$$ = &ast.PartitionOptions{
 			Tp:		model.PartitionTypeRange,
@@ -1818,6 +1824,18 @@ PartitionOpt:
 			Definitions:	defs,
 		}
 	}
+
+SubPartitionOpt:
+	{}
+|	"SUBPARTITION" "BY" "HASH" '(' Expression ')' SubPartitionNumOpt
+	{}
+|	"SUBPARTITION" "BY" "KEY" '(' ColumnNameList ')' SubPartitionNumOpt
+	{}
+
+SubPartitionNumOpt:
+	{}
+|	"SUBPARTITIONS" NUM
+	{}
 
 PartitionNumOpt:
 	{}
@@ -1845,11 +1863,10 @@ PartitionDefinitionList:
 	}
 
 PartitionDefinition:
-	"PARTITION" Identifier PartDefValuesOpt PartDefCommentOpt PartDefStorageOpt
+	"PARTITION" Identifier PartDefValuesOpt PartDefOptionsOpt
 	{
 		partDef := &ast.PartitionDefinition{
 			Name: model.NewCIStr($2),
-			Comment: $4.(string),
 		}
 		switch $3.(type) {
 		case []ast.ExprNode:
@@ -1858,17 +1875,50 @@ PartitionDefinition:
 			partDef.LessThan = make([]ast.ExprNode, 1)
 			partDef.LessThan[0] = $3.(ast.ExprNode)
 		}
+
+		if comment, ok := $4.(string); ok {
+			partDef.Comment = comment
+		}
 		$$ = partDef
 	}
 
-PartDefCommentOpt:
+PartDefOptionsOpt:
 	{
-		$$ = ""
+		$$ = nil
 	}
-|	"COMMENT" eq stringLit
+|	PartDefOptionList
+	{
+		$$ = $1
+	}
+
+PartDefOptionList:
+	PartDefOption
+	{
+		$$ = $1
+	}
+|	PartDefOptionList PartDefOption
+	{
+		if $1 != nil {
+			$$ = $1
+		} else {
+			$$ = $2
+		}
+	}
+
+PartDefOption:
+	"COMMENT" EqOpt stringLit
 	{
 		$$ = $3
 	}
+|	"ENGINE" EqOpt Identifier
+	{
+		$$ = nil
+	}
+|	"TABLESPACE" EqOpt Identifier
+	{
+		$$ =  nil
+	}
+
 
 PartDefValuesOpt:
 	{
@@ -1882,11 +1932,6 @@ PartDefValuesOpt:
 	{
 		$$ = $5
 	}
-
-PartDefStorageOpt:
-	{}
-|	"ENGINE" eq Identifier
-	{}
 
 DuplicateOpt:
 	{
@@ -2751,8 +2796,8 @@ UnReservedKeyword:
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ERRORS" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
-| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken | "TIMESTAMP" %prec lowerThanStringLitToken
-| "TRACE" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
+| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "SUBPARTITIONS" | "SUBPARTITION" | "TABLES" | "TABLESPACE" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken 
+| "TIMESTAMP" %prec lowerThanStringLitToken | "TRACE" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MASTER" | "MAX_ROWS"
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
@@ -6559,6 +6604,23 @@ AuthOption:
 		$$ = &ast.AuthOption {
 			AuthString: $3.(string),
 			ByAuthString: true,
+		}
+	}
+|	"IDENTIFIED" "WITH" StringName
+	{
+		$$ = nil
+	}
+|	"IDENTIFIED" "WITH" StringName "BY" AuthString
+	{
+		$$ = &ast.AuthOption {
+			AuthString: $5.(string),
+			ByAuthString: true,
+		}
+	}
+|	"IDENTIFIED" "WITH" StringName "AS" HashString
+	{
+		$$ = &ast.AuthOption{
+			HashString: $5.(string),
 		}
 	}
 |	"IDENTIFIED" "BY" "PASSWORD" HashString
