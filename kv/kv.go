@@ -85,6 +85,8 @@ type Retriever interface {
 	// The Iterator must be Closed after use.
 	Seek(k Key) (Iterator, error)
 
+	SeekWithBatchSize(k Key, batchSize int) (Iterator, error)
+
 	// SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 	// The returned iterator will iterate from greater key to smaller key.
 	// If k is nil, the returned iterator will be positioned at the last key.

@@ -595,7 +595,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
-	it, err := retriever.Seek(startKey)
+	it, err := retriever.SeekWithBatchSize(startKey, 2)
 	if err != nil {
 		return errors.Trace(err)
 	}

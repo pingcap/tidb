@@ -123,6 +123,10 @@ func (txn *tikvTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	return txn.us.Seek(k)
 }
 
+func (txn *tikvTxn) SeekWithBatchSize(k kv.Key, _ int) (kv.Iterator, error) {
+	return txn.Seek(k)
+}
+
 // SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (txn *tikvTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse").Inc()
