@@ -85,7 +85,12 @@ func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	if paramID >= len(ts.boundParams) {
 		return mysql.NewErr(mysql.ErrWrongArguments, "stmt_send_longdata")
 	}
-	ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
+	// If len(data) is 0, append an empty byte slice to the end to distinguish no data and no parameter.
+	if len(data) == 0 {
+		ts.boundParams[paramID] = []byte{}
+	} else {
+		ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
+	}
 	return nil
 }
 
