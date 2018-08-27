@@ -273,6 +273,180 @@ func encodeChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTy
 	return b, errors.Trace(err)
 }
 
+func encodeChunk(sc *stmtctx.StatementContext, bs [][]byte, chk *chunk.Chunk, isNulls []bool, numRows int, allTypes []*types.FieldType, colIdx []int, comparable, hash bool) ([][]byte, error) {
+	var err error
+	row := chk.GetRow(0)
+	for _, i := range colIdx {
+		switch allTypes[i].Tp {
+		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+			if !mysql.HasUnsignedFlag(allTypes[i].Flag) {
+				for j := 0; j < numRows; j++ {
+					if isNulls[j] {
+						continue
+					}
+					row.SetRowIdx(j)
+					bs[j] = encodeSignedInt(bs[j], row.GetInt64(i), comparable)
+
+				}
+				break
+			}
+			// encode unsigned integers.
+			if hash {
+				var integer int64
+				for j := 0; j < numRows; j++ {
+					if isNulls[j] {
+						continue
+					}
+					row.SetRowIdx(j)
+					integer = row.GetInt64(i)
+					if integer < 0 {
+						bs[i] = encodeUnsignedInt(bs[j], uint64(integer), comparable)
+					} else {
+						bs[j] = encodeSignedInt(bs[j], integer, comparable)
+					}
+
+				}
+			} else {
+				for j := 0; j < numRows; j++ {
+					if isNulls[j] {
+						continue
+					}
+					row.SetRowIdx(j)
+					bs[j] = encodeUnsignedInt(bs[j], row.GetUint64(i), comparable)
+				}
+			}
+		case mysql.TypeFloat:
+			for j := 0; j < numRows; j++ {
+				if isNulls[j] {
+					continue
+				}
+				row.SetRowIdx(j)
+				bs[j] = append(bs[j], floatFlag)
+				bs[j] = EncodeFloat(bs[j], float64(row.GetFloat32(i)))
+			}
+		case mysql.TypeDouble:
+			for j := 0; j < numRows; j++ {
+				if isNulls[j] {
+					continue
+				}
+				row.SetRowIdx(j)
+				bs[j] = append(bs[j], floatFlag)
+				bs[j] = EncodeFloat(bs[j], row.GetFloat64(i))
+			}
+		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			for j := 0; j < numRows; j++ {
+				if isNulls[j] {
+					continue
+				}
+				row.SetRowIdx(j)
+				bs[j] = encodeBytes(bs[j], row.GetBytes(i), comparable)
+			}
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+			for j := 0; j < numRows; j++ {
+				if isNulls[j] {
+					continue
+				}
+				row.SetRowIdx(j)
+				bs[j] = append(bs[j], uintFlag)
+				t := row.GetTime(i)
+				// Encoding timestamp need to consider timezone.
+				// If it's not in UTC, transform to UTC first.
+				if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+					err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+				}
+				var v uint64
+				v, err = t.ToPackedUint()
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				bs[j] = EncodeUint(bs[j], v)
+			}
+		case mysql.TypeDuration:
+			for j := 0; j < numRows; j++ {
+				if isNulls[j] {
+					continue
+				}
+				row.SetRowIdx(j)
+				// duration may have negative value, so we cannot use String to encode directly.
+				bs[j] = append(bs[j], durationFlag)
+				bs[j] = EncodeInt(bs[j], int64(row.GetDuration(i, 0).Duration))
+			}
+		case mysql.TypeNewDecimal:
+			for j := 0; j < numRows; j++ {
+				if isNulls[j] {
+					continue
+				}
+				row.SetRowIdx(j)
+
+				bs[j] = append(bs[j], decimalFlag)
+				if hash {
+					// If hash is true, we only consider the original value of this decimal and ignore it's precision.
+					dec := row.GetMyDecimal(i)
+					precision, frac := dec.PrecisionAndFrac()
+					var bin []byte
+					bin, err = dec.ToBin(precision, frac)
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+					bs[j] = append(bs[j], bin...)
+				} else {
+					bs[j], err = EncodeDecimal(bs[j], row.GetMyDecimal(i), allTypes[i].Flen, allTypes[i].Decimal)
+					if terror.ErrorEqual(err, types.ErrTruncated) {
+						err = sc.HandleTruncate(err)
+					}
+				}
+			}
+		case mysql.TypeEnum:
+			for j := 0; j < numRows; j++ {
+				if isNulls[j] {
+					continue
+				}
+				row.SetRowIdx(j)
+				bs[j] = encodeUnsignedInt(bs[j], uint64(row.GetEnum(i).ToNumber()), comparable)
+			}
+		case mysql.TypeSet:
+			for j := 0; j < numRows; j++ {
+				if isNulls[j] {
+					continue
+				}
+				row.SetRowIdx(j)
+				bs[j] = encodeUnsignedInt(bs[j], uint64(row.GetSet(i).ToNumber()), comparable)
+			}
+		case mysql.TypeBit:
+			var val uint64
+			for j := 0; j < numRows; j++ {
+				if isNulls[j] {
+					continue
+				}
+				row.SetRowIdx(j)
+
+				// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
+				val, err = types.BinaryLiteral(row.GetBytes(i)).ToInt(sc)
+				terror.Log(errors.Trace(err))
+				bs[j] = encodeUnsignedInt(bs[j], val, comparable)
+			}
+		case mysql.TypeJSON:
+			for j := 0; j < numRows; j++ {
+				if isNulls[j] {
+					continue
+				}
+
+				row.SetRowIdx(j)
+				bs[j] = append(bs[j], jsonFlag)
+				js := row.GetJSON(i)
+				bs[j] = append(bs[j], js.TypeCode)
+				bs[j] = append(bs[j], js.Value...)
+			}
+		default:
+			return nil, errors.Errorf("unsupport column type for encode %d", allTypes[i].Tp)
+		}
+	}
+	return bs, errors.Trace(err)
+}
+
 // HashValues appends the encoded values to byte slice b, returning the appended
 // slice. If two datums are equal, they will generate the same bytes.
 func HashValues(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byte, error) {
@@ -283,6 +457,11 @@ func HashValues(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byt
 // If two rows are equal, it will generate the same bytes.
 func HashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, allTypes []*types.FieldType, colIdx []int) ([]byte, error) {
 	return encodeChunkRow(sc, b, row, allTypes, colIdx, false, true)
+}
+
+// HashChunk is the chunk implement of HashChunkRow.
+func HashChunk(sc *stmtctx.StatementContext, b [][]byte, chk *chunk.Chunk, isNulls []bool, numRows int, allTypes []*types.FieldType, colIdx []int) ([][]byte, error) {
+	return encodeChunk(sc, b, chk, isNulls, numRows, allTypes, colIdx, false, true)
 }
 
 // Decode decodes values from a byte slice generated with EncodeKey or EncodeValue
