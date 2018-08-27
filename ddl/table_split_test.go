@@ -14,6 +14,9 @@
 package ddl_test
 
 import (
+	"bytes"
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
@@ -48,8 +51,18 @@ func (s *testDDLTableSplitSuite) TestTableSplit(c *C) {
 	type kvStore interface {
 		GetRegionCache() *tikv.RegionCache
 	}
-	cache := store.(kvStore).GetRegionCache()
-	loc, err := cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
-	c.Assert(err, IsNil)
+	var loc *tikv.KeyLocation
+	for i := 0; i < 10; i++ {
+		cache := store.(kvStore).GetRegionCache()
+		loc, err = cache.LocateKey(tikv.NewBackoffer(context.Background(), 5000), regionStartKey)
+		c.Assert(err, IsNil)
+
+		// Region cache may be out of date, so we need to drop this expired region and load it again.
+		cache.DropRegion(loc.Region)
+		if bytes.Compare(loc.StartKey, []byte(regionStartKey)) == 0 {
+			return
+		}
+		time.Sleep(3 * time.Millisecond)
+	}
 	c.Assert(loc.StartKey, BytesEquals, []byte(regionStartKey))
 }
