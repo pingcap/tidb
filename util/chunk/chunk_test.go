@@ -20,12 +20,14 @@ import (
 	"time"
 	"unsafe"
 
+	"bytes"
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	"strconv"
 )
 
 func TestT(t *testing.T) {
@@ -457,22 +459,6 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	c.Assert(memUsage, check.Equals, int64(expectedUsage))
 }
 
-func (s testChunkSuite) TestNextPowerOfTwo(c *check.C) {
-	tests := []struct {
-		input, output int
-	}{
-		{0, 1},
-		{-10, 1},
-		{1, 1},
-		{2, 2},
-		{3, 4},
-		{5, 8},
-	}
-	for _, test := range tests {
-		c.Assert(NextPowerOfTwo(test.input), check.Equals, test.output)
-	}
-}
-
 func BenchmarkAppendInt(b *testing.B) {
 	b.ReportAllocs()
 	chk := newChunk(8)
@@ -679,187 +665,69 @@ func (x *seqNumberGenerateExec) Next(chk *Chunk, resize bool) {
 	}
 }
 
-func BenchmarkChunkRenewConsumeExec10000000In1024Slice(b *testing.B) {
-	b.ReportAllocs()
-	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e := &seqNumberGenerateExec{genCountSize: 10000000}
-		for {
-			e.Next(chk, false)
-			if chk.NumRows() == 0 {
-				break
-			}
-			chk = New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
-		}
+type benchChunkGrowCase struct {
+	tag        string
+	reuse      bool
+	newReset   bool
+	cntPerCall int
+	initCap    int
+	maxCap     int
+}
+
+func (b *benchChunkGrowCase) String() string {
+	var buff bytes.Buffer
+	if b.reuse {
+		buff.WriteString("renew,")
+	} else {
+		buff.WriteString("reset,")
+	}
+	buff.WriteString("cntPerCall:" + strconv.Itoa(b.cntPerCall) + ",")
+	buff.WriteString("cap from:" + strconv.Itoa(b.initCap) + " to " + strconv.Itoa(b.maxCap) + ",")
+	if b.tag != "" {
+		buff.WriteString("[" + b.tag + "]")
+	}
+	return buff.String()
+}
+
+func BenchmarkChunkGrowSuit(b *testing.B) {
+	tests := []benchChunkGrowCase{
+		{reuse: true, newReset: false, cntPerCall: 10000000, initCap: 1024, maxCap: 1024},
+		{reuse: true, newReset: false, cntPerCall: 10000000, initCap: 32, maxCap: 32},
+		{reuse: true, newReset: true, cntPerCall: 10000000, initCap: 32, maxCap: 1024, tag: "grow"},
+		{reuse: false, newReset: false, cntPerCall: 10000000, initCap: 1024, maxCap: 1024},
+		{reuse: false, newReset: false, cntPerCall: 10000000, initCap: 32, maxCap: 32},
+		{reuse: false, newReset: true, cntPerCall: 10000000, initCap: 32, maxCap: 1024, tag: "grow"},
+		{reuse: true, newReset: false, cntPerCall: 10, initCap: 1024, maxCap: 1024},
+		{reuse: true, newReset: false, cntPerCall: 10, initCap: 32, maxCap: 32},
+		{reuse: true, newReset: true, cntPerCall: 10, initCap: 32, maxCap: 1024, tag: "grow"},
+		{reuse: false, newReset: false, cntPerCall: 10, initCap: 1024, maxCap: 1024},
+		{reuse: false, newReset: false, cntPerCall: 10, initCap: 32, maxCap: 32},
+		{reuse: false, newReset: true, cntPerCall: 10, initCap: 32, maxCap: 1024, tag: "grow"},
+	}
+	for _, test := range tests {
+		b.Run(test.String(), benchmarkChunkGrow(test))
 	}
 }
 
-func BenchmarkChunkRenewConsumeExec10000000In32Slice(b *testing.B) {
-	b.ReportAllocs()
-	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e := &seqNumberGenerateExec{genCountSize: 10000000}
-		for {
-			e.Next(chk, false)
-			if chk.NumRows() == 0 {
-				break
-			}
-			chk = New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
-		}
-	}
-}
-
-func BenchmarkChunkRenewConsumeExec10000000InGrow(b *testing.B) {
-	b.ReportAllocs()
-	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 1024)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e := &seqNumberGenerateExec{genCountSize: 10000000}
-		for {
-			e.Next(chk, true)
-			if chk.NumRows() == 0 {
-				break
-			}
-			chk = Renew(chk, 1024)
-		}
-	}
-}
-
-func BenchmarkChunkRestConsumeExec10000000In1024Slice(b *testing.B) {
-	b.ReportAllocs()
-	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e := &seqNumberGenerateExec{genCountSize: 10000000}
-		for {
-			e.Next(chk, false)
-			if chk.NumRows() == 0 {
-				break
-			}
-		}
-	}
-}
-
-func BenchmarkChunkResetConsumeExec10000000In32Slice(b *testing.B) {
-	b.ReportAllocs()
-	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e := &seqNumberGenerateExec{genCountSize: 10000000}
-		for {
-			e.Next(chk, false)
-			if chk.NumRows() == 0 {
-				break
-			}
-		}
-	}
-}
-
-func BenchmarkChunkResetConsumeExec10000000InGrow(b *testing.B) {
-	b.ReportAllocs()
-	chk := New([]*types.FieldType{{Tp: mysql.TypeFloat}}, 32, 1024)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e := &seqNumberGenerateExec{genCountSize: 10000000}
-		for {
-			e.Next(chk, true)
-			if chk.NumRows() == 0 {
-				break
-			}
-		}
-	}
-}
-
-func BenchmarkChunkRenewConsumeExec10In1024Slice(b *testing.B) {
-	b.ReportAllocs()
-	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e := &seqNumberGenerateExec{genCountSize: 10}
-		for {
-			e.Next(chk, false)
-			if chk.NumRows() == 0 {
-				break
-			}
-			chk = New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
-		}
-	}
-}
-
-func BenchmarkChunkRenewConsumeExec10In32Slice(b *testing.B) {
-	b.ReportAllocs()
-	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e := &seqNumberGenerateExec{genCountSize: 10}
-		for {
-			e.Next(chk, false)
-			if chk.NumRows() == 0 {
-				break
-			}
-			chk = New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
-		}
-	}
-}
-
-func BenchmarkChunkRenewConsumeExec10InGrow(b *testing.B) {
-	b.ReportAllocs()
-	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 1024)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e := &seqNumberGenerateExec{genCountSize: 10}
-		for {
-			e.Next(chk, true)
-			if chk.NumRows() == 0 {
-				break
-			}
-			chk = Renew(chk, 1024)
-		}
-	}
-}
-
-func BenchmarkChunkRestConsumeExec10In1024Slice(b *testing.B) {
-	b.ReportAllocs()
-	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 1024, 1024)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e := &seqNumberGenerateExec{genCountSize: 10}
-		for {
-			e.Next(chk, false)
-			if chk.NumRows() == 0 {
-				break
-			}
-		}
-	}
-}
-
-func BenchmarkChunkResetConsumeExec10In32Slice(b *testing.B) {
-	b.ReportAllocs()
-	chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, 32, 32)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e := &seqNumberGenerateExec{genCountSize: 10}
-		for {
-			e.Next(chk, false)
-			if chk.NumRows() == 0 {
-				break
-			}
-		}
-	}
-}
-
-func BenchmarkChunkResetConsumeExec10InGrow(b *testing.B) {
-	b.ReportAllocs()
-	chk := New([]*types.FieldType{{Tp: mysql.TypeFloat}}, 32, 1024)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		e := &seqNumberGenerateExec{genCountSize: 10}
-		for {
-			e.Next(chk, true)
-			if chk.NumRows() == 0 {
-				break
+func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
+	return func(b *testing.B) {
+		b.ReportAllocs()
+		chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, t.initCap, t.maxCap)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			e := &seqNumberGenerateExec{genCountSize: t.cntPerCall}
+			for {
+				e.Next(chk, t.newReset)
+				if chk.NumRows() == 0 {
+					break
+				}
+				if !t.reuse {
+					if t.newReset {
+						chk = Renew(chk, t.maxCap)
+					} else {
+						chk = New([]*types.FieldType{{Tp: mysql.TypeLong}}, t.initCap, t.maxCap)
+					}
+				}
 			}
 		}
 	}

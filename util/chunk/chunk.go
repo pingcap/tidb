@@ -15,7 +15,6 @@ package chunk
 
 import (
 	"encoding/binary"
-	"math/bits"
 	"unsafe"
 
 	"github.com/cznic/mathutil"
@@ -56,10 +55,10 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	chk.columns = make([]*column, 0, len(fields))
 	for _, f := range fields {
 		elemLen := getFixedLen(f)
-		if elemLen != varElemLen {
-			chk.columns = append(chk.columns, newFixedLenColumn(elemLen, cap))
-		} else {
+		if elemLen == varElemLen {
 			chk.columns = append(chk.columns, newVarLenColumn(cap, nil))
+		} else {
+			chk.columns = append(chk.columns, newFixedLenColumn(elemLen, cap))
 		}
 	}
 	chk.numVirtualRows = 0
@@ -72,9 +71,9 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 //   maxChunkSize: the max limit for max number of rows.
 //
 //  this method will be used in the situation when calling call Executor#Next many times with a new chunk.
-//  so it will `calculateCapForRenew` to get a new cap then create a new chunk.
+//  so it will `calculateCapacity` to get a new cap then create a new chunk.
 func Renew(chk *Chunk, maxChunkSize int) *Chunk {
-	newCap := calculateCapForRenew(chk, maxChunkSize)
+	newCap := calculateCapacity(chk, maxChunkSize)
 	newChk := new(Chunk)
 	newChk.columns = renewColumns(chk.columns, newCap)
 	newChk.numVirtualRows = 0
@@ -169,8 +168,8 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 	if c.columns == nil {
 		return
 	}
-	needRenewCol, newCap := calculateCapForReset(c, maxChunkSize)
-	if !needRenewCol {
+	newCap := calculateCapacity(c, maxChunkSize)
+	if newCap <= c.capacity {
 		c.Reset()
 		return
 	}
@@ -179,39 +178,15 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 	c.numVirtualRows = 0
 }
 
-// calculateCapForReset checks and return whether need scale up and suitable capacity execution.
-//  It works like:
-//      keep old value if capacity == maxChunkSize or chk isn't full, and no need renew columns.
-//      old value x 2  if chk is full, and need renew columns.
-func calculateCapForReset(c *Chunk, maxChunkSize int) (requireRenewCol bool, newCap int) {
-	if c.capacity == maxChunkSize || c.NumRows() < c.capacity {
-		return false, c.capacity
-	}
-	return true, mathutil.Min(c.capacity*2, maxChunkSize)
-}
-
-// calculateCapForRenew checks and return suitable capacity in next execution.
-//  It works like:
-//      using next power of 2 for renew if currSize < cap
+// calculateCapacity suitable capacity in next execution.
 //      using capacity limit if full but capacity already meet maxChunkSize
 //      using oldcap x 2 if chk is full but less than maxChunkSize
-func calculateCapForRenew(c *Chunk, maxChunkSize int) int {
-	currSize := c.NumRows()
-	if currSize < c.capacity {
-		return NextPowerOfTwo(currSize)
-	}
-	if c.capacity == maxChunkSize {
-		return maxChunkSize
+//      keep oldcap if chk isn't full
+func calculateCapacity(c *Chunk, maxChunkSize int) int {
+	if c.NumRows() < c.capacity {
+		return c.capacity
 	}
 	return mathutil.Min(c.capacity*2, maxChunkSize)
-}
-
-// NextPowerOfTwo returns next power of two size for the given target cap.
-func NextPowerOfTwo(cap int) int {
-	if cap < 1 {
-		return 1
-	}
-	return 1 << uint(bits.Len64(uint64(cap)-1))
 }
 
 // Capacity return the max number of rows that chunk want to hold.
