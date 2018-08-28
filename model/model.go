@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -93,6 +94,8 @@ func (c *ColumnInfo) IsGenerated() bool {
 func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 	c.DefaultValue = value
 	if c.Tp == mysql.TypeBit {
+		// For mysql.TypeBit type, the default value storage format must be a string.
+		// Other value such as int must convert to string format first.
 		if v, ok := value.(string); ok {
 			c.DefaultValueBit = []byte(v)
 			return nil
@@ -107,7 +110,7 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 // bit type default value will store in DefaultValueBit for fix bit default value decode/encode bug.
 func (c *ColumnInfo) GetDefaultValue() interface{} {
 	if c.Tp == mysql.TypeBit && c.DefaultValueBit != nil {
-		return string(c.DefaultValueBit)
+		return hack.String(c.DefaultValueBit)
 	}
 	return c.DefaultValue
 }
