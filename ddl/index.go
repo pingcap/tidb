@@ -1169,11 +1169,10 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	}
 	firstKey := t.RecordKey(seekHandle)
 	var it kv.Iterator
-	if v, ok := snap.(kv.Seeker); ok {
-		it, err = v.SeekWithBatchSize(firstKey, 2)
-	} else {
-		it, err = snap.Seek(firstKey)
-	}
+	tikv.SetsSanBatchSize(2)
+	it, err = snap.Seek(firstKey)
+	tikv.SetsSanBatchSize(0)
+
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"sync/atomic"
 	"bytes"
 	"fmt"
 	"sync"
@@ -35,9 +36,10 @@ var (
 	_ kv.Snapshot = (*tikvSnapshot)(nil)
 )
 
-const (
-	scanBatchSize = 256
-	batchGetSize  = 5120
+var scanBatchSize int64 = 256
+
+var (
+	batchGetSize = 5120
 )
 
 // tikvSnapshot implements the kv.Snapshot interface.
@@ -60,6 +62,15 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version) *tikvSnapshot {
 		priority: pb.CommandPri_Normal,
 		vars:     kv.DefaultVars,
 	}
+}
+
+// SetsSanBatchSize sets scanBatchSize. It exporting for testing.
+func SetsSanBatchSize(size int64) {
+	if size <= 1 {
+		size = 256
+	}
+	atomic.StoreInt64(&scanBatchSize, size)
+	log.Infof("tikv scan set batch size: %d", scanBatchSize)
 }
 
 func (s *tikvSnapshot) SetPriority(priority int) {
@@ -282,14 +293,8 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 
 // Seek return a list of key-value pair after `k`.
 func (s *tikvSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
-	scanner, err := newScanner(s, k, scanBatchSize)
-	return scanner, errors.Trace(err)
-}
-
-// SeekWithBatchSize implements the kv.Seeker interface.
-func (s *tikvSnapshot) SeekWithBatchSize(k kv.Key, batchSize int) (kv.Iterator, error) {
-	scanner, err := newScanner(s, k, batchSize)
-	log.Infof("tikv scan batch size: %d", batchSize)
+	scanner, err := newScanner(s, k, int(scanBatchSize))
+	log.Infof("tikv scan batch size: %d", scanBatchSize)
 	return scanner, errors.Trace(err)
 }
 

@@ -36,7 +36,7 @@ type Scanner struct {
 func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int) (*Scanner, error) {
 	// It must be > 1. Otherwise scanner won't skipFirst.
 	if batchSize <= 1 {
-		batchSize = scanBatchSize
+		batchSize = int(scanBatchSize)
 	}
 	scanner := &Scanner{
 		snapshot:     snapshot,

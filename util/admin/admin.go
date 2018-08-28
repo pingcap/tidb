@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -595,13 +596,10 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
 	fn table.RecordIterFunc) error {
-	var it kv.Iterator
-	var err error
-	if v, ok := retriever.(kv.Seeker); ok {
-		it, err = v.SeekWithBatchSize(startKey, 2)
-	} else {
-		it, err = retriever.Seek(startKey)
-	}
+
+	tikv.SetsSanBatchSize(2)
+	it, err := retriever.Seek(startKey)
+	tikv.SetsSanBatchSize(0)
 	if err != nil {
 		return errors.Trace(err)
 	}

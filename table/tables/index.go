@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -285,11 +286,9 @@ func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues
 // SeekFirst returns an iterator which points to the first entry of the KV index.
 func (c *index) SeekFirst(r kv.Retriever) (iter table.IndexIterator, err error) {
 	var it kv.Iterator
-	if v, ok := r.(kv.Seeker); ok {
-		it, err = v.SeekWithBatchSize(c.prefix, 2)
-	} else {
-		it, err = r.Seek(c.prefix)
-	}
+	tikv.SetsSanBatchSize(2)
+	it, err = r.Seek(c.prefix)
+	tikv.SetsSanBatchSize(0)
 
 	if err != nil {
 		return nil, errors.Trace(err)

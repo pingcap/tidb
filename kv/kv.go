@@ -90,11 +90,6 @@ type Retriever interface {
 	SeekReverse(k Key) (Iterator, error)
 }
 
-// Seeker creates an Iterator with specified batch size.
-type Seeker interface {
-	SeekWithBatchSize(k Key, batchSize int) (Iterator, error)
-}
-
 // Mutator is the interface wraps the basic Set and Delete methods.
 type Mutator interface {
 	// Set sets the value for key k as v into kv store.

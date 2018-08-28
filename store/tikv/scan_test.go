@@ -34,7 +34,7 @@ func (s *testScanSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	s.store = NewTestStore(c).(*tikvStore)
 	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
-	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1)
+	s.rowNums = append(s.rowNums, 1, int(scanBatchSize), int(scanBatchSize)+1)
 }
 
 func (s *testScanSuite) TearDownSuite(c *C) {
