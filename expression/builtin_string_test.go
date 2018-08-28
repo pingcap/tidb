@@ -1425,7 +1425,7 @@ func (s *testEvaluatorSuite) TestRpadSig(c *C) {
 	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 }
 
-func (s *testEvaluatorSuite) TestInsertSig(c *C) {
+func (s *testEvaluatorSuite) TestInsertBinarySig(c *C) {
 	colTypes := []*types.FieldType{
 		{Tp: mysql.TypeVarchar},
 		{Tp: mysql.TypeLonglong},
@@ -1442,7 +1442,7 @@ func (s *testEvaluatorSuite) TestInsertSig(c *C) {
 	}
 
 	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
-	insert := &builtinInsertSig{base, 12}
+	insert := &builtinInsertBinarySig{base, 3}
 
 	input := chunk.NewChunkWithCapacity(colTypes, 2)
 	input.AppendString(0, "abc")

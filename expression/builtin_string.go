@@ -3225,12 +3225,14 @@ func (b *builtinInsertBinarySig) evalString(row chunk.Row) (string, bool, error)
 	}
 
 	if length > strLength-pos+1 || length < 0 {
-		if uint64(pos-1+int64(len(newstr)))*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("insert", b.maxAllowedPacket))
-			return "", true, nil
-		}
-		return str[0:pos-1] + newstr, false, nil
+		length = strLength - pos + 1
 	}
+
+	if uint64(strLength-length+int64(len(newstr))) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("insert", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
 	return str[0:pos-1] + newstr + str[pos+length-1:], false, nil
 }
 
@@ -3275,11 +3277,12 @@ func (b *builtinInsertSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	if length > runeLength-pos+1 || length < 0 {
-		if uint64(pos-1+int64(len(newstr)))*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("insert", b.maxAllowedPacket))
-			return "", true, nil
-		}
-		return string(runes[0:pos-1]) + newstr, false, nil
+		length = runeLength - pos + 1
+	}
+
+	if uint64(runeLength-length)*uint64(mysql.MaxBytesOfCharacter)+uint64(len(newstr)) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("insert", b.maxAllowedPacket))
+		return "", true, nil
 	}
 	return string(runes[0:pos-1]) + newstr + string(runes[pos+length-1:]), false, nil
 }
