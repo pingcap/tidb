@@ -31,9 +31,7 @@ type Chunk struct {
 	// numVirtualRows indicates the number of virtual rows, which have zero column.
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int
-	// capacity indicates the max number of rows that the chunk can hold.
-	// The accurate row count after executor.Next is guaranteed by executor implementation.
-	// It is used only during executor's execution, and grow by `Renew` or `GrowAndReset`.
+	// capacity indicates the max number of rows this chunk can hold.
 	capacity int
 }
 
@@ -53,27 +51,24 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	chk := new(Chunk)
 	chk.columns = make([]*column, 0, len(fields))
+	chk.capacity = mathutil.Min(cap, maxChunkSize)
 	for _, f := range fields {
 		elemLen := getFixedLen(f)
 		if elemLen == varElemLen {
-			chk.columns = append(chk.columns, newVarLenColumn(cap, nil))
+			chk.columns = append(chk.columns, newVarLenColumn(chk.capacity, nil))
 		} else {
-			chk.columns = append(chk.columns, newFixedLenColumn(elemLen, cap))
+			chk.columns = append(chk.columns, newFixedLenColumn(elemLen, chk.capacity))
 		}
 	}
 	chk.numVirtualRows = 0
-	chk.capacity = mathutil.Min(cap, maxChunkSize)
 	return chk
 }
 
-// Renew recreates a new chunk base on old chunk.
-//   chk: old chunk(often used in previous call).
-//   maxChunkSize: the max limit for max number of rows.
-//
-//  this method will be used in the situation when calling call Executor#Next many times with a new chunk.
-//  so it will `calculateCapacity` to get a new cap then create a new chunk.
+// Renew creates a new Chunk based on an existing Chunk. The newly created Chunk
+// has the same data schema with the old Chunk, the capacity of the new Chunk
+// might be doubled based on the capacity of the old Chunk and the maxChunkSize.
 func Renew(chk *Chunk, maxChunkSize int) *Chunk {
-	newCap := calculateCapacity(chk, maxChunkSize)
+	newCap := reCalcCapacity(chk, maxChunkSize)
 	newChk := new(Chunk)
 	newChk.columns = renewColumns(chk.columns, newCap)
 	newChk.numVirtualRows = 0
@@ -81,8 +76,8 @@ func Renew(chk *Chunk, maxChunkSize int) *Chunk {
 	return newChk
 }
 
-// renewColumns recreates columns in chunk.
-// create FixedLenColumn or VarLenColumn based on whether column is fixed.
+// renewColumns creates the columns of a Chunk, the capacity of the newly
+// created columns is equal to cap.
 func renewColumns(oldCol []*column, cap int) []*column {
 	columns := make([]*column, 0, len(oldCol))
 	for _, col := range oldCol {
@@ -107,16 +102,16 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 }
 
 // newFixedLenColumn creates a fixed length column with elemLen and initial data capacity.
-func newFixedLenColumn(elemLen, initCap int) *column {
+func newFixedLenColumn(elemLen, cap int) *column {
 	return &column{
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, initCap*elemLen),
-		nullBitmap: make([]byte, 0, initCap>>3),
+		data:       make([]byte, 0, cap*elemLen),
+		nullBitmap: make([]byte, 0, cap>>3),
 	}
 }
 
 // newVarLenColumn creates a variable length column with initial data capacity.
-func newVarLenColumn(initCap int, old *column) *column {
+func newVarLenColumn(cap int, old *column) *column {
 	estimatedElemLen := 8
 	// For varLenColumn(e.g. varchar) we could not take the accuracy length of element,
 	// so, in first executor.Next we using a experience value --- 8(so it maybe make `runtime.growslice`)
@@ -125,9 +120,9 @@ func newVarLenColumn(initCap int, old *column) *column {
 		estimatedElemLen = (len(old.data) + len(old.data)/8) / old.length
 	}
 	return &column{
-		offsets:    make([]int32, 1, initCap+1),
-		data:       make([]byte, 0, initCap*estimatedElemLen),
-		nullBitmap: make([]byte, 0, initCap>>3),
+		offsets:    make([]int32, 1, cap+1),
+		data:       make([]byte, 0, cap*estimatedElemLen),
+		nullBitmap: make([]byte, 0, cap>>3),
 	}
 }
 
@@ -162,13 +157,13 @@ func (c *Chunk) Reset() {
 	c.numVirtualRows = 0
 }
 
-// GrowAndReset resets the chunk and grow capacity if needed.
-// TODO: this method will be used in continue PR.
+// GrowAndReset doubles the capacity of the Chunk, the doubled capacity should
+// not be larger than maxChunkSize, resets the content of the Chunk.
 func (c *Chunk) GrowAndReset(maxChunkSize int) {
 	if c.columns == nil {
 		return
 	}
-	newCap := calculateCapacity(c, maxChunkSize)
+	newCap := reCalcCapacity(c, maxChunkSize)
 	if newCap <= c.capacity {
 		c.Reset()
 		return
@@ -178,18 +173,16 @@ func (c *Chunk) GrowAndReset(maxChunkSize int) {
 	c.numVirtualRows = 0
 }
 
-// calculateCapacity suitable capacity in next execution.
-//      using capacity limit if full but capacity already meet maxChunkSize
-//      using oldcap x 2 if chk is full but less than maxChunkSize
-//      keep oldcap if chk isn't full
-func calculateCapacity(c *Chunk, maxChunkSize int) int {
+// reCalcCapacity calculates the capacity for another Chunk based the current
+// Chunk. The new capacity is doubled only when the current Chunk is full.
+func reCalcCapacity(c *Chunk, maxChunkSize int) int {
 	if c.NumRows() < c.capacity {
 		return c.capacity
 	}
 	return mathutil.Min(c.capacity*2, maxChunkSize)
 }
 
-// Capacity return the max number of rows that chunk want to hold.
+// Capacity returns the capacity of the Chunk.
 func (c *Chunk) Capacity() int {
 	return c.capacity
 }
