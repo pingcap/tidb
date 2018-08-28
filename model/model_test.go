@@ -133,7 +133,7 @@ func (*testModelSuite) TestJobStartTime(c *C) {
 	}
 	t := time.Unix(0, 0)
 	c.Assert(t, Equals, TSConvert2Time(job.StartTS))
-	ret := fmt.Sprintf("%s", job.String())
+	ret := fmt.Sprintf("%s", job)
 	c.Assert(job.String(), Equals, ret)
 }
 

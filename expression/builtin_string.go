@@ -1483,7 +1483,7 @@ func (c *unhexFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		// For number value, there're (Flen + 1) / 2 byte-pairs
 		retFlen = (argType.Flen + 1) / 2
 	default:
-		return nil, errors.Errorf("Unhex invalid args, need int or string but get %s", argType.String())
+		return nil, errors.Errorf("Unhex invalid args, need int or string but get %s", argType)
 	}
 
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)

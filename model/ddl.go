@@ -243,7 +243,7 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
 	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
-		job.ID, job.Type.String(), job.State.String(), job.SchemaState.String(), job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
 }
 
 func (job *Job) hasDependentSchema(other *Job) (bool, error) {

@@ -465,7 +465,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 			return errors.Trace(tikv.ErrBodyMissing)
 		}
 		if locksResp.GetError() != nil {
-			return errors.Errorf("unexpected scanlock error: %s", locksResp.String())
+			return errors.Errorf("unexpected scanlock error: %s", locksResp)
 		}
 		locksInfo := locksResp.GetLocks()
 		locks := make([]*tikv.Lock, len(locksInfo))
@@ -613,7 +613,7 @@ func (w *gcTaskWorker) doGCForRegion(bo *tikv.Backoffer, safePoint uint64, regio
 		return nil, errors.Trace(tikv.ErrBodyMissing)
 	}
 	if gcResp.GetError() != nil {
-		return nil, errors.Errorf("unexpected gc error: %s", gcResp.GetError().String())
+		return nil, errors.Errorf("unexpected gc error: %s", gcResp.GetError())
 	}
 
 	return nil, nil

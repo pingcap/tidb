@@ -184,7 +184,7 @@ func (col *Column) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (col *Column) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("\"%s\"", col.String())), nil
+	return []byte(fmt.Sprintf("\"%s\"", col)), nil
 }
 
 // GetType implements Expression interface.
@@ -321,7 +321,7 @@ func (col *Column) ResolveIndices(schema *Schema) Expression {
 func (col *Column) resolveIndices(schema *Schema) {
 	col.Index = schema.ColumnIndex(col)
 	if col.Index == -1 {
-		log.Errorf("Can't find column %s in schema %s", col.String(), schema.String())
+		log.Errorf("Can't find column %s in schema %s", col, schema.String())
 	}
 }
 

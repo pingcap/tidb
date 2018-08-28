@@ -227,7 +227,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, errors.Trace(ErrBodyMissing)
 	}
 	if keyErr := cmdResp.GetError(); keyErr != nil {
-		return false, errors.Errorf("unexpected resolve err: %s", keyErr.String())
+		return false, errors.Errorf("unexpected resolve err: %s", keyErr)
 	}
 
 	log.Infof("BatchResolveLocks: it took %v to resolve %v locks in a batch.", time.Since(startTime), len(expiredLocks))
@@ -336,7 +336,7 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			return status, errors.Trace(ErrBodyMissing)
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
-			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr.String(), txnID)
+			err = errors.Errorf("unexpected cleanup err: %s, tid: %v", keyErr, txnID)
 			log.Error(err)
 			return status, err
 		}
@@ -390,7 +390,7 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, cl
 			return errors.Trace(ErrBodyMissing)
 		}
 		if keyErr := cmdResp.GetError(); keyErr != nil {
-			err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr.String(), l)
+			err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)
 			log.Error(err)
 			return err
 		}

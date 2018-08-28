@@ -127,7 +127,7 @@ func (w *worker) start(d *ddlCtx) {
 		r := recover()
 		if r != nil {
 			buf := util.GetStack()
-			log.Errorf("[ddl-%s] ddl %s, %v %s", w.String(), d.uuid, r, buf)
+			log.Errorf("[ddl-%s] ddl %s, %v %s", w, d.uuid, r, buf)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
 		}
 	}()
@@ -143,7 +143,7 @@ func (w *worker) start(d *ddlCtx) {
 
 		err := w.handleDDLJobQueue(d)
 		if err != nil {
-			log.Errorf("[ddl-%s] handle DDL job err %v", w.String(), errors.ErrorStack(err))
+			log.Errorf("[ddl-%s] handle DDL job err %v", w, errors.ErrorStack(err))
 		}
 	}
 }
@@ -522,7 +522,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if err != nil {
 		// If job is not cancelled, we should log this error.
 		if job.State != model.JobStateCancelled {
-			log.Errorf("[ddl-%s] run DDL job err %v", w.String(), errors.ErrorStack(err))
+			log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
 		} else {
 			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, errors.ErrorStack(err))
 		}

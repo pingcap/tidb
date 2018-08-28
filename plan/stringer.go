@@ -192,7 +192,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		for i := range x.OuterJoinKeys {
 			l := x.OuterJoinKeys[i]
 			r := x.InnerJoinKeys[i]
-			str += fmt.Sprintf("(%s,%s)", l.String(), r.String())
+			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *Analyze:
 		str = "Analyze{"

@@ -29,7 +29,7 @@ type Event struct {
 
 // String implements fmt.Stringer interface.
 func (e *Event) String() string {
-	ret := fmt.Sprintf("(Event Type: %s", e.Tp.String())
+	ret := fmt.Sprintf("(Event Type: %s", e.Tp)
 	if e.TableInfo != nil {
 		ret += fmt.Sprintf(", Table ID: %d, Table Name %s", e.TableInfo.ID, e.TableInfo.Name)
 	}

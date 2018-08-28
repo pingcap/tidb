@@ -702,7 +702,7 @@ func (worker *copIteratorWorker) handleCopStreamResult(bo *Backoffer, stream *ti
 				return nil, nil
 			}
 
-			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task: %s", err, task.String())); err1 != nil {
+			if err1 := bo.Backoff(boTiKVRPC, errors.Errorf("recv stream response error: %v, task: %s", err, task)); err1 != nil {
 				return nil, errors.Trace(err)
 			}
 

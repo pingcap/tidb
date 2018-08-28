@@ -527,7 +527,7 @@ func (c *twoPhaseCommitter) cleanupSingleBatch(bo *Backoffer, batch batchKeys) e
 		return errors.Trace(err)
 	}
 	if keyErr := resp.BatchRollback.GetError(); keyErr != nil {
-		err = errors.Errorf("con:%d 2PC cleanup failed: %s", c.connID, keyErr.String())
+		err = errors.Errorf("con:%d 2PC cleanup failed: %s", c.connID, keyErr)
 		log.Debugf("2PC failed cleanup key: %v, tid: %d", err, c.startTS)
 		return errors.Trace(err)
 	}
