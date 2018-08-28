@@ -3,7 +3,7 @@ language: go
 go_import_path: github.com/pingcap/tidb
 
 go:
-  - "1.10"
+  - "1.11"
 
 # https://docs.travis-ci.com/user/customizing-the-build/#Rows-that-are-Allowed-to-Fail
 env:
