@@ -122,7 +122,7 @@ func newVarLenColumn(initCap int, old *column) *column {
 	// so, in first executor.Next we using a experience value --- 4(so it maybe make `runtime.growslice`)
 	// but in continue Next call we estimated length as AVG x 1.5 elemLen of previous call.
 	if old != nil && old.length != 0 {
-		estimatedElemLen = (len(old.data) + len(old.data)/2) / old.length
+		estimatedElemLen = (len(old.data) + len(old.data)/8) / old.length
 	}
 	return &column{
 		offsets:    make([]int32, 1, initCap+1),

@@ -14,20 +14,20 @@
 package chunk
 
 import (
+	"bytes"
 	"fmt"
 	"math"
+	"strconv"
 	"testing"
 	"time"
 	"unsafe"
 
-	"bytes"
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
-	"strconv"
 )
 
 func TestT(t *testing.T) {
