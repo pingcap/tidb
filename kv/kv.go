@@ -90,7 +90,7 @@ type Retriever interface {
 	SeekReverse(k Key) (Iterator, error)
 }
 
-// Seeker is for test.
+// Seeker creates an Iterator with specified batch size.
 type Seeker interface {
 	SeekWithBatchSize(k Key, batchSize int) (Iterator, error)
 }

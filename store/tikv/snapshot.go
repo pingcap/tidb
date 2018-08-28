@@ -286,9 +286,10 @@ func (s *tikvSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
 	return scanner, errors.Trace(err)
 }
 
-// SeekWithBatchSize implements the Retriever interface.
+// SeekWithBatchSize implements the kv.Seeker interface.
 func (s *tikvSnapshot) SeekWithBatchSize(k kv.Key, batchSize int) (kv.Iterator, error) {
 	scanner, err := newScanner(s, k, batchSize)
+	log.Infof("tikv scan batch size: %d", batchSize)
 	return scanner, errors.Trace(err)
 }
 
