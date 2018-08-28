@@ -46,11 +46,6 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 
 	if tbInfo.Partition != nil {
-		err = checkCreatePartitionValue(tbInfo.Partition)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
 		err = checkAddPartitionTooManyPartitions(len(tbInfo.Partition.Definitions))
 		if err != nil {
 			job.State = model.JobStateCancelled
