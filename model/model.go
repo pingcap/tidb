@@ -15,6 +15,7 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -545,4 +546,9 @@ func collationToProto(c string) int32 {
 	// Setting other collations to utf8_bin for old data compatibility.
 	// For the data created when we didn't enforce utf8_bin collation in create table.
 	return int32(mysql.DefaultCollationID)
+}
+
+// GetTableColumnID gets a ID of a column with table ID
+func GetTableColumnID(tableInfo *TableInfo, col *ColumnInfo) string {
+	return fmt.Sprintf("%d_%d", tableInfo.ID, col.ID)
 }
