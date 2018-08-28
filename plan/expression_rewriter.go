@@ -670,9 +670,31 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
-	if er.err != nil {
-		return v, true
+	if !v.Not && !asScalar {
+		agg := er.b.buildDistinct(np, np.Schema().Len())
+		eq, left, right, other := extractOnCondition(expression.SplitCNFItems(checkCondition), er.p, agg)
+		join := LogicalJoin{
+			JoinType:        InnerJoin,
+			EqualConditions: eq,
+			LeftConditions:  left,
+			RightConditions: right,
+			OtherConditions: other,
+		}.init(er.ctx)
+		join.SetChildren(er.p, agg)
+		join.SetSchema(expression.MergeSchema(er.p.Schema(), agg.schema))
+		proj := LogicalProjection{}.init(er.ctx)
+		proj.Exprs = make([]expression.Expression, 0, er.p.Schema().Len())
+		for _, col := range er.p.Schema().Columns {
+			proj.Exprs = append(proj.Exprs, col)
+		}
+		proj.SetSchema(er.p.Schema())
+		proj.SetChildren(join)
+		er.p = proj
+	} else {
+		er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
+		if er.err != nil {
+			return v, true
+		}
 	}
 
 	if asScalar {
