@@ -496,7 +496,7 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 	actual, err := (&RequestBuilder{}).SetKeyRanges(keyRanges).
 		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
 		SetKeepOrder(true).
-		SetPriority(kv.PriorityLow).
+		SetConcurrency(15).
 		Build()
 	c.Assert(err, IsNil)
 	expect := &kv.Request{
@@ -506,8 +506,8 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		KeyRanges:      keyRanges,
 		KeepOrder:      true,
 		Desc:           false,
-		Concurrency:    0,
-		IsolationLevel: kv.SI,
+		Concurrency:    15,
+		IsolationLevel: kv.RC,
 		Priority:       1,
 		NotFillCache:   true,
 		SyncLog:        false,
