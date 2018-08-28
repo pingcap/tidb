@@ -562,7 +562,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 			}
 			continue
 		}
-		// if have virtual generate column , decode all columns.
+		// If have virtual generate column , decode all columns.
 		if col.IsGenerated() && col.GeneratedStored == false {
 			genColFlag = true
 		}
