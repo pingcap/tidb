@@ -297,16 +297,18 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
-func (e *HashJoinExec) fetchInnerRows(ctx context.Context) (err error) {
+func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk) (err error) {
 	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
+	defer close(chkCh)
 	for {
 		chk := e.children[e.innerIdx].newChunk()
 		err = e.innerExec.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
 			return errors.Trace(err)
 		}
+		chkCh <- chk
 		e.innerResult.Add(chk)
 	}
 }
@@ -544,12 +546,15 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 		close(e.innerFinished)
 	}()
 
-	if err := e.fetchInnerRows(ctx); err != nil {
-		e.innerFinished <- errors.Trace(err)
-		return
-	}
+	chkCh := make(chan *chunk.Chunk, 10)
+	go func() {
+		if err := e.fetchInnerRows(ctx, chkCh); err != nil {
+			e.innerFinished <- errors.Trace(err)
+			return
+		}
+	}()
 
-	if err := e.buildHashTableForList(); err != nil {
+	if err := e.buildHashTableForList(chkCh); err != nil {
 		e.innerFinished <- errors.Trace(err)
 		return
 	}
@@ -558,7 +563,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 // buildHashTableForList builds hash table from `list`.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (e *HashJoinExec) buildHashTableForList() error {
+func (e *HashJoinExec) buildHashTableForList(chkCh chan *chunk.Chunk) error {
 	e.hashTable = mvmap.NewMVMap()
 	e.innerKeyColIdx = make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {
@@ -574,8 +579,8 @@ func (e *HashJoinExec) buildHashTableForList() error {
 		keysBuf = append(keysBuf, make([]byte, 0, 64))
 	}
 
-	for i := 0; i < e.innerResult.NumChunks(); i++ {
-		chk := e.innerResult.GetChunk(i)
+	numChks := 0
+	for chk := range chkCh {
 		numRows := chk.NumRows()
 		hasNulls, keysBuf, err = e.getJoinKeyFromChunk(false, chk, numRows, keysBuf, hasNulls)
 		if err != nil {
@@ -585,10 +590,11 @@ func (e *HashJoinExec) buildHashTableForList() error {
 			if hasNulls[j] {
 				continue
 			}
-			rowPtr := chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)}
+			rowPtr := chunk.RowPtr{ChkIdx: uint32(numChks), RowIdx: uint32(j)}
 			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
 			e.hashTable.Put(keysBuf[j], valBuf)
 		}
+		numChks++
 	}
 	return nil
 }
