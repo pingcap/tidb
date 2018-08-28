@@ -284,7 +284,13 @@ func (c *index) Seek(sc *stmtctx.StatementContext, r kv.Retriever, indexedValues
 
 // SeekFirst returns an iterator which points to the first entry of the KV index.
 func (c *index) SeekFirst(r kv.Retriever) (iter table.IndexIterator, err error) {
-	it, err := r.Seek(c.prefix)
+	var it kv.Iterator
+	if v, ok := r.(kv.Seeker); ok {
+		it, err = v.SeekWithBatchSize(c.prefix, 2)
+	} else {
+		it, err = r.Seek(c.prefix)
+	}
+
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

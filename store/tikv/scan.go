@@ -162,6 +162,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			log.Debugf("scanner getData failed: %s", regionErr)
 			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
 			if err != nil {
+				log.Infof("tikv scan batch size: %d", s.batchSize)
 				return errors.Trace(err)
 			}
 			continue
