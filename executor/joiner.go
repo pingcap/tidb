@@ -149,8 +149,8 @@ func (j *baseJoiner) makeJoinRowToChunk(chk *chunk.Chunk, lhs, rhs chunk.Row) {
 	chk.AppendPartialRow(lhs.Len(), rhs)
 }
 
-// makeJoinRow shallow copies `inner` and `outer` into `shallowRow`.
-func (j *baseJoiner) makeJoinRow(isRightJoin bool, inner, outer chunk.Row) {
+// makeShallowJoinRow shallow copies `inner` and `outer` into `shallowRow`.
+func (j *baseJoiner) makeShallowJoinRow(isRightJoin bool, inner, outer chunk.Row) {
 	if !isRightJoin {
 		inner, outer = outer, inner
 	}
@@ -189,7 +189,7 @@ func (j *semiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chu
 	}
 
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
-		j.makeJoinRow(j.outerIsRight, inner, outer)
+		j.makeShallowJoinRow(j.outerIsRight, inner, outer)
 
 		matched, err = expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
@@ -223,7 +223,7 @@ func (j *antiSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk 
 	}
 
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
-		j.makeJoinRow(j.outerIsRight, inner, outer)
+		j.makeShallowJoinRow(j.outerIsRight, inner, outer)
 
 		matched, err = expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
@@ -258,7 +258,7 @@ func (j *leftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator,
 	}
 
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
-		j.makeJoinRow(false, inner, outer)
+		j.makeShallowJoinRow(false, inner, outer)
 
 		matched, err = expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
@@ -300,7 +300,7 @@ func (j *antiLeftOuterSemiJoiner) tryToMatch(outer chunk.Row, inners chunk.Itera
 	}
 
 	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
-		j.makeJoinRow(false, inner, outer)
+		j.makeShallowJoinRow(false, inner, outer)
 
 		matched, err := expression.EvalBool(j.ctx, j.conditions, j.shallowRow.ToRow())
 		if err != nil {
