@@ -117,10 +117,10 @@ func newFixedLenColumn(elemLen, initCap int) *column {
 
 // newVarLenColumn creates a variable length column with initial data capacity.
 func newVarLenColumn(initCap int, old *column) *column {
-	estimatedElemLen := 4
+	estimatedElemLen := 8
 	// For varLenColumn(e.g. varchar) we could not take the accuracy length of element,
-	// so, in first executor.Next we using a experience value --- 4(so it maybe make `runtime.growslice`)
-	// but in continue Next call we estimated length as AVG x 1.5 elemLen of previous call.
+	// so, in first executor.Next we using a experience value --- 8(so it maybe make `runtime.growslice`)
+	// but in continue Next call we estimated length as AVG x 1.125 elemLen of previous call.
 	if old != nil && old.length != 0 {
 		estimatedElemLen = (len(old.data) + len(old.data)/8) / old.length
 	}
