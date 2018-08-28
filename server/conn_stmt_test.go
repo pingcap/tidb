@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 )
 
 func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
@@ -120,7 +121,7 @@ func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
 				[]byte{0x00},
 			},
 			nil,
-			"00000000000000",
+			types.ZeroDatetimeStr,
 		},
 		// Tests for time
 		{

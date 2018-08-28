@@ -42,6 +42,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"golang.org/x/net/context"
 )
@@ -354,7 +355,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			pos++
 			switch length {
 			case 0:
-				args[i] = "00000000000000"
+				args[i] = types.ZeroDatetimeStr
 			case 4:
 				pos, args[i] = parseBinaryDate(pos, paramValues)
 			case 7:
