@@ -455,6 +455,8 @@ func setupSignalHandler() {
 }
 
 func setupMetrics() {
+	// Enable the mutex profile, 1/10 of mutex blocking event sampling.
+	runtime.SetMutexProfileFraction(10)
 	systimeErrHandler := func() {
 		metrics.TimeJumpBackCounter.Inc()
 	}
