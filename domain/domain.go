@@ -503,7 +503,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	sysFac := func() (pools.Resource, error) {
 		return sysFactory(do)
 	}
-	sysCtxPool := pools.NewResourcePool(sysFac, 4, 10, resourceIdleTimeout)
+	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
 	ctx := context.Background()
 	callback := &ddlCallback{do: do}
 	do.ddl = ddl.NewDDL(ctx, do.etcdClient, do.store, do.infoHandle, callback, ddlLease, sysCtxPool)
