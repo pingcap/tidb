@@ -2032,6 +2032,9 @@ func (s *testSuite) TestReplaceLog(c *C) {
 	tk.MustQuery(`admin cleanup index testLog b;`).Check(testkit.Rows("1"))
 }
 
+// For issue 7422.
+// There is no need to do the rebase when updating a record if the auto-increment ID not changed.
+// This could make the auto ID increasing speed slower.
 func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2043,6 +2046,8 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	tbl, err := s.domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	c.Assert(s.ctx.NewTxn(), IsNil)
+	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
+	// which could simulate another TiDB adds a large auto ID.
 	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
 	c.Assert(err, IsNil)
 	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
