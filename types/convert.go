@@ -292,7 +292,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		// convert scientific notation decimal number
 		extraZeroCount := intCnt - len(digits)
 		if extraZeroCount > 20 {
-			// Return overflow to avoid allocating too much memory.
+			// Append overflow warning and return to avoid allocating too much memory.
 			sc.AppendWarning(ErrOverflow.GenByArgs("BIGINT", oriStr))
 			return validFloat[:eIdx], nil
 		}
