@@ -178,14 +178,13 @@ func (c *Chunk) BatchCopyJoinRowToChunk(isRight bool, chkForJoin *Chunk, outer R
 
 // appendPartialRows appends multiple different rows to the chunk.
 func appendPartialRows(colIdx, outerIdx int, chkForJoin, chk *Chunk, selected []bool) int {
-	oldLen := chk.NumRows()
+	oldLen := chk.columns[colIdx].length
 	var columns []*column
 	if colIdx == 0 {
 		columns = chkForJoin.columns[:outerIdx]
 	} else {
 		columns = chkForJoin.columns[colIdx:]
 	}
-
 	for j, rowCol := range columns {
 		chkCol := chk.columns[colIdx+j]
 		for i := 0; i < len(selected); i++ {
@@ -206,7 +205,7 @@ func appendPartialRows(colIdx, outerIdx int, chkForJoin, chk *Chunk, selected []
 			}
 		}
 	}
-	return chk.NumRows() - oldLen
+	return chk.columns[colIdx].length - oldLen
 }
 
 // appendPartialSameRows appends same row to the chunk with `rowNum` times.
