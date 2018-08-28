@@ -14,9 +14,11 @@
 package chunk
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 	"unsafe"
@@ -249,9 +251,9 @@ func newChunk(elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
 		if l > 0 {
-			chk.addFixedLenColumn(l, 0)
+			chk.columns = append(chk.columns, newFixedLenColumn(l, 0))
 		} else {
-			chk.addVarLenColumn(0)
+			chk.columns = append(chk.columns, newVarLenColumn(0, nil))
 		}
 	}
 	return chk
@@ -417,8 +419,8 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	//cap(c.nullBitmap) + cap(c.offsets)*4 + cap(c.data) + cap(c.elemBuf)
 	colUsage := make([]int, len(fieldTypes))
 	colUsage[0] = initCap>>3 + 0 + initCap*4 + 4
-	colUsage[1] = initCap>>3 + (initCap+1)*4 + initCap*4 + 0
-	colUsage[2] = initCap>>3 + (initCap+1)*4 + initCap*4 + 0
+	colUsage[1] = initCap>>3 + (initCap+1)*4 + initCap*8 + 0
+	colUsage[2] = initCap>>3 + (initCap+1)*4 + initCap*8 + 0
 	colUsage[3] = initCap>>3 + 0 + initCap*16 + 16
 	colUsage[4] = initCap>>3 + 0 + initCap*8 + 8
 
@@ -648,9 +650,9 @@ func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
 		if l > 0 {
-			chk.addFixedLenColumn(l, cap)
+			chk.columns = append(chk.columns, newFixedLenColumn(l, cap))
 		} else {
-			chk.addVarLenColumn(cap)
+			chk.columns = append(chk.columns, newVarLenColumn(cap, nil))
 		}
 	}
 	return chk
@@ -717,6 +719,93 @@ func BenchmarkChunkAppendPartialRow(b *testing.B) {
 			}
 			dstChk.AppendRow(srcChk.GetRow(j))
 		}
+	}
+}
 
+type seqNumberGenerateExec struct {
+	seq          int
+	genCountSize int
+}
+
+func (x *seqNumberGenerateExec) Next(chk *Chunk, resize bool) {
+	if resize {
+		chk.GrowAndReset(1024)
+	} else {
+		chk.Reset()
+	}
+	for chk.NumRows() < chk.Capacity() {
+		x.seq++
+		if x.seq > x.genCountSize {
+			break
+		}
+		chk.AppendInt64(0, 1)
+	}
+}
+
+type benchChunkGrowCase struct {
+	tag        string
+	reuse      bool
+	newReset   bool
+	cntPerCall int
+	initCap    int
+	maxCap     int
+}
+
+func (b *benchChunkGrowCase) String() string {
+	var buff bytes.Buffer
+	if b.reuse {
+		buff.WriteString("renew,")
+	} else {
+		buff.WriteString("reset,")
+	}
+	buff.WriteString("cntPerCall:" + strconv.Itoa(b.cntPerCall) + ",")
+	buff.WriteString("cap from:" + strconv.Itoa(b.initCap) + " to " + strconv.Itoa(b.maxCap) + ",")
+	if b.tag != "" {
+		buff.WriteString("[" + b.tag + "]")
+	}
+	return buff.String()
+}
+
+func BenchmarkChunkGrowSuit(b *testing.B) {
+	tests := []benchChunkGrowCase{
+		{reuse: true, newReset: false, cntPerCall: 10000000, initCap: 1024, maxCap: 1024},
+		{reuse: true, newReset: false, cntPerCall: 10000000, initCap: 32, maxCap: 32},
+		{reuse: true, newReset: true, cntPerCall: 10000000, initCap: 32, maxCap: 1024, tag: "grow"},
+		{reuse: false, newReset: false, cntPerCall: 10000000, initCap: 1024, maxCap: 1024},
+		{reuse: false, newReset: false, cntPerCall: 10000000, initCap: 32, maxCap: 32},
+		{reuse: false, newReset: true, cntPerCall: 10000000, initCap: 32, maxCap: 1024, tag: "grow"},
+		{reuse: true, newReset: false, cntPerCall: 10, initCap: 1024, maxCap: 1024},
+		{reuse: true, newReset: false, cntPerCall: 10, initCap: 32, maxCap: 32},
+		{reuse: true, newReset: true, cntPerCall: 10, initCap: 32, maxCap: 1024, tag: "grow"},
+		{reuse: false, newReset: false, cntPerCall: 10, initCap: 1024, maxCap: 1024},
+		{reuse: false, newReset: false, cntPerCall: 10, initCap: 32, maxCap: 32},
+		{reuse: false, newReset: true, cntPerCall: 10, initCap: 32, maxCap: 1024, tag: "grow"},
+	}
+	for _, test := range tests {
+		b.Run(test.String(), benchmarkChunkGrow(test))
+	}
+}
+
+func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
+	return func(b *testing.B) {
+		b.ReportAllocs()
+		chk := New([]*types.FieldType{{Tp: mysql.TypeLong}}, t.initCap, t.maxCap)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			e := &seqNumberGenerateExec{genCountSize: t.cntPerCall}
+			for {
+				e.Next(chk, t.newReset)
+				if chk.NumRows() == 0 {
+					break
+				}
+				if !t.reuse {
+					if t.newReset {
+						chk = Renew(chk, t.maxCap)
+					} else {
+						chk = New([]*types.FieldType{{Tp: mysql.TypeLong}}, t.initCap, t.maxCap)
+					}
+				}
+			}
+		}
 	}
 }

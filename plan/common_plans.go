@@ -56,6 +56,8 @@ type CheckTable struct {
 	baseSchemaProducer
 
 	Tables []*ast.TableName
+
+	GenExprs map[string]expression.Expression
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
