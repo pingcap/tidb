@@ -77,22 +77,24 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if err != nil {
 			return false, handleChanged, newHandle, 0, errors.Trace(err)
 		}
-		if cmp != 0 {
-			// Rebase auto increment id if the field is changed.
-			if mysql.HasAutoIncrementFlag(col.Flag) {
-				if newData[i].IsNull() {
-					return false, handleChanged, newHandle, 0, table.ErrColumnCantNull.GenByArgs(col.Name)
-				}
-				val, errTI := newData[i].ToInt64(sc)
-				if errTI != nil {
-					return false, handleChanged, newHandle, 0, errors.Trace(errTI)
-				}
-				lastInsertID = uint64(val)
+		// Rebase auto increment id if the field is changed.
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			if newData[i].IsNull() {
+				return false, handleChanged, newHandle, 0, table.ErrColumnCantNull.GenByArgs(col.Name)
+			}
+			val, errTI := newData[i].ToInt64(sc)
+			if errTI != nil {
+				return false, handleChanged, newHandle, 0, errors.Trace(errTI)
+			}
+			lastInsertID = uint64(val)
+			if cmp != 0 {
 				err := t.RebaseAutoID(ctx, val, true)
 				if err != nil {
 					return false, handleChanged, newHandle, 0, errors.Trace(err)
 				}
 			}
+		}
+		if cmp != 0 {
 			changed = true
 			modified[i] = true
 			if col.IsPKHandleColumn(t.Meta()) {
