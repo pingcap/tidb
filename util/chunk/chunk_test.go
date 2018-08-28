@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	"reflect"
 )
 
 func TestT(t *testing.T) {
@@ -640,5 +641,82 @@ func BenchmarkChunkMemoryUsage(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		chk.MemoryUsage()
+	}
+}
+
+func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
+	chk := &Chunk{}
+	for _, l := range elemLen {
+		if l > 0 {
+			chk.addFixedLenColumn(l, cap)
+		} else {
+			chk.addVarLenColumn(cap)
+		}
+	}
+	return chk
+}
+
+func getChk() (*Chunk, *Chunk, Row, int, []bool) {
+	numRows := 1024
+	srcChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, 16)
+	srcChk.Reset()
+	selected := make([]bool, numRows)
+	var row Row
+	for j := 0; j < numRows; j++ {
+		if j%7 == 0 {
+			row = MutRowFromValues("abc", "abcdefg", nil, 123, types.ZeroDatetime).ToRow()
+		} else {
+			row = MutRowFromValues("abc", "abcdefg", j, 123, types.ZeroDatetime).ToRow()
+		}
+		srcChk.AppendPartialRow(0, row)
+		selected[j] = true
+	}
+	dstChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, 16)
+	outerRow := MutRowFromValues(123, types.ZeroDatetime).ToRow()
+
+	return srcChk, dstChk, outerRow, numRows, selected
+}
+
+func TestBatchCopyJoinRowToChunk(t *testing.T) {
+	srcChk, dstChk, outerRow, numRows, selected := getChk()
+	for i := 0; i < numRows; i++ {
+		if !selected[i] {
+			continue
+		}
+		dstChk.AppendRow(srcChk.GetRow(i))
+	}
+
+	// batch copy
+	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, 16)
+	dstChk2.BatchCopyJoinRowToChunk(true, srcChk, outerRow, selected)
+
+	if !reflect.DeepEqual(dstChk, dstChk2) {
+		t.Fatal()
+	}
+}
+
+func BenchmarkChunkBatchCopyJoinRow(b *testing.B) {
+	b.ReportAllocs()
+	srcChk, dstChk, outerRow, _, selected := getChk()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		dstChk.Reset()
+		dstChk.BatchCopyJoinRowToChunk(false, srcChk, outerRow, selected)
+	}
+}
+
+func BenchmarkChunkAppendPartialRow(b *testing.B) {
+	b.ReportAllocs()
+	srcChk, dstChk, _, numRows, selected := getChk()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		dstChk.Reset()
+		for j := 0; j < numRows; j++ {
+			if !selected[j] {
+				continue
+			}
+			dstChk.AppendRow(srcChk.GetRow(j))
+		}
+
 	}
 }
