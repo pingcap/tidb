@@ -843,17 +843,18 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 			HighVal: []types.Datum{ran.HighVal[rangePosition]},
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
-		var rangeString string
 		// prefer index stats over column stats
 		if idxHist := t.indexStartWithColumnForDebugLog(colName); idxHist != nil {
-			rangeString = logForIndexRange(idxHist, &rang, -1, factor)
+			rangeString := logForIndexRange(idxHist, &rang, -1, factor)
+			log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
+				actual[i], equalityString, equalityCount, rangeString)
 		} else if colHist := t.columnByNameForDebugLog(colName); colHist != nil {
-			rangeString = colRangeToStr(colHist, &rang, -1, factor)
+			rangeString := colRangeToStr(colHist, &rang, -1, factor)
+			log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
+				actual[i], equalityString, equalityCount, rangeString)
 		} else {
 			return
 		}
-		log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
-			actual[i], equalityString, equalityCount, rangeString)
 	}
 }
 
