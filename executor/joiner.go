@@ -344,7 +344,7 @@ func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	matched := chunk.BatchCopyJoinRowToChunk(false, chkForJoin, outer, chk, j.selected)
+	matched := chk.BatchCopyJoinRowToChunk(false, chkForJoin, outer, j.selected)
 	return matched, nil
 }
 
@@ -382,7 +382,7 @@ func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, ch
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	matched := chunk.BatchCopyJoinRowToChunk(true, chkForJoin, outer, chk, j.selected)
+	matched := chk.BatchCopyJoinRowToChunk(true, chkForJoin, outer, j.selected)
 	return matched, nil
 }
 
@@ -422,7 +422,7 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	matched := chunk.BatchCopyJoinRowToChunk(j.outerIsRight, chkForJoin, outer, chk, j.selected)
+	matched := chk.BatchCopyJoinRowToChunk(j.outerIsRight, chkForJoin, outer, j.selected)
 	return matched, nil
 
 }

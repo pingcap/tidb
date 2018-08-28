@@ -161,7 +161,7 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 }
 
 // BatchCopyJoinRowToChunk uses for join to batch copy inner rows and outer row to chunk.
-func BatchCopyJoinRowToChunk(isRight bool, chkForJoin *Chunk, outer Row, c *Chunk, selected []bool) bool {
+func (c *Chunk) BatchCopyJoinRowToChunk(isRight bool, chkForJoin *Chunk, outer Row, selected []bool) bool {
 	if chkForJoin.NumRows() == 0 {
 		return false
 	}
@@ -205,7 +205,6 @@ func appendPartialRows(colIdx, outerIdx int, chkForJoin, chk *Chunk, selected []
 				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
 			}
 		}
-
 		rowNum++
 	}
 	return rowNum
