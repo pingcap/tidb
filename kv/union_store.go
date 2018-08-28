@@ -134,10 +134,6 @@ func (lmb *lazyMemBuffer) Seek(k Key) (Iterator, error) {
 	return lmb.mb.Seek(k)
 }
 
-func (lmb *lazyMemBuffer) SeekWithBatchSize(k Key, _ int) (Iterator, error) {
-	return lmb.Seek(k)
-}
-
 func (lmb *lazyMemBuffer) SeekReverse(k Key) (Iterator, error) {
 	if lmb.mb == nil {
 		return invalidIterator{}, nil

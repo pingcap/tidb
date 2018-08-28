@@ -87,11 +87,6 @@ func (s *BufferStore) Seek(k Key) (Iterator, error) {
 	return NewUnionIter(bufferIt, retrieverIt, false)
 }
 
-// SeekWithBatchSize implements the Retriever interface.
-func (s *BufferStore) SeekWithBatchSize(k Key, _ int) (Iterator, error) {
-	return s.Seek(k)
-}
-
 // SeekReverse implements the Retriever interface.
 func (s *BufferStore) SeekReverse(k Key) (Iterator, error) {
 	bufferIt, err := s.MemBuffer.SeekReverse(k)

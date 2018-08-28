@@ -65,11 +65,6 @@ func (m *memDbBuffer) Seek(k Key) (Iterator, error) {
 	return i, nil
 }
 
-// SeekWithBatchSize implements the Retriever interface.
-func (m *memDbBuffer) SeekWithBatchSize(k Key, _ int) (Iterator, error) {
-	return m.Seek(k)
-}
-
 func (m *memDbBuffer) SetCap(cap int) {
 
 }

@@ -173,11 +173,6 @@ func (st *TxnState) Seek(k kv.Key) (kv.Iterator, error) {
 	return kv.NewUnionIter(bufferIt, retrieverIt, false)
 }
 
-// SeekWithBatchSize implements the Retriever interface.
-func (st *TxnState) SeekWithBatchSize(k kv.Key, _ int) (kv.Iterator, error) {
-	return st.Seek(k)
-}
-
 // SeekReverse overrides the Transaction interface.
 func (st *TxnState) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	bufferIt, err := st.buf.SeekReverse(k)
