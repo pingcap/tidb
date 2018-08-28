@@ -117,7 +117,7 @@ lint:
 
 vet:
 	@echo "vet"
-	@retool do govet -all -shadow $$($(PACKAGE_DIRECTORIES)) 2>&1 | $(FAIL_ON_STDOUT)
+	@go vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
 clean:
 	$(GO) clean -i ./...
