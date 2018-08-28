@@ -1190,7 +1190,23 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 		return errors.Trace(err)
 	}
 
-	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, insertPlan.SelectPlan.Schema())
+	// schema4NewRow is the schema for the newly created data record based on
+	// the result of the select statement.
+	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
+	for i, selCol := range insertPlan.SelectPlan.Schema().Columns {
+		ordinal := affectedValuesCols[i].Offset
+		schema4NewRow.Columns[ordinal] = &expression.Column{}
+		*schema4NewRow.Columns[ordinal] = *selCol
+
+		schema4NewRow.Columns[ordinal].RetType = &types.FieldType{}
+		*schema4NewRow.Columns[ordinal].RetType = affectedValuesCols[i].FieldType
+	}
+	for i := range schema4NewRow.Columns {
+		if schema4NewRow.Columns[i] == nil {
+			schema4NewRow.Columns[i] = &expression.Column{UniqueID: insertPlan.ctx.GetSessionVars().AllocPlanColumnID()}
+		}
+	}
+	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, schema4NewRow)
 	return nil
 }
 

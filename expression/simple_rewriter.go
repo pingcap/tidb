@@ -56,7 +56,8 @@ func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo
 	return rewriter.pop(), nil
 }
 
-// ParseSimpleExprsWithSchema parses a simple expression to expression.Expression.
+// ParseSimpleExprsWithSchema parses simple expression string to Expression.
+// The expression string must only reference the column in the given schema.
 func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *Schema) ([]Expression, error) {
 	exprStr = "select " + exprStr
 	stmts, err := parser.New().Parse(exprStr, "", "")
@@ -66,7 +67,7 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
 	exprs := make([]Expression, 0, len(fields))
 	for _, field := range fields {
-		expr, err := rewriteSimpleExprWithSchema(ctx, field.Expr, schema)
+		expr, err := RewriteSimpleExprWithSchema(ctx, field.Expr, schema)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -75,7 +76,8 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 	return exprs, nil
 }
 
-func rewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema) (Expression, error) {
+// RewriteSimpleExprWithSchema rewrites simple ast.ExprNode to expression.Expression.
+func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema) (Expression, error) {
 	rewriter := &simpleRewriter{ctx: ctx, schema: schema}
 	expr.Accept(rewriter)
 	if rewriter.err != nil {
