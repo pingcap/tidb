@@ -16,6 +16,7 @@ package chunk
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 	"unsafe"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
-	"reflect"
 )
 
 func TestT(t *testing.T) {

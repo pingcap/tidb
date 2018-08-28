@@ -178,7 +178,7 @@ func (c *Chunk) BatchCopyJoinRowToChunk(isRight bool, chkForJoin *Chunk, outer R
 
 // appendPartialRows appends multiple different rows to the chunk.
 func appendPartialRows(colIdx, outerIdx int, chkForJoin, chk *Chunk, selected []bool) int {
-	rowNum := 0
+	oldLen := chk.NumRows()
 	var columns []*column
 	if colIdx == 0 {
 		columns = chkForJoin.columns[:outerIdx]
@@ -186,12 +186,12 @@ func appendPartialRows(colIdx, outerIdx int, chkForJoin, chk *Chunk, selected []
 		columns = chkForJoin.columns[colIdx:]
 	}
 
-	for i := 0; i < len(selected); i++ {
-		if !selected[i] {
-			continue
-		}
-		for j, rowCol := range columns {
-			chkCol := chk.columns[colIdx+j]
+	for j, rowCol := range columns {
+		chkCol := chk.columns[colIdx+j]
+		for i := 0; i < len(selected); i++ {
+			if !selected[i] {
+				continue
+			}
 			chkCol.appendNullBitmap(!rowCol.isNull(i))
 			chkCol.length++
 
@@ -205,9 +205,8 @@ func appendPartialRows(colIdx, outerIdx int, chkForJoin, chk *Chunk, selected []
 				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
 			}
 		}
-		rowNum++
 	}
-	return rowNum
+	return chk.NumRows() - oldLen
 }
 
 // appendPartialSameRows appends same row to the chunk with `rowNum` times.
