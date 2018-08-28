@@ -3280,11 +3280,13 @@ func (b *builtinInsertSig) evalString(row chunk.Row) (string, bool, error) {
 		length = runeLength - pos + 1
 	}
 
-	if uint64(runeLength-length)*uint64(mysql.MaxBytesOfCharacter)+uint64(len(newstr)) > b.maxAllowedPacket {
+	strHead := string(runes[0 : pos-1])
+	strTail := string(runes[pos+length-1:])
+	if uint64(len(strHead)+len(newstr)+len(strTail)) > b.maxAllowedPacket {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("insert", b.maxAllowedPacket))
 		return "", true, nil
 	}
-	return string(runes[0:pos-1]) + newstr + string(runes[pos+length-1:]), false, nil
+	return strHead + newstr + strTail, false, nil
 }
 
 type instrFunctionClass struct {
