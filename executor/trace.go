@@ -50,7 +50,6 @@ func (b *executorBuilder) buildTrace(v *plan.Trace) Executor {
 	}
 
 	pp, _ := v.StmtPlan.(plan.PhysicalPlan)
-	fmt.Println(pp.ExplainInfo())
 	e.children = make([]Executor, 0, len(pp.Children()))
 	for _, child := range pp.Children() {
 		switch p := child.(type) {
@@ -98,8 +97,10 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	// store span into context
 	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)
 	if len(e.children) > 0 {
-		if err := e.children[0].Next(ctx, e.childrenResults[0]); err != nil {
-			return errors.Trace(err)
+		for e.childrenResults[0].NumRows() != 0 {
+			if err := e.children[0].Next(ctx, e.childrenResults[0]); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 
