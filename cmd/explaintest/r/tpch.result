@@ -984,7 +984,7 @@ The Large Volume Customer Query ranks customers based on their having placed a l
 quantity orders are defined as those orders whose total quantity is above a certain level.
 The Large Volume Customer Query finds a list of the top 100 customers who have ever placed large quantity orders.
 The query lists the customer name, customer key, the order key, date and total price and the quantity for the order.
-Planner enhancement: unfold in subquery.
+Planner enhancement: cost estimation is not so good, join reorder. The inner subquery's result is only 300+ rows.
 */
 explain
 select
