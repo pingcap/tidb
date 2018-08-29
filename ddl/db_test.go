@@ -2157,24 +2157,29 @@ func (s *testDBSuite) TestRebaseAutoID(c *C) {
 	s.testErrorCode(c, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
 }
 
-func (s *testDBSuite) TestYearTypeCreateTable(c *C) {
+func (s *testDBSuite) TestZeroFillCreateTable(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop table if exists abc;")
-	s.tk.MustExec("create table abc(y year, x int, primary key(y));")
+	s.tk.MustExec("create table abc(y year, z tinyint(10) zerofill, primary key(y));")
 	is := s.dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("abc"))
 	c.Assert(err, IsNil)
-	var yearCol *model.ColumnInfo
+	var yearCol, zCol *model.ColumnInfo
 	for _, col := range tbl.Meta().Columns {
 		if col.Name.String() == "y" {
 			yearCol = col
-			break
+		}
+		if col.Name.String() == "z" {
+			zCol = col
 		}
 	}
 	c.Assert(yearCol, NotNil)
 	c.Assert(yearCol.Tp, Equals, mysql.TypeYear)
-	c.Assert(mysql.HasUnsignedFlag(yearCol.Flag), IsFalse)
+	c.Assert(mysql.HasUnsignedFlag(yearCol.Flag), IsTrue)
+
+	c.Assert(zCol, NotNil)
+	c.Assert(mysql.HasUnsignedFlag(zCol.Flag), IsTrue)
 }
 
 func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
