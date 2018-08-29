@@ -2515,6 +2515,13 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	result.Check(testkit.Rows("1 1300 -6 <nil> <nil> <nil>"))
 	result = tk.MustQuery("SELECT 2.4 div 1.1, 2.4 div 1.2, 2.4 div 1.3;")
 	result.Check(testkit.Rows("2 2 1"))
+	result = tk.MustQuery("SELECT 1.175494351E-37 div 1.7976931348623157E+308, 1.7976931348623157E+308 div -1.7976931348623157E+307, 1 div 1e-82;")
+	result.Check(testkit.Rows("0 -1 <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308)'",
+		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308)'",
+		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(-1.7976931348623158e+307)'",
+		"Warning|1365|Division by 0"))
 	rs, err = tk.Exec("select 1e300 DIV 1.5")
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)

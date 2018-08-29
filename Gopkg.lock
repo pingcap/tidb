@@ -78,23 +78,13 @@
 [[projects]]
   branch = "master"
   name = "github.com/etcd-io/gofail"
-  packages = [
-    ".",
-    "code",
-    "runtime"
-  ]
+  packages = ["runtime"]
   revision = "51ce9a71510a58bad5ae66ddd278ef28762a1550"
 
 [[projects]]
   name = "github.com/go-sql-driver/mysql"
   packages = ["."]
   revision = "3955978caca48c1658a4bb7a9c6a0f084e326af3"
-
-[[projects]]
-  name = "github.com/gogo/protobuf"
-  packages = ["proto"]
-  revision = "1adfc126b41513cc696b209667c8656ea7aac67c"
-  version = "v1.0.0"
 
 [[projects]]
   name = "github.com/golang/protobuf"
@@ -173,15 +163,6 @@
   revision = "7a24ed77b2efb460c1468b7dc917821c66e80e55"
 
 [[projects]]
-  name = "github.com/opentracing/basictracer-go"
-  packages = [
-    ".",
-    "wire"
-  ]
-  revision = "1b32af207119a14b1b231d451df3ed04a72efebf"
-  version = "v1.0.0"
-
-[[projects]]
   name = "github.com/opentracing/opentracing-go"
   packages = [
     ".",
@@ -234,13 +215,13 @@
     "pkg/raft_serverpb",
     "pkg/tikvpb"
   ]
-  revision = "5ef8fa297ea3547b015ef5069cb500bba67b0d94"
+  revision = "279515615485b0f2d12f1421cc412fe2784e0190"
 
 [[projects]]
   branch = "master"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
-  revision = "ea6597638eb7f3d7d50248b90e60888352ac8e85"
+  revision = "47a950e6649fa0151a6c5d0fc48a97c080012e3d"
 
 [[projects]]
   branch = "master"
@@ -261,6 +242,12 @@
     "sharedbytes"
   ]
   revision = "5e46e0ec647edfee8fe001c5b51609460fb655bf"
+
+[[projects]]
+  name = "github.com/pkg/errors"
+  packages = ["."]
+  revision = "645ef00459ed84a119197bfb8d8205042c6df63d"
+  version = "v0.8.0"
 
 [[projects]]
   name = "github.com/prometheus/client_golang"
@@ -424,6 +411,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "472d8f62cb1733b34466708b19eaa0f7d80c01045ad4de7d790cfc34797c991a"
+  inputs-digest = "9c66d4c8409973a2286ef3018c5de331324953b79c1e323881a8caa5d2a21d2c"
   solver-name = "gps-cdcl"
   solver-version = 1

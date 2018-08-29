@@ -209,7 +209,7 @@ func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		return errors.Trace(err)
 	})
-	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
 
@@ -278,7 +278,7 @@ func (w *worker) deleteRange(job *model.Job) error {
 func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	startTime := time.Now()
 	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
 	switch job.Type {
@@ -396,7 +396,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
 			log.Infof("[ddl-%s] run DDL job error, sleeps a while:%v then retries it.", w, WaitTimeWhenErrorOccured)
-			metrics.DDLJobErrCounter.Inc()
 			time.Sleep(WaitTimeWhenErrorOccured)
 		}
 
@@ -447,6 +446,10 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	log.Infof("[ddl-%s] run DDL job %s", w, job)
+	timeStart := time.Now()
+	defer func() {
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+	}()
 	if job.IsFinished() {
 		return
 	}
@@ -554,7 +557,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	timeStart := time.Now()
 	var err error
 	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 
 	if latestSchemaVersion == 0 {
