@@ -322,11 +322,11 @@ func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 type SubqueryExpr struct {
 	exprNode
 	// Query is the query SelectNode.
-	Query        ResultSetNode
-	Evaluated    bool
-	Correlated   bool
-	MultiRows    bool
-	Exists       bool
+	Query      ResultSetNode
+	Evaluated  bool
+	Correlated bool
+	MultiRows  bool
+	Exists     bool
 }
 
 // Format the ExprNode into a Writer.
