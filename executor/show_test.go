@@ -376,7 +376,7 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) NOT NULL,\n"+
-			"  `val` tinyint(10) unsigned zerofill DEFAULT NULL,\n"+
+			"  `val` tinyint(10) UNSIGNED ZEROFILL DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 }
