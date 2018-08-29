@@ -539,7 +539,6 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-
 	if e.isUnparallelExec {
 		return errors.Trace(e.unparallelExec(ctx, chk))
 	}

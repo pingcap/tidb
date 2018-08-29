@@ -21,7 +21,6 @@ import (
 	"github.com/opentracing/basictracer-go"
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/plan"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/tracing"
 	"golang.org/x/net/context"

@@ -211,7 +211,6 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	default:
 	}
 
-	b.ctx = ctx
 	metrics.TiKVBackoffCounter.WithLabelValues(typ.String()).Inc()
 	// Lazy initialize.
 	if b.fn == nil {
@@ -227,8 +226,6 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	b.types = append(b.types, typ)
 
 	log.Debugf("%v, retry later(totalsleep %dms, maxsleep %dms)", err, b.totalSleep, b.maxSleep)
-	child.LogKV("error", err.Error())
-	child.LogKV("retry", fmt.Sprintf("retry later(totalsleep %dms, maxsleep %dms)", b.totalSleep, b.maxSleep))
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
