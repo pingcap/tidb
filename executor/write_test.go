@@ -1635,6 +1635,27 @@ func (s *testSuite) TestLoadDataSpecifiedColumns(c *C) {
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
+func (s *testSuite) TestLoadDataIgnoreLines(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ignore 1 lines")
+	ctx := tk.Se.(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
+	ld.IgnoreLines = 1
+	// test escape
+	tests := []testCase{
+		{nil, []byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, nil},
+		{nil, []byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, nil},
+	}
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
+}
+
 func (s *testSuite) TestBatchInsertDelete(c *C) {
 	originLimit := atomic.LoadUint64(&kv.TxnEntryCountLimit)
 	defer func() {

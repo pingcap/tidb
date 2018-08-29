@@ -809,6 +809,7 @@ import (
 	TableOptimizerHintOpt	"Table level optimizer hint"
 	TableOptimizerHints	"Table level optimizer hints"
 	TableOptimizerHintList	"Table level optimizer hint list"
+	IgnoreLines     "Ignore num(int) lines"
 
 %type	<ident>
 	AsOpt			"AS or EmptyString"
@@ -6883,12 +6884,13 @@ RevokeStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName CharsetOpt Fields Lines ColumnNameListOptWithBrackets
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameListOptWithBrackets
 	{
 		x := &ast.LoadDataStmt{
 			Path:       $5,
 			Table:      $8.(*ast.TableName),
-			Columns:    $12.([]*ast.ColumnName),
+			Columns:    $13.([]*ast.ColumnName),
+			IgnoreLines:$12.(uint64),
 		}
 		if $3 != nil {
 			x.IsLocal = true
@@ -6901,6 +6903,15 @@ LoadDataStmt:
 		}
 		$$ = x
 	}
+
+IgnoreLines:
+    {
+        $$ = uint64(0)
+    }
+|   "IGNORE" NUM "LINES"
+    {
+        $$ = getUint64FromNUM($2)
+    }
 
 CharsetOpt:
 	{}

@@ -564,6 +564,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 			Table:        tbl,
 			FieldsInfo:   v.FieldsInfo,
 			LinesInfo:    v.LinesInfo,
+			IgnoreLines:  v.IgnoreLines,
 			Ctx:          b.ctx,
 			columns:      columns,
 		},

@@ -1257,12 +1257,13 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 
 func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 	p := &LoadData{
-		IsLocal:    ld.IsLocal,
-		Path:       ld.Path,
-		Table:      ld.Table,
-		Columns:    ld.Columns,
-		FieldsInfo: ld.FieldsInfo,
-		LinesInfo:  ld.LinesInfo,
+		IsLocal:     ld.IsLocal,
+		Path:        ld.Path,
+		Table:       ld.Table,
+		Columns:     ld.Columns,
+		FieldsInfo:  ld.FieldsInfo,
+		LinesInfo:   ld.LinesInfo,
+		IgnoreLines: ld.IgnoreLines,
 	}
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
