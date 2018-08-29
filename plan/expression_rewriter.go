@@ -617,38 +617,6 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = expression.ErrOperandColumns.GenByArgs(lLen)
 		return v, true
 	}
-	// Sometimes we can unfold the in subquery. For example, a in (select * from t) can rewrite to `a in (1,2,3,4)`.
-	// TODO: Now we cannot add it to CBO framework. Instead, user can set a session variable to open this optimization.
-	// We will improve our CBO framework in future.
-	if lLen == 1 && er.ctx.GetSessionVars().AllowInSubqueryUnFolding && len(np.extractCorrelatedCols()) == 0 {
-		physicalPlan, err1 := doOptimize(er.b.optFlag, np)
-		if err1 != nil {
-			er.err = errors.Trace(err1)
-			return v, true
-		}
-		rows, err1 := EvalSubquery(physicalPlan, er.b.is, er.b.ctx)
-		if err1 != nil {
-			er.err = errors.Trace(err1)
-			return v, true
-		}
-		for _, row := range rows {
-			con := &expression.Constant{
-				Value:   row[0],
-				RetType: np.Schema().Columns[0].GetType(),
-			}
-			er.ctxStack = append(er.ctxStack, con)
-		}
-		listLen := len(rows)
-		if listLen == 0 {
-			er.ctxStack[len(er.ctxStack)-1] = &expression.Constant{
-				Value:   types.NewDatum(v.Not),
-				RetType: types.NewFieldType(mysql.TypeTiny),
-			}
-		} else {
-			er.inToExpression(listLen, v.Not, &v.Type)
-		}
-		return v, true
-	}
 	var rexpr expression.Expression
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
@@ -670,7 +638,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	if !v.Not && !asScalar && len(np.extractCorrelatedCols()) == 0 {
+	if er.ctx.GetSessionVars().AllowInSubqueryRewriting && !v.Not && !asScalar && len(np.extractCorrelatedCols()) == 0 {
 		er.b.optFlag |= flagEliminateAgg
 		er.b.optFlag |= flagEliminateProjection2
 		agg := er.b.buildDistinct(np, np.Schema().Len())
