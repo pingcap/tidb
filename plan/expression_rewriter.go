@@ -638,14 +638,18 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = errors.Trace(err)
 		return v, true
 	}
+	// If it's not the form of `not in (SUBQUERY)`, has no correlated column and don't need append a scalar value. We can rewrite it to inner join.
 	if er.ctx.GetSessionVars().AllowInSubqueryRewriting && !v.Not && !asScalar && len(np.extractCorrelatedCols()) == 0 {
+		// We need to try to eliminate the agg and the projection produced by this operation.
 		er.b.optFlag |= flagEliminateAgg
 		er.b.optFlag |= flagEliminateProjection2
+		// Build distinct for the inner query.
 		agg := er.b.buildDistinct(np, np.Schema().Len())
 		for _, col := range agg.schema.Columns {
 			col.IsAggOrSubq = true
 		}
 		eq, left, right, other := extractOnCondition(expression.SplitCNFItems(checkCondition), er.p, agg)
+		// Build inner join above the aggregation.
 		join := LogicalJoin{
 			JoinType:        InnerJoin,
 			EqualConditions: eq,
@@ -655,7 +659,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		}.init(er.ctx)
 		join.SetChildren(er.p, agg)
 		join.SetSchema(expression.MergeSchema(er.p.Schema(), agg.schema))
-		// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
+		// Set join hint for this join.
 		if er.b.TableHints() != nil {
 			er.err = join.setPreferredJoinType(er.b.TableHints())
 			if er.err != nil {
