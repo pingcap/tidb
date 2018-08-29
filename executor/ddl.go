@@ -154,15 +154,13 @@ func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	return errors.Trace(err)
 }
 
-var errForbidDrop = errors.New("Drop tidb system tables is forbidden")
-
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	dbName := model.NewCIStr(s.Name)
 
 	// Protect important system table from been dropped by a mistake.
 	// I can hardly find a case that a user really need to do this.
 	if dbName.L == "mysql" {
-		return errors.Trace(errForbidDrop)
+		return errors.New("Drop 'mysql' database is forbidden")
 	}
 
 	err := domain.GetDomain(e.ctx).DDL().DropSchema(e.ctx, dbName)
@@ -226,7 +224,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
 		if isSystemTable(tn.Schema.L, tn.Name.L) {
-			return errors.Trace(errForbidDrop)
+			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
 		}
 
 		if config.CheckTableBeforeDrop {
