@@ -14,6 +14,8 @@
 package ddl
 
 import (
+	"sync"
+
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/mysql"
@@ -21,14 +23,15 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-// sessionGenerator is used to new session.
-type sessionGenerator struct {
+// sessionPool is used to new session.
+type sessionPool struct {
+	mu      sync.Mutex
 	resPool *pools.ResourcePool
 }
 
-// getSessionCtx gets sessionctx from context resource pool.
-// Please remember to call putSessionCtx after you getting the sessionctx.
-func (sg *sessionGenerator) getSessionCtx() (sessionctx.Context, error) {
+// get gets sessionctx from context resource pool.
+// Please remember to call put after you finished using sessionctx.
+func (sg *sessionPool) get() (sessionctx.Context, error) {
 	if sg.resPool == nil {
 		return mock.NewContext(), nil
 	}
@@ -44,8 +47,8 @@ func (sg *sessionGenerator) getSessionCtx() (sessionctx.Context, error) {
 	return ctx, nil
 }
 
-// putSessionCtx returns sessionctx to context resource pool.
-func (sg *sessionGenerator) putSessionCtx(ctx sessionctx.Context) {
+// put returns sessionctx to context resource pool.
+func (sg *sessionPool) put(ctx sessionctx.Context) {
 	if sg.resPool == nil {
 		return
 	}
@@ -53,11 +56,14 @@ func (sg *sessionGenerator) putSessionCtx(ctx sessionctx.Context) {
 	sg.resPool.Put(ctx.(pools.Resource))
 }
 
-// close clean up the sessionGenerator.
-func (sg *sessionGenerator) close() {
+// close clean up the sessionPool.
+func (sg *sessionPool) close() {
+	sg.mu.Lock()
+	defer sg.mu.Unlock()
 	if sg.resPool == nil {
 		return
 	}
 
 	sg.resPool.Close()
+	sg.resPool = nil
 }

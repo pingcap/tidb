@@ -48,23 +48,23 @@ type delRangeManager interface {
 }
 
 type delRange struct {
-	store         kv.Storage
-	sessGenerator *sessionGenerator
-	storeSupport  bool
-	emulatorCh    chan struct{}
-	keys          []kv.Key
-	quitCh        chan struct{}
+	store        kv.Storage
+	sessPool     *sessionPool
+	storeSupport bool
+	emulatorCh   chan struct{}
+	keys         []kv.Key
+	quitCh       chan struct{}
 
 	wait sync.WaitGroup // wait is only used when storeSupport is false.
 }
 
 // newDelRangeManager returns a delRangeManager.
-func newDelRangeManager(store kv.Storage, sessGenerator *sessionGenerator) delRangeManager {
+func newDelRangeManager(store kv.Storage, sessPool *sessionPool) delRangeManager {
 	dr := &delRange{
-		store:         store,
-		sessGenerator: sessGenerator,
-		storeSupport:  store.SupportDeleteRange(),
-		quitCh:        make(chan struct{}),
+		store:        store,
+		sessPool:     sessPool,
+		storeSupport: store.SupportDeleteRange(),
+		quitCh:       make(chan struct{}),
 	}
 	if !dr.storeSupport {
 		dr.emulatorCh = make(chan struct{}, delBackLog)
@@ -75,11 +75,11 @@ func newDelRangeManager(store kv.Storage, sessGenerator *sessionGenerator) delRa
 
 // addDelRangeJob implements delRangeManager interface.
 func (dr *delRange) addDelRangeJob(job *model.Job) error {
-	ctx, err := dr.sessGenerator.getSessionCtx()
+	ctx, err := dr.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer dr.sessGenerator.putSessionCtx(ctx)
+	defer dr.sessPool.put(ctx)
 
 	err = insertJobIntoDeleteRangeTable(ctx, job)
 	if err != nil {
@@ -105,7 +105,7 @@ func (dr *delRange) clear() {
 	log.Infof("[ddl] closing delRange session pool")
 	close(dr.quitCh)
 	dr.wait.Wait()
-	dr.sessGenerator.close()
+	dr.sessPool.close()
 }
 
 // startEmulator is only used for those storage engines which don't support
@@ -126,12 +126,12 @@ func (dr *delRange) startEmulator() {
 }
 
 func (dr *delRange) doDelRangeWork() error {
-	ctx, err := dr.sessGenerator.getSessionCtx()
+	ctx, err := dr.sessPool.get()
 	if err != nil {
 		log.Errorf("[ddl] delRange emulator get session fail: %s", err)
 		return errors.Trace(err)
 	}
-	defer dr.sessGenerator.putSessionCtx(ctx)
+	defer dr.sessPool.put(ctx)
 
 	ranges, err := util.LoadDeleteRanges(ctx, math.MaxInt64)
 	if err != nil {
