@@ -297,19 +297,37 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
-func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk) (err error) {
+func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh chan struct{}) {
+	defer func() {
+		close(chkCh)
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("hash join inner fetcher panic stack is:\n%s", buf)
+		}
+	}()
 	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
-	defer close(chkCh)
+	var err error
 	for {
-		chk := e.children[e.innerIdx].newChunk()
-		err = e.innerExec.Next(ctx, chk)
-		if err != nil || chk.NumRows() == 0 {
-			return errors.Trace(err)
+		select {
+		case <-doneCh:
+			return
+		default:
+			chk := e.children[e.innerIdx].newChunk()
+			err = e.innerExec.Next(ctx, chk)
+			if err != nil {
+				e.innerFinished <- errors.Trace(err)
+				return
+			}
+			if chk.NumRows() == 0 {
+				return
+			}
+			chkCh <- chk
+			e.innerResult.Add(chk)
 		}
-		chkCh <- chk
-		e.innerResult.Add(chk)
 	}
 }
 
@@ -535,6 +553,8 @@ func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 }
 
 func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
+	chkCh := make(chan *chunk.Chunk, e.concurrency)
+	doneCh := make(chan struct{})
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -546,17 +566,18 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 		close(e.innerFinished)
 	}()
 
-	chkCh := make(chan *chunk.Chunk, 10)
-	go func() {
-		if err := e.fetchInnerRows(ctx, chkCh); err != nil {
-			e.innerFinished <- errors.Trace(err)
-			return
-		}
-	}()
+	go e.fetchInnerRows(ctx, chkCh, doneCh)
 
-	if err := e.buildHashTableForList(chkCh); err != nil {
+	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
+	err := e.buildHashTableForList(chkCh)
+	if err != nil {
 		e.innerFinished <- errors.Trace(err)
-		return
+		close(doneCh)
+		// Func fetchInnerRows may blocked by this channel, so read from the channel to unblock it.
+		select {
+		case <-chkCh:
+		default:
+		}
 	}
 }
 
