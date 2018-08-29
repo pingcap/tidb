@@ -39,11 +39,6 @@ func (r Row) Idx() int {
 	return r.idx
 }
 
-// SetRowIdx sets the row index of chunk.
-func (r *Row) SetRowIdx(idx int) {
-	r.idx = idx
-}
-
 // Len returns the number of values in the row.
 func (r Row) Len() int {
 	return r.c.NumCols()

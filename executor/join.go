@@ -181,44 +181,6 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 	return false, keyBuf, err
 }
 
-func (e *HashJoinExec) getJoinKeyFromChunk(isOuterKey bool, chk *chunk.Chunk, numRows int, keysBuf [][]byte, isNulls []bool) ([]bool, [][]byte, error) {
-	if numRows == 0 {
-		return isNulls, keysBuf, nil
-	}
-	var err error
-	var keyColIdx []int
-	var allTypes []*types.FieldType
-	if isOuterKey {
-		keyColIdx = e.outerKeyColIdx
-		allTypes = e.outerExec.retTypes()
-	} else {
-		keyColIdx = e.innerKeyColIdx
-		allTypes = e.innerExec.retTypes()
-	}
-
-	isNulls = isNulls[:0]
-	for i := 0; i < numRows; i++ {
-		isNulls = append(isNulls, false)
-		keysBuf[i] = keysBuf[i][:0]
-	}
-	row := chk.GetRow(0)
-	for _, i := range keyColIdx {
-		for j := 0; j < numRows; j++ {
-			if isNulls[j] {
-				continue
-			}
-			row.SetRowIdx(j)
-			isNulls[j] = row.IsNull(i)
-		}
-	}
-
-	keysBuf, err = codec.HashChunk(e.ctx.GetSessionVars().StmtCtx, keysBuf, chk, isNulls, numRows, allTypes, keyColIdx)
-	if err != nil {
-		err = errors.Trace(err)
-	}
-	return isNulls, keysBuf, err
-}
-
 // fetchOuterChunks get chunks from fetches chunks from the big table in a background goroutine
 // and sends the chunks to multiple channels which will be read by multiple join workers.
 func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
@@ -591,29 +553,26 @@ func (e *HashJoinExec) buildHashTableForList(chkCh chan *chunk.Chunk) error {
 		e.innerKeyColIdx[i] = e.innerKeys[i].Index
 	}
 	var (
-		err      error
-		keysBuf  = make([][]byte, 0, e.maxChunkSize)
-		hasNulls = make([]bool, 0, e.maxChunkSize)
-		valBuf   = make([]byte, 8)
+		hasNull bool
+		err     error
+		keyBuf  = make([]byte, 0, 64)
+		valBuf  = make([]byte, 8)
 	)
-	for i := 0; i < e.maxChunkSize; i++ {
-		keysBuf = append(keysBuf, make([]byte, 0, 64))
-	}
 
 	numChks := 0
 	for chk := range chkCh {
 		numRows := chk.NumRows()
-		hasNulls, keysBuf, err = e.getJoinKeyFromChunk(false, chk, numRows, keysBuf, hasNulls)
-		if err != nil {
-			return errors.Trace(err)
-		}
 		for j := 0; j < numRows; j++ {
-			if hasNulls[j] {
+			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if hasNull {
 				continue
 			}
 			rowPtr := chunk.RowPtr{ChkIdx: uint32(numChks), RowIdx: uint32(j)}
 			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
-			e.hashTable.Put(keysBuf[j], valBuf)
+			e.hashTable.Put(keyBuf, valBuf)
 		}
 		numChks++
 	}
