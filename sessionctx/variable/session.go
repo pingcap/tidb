@@ -248,7 +248,7 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
-	// AllowInSubqueryRewriting can be set to true to fold in subquery
+	// AllowInSubqueryRewriting can be set to false to forbid rewriting the semi join to inner join with agg.
 	AllowInSubqueryRewriting bool
 
 	// CurrInsertValues is used to record current ValuesExpr's values.

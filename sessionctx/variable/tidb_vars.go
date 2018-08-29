@@ -113,7 +113,7 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
-	// tidb_opt_insubquery_rewriting is used to enable/disable the optimizer rule of in subquery unfold.
+	// tidb_opt_insubquery_rewriting is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqRewriting = "tidb_opt_insubquery_rewriting"
 
 	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
