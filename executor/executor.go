@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -135,6 +136,16 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 	return e
 }
 
+func (e baseExecutor) withInitCap(initCap int) (ret baseExecutor) {
+	e.initCap = initCap
+	return e
+}
+
+func (e baseExecutor) withMaxChunkSize(maxChunkSize int) (ret baseExecutor) {
+	e.maxChunkSize = maxChunkSize
+	return e
+}
+
 // Executor is the physical implementation of a algebra operator.
 //
 // In TiDB, all algebra operators are implemented as iterators, i.e., they
@@ -170,7 +181,7 @@ func (e *CancelDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.cursor >= len(e.jobIDs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobIDs)-e.cursor)
+	numCurBatch := mathutil.Min(chk.Capacity(), len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		chk.AppendString(0, fmt.Sprintf("%d", e.jobIDs[i]))
 		if e.errs[i] != nil {
@@ -266,7 +277,7 @@ func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, chk *chunk.Chunk) erro
 	if len(e.jobIDs) >= len(e.jobs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
+	numCurBatch := mathutil.Min(chk.Capacity(), len(e.jobs)-e.cursor)
 	for _, id := range e.jobIDs {
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 			if id == e.jobs[i].ID {
@@ -306,7 +317,7 @@ func (e *ShowDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.cursor >= len(e.jobs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.maxChunkSize, len(e.jobs)-e.cursor)
+	numCurBatch := mathutil.Min(chk.Capacity(), len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		chk.AppendInt64(0, e.jobs[i].ID)
 		chk.AppendString(1, getSchemaName(e.is, e.jobs[i].SchemaID))
@@ -630,8 +641,8 @@ func init() {
 		if err != nil {
 			return rows, errors.Trace(err)
 		}
+		chk := exec.newChunk()
 		for {
-			chk := exec.newChunk()
 			err = exec.Next(ctx, chk)
 			if err != nil {
 				return rows, errors.Trace(err)
@@ -644,6 +655,7 @@ func init() {
 				row := r.GetDatumRow(exec.retTypes())
 				rows = append(rows, row)
 			}
+			chk = chunk.Renew(chk, variable.DefMaxChunkSize)
 		}
 	}
 }
@@ -716,7 +728,7 @@ func (e *SelectionExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+	chk.GrowAndReset(e.maxChunkSize)
 
 	if !e.batched {
 		return errors.Trace(e.unBatchedNext(ctx, chk))
@@ -727,7 +739,7 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			if !e.selected[e.inputRow.Idx()] {
 				continue
 			}
-			if chk.NumRows() == e.maxChunkSize {
+			if chk.NumRows() >= chk.Capacity() {
 				return nil
 			}
 			chk.AppendRow(e.inputRow)
@@ -801,7 +813,7 @@ func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 
 	mutableRow := chunk.MutRowFromTypes(e.retTypes())
-	for chk.NumRows() < e.maxChunkSize {
+	for chk.NumRows() < chk.Capacity() {
 		row, err := e.getRow(handle)
 		if err != nil {
 			return errors.Trace(err)

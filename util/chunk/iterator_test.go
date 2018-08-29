@@ -21,7 +21,7 @@ import (
 
 func (s *testChunkSuite) TestIterator(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
-	chk := NewChunkWithCapacity(fields, 32)
+	chk := New(fields, 32, 1024)
 	n := 10
 	var expected []int64
 	for i := 0; i < n; i++ {

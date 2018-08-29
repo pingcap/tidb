@@ -29,7 +29,7 @@ type MockExec struct {
 func (m *MockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	colTypes := m.retTypes()
-	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < m.maxChunkSize; m.curRowIdx++ {
+	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < chk.Capacity(); m.curRowIdx++ {
 		curRow := m.Rows[m.curRowIdx]
 		for i := 0; i < curRow.Len(); i++ {
 			curDatum := curRow.ToRow().GetDatum(i, colTypes[i])

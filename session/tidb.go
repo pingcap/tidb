@@ -205,9 +205,9 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs ast.RecordSet
 		return nil, nil
 	}
 	var rows []chunk.Row
+	chk := rs.NewChunk()
 	for {
 		// Since we collect all the rows, we can not reuse the chunk.
-		chk := rs.NewChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
 		err := rs.Next(ctx, chk)
@@ -221,6 +221,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs ast.RecordSet
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			rows = append(rows, row)
 		}
+		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
 	}
 	return rows, nil
 }
