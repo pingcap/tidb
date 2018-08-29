@@ -393,6 +393,18 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(hg.Len(), Equals, 3)
 }
 
+func (s *testStatsUpdateSuite) TestZeroColSizeUpdate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a varchar(20))")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("insert into t values ('ss')")
+	testKit.MustExec("delete from t")
+	h := s.do.StatsHandle()
+	c.Assert(h.DumpStatsDeltaToKV(), IsNil)
+}
+
 func appendBucket(h *statistics.Histogram, l, r int64) {
 	lower, upper := types.NewIntDatum(l), types.NewIntDatum(r)
 	h.AppendBucket(&lower, &upper, 0, 0)
