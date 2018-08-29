@@ -341,7 +341,7 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 	if idxCols == 0 {
 		return value.ToString()
 	}
-	decodedVals, err := codec.Decode(value.GetBytes(), idxCols)
+	decodedVals, err := codec.DecodeRange(value.GetBytes(), idxCols)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
@@ -350,6 +350,14 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 		return "", errors.Trace(err)
 	}
 	return str, nil
+}
+
+func (hg *Histogram) bucketToString(bktID, idxCols int) string {
+	upperVal, err := ValueToString(hg.GetUpper(bktID), idxCols)
+	terror.Log(errors.Trace(err))
+	lowerVal, err := ValueToString(hg.GetLower(bktID), idxCols)
+	terror.Log(errors.Trace(err))
+	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat)
 }
 
 // ToString gets the string representation for the histogram.
@@ -361,11 +369,7 @@ func (hg *Histogram) ToString(idxCols int) string {
 		strs = append(strs, fmt.Sprintf("column:%d ndv:%d totColSize:%d", hg.ID, hg.NDV, hg.TotColSize))
 	}
 	for i := 0; i < hg.Len(); i++ {
-		upperVal, err := ValueToString(hg.GetUpper(i), idxCols)
-		terror.Log(errors.Trace(err))
-		lowerVal, err := ValueToString(hg.GetLower(i), idxCols)
-		terror.Log(errors.Trace(err))
-		strs = append(strs, fmt.Sprintf("num: %d\tlower_bound: %s\tupper_bound: %s\trepeats: %d", hg.Buckets[i].Count, lowerVal, upperVal, hg.Buckets[i].Repeat))
+		strs = append(strs, hg.bucketToString(i, idxCols))
 	}
 	return strings.Join(strs, "\n")
 }
@@ -405,14 +409,14 @@ func (hg *Histogram) greaterAndEqRowCount(value types.Datum) float64 {
 }
 
 // lessRowCount estimates the row count where the column less than value.
-func (hg *Histogram) lessRowCount(value types.Datum) float64 {
+func (hg *Histogram) lessRowCountWithBktIdx(value types.Datum) (float64, int) {
 	// all the values is null
 	if hg.Bounds == nil {
-		return 0
+		return 0, 0
 	}
 	index, match := hg.Bounds.LowerBound(0, &value)
 	if index == hg.Bounds.NumRows() {
-		return hg.totalRowCount()
+		return hg.totalRowCount(), hg.Len() - 1
 	}
 	// Since we store the lower and upper bound together, so dividing the index by 2 will get the bucket index.
 	bucketIdx := index / 2
@@ -423,11 +427,16 @@ func (hg *Histogram) lessRowCount(value types.Datum) float64 {
 	}
 	if index%2 == 1 {
 		if match {
-			return curCount - curRepeat
+			return curCount - curRepeat, bucketIdx
 		}
-		return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount)
+		return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount), bucketIdx
 	}
-	return preCount
+	return preCount, bucketIdx
+}
+
+func (hg *Histogram) lessRowCount(value types.Datum) float64 {
+	result, _ := hg.lessRowCountWithBktIdx(value)
+	return result
 }
 
 // lessAndEqRowCount estimates the row count where the column less than or equal to value.

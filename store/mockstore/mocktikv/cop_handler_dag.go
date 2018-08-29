@@ -145,17 +145,13 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	sc := flagsToStatementContext(dagReq.Flags)
 
-	// retrieving timezone by name first. When name is set, it means we need
-	// consider daylight saving time. If it is not, we can use offset.
-	if dagReq.TimeZoneName != "" {
-		if sc.TimeZone, err = LocCache.getLoc(dagReq.TimeZoneName); err != nil {
-			return nil, nil, nil, errors.Trace(err)
-		}
-	} else {
-		sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	sc := flagsToStatementContext(dagReq.Flags)
+	sc.TimeZone, err = constructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
 	}
+
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
@@ -166,6 +162,16 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		return nil, nil, nil, errors.Trace(err)
 	}
 	return ctx, e, dagReq, err
+}
+
+// constructTimeZone constructs timezone by name first. When the timezone name
+// is set, the daylight saving problem must be considered. Otherwise the
+// timezone offset in seconds east of UTC is used to constructed the timezone.
+func constructTimeZone(name string, offset int) (*time.Location, error) {
+	if name != "" {
+		return LocCache.getLoc(name)
+	}
+	return time.FixedZone("", offset), nil
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
