@@ -670,8 +670,13 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		er.err = errors.Trace(err)
 		return v, true
 	}
-	if !v.Not && !asScalar {
+	if !v.Not && !asScalar && len(np.extractCorrelatedCols()) == 0 {
+		er.b.optFlag |= flagEliminateAgg
+		er.b.optFlag |= flagEliminateProjection2
 		agg := er.b.buildDistinct(np, np.Schema().Len())
+		for _, col := range agg.schema.Columns {
+			col.IsAggOrSubq = true
+		}
 		eq, left, right, other := extractOnCondition(expression.SplitCNFItems(checkCondition), er.p, agg)
 		join := LogicalJoin{
 			JoinType:        InnerJoin,
@@ -682,14 +687,14 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		}.init(er.ctx)
 		join.SetChildren(er.p, agg)
 		join.SetSchema(expression.MergeSchema(er.p.Schema(), agg.schema))
-		proj := LogicalProjection{}.init(er.ctx)
-		proj.Exprs = make([]expression.Expression, 0, er.p.Schema().Len())
-		for _, col := range er.p.Schema().Columns {
-			proj.Exprs = append(proj.Exprs, col)
+		// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
+		if er.b.TableHints() != nil {
+			er.err = join.setPreferredJoinType(er.b.TableHints())
+			if er.err != nil {
+				return v, true
+			}
 		}
-		proj.SetSchema(er.p.Schema())
-		proj.SetChildren(join)
-		er.p = proj
+		er.p = join
 	} else {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not)
 		if er.err != nil {
