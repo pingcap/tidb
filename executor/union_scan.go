@@ -125,7 +125,7 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+	chk.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	for i, batchSize := 0, chk.Capacity(); i < batchSize; i++ {
 		row, err := us.getOneRow(ctx)
