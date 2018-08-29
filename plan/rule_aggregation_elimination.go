@@ -123,4 +123,3 @@ func (a *aggregationEliminater) optimize(p LogicalPlan) (LogicalPlan, error) {
 	}
 	return p, nil
 }
-
