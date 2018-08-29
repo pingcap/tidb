@@ -56,7 +56,7 @@ func (b *executorBuilder) buildTrace(v *plan.Trace) Executor {
 		case *plan.PhysicalTableReader, *plan.PhysicalIndexReader, *plan.PhysicalIndexLookUpReader, *plan.PhysicalHashAgg, *plan.PhysicalProjection, *plan.PhysicalStreamAgg, *plan.PhysicalSort:
 			e.children = append(e.children, b.build(p))
 		default:
-			panic(fmt.Sprintf("%v is not supported", child))
+			b.err = errors.Errorf("%v is not supported", child)
 		}
 
 	}

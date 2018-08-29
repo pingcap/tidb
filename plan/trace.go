@@ -24,7 +24,7 @@ func (b *planBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 
 	optimizedP, err := Optimize(b.ctx, trace.Stmt, b.is)
 	if err != nil {
-		return nil, errors.New("fail to optimize during build trace")
+		return nil, err
 	}
 	p := &Trace{StmtPlan: optimizedP}
 
