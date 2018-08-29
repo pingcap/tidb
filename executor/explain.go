@@ -35,7 +35,7 @@ func (e *ExplainExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *ExplainExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+	chk.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.rows) {
 		return nil
 	}

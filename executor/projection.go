@@ -139,7 +139,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //  +------------------------------+       +----------------------+
 //
 func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+	chk.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {
 		return errors.Trace(e.unParallelExecute(ctx, chk))
 	}
