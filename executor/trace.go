@@ -97,9 +97,12 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	// store span into context
 	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)
 	if len(e.children) > 0 {
-		for e.childrenResults[0].NumRows() != 0 {
+		for {
 			if err := e.children[0].Next(ctx, e.childrenResults[0]); err != nil {
 				return errors.Trace(err)
+			}
+			if e.childrenResults[0].NumRows() != 0 {
+				break
 			}
 		}
 	}
