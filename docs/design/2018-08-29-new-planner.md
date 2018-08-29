@@ -1,7 +1,7 @@
 # Proposal: A SQL Planner based on the Volcano/Cascades model
 
-- Author(s):     Zhang Jian
-- Last updated:  2018-08-16
+- Author(s):     [zz-jason](https://github.com/zz-jason)
+- Last updated:  2018-08-29
 - Discussion at:
 
 ## Abstract
