@@ -38,6 +38,7 @@ type Chunk struct {
 // Capacity constants.
 const (
 	InitialCapacity = 32
+	NoDataChunkCap  = -1
 )
 
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
@@ -50,6 +51,9 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 //  maxChunkSize: the max limit for the number of rows.
 func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	chk := new(Chunk)
+	if cap == NoDataChunkCap {
+		return chk
+	}
 	chk.columns = make([]*column, 0, len(fields))
 	chk.capacity = mathutil.Min(cap, maxChunkSize)
 	for _, f := range fields {
@@ -70,8 +74,11 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 //  chk: old chunk(often used in previous call).
 //  maxChunkSize: the limit for the max number of rows.
 func Renew(chk *Chunk, maxChunkSize int) *Chunk {
-	newCap := reCalcCapacity(chk, maxChunkSize)
 	newChk := new(Chunk)
+	if chk.columns == nil {
+		return newChk
+	}
+	newCap := reCalcCapacity(chk, maxChunkSize)
 	newChk.columns = renewColumns(chk.columns, newCap)
 	newChk.numVirtualRows = 0
 	newChk.capacity = newCap
@@ -153,6 +160,9 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
+	if c.columns == nil {
+		return
+	}
 	for _, col := range c.columns {
 		col.reset()
 	}
