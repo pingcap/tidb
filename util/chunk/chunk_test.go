@@ -262,9 +262,9 @@ func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
 	chk := &Chunk{}
 	for _, l := range elemLen {
 		if l > 0 {
-			chk.addFixedLenColumn(l, cap)
+			chk.columns = append(chk.columns, newFixedLenColumn(l, cap))
 		} else {
-			chk.addVarLenColumn(cap)
+			chk.columns = append(chk.columns, newVarLenColumn(cap, nil))
 		}
 	}
 	return chk
