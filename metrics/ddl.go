@@ -63,7 +63,7 @@ var (
 			Name:      "update_self_ver_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of update self version",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
-		}, []string{LblResult})
+		}, []string{LblVersion, LblResult})
 
 	OwnerUpdateGlobalVersion   = "update_global_version"
 	OwnerGetGlobalVersion      = "get_global_version"
@@ -75,10 +75,11 @@ var (
 			Name:      "owner_handle_syncer_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle syncer",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
-		}, []string{LblType, LblResult})
+		}, []string{LblType, LblVersion, LblResult})
 
 	// Metrics for ddl_worker.go.
 	WorkerAddDDLJob         = "add_job"
+	WorkerRunDDLJob         = "run_job"
 	WorkerFinishDDLJob      = "finish_job"
 	WorkerWaitSchemaChanged = "wait_schema_changed"
 	DDLWorkerHistogram      = prometheus.NewHistogramVec(
@@ -88,7 +89,7 @@ var (
 			Name:      "worker_operation_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of ddl worker operations",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
-		}, []string{LblType, LblResult})
+		}, []string{LblType, LblAction, LblResult})
 
 	CreateDDLInstance = "create_ddl_instance"
 	CreateDDL         = "create_ddl"
@@ -100,15 +101,12 @@ var (
 			Name:      "worker_operation_total",
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{LblType})
+)
 
-	// DDLJobErrCounter is the counter of error occurred in ddl job.
-	DDLJobErrCounter = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ddl",
-			Name:      "job_error_total",
-			Help:      "Counter of error occurred in ddl job.",
-		})
+// Label constants.
+const (
+	LblAction  = "action"
+	LblVersion = "version"
 )
 
 func init() {
@@ -120,5 +118,4 @@ func init() {
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)
 	prometheus.MustRegister(DDLWorkerHistogram)
 	prometheus.MustRegister(DDLCounter)
-	prometheus.MustRegister(DDLJobErrCounter)
 }

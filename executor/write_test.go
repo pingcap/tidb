@@ -19,15 +19,12 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -1000,7 +997,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	_, err = tk.Exec("update ignore t set a = 1 where a = 2;")
 	c.Assert(err, IsNil)
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1062 key already exist"))
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'I_uniq'"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 
 	tk.MustExec("drop table if exists t")
@@ -1426,7 +1423,10 @@ func (s *testSuite) TestLoadData(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	ctx := tk.Se.(sessionctx.Context)
-	ld := makeLoadDataInfo(4, nil, ctx, c)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
@@ -1582,7 +1582,10 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	ctx := tk.Se.(sessionctx.Context)
-	ld := makeLoadDataInfo(2, nil, ctx, c)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
 	// test escape
 	tests := []testCase{
 		// data1 = nil, data2 != nil
@@ -1607,7 +1610,10 @@ func (s *testSuite) TestLoadDataSpecifiedColumns(c *C) {
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)")
 	ctx := tk.Se.(sessionctx.Context)
-	ld := makeLoadDataInfo(2, []string{"c1", "c2"}, ctx, c)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
 	// test
 	tests := []testCase{
 		// data1 = nil, data2 != nil
@@ -1622,27 +1628,6 @@ func (s *testSuite) TestLoadDataSpecifiedColumns(c *C) {
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
-}
-
-func makeLoadDataInfo(column int, specifiedColumns []string, ctx sessionctx.Context, c *C) (ld *executor.LoadDataInfo) {
-	dom := domain.GetDomain(ctx)
-	is := dom.InfoSchema()
-	c.Assert(is, NotNil)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("load_data_test"))
-	c.Assert(err, IsNil)
-	columns := tbl.Cols()
-	// filter specified columns
-	if len(specifiedColumns) > 0 {
-		columns, err = table.FindCols(columns, specifiedColumns, true)
-		c.Assert(err, IsNil)
-	}
-	fields := &ast.FieldsClause{Terminated: "\t"}
-	lines := &ast.LinesClause{Starting: "", Terminated: "\n"}
-	ld = executor.NewLoadDataInfo(ctx, make([]types.Datum, column), tbl, columns)
-	ld.SetMaxRowsInBatch(0)
-	ld.FieldsInfo = fields
-	ld.LinesInfo = lines
-	return
 }
 
 func (s *testSuite) TestBatchInsertDelete(c *C) {
