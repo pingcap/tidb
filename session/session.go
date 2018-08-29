@@ -616,11 +616,12 @@ func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs ast.RecordS
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		maxChunkSize := variable.DefMaxChunkSize
-		if sctx != nil {
-			maxChunkSize = sctx.GetSessionVars().MaxChunkSize
+		if sctx == nil {
+			// sadness, statistic will pass nil sctx
+			chk = chunk.Renew(chk, variable.DefMaxChunkSize)
+			continue
 		}
-		chk = chunk.Renew(chk, maxChunkSize)
+		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
 	}
 }
 

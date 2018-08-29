@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/auth"
@@ -1049,7 +1048,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		for i := 0; i < rowCount; i++ {
 			fetchedRows = append(fetchedRows, chk.GetRow(i))
 		}
-		chk = chunk.Renew(chk, variable.DefMaxChunkSize)
+		chk = chunk.Renew(chk, cc.ctx.GetSessionVars().MaxChunkSize)
 	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,

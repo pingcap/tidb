@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
@@ -655,7 +654,7 @@ func init() {
 				row := r.GetDatumRow(exec.retTypes())
 				rows = append(rows, row)
 			}
-			chk = chunk.Renew(chk, variable.DefMaxChunkSize)
+			chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
 		}
 	}
 }
