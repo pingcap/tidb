@@ -748,6 +748,16 @@ func (t *tableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.Retriev
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *tableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index) error {
 	if _, err := idx.Create(ctx, rm, vals, h); err != nil {
+		if kv.ErrKeyExists.Equal(err) {
+			// Make error message consistent with MySQL.
+			entryKey, err1 := t.genIndexKeyStr(vals)
+			if err1 != nil {
+				// if genIndexKeyStr failed, return the original error.
+				return errors.Trace(err)
+			}
+
+			return kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, idx.Meta().Name)
+		}
 		return errors.Trace(err)
 	}
 	return nil

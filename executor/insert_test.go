@@ -97,6 +97,18 @@ func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 2 3`))
 }
 
+func (s *testSuite) TestUpdateDuplicateKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table c(i int,j int,k int,primary key(i,j,k));`)
+	tk.MustExec(`insert into c values(1,2,3);`)
+	tk.MustExec(`insert into c values(1,2,4);`)
+	_, err := tk.Exec(`update c set i=1,j=2,k=4 where i=1 and j=2 and k=3;`)
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
+}
+
 func (s *testSuite) TestInsertWrongValueForField(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
