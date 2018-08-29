@@ -186,6 +186,8 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	return errors.Trace(err)
 }
 
+// If one drop those tables by mistake, it's difficult to recover.
+// In the worst case, the whole TiDB cluster fails to bootstrap, so we prevent user from dropping them.
 var systemTables = map[string]struct{}{
 	"tidb":                 {},
 	"gc_delete_range":      {},
