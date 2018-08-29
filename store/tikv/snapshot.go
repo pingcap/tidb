@@ -283,7 +283,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 
 // Seek return a list of key-value pair after `k`.
 func (s *tikvSnapshot) Seek(k kv.Key) (kv.Iterator, error) {
-	scanner, err := newScanner(s, k, scanBatchSize, s.keyOnly)
+	scanner, err := newScanner(s, k, scanBatchSize)
 	return scanner, errors.Trace(err)
 }
 

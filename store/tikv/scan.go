@@ -27,14 +27,13 @@ type Scanner struct {
 	snapshot     *tikvSnapshot
 	batchSize    int
 	valid        bool
-	keyOnly      bool
 	cache        []*pb.KvPair
 	idx          int
 	nextStartKey []byte
 	eof          bool
 }
 
-func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int, keyOnly bool) (*Scanner, error) {
+func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int) (*Scanner, error) {
 	// It must be > 1. Otherwise scanner won't skipFirst.
 	if batchSize <= 1 {
 		batchSize = scanBatchSize
@@ -43,7 +42,6 @@ func newScanner(snapshot *tikvSnapshot, startKey []byte, batchSize int, keyOnly 
 		snapshot:     snapshot,
 		batchSize:    batchSize,
 		valid:        true,
-		keyOnly:      keyOnly,
 		nextStartKey: startKey,
 	}
 	err := scanner.Next()
@@ -148,7 +146,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				StartKey: s.nextStartKey,
 				Limit:    uint32(s.batchSize),
 				Version:  s.startTS(),
-				KeyOnly:  s.keyOnly,
+				KeyOnly:  s.snapshot.keyOnly,
 			},
 			Context: pb.Context{
 				Priority:     s.snapshot.priority,
