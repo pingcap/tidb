@@ -91,7 +91,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		innerFilter:  []expression.Expression{innerFilter},
 		joiner:       joiner,
 	}
-	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.maxChunkSize)
+	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.initCap, innerExec.maxChunkSize)
 	join.innerChunk = innerExec.newChunk()
 	join.outerChunk = outerExec.newChunk()
 	joinChk := join.newChunk()

@@ -65,6 +65,7 @@ type baseExecutor struct {
 	ctx           sessionctx.Context
 	id            string
 	schema        *expression.Schema
+	initCap       int
 	maxChunkSize  int
 	children      []Executor
 	retFieldTypes []*types.FieldType
@@ -102,7 +103,7 @@ func (e *baseExecutor) Schema() *expression.Schema {
 
 // newChunk creates a new chunk to buffer current executor's result.
 func (e *baseExecutor) newChunk() *chunk.Chunk {
-	return chunk.NewChunkWithCapacity(e.retTypes(), e.maxChunkSize)
+	return chunk.New(e.retTypes(), e.initCap, e.maxChunkSize)
 }
 
 // retTypes returns all output column types.
@@ -121,6 +122,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		ctx:          ctx,
 		id:           id,
 		schema:       schema,
+		initCap:      ctx.GetSessionVars().MaxChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	if schema != nil {
@@ -814,7 +816,7 @@ func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (e *TableScanExec) nextChunk4InfoSchema(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.virtualTableChunkList == nil {
-		e.virtualTableChunkList = chunk.NewList(e.retTypes(), e.maxChunkSize)
+		e.virtualTableChunkList = chunk.NewList(e.retTypes(), e.initCap, e.maxChunkSize)
 		columns := make([]*table.Column, e.schema.Len())
 		for i, colInfo := range e.columns {
 			columns[i] = table.ToColumn(colInfo)

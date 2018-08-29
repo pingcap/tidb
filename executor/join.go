@@ -260,7 +260,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context) (err error) {
-	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
 	for {
@@ -598,7 +598,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerRows = e.innerRows[:0]
 	e.outerChunk = e.outerExec.newChunk()
 	e.innerChunk = e.innerExec.newChunk()
-	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
