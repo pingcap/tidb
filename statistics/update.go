@@ -262,7 +262,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 	vals, err := encodeFeedback(fb)
 	if err != nil {
-		log.Debugf("error occurred when encoding feedback, err: ", errors.ErrorStack(err))
+		log.Debugf("error occurred when encoding feedback, err: %s", errors.ErrorStack(err))
 		return nil
 	}
 	var isIndex int64
