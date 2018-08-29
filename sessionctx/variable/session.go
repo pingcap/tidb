@@ -314,6 +314,7 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                DefTiDBRetryLimit,
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
+		AllowInSubqueryRewriting:  DefOptInSubqRewriting,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
