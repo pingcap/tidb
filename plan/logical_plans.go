@@ -301,8 +301,8 @@ type DataSource struct {
 	possibleAccessPaths []*accessPath
 
 	// The data source may be a partition, rather than a real table.
-	isPartition bool
-	partitionID int64
+	isPartition     bool
+	physicalTableID int64
 }
 
 // accessPath tells how we access one index or just access table.
@@ -484,14 +484,15 @@ func (path *accessPath) splitCorColAccessCondFromFilters() (access, remained []e
 	for i := path.eqCondCount; i < len(path.idxCols); i++ {
 		matched := false
 		for j, filter := range path.tableFilters {
-			if !isColEqCorColOrConstant(filter, path.idxCols[i]) {
-				break
+			if used[j] || !isColEqCorColOrConstant(filter, path.idxCols[i]) {
+				continue
 			}
 			matched = true
 			access[i-path.eqCondCount] = filter
 			if path.idxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
 			}
+			break
 		}
 		if !matched {
 			access = access[:i-path.eqCondCount]

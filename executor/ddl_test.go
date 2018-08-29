@@ -411,11 +411,11 @@ func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
 	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
 	_, err := tk.Exec("set tidb_ddl_reorg_worker_cnt = invalid_val")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
 	_, err = tk.Exec("set tidb_ddl_reorg_worker_cnt = -1")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
 	res := tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")

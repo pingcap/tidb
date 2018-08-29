@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -234,6 +235,9 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 	return r.slice(0, n), r.slice(n, r.len())
 }
 
+// rangesPerTask limits the length of the ranges slice sent in one copTask.
+const rangesPerTask = 25000
+
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool, streaming bool) ([]*copTask, error) {
 	start := time.Now()
 	rangesLen := ranges.len()
@@ -244,12 +248,19 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 
 	var tasks []*copTask
 	appendTask := func(region RegionVerID, ranges *copRanges) {
-		tasks = append(tasks, &copTask{
-			region:   region,
-			ranges:   ranges,
-			respChan: make(chan *copResponse, 1),
-			cmdType:  cmdType,
-		})
+		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
+		// to make sure the message can be sent successfully.
+		rLen := ranges.len()
+		for i := 0; i < rLen; {
+			nextI := mathutil.Min(i+rangesPerTask, rLen)
+			tasks = append(tasks, &copTask{
+				region:   region,
+				ranges:   ranges.slice(i, nextI),
+				respChan: make(chan *copResponse, 1),
+				cmdType:  cmdType,
+			})
+			i = nextI
+		}
 	}
 
 	err := splitRanges(bo, cache, ranges, appendTask)
@@ -593,6 +604,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			Priority:       kvPriorityToCommandPri(worker.req.Priority),
 			NotFillCache:   worker.req.NotFillCache,
 			HandleTime:     true,
+			ScanDetail:     true,
 		},
 	}
 	startTime := time.Now()
