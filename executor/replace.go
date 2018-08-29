@@ -15,7 +15,6 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -83,17 +82,6 @@ func (e *ReplaceExec) removeRow(handle int64, r toBeCheckedRow) (bool, error) {
 	return false, nil
 }
 
-// addRow adds a row when all the duplicate key were checked.
-func (e *ReplaceExec) addRow(row []types.Datum) (int64, error) {
-	// Set kv.PresumeKeyNotExists is safe here, because we've already removed all duplicated rows.
-	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
-	h, err := e.Table.AddRecord(e.ctx, row, false)
-	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return h, nil
-}
 
 // replaceRow removes all duplicate rows for one row, then inserts it.
 func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
@@ -129,7 +117,7 @@ func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
 	}
 
 	// No duplicated rows now, insert the row.
-	newHandle, err := e.addRow(r.row)
+	newHandle, err := e.addRecord(r.row)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -189,9 +177,6 @@ func (e *ReplaceExec) exec(newRows [][]types.Datum) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-	}
-	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
 	return nil
