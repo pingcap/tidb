@@ -5,7 +5,6 @@ create table t2 (c1 int unique, c2 int);
 insert into t2 values(1, 0), (2, 1);
 create table t3 (a bigint, b bigint, c bigint, d bigint);
 create table t4 (a int, b int, c int, index idx(a, b), primary key(a));
-set @@session.tidb_opt_insubquery_unfold = 1;
 set @@session.tidb_opt_agg_push_down = 1;
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	count	task	operator info
@@ -87,14 +86,22 @@ TableReader_7	0.33	root	data:Selection_6
   └─TableScan_5	1.00	cop	table:t1, range:[1,1], keep order:false, stats:pseudo
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
-StreamAgg_21	1.00	root	funcs:sum(col_0)
-└─TableReader_22	1.00	root	data:StreamAgg_13
-  └─StreamAgg_13	1.00	cop	funcs:sum(in(test.t1.c1, 1, 2))
-    └─TableScan_20	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+StreamAgg_12	1.00	root	funcs:sum(5_aux_0)
+└─MergeJoin_28	10000.00	root	left outer semi join, left key:test.t1.c1, right key:test.t2.c1
+  ├─TableReader_19	10000.00	root	data:TableScan_18
+  │ └─TableScan_18	10000.00	cop	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
+  └─IndexReader_23	10000.00	root	index:IndexScan_22
+    └─IndexScan_22	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
 explain select c1 from t1 where c1 in (select c2 from t2);
 id	count	task	operator info
-TableReader_11	2.00	root	data:TableScan_10
-└─TableScan_10	2.00	cop	table:t1, range:[0,0], [1,1], keep order:false, stats:pseudo
+Projection_8	10000.00	root	test.t1.c1
+└─IndexJoin_11	10000.00	root	inner join, inner:TableReader_10, outer key:test.t2.c2, inner key:test.t1.c1
+  ├─TableReader_10	10.00	root	data:TableScan_9
+  │ └─TableScan_9	10.00	cop	table:t1, range: decided by [test.t2.c2], keep order:false, stats:pseudo
+  └─HashAgg_18	8000.00	root	group by:col_1, funcs:firstrow(col_0)
+    └─TableReader_19	8000.00	root	data:HashAgg_14
+      └─HashAgg_14	8000.00	cop	group by:test.t2.c2, funcs:firstrow(test.t2.c2)
+        └─TableScan_17	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1;
 id	count	task	operator info
 Projection_13	10000.00	root	k
@@ -181,7 +188,6 @@ HashAgg_15	24000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
     └─IndexReader_64	8000.00	root	index:StreamAgg_54
       └─StreamAgg_54	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
         └─IndexScan_62	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
-set @@session.tidb_opt_insubquery_unfold = 0;
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
 StreamAgg_12	1.00	root	funcs:sum(5_aux_0)

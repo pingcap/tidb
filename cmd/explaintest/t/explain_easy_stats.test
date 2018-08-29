@@ -8,7 +8,6 @@ create table t3 (a bigint, b bigint, c bigint, d bigint);
 load stats 's/explain_easy_stats_t3.json';
 create table index_prune(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c tinyint(4) NOT NULL, primary key(a, b), index idx_b_c_a(b, c, a));
 load stats 's/explain_easy_stats_index_prune.json';
-set @@session.tidb_opt_insubquery_unfold = 1;
 set @@session.tidb_opt_agg_push_down = 1;
 
 
@@ -37,8 +36,6 @@ explain select c1 from t1 where c1 in (select c2 from t2);
 explain select * from information_schema.columns;
 explain select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 explain select * from t1 order by c1 desc limit 1;
-
-set @@session.tidb_opt_insubquery_unfold = 0;
 
 # explain select sum(t1.c1 in (select c1 from t2)) from t1;
 explain select 1 in (select c2 from t2) from t1;
