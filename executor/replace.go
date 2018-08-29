@@ -82,7 +82,6 @@ func (e *ReplaceExec) removeRow(handle int64, r toBeCheckedRow) (bool, error) {
 	return false, nil
 }
 
-
 // replaceRow removes all duplicate rows for one row, then inserts it.
 func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
 	if r.handleKey != nil {
