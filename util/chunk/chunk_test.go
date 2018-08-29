@@ -259,6 +259,18 @@ func newChunk(elemLen ...int) *Chunk {
 	return chk
 }
 
+func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
+	chk := &Chunk{}
+	for _, l := range elemLen {
+		if l > 0 {
+			chk.columns = append(chk.columns, newFixedLenColumn(l, cap))
+		} else {
+			chk.columns = append(chk.columns, newVarLenColumn(cap, nil))
+		}
+	}
+	return chk
+}
+
 var allTypes = []*types.FieldType{
 	types.NewFieldType(mysql.TypeTiny),
 	types.NewFieldType(mysql.TypeShort),
@@ -646,18 +658,6 @@ func BenchmarkChunkMemoryUsage(b *testing.B) {
 	}
 }
 
-func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
-	chk := &Chunk{}
-	for _, l := range elemLen {
-		if l > 0 {
-			chk.columns = append(chk.columns, newFixedLenColumn(l, cap))
-		} else {
-			chk.columns = append(chk.columns, newVarLenColumn(cap, nil))
-		}
-	}
-	return chk
-}
-
 func getChk() (*Chunk, *Chunk, Row, int, []bool) {
 	numRows := 1024
 	srcChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, 16)
@@ -707,7 +707,7 @@ func BenchmarkChunkBatchCopyJoinRow(b *testing.B) {
 	}
 }
 
-func BenchmarkChunkAppendPartialRow(b *testing.B) {
+func BenchmarkChunkAppendRow(b *testing.B) {
 	b.ReportAllocs()
 	srcChk, dstChk, _, numRows, selected := getChk()
 	b.ResetTimer()
