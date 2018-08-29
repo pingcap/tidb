@@ -475,9 +475,9 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	// For timestamp Col, if is not set default value or not set null, use current timestamp.
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
-			c.DefaultValue = types.ZeroDatetimeStr
+			c.SetDefaultValue(types.ZeroDatetimeStr)
 		} else {
-			c.DefaultValue = strings.ToUpper(ast.CurrentTimestamp)
+			c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp))
 		}
 	}
 }
