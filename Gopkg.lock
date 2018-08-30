@@ -297,12 +297,13 @@
   revision = "279515615485b0f2d12f1421cc412fe2784e0190"
 
 [[projects]]
-  branch = "master"
-  digest = "1:c9481427c87777d146d7e299c66cf08cf90a2ea2be035bb6581cfa1a78cdd39f"
+  branch = "misono/get-all-stores"
+  digest = "1:4a2513eac0b3e03b9aec4b9f9a4c844c732a335c1a6d19f4c44e948d7b00d9a6"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
   pruneopts = "NUT"
-  revision = "47a950e6649fa0151a6c5d0fc48a97c080012e3d"
+  revision = "983de7f46114e23a8b3c2f071945f3773a097c50"
+  source = "https://github.com/MyonKeminta/pd"
 
 [[projects]]
   branch = "master"
@@ -549,7 +550,6 @@
     "github.com/grpc-ecosystem/go-grpc-prometheus",
     "github.com/juju/errors",
     "github.com/ngaut/pools",
-    "github.com/opentracing/basictracer-go",
     "github.com/opentracing/opentracing-go",
     "github.com/pingcap/check",
     "github.com/pingcap/goleveldb/leveldb",

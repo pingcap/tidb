@@ -25,6 +25,8 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -45,6 +47,7 @@ type GCWorker struct {
 	uuid        string
 	desc        string
 	store       tikv.Storage
+	pdClient    pd.Client
 	gcIsRunning bool
 	lastFinish  time.Time
 	cancel      context.CancelFunc
@@ -54,7 +57,7 @@ type GCWorker struct {
 }
 
 // NewGCWorker creates a GCWorker instance.
-func NewGCWorker(store tikv.Storage) (tikv.GCHandler, error) {
+func NewGCWorker(store tikv.Storage, pdClient pd.Client) (tikv.GCHandler, error) {
 	ver, err := store.CurrentVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -67,6 +70,7 @@ func NewGCWorker(store tikv.Storage) (tikv.GCHandler, error) {
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:       store,
+		pdClient:    pdClient,
 		gcIsRunning: false,
 		lastFinish:  time.Now(),
 		done:        make(chan error),
@@ -356,21 +360,40 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 
 	log.Infof("[gc worker] %s start delete %v ranges", w.uuid, len(ranges))
 	startTime := time.Now()
-	regions := 0
 	for _, r := range ranges {
-		startKey, rangeEndKey := r.Range()
+		startKey, endKey := r.Range()
 
-		deleteRangeTask := tikv.NewDeleteRangeTask(ctx, w.store, startKey, rangeEndKey)
-		err := deleteRangeTask.Execute()
-
+		// Get all stores every time deleting a region. So the store list is less probably to be stale.
+		stores, err := w.pdClient.GetAllStores(ctx)
 		if err != nil {
-			return errors.Trace(err)
-		}
-		if deleteRangeTask.IsCanceled() {
-			return errors.New("[gc worker] gc job canceled")
+			log.Errorf("[gc worker] %s delete ranges: got an error while trying to get store list from pd: %v", w.uuid, errors.ErrorStack(err))
+			continue
 		}
 
-		regions += deleteRangeTask.CompletedRegions()
+		req := &tikvrpc.Request{
+			Type: tikvrpc.CmdDestroyRange,
+			DestroyRange: &kvrpcpb.DestroyRangeRequest{
+				StartKey: startKey,
+				EndKey:   endKey,
+			},
+		}
+
+		allSuccess := true
+		for _, store := range stores {
+			if store.State != metapb.StoreState_Up {
+				continue
+			}
+
+			_, err := w.store.GetTiKVClient().SendRequest(ctx, store.Address, req, tikv.DestroyRangeTimeout)
+			if err != nil {
+				log.Errorf("[gc worker] %s destroy range on store %v failed with error: %v", w.uuid, store.Id, errors.ErrorStack(err))
+				allSuccess = false
+			}
+		}
+		if !allSuccess {
+			continue
+		}
+
 		se := createSession(w.store)
 		err = util.CompleteDeleteRange(se, r)
 		se.Close()
@@ -378,7 +401,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 			return errors.Trace(err)
 		}
 	}
-	log.Infof("[gc worker] %s finish delete %v ranges, regions: %v, cost time: %s", w.uuid, len(ranges), regions, time.Since(startTime))
+	log.Infof("[gc worker] %s finish delete %v ranges, cost time: %s", w.uuid, len(ranges), time.Since(startTime))
 	gcHistogram.WithLabelValues("delete_ranges").Observe(time.Since(startTime).Seconds())
 	return nil
 }

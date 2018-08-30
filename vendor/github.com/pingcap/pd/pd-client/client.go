@@ -55,6 +55,10 @@ type Client interface {
 	// The store may expire later. Caller is responsible for caching and taking care
 	// of store change.
 	GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
+	// GetAllStores gets all stores from pd.
+	// The store may expire later. Caller is responsible for caching and taking care
+	// of store change.
+	GetAllStores(ctx context.Context) ([]*metapb.Store, error)
 	// Update GC safe point. TiKV will check it and do GC themselves if necessary.
 	// If the given safePoint is less than the current one, it will not be updated.
 	// Returns the new safePoint after updating.
@@ -676,6 +680,29 @@ func (c *client) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, e
 		return nil, nil
 	}
 	return store, nil
+}
+
+func (c *client) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil {
+		span = opentracing.StartSpan("pdclient.GetAllStores", opentracing.ChildOf(span.Context()))
+		defer span.Finish()
+	}
+	start := time.Now()
+	defer func() { cmdDuration.WithLabelValues("get_all_stores").Observe(time.Since(start).Seconds()) }()
+
+	ctx, cancel := context.WithTimeout(ctx, pdTimeout)
+	resp, err := c.leaderClient().GetAllStores(ctx, &pdpb.GetAllStoresRequest{
+		Header: c.requestHeader(),
+	})
+	cancel()
+
+	if err != nil {
+		cmdFailedDuration.WithLabelValues("get_all_stores").Observe(time.Since(start).Seconds())
+		c.ScheduleCheckLeader()
+		return nil, errors.WithStack(err)
+	}
+	stores := resp.GetStores()
+	return stores, nil
 }
 
 func (c *client) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
