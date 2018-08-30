@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/opentracing/opentracing-go"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -584,20 +583,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 			})
 		}
 	}()
-
-	span := opentracing.SpanFromContext(ctx)
-	if span != nil {
-		span = opentracing.StartSpan("twoPhaseCommit.execute", opentracing.ChildOf(span.Context()))
-	} else {
-		// If we lost the trace information, make a new one for 2PC commit.
-		span = opentracing.StartSpan("twoPhaseCommit.execute")
-	}
-	defer span.Finish()
-
-	// I'm not sure is it safe to cancel 2pc commit process at any time,
-	// So use a new Background() context instead of inherit the ctx, this is by design,
-	// to avoid the cancel signal from parent context.
-	ctx = opentracing.ContextWithSpan(context.Background(), span)
 
 	binlogChan := c.prewriteBinlog()
 	err := c.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars), c.keys)
