@@ -29,5 +29,6 @@ func (s *testSuite) TestTraceExec(c *C) {
 	tk.MustExec("use test")
 	testSQL := `create table trace (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1);`
 	tk.MustExec(testSQL)
+	// TODO: check result later in another PR.
 	tk.MustExec("trace select * from trace where id = 0;")
 }
