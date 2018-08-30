@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testUnitTestSuit{})
@@ -185,9 +186,11 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 		path := accessPath{
 			eqCondCount:  0,
 			tableFilters: trueFilters,
-			idxCols:      expression.FindColumnsByUniqueIDs(totalSchema.Columns, tt.idxColIDs),
+			idxCols:      expression.FindColumnsByUniqueIDList(totalSchema.Columns, tt.idxColIDs),
 			idxColLens:   tt.idxColLens,
 		}
+
+		logrus.Warnf("idx cols: %v", path.idxCols)
 		access, remained := path.splitCorColAccessCondFromFilters()
 		c.Assert(fmt.Sprintf("%s", access), Equals, tt.access, comment)
 		c.Assert(fmt.Sprintf("%s", remained), Equals, tt.remained, comment)
