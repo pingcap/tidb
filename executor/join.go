@@ -102,6 +102,10 @@ func (e *HashJoinExec) Close() error {
 	close(e.closeCh)
 	e.finished.Store(true)
 	if e.prepared {
+		if e.innerFinished != nil {
+			for range e.innerFinished {
+			}
+		}
 		if e.joinResultCh != nil {
 			for range e.joinResultCh {
 			}
@@ -511,6 +515,10 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 
 	if err := e.fetchInnerRows(ctx); err != nil {
 		e.innerFinished <- errors.Trace(err)
+		return
+	}
+
+	if e.finished.Load().(bool) {
 		return
 	}
 
