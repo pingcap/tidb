@@ -19,6 +19,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/statistics"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -27,6 +28,7 @@ type statsInfo struct {
 	count       float64
 	cardinality []float64
 
+	histColl statistics.HistColl
 	// usePseudoStats indicates whether the statsInfo is calculated using the
 	// pseudo statistics on a table.
 	usePseudoStats bool
@@ -45,6 +47,7 @@ func (s *statsInfo) scale(factor float64) *statsInfo {
 	profile := &statsInfo{
 		count:          s.count * factor,
 		cardinality:    make([]float64, len(s.cardinality)),
+		histColl:       s.histColl,
 		usePseudoStats: s.usePseudoStats,
 	}
 	for i := range profile.cardinality {
@@ -111,6 +114,7 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
 	profile := &statsInfo{
 		count:          float64(ds.statisticTable.Count),
 		cardinality:    make([]float64, len(ds.Columns)),
+		histColl:       ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
 		usePseudoStats: ds.statisticTable.Pseudo,
 	}
 	for i, col := range ds.Columns {
@@ -123,7 +127,7 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
 		}
 	}
 	ds.stats = profile
-	selectivity, err := ds.statisticTable.Selectivity(ds.ctx, conds)
+	selectivity, err := profile.histColl.Selectivity(ds.ctx, conds)
 	if err != nil {
 		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 		selectivity = selectionFactor
