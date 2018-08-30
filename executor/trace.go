@@ -44,29 +44,6 @@ type TraceExec struct {
 	builder *executorBuilder
 }
 
-// Open opens a trace executor and it will create a root trace span which will be
-// used for the following span in a relationship of `ChildOf` or `FollowFrom`.
-// for more details, you could refer to http://opentracing.io
-func (e *TraceExec) Open(ctx context.Context) error {
-	e.rootTrace = tracing.NewRecordedTrace("trace_exec", func(sp basictracer.RawSpan) {
-		e.CollectedSpans = append(e.CollectedSpans, sp)
-	})
-	// we actually don't care when underlying executor started. We only care how
-	// much time was spent
-	for _, child := range e.children {
-		err := child.Open(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
-	for _, child := range e.children {
-		e.childrenResults = append(e.childrenResults, child.newChunk())
-	}
-
-	return nil
-}
-
 // Next executes real query and collects span later.
 func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -89,6 +66,22 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		default:
 			return errors.Errorf("%v is not supported", child)
 		}
+	}
+
+	e.rootTrace = tracing.NewRecordedTrace("trace_exec", func(sp basictracer.RawSpan) {
+		e.CollectedSpans = append(e.CollectedSpans, sp)
+	})
+	// we actually don't care when underlying executor started. We only care how
+	// much time was spent
+	for _, child := range e.children {
+		err := child.Open(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
+	for _, child := range e.children {
+		e.childrenResults = append(e.childrenResults, child.newChunk())
 	}
 
 	// store span into context
