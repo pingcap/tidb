@@ -132,11 +132,11 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// If handle changed, remove then add record, else update record.
 	var err error
 	if handleChanged {
-		if err := t.RemoveRecord(ctx, h, oldData); err != nil {
-			return false, false, 0, errors.Trace(err)
-		}
 		newHandle, err = t.AddRecord(ctx, newData, false)
 		if err != nil {
+			return false, false, 0, errors.Trace(err)
+		}
+		if err := t.RemoveRecord(ctx, h, oldData); err != nil {
 			return false, false, 0, errors.Trace(err)
 		}
 	} else {
