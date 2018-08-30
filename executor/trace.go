@@ -58,15 +58,14 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return err
 	}
 	optimizeSp.Finish()
-	pp, _ := stmtPlan.(plan.PhysicalPlan)
-	for _, child := range pp.Children() {
-		switch p := child.(type) {
-		case *plan.PhysicalTableReader, *plan.PhysicalIndexReader, *plan.PhysicalIndexLookUpReader, *plan.PhysicalHashAgg, *plan.PhysicalProjection, *plan.PhysicalStreamAgg, *plan.PhysicalSort:
-			e.children = append(e.children, e.builder.build(p))
-		default:
-			return errors.Errorf("%v is not supported", child)
-		}
+
+	pp, ok := stmtPlan.(plan.PhysicalPlan)
+	if !ok {
+		return errors.New("cannot cast logical plan to physical plan")
 	}
+
+	// append select executor to trace executor
+	e.children = append(e.children, e.builder.build(pp))
 
 	e.rootTrace = tracing.NewRecordedTrace("trace_exec", func(sp basictracer.RawSpan) {
 		e.CollectedSpans = append(e.CollectedSpans, sp)
