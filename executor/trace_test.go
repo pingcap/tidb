@@ -21,7 +21,6 @@ import (
 type testTraceExec struct{}
 
 func (s *testTraceExec) SetupSuite(c *C) {
-
 }
 
 func (s *testSuite) TestTraceExec(c *C) {
