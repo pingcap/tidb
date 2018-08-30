@@ -198,9 +198,9 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 
 func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
 	cols []*expression.Column, lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression) {
+	var filters []expression.Expression
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	accesses := make([]expression.Expression, len(cols))
-	filters := make([]expression.Expression, len(cols))
 	points := make([][]point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
 	condOffset := make([]int, len(cols))
@@ -228,6 +228,7 @@ func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			points[offset] = rb.build(accesses[offset])
 		}
 		points[offset] = rb.intersection(points[offset], rb.build(conditions[i]))
+		//XXX quick termination if len(points[offset]) == 0
 		if inOffset == -1 {
 			mergedAccesses[offset] = conditions[i]
 		}
