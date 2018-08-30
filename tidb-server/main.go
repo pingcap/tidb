@@ -143,7 +143,6 @@ func main() {
 	createServer()
 	setupSignalHandler()
 	runServer()
-	cleanup()
 	os.Exit(0)
 }
 
@@ -421,6 +420,7 @@ func createServer() {
 	svr, err = server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
 	terror.MustNil(err, closeDomainAndStorage)
+	svr.SetCleanupFunc(cleanup)
 	if cfg.XProtocol.XServer {
 		xcfg := &xserver.Config{
 			Addr:       fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
@@ -490,6 +490,7 @@ func runServer() {
 		err := xsvr.Run()
 		terror.MustNil(err)
 	}
+	<-closeCh
 }
 
 func closeDomainAndStorage() {
@@ -498,9 +499,12 @@ func closeDomainAndStorage() {
 	terror.Log(errors.Trace(err))
 }
 
+var closeCh = make(chan struct{})
+
 func cleanup() {
 	if graceful {
 		svr.GracefulDown()
 	}
 	closeDomainAndStorage()
+	close(closeCh)
 }
