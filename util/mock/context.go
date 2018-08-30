@@ -51,7 +51,7 @@ type Context struct {
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (c *Context) Execute(ctx context.Context, sql string) ([]ast.RecordSet, error) {
-	return nil, nil
+	return nil, errors.Errorf("Not Support.")
 }
 
 // DDLOwnerChecker returns owner.DDLOwnerChecker.
