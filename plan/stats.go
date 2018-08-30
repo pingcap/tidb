@@ -226,7 +226,7 @@ func (lt *LogicalTopN) deriveStats() (*statsInfo, error) {
 func getCardinality(cols []*expression.Column, schema *expression.Schema, profile *statsInfo) float64 {
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
-		log.Errorf("Cannot find column %s indices from schema %s", cols, schema)
+		log.Errorf("Cannot find column %v indices from schema %s", cols, schema)
 		return 0
 	}
 	var cardinality = 1.0
