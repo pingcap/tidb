@@ -362,7 +362,7 @@ func (s *testSuite) TestShow(c *C) {
 
 	// Test show create table year type
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t(y year, x int, primary key(y));`)
+	tk.MustExec(`create table t(y year signed unsigned zerofill zerofill, x int, primary key(y));`)
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `y` year NOT NULL,\n"+
