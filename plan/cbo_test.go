@@ -37,7 +37,7 @@ var _ = Suite(&testAnalyzeSuite{})
 type testAnalyzeSuite struct {
 }
 
-// CBOWithoutAnalyze tests the plan with stats that only have count info.
+// TestCBOWithoutAnalyze tests the plan with stats that only have count info.
 func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -633,12 +633,13 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─StreamAgg_20 1.00 root funcs:count(1)",
-			"    └─HashRightJoin_22 1.00 root inner join, inner:TableReader_25, equal:[eq(s.a, t1.a)]",
+			"    └─HashLeftJoin_21 1.00 root inner join, inner:TableReader_28, equal:[eq(s.a, t1.a)]",
 			"      ├─TableReader_25 1.00 root data:Selection_24",
 			"      │ └─Selection_24 1.00 cop eq(s.a, test.t.a)",
 			"      │   └─TableScan_23 10.00 cop table:s, range:[-inf,+inf], keep order:false",
-			"      └─TableReader_27 10.00 root data:TableScan_26",
-			"        └─TableScan_26 10.00 cop table:t1, range:[-inf,+inf], keep order:false",
+			"      └─TableReader_28 1.00 root data:Selection_27",
+			"        └─Selection_27 1.00 cop eq(t1.a, test.t.a)",
+			"          └─TableScan_26 10.00 cop table:t1, range:[-inf,+inf], keep order:false",
 		))
 	tk.MustQuery("explain select (select concat(t1.a, \",\", t1.b) from t t1 where t1.a=t.a and t1.c=t.c) from t").
 		Check(testkit.Rows(
