@@ -103,7 +103,7 @@ check-static:
 	  --enable misspell \
 	  --enable megacheck \
 	  --enable ineffassign \
- 	  $$($(PACKAGE_DIRECTORIES))
+	  $$($(PACKAGE_DIRECTORIES))
 
 check-slow:
 	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all \
@@ -117,7 +117,7 @@ lint:
 
 vet:
 	@echo "vet"
-	@retool do govet -all -shadow $$($(PACKAGE_DIRECTORIES)) 2>&1 | $(FAIL_ON_STDOUT)
+	@go vet -all -shadow $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
 clean:
 	$(GO) clean -i ./...
