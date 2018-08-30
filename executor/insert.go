@@ -34,16 +34,6 @@ type InsertExec struct {
 	finished    bool
 }
 
-func (e *InsertExec) insertOneRow(row []types.Datum) (int64, error) {
-	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
-	h, err := e.Table.AddRecord(e.ctx, row, false)
-	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return h, nil
-}
-
 func (e *InsertExec) exec(rows [][]types.Datum) error {
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.ctx.GetSessionVars()
@@ -67,19 +57,16 @@ func (e *InsertExec) exec(rows [][]types.Datum) error {
 			return errors.Trace(err)
 		}
 	} else if ignoreErr {
-		err := e.batchCheckAndInsert(rows, e.insertOneRow)
+		err := e.batchCheckAndInsert(rows, e.addRecord)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else {
 		for _, row := range rows {
-			if _, err := e.insertOneRow(row); err != nil {
+			if _, err := e.addRecord(row); err != nil {
 				return errors.Trace(err)
 			}
 		}
-	}
-	if e.lastInsertID != 0 {
-		sessVars.SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
 	return nil
@@ -131,7 +118,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
 		if newRows[i] != nil {
-			newHandle, err := e.insertOneRow(newRows[i])
+			newHandle, err := e.addRecord(newRows[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -220,12 +207,9 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow [
 	}
 
 	newData := row4Update[:len(oldRow)]
-	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
+	_, handleChanged, newHandle, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
-	}
-	if lastInsertID != 0 {
-		e.lastInsertID = lastInsertID
 	}
 	return newData, handleChanged, newHandle, nil
 }
