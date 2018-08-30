@@ -611,7 +611,6 @@ func (b *builtinJSONContainsSig) evalInt(row chunk.Row) (res int64, isNull bool,
 
 	if json.ContainsBinary(obj, target) {
 		return 1, false, nil
-	} else {
-		return 0, false, nil
 	}
+	return 0, false, nil
 }
