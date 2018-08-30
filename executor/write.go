@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -132,11 +133,21 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// If handle changed, remove then add record, else update record.
 	var err error
 	if handleChanged {
-		newHandle, err = t.AddRecord(ctx, newData, false)
-		if err != nil {
-			return false, false, 0, errors.Trace(err)
+		skipHandleCheck := false
+		if sc.DupKeyAsWarning {
+			// For `UPDATE IGNORE`/`INSERT IGNORE ON DUPLICATE KEY UPDATE`
+			// If the new handle exists, this will avoid to remove the record.
+			err = tables.CheckHandleExists(ctx, t, newHandle, newData)
+			if err != nil {
+				return false, handleChanged, newHandle, errors.Trace(err)
+			}
+			skipHandleCheck = true
 		}
 		if err := t.RemoveRecord(ctx, h, oldData); err != nil {
+			return false, false, 0, errors.Trace(err)
+		}
+		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
+		if err != nil {
 			return false, false, 0, errors.Trace(err)
 		}
 	} else {
