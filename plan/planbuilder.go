@@ -441,11 +441,13 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 
 func (b *planBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 	var ret Plan
-
+	var err error
 	switch as.Tp {
 	case ast.AdminCheckTable:
-		p := &CheckTable{Tables: as.Tables}
-		ret = p
+		ret, err = b.buildAdminCheckTable(as)
+		if err != nil {
+			return ret, errors.Trace(err)
+		}
 	case ast.AdminCheckIndex:
 		dbName := as.Tables[0].Schema
 		readerPlan, err := b.buildCheckIndex(dbName, as)
@@ -502,6 +504,47 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 	// Admin command can only be executed by administrator.
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
 	return ret, nil
+}
+
+func (b *planBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, error) {
+	p := &CheckTable{Tables: as.Tables}
+	p.GenExprs = make(map[string]expression.Expression)
+
+	mockTablePlan := LogicalTableDual{}.init(b.ctx)
+	for _, tbl := range p.Tables {
+		tableInfo := tbl.TableInfo
+		schema := expression.TableInfo2SchemaWithDBName(b.ctx, tbl.Schema, tableInfo)
+		table, ok := b.is.TableByID(tableInfo.ID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists.GenByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
+		}
+
+		mockTablePlan.SetSchema(schema)
+
+		// Calculate generated columns.
+		columns := table.Cols()
+		for _, column := range columns {
+			if !column.IsGenerated() {
+				continue
+			}
+			columnName := &ast.ColumnName{Name: column.Name}
+			columnName.SetText(column.Name.O)
+
+			colExpr, _, err := mockTablePlan.findColumn(columnName)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			expr, _, err := b.rewrite(column.GeneratedExpr, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
+			genColumnName := model.GetTableColumnID(tableInfo, column.ColumnInfo)
+			p.GenExprs[genColumnName] = expr
+		}
+	}
+	return p, nil
 }
 
 func (b *planBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {
@@ -1190,7 +1233,23 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 		return errors.Trace(err)
 	}
 
-	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, insertPlan.SelectPlan.Schema())
+	// schema4NewRow is the schema for the newly created data record based on
+	// the result of the select statement.
+	schema4NewRow := expression.NewSchema(make([]*expression.Column, len(insertPlan.Table.Cols()))...)
+	for i, selCol := range insertPlan.SelectPlan.Schema().Columns {
+		ordinal := affectedValuesCols[i].Offset
+		schema4NewRow.Columns[ordinal] = &expression.Column{}
+		*schema4NewRow.Columns[ordinal] = *selCol
+
+		schema4NewRow.Columns[ordinal].RetType = &types.FieldType{}
+		*schema4NewRow.Columns[ordinal].RetType = affectedValuesCols[i].FieldType
+	}
+	for i := range schema4NewRow.Columns {
+		if schema4NewRow.Columns[i] == nil {
+			schema4NewRow.Columns[i] = &expression.Column{UniqueID: insertPlan.ctx.GetSessionVars().AllocPlanColumnID()}
+		}
+	}
+	insertPlan.Schema4OnDuplicate = expression.MergeSchema(insertPlan.tableSchema, schema4NewRow)
 	return nil
 }
 

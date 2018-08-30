@@ -174,8 +174,8 @@ func (e *AnalyzeIndexExec) open() error {
 	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.idxInfo.ID, ranger.FullRange()).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
+		SetConcurrency(e.concurrency).
 		Build()
-	kvReq.Concurrency = e.concurrency
 	ctx := context.TODO()
 	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
 	if err != nil {
@@ -289,8 +289,8 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
+		SetConcurrency(e.concurrency).
 		Build()
-	kvReq.Concurrency = e.concurrency
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

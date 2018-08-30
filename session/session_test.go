@@ -630,6 +630,19 @@ func (s *testSessionSuite) TestLastInsertID(c *C) {
 	c.Assert(lastInsertID+2, Equals, currLastInsertID)
 }
 
+func (s *testSessionSuite) TestPrepareZero(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(v timestamp)")
+	tk.MustExec("prepare s1 from 'insert into t (v) values (?)'")
+	tk.MustExec("set @v1='0'")
+	_, rs := tk.Exec("execute s1 using @v1")
+	c.Assert(rs, NotNil)
+	tk.MustExec("set @v2='" + types.ZeroDatetimeStr + "'")
+	tk.MustExec("execute s1 using @v2")
+	tk.MustQuery("select v from t").Check(testkit.Rows("0000-00-00 00:00:00"))
+}
+
 func (s *testSessionSuite) TestPrimaryKeyAutoIncrement(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
