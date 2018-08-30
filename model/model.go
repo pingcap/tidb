@@ -15,6 +15,7 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -409,6 +410,14 @@ func (db *DBInfo) Clone() *DBInfo {
 	return &newInfo
 }
 
+// Copy shallow copies DBInfo.
+func (db *DBInfo) Copy() *DBInfo {
+	newInfo := *db
+	newInfo.Tables = make([]*TableInfo, len(db.Tables))
+	copy(newInfo.Tables, db.Tables)
+	return &newInfo
+}
+
 // CIStr is case insensitive string.
 type CIStr struct {
 	O string `json:"O"` // Original string.
@@ -513,4 +522,9 @@ func collationToProto(c string) int32 {
 	// Setting other collations to utf8_bin for old data compatibility.
 	// For the data created when we didn't enforce utf8_bin collation in create table.
 	return int32(mysql.DefaultCollationID)
+}
+
+// GetTableColumnID gets a ID of a column with table ID
+func GetTableColumnID(tableInfo *TableInfo, col *ColumnInfo) string {
+	return fmt.Sprintf("%d_%d", tableInfo.ID, col.ID)
 }

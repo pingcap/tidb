@@ -15,32 +15,28 @@ package variable
 
 // MockGlobalAccessor implements GlobalVarAccessor interface. it's used in tests
 type MockGlobalAccessor struct {
-	vars map[string]string
 }
 
 // NewMockGlobalAccessor implements GlobalVarAccessor interface.
 func NewMockGlobalAccessor() *MockGlobalAccessor {
-	m := &MockGlobalAccessor{
-		vars: make(map[string]string),
-	}
-	for name, val := range SysVars {
-		m.vars[name] = val.Value
-	}
-	return m
+	return new(MockGlobalAccessor)
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (m *MockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
-	return m.vars[name], nil
+	v, ok := SysVars[name]
+	if ok {
+		return v.Value, nil
+	}
+	return "", nil
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
 func (m *MockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
-	m.vars[name] = value
-	return nil
+	panic("not supported")
 }
 
 // GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
 func (m *MockGlobalAccessor) GetAllSysVars() (map[string]string, error) {
-	return m.vars, nil
+	panic("not supported")
 }

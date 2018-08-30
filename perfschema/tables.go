@@ -142,7 +142,7 @@ func (vt *perfSchemaTable) Meta() *model.TableInfo {
 }
 
 // GetID implements table.Table GetID interface.
-func (vt *perfSchemaTable) GetID() int64 {
+func (vt *perfSchemaTable) GetPhysicalID() int64 {
 	return vt.meta.ID
 }
 

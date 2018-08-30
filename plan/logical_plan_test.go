@@ -538,6 +538,17 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 			best: "Dual->Projection",
 			is:   is1,
 		},
+		{
+			// NULL will be located in the first partition.
+			sql:  "select * from t where t.h is null",
+			best: "Partition(41)->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h is null or t.h > 70",
+			best: "UnionAll{Partition(41)->Partition(44)}->Projection",
+			is:   is1,
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
@@ -1170,6 +1181,14 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		{
 			sql: "select a from t having sum(avg(a))",
 			err: ErrInvalidGroupFuncUse,
+		},
+		{
+			sql: "select concat(c_str, d_str) from t group by `concat(c_str, d_str)`",
+			err: nil,
+		},
+		{
+			sql: "select concat(c_str, d_str) from t group by `concat(c_str,d_str)`",
+			err: ErrUnknownColumn,
 		},
 	}
 	for _, tt := range tests {

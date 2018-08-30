@@ -116,8 +116,8 @@ type PhysicalIndexScan struct {
 	rangeDecidedBy []*expression.Column
 
 	// The index scan may be on a partition.
-	isPartition bool
-	partitionID int64
+	isPartition     bool
+	physicalTableID int64
 }
 
 // PhysicalMemTable reads memory table.
@@ -155,15 +155,15 @@ type PhysicalTableScan struct {
 	Hist *statistics.Histogram
 
 	// The table scan may be a partition, rather than a real table.
-	isPartition bool
-	partitionID int64
+	isPartition     bool
+	physicalTableID int64
 
 	rangeDecidedBy []*expression.Column
 }
 
 // IsPartition returns true and partition ID if it's actually a partition.
 func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
-	return ts.isPartition, ts.partitionID
+	return ts.isPartition, ts.physicalTableID
 }
 
 // PhysicalProjection is the physical operator of projection.
@@ -343,7 +343,7 @@ type PhysicalUnionScan struct {
 
 // IsPartition returns true and partition ID if it works on a partition.
 func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
-	return p.isPartition, p.partitionID
+	return p.isPartition, p.physicalTableID
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
