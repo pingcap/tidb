@@ -155,7 +155,10 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		err     error
 	)
 
-	accessConds, filterConds, conditions := extractEqAndInCondition(sctx, conditions, cols, lengths)
+	accessConds, filterConds, conditions, emptyRange := extractEqAndInCondition(sctx, conditions, cols, lengths)
+	if emptyRange {
+		return ranges, nil, nil, 0, nil
+	}
 
 	for ; eqCount < len(accessConds); eqCount++ {
 		if accessConds[eqCount].(*expression.ScalarFunction).FuncName.L != ast.EQ {
@@ -197,7 +200,7 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 }
 
 func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
-	cols []*expression.Column, lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression) {
+	cols []*expression.Column, lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, bool) {
 	var filters []expression.Expression
 	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
 	accesses := make([]expression.Expression, len(cols))
@@ -228,7 +231,10 @@ func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			points[offset] = rb.build(accesses[offset])
 		}
 		points[offset] = rb.intersection(points[offset], rb.build(conditions[i]))
-		//XXX quick termination if len(points[offset]) == 0
+		//early termination if false expression found
+		if len(points[offset]) == 0 {
+			return nil, nil, nil, true
+		}
 		if inOffset == -1 {
 			mergedAccesses[offset] = conditions[i]
 		}
@@ -239,7 +245,6 @@ func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			continue
 		}
 		accesses[i] = points2EqOrInCond(sctx, points[i], mergedAccesses[i])
-		//XXX check nil
 		conditions = append(conditions, accesses[i])
 	}
 	for i, cond := range accesses {
@@ -251,7 +256,7 @@ func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			filters = append(filters, cond)
 		}
 	}
-	return accesses, filters, conditions
+	return accesses, filters, conditions, false
 }
 
 // detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
