@@ -187,7 +187,7 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	isUnsignedBigint := FindRangePartitionColTp(cols, pi)
+	isUnsignedBigint := isRangePartitionColUnsignedBigint(cols, pi)
 	var prevRangeValue interface{}
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
@@ -224,9 +224,9 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo,
 
 // getRangeValue gets an integer from the range value string.
 // The returned boolean value indicates whether the input string is a constant expression.
-func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string, ifUnsignedBigint bool) (interface{}, bool, error) {
+func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string, unsignedBigint bool) (interface{}, bool, error) {
 	// Unsigned bigint was converted to uint64 handle.
-	if ifUnsignedBigint {
+	if unsignedBigint {
 		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
 			return value, false, nil
 		}
@@ -407,9 +407,8 @@ func checkConstraintIncludePartKey(partkeys []string, constraints map[string]str
 	return true
 }
 
-// FindRangePartitionColTp finds the type of the partitioning key column type.
-// The returned boolean value indicates whether the partitioning key column type is unsigned bigint type.
-func FindRangePartitionColTp(cols []*table.Column, pi *model.PartitionInfo) bool {
+// isRangePartitionColUnsignedBigint returns true if the partitioning key column type is unsigned bigint type.
+func isRangePartitionColUnsignedBigint(cols []*table.Column, pi *model.PartitionInfo) bool {
 	for _, col := range cols {
 		isUnsigned := col.Tp == mysql.TypeLonglong && mysql.HasUnsignedFlag(col.Flag)
 		if isUnsigned && strings.Contains(strings.ToLower(pi.Expr), col.Name.L) {
