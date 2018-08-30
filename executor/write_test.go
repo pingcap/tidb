@@ -2045,4 +2045,12 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	tk.MustExec(`update t set b = 3 where a = 30001;`)
 	tk.MustExec(`insert into t (b) values (4);`)
 	tk.MustQuery(`select a from t where b = 4;`).Check(testkit.Rows("2"))
+
+	tk.MustExec(`insert into t set b = 3 on duplicate key update a = a;`)
+	tk.MustExec(`insert into t (b) values (5);`)
+	tk.MustQuery(`select a from t where b = 5;`).Check(testkit.Rows("4"))
+
+	tk.MustExec(`insert into t set b = 3 on duplicate key update a = a + 1;`)
+	tk.MustExec(`insert into t (b) values (6);`)
+	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
 }
