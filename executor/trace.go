@@ -57,7 +57,6 @@ func (b *executorBuilder) buildTrace(v *plan.Trace) Executor {
 		default:
 			b.err = errors.Errorf("%v is not supported", child)
 		}
-
 	}
 
 	return e
