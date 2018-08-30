@@ -223,4 +223,16 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "1")
 	c.Assert(v.EnableTablePartition, IsTrue)
+
+	c.Assert(GetDDLErrorRetryLimit(), Equals, int32(DefTiDBDDLErrorRetryLimit))
+	SetSessionSystemVar(v, TiDBDDLErrorRetryLimit, types.NewIntDatum(DefTiDBDDLErrorRetryLimit-1))
+	c.Assert(GetDDLErrorRetryLimit(), Equals, int32(DefTiDBDDLErrorRetryLimit-1))
+
+	SetSessionSystemVar(v, TiDBDDLErrorRetryLimit, types.NewIntDatum(1))
+	c.Assert(GetDDLErrorRetryLimit(), Equals, int32(minDDLErrorRetryLimit))
+
+	SetSessionSystemVar(v, TiDBDDLErrorRetryLimit, types.NewIntDatum(DefTiDBDDLErrorRetryLimit))
+	c.Assert(GetDDLErrorRetryLimit(), Equals, int32(10000))
+	SetSessionSystemVar(v, TiDBDDLErrorRetryLimit, types.NewIntDatum(10))
+	c.Assert(GetDDLErrorRetryLimit(), Equals, int32(10))
 }

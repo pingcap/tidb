@@ -1267,6 +1267,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxChunkSize + quoteCommaQuote +
 	variable.TiDBRetryLimit + quoteCommaQuote +
+	variable.TiDBDDLErrorRetryLimit + quoteCommaQuote +
 	variable.TiDBDisableTxnAutoRetry + "')"
 
 // loadCommonGlobalVariablesIfNeeded loads and applies commonly used global variables for the session.

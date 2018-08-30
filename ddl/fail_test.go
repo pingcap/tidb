@@ -17,7 +17,10 @@ import (
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"golang.org/x/net/context"
 )
@@ -62,4 +65,51 @@ func (s *testColumnChangeSuite) TestFailBeforeDecodeArgs(c *C) {
 	// Make sure the schema state only appears once.
 	c.Assert(stateCnt, Equals, 1)
 	testCheckJobDone(c, d, job, true)
+}
+
+func (s *testColumnChangeSuite) TestErrorCountlimit(c *C) {
+	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
+	defer d.Stop()
+
+	tblInfo := testTableInfo(c, d, "t_error_count_limit", 2)
+	ctx := testNewContext(d)
+	err := ctx.NewTxn()
+	c.Assert(err, IsNil)
+	sessionVars := ctx.GetSessionVars()
+	variable.SetSessionSystemVar(sessionVars, variable.TiDBDDLErrorRetryLimit, types.NewIntDatum(5))
+	c.Assert(variable.GetDDLErrorRetryLimit(), Equals, int32(5))
+
+	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
+	originTable := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	row := types.MakeDatums(1, 2)
+	_, err = originTable.AddRecord(ctx, row, false)
+	c.Assert(err, IsNil)
+	err = ctx.Txn().Commit(context.Background())
+	c.Assert(err, IsNil)
+	tc := &TestDDLCallback{}
+
+	tc.onJobRunBefore = func(job *model.Job) {
+		if job.SchemaState == model.StateWriteReorganization {
+			// Limit the number of retries.
+			if job.ErrorCount < int64(variable.GetDDLErrorRetryLimit())+1 {
+				gofail.Enable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs", `return(true)`)
+			} else {
+				gofail.Disable("github.com/pingcap/tidb/ddl/errorBeforeDecodeArgs")
+			}
+		}
+	}
+	d.SetHook(tc)
+
+	job := buildCreateColumnJob(s.dbInfo, tblInfo, "c3", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, int64(3))
+	err = d.doDDLJob(ctx, job)
+	c.Assert(errCancelledDDLJob.Equal(err), Equals, true)
+
+	kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		historyJob, err := t.GetHistoryDDLJob(job.ID)
+		c.Assert(err, IsNil)
+		// Verify that job is canceled.
+		c.Assert(historyJob.State, Equals, model.JobStateCancelled)
+		return nil
+	})
 }

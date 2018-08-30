@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
@@ -522,13 +523,20 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	if err != nil {
 		// If job is not cancelled, we should log this error.
 		if job.State != model.JobStateCancelled {
-			log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
+			log.Errorf("[ddl-%s] run DDL job err %v, job query %s ", w, errors.ErrorStack(err), job.Query)
 		} else {
-			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, errors.ErrorStack(err))
+			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v, job query %s", w, errors.ErrorStack(err), job.Query)
+			metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerCancelDDLJob, metrics.RetLabel(err)).Observe(time.Since(model.TSConvert2Time(job.StartTS)).Seconds())
 		}
 
 		job.Error = toTError(err)
 		job.ErrorCount++
+		if job.ErrorCount > int64(variable.GetDDLErrorRetryLimit()) && job.Type != model.ActionAddIndex {
+			log.Infof("[ddl-%s] DDL job over maximum retry count is canceled because %v, job query %s", w, errors.ErrorStack(err), job.Query)
+			job.State = model.JobStateCancelled
+			metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerCancelDDLJob, metrics.RetLabel(err)).Observe(time.Since(model.TSConvert2Time(job.StartTS)).Seconds())
+			return
+		}
 	}
 	return
 }

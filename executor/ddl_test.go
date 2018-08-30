@@ -432,4 +432,10 @@ func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
 	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
 	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
 	res.Check(testkit.Rows("100"))
+
+	res = tk.MustQuery("select @@global.tidb_ddl_error_retry_limit")
+	res.Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBDDLErrorRetryLimit)))
+	tk.MustExec("set @@global.tidb_ddl_error_retry_limit = 10000")
+	res = tk.MustQuery("select @@global.tidb_ddl_error_retry_limit")
+	res.Check(testkit.Rows("10000"))
 }

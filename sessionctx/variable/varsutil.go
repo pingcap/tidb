@@ -45,6 +45,19 @@ func GetDDLReorgWorkerCounter() int32 {
 	return atomic.LoadInt32(&ddlReorgWorkerCounter)
 }
 
+// SetDDLErrorRetryLimit sets ddlErrorRetryLimit count.
+func SetDDLErrorRetryLimit(cnt int32) {
+	if cnt < minDDLErrorRetryLimit {
+		cnt = minDDLErrorRetryLimit
+	}
+	atomic.StoreInt32(&ddlErrorRetryLimit, cnt)
+}
+
+// GetDDLErrorRetryLimit gets ddlErrorRetryLimit.
+func GetDDLErrorRetryLimit() int32 {
+	return atomic.LoadInt32(&ddlErrorRetryLimit)
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -291,7 +304,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBHashAggPartialConcurrency,
 		TiDBHashAggFinalConcurrency,
 		TiDBDistSQLScanConcurrency,
-		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
+		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount, TiDBDDLErrorRetryLimit,
 		TiDBBackoffLockFast, TiDBMaxChunkSize,
 		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel:
 		v, err := strconv.Atoi(value)

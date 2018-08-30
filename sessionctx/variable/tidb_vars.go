@@ -177,6 +177,9 @@ const (
 	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
+
+	// tidb_ddl_error_retry_limit is the maximum number of retries when an error occurs in ddl job.
+	TiDBDDLErrorRetryLimit = "tidb_ddl_error_retry_limit"
 )
 
 // Default TiDB system variable values.
@@ -214,6 +217,7 @@ const (
 	DefTiDBDDLReorgWorkerCount       = 16
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4
+	DefTiDBDDLErrorRetryLimit        = 10000
 )
 
 // Process global variables.
@@ -222,5 +226,7 @@ var (
 	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
 	maxDDLReorgWorkerCount int32 = 128
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold uint32 = 300
+	DDLSlowOprThreshold   uint32 = 300
+	ddlErrorRetryLimit    int32  = DefTiDBDDLErrorRetryLimit
+	minDDLErrorRetryLimit int32  = 1
 )

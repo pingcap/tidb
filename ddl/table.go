@@ -65,6 +65,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		tbInfo.UpdateTS = t.StartTS
 		err = t.CreateTable(schemaID, tbInfo)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		if EnableSplitTableRegion {

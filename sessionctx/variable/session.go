@@ -575,6 +575,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
+	case TiDBDDLErrorRetryLimit:
+		SetDDLErrorRetryLimit(int32(tidbOptPositiveInt32(val, DefTiDBDDLErrorRetryLimit)))
 	}
 	s.systems[name] = val
 	return nil

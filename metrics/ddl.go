@@ -81,6 +81,7 @@ var (
 	WorkerAddDDLJob         = "add_job"
 	WorkerRunDDLJob         = "run_job"
 	WorkerFinishDDLJob      = "finish_job"
+	WorkerCancelDDLJob      = "cancel_job"
 	WorkerWaitSchemaChanged = "wait_schema_changed"
 	DDLWorkerHistogram      = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
