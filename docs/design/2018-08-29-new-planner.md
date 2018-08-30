@@ -61,6 +61,8 @@ operator.
   With the concept of **Group** and **Group Expression**, all the logically
   equivalent expressions can be stored in a root Group.
 
+  ![group and expression](./group-and-expression.png)
+
 - **Transformation Rule**
 
   The transform rule is used to transform a logical plan to another equivalent
