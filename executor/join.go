@@ -525,19 +525,19 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 		}
 		close(e.innerFinished)
 	}()
-
-	chkCh := make(chan *chunk.Chunk, e.concurrency)
+	// innerResultCh transfer inner result chunk from inner fetch to build hash table.
+	innerResultCh := make(chan *chunk.Chunk, e.concurrency)
 	doneCh := make(chan struct{})
-	go e.fetchInnerRows(ctx, chkCh, doneCh)
+	go e.fetchInnerRows(ctx, innerResultCh, doneCh)
 
 	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
-	err := e.buildHashTableForList(chkCh)
+	err := e.buildHashTableForList(innerResultCh)
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
 		close(doneCh)
 		// fetchInnerRows may be blocked by this channel, so read from the channel to unblock it.
 		select {
-		case <-chkCh:
+		case <-innerResultCh:
 		default:
 		}
 	}
@@ -546,7 +546,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 // buildHashTableForList builds hash table from `list`.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (e *HashJoinExec) buildHashTableForList(chkCh chan *chunk.Chunk) error {
+func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) error {
 	e.hashTable = mvmap.NewMVMap()
 	e.innerKeyColIdx = make([]int, len(e.innerKeys))
 	for i := range e.innerKeys {
@@ -560,7 +560,7 @@ func (e *HashJoinExec) buildHashTableForList(chkCh chan *chunk.Chunk) error {
 	)
 
 	chkIdx := uint32(0)
-	for chk := range chkCh {
+	for chk := range innerResultCh {
 		numRows := chk.NumRows()
 		for j := 0; j < numRows; j++ {
 			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)
