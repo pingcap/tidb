@@ -264,6 +264,9 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context) (err error) {
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
 	for {
+		if e.finished.Load().(bool) {
+			return nil
+		}
 		chk := e.children[e.innerIdx].newChunk()
 		err = e.innerExec.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
@@ -533,8 +536,14 @@ func (e *HashJoinExec) buildHashTableForList() error {
 		valBuf  = make([]byte, 8)
 	)
 	for i := 0; i < e.innerResult.NumChunks(); i++ {
+		if e.finished.Load().(bool) {
+			return nil
+		}
 		chk := e.innerResult.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
+			if e.finished.Load().(bool) {
+				return nil
+			}
 			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)
 			if err != nil {
 				return errors.Trace(err)
