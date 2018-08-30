@@ -405,6 +405,40 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(hg.Len(), Equals, 3)
 }
 
+func (s *testStatsUpdateSuite) TestTableAnalyzed(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int)")
+	testKit.MustExec("insert into t values (1)")
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := s.do.StatsHandle()
+
+	h.Update(is)
+	statsTbl := h.GetTableStats(tableInfo)
+	c.Assert(statistics.TableAnalyzed(statsTbl), IsFalse)
+
+	testKit.MustExec("analyze table t")
+	h.Update(is)
+	statsTbl = h.GetTableStats(tableInfo)
+	c.Assert(statistics.TableAnalyzed(statsTbl), IsTrue)
+
+	h.Clear()
+	oriLease := h.Lease
+	// set it to non-zero so we will use load by need strategy
+	h.Lease = 1
+	defer func() {
+		h.Lease = oriLease
+	}()
+	h.Update(is)
+	statsTbl = h.GetTableStats(tableInfo)
+	c.Assert(statistics.TableAnalyzed(statsTbl), IsTrue)
+}
+
 func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	h := s.do.StatsHandle()
