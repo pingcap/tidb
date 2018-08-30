@@ -61,11 +61,12 @@ var MaxCallMsgSize = 1<<31 - 1
 
 // Timeout durations.
 const (
-	dialTimeout       = 5 * time.Second
-	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
-	ReadTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
-	ReadTimeoutLong   = 150 * time.Second // For requests that may need scan region multiple times.
-	GCTimeout         = 5 * time.Minute
+	dialTimeout         = 5 * time.Second
+	readTimeoutShort    = 20 * time.Second  // For requests that read/write several key-values.
+	ReadTimeoutMedium   = 60 * time.Second  // For requests that may need scan region.
+	ReadTimeoutLong     = 150 * time.Second // For requests that may need scan region multiple times.
+	GCTimeout           = 5 * time.Minute
+	DestroyRangeTimeout = 15 * time.Minute
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
