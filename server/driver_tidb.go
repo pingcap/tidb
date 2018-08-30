@@ -403,6 +403,15 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		// * Utf-8, the multiple is 3
 		// * utf8mb4, the multiple is 4
 		// So the large enough multiple is 4 in here.
+		// For number types, like TypeYear, TypeShort etc. If they have ZeroFillFlag, multipling
+		// mysql.MaxBytesOfCharacter directly will cause incompatible problem.
+		// For example, execute these SQL by prepare/execute.
+		// create table t (k smallint(10) unsigned zerofill);
+		// insert into t value (10);
+		// select * from t;
+		// MySQL will get '0000000010'
+		// TiDB will get  '0000000000000000000000000000000000000010'
+		// https://github.com/pingcap/tidb/pull/7525 fixed this problem.
 		ci.ColumnLength = ci.ColumnLength * mysql.MaxBytesOfCharacter
 	}
 
