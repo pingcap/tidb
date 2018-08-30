@@ -515,8 +515,6 @@ func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 }
 
 func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
-	chkCh := make(chan *chunk.Chunk, e.concurrency)
-	doneCh := make(chan struct{})
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -528,6 +526,8 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 		close(e.innerFinished)
 	}()
 
+	chkCh := make(chan *chunk.Chunk, e.concurrency)
+	doneCh := make(chan struct{})
 	go e.fetchInnerRows(ctx, chkCh, doneCh)
 
 	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
@@ -535,7 +535,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	if err != nil {
 		e.innerFinished <- errors.Trace(err)
 		close(doneCh)
-		// Func fetchInnerRows may blocked by this channel, so read from the channel to unblock it.
+		// fetchInnerRows may be blocked by this channel, so read from the channel to unblock it.
 		select {
 		case <-chkCh:
 		default:
@@ -559,7 +559,7 @@ func (e *HashJoinExec) buildHashTableForList(chkCh chan *chunk.Chunk) error {
 		valBuf  = make([]byte, 8)
 	)
 
-	numChks := 0
+	chkIdx := uint32(0)
 	for chk := range chkCh {
 		numRows := chk.NumRows()
 		for j := 0; j < numRows; j++ {
@@ -570,11 +570,11 @@ func (e *HashJoinExec) buildHashTableForList(chkCh chan *chunk.Chunk) error {
 			if hasNull {
 				continue
 			}
-			rowPtr := chunk.RowPtr{ChkIdx: uint32(numChks), RowIdx: uint32(j)}
+			rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(j)}
 			*(*chunk.RowPtr)(unsafe.Pointer(&valBuf[0])) = rowPtr
 			e.hashTable.Put(keyBuf, valBuf)
 		}
-		numChks++
+		chkIdx++
 	}
 	return nil
 }
