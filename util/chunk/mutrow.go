@@ -346,3 +346,26 @@ func setMutRowJSON(col *column, j json.BinaryJSON) {
 	copy(col.data[1:], j.Value)
 	col.offsets[1] = int32(dataLen)
 }
+
+// ShallowCopyPartialRow shallow copies the data of `row` to MutRow.
+func (mr MutRow) ShallowCopyPartialRow(colIdx int, row Row) {
+	for i, srcCol := range row.c.columns {
+		dstCol := mr.c.columns[colIdx+i]
+		if !srcCol.isNull(row.idx) {
+			// MutRow only contains one row, so we can directly set the whole byte.
+			dstCol.nullBitmap[0] = 1
+		} else {
+			dstCol.nullBitmap[0] = 0
+		}
+
+		if srcCol.isFixed() {
+			elemLen := len(srcCol.elemBuf)
+			offset := row.idx * elemLen
+			dstCol.data = srcCol.data[offset : offset+elemLen]
+		} else {
+			start, end := srcCol.offsets[row.idx], srcCol.offsets[row.idx+1]
+			dstCol.data = srcCol.data[start:end]
+			dstCol.offsets[1] = int32(len(dstCol.data))
+		}
+	}
+}
