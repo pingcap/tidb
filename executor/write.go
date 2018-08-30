@@ -41,7 +41,7 @@ var (
 //     1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
 //     2. handleChanged (bool) : is the handle changed after the update.
 //     3. newHandle (int64) : if handleChanged == true, the newHandle means the new handle after update.
-//     5. err (error) : error in the update.
+//     4. err (error) : error in the update.
 func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
 	onDup bool) (bool, bool, int64, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
