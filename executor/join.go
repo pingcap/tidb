@@ -541,9 +541,6 @@ func (e *HashJoinExec) buildHashTableForList() error {
 		}
 		chk := e.innerResult.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
-			if e.finished.Load().(bool) {
-				return nil
-			}
 			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)
 			if err != nil {
 				return errors.Trace(err)
