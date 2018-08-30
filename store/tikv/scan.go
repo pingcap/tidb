@@ -94,15 +94,22 @@ func (s *Scanner) Next() error {
 				continue
 			}
 		}
-		resolved, err := s.resolveCurrentLock(bo)
-		if err != nil {
-			s.Close()
-			return errors.Trace(err)
-		}
 
-		if resolved && len(s.Value()) == 0 {
-			// nil stands for NotExist, go to next KV pair.
-			continue
+		current := s.cache[s.idx]
+		// Try to resolve the lock
+		if current.GetError() != nil {
+			// 'current' would be modified if the lock being resolved
+			if err := s.resolveCurrentLock(bo, current); err != nil {
+				s.Close()
+				return errors.Trace(err)
+			}
+
+			// The check here does not violate the KeyOnly semantic, because current's value
+			// is filled by resolveCurrentLock which fetches the value by snapshot.get, so an empty
+			// value stands for NotExist
+			if len(current.Value) == 0 {
+				continue
+			}
 		}
 		return nil
 	}
@@ -117,18 +124,14 @@ func (s *Scanner) startTS() uint64 {
 	return s.snapshot.version.Ver
 }
 
-func (s *Scanner) resolveCurrentLock(bo *Backoffer) (bool, error) {
-	current := s.cache[s.idx]
-	if current.GetError() == nil {
-		return false, nil
-	}
+func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 	val, err := s.snapshot.get(bo, kv.Key(current.Key))
 	if err != nil {
-		return false, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	current.Error = nil
 	current.Value = val
-	return true, nil
+	return nil
 }
 
 func (s *Scanner) getData(bo *Backoffer) error {
