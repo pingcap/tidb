@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/juju/errors"
