@@ -55,7 +55,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// because all of them are sorted by their `Offset`, which
 	// causes all writable columns are after public columns.
 
-	// Case modified values.
+	// 1. Cast modified values.
 	for i, col := range t.Cols() {
 		if modified[i] {
 			// Cast changed fields with respective columns.
@@ -67,7 +67,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	}
 
-	// Check null.
+	// 2. Check null.
 	for i, col := range t.Cols() {
 		if err := col.CheckNotNull(newData[i]); err != nil {
 			if sc.BadNullAsWarning {
@@ -81,7 +81,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	}
 
-	// Compare datum.
+	// 3. Compare datum, then handle some flags.
 	for i, col := range t.Cols() {
 		if cmp, err := newData[i].CompareDatum(sc, &oldData[i]); err != nil {
 			return false, false, 0, errors.Trace(err)
@@ -109,7 +109,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	}
 
-	// If no change, nothing to do.
+	// If no changes, nothing to do, return directly.
 	if !changed {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
@@ -118,7 +118,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		return false, false, 0, nil
 	}
 
-	// Fill values into on-update-now fields, only if they are really changed.
+	// 4. Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
 			if v, err := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal); err != nil {
@@ -130,7 +130,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	}
 
-	// If handle changed, remove then add record, else update record.
+	// 5. If handle changed, remove the old then add the new record, otherwise update the record.
 	var err error
 	if handleChanged {
 		skipHandleCheck := false
@@ -166,6 +166,8 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			sc.AddAffectedRows(1)
 		}
 	}
+
+	// 6. Update delta for the statistics.
 	colSize := make(map[int64]int64)
 	for id, col := range t.Cols() {
 		val := int64(len(newData[id].GetBytes()) - len(oldData[id].GetBytes()))
