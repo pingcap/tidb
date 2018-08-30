@@ -792,13 +792,48 @@ func dataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) [][]types.D
 func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
 	var rows [][]types.Datum
 	for i, col := range tbl.Columns {
+		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
 		colLen, decimal := col.Flen, col.Decimal
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
+		if decimal == types.UnspecifiedLength {
+			decimal = defaultDecimal
+		}
 		if colLen == types.UnspecifiedLength {
 			colLen = defaultFlen
 		}
-		if decimal == types.UnspecifiedLength {
-			decimal = defaultDecimal
+		if col.Tp == mysql.TypeSet {
+			// Example: In MySQL set('a','bc','def','ghij') has length 13, because
+			// len('a')+len('bc')+len('def')+len('ghij')+len(ThreeComma)=13
+			// Reference link: https://bugs.mysql.com/bug.php?id=22613
+			colLen = 0
+			for _, ele := range col.Elems {
+				colLen += len(ele)
+			}
+			if len(col.Elems) != 0 {
+				colLen += (len(col.Elems) - 1)
+			}
+			charMaxLen = colLen
+			charOctLen = colLen
+		} else if col.Tp == mysql.TypeEnum {
+			// Example: In MySQL enum('a', 'ab', 'cdef') has length 4, because
+			// the longest string in the enum is 'cdef'
+			// Reference link: https://bugs.mysql.com/bug.php?id=22613
+			colLen = 0
+			for _, ele := range col.Elems {
+				if len(ele) > colLen {
+					colLen = len(ele)
+				}
+			}
+			charMaxLen = colLen
+			charOctLen = colLen
+		} else if types.IsString(col.Tp) {
+			charMaxLen = colLen
+			charOctLen = colLen
+		} else if types.IsTypeFractionable(col.Tp) {
+			datetimePrecision = decimal
+		} else if types.IsTypeNumeric(col.Tp) {
+			numericPrecision = colLen
+			numericScale = decimal
 		}
 		columnType := col.FieldType.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
@@ -815,19 +850,19 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			columnDefault,                        // COLUMN_DEFAULT
 			columnDesc.Null,                      // IS_NULLABLE
 			types.TypeToStr(col.Tp, col.Charset), // DATA_TYPE
-			colLen,                            // CHARACTER_MAXIMUM_LENGTH
-			colLen,                            // CHARACTER_OCTET_LENGTH
-			decimal,                           // NUMERIC_PRECISION
-			0,                                 // NUMERIC_SCALE
-			0,                                 // DATETIME_PRECISION
-			col.Charset,                       // CHARACTER_SET_NAME
-			col.Collate,                       // COLLATION_NAME
-			columnType,                        // COLUMN_TYPE
-			columnDesc.Key,                    // COLUMN_KEY
-			columnDesc.Extra,                  // EXTRA
-			"select,insert,update,references", // PRIVILEGES
-			columnDesc.Comment,                // COLUMN_COMMENT
-			col.GeneratedExprString,           // GENERATION_EXPRESSION
+			charMaxLen,                           // CHARACTER_MAXIMUM_LENGTH
+			charOctLen,                           // CHARACTER_OCTET_LENGTH
+			numericPrecision,                     // NUMERIC_PRECISION
+			numericScale,                         // NUMERIC_SCALE
+			datetimePrecision,                    // DATETIME_PRECISION
+			col.Charset,                          // CHARACTER_SET_NAME
+			col.Collate,                          // COLLATION_NAME
+			columnType,                           // COLUMN_TYPE
+			columnDesc.Key,                       // COLUMN_KEY
+			columnDesc.Extra,                     // EXTRA
+			"select,insert,update,references",    // PRIVILEGES
+			columnDesc.Comment,                   // COLUMN_COMMENT
+			col.GeneratedExprString,              // GENERATION_EXPRESSION
 		)
 		// In mysql, 'character_set_name' and 'collation_name' are setted to null when column type is non-varchar or non-blob in information_schema.
 		if col.Tp != mysql.TypeVarchar && col.Tp != mysql.TypeBlob {
@@ -971,24 +1006,24 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 func dataForPseudoProfiling() [][]types.Datum {
 	var rows [][]types.Datum
 	row := types.MakeDatums(
-		0,  // QUERY_ID
-		0,  // SEQ
-		"", // STATE
+		0,                      // QUERY_ID
+		0,                      // SEQ
+		"",                     // STATE
 		types.NewDecFromInt(0), // DURATION
 		types.NewDecFromInt(0), // CPU_USER
 		types.NewDecFromInt(0), // CPU_SYSTEM
-		0, // CONTEXT_VOLUNTARY
-		0, // CONTEXT_INVOLUNTARY
-		0, // BLOCK_OPS_IN
-		0, // BLOCK_OPS_OUT
-		0, // MESSAGES_SENT
-		0, // MESSAGES_RECEIVED
-		0, // PAGE_FAULTS_MAJOR
-		0, // PAGE_FAULTS_MINOR
-		0, // SWAPS
-		0, // SOURCE_FUNCTION
-		0, // SOURCE_FILE
-		0, // SOURCE_LINE
+		0,                      // CONTEXT_VOLUNTARY
+		0,                      // CONTEXT_INVOLUNTARY
+		0,                      // BLOCK_OPS_IN
+		0,                      // BLOCK_OPS_OUT
+		0,                      // MESSAGES_SENT
+		0,                      // MESSAGES_RECEIVED
+		0,                      // PAGE_FAULTS_MAJOR
+		0,                      // PAGE_FAULTS_MINOR
+		0,                      // SWAPS
+		0,                      // SOURCE_FUNCTION
+		0,                      // SOURCE_FILE
+		0,                      // SOURCE_LINE
 	)
 	rows = append(rows, row)
 	return rows
@@ -1158,7 +1193,7 @@ func (s schemasSorter) Less(i, j int) bool {
 }
 
 func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
-	is := it.handle.Get()
+	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(InfoSchema)
 	dbs := is.AllSchemas()
 	sort.Sort(schemasSorter(dbs))
 	switch it.meta.Name.O {
@@ -1321,7 +1356,7 @@ func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
 }
 
-func (it *infoschemaTable) GetID() int64 {
+func (it *infoschemaTable) GetPhysicalID() int64 {
 	return it.meta.ID
 }
 

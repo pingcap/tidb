@@ -375,3 +375,18 @@ func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 	}
 	return retCols, lengths
 }
+
+// FindColumnsByUniqueIDs will find columns by checking the unique id.
+// Note: `ids` must be a subset of the column slice.
+func FindColumnsByUniqueIDs(cols []*Column, ids []int) []*Column {
+	retCols := make([]*Column, 0, len(ids))
+	for _, id := range ids {
+		for _, col := range cols {
+			if col.UniqueID == id {
+				retCols = append(retCols, col)
+				break
+			}
+		}
+	}
+	return retCols
+}

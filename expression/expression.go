@@ -312,6 +312,7 @@ func ColumnInfos2ColumnsWithDBName(ctx sessionctx.Context, dbName, tblName model
 			TblName:  tblName,
 			DBName:   dbName,
 			RetType:  &col.FieldType,
+			ID:       col.ID,
 			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
 		}

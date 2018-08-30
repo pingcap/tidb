@@ -172,21 +172,22 @@ func (s *testSuite) TestUser(c *C) {
 	// Test 'identified by password'
 	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password 'xxx';`
 	_, err = tk.Exec(createUserSQL)
-	c.Assert(terror.ErrorEqual(executor.ErrPasswordFormat, err), IsTrue)
+	c.Assert(terror.ErrorEqual(executor.ErrPasswordFormat, err), IsTrue, Commentf("err %v", err))
 	createUserSQL = `CREATE USER 'test1'@'localhost' identified by password '*3D56A309CD04FA2EEF181462E59011F075C89548';`
 	tk.MustExec(createUserSQL)
 	dropUserSQL = `DROP USER 'test1'@'localhost';`
 	tk.MustExec(dropUserSQL)
 	tk.MustQuery("select * from mysql.db").Check(testkit.Rows(
 		"localhost test testDB Y Y Y Y Y Y Y N Y Y N N N N N N Y N N",
-		"localhost test testDB1 Y Y Y Y Y Y Y N Y Y N N N N N N Y N N] [% dddb_% dduser Y Y Y Y Y Y Y N Y Y N N N N N N Y N N",
+		"localhost test testDB1 Y Y Y Y Y Y Y N Y Y N N N N N N Y N N",
+		"% dddb_% dduser Y Y Y Y Y Y Y N Y Y N N N N N N Y N N",
 		"% test test Y N N N N N N N N N N N N N N N N N N",
 		"localhost test testDBRevoke N N N N N N N N N N N N N N N N N N N",
 	))
 
 	// Test drop user meet error
 	_, err = tk.Exec(dropUserSQL)
-	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenByArgs("DROP USER", "")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenByArgs("DROP USER", "")), IsTrue, Commentf("err %v", err))
 
 	createUserSQL = `CREATE USER 'test1'@'localhost'`
 	tk.MustExec(createUserSQL)
@@ -195,7 +196,7 @@ func (s *testSuite) TestUser(c *C) {
 
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	_, err = tk.Exec(dropUserSQL)
-	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenByArgs("DROP USER", "")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenByArgs("DROP USER", "")), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite) TestSetPwd(c *C) {
@@ -222,7 +223,7 @@ func (s *testSuite) TestSetPwd(c *C) {
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd1", Hostname: "localhost"}
 	// Session user doesn't exist.
 	_, err = tk.Exec(setPwdSQL)
-	c.Check(terror.ErrorEqual(err, executor.ErrPasswordNoMatch), IsTrue)
+	c.Check(terror.ErrorEqual(err, executor.ErrPasswordNoMatch), IsTrue, Commentf("err %v", err))
 	// normal
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testpwd", Hostname: "localhost"}
 	tk.MustExec(setPwdSQL)

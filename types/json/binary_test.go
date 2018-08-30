@@ -29,9 +29,9 @@ func TestT(t *testing.T) {
 
 func (s *testJSONSuite) TestBinaryJSONMarshalUnmarshal(c *C) {
 	strs := []string{
-		`{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`,
-		`{"aaaaaaaaaaa":[1,"2",{"aa":"bb"},4.1],"bbbbbbbbbb":true,"ccccccccc":"d"}`,
-		`[{"a":1,"b":true},3,3.5,"hello, world",null,true]`,
+		`{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`,
+		`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.1], "bbbbbbbbbb": true, "ccccccccc": "d"}`,
+		`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`,
 	}
 	for _, str := range strs {
 		parsedBJ := mustParseBinaryFromString(c, str)
@@ -115,7 +115,7 @@ func (s *testJSONSuite) TestBinaryJSONUnquote(c *C) {
 		{j: "\"\\u4f60\"", unquoted: "你"},
 		{j: `true`, unquoted: "true"},
 		{j: `null`, unquoted: "null"},
-		{j: `{"a": [1, 2]}`, unquoted: `{"a":[1,2]}`},
+		{j: `{"a": [1, 2]}`, unquoted: `{"a": [1, 2]}`},
 		{j: `"\""`, unquoted: `"`},
 		{j: `"'"`, unquoted: `'`},
 		{j: `"''"`, unquoted: `''`},

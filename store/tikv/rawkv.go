@@ -35,7 +35,12 @@ var (
 	ErrMaxScanLimitExceeded = errors.New("limit should be less than MaxRawKVScanLimit")
 )
 
-const rawBatchPutSize = 16 * 1024
+const (
+	// rawBatchPutSize is the maximum size limit for rawkv each batch put request.
+	rawBatchPutSize = 16 * 1024
+	// rawBatchPairCount is the maximum limit for rawkv each batch get/delete request.
+	rawBatchPairCount = 512
+)
 
 // RawKVClient is a client of TiKV server which is used as a key-value storage,
 // only GET/PUT/DELETE commands are supported.
@@ -101,6 +106,36 @@ func (c *RawKVClient) Get(key []byte) ([]byte, error) {
 		return nil, nil
 	}
 	return cmdResp.Value, nil
+}
+
+// BatchGet queries values with the keys.
+func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
+	start := time.Now()
+	defer func() {
+		metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_get").Observe(time.Since(start).Seconds())
+	}()
+
+	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	resp, err := c.sendBatchReq(bo, keys, tikvrpc.CmdRawBatchGet)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	cmdResp := resp.RawBatchGet
+	if cmdResp == nil {
+		return nil, errors.Trace(ErrBodyMissing)
+	}
+
+	keyToValue := make(map[string][]byte, len(keys))
+	for _, pair := range cmdResp.Pairs {
+		keyToValue[string(pair.Key)] = pair.Value
+	}
+
+	values := make([][]byte, len(keys))
+	for i, key := range keys {
+		values[i] = keyToValue[string(key)]
+	}
+	return values, nil
 }
 
 // Put stores a key-value pair to TiKV.
@@ -171,6 +206,28 @@ func (c *RawKVClient) Delete(key []byte) error {
 		return errors.Trace(err)
 	}
 	cmdResp := resp.RawDelete
+	if cmdResp == nil {
+		return errors.Trace(ErrBodyMissing)
+	}
+	if cmdResp.GetError() != "" {
+		return errors.New(cmdResp.GetError())
+	}
+	return nil
+}
+
+// BatchDelete deletes key-value pairs from TiKV
+func (c *RawKVClient) BatchDelete(keys [][]byte) error {
+	start := time.Now()
+	defer func() {
+		metrics.TiKVRawkvCmdHistogram.WithLabelValues("batch_delete").Observe(time.Since(start).Seconds())
+	}()
+
+	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	resp, err := c.sendBatchReq(bo, keys, tikvrpc.CmdRawBatchDelete)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cmdResp := resp.RawBatchDelete
 	if cmdResp == nil {
 		return errors.Trace(ErrBodyMissing)
 	}
@@ -278,6 +335,115 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Respon
 	}
 }
 
+func (c *RawKVClient) sendBatchReq(bo *Backoffer, keys [][]byte, cmdType tikvrpc.CmdType) (*tikvrpc.Response, error) { // split the keys
+	groups, _, err := c.regionCache.GroupKeysByRegion(bo, keys)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var batches []batch
+	for regionID, groupKeys := range groups {
+		batches = appendKeyBatches(batches, regionID, groupKeys, rawBatchPairCount)
+	}
+	bo, cancel := bo.Fork()
+	ches := make(chan singleBatchResp, len(batches))
+	for _, batch := range batches {
+		batch1 := batch
+		rawKVClientGP.Go(func() {
+			singleBatchBackoffer, singleBatchCancel := bo.Fork()
+			defer singleBatchCancel()
+			ches <- c.doBatchReq(singleBatchBackoffer, batch1, cmdType)
+		})
+	}
+
+	var firstError error
+	var resp *tikvrpc.Response
+	switch cmdType {
+	case tikvrpc.CmdRawBatchGet:
+		resp = &tikvrpc.Response{Type: tikvrpc.CmdRawBatchGet, RawBatchGet: &kvrpcpb.RawBatchGetResponse{}}
+	case tikvrpc.CmdRawBatchDelete:
+		resp = &tikvrpc.Response{Type: tikvrpc.CmdRawBatchDelete, RawBatchDelete: &kvrpcpb.RawBatchDeleteResponse{}}
+	}
+	for i := 0; i < len(batches); i++ {
+		singleResp, ok := <-ches
+		if ok {
+			if singleResp.err != nil {
+				cancel()
+				if firstError == nil {
+					firstError = singleResp.err
+				}
+			} else if cmdType == tikvrpc.CmdRawBatchGet {
+				cmdResp := singleResp.resp.RawBatchGet
+				resp.RawBatchGet.Pairs = append(resp.RawBatchGet.Pairs, cmdResp.Pairs...)
+			}
+		}
+	}
+
+	return resp, firstError
+}
+
+func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.CmdType) singleBatchResp {
+	var req *tikvrpc.Request
+	switch cmdType {
+	case tikvrpc.CmdRawBatchGet:
+		req = &tikvrpc.Request{
+			Type: cmdType,
+			RawBatchGet: &kvrpcpb.RawBatchGetRequest{
+				Keys: batch.keys,
+			},
+		}
+	case tikvrpc.CmdRawBatchDelete:
+		req = &tikvrpc.Request{
+			Type: cmdType,
+			RawBatchDelete: &kvrpcpb.RawBatchDeleteRequest{
+				Keys: batch.keys,
+			},
+		}
+	}
+
+	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
+	resp, err := sender.SendReq(bo, req, batch.regionID, readTimeoutShort)
+
+	batchResp := singleBatchResp{}
+	if err != nil {
+		batchResp.err = errors.Trace(err)
+		return batchResp
+	}
+	regionErr, err := resp.GetRegionError()
+	if err != nil {
+		batchResp.err = errors.Trace(err)
+		return batchResp
+	}
+	if regionErr != nil {
+		err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+		if err != nil {
+			batchResp.err = errors.Trace(err)
+			return batchResp
+		}
+		resp, err = c.sendBatchReq(bo, batch.keys, cmdType)
+		batchResp.resp = resp
+		batchResp.err = err
+		return batchResp
+	}
+
+	switch cmdType {
+	case tikvrpc.CmdRawBatchGet:
+		batchResp.resp = resp
+	case tikvrpc.CmdRawBatchDelete:
+		cmdResp := resp.RawBatchDelete
+		if cmdResp == nil {
+			batchResp.err = errors.Trace(ErrBodyMissing)
+			return batchResp
+		}
+		if cmdResp.GetError() != "" {
+			batchResp.err = errors.New(cmdResp.GetError())
+			return batchResp
+		}
+		batchResp.resp = resp
+	}
+	return batchResp
+}
+
 // sendDeleteRangeReq sends a raw delete range request and returns the response and the actual endKey.
 // If the given range spans over more than one regions, the actual endKey is the end of the first region.
 // We can't use sendReq directly, because we need to know the end of the region before we send the request
@@ -360,6 +526,23 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 	return errors.Trace(err)
 }
 
+func appendKeyBatches(batches []batch, regionID RegionVerID, groupKeys [][]byte, limit int) []batch {
+	var keys [][]byte
+	for start, count := 0, 0; start < len(groupKeys); start++ {
+		if count > limit {
+			batches = append(batches, batch{regionID: regionID, keys: keys})
+			keys = make([][]byte, 0, limit)
+			count = 0
+		}
+		keys = append(keys, groupKeys[start])
+		count++
+	}
+	if len(keys) != 0 {
+		batches = append(batches, batch{regionID: regionID, keys: keys})
+	}
+	return batches
+}
+
 func appendBatches(batches []batch, regionID RegionVerID, groupKeys [][]byte, keyToValue map[string][]byte, limit int) []batch {
 	var start, size int
 	var keys, values [][]byte
@@ -428,4 +611,9 @@ type batch struct {
 	regionID RegionVerID
 	keys     [][]byte
 	values   [][]byte
+}
+
+type singleBatchResp struct {
+	resp *tikvrpc.Response
+	err  error
 }

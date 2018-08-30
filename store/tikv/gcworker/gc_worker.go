@@ -219,6 +219,7 @@ func (w *GCWorker) storeIsBootstrapped() bool {
 // Leader of GC worker checks if it should start a GC job every tick.
 func (w *GCWorker) leaderTick(ctx context.Context) error {
 	if w.gcIsRunning {
+		log.Infof("[gc worker] leaderTick on %s: there's already a gc job running. skipped.", w.uuid)
 		return nil
 	}
 
@@ -234,6 +235,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	// wait a while before starting a new job.
 	if time.Since(w.lastFinish) < gcWaitTime {
 		w.gcIsRunning = false
+		log.Infof("[gc worker] leaderTick on %s: another gc job has just finished. skipped.", w.uuid)
 		return nil
 	}
 
@@ -291,6 +293,7 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	}
 
 	if lastRun != nil && lastRun.Add(*runInterval).After(now) {
+		log.Infof("[gc worker] leaderTick on %s: gc interval (%v) haven't past since last run (%v). no need to gc", w.uuid, runInterval, lastRun)
 		return false, nil
 	}
 
@@ -310,6 +313,8 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	safePoint := now.Add(-*lifeTime)
 	// We should never decrease safePoint.
 	if lastSafePoint != nil && safePoint.Before(*lastSafePoint) {
+		log.Info("[gc worker] leaderTick on %s: last safe point (%v) is later than current one (%v). no need to gc. "+
+			"this might be caused by manually enlarging gc lifetime.", w.uuid, lastSafePoint, safePoint)
 		return nil, nil
 	}
 	return &safePoint, nil
@@ -517,7 +522,7 @@ func (w *GCWorker) syncSafePointWithPd(ctx context.Context, safePoint uint64) er
 		return errors.Trace(err)
 	}
 	if newSafePoint != safePoint {
-		log.Warn("[gc worker] pd rejected our safe point %d, because pd has greater safe point %d", safePoint, newSafePoint)
+		log.Warnf("[gc worker] pd rejected our safe point %v, because pd has greater safe point %v", safePoint, newSafePoint)
 		// TODO: If unfortunately this happened, should we do something else?
 	}
 	return nil

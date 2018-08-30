@@ -15,6 +15,7 @@ package privileges_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -299,6 +300,24 @@ func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "localhost"}, nil, nil), IsTrue)
 	mustExec(c, se, `select * from information_schema.tables`)
 	mustExec(c, se, `select * from information_schema.key_column_usage`)
+}
+
+func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `CREATE USER 'test_admin'@'localhost';`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	mustExec(c, se, `CREATE TABLE t(a int)`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_admin", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "ADMIN SHOW DDL JOBS")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	_, err = se.Execute(context.Background(), "ADMIN CHECK TABLE t")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "ADMIN SHOW DDL JOBS")
+	c.Assert(err, IsNil)
 }
 
 func mustExec(c *C, se session.Session, sql string) {

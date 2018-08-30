@@ -15,11 +15,11 @@ package executor
 
 import (
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -48,9 +48,11 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 
 // removeRow removes the duplicate row and cleanup its keys in the key-value map,
 // but if the to-be-removed row equals to the to-be-added row, no remove or add things to do.
-func (e *ReplaceExec) removeRow(handle int64, newRow []types.Datum) (bool, error) {
-	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
+func (e *ReplaceExec) removeRow(handle int64, r toBeCheckedRow) (bool, error) {
+	newRow := r.row
+	oldRow, err := e.batchChecker.getOldRow(e.ctx, r.t, handle)
 	if err != nil {
+		log.Errorf("[replace] handle is %d for the to-be-inserted row %v", handle, types.DatumsToStrNoErr(r.row))
 		return false, errors.Trace(err)
 	}
 	rowUnchanged, err := types.EqualDatums(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
@@ -61,14 +63,15 @@ func (e *ReplaceExec) removeRow(handle int64, newRow []types.Datum) (bool, error
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 		return true, nil
 	}
-	err = e.Table.RemoveRecord(e.ctx, handle, oldRow)
+
+	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 
 	// Cleanup keys map, because the record was removed.
-	cleanupRows, err := e.getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{oldRow})
+	cleanupRows, err := e.getKeysNeedCheck(e.ctx, r.t, [][]types.Datum{oldRow})
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -79,39 +82,26 @@ func (e *ReplaceExec) removeRow(handle int64, newRow []types.Datum) (bool, error
 	return false, nil
 }
 
-// addRow adds a row when all the duplicate key were checked.
-func (e *ReplaceExec) addRow(row []types.Datum) (int64, error) {
-	// Set kv.PresumeKeyNotExists is safe here, because we've already removed all duplicated rows.
-	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
-	h, err := e.Table.AddRecord(e.ctx, row, false)
-	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return h, nil
-}
-
 // replaceRow removes all duplicate rows for one row, then inserts it.
 func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
-	// Keep on removing duplicated rows.
-	for {
-		if r.handleKey != nil {
-			if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
-				handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				rowUnchanged, err := e.removeRow(handle, r.row)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if rowUnchanged {
-					return nil
-				}
-				continue
+	if r.handleKey != nil {
+		if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
+			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			rowUnchanged, err := e.removeRow(handle, r)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if rowUnchanged {
+				return nil
 			}
 		}
+	}
 
+	// Keep on removing duplicated rows.
+	for {
 		rowUnchanged, foundDupKey, err := e.removeIndexRow(r)
 		if err != nil {
 			return errors.Trace(err)
@@ -126,11 +116,11 @@ func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
 	}
 
 	// No duplicated rows now, insert the row.
-	newHandle, err := e.addRow(r.row)
+	newHandle, err := e.addRecord(r.row)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.fillBackKeys(e.Table, r, newHandle)
+	e.fillBackKeys(r.t, r, newHandle)
 	return nil
 }
 
@@ -147,7 +137,7 @@ func (e *ReplaceExec) removeIndexRow(r toBeCheckedRow) (bool, bool, error) {
 			if err != nil {
 				return false, found, errors.Trace(err)
 			}
-			rowUnchanged, err := e.removeRow(handle, r.row)
+			rowUnchanged, err := e.removeRow(handle, r)
 			if err != nil {
 				return false, found, errors.Trace(err)
 			}
@@ -186,9 +176,6 @@ func (e *ReplaceExec) exec(newRows [][]types.Datum) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-	}
-	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
 	return nil

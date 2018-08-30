@@ -623,7 +623,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 		store.Close()
 	}()
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("create table t(a int, b int, c int, index idx(c))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
@@ -639,6 +639,19 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"      │   └─TableScan_23 10.00 cop table:s, range:[-inf,+inf], keep order:false",
 			"      └─TableReader_27 10.00 root data:TableScan_26",
 			"        └─TableScan_26 10.00 cop table:t1, range:[-inf,+inf], keep order:false",
+		))
+	tk.MustQuery("explain select (select concat(t1.a, \",\", t1.b) from t t1 where t1.a=t.a and t1.c=t.c) from t").
+		Check(testkit.Rows(
+			"Projection_8 10.00 root concat(t1.a, \",\", t1.b)",
+			"└─Apply_10 10.00 root left outer join, inner:MaxOneRow_13",
+			"  ├─TableReader_12 10.00 root data:TableScan_11",
+			"  │ └─TableScan_11 10.00 cop table:t, range:[-inf,+inf], keep order:false",
+			"  └─MaxOneRow_13 1.00 root ",
+			"    └─Projection_14 0.80 root concat(cast(t1.a), \",\", cast(t1.b))",
+			"      └─IndexLookUp_21 0.80 root ",
+			"        ├─IndexScan_18 1.00 cop table:t1, index:c, range: decided by [eq(t1.c, test.t.c)], keep order:false",
+			"        └─Selection_20 0.80 cop eq(t1.a, test.t.a)",
+			"          └─TableScan_19 1.00 cop table:t, keep order:false",
 		))
 }
 

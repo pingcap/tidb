@@ -1633,11 +1633,13 @@ func (i inCastContext) String() string {
 	return "__cast_ctx"
 }
 
-// inUnionCastContext is session key value that indicates whether executing in union cast context.
+// inUnionCastContext is session key value that indicates whether executing in
+// union cast context.
 // @see BuildCastFunction4Union
 const inUnionCastContext inCastContext = 0
 
-// BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union Expression.
+// BuildCastFunction4Union build a implicitly CAST ScalarFunction from the Union
+// Expression.
 func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	ctx.SetValue(inUnionCastContext, struct{}{})
 	defer func() {
@@ -1673,17 +1675,16 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 		Function: f,
 	}
 	// We do not fold CAST if the eval type of this scalar function is ETJson
-	// since we may reset the flag of the field type of CastAsJson later which would
-	// affect the evaluation of it.
+	// since we may reset the flag of the field type of CastAsJson later which
+	// would affect the evaluation of it.
 	if tp.EvalType() != types.ETJson {
 		res = FoldConstant(res)
 	}
 	return res
 }
 
-// WrapWithCastAsInt wraps `expr` with `cast` if the return type
-// of expr is not type int,
-// otherwise, returns `expr` directly.
+// WrapWithCastAsInt wraps `expr` with `cast` if the return type of expr is not
+// type int, otherwise, returns `expr` directly.
 func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETInt {
 		return expr
@@ -1695,9 +1696,8 @@ func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
-// WrapWithCastAsReal wraps `expr` with `cast` if the return type
-// of expr is not type real,
-// otherwise, returns `expr` directly.
+// WrapWithCastAsReal wraps `expr` with `cast` if the return type of expr is not
+// type real, otherwise, returns `expr` directly.
 func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETReal {
 		return expr
@@ -1709,9 +1709,8 @@ func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
-// WrapWithCastAsDecimal wraps `expr` with `cast` if the return type
-// of expr is not type decimal,
-// otherwise, returns `expr` directly.
+// WrapWithCastAsDecimal wraps `expr` with `cast` if the return type of expr is
+// not type decimal, otherwise, returns `expr` directly.
 func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().EvalType() == types.ETDecimal {
 		return expr
@@ -1723,15 +1722,22 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
-// WrapWithCastAsString wraps `expr` with `cast` if the return type
-// of expr is not type string,
-// otherwise, returns `expr` directly.
+// WrapWithCastAsString wraps `expr` with `cast` if the return type of expr is
+// not type string, otherwise, returns `expr` directly.
 func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
-	if expr.GetType().EvalType() == types.ETString {
+	exprTp := expr.GetType()
+	if exprTp.EvalType() == types.ETString {
 		return expr
 	}
-	argLen := expr.GetType().Flen
-	if expr.GetType().EvalType() == types.ETInt {
+	argLen := exprTp.Flen
+	// If expr is decimal, we should take the decimal point and negative sign
+	// into consideration, so we set `expr.GetType().Flen + 2` as the `argLen`.
+	// Since the length of float and double is not accurate, we do not handle
+	// them.
+	if exprTp.Tp == mysql.TypeNewDecimal && argLen != types.UnspecifiedFsp {
+		argLen += 2
+	}
+	if exprTp.EvalType() == types.ETInt {
 		argLen = mysql.MaxIntWidth
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
@@ -1740,9 +1746,8 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
-// WrapWithCastAsTime wraps `expr` with `cast` if the return type
-// of expr is not same as type of the specified `tp` ,
-// otherwise, returns `expr` directly.
+// WrapWithCastAsTime wraps `expr` with `cast` if the return type of expr is not
+// same as type of the specified `tp` , otherwise, returns `expr` directly.
 func WrapWithCastAsTime(ctx sessionctx.Context, expr Expression, tp *types.FieldType) Expression {
 	exprTp := expr.GetType().Tp
 	if tp.Tp == exprTp {
@@ -1769,9 +1774,8 @@ func WrapWithCastAsTime(ctx sessionctx.Context, expr Expression, tp *types.Field
 	return BuildCastFunction(ctx, expr, tp)
 }
 
-// WrapWithCastAsDuration wraps `expr` with `cast` if the return type
-// of expr is not type duration,
-// otherwise, returns `expr` directly.
+// WrapWithCastAsDuration wraps `expr` with `cast` if the return type of expr is
+// not type duration, otherwise, returns `expr` directly.
 func WrapWithCastAsDuration(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().Tp == mysql.TypeDuration {
 		return expr
@@ -1790,9 +1794,8 @@ func WrapWithCastAsDuration(ctx sessionctx.Context, expr Expression) Expression 
 	return BuildCastFunction(ctx, expr, tp)
 }
 
-// WrapWithCastAsJSON wraps `expr` with `cast` if the return type
-// of expr is not type json,
-// otherwise, returns `expr` directly.
+// WrapWithCastAsJSON wraps `expr` with `cast` if the return type of expr is not
+// type json, otherwise, returns `expr` directly.
 func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 	if expr.GetType().Tp == mysql.TypeJSON && !mysql.HasParseToJSONFlag(expr.GetType().Flag) {
 		return expr
