@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -465,4 +466,32 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 	default:
 		return tp
 	}
+}
+
+func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.Expression) expression.Expression {
+	if len(points) == 0 {
+		return nil
+	}
+	sf, _ := expr.(*expression.ScalarFunction)
+	//Constant and Column args should have same RetType, simply get from first arg
+	retType := sf.GetArgs()[0].GetType()
+	values := make([]expression.Expression, 0, len(points)/2)
+	if sf.FuncName.L == ast.EQ {
+		if c, ok := sf.GetArgs()[0].(*expression.Column); ok {
+			values = append(values, c)
+		} else if c, ok := sf.GetArgs()[1].(*expression.Column); ok {
+			values = append(values, c)
+		}
+	} else {
+		values = append(values, sf.GetArgs()[0])
+	}
+	for i := 0; i < len(points); i = i + 2 {
+		value := &expression.Constant{
+			Value:   points[i].value,
+			RetType: retType,
+		}
+		values = append(values, value)
+	}
+	f := expression.NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(), values...)
+	return f
 }

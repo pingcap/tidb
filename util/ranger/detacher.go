@@ -88,10 +88,9 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 	return accessConditions, hasResidualConditions
 }
 
-// getEqOrInColOffset checks if the expression is a eq function that one side is constant and another is column or an
-// in function which is `column in (constant list)`.
+// getEqColOffset checks if the expression is a eq function that one side is constant and another is column.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
-func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) int {
+func getEqColOffset(expr expression.Expression, cols []*expression.Column) int {
 	f, ok := expr.(*expression.ScalarFunction)
 	if !ok {
 		return -1
@@ -115,6 +114,16 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 				}
 			}
 		}
+	}
+	return -1
+}
+
+// getInColOffset checks if the expression is an in function which is `column in (constant list)`.
+// If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
+func getInColOffset(expr expression.Expression, cols []*expression.Column) int {
+	f, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return -1
 	}
 	if f.FuncName.L == ast.In {
 		c, ok := f.GetArgs()[0].(*expression.Column)
@@ -146,7 +155,7 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		err     error
 	)
 
-	accessConds, filterConds := extractEqAndInCondition(conditions, cols, lengths)
+	accessConds, filterConds, conditions := extractEqAndInCondition(sctx, conditions, cols, lengths)
 
 	for ; eqCount < len(accessConds); eqCount++ {
 		if accessConds[eqCount].(*expression.ScalarFunction).FuncName.L != ast.EQ {
@@ -187,14 +196,50 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 	return ranges, accessConds, filterConds, eqCount, errors.Trace(err)
 }
 
-func extractEqAndInCondition(conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) (accesses, filters []expression.Expression) {
-	accesses = make([]expression.Expression, len(cols))
-	for _, cond := range conditions {
-		offset := getEqOrInColOffset(cond, cols)
-		if offset != -1 {
-			accesses[offset] = cond
+func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
+	cols []*expression.Column, lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression) {
+	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
+	accesses := make([]expression.Expression, len(cols))
+	filters := make([]expression.Expression, len(cols))
+	points := make([][]point, len(cols))
+	mergedAccesses := make([]expression.Expression, len(cols))
+	condOffset := make([]int, len(cols))
+	//should not use range to iterate conditions, because we would delete items while iterating
+	for i := len(conditions) - 1; i >= 0; i-- {
+		eqOffset := getEqColOffset(conditions[i], cols)
+		inOffset := getInColOffset(conditions[i], cols)
+		offset := eqOffset
+		if eqOffset == -1 {
+			if inOffset == -1 {
+				continue
+			}
+			offset = inOffset
 		}
+		if accesses[offset] == nil {
+			accesses[offset] = conditions[i]
+			condOffset[offset] = i
+			continue
+		}
+		//multiple Eq/In conditions for one column in CNF, apply intersection on them
+		//lazily compute the points for the first visited Eq/In
+		if mergedAccesses[offset] == nil {
+			mergedAccesses[offset] = accesses[offset]
+			conditions = append(conditions[:condOffset[offset]], conditions[condOffset[offset]+1:]...)
+			points[offset] = rb.build(accesses[offset])
+		}
+		points[offset] = rb.intersection(points[offset], rb.build(conditions[i]))
+		if inOffset == -1 {
+			mergedAccesses[offset] = conditions[i]
+		}
+		conditions = append(conditions[:i], conditions[i+1:]...)
+	}
+	for i, ma := range mergedAccesses {
+		if ma == nil {
+			continue
+		}
+		accesses[i] = points2EqOrInCond(sctx, points[i], mergedAccesses[i])
+		//XXX check nil
+		conditions = append(conditions, accesses[i])
 	}
 	for i, cond := range accesses {
 		if cond == nil {
@@ -205,7 +250,7 @@ func extractEqAndInCondition(conditions []expression.Expression, cols []*express
 			filters = append(filters, cond)
 		}
 	}
-	return accesses, filters
+	return accesses, filters, conditions
 }
 
 // detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
