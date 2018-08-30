@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -44,114 +43,108 @@ var (
 //     4. err (error) : error in the update.
 func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
 	onDup bool) (bool, bool, int64, error) {
-	var sc = ctx.GetSessionVars().StmtCtx
-	var changed, handleChanged = false, false
+	sc := ctx.GetSessionVars().StmtCtx
+	changed, handleChanged := false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
 	// timestamp field is explicitly set, but not changed in fact.
-	var onUpdateSpecified = make(map[int]bool)
+	onUpdateSpecified := make(map[int]bool)
 	var newHandle int64
 
 	// We can iterate on public columns not writable columns,
 	// because all of them are sorted by their `Offset`, which
 	// causes all writable columns are after public columns.
+
+	// Case modified values.
 	for i, col := range t.Cols() {
 		if modified[i] {
 			// Cast changed fields with respective columns.
 			v, err := table.CastValue(ctx, newData[i], col.ToInfo())
 			if err != nil {
-				return false, handleChanged, newHandle, errors.Trace(err)
+				return false, false, 0, errors.Trace(err)
 			}
 			newData[i] = v
 		}
+	}
 
-		if mysql.HasNotNullFlag(col.Flag) && newData[i].IsNull() && sc.BadNullAsWarning {
-			var err error
-			newData[i], err = table.GetColDefaultValue(ctx, col.ToInfo())
-			if err != nil {
-				return false, handleChanged, newHandle, errors.Trace(err)
+	// Check null.
+	for i, col := range t.Cols() {
+		if err := col.CheckNotNull(newData[i]); err != nil {
+			if sc.BadNullAsWarning {
+				newData[i], err = table.GetColDefaultValue(ctx, col.ToInfo())
+				if err != nil {
+					return false, false, 0, errors.Trace(err)
+				}
+			} else {
+				return false, false, 0, errors.Trace(err)
 			}
 		}
-		// Rebase auto increment id if the field is changed.
-		if mysql.HasAutoIncrementFlag(col.Flag) {
-			if newData[i].IsNull() {
-				return false, handleChanged, newHandle, table.ErrColumnCantNull.GenByArgs(col.Name)
-			}
-			val, errTI := newData[i].ToInt64(sc)
-			if errTI != nil {
-				return false, handleChanged, newHandle, errors.Trace(errTI)
-			}
-			err := t.RebaseAutoID(ctx, val, true)
-			if err != nil {
-				return false, handleChanged, newHandle, errors.Trace(err)
-			}
-		}
-		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
-		if err != nil {
-			return false, handleChanged, newHandle, errors.Trace(err)
-		}
-		if cmp != 0 {
-			changed = true
-			modified[i] = true
-			if col.IsPKHandleColumn(t.Meta()) {
-				handleChanged = true
-				newHandle = newData[i].GetInt64()
-			}
+	}
+
+	// Compare datum.
+	for i, col := range t.Cols() {
+		if cmp, err := newData[i].CompareDatum(sc, &oldData[i]); err != nil {
+			return false, false, 0, errors.Trace(err)
 		} else {
-			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
-				// It's for "UPDATE t SET ts = ts" and ts is a timestamp.
-				onUpdateSpecified[i] = true
+			if cmp != 0 {
+				changed = true
+				modified[i] = true
+				// Rebase auto increment id if the field is changed.
+				if mysql.HasAutoIncrementFlag(col.Flag) {
+					if err := t.RebaseAutoID(ctx, newData[i].GetInt64(), true); err != nil {
+						return false, false, 0, errors.Trace(err)
+					}
+				}
+				if col.IsPKHandleColumn(t.Meta()) {
+					handleChanged = true
+					newHandle = newData[i].GetInt64()
+				}
+			} else {
+				if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
+					// It's for "UPDATE t SET ts = ts" and ts is a timestamp.
+					onUpdateSpecified[i] = true
+				}
+				modified[i] = false
 			}
-			modified[i] = false
 		}
 	}
 
-	// Check the not-null constraints.
-	err := table.CheckNotNull(t.Cols(), newData)
-	if err != nil {
-		return false, handleChanged, newHandle, errors.Trace(err)
-	}
-
+	// If no change, nothing to do.
 	if !changed {
 		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-		return false, handleChanged, newHandle, nil
+		return false, false, 0, nil
 	}
 
 	// Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
-			v, errGT := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal)
-			if errGT != nil {
-				return false, handleChanged, newHandle, errors.Trace(errGT)
+			if v, err := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal); err != nil {
+				return false, false, 0, errors.Trace(err)
+			} else {
+				newData[i] = v
+				modified[i] = true
 			}
-			newData[i] = v
-			modified[i] = true
 		}
 	}
 
+	// If handle changed, remove then add record, else update record.
+	var err error
 	if handleChanged {
-		skipHandleCheck := false
-		if sc.DupKeyAsWarning {
-			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
-			err = tables.CheckHandleExists(ctx, t, newHandle, newData)
-			if err != nil {
-				return false, handleChanged, newHandle, errors.Trace(err)
-			}
-			skipHandleCheck = true
+		if err := t.RemoveRecord(ctx, h, oldData); err != nil {
+			return false, false, 0, errors.Trace(err)
 		}
-		err = t.RemoveRecord(ctx, h, oldData)
+		newHandle, err = t.AddRecord(ctx, newData, false)
 		if err != nil {
-			return false, handleChanged, newHandle, errors.Trace(err)
+			return false, false, 0, errors.Trace(err)
 		}
-		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
 	} else {
 		// Update record to new value and update index.
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
-	}
-	if err != nil {
-		return false, handleChanged, newHandle, errors.Trace(err)
+		if err != nil {
+			return false, false, 0, errors.Trace(err)
+		}
 	}
 
 	if onDup {
