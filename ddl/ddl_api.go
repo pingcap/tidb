@@ -395,7 +395,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		col.Flag |= mysql.ZerofillFlag
 	}
 	// If you specify ZEROFILL for a numeric column, MySQL automatically adds the UNSIGNED attribute to the column.
-	// See https://dev.mysql.com/doc/refman/8.0/en/numeric-type-overview.html for more details.
+	// See https://dev.mysql.com/doc/refman/5.7/en/numeric-type-overview.html for more details.
 	// But some types like bit and year, won't show its unsigned flag in `show create table`.
 	if mysql.HasZerofillFlag(col.Flag) {
 		col.Flag |= mysql.UnsignedFlag
