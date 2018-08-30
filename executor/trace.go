@@ -81,7 +81,7 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err := stmtExec.Next(ctx, stmtExecChk); err != nil {
 			return errors.Trace(err)
 		}
-		if stmtExecChk.NumRows() != 0 {
+		if stmtExecChk.NumRows() == 0 {
 			break
 		}
 	}
