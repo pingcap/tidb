@@ -186,7 +186,7 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 		path := accessPath{
 			eqCondCount:  0,
 			tableFilters: trueFilters,
-			idxCols:      expression.FindColumnsByUniqueIDList(totalSchema.Columns, tt.idxColIDs),
+			idxCols:      expression.FindPrefixOfIndex(totalSchema.Columns, tt.idxColIDs),
 			idxColLens:   tt.idxColLens,
 		}
 

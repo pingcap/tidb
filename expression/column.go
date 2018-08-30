@@ -376,22 +376,20 @@ func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 	return retCols, lengths
 }
 
-// FindColumnsByUniqueIDList will find columns by checking the unique id.
-// Then return order is the same with `ids`. If one id doesn't exists in `cols`. We'll just break.
-func FindColumnsByUniqueIDList(cols []*Column, ids []int64) []*Column {
-	retCols := make([]*Column, 0, len(ids))
-	for _, id := range ids {
-		found := false
+// FindPrefixOfIndex will find columns in index by checking the unique id.
+// So it will return at once no matching column is found.
+func FindPrefixOfIndex(cols []*Column, idxColIDs []int64) []*Column {
+	retCols := make([]*Column, 0, len(idxColIDs))
+idLoop:
+	for _, id := range idxColIDs {
 		for _, col := range cols {
 			if col.UniqueID == id {
 				retCols = append(retCols, col)
-				found = true
-				break
+				continue idLoop
 			}
 		}
-		if !found {
-			break
-		}
+		// If no matching column is found, just return.
+		return retCols
 	}
 	return retCols
 }

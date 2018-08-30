@@ -186,7 +186,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		}
 	}
 	for id, idxInfo := range coll.Indices {
-		idxCols := expression.FindColumnsByUniqueIDList(extractedCols, coll.Idx2ColumnIDs[id])
+		idxCols := expression.FindPrefixOfIndex(extractedCols, coll.Idx2ColumnIDs[id])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols); i++ {
