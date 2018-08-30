@@ -77,6 +77,22 @@ func (s *testTraceSuite) TestChildSpanFromContext(c *C) {
 
 }
 
+func (s *testTraceSuite) TestCreateSapnBeforeSetupGlobalTracer(c *C) {
+	var collectedSpans []basictracer.RawSpan
+	sp := opentracing.StartSpan("before")
+	sp.Finish()
+
+	// first start a root span
+	sp1 := tracing.NewRecordedTrace("test", func(sp basictracer.RawSpan) {
+		collectedSpans = append(collectedSpans, sp)
+	})
+	sp1.Finish()
+
+	// sp is a span started before we setup global tracer; hence such span will be
+	// droped.
+	c.Assert(len(collectedSpans), Equals, 1)
+}
+
 func (s *testTraceSuite) TestTreeRelationship(c *C) {
 	var collectedSpans []basictracer.RawSpan
 	ctx := context.TODO()
