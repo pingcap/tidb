@@ -88,4 +88,26 @@ func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
 	}
 	colInfo = convertColumnInfo(&resultField)
 	c.Assert(colInfo, DeepEquals, createColumnByTypeAndLen(mysql.TypeTiny, 1))
+
+	resultField = ast.ResultField{
+		Column: &model.ColumnInfo{
+			Name:   model.NewCIStr("a"),
+			ID:     0,
+			Offset: 0,
+			FieldType: types.FieldType{
+				Tp:      mysql.TypeYear,
+				Flag:    mysql.ZerofillFlag,
+				Flen:    4,
+				Decimal: 0,
+				Charset: charset.CharsetBin,
+				Collate: charset.CollationBin,
+			},
+			Comment: "column a is the first column in table dual",
+		},
+		ColumnAsName: model.NewCIStr("a"),
+		TableAsName:  model.NewCIStr("dual"),
+		DBName:       model.NewCIStr("test"),
+	}
+	colInfo = convertColumnInfo(&resultField)
+	c.Assert(colInfo.ColumnLength, Equals, uint32(4))
 }
