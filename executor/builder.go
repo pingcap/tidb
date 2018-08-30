@@ -621,6 +621,27 @@ func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 	return e
 }
 
+// buildTrace builds a TraceExec for future executing. This method will be called
+// at build().
+func (b *executorBuilder) buildTrace(v *plan.Trace) Executor {
+	e := &TraceExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+	}
+
+	pp, _ := v.StmtPlan.(plan.PhysicalPlan)
+	e.children = make([]Executor, 0, len(pp.Children()))
+	for _, child := range pp.Children() {
+		switch p := child.(type) {
+		case *plan.PhysicalTableReader, *plan.PhysicalIndexReader, *plan.PhysicalIndexLookUpReader, *plan.PhysicalHashAgg, *plan.PhysicalProjection, *plan.PhysicalStreamAgg, *plan.PhysicalSort:
+			e.children = append(e.children, b.build(p))
+		default:
+			b.err = errors.Errorf("%v is not supported", child)
+		}
+	}
+
+	return e
+}
+
 // buildExplain builds a explain executor. `e.rows` collects final result to `ExplainExec`.
 func (b *executorBuilder) buildExplain(v *plan.Explain) Executor {
 	e := &ExplainExec{
