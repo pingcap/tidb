@@ -39,8 +39,6 @@ type TraceExec struct {
 	// rootTrace represents root span which is father of all other span.
 	rootTrace opentracing.Span
 
-	childrenResults []*chunk.Chunk
-
 	builder *executorBuilder
 }
 
@@ -65,35 +63,26 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 
 	// append select executor to trace executor
-	e.children = append(e.children, e.builder.build(pp))
+	stmtExec := e.builder.build(pp)
 
 	e.rootTrace = tracing.NewRecordedTrace("trace_exec", func(sp basictracer.RawSpan) {
 		e.CollectedSpans = append(e.CollectedSpans, sp)
 	})
-	// we actually don't care when underlying executor started. We only care how
-	// much time was spent
-	for _, child := range e.children {
-		err := child.Open(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	err = stmtExec.Open(ctx)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
-	for _, child := range e.children {
-		e.childrenResults = append(e.childrenResults, child.newChunk())
-	}
+	stmtExecChk := stmtExec.newChunk()
 
 	// store span into context
 	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)
 
-	if len(e.children) > 0 {
-		for {
-			if err := e.children[0].Next(ctx, e.childrenResults[0]); err != nil {
-				return errors.Trace(err)
-			}
-			if e.childrenResults[0].NumRows() != 0 {
-				break
-			}
+	for {
+		if err := stmtExec.Next(ctx, stmtExecChk); err != nil {
+			return errors.Trace(err)
+		}
+		if stmtExecChk.NumRows() != 0 {
+			break
 		}
 	}
 
