@@ -1369,11 +1369,7 @@ func (b *planBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 		return nil, errors.New("trace only supports select query")
 	}
 
-	stmtPlan, err := Optimize(b.ctx, trace.Stmt, b.is)
-	if err != nil {
-		return nil, err
-	}
-	p := &Trace{StmtPlan: stmtPlan}
+	p := &Trace{StmtNode: trace.Stmt}
 
 	retFields := []string{"operation", "duration", "spanID"}
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)

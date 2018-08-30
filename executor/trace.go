@@ -19,6 +19,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/opentracing/basictracer-go"
 	opentracing "github.com/opentracing/opentracing-go"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/tracing"
@@ -33,12 +34,14 @@ type TraceExec struct {
 	CollectedSpans []basictracer.RawSpan
 	// exhausted being true means there is no more result.
 	exhausted bool
-	// plan is the real query plan and it is used for building real query's executor.
-	plan plan.Plan
+	// stmtNode is the real query ast tree and it is used for building real query's plan.
+	stmtNode ast.StmtNode
 	// rootTrace represents root span which is father of all other span.
 	rootTrace opentracing.Span
 
 	childrenResults []*chunk.Chunk
+
+	builder *executorBuilder
 }
 
 // Open opens a trace executor and it will create a root trace span which will be
@@ -71,8 +74,26 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
+	// record how much time was spent for optimizeing plan
+	optimizeSp := e.rootTrace.Tracer().StartSpan("plan_optimize", opentracing.FollowsFrom(e.rootTrace.Context()))
+	stmtPlan, err := plan.Optimize(e.builder.ctx, e.stmtNode, e.builder.is)
+	if err != nil {
+		return err
+	}
+	optimizeSp.Finish()
+	pp, _ := stmtPlan.(plan.PhysicalPlan)
+	for _, child := range pp.Children() {
+		switch p := child.(type) {
+		case *plan.PhysicalTableReader, *plan.PhysicalIndexReader, *plan.PhysicalIndexLookUpReader, *plan.PhysicalHashAgg, *plan.PhysicalProjection, *plan.PhysicalStreamAgg, *plan.PhysicalSort:
+			e.children = append(e.children, e.builder.build(p))
+		default:
+			return errors.Errorf("%v is not supported", child)
+		}
+	}
+
 	// store span into context
 	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)
+
 	if len(e.children) > 0 {
 		for {
 			if err := e.children[0].Next(ctx, e.childrenResults[0]); err != nil {

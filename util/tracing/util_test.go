@@ -77,6 +77,21 @@ func (s *testTraceSuite) TestChildSpanFromContext(c *C) {
 
 }
 
+func (s *testTraceSuite) TestFollowFrom(c *C) {
+	var collectedSpans []basictracer.RawSpan
+	// first start a root span
+	sp1 := tracing.NewRecordedTrace("test", func(sp basictracer.RawSpan) {
+		collectedSpans = append(collectedSpans, sp)
+	})
+	sp2 := sp1.Tracer().StartSpan("follow_from", opentracing.FollowsFrom(sp1.Context()))
+	sp1.Finish()
+	sp2.Finish()
+	c.Assert(collectedSpans[1].Operation, Equals, "follow_from")
+	c.Assert(collectedSpans[1].ParentSpanID, Not(Equals), uint64(0))
+	// only root span has 0 parent id
+	c.Assert(collectedSpans[0].ParentSpanID, Equals, uint64(0))
+}
+
 func (s *testTraceSuite) TestCreateSapnBeforeSetupGlobalTracer(c *C) {
 	var collectedSpans []basictracer.RawSpan
 	sp := opentracing.StartSpan("before")
