@@ -47,6 +47,7 @@ type tikvSnapshot struct {
 	priority     pb.CommandPri
 	notFillCache bool
 	syncLog      bool
+	keyOnly      bool
 	vars         *kv.Variables
 }
 
