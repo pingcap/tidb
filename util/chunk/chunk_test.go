@@ -258,6 +258,18 @@ func newChunk(elemLen ...int) *Chunk {
 	return chk
 }
 
+func newChunkWithInitCap(cap int, elemLen ...int) *Chunk {
+	chk := &Chunk{}
+	for _, l := range elemLen {
+		if l > 0 {
+			chk.columns = append(chk.columns, newFixedLenColumn(l, cap))
+		} else {
+			chk.columns = append(chk.columns, newVarLenColumn(cap, nil))
+		}
+	}
+	return chk
+}
+
 var allTypes = []*types.FieldType{
 	types.NewFieldType(mysql.TypeTiny),
 	types.NewFieldType(mysql.TypeShort),
