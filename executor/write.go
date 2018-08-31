@@ -71,20 +71,6 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 				return false, handleChanged, newHandle, errors.Trace(err)
 			}
 		}
-		// Rebase auto increment id if the field is changed.
-		if mysql.HasAutoIncrementFlag(col.Flag) {
-			if newData[i].IsNull() {
-				return false, handleChanged, newHandle, table.ErrColumnCantNull.GenByArgs(col.Name)
-			}
-			val, errTI := newData[i].ToInt64(sc)
-			if errTI != nil {
-				return false, handleChanged, newHandle, errors.Trace(errTI)
-			}
-			err := t.RebaseAutoID(ctx, val, true)
-			if err != nil {
-				return false, handleChanged, newHandle, errors.Trace(err)
-			}
-		}
 		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
 		if err != nil {
 			return false, handleChanged, newHandle, errors.Trace(err)
@@ -92,6 +78,20 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if cmp != 0 {
 			changed = true
 			modified[i] = true
+			// Rebase auto increment id if the field is changed.
+			if mysql.HasAutoIncrementFlag(col.Flag) {
+				if newData[i].IsNull() {
+					return false, handleChanged, newHandle, table.ErrColumnCantNull.GenByArgs(col.Name)
+				}
+				val, errTI := newData[i].ToInt64(sc)
+				if errTI != nil {
+					return false, handleChanged, newHandle, errors.Trace(errTI)
+				}
+				err := t.RebaseAutoID(ctx, val, true)
+				if err != nil {
+					return false, handleChanged, newHandle, errors.Trace(err)
+				}
+			}
 			if col.IsPKHandleColumn(t.Meta()) {
 				handleChanged = true
 				newHandle = newData[i].GetInt64()
