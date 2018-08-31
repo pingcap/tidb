@@ -684,10 +684,15 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		_, err := strconv.ParseFloat(prefix, 64)
 		c.Assert(err, IsNil)
 	}
-	_, err := floatStrToIntStr("1e9223372036854775807")
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
-	_, err = floatStrToIntStr("1e21")
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
+	floatStr, err := floatStrToIntStr(sc, "1e9223372036854775807", "1e9223372036854775807")
+	c.Assert(err, IsNil)
+	c.Assert(floatStr, Equals, "1")
+	floatStr, err = floatStrToIntStr(sc, "125e342", "125e342.83")
+	c.Assert(err, IsNil)
+	c.Assert(floatStr, Equals, "125")
+	floatStr, err = floatStrToIntStr(sc, "1e21", "1e21")
+	c.Assert(err, IsNil)
+	c.Assert(floatStr, Equals, "1")
 }
 
 // TestConvertTime tests time related conversion.
