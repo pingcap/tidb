@@ -1349,11 +1349,7 @@ PrimaryOpt:
 | "PRIMARY"
 
 ColumnOption:
-	"DEFAULT" DefaultValueExpr
-	{
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionDefaultValue, Expr: $2}
-	}
-|	"NOT" "NULL"
+	"NOT" "NULL"
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionNotNull}
 	}
@@ -1379,6 +1375,10 @@ ColumnOption:
 |	"UNIQUE" "KEY"
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey}
+	}
+|	"DEFAULT" DefaultValueExpr
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionDefaultValue, Expr: $2}
 	}
 |	"ON" "UPDATE" NowSymOptionFraction
 	{
