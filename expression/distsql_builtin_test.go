@@ -29,14 +29,14 @@ import (
 var _ = Suite(&testEvalSuite{})
 
 type testEvalSuite struct {
-	colID int
+	colID int64
 }
 
 func (s *testEvalSuite) SetUpSuite(c *C) {
 	s.colID = 0
 }
 
-func (s *testEvalSuite) allocColID() int {
+func (s *testEvalSuite) allocColID() int64 {
 	s.colID++
 	return s.colID
 }
