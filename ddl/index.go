@@ -16,11 +16,13 @@ package ddl
 import (
 	"context"
 	"math"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -35,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -285,6 +288,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 		log.Infof("[ddl] add index, run DDL job %s, index info %#v", job, indexInfo)
 	}
+
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
@@ -467,6 +471,7 @@ type addIndexWorker struct {
 	index       table.Index
 	table       table.Table
 	colFieldMap map[int64]*types.FieldType
+	colExprMap  map[int64]expression.Expression
 	closed      bool
 	priority    int
 
@@ -474,6 +479,8 @@ type addIndexWorker struct {
 	defaultVals        []types.Datum
 	idxRecords         []*indexRecord
 	rowMap             map[int64]types.Datum
+	rowSlice           []types.Datum
+	row                chunk.Row
 	idxKeyBufs         [][]byte
 	batchCheckKeys     []kv.Key
 	distinctCheckFlags []bool
@@ -496,9 +503,9 @@ type addIndexResult struct {
 	err        error
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType, colExprMap map[int64]expression.Expression) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-	return &addIndexWorker{
+	w := &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
 		batchCnt:    DefaultTaskHandleCnt,
@@ -508,10 +515,15 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		index:       index,
 		table:       t,
 		colFieldMap: colFieldMap,
+		colExprMap:  colExprMap,
 		priority:    kv.PriorityLow,
 		defaultVals: make([]types.Datum, len(t.Cols())),
 		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
 	}
+	if len(colExprMap) != 0 {
+		w.rowSlice = make([]types.Datum, len(t.Cols()))
+	}
+	return w
 }
 
 func (w *addIndexWorker) close() {
@@ -531,6 +543,15 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 		return nil, errors.Trace(err)
 	}
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
+	if len(w.colExprMap) != 0 {
+		for _, col := range w.table.Cols() {
+			ri, ok := w.rowMap[col.ID]
+			if ok {
+				w.rowSlice[col.Offset] = ri
+			}
+		}
+		w.row = chunk.MutRowFromDatums(w.rowSlice).ToRow()
+	}
 	for j, v := range idxInfo.Columns {
 		col := cols[v.Offset]
 		if col.IsPKHandleColumn(t.Meta()) {
@@ -548,6 +569,17 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 			delete(w.rowMap, col.ID)
 			continue
 		}
+		if col.IsGenerated() && col.GeneratedStored == false {
+			var val *types.Datum
+			val, err = w.fillGenColData(col)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if val != nil {
+				idxVal[j] = *val
+				continue
+			}
+		}
 		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -556,6 +588,21 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	}
 	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal}
 	return idxRecord, nil
+}
+
+func (w *addIndexWorker) fillGenColData(col *table.Column) (*types.Datum, error) {
+	if expr, ok := w.colExprMap[col.ID]; ok {
+		val, err := expr.Eval(w.row)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		val, err = table.CastValue(w.sessCtx, val, col.ToInfo())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return &val, nil
+	}
+	return nil, nil
 }
 
 // getNextHandle gets next handle of entry that we are going to process.
@@ -843,14 +890,28 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 	log.Infof("[ddl-reorg] worker[%v] exit", w.id)
 }
 
-func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64]*types.FieldType {
+func makeupIndexColFieldMapAndColExpr(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]*types.FieldType, map[int64]expression.Expression, error) {
 	cols := t.Cols()
 	colFieldMap := make(map[int64]*types.FieldType, len(indexInfo.Columns))
+	colExprMap := make(map[int64]expression.Expression)
+
 	for _, v := range indexInfo.Columns {
 		col := cols[v.Offset]
 		colFieldMap[col.ID] = &col.FieldType
+		if col.IsGenerated() && col.GeneratedStored == false {
+			for _, c := range cols {
+				if strings.Contains(col.GeneratedExprString, c.Name.L) {
+					colFieldMap[c.ID] = &c.FieldType
+				}
+			}
+			e, err := expression.ParseSimpleExprWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta())
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			colExprMap[col.ID] = e
+		}
 	}
-	return colFieldMap
+	return colFieldMap, colExprMap, nil
 }
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
@@ -1053,19 +1114,20 @@ func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, workers []*addInd
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
-	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
+	sessCtx := newContext(reorgInfo.d.store)
+	colFieldMap, colExprMap, err := makeupIndexColFieldMapAndColExpr(sessCtx, t, indexInfo)
 
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
 	idxWorkers := make([]*addIndexWorker, workerCnt)
 	for i := 0; i < int(workerCnt); i++ {
 		sessCtx := newContext(reorgInfo.d.store)
-		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, colFieldMap)
+		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, colFieldMap, colExprMap)
 		idxWorkers[i].priority = job.Priority
 		go idxWorkers[i].run(reorgInfo.d)
 	}
 	defer closeAddIndexWorkers(idxWorkers)
-	err := w.buildIndexForReorgInfo(t, idxWorkers, job, reorgInfo)
+	err = w.buildIndexForReorgInfo(t, idxWorkers, job, reorgInfo)
 	return errors.Trace(err)
 }
 

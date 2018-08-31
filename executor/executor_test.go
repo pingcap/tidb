@@ -270,6 +270,12 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
 	tk.MustExec("admin check table t1;")
 
+	// For add index on virtual column
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(" create table t1 ( b json , c int as (JSON_EXTRACT(b,'$.d')));")
+	tk.MustExec("insert into t1 set b='{\"d\": 100}';")
+	tk.MustExec("alter table t1 add index idx(c);")
+	tk.MustExec("admin check table t1;")
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
