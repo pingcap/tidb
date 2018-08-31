@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/sirupsen/logrus"
 )
 
 var _ = Suite(&testUnitTestSuit{})
@@ -43,7 +44,7 @@ func (s *testUnitTestSuit) newTypeWithFlen(typeByte byte, flen int) *types.Field
 	return tp
 }
 
-func (s *testUnitTestSuit) SubstituteCol2CorCol(expr expression.Expression, colIDs map[int]struct{}) (expression.Expression, error) {
+func (s *testUnitTestSuit) SubstituteCol2CorCol(expr expression.Expression, colIDs map[int64]struct{}) (expression.Expression, error) {
 	switch x := expr.(type) {
 	case *expression.ScalarFunction:
 		newArgs := make([]expression.Expression, 0, len(x.GetArgs()))
@@ -94,72 +95,72 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 	})
 	testCases := []struct {
 		expr       string
-		corColIDs  []int
-		idxColIDs  []int
+		corColIDs  []int64
+		idxColIDs  []int64
 		idxColLens []int
 		access     string
 		remained   string
 	}{
 		{
 			expr:       "col1 = col2",
-			corColIDs:  []int{2},
-			idxColIDs:  []int{1},
+			corColIDs:  []int64{2},
+			idxColIDs:  []int64{1},
 			idxColLens: []int{types.UnspecifiedLength},
 			access:     "[eq(col1, col2)]",
 			remained:   "[]",
 		},
 		{
 			expr:       "col1 = col5 and col2 = 1",
-			corColIDs:  []int{5},
-			idxColIDs:  []int{1, 2},
+			corColIDs:  []int64{5},
+			idxColIDs:  []int64{1, 2},
 			idxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength},
 			access:     "[eq(col1, col5) eq(col2, 1)]",
 			remained:   "[]",
 		},
 		{
 			expr:       "col1 = col5 and col2 = 1",
-			corColIDs:  []int{5},
-			idxColIDs:  []int{2, 1},
+			corColIDs:  []int64{5},
+			idxColIDs:  []int64{2, 1},
 			idxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength},
 			access:     "[eq(col2, 1) eq(col1, col5)]",
 			remained:   "[]",
 		},
 		{
 			expr:       "col1 = col5 and col2 = 1",
-			corColIDs:  []int{5},
-			idxColIDs:  []int{1},
+			corColIDs:  []int64{5},
+			idxColIDs:  []int64{1},
 			idxColLens: []int{types.UnspecifiedLength},
 			access:     "[eq(col1, col5)]",
 			remained:   "[eq(col2, 1)]",
 		},
 		{
 			expr:       "col2 = 1 and col1 = col5",
-			corColIDs:  []int{5},
-			idxColIDs:  []int{1},
+			corColIDs:  []int64{5},
+			idxColIDs:  []int64{1},
 			idxColLens: []int{types.UnspecifiedLength},
 			access:     "[eq(col1, col5)]",
 			remained:   "[eq(col2, 1)]",
 		},
 		{
 			expr:       "col1 = col2 and col3 = col4 and col5 = 1",
-			corColIDs:  []int{2, 4},
-			idxColIDs:  []int{1, 3},
+			corColIDs:  []int64{2, 4},
+			idxColIDs:  []int64{1, 3},
 			idxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength},
 			access:     "[eq(col1, col2) eq(col3, col4)]",
 			remained:   "[eq(col5, 1)]",
 		},
 		{
 			expr:       "col1 = col2 and col3 = col4 and col5 = 1",
-			corColIDs:  []int{2, 4},
-			idxColIDs:  []int{1, 3},
+			corColIDs:  []int64{2, 4},
+			idxColIDs:  []int64{1, 3},
 			idxColLens: []int{types.UnspecifiedLength, 2},
 			access:     "[eq(col1, col2) eq(col3, col4)]",
 			remained:   "[eq(col3, col4) eq(col5, 1)]",
 		},
 		{
 			expr:       `col1 = col5 and col3 = "col1" and col2 = col5`,
-			corColIDs:  []int{5},
-			idxColIDs:  []int{1, 2, 3},
+			corColIDs:  []int64{5},
+			idxColIDs:  []int64{1, 2, 3},
 			idxColLens: []int{types.UnspecifiedLength, types.UnspecifiedLength, types.UnspecifiedLength},
 			access:     "[eq(col1, col5) eq(col2, col5) eq(col3, col1)]",
 			remained:   "[]",
@@ -173,7 +174,7 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 		}
 		c.Assert(err, IsNil, comment)
 		trueFilters := make([]expression.Expression, 0, len(filters))
-		idMap := make(map[int]struct{})
+		idMap := make(map[int64]struct{})
 		for _, id := range tt.corColIDs {
 			idMap[id] = struct{}{}
 		}
@@ -185,9 +186,11 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 		path := accessPath{
 			eqCondCount:  0,
 			tableFilters: trueFilters,
-			idxCols:      expression.FindColumnsByUniqueIDs(totalSchema.Columns, tt.idxColIDs),
+			idxCols:      expression.FindPrefixOfIndex(totalSchema.Columns, tt.idxColIDs),
 			idxColLens:   tt.idxColLens,
 		}
+
+		logrus.Warnf("idx cols: %v", path.idxCols)
 		access, remained := path.splitCorColAccessCondFromFilters()
 		c.Assert(fmt.Sprintf("%s", access), Equals, tt.access, comment)
 		c.Assert(fmt.Sprintf("%s", remained), Equals, tt.remained, comment)
