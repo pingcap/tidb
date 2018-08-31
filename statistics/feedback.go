@@ -556,10 +556,13 @@ func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 
 // queryFeedback is used to serialize the QueryFeedback.
 type queryFeedback struct {
-	IntRanges    []int64
-	HashValues   []uint64 // HashValues is the murmur hash values for each index point.
-	IndexRanges  [][]byte
-	Counts       []int64 // Counts is the number of scan keys in each range.
+	IntRanges []int64
+	// HashValues is the murmur hash values for each index point.
+	HashValues  []uint64
+	IndexRanges [][]byte
+	// Counts is the number of scan keys in each range. It first stores the count for `IntRanges`, `IndexRanges` or `ColumnRanges`.
+	// After that, it stores the ranges for `HashValues`.
+	Counts       []int64
 	ColumnRanges [][]byte
 }
 
@@ -642,21 +645,8 @@ func encodeFeedback(q *QueryFeedback) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
-	buf := bytes.NewBuffer(val)
-	dec := gob.NewDecoder(buf)
-	pb := &queryFeedback{}
-	err := dec.Decode(pb)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 {
-		q.tp = indexType
-	} else if len(pb.IntRanges) > 0 {
-		q.tp = pkType
-	} else {
-		q.tp = colType
-	}
+func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
+	q.tp = indexType
 	// decode the index range feedback
 	for i := 0; i < len(pb.IndexRanges); i += 2 {
 		lower, upper := types.NewBytesDatum(pb.IndexRanges[i]), types.NewBytesDatum(pb.IndexRanges[i+1])
@@ -669,11 +659,19 @@ func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
 			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint32(pb.Counts[start+i/2]))
 		}
 	}
+}
+
+func decodeFeedbackForPK(q *QueryFeedback, pb *queryFeedback) {
+	q.tp = pkType
 	// decode feedback for primary key
 	for i := 0; i < len(pb.IntRanges); i += 2 {
 		lower, upper := types.NewIntDatum(pb.IntRanges[i]), types.NewIntDatum(pb.IntRanges[i+1])
 		q.feedback = append(q.feedback, feedback{&lower, &upper, pb.Counts[i/2], 0})
 	}
+}
+
+func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback) error {
+	q.tp = colType
 	for i := 0; i < len(pb.ColumnRanges); i += 2 {
 		low, err := codec.DecodeRange(pb.ColumnRanges[i], 1)
 		if err != nil {
@@ -684,6 +682,27 @@ func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
 			return errors.Trace(err)
 		}
 		q.feedback = append(q.feedback, feedback{&low[0], &high[0], pb.Counts[i/2], 0})
+	}
+	return nil
+}
+
+func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
+	buf := bytes.NewBuffer(val)
+	dec := gob.NewDecoder(buf)
+	pb := &queryFeedback{}
+	err := dec.Decode(pb)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 {
+		decodeFeedbackForIndex(q, pb, c)
+	} else if len(pb.IntRanges) > 0 {
+		decodeFeedbackForPK(q, pb)
+	} else {
+		err := decodeFeedbackForColumn(q, pb)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
@@ -855,11 +874,11 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		// prefer index stats over column stats
-		if idxHist := t.indexStartWithColumnForDebugLog(colName); idxHist != nil {
+		if idxHist := t.indexStartWithColumn(colName); idxHist != nil {
 			rangeString := logForIndexRange(idxHist, &rang, -1, factor)
 			log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
 				actual[i], equalityString, equalityCount, rangeString)
-		} else if colHist := t.columnByNameForDebugLog(colName); colHist != nil {
+		} else if colHist := t.columnByName(colName); colHist != nil {
 			rangeString := colRangeToStr(colHist, &rang, -1, factor)
 			log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
 				actual[i], equalityString, equalityCount, rangeString)
@@ -902,7 +921,7 @@ func (q *QueryFeedback) logDetailedInfo(h *Handle) {
 
 // getNewCount adjust the estimated `eqCount` and `rangeCount` according to the real count.
 // We assumes that `eqCount` and `rangeCount` contribute the same error rate.
-func getNewCount(eqCount, rangeCount, totalCount, realCount float64) (float64, float64) {
+func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (float64, float64) {
 	estimate := (eqCount / totalCount) * (rangeCount / totalCount) * totalCount
 	if estimate <= 1 {
 		return eqCount, rangeCount
@@ -948,27 +967,21 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 		var rangeCount float64
 		rangeFB := &QueryFeedback{tableID: q.tableID}
 		// prefer index stats over column stats
-		if idx, ok := t.colName2Idx[colName]; ok {
-			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx, []*ranger.Range{&rang})
-			index := t.Indices[idx]
-			if index == nil || index.Histogram.Len() == 0 {
-				continue
-			}
-			rangeFB.tp, rangeFB.hist = indexType, &index.Histogram
-		} else {
-			rangeCount, err = t.GetRowCountByColumnRanges(sc, t.colName2ID[colName], []*ranger.Range{&rang})
-			col := t.Columns[t.colName2ID[colName]]
-			if col == nil || col.Histogram.Len() == 0 {
-				continue
-			}
+		if idx := t.indexStartWithColumn(colName); idx != nil && idx.Histogram.Len() != 0 {
+			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{&rang})
+			rangeFB.tp, rangeFB.hist = indexType, &idx.Histogram
+		} else if col := t.columnByName(colName); col != nil && col.Histogram.Len() != 0 {
+			rangeCount, err = t.GetRowCountByColumnRanges(sc, col.ID, []*ranger.Range{&rang})
 			rangeFB.tp, rangeFB.hist = colType, &col.Histogram
+		} else {
+			continue
 		}
 		if err != nil {
 			log.Debug("get row count by ranges failed: ", err)
 			continue
 		}
 
-		equalityCount, rangeCount = getNewCount(equalityCount, rangeCount, float64(t.Count), float64(q.feedback[i].count))
+		equalityCount, rangeCount = getNewCountForIndex(equalityCount, rangeCount, float64(t.Count), float64(q.feedback[i].count))
 		value := types.NewBytesDatum(bytes)
 		q.feedback[i] = feedback{lower: &value, upper: &value, count: int64(equalityCount)}
 		err = rangeFB.dumpRangeFeedback(h, &rang, rangeCount)
@@ -1039,7 +1052,7 @@ func setNextValue(d *types.Datum) {
 	case types.KindMysqlTime:
 		t := d.GetMysqlTime()
 		sc := &stmtctx.StatementContext{TimeZone: types.BoundTimezone}
-		t.Add(sc, types.Duration{1, 0})
+		t.Add(sc, types.Duration{Duration: 1, Fsp: 0})
 		d.SetMysqlTime(t)
 	}
 }
