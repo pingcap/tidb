@@ -203,6 +203,9 @@ func (c *Column) GetTypeDesc() string {
 	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit && c.Tp != mysql.TypeYear {
 		desc += " UNSIGNED"
 	}
+	if mysql.HasZerofillFlag(c.Flag) && c.Tp != mysql.TypeYear {
+		desc += " ZEROFILL"
+	}
 	return desc
 }
 

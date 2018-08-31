@@ -6321,7 +6321,7 @@ DateAndTimeType:
 		}
 		$$ = x
 	}
-|	"YEAR" OptFieldLen
+|	"YEAR" OptFieldLen FieldOpts
 	{
 		x := types.NewFieldType(mysql.TypeYear)
 		x.Flen = $2.(int)

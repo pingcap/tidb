@@ -2021,3 +2021,36 @@ func (s *testSuite) TestReplaceLog(c *C) {
 
 	tk.MustQuery(`admin cleanup index testLog b;`).Check(testkit.Rows("1"))
 }
+
+// For issue 7422.
+// There is no need to do the rebase when updating a record if the auto-increment ID not changed.
+// This could make the auto ID increasing speed slower.
+func (s *testSuite) TestRebaseIfNeeded(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int not null primary key auto_increment, b int unique key);`)
+	tk.MustExec(`insert into t (b) values (1);`)
+
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	tbl, err := s.domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(s.ctx.NewTxn(), IsNil)
+	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
+	// which could simulate another TiDB adds a large auto ID.
+	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
+	c.Assert(err, IsNil)
+	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+
+	tk.MustExec(`update t set b = 3 where a = 30001;`)
+	tk.MustExec(`insert into t (b) values (4);`)
+	tk.MustQuery(`select a from t where b = 4;`).Check(testkit.Rows("2"))
+
+	tk.MustExec(`insert into t set b = 3 on duplicate key update a = a;`)
+	tk.MustExec(`insert into t (b) values (5);`)
+	tk.MustQuery(`select a from t where b = 5;`).Check(testkit.Rows("4"))
+
+	tk.MustExec(`insert into t set b = 3 on duplicate key update a = a + 1;`)
+	tk.MustExec(`insert into t (b) values (6);`)
+	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
+}
