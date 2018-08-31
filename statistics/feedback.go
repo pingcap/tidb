@@ -854,22 +854,18 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 			HighVal: []types.Datum{ran.HighVal[rangePosition]},
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
-		var rangeString string
 		// prefer index stats over column stats
-		if idx, ok := t.colName2Idx[colName]; ok {
-			if t.Indices[idx] == nil {
-				return
-			}
-			rangeString = logForIndexRange(t.Indices[idx], &rang, -1, factor)
+		if idxHist := t.indexStartWithColumnForDebugLog(colName); idxHist != nil {
+			rangeString := logForIndexRange(idxHist, &rang, -1, factor)
+			log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
+				actual[i], equalityString, equalityCount, rangeString)
+		} else if colHist := t.columnByNameForDebugLog(colName); colHist != nil {
+			rangeString := colRangeToStr(colHist, &rang, -1, factor)
+			log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
+				actual[i], equalityString, equalityCount, rangeString)
 		} else {
-			id := t.colName2ID[colName]
-			if t.Columns[id] == nil {
-				return
-			}
-			rangeString = colRangeToStr(t.Columns[t.colName2ID[colName]], &rang, -1, factor)
+			return
 		}
-		log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
-			actual[i], equalityString, equalityCount, rangeString)
 	}
 }
 

@@ -23,7 +23,6 @@ import (
 	"unsafe"
 
 	"github.com/juju/errors"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -210,18 +209,6 @@ func splitRanges(ranges []*ranger.Range, keepOrder bool) ([]*ranger.Range, []*ra
 	return signedRanges, unsignedRanges
 }
 
-// startSpanFollowContext is similar to opentracing.StartSpanFromContext, but the span reference use FollowsFrom option.
-func startSpanFollowsContext(ctx context.Context, operationName string) (opentracing.Span, context.Context) {
-	span := opentracing.SpanFromContext(ctx)
-	if span != nil {
-		span = opentracing.StartSpan(operationName, opentracing.FollowsFrom(span.Context()))
-	} else {
-		span = opentracing.StartSpan(operationName)
-	}
-
-	return span, opentracing.ContextWithSpan(ctx, span)
-}
-
 // rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range
 // by substitute correlated column with the constant.
 func rebuildIndexRanges(ctx sessionctx.Context, is *plan.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
@@ -298,9 +285,6 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 }
 
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
-	span, ctx := startSpanFollowsContext(ctx, "executor.IndexReader.Open")
-	defer span.Finish()
-
 	var err error
 	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
@@ -402,9 +386,6 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	// situation.
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupReader)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-
-	span, ctx := startSpanFollowsContext(ctx, "executor.IndexLookUp.Open")
-	defer span.Finish()
 
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
