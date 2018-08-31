@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -243,6 +244,8 @@ func (e *IndexReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	sp, ctx := tracing.ChildSpanFromContxt(ctx, e.id)
+	defer sp.Finish()
 	err := e.result.Next(ctx, chk)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -512,6 +515,8 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	sp, ctx := tracing.ChildSpanFromContxt(ctx, e.id)
+	defer sp.Finish()
 	chk.Reset()
 	for {
 		resultTask, err := e.getResultTask()

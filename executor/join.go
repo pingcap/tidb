@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/util/tracing"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -483,6 +485,8 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 // step 1. fetch data from inner child and build a hash table;
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
 func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+	sp, ctx := tracing.ChildSpanFromContxt(ctx, e.id)
+	defer sp.Finish()
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
 		go util.WithRecovery(func() { e.fetchInnerAndBuildHashTable(ctx) }, e.finishFetchInnerAndBuildHashTable)

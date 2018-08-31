@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/tracing"
 	tipb "github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -98,6 +99,8 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	sp, ctx := tracing.ChildSpanFromContxt(ctx, e.id)
+	defer sp.Finish()
 	if err := e.resultHandler.nextChunk(ctx, chk); err != nil {
 		e.feedback.Invalidate()
 		return err

@@ -49,6 +49,10 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
+	e.rootTrace = tracing.NewRecordedTrace("trace_exec", func(sp basictracer.RawSpan) {
+		e.CollectedSpans = append(e.CollectedSpans, sp)
+	})
+
 	// record how much time was spent for optimizeing plan
 	optimizeSp := e.rootTrace.Tracer().StartSpan("plan_optimize", opentracing.FollowsFrom(e.rootTrace.Context()))
 	stmtPlan, err := plannercore.Optimize(e.builder.ctx, e.stmtNode, e.builder.is)
@@ -65,9 +69,6 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	// append select executor to trace executor
 	stmtExec := e.builder.build(pp)
 
-	e.rootTrace = tracing.NewRecordedTrace("trace_exec", func(sp basictracer.RawSpan) {
-		e.CollectedSpans = append(e.CollectedSpans, sp)
-	})
 	err = stmtExec.Open(ctx)
 	if err != nil {
 		return errors.Trace(err)

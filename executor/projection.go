@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/util/tracing"
 	"golang.org/x/net/context"
 )
 
@@ -140,6 +141,8 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //
 func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
+	sp, ctx := tracing.ChildSpanFromContxt(ctx, e.id)
+	defer sp.Finish()
 	if e.isUnparallelExec() {
 		return errors.Trace(e.unParallelExecute(ctx, chk))
 	}
