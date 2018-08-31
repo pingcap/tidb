@@ -128,6 +128,9 @@ func (s *testSuite) TestCreateDropDatabase(c *C) {
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 	_, err = tk.Exec("select * from t;")
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+
+	_, err = tk.Exec("drop database mysql")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestCreateDropTable(c *C) {
@@ -137,6 +140,9 @@ func (s *testSuite) TestCreateDropTable(c *C) {
 	tk.MustExec("drop table if exists drop_test")
 	tk.MustExec("create table drop_test (a int)")
 	tk.MustExec("drop table drop_test")
+
+	_, err := tk.Exec("drop table mysql.gc_delete_range")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestCreateDropIndex(c *C) {
@@ -411,11 +417,11 @@ func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
 	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
 	_, err := tk.Exec("set tidb_ddl_reorg_worker_cnt = invalid_val")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
 	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
 	_, err = tk.Exec("set tidb_ddl_reorg_worker_cnt = -1")
-	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
 	res := tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")

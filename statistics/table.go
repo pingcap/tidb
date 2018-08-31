@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -46,19 +47,24 @@ const (
 type Table struct {
 	HistColl
 	Version uint64
+	name    string
 }
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
 type HistColl struct {
-	PhysicalID     int64 // PhysicalID is the partition id for a partitioned table, otherwise, it is the table id.
+	PhysicalID int64
+	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
+	// The physical id is used when try to load column stats from storage.
 	HavePhysicalID bool
 	Columns        map[int64]*Column
 	Indices        map[int64]*Index
-	colName2Idx    map[string]int64 // map column name to index id
-	colName2ID     map[string]int64 // map column name to column id
-	Pseudo         bool
-	Count          int64
-	ModifyCount    int64 // Total modify count in a table.
+	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
+	Idx2ColumnIDs map[int64][]int64
+	// ColID2IdxID maps the column id to index id whose first column is it. It's used to calculate the selectivity in planner.
+	ColID2IdxID map[int64]int64
+	Pseudo      bool
+	Count       int64
+	ModifyCount int64 // Total modify count in a table.
 }
 
 func (t *Table) copy() *Table {
@@ -68,8 +74,6 @@ func (t *Table) copy() *Table {
 		Count:          t.Count,
 		Columns:        make(map[int64]*Column),
 		Indices:        make(map[int64]*Index),
-		colName2Idx:    make(map[string]int64),
-		colName2ID:     make(map[string]int64),
 		Pseudo:         t.Pseudo,
 		ModifyCount:    t.ModifyCount,
 	}
@@ -79,27 +83,12 @@ func (t *Table) copy() *Table {
 	for id, idx := range t.Indices {
 		newHistColl.Indices[id] = idx
 	}
-	for name, id := range t.colName2Idx {
-		newHistColl.colName2Idx[name] = id
-	}
-	for name, id := range t.colName2ID {
-		newHistColl.colName2ID[name] = id
-	}
 	nt := &Table{
 		HistColl: newHistColl,
 		Version:  t.Version,
+		name:     t.name,
 	}
 	return nt
-}
-
-func (t *Table) buildColNameMapper() {
-	for id, col := range t.Columns {
-		t.colName2ID[col.Info.Name.L] = id
-	}
-	for id, idx := range t.Indices {
-		// use this index to estimate the column stats
-		t.colName2Idx[idx.Info.Columns[0].Name.L] = id
-	}
 }
 
 func (h *Handle) cmSketchFromStorage(tblID int64, isIndex, histID int64) (*CMSketch, error) {
@@ -249,8 +238,6 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			HavePhysicalID: true,
 			Columns:        make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices:        make(map[int64]*Index, len(tableInfo.Indices)),
-			colName2Idx:    make(map[string]int64),
-			colName2ID:     make(map[string]int64),
 		}
 		table = &Table{
 			HistColl: histColl,
@@ -280,7 +267,6 @@ func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			}
 		}
 	}
-	table.buildColNameMapper()
 	return table, nil
 }
 
@@ -295,6 +281,24 @@ func (t *Table) String() string {
 		strs = append(strs, col.String())
 	}
 	return strings.Join(strs, "\n")
+}
+
+func (t *Table) indexStartWithColumnForDebugLog(colName string) *Index {
+	for _, index := range t.Indices {
+		if index.Info.Columns[0].Name.L == colName {
+			return index
+		}
+	}
+	return nil
+}
+
+func (t *Table) columnByNameForDebugLog(colName string) *Column {
+	for _, c := range t.Columns {
+		if c.Info.Name.L == colName {
+			return c
+		}
+	}
+	return nil
 }
 
 type tableColumnID struct {
@@ -350,9 +354,9 @@ func (coll *HistColl) ColumnIsInvalid(sc *stmtctx.StatementContext, colID int64)
 	if !ok || coll.Pseudo && col.NotAccurate() {
 		return true
 	}
-	if col.NDV > 0 && col.Len() == 0 {
+	if col.NDV > 0 && col.Len() == 0 && coll.HavePhysicalID {
 		sc.SetHistogramsNotLoad()
-		histogramNeededColumns.insert(tableColumnID{tableID: coll.PhysicalID, columnID: colID})
+		histogramNeededColumns.insert(tableColumnID{tableID: coll.PhysicalID, columnID: col.Info.ID})
 	}
 	return col.totalRowCount() == 0 || (col.NDV > 0 && col.Len() == 0)
 }
@@ -437,7 +441,7 @@ func (coll *HistColl) GetRowCountByIndexRanges(sc *stmtctx.StatementContext, idx
 	var result float64
 	var err error
 	if idx.CMSketch != nil && idx.statsVer == version1 {
-		result, err = coll.getIndexRowCount(sc, idx, indexRanges, coll.ModifyCount)
+		result, err = coll.getIndexRowCount(sc, idxID, indexRanges)
 	} else {
 		result, err = idx.getRowCount(sc, indexRanges, coll.ModifyCount)
 	}
@@ -466,13 +470,69 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 	return len(ran.LowVal)
 }
 
-func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index, indexRanges []*ranger.Range, modifyCount int64) (float64, error) {
+// GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxID and IdxID2ColIDs is built from the given parameter.
+func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) HistColl {
+	newColHistMap := make(map[int64]*Column)
+	colInfoID2UniqueID := make(map[int64]int64)
+	colNames2UniqueID := make(map[string]int64)
+	for _, col := range columns {
+		colInfoID2UniqueID[col.ID] = col.UniqueID
+	}
+	for _, colInfo := range infos {
+		uniqueID, ok := colInfoID2UniqueID[colInfo.ID]
+		if ok {
+			colNames2UniqueID[colInfo.Name.L] = uniqueID
+		}
+	}
+	for id, colHist := range coll.Columns {
+		uniqueID, ok := colInfoID2UniqueID[id]
+		// Collect the statistics by the given columns.
+		if ok {
+			newColHistMap[uniqueID] = colHist
+		}
+	}
+	newIdxHistMap := make(map[int64]*Index)
+	idx2Columns := make(map[int64][]int64)
+	colID2IdxID := make(map[int64]int64)
+	for _, idxHist := range coll.Indices {
+		ids := make([]int64, 0, len(idxHist.Info.Columns))
+		for _, idxCol := range idxHist.Info.Columns {
+			uniqueID, ok := colNames2UniqueID[idxCol.Name.L]
+			if !ok {
+				break
+			}
+			ids = append(ids, uniqueID)
+		}
+		// If the length of the id list is 0, this index won't be used in this query.
+		if len(ids) == 0 {
+			continue
+		}
+		colID2IdxID[ids[0]] = idxHist.ID
+		newIdxHistMap[idxHist.ID] = idxHist
+		idx2Columns[idxHist.ID] = ids
+	}
+	newColl := HistColl{
+		PhysicalID:     coll.PhysicalID,
+		HavePhysicalID: coll.HavePhysicalID,
+		Pseudo:         coll.Pseudo,
+		Count:          coll.Count,
+		ModifyCount:    coll.ModifyCount,
+		Columns:        newColHistMap,
+		Indices:        newIdxHistMap,
+		ColID2IdxID:    colID2IdxID,
+		Idx2ColumnIDs:  idx2Columns,
+	}
+	return newColl
+}
+
+func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64, indexRanges []*ranger.Range) (float64, error) {
+	idx := coll.Indices[idxID]
 	totalCount := float64(0)
 	for _, ran := range indexRanges {
 		rangePosition := getOrdinalOfRangeCond(sc, ran)
 		// first one is range, just use the previous way to estimate
 		if rangePosition == 0 {
-			count, err := idx.getRowCount(sc, []*ranger.Range{ran}, modifyCount)
+			count, err := idx.getRowCount(sc, []*ranger.Range{ran}, coll.ModifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -494,7 +554,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index,
 				selectivity = 1.0 / float64(idx.NDV)
 			} else {
 				// for range queries
-				selectivity = float64(modifyCount) / outOfRangeBetweenRate / idx.totalRowCount()
+				selectivity = float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.totalRowCount()
 			}
 		} else {
 			selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.totalRowCount())
@@ -509,12 +569,18 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idx *Index,
 			}
 			var count float64
 			var err error
-			colName := idx.Info.Columns[rangePosition].Name.L
+			colIDs := coll.Idx2ColumnIDs[idxID]
+			var colID int64
+			if rangePosition >= len(colIDs) {
+				colID = -1
+			} else {
+				colID = colIDs[rangePosition]
+			}
 			// prefer index stats over column stats
-			if idx, ok := coll.colName2Idx[colName]; ok {
+			if idx, ok := coll.ColID2IdxID[colID]; ok {
 				count, err = coll.GetRowCountByIndexRanges(sc, idx, []*ranger.Range{&rang})
 			} else {
-				count, err = coll.GetRowCountByColumnRanges(sc, coll.colName2ID[colName], []*ranger.Range{&rang})
+				count, err = coll.GetRowCountByColumnRanges(sc, colID, []*ranger.Range{&rang})
 			}
 			if err != nil {
 				return 0, errors.Trace(err)

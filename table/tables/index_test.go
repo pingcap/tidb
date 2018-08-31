@@ -106,7 +106,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 
 	_, _, err = it.Next()
-	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
+	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
 	it.Close()
 
 	_, err = index.Create(mockCtx, txn, values, 0)
@@ -127,14 +127,14 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(hit, IsFalse)
 
 	_, _, err = it.Next()
-	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
+	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
 	it.Close()
 
 	it, err = index.SeekFirst(txn)
 	c.Assert(err, IsNil)
 
 	_, _, err = it.Next()
-	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
+	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
 	it.Close()
 
 	err = txn.Commit(context.Background())

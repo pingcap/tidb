@@ -366,6 +366,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			}
 			do.SchemaValidator.Restart()
 		case <-do.info.Done():
+			log.Info("[ddl] reload schema in loop, server info syncer need restart")
 			do.info.Restart(context.Background())
 		case <-do.exit:
 			return

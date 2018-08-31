@@ -345,7 +345,9 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 					return nil, nil, errors.Trace(err)
 				}
-				col.DefaultValue = value
+				if err = col.SetDefaultValue(value); err != nil {
+					return nil, nil, errors.Trace(err)
+				}
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
@@ -473,9 +475,9 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	// For timestamp Col, if is not set default value or not set null, use current timestamp.
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
-			c.DefaultValue = types.ZeroDatetimeStr
+			c.SetDefaultValue(types.ZeroDatetimeStr)
 		} else {
-			c.DefaultValue = strings.ToUpper(ast.CurrentTimestamp)
+			c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp))
 		}
 	}
 }
@@ -500,7 +502,7 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 		return nil
 	}
 
-	if c.DefaultValue != nil {
+	if c.GetDefaultValue() != nil {
 		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
 			return types.ErrInvalidDefault.GenByArgs(c.Name)
 		}
@@ -522,7 +524,7 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 // checkPriKeyConstraint check all parts of a PRIMARY KEY must be NOT NULL
 func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool, outPriKeyConstraint *ast.Constraint) error {
 	// Primary key should not be null.
-	if mysql.HasPriKeyFlag(col.Flag) && hasDefaultValue && col.DefaultValue == nil {
+	if mysql.HasPriKeyFlag(col.Flag) && hasDefaultValue && col.GetDefaultValue() == nil {
 		return types.ErrInvalidDefault.GenByArgs(col.Name)
 	}
 	// Set primary key flag for outer primary key constraint.
@@ -904,7 +906,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			return errors.Trace(err)
 		}
 
-		if err = checkCreatePartitionValue(pi); err != nil {
+		if err = checkCreatePartitionValue(ctx, tbInfo, pi); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -912,7 +914,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			return errors.Trace(err)
 		}
 
-		if err = checkPartitionFuncValid(s.Partition.Expr); err != nil {
+		if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -1247,7 +1249,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	col.OriginDefaultValue = col.DefaultValue
+	col.OriginDefaultValue = col.GetDefaultValue()
 	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
 		zeroVal := table.GetZeroValue(col.ToInfo())
 		col.OriginDefaultValue, err = zeroVal.ToString()
@@ -1458,7 +1460,10 @@ func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	if err != nil {
 		return ErrColumnBadNull.Gen("invalid default value - %s", err)
 	}
-	col.DefaultValue = value
+	err = col.SetDefaultValue(value)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return errors.Trace(checkDefaultValue(ctx, col, true))
 }
 
@@ -1487,7 +1492,9 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 				return errors.Trace(err)
 			}
-			col.DefaultValue = value
+			if err = col.SetDefaultValue(value); err != nil {
+				return errors.Trace(err)
+			}
 		case ast.ColumnOptionComment:
 			err := setColumnComment(ctx, col, opt)
 			if err != nil {
@@ -1709,7 +1716,10 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	// Clean the NoDefaultValueFlag value.
 	col.Flag &= ^mysql.NoDefaultValueFlag
 	if len(specNewColumn.Options) == 0 {
-		col.DefaultValue = nil
+		err = col.SetDefaultValue(nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		setNoDefaultValueFlag(col, false)
 	} else {
 		err = setDefaultValue(ctx, col, specNewColumn.Options[0])

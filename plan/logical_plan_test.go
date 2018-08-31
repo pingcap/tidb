@@ -315,7 +315,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2 where t1.a = t2.b and t2.b > 0 and t1.a = t1.c and t1.d like 'abc' and t2.d = t1.d",
-			best: "Join{DataScan(t2)->DataScan(t1)->Sel([like(cast(t1.d), abc, 92)])}(t2.b,t1.a)(t2.d,t1.d)->Projection",
+			best: "Join{DataScan(t2)->Sel([like(cast(t2.d), abc, 92)])->DataScan(t1)->Sel([like(cast(t1.d), abc, 92)])}(t2.b,t1.a)(t2.d,t1.d)->Projection",
 		},
 		{
 			sql:  "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
@@ -536,6 +536,17 @@ func (s *testPlanSuite) TestTablePartition(c *C) {
 		{
 			sql:  "select * from t where t.h > 128",
 			best: "Dual->Projection",
+			is:   is1,
+		},
+		{
+			// NULL will be located in the first partition.
+			sql:  "select * from t where t.h is null",
+			best: "Partition(41)->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h is null or t.h > 70",
+			best: "UnionAll{Partition(41)->Partition(44)}->Projection",
 			is:   is1,
 		},
 	}
@@ -1170,6 +1181,14 @@ func (s *testPlanSuite) TestValidate(c *C) {
 		{
 			sql: "select a from t having sum(avg(a))",
 			err: ErrInvalidGroupFuncUse,
+		},
+		{
+			sql: "select concat(c_str, d_str) from t group by `concat(c_str, d_str)`",
+			err: nil,
+		},
+		{
+			sql: "select concat(c_str, d_str) from t group by `concat(c_str,d_str)`",
+			err: ErrUnknownColumn,
 		},
 	}
 	for _, tt := range tests {

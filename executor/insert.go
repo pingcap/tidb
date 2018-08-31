@@ -22,33 +22,16 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
 // InsertExec represents an insert executor.
 type InsertExec struct {
 	*InsertValues
-
-	batchInsertRowCount uint64
-	OnDuplicate         []*expression.Assignment
-
-	Priority mysql.PriorityEnum
-
-	finished bool
-}
-
-func (e *InsertExec) insertOneRow(row []types.Datum) (int64, error) {
-	if err := e.checkBatchLimit(); err != nil {
-		return 0, errors.Trace(err)
-	}
-	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
-	h, err := e.Table.AddRecord(e.ctx, row, false)
-	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	e.batchInsertRowCount++
-	return h, nil
+	OnDuplicate []*expression.Assignment
+	Priority    mysql.PriorityEnum
+	finished    bool
 }
 
 func (e *InsertExec) exec(rows [][]types.Datum) error {
@@ -74,40 +57,18 @@ func (e *InsertExec) exec(rows [][]types.Datum) error {
 			return errors.Trace(err)
 		}
 	} else if ignoreErr {
-		err := e.batchCheckAndInsert(rows, e.insertOneRow)
+		err := e.batchCheckAndInsert(rows, e.addRecord)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else {
 		for _, row := range rows {
-			if _, err := e.insertOneRow(row); err != nil {
+			if _, err := e.addRecord(row); err != nil {
 				return errors.Trace(err)
 			}
 		}
 	}
-	if e.lastInsertID != 0 {
-		sessVars.SetLastInsertID(e.lastInsertID)
-	}
 	e.finished = true
-	return nil
-}
-
-// checkBatchLimit check the batchSize limitation.
-func (e *InsertExec) checkBatchLimit() error {
-	sessVars := e.ctx.GetSessionVars()
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
-	batchSize := sessVars.DMLBatchSize
-	if batchInsert && e.batchInsertRowCount >= uint64(batchSize) {
-		e.ctx.StmtCommit()
-		if err := e.ctx.NewTxn(); err != nil {
-			// We should return a special error for batch insert.
-			return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
-		}
-		e.batchInsertRowCount = 0
-		if !sessVars.LightningMode {
-			sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
-		}
-	}
 	return nil
 }
 
@@ -157,7 +118,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
 		if newRows[i] != nil {
-			newHandle, err := e.insertOneRow(newRows[i])
+			newHandle, err := e.addRecord(newRows[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -205,6 +166,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate []*expression.Assignment) error {
 	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
 	if err != nil {
+		log.Errorf("[insert on dup] handle is %d for the to-be-inserted row %s", handle, types.DatumsToStrNoErr(row.row))
 		return errors.Trace(err)
 	}
 	// Do update row.
@@ -245,16 +207,9 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow [
 	}
 
 	newData := row4Update[:len(oldRow)]
-	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
+	_, handleChanged, newHandle, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
-	}
-	e.batchInsertRowCount++
-	if err := e.checkBatchLimit(); err != nil {
-		return nil, false, 0, errors.Trace(err)
-	}
-	if lastInsertID != 0 {
-		e.lastInsertID = lastInsertID
 	}
 	return newData, handleChanged, newHandle, nil
 }

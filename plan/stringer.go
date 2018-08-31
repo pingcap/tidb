@@ -141,7 +141,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		idxs = idxs[:last]
 	case *DataSource:
 		if x.isPartition {
-			str = fmt.Sprintf("Partition(%d)", x.partitionID)
+			str = fmt.Sprintf("Partition(%d)", x.physicalTableID)
 		} else {
 			if x.TableAsName != nil && x.TableAsName.L != "" {
 				str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
@@ -156,9 +156,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *LogicalProjection, *PhysicalProjection:
 		str = "Projection"
 	case *LogicalTopN:
-		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
+		str = fmt.Sprintf("TopN(%v,%d,%d)", x.ByItems, x.Offset, x.Count)
 	case *PhysicalTopN:
-		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
+		str = fmt.Sprintf("TopN(%v,%d,%d)", x.ByItems, x.Offset, x.Count)
 	case *LogicalTableDual, *PhysicalTableDual:
 		str = "Dual"
 	case *PhysicalHashAgg:
