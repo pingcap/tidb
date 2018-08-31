@@ -1349,7 +1349,11 @@ PrimaryOpt:
 | "PRIMARY"
 
 ColumnOption:
-	"NOT" "NULL"
+	"DEFAULT" DefaultValueExpr
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionDefaultValue, Expr: $2}
+	}
+|	"NOT" "NULL"
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionNotNull}
 	}
@@ -1375,10 +1379,6 @@ ColumnOption:
 |	"UNIQUE" "KEY"
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionUniqKey}
-	}
-|	"DEFAULT" DefaultValueExpr
-	{
-		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionDefaultValue, Expr: $2}
 	}
 |	"ON" "UPDATE" NowSymOptionFraction
 	{
@@ -1626,11 +1626,11 @@ SignedLiteral:
 	}
 |	'+' NumLiteral
 	{
-		$$ = &ast.UnaryOperationExpr{Op: opcode.Plus, V: ast.NewValueExpr($2)}
+		$$ = ast.NewValueExpr($2)
 	}
 |	'-' NumLiteral
 	{
-		$$ = &ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr($2)}
+		$$ = ast.NewOppositeValueExpr($2)
 	}
 
 NumLiteral:

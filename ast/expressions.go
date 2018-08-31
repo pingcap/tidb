@@ -109,6 +109,40 @@ func NewValueExpr(value interface{}) *ValueExpr {
 	return ve
 }
 
+// NewOppositeValueExpr creates a ValueExpr with opposite value 
+// when value's type is number, and sets default field type.
+func NewOppositeValueExpr(value interface{}) *ValueExpr {
+	if ve, ok := value.(*ValueExpr); ok {
+		return ve
+	}
+	oppositeValue := value
+	switch v := value.(type){
+	case int:
+		oppositeValue = -v
+	case int32:
+		oppositeValue = -v
+	case int64:
+		oppositeValue = -v
+	case float64:
+		oppositeValue = -v
+	case float32:
+		oppositeValue = -v
+	case *types.MyDecimal:
+		floatV, err := v.ToFloat64()
+		if err != nil {
+			break
+		}
+		oppositeValue = -floatV
+	}
+	
+	ve := &ValueExpr{}
+	ve.SetValue(oppositeValue)
+	types.DefaultTypeForValue(oppositeValue, &ve.Type)
+	ve.projectionOffset = -1
+	return ve
+}
+
+
 // SetProjectionOffset sets ValueExpr.projectionOffset for logical plan builder.
 func (n *ValueExpr) SetProjectionOffset(offset int) {
 	n.projectionOffset = offset
