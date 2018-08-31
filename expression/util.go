@@ -19,7 +19,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -451,18 +450,16 @@ func (s *exprStack) len() int {
 	return len(s.stack)
 }
 
-// ColumnSliceIntersect intersects two column slice.
-// You need to make sure that at least each element in s2 is unique.
-func ColumnSliceIntersect(s1, s2 []*Column) []*Column {
+// ColumnSliceIsIntersect checks whether two column slice is intersected.
+func ColumnSliceIsIntersect(s1, s2 []*Column) bool {
 	intSet := map[int64]struct{}{}
 	for _, col := range s1 {
 		intSet[col.UniqueID] = struct{}{}
 	}
-	result := make([]*Column, 0, mathutil.Min(len(s1), len(s2)))
 	for _, col := range s2 {
 		if _, ok := intSet[col.UniqueID]; ok {
-			result = append(result, col)
+			return true
 		}
 	}
-	return result
+	return false
 }

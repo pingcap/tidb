@@ -574,7 +574,7 @@ func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.C
 	remained = make([]expression.Expression, 0, len(innerFilters))
 	for _, filter := range innerFilters {
 		affectedCols := expression.ExtractColumns(filter)
-		if len(expression.ColumnSliceIntersect(affectedCols, usableKeys)) > 0 {
+		if expression.ColumnSliceIsIntersect(affectedCols, usableKeys) {
 			remained = append(remained, filter)
 			continue
 		}
