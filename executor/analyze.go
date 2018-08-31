@@ -181,7 +181,7 @@ func (e *AnalyzeIndexExec) open() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(ctx)
+	e.result.Fetch(ctx, distsql.CalcDecodeType(tipb.EncodeType_TypeDefault))
 	return nil
 }
 
@@ -299,7 +299,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.Fetch(ctx)
+	result.Fetch(ctx, distsql.CalcDecodeType(tipb.EncodeType_TypeDefault))
 	return result, nil
 }
 

@@ -18,7 +18,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -118,7 +117,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	e.result.Fetch(ctx)
+	e.result.Fetch(ctx, distsql.CalcDecodeType(dagPB.EncodeType))
 	return nil
 }
 
@@ -138,9 +137,7 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if config.GetGlobalConfig().EnableArrow {
-		dagReq.EncodeType = tipb.EncodeType_TypeArrow
-	}
+	distsql.SetEncodeType(dagReq)
 	return dagReq, nil
 }
 
@@ -245,9 +242,7 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 	limitExec := e.constructLimitPB(limitCnt)
 	dagReq.Executors = append(dagReq.Executors, limitExec)
 
-	if config.GetGlobalConfig().EnableArrow {
-		dagReq.EncodeType = tipb.EncodeType_TypeArrow
-	}
+	distsql.SetEncodeType(dagReq)
 	return dagReq, nil
 }
 
@@ -272,7 +267,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.Fetch(ctx)
+	result.Fetch(ctx, distsql.CalcDecodeType(dagPB.EncodeType))
 	return result, nil
 }
 
@@ -632,7 +627,7 @@ func (e *CleanupIndexExec) buildIndexScan(ctx context.Context, txn kv.Transactio
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.Fetch(ctx)
+	result.Fetch(ctx, distsql.CalcDecodeType(dagPB.EncodeType))
 	return result, nil
 }
 
@@ -674,10 +669,7 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 	limitExec := e.constructLimitPB()
 	dagReq.Executors = append(dagReq.Executors, limitExec)
 
-	if config.GetGlobalConfig().EnableArrow {
-		dagReq.EncodeType = tipb.EncodeType_TypeArrow
-	}
-
+	distsql.SetEncodeType(dagReq)
 	return dagReq, nil
 }
 

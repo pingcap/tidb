@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -36,6 +35,33 @@ var (
 	_ SelectResult = (*streamResult)(nil)
 )
 
+type DecodeType int
+
+const (
+	DecodeTypeDefault DecodeType = iota
+	DecodeTypeArrow
+)
+
+func (t DecodeType) String() string {
+	switch t {
+	case DecodeTypeDefault:
+		return "DecodeTypeDefault"
+	case DecodeTypeArrow:
+		return "DecodeTypeArrow"
+	}
+	return "unknown decode type"
+}
+
+func CalcDecodeType(encodeType tipb.EncodeType) (decodeType DecodeType) {
+	switch encodeType {
+	case tipb.EncodeType_TypeDefault:
+		return DecodeTypeDefault
+	case tipb.EncodeType_TypeArrow:
+		return DecodeTypeArrow
+	}
+	panic("unsupported encode type")
+}
+
 var (
 	selectResultGP = gp.New(time.Minute * 2)
 )
@@ -43,7 +69,7 @@ var (
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
 	// Fetch fetches partial results from client.
-	Fetch(context.Context)
+	Fetch(context.Context, DecodeType)
 	// NextRaw gets the next raw result.
 	NextRaw(context.Context) ([]byte, error)
 	// Next reads the data into chunk.
@@ -73,9 +99,12 @@ type selectResult struct {
 
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
+
+	decodeType DecodeType
 }
 
-func (r *selectResult) Fetch(ctx context.Context) {
+func (r *selectResult) Fetch(ctx context.Context, dt DecodeType) {
+	r.decodeType = dt
 	selectResultGP.Go(func() {
 		r.fetch(ctx)
 	})
@@ -123,10 +152,13 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if config.GetGlobalConfig().EnableArrow {
+	switch r.decodeType {
+	case DecodeTypeDefault:
+		return r.readFromDefault(ctx, chk)
+	case DecodeTypeArrow:
 		return r.readFromArrow(ctx, chk)
 	}
-	return r.readFromDefault(ctx, chk)
+	panic("unsupported decode type")
 }
 
 func (r *selectResult) readFromArrow(ctx context.Context, chk *chunk.Chunk) error {
@@ -209,12 +241,13 @@ func (r *selectResult) getSelectResp() error {
 		r.partialCount++
 		sc.MergeExecDetails(re.result.GetExecDetails())
 
-		if config.GetGlobalConfig().EnableArrow {
-			if len(r.selectResp.RowBatchData) == 0 {
+		switch r.decodeType {
+		case DecodeTypeDefault:
+			if len(r.selectResp.Chunks) == 0 {
 				continue
 			}
-		} else {
-			if len(r.selectResp.Chunks) == 0 {
+		case DecodeTypeArrow:
+			if len(r.selectResp.RowBatchData) == 0 {
 				continue
 			}
 		}

@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -223,9 +222,7 @@ func buildDescTableScanDAG(startTS uint64, tbl table.Table, columns []*model.Col
 	tblScanExec := constructDescTableScanPB(tbl.GetID(), pbColumnInfos)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
-	if config.GetGlobalConfig().EnableArrow {
-		dagReq.EncodeType = tipb.EncodeType_TypeArrow
-	}
+	distsql.SetEncodeType(dagReq)
 	return dagReq, nil
 }
 
@@ -259,7 +256,7 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	result.Fetch(ctx)
+	result.Fetch(ctx, distsql.CalcDecodeType(dagPB.EncodeType))
 	return result, nil
 }
 

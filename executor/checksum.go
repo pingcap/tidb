@@ -132,7 +132,7 @@ func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.C
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	res.Fetch(ctx)
+	res.Fetch(ctx, distsql.CalcDecodeType(tipb.EncodeType_TypeDefault))
 	defer func() {
 		if err1 := res.Close(); err1 != nil {
 			err = errors.Trace(err1)
