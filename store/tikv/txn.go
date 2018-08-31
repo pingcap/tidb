@@ -150,6 +150,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.notFillCache = val.(bool)
 	case kv.SyncLog:
 		txn.snapshot.syncLog = val.(bool)
+	case kv.KeyOnly:
+		txn.snapshot.keyOnly = val.(bool)
 	}
 }
 

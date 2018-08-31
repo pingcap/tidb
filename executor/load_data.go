@@ -248,14 +248,10 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			break
 		}
 	}
-	err := e.batchCheckAndInsert(rows, e.insertData)
+	err := e.batchCheckAndInsert(rows, e.addRecordLD)
 	if err != nil {
 		return nil, reachLimit, errors.Trace(err)
 	}
-	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
-	}
-
 	return curData, reachLimit, nil
 }
 
@@ -282,11 +278,11 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 	return row
 }
 
-func (e *LoadDataInfo) insertData(row []types.Datum) (int64, error) {
+func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
 	if row == nil {
 		return 0, nil
 	}
-	h, err := e.Table.AddRecord(e.ctx, row, false)
+	h, err := e.addRecord(row)
 	if err != nil {
 		e.handleWarning(err,
 			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))

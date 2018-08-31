@@ -102,6 +102,10 @@ func (e *HashJoinExec) Close() error {
 	close(e.closeCh)
 	e.finished.Store(true)
 	if e.prepared {
+		if e.innerFinished != nil {
+			for range e.innerFinished {
+			}
+		}
 		if e.joinResultCh != nil {
 			for range e.joinResultCh {
 			}
@@ -278,6 +282,9 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 		case <-doneCh:
 			return
 		default:
+			if e.finished.Load().(bool) {
+				return
+			}
 			chk := e.children[e.innerIdx].newChunk()
 			err = e.innerExec.Next(ctx, chk)
 			if err != nil {
@@ -530,6 +537,9 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	doneCh := make(chan struct{})
 	go e.fetchInnerRows(ctx, innerResultCh, doneCh)
 
+	if e.finished.Load().(bool) {
+		return
+	}
 	// TODO: Parallel build hash table. Currently not support because `mvmap` is not thread-safe.
 	err := e.buildHashTableForList(innerResultCh)
 	if err != nil {
@@ -561,6 +571,9 @@ func (e *HashJoinExec) buildHashTableForList(innerResultCh chan *chunk.Chunk) er
 
 	chkIdx := uint32(0)
 	for chk := range innerResultCh {
+		if e.finished.Load().(bool) {
+			return nil
+		}
 		numRows := chk.NumRows()
 		for j := 0; j < numRows; j++ {
 			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)
