@@ -83,15 +83,13 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 
 	// 3. Compare datum, then handle some flags.
 	for i, col := range t.Cols() {
-		if cmp, err := newData[i].CompareDatum(sc, &oldData[i]); err != nil {
-			return false, false, 0, errors.Trace(err)
-		} else {
+		if cmp, err := newData[i].CompareDatum(sc, &oldData[i]); err == nil {
 			if cmp != 0 {
 				changed = true
 				modified[i] = true
 				// Rebase auto increment id if the field is changed.
 				if mysql.HasAutoIncrementFlag(col.Flag) {
-					if err := t.RebaseAutoID(ctx, newData[i].GetInt64(), true); err != nil {
+					if err = t.RebaseAutoID(ctx, newData[i].GetInt64(), true); err != nil {
 						return false, false, 0, errors.Trace(err)
 					}
 				}
@@ -106,6 +104,8 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 				}
 				modified[i] = false
 			}
+		} else {
+			return false, false, 0, errors.Trace(err)
 		}
 	}
 
@@ -121,11 +121,11 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// 4. Fill values into on-update-now fields, only if they are really changed.
 	for i, col := range t.Cols() {
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
-			if v, err := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal); err != nil {
-				return false, false, 0, errors.Trace(err)
-			} else {
+			if v, err := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal); err == nil {
 				newData[i] = v
 				modified[i] = true
+			} else {
+				return false, false, 0, errors.Trace(err)
 			}
 		}
 	}
@@ -143,7 +143,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			}
 			skipHandleCheck = true
 		}
-		if err := t.RemoveRecord(ctx, h, oldData); err != nil {
+		if err = t.RemoveRecord(ctx, h, oldData); err != nil {
 			return false, false, 0, errors.Trace(err)
 		}
 		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
@@ -152,8 +152,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	} else {
 		// Update record to new value and update index.
-		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
-		if err != nil {
+		if err = t.UpdateRecord(ctx, h, oldData, newData, modified); err != nil {
 			return false, false, 0, errors.Trace(err)
 		}
 	}
