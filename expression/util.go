@@ -454,7 +454,7 @@ func (s *exprStack) len() int {
 // ColumnSliceIntersect intersects two column slice.
 // You need to make sure that at least each element in s2 is unique.
 func ColumnSliceIntersect(s1, s2 []*Column) []*Column {
-	intSet := map[int]struct{}{}
+	intSet := map[int64]struct{}{}
 	for _, col := range s1 {
 		intSet[col.UniqueID] = struct{}{}
 	}
