@@ -246,15 +246,14 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 	var isNull bool
 
 	for i := 0; i < len(args); i++ {
-		if nullBitmap[i>>3]&(1<<(uint(i)%8)) > 0 {
-			args[i] = nil
-			continue
-		}
 		if boundParams[i] != nil {
 			args[i] = boundParams[i]
 			continue
 		}
-
+		if nullBitmap[i>>3]&(1<<(uint(i)%8)) > 0 {
+			args[i] = nil
+			continue
+		}
 		if (i<<1)+1 >= len(paramTypes) {
 			return mysql.ErrMalformPacket
 		}
