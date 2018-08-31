@@ -38,6 +38,10 @@ const (
 	// Auto analyze will run if (table modify count)/(table row count) is greater than this value.
 	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
 
+	// Auto analyze will run if current time is within start time and end time.
+	TiDBAutoAnalyzeStartTime = "tidb_auto_analyze_start_time"
+	TiDBAutoAnalyzeEndTime   = "tidb_auto_analyze_end_time"
+
 	// tidb_checksum_table_concurrency is used to speed up the ADMIN CHECKSUM TABLE
 	// statement, when a table has multiple indices, those indices can be
 	// scanned concurrently, with the cost of higher system performance impact.
@@ -189,6 +193,8 @@ const (
 	DefDistSQLScanConcurrency        = 15
 	DefBuildStatsConcurrency         = 4
 	DefAutoAnalyzeRatio              = 0.5
+	DefAutoAnalyzeStartTime          = "00:00 UTC"
+	DefAutoAnalyzeEndTime            = "23:59 UTC"
 	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
