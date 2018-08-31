@@ -84,7 +84,7 @@ LOOP:
 		case <-ticker.C:
 			d.close()
 			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
-			d.start(context.Background(), nil)
+			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
 			c.Assert(err, IsNil)

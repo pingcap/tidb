@@ -471,7 +471,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		// Test Apply.
 		{
 			sql:  "select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
-			best: "Apply{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
+			best: "Apply{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(t1.a, test.t.a)]))}(s.a,t1.a)->StreamAgg}->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
