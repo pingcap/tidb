@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"golang.org/x/net/context"
 )
 
@@ -76,6 +77,42 @@ func (s *testScanSuite) TestSeek(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(val, BytesEquals, valueBytes(0))
 		scan, err := txn2.Seek(encodeKey(s.prefix, ""))
+		c.Assert(err, IsNil)
+
+		for i := 0; i < rowNum; i++ {
+			k := scan.Key()
+			c.Assert([]byte(k), BytesEquals, encodeKey(s.prefix, s08d("key", i)))
+			v := scan.Value()
+			c.Assert(v, BytesEquals, valueBytes(i))
+			// Because newScan return first item without calling scan.Next() just like go-hbase,
+			// for-loop count will decrease 1.
+			if i < rowNum-1 {
+				scan.Next()
+			}
+		}
+		scan.Next()
+		c.Assert(scan.Valid(), IsFalse)
+
+		txn3 := s.beginTxn(c)
+		txn3.SetOption(kv.KeyOnly, true)
+		scan, err = txn3.Seek(encodeKey(s.prefix, ""))
+		c.Assert(err, IsNil)
+
+		for i := 0; i < rowNum; i++ {
+			k := scan.Key()
+			c.Assert([]byte(k), BytesEquals, encodeKey(s.prefix, s08d("key", i)))
+			// Because newScan return first item without calling scan.Next() just like go-hbase,
+			// for-loop count will decrease 1.
+			if i < rowNum-1 {
+				scan.Next()
+			}
+		}
+		scan.Next()
+		c.Assert(scan.Valid(), IsFalse)
+
+		// Restore KeyOnly to false
+		txn3.SetOption(kv.KeyOnly, false)
+		scan, err = txn3.Seek(encodeKey(s.prefix, ""))
 		c.Assert(err, IsNil)
 
 		for i := 0; i < rowNum; i++ {

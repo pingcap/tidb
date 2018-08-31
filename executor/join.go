@@ -102,6 +102,10 @@ func (e *HashJoinExec) Close() error {
 	close(e.closeCh)
 	e.finished.Store(true)
 	if e.prepared {
+		if e.innerFinished != nil {
+			for range e.innerFinished {
+			}
+		}
 		if e.joinResultCh != nil {
 			for range e.joinResultCh {
 			}
@@ -264,6 +268,9 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context) (err error) {
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
 	for {
+		if e.finished.Load().(bool) {
+			return nil
+		}
 		chk := e.children[e.innerIdx].newChunk()
 		err = e.innerExec.Next(ctx, chk)
 		if err != nil || chk.NumRows() == 0 {
@@ -511,6 +518,10 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 		return
 	}
 
+	if e.finished.Load().(bool) {
+		return
+	}
+
 	if err := e.buildHashTableForList(); err != nil {
 		e.innerFinished <- errors.Trace(err)
 		return
@@ -533,6 +544,9 @@ func (e *HashJoinExec) buildHashTableForList() error {
 		valBuf  = make([]byte, 8)
 	)
 	for i := 0; i < e.innerResult.NumChunks(); i++ {
+		if e.finished.Load().(bool) {
+			return nil
+		}
 		chk := e.innerResult.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
 			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, chk.GetRow(j), keyBuf)

@@ -15,12 +15,14 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -68,6 +70,7 @@ type ColumnInfo struct {
 	Offset              int                 `json:"offset"`
 	OriginDefaultValue  interface{}         `json:"origin_default"`
 	DefaultValue        interface{}         `json:"default"`
+	DefaultValueBit     []byte              `json:"default_bit"`
 	GeneratedExprString string              `json:"generated_expr_string"`
 	GeneratedStored     bool                `json:"generated_stored"`
 	Dependences         map[string]struct{} `json:"dependences"`
@@ -85,6 +88,31 @@ func (c *ColumnInfo) Clone() *ColumnInfo {
 // IsGenerated returns true if the column is generated column.
 func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
+}
+
+// SetDefaultValue sets the default value.
+func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
+	c.DefaultValue = value
+	if c.Tp == mysql.TypeBit {
+		// For mysql.TypeBit type, the default value storage format must be a string.
+		// Other value such as int must convert to string format first.
+		if v, ok := value.(string); ok {
+			c.DefaultValueBit = []byte(v)
+			return nil
+		}
+		return types.ErrInvalidDefault.GenByArgs(c.Name)
+	}
+	return nil
+}
+
+// GetDefaultValue gets the default value of the column.
+// Default value use to stored in DefaultValue field, but now,
+// bit type default value will store in DefaultValueBit for fix bit default value decode/encode bug.
+func (c *ColumnInfo) GetDefaultValue() interface{} {
+	if c.Tp == mysql.TypeBit && c.DefaultValueBit != nil {
+		return hack.String(c.DefaultValueBit)
+	}
+	return c.DefaultValue
 }
 
 // FindColumnInfo finds ColumnInfo in cols by name.
@@ -521,4 +549,9 @@ func collationToProto(c string) int32 {
 	// Setting other collations to utf8_bin for old data compatibility.
 	// For the data created when we didn't enforce utf8_bin collation in create table.
 	return int32(mysql.DefaultCollationID)
+}
+
+// GetTableColumnID gets a ID of a column with table ID
+func GetTableColumnID(tableInfo *TableInfo, col *ColumnInfo) string {
+	return fmt.Sprintf("%d_%d", tableInfo.ID, col.ID)
 }

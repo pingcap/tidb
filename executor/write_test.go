@@ -19,15 +19,12 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -625,6 +622,11 @@ commit;`
 	testSQL = `SELECT LAST_INSERT_ID();`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1"))
+	testSQL = `INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = 2;`
+	tk.MustExec(testSQL)
+	testSQL = `SELECT LAST_INSERT_ID();`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1"))
 
 	testSQL = `DROP TABLE IF EXISTS t1;
 	CREATE TABLE t1 (f1 INT);
@@ -1000,7 +1002,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	_, err = tk.Exec("update ignore t set a = 1 where a = 2;")
 	c.Assert(err, IsNil)
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1062 key already exist"))
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'I_uniq'"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 
 	tk.MustExec("drop table if exists t")
@@ -1426,7 +1428,10 @@ func (s *testSuite) TestLoadData(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	ctx := tk.Se.(sessionctx.Context)
-	ld := makeLoadDataInfo(4, nil, ctx, c)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
@@ -1582,7 +1587,10 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	ctx := tk.Se.(sessionctx.Context)
-	ld := makeLoadDataInfo(2, nil, ctx, c)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
 	// test escape
 	tests := []testCase{
 		// data1 = nil, data2 != nil
@@ -1607,7 +1615,10 @@ func (s *testSuite) TestLoadDataSpecifiedColumns(c *C) {
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)")
 	ctx := tk.Se.(sessionctx.Context)
-	ld := makeLoadDataInfo(2, []string{"c1", "c2"}, ctx, c)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
 	// test
 	tests := []testCase{
 		// data1 = nil, data2 != nil
@@ -1622,27 +1633,6 @@ func (s *testSuite) TestLoadDataSpecifiedColumns(c *C) {
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
-}
-
-func makeLoadDataInfo(column int, specifiedColumns []string, ctx sessionctx.Context, c *C) (ld *executor.LoadDataInfo) {
-	dom := domain.GetDomain(ctx)
-	is := dom.InfoSchema()
-	c.Assert(is, NotNil)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("load_data_test"))
-	c.Assert(err, IsNil)
-	columns := tbl.Cols()
-	// filter specified columns
-	if len(specifiedColumns) > 0 {
-		columns, err = table.FindCols(columns, specifiedColumns, true)
-		c.Assert(err, IsNil)
-	}
-	fields := &ast.FieldsClause{Terminated: "\t"}
-	lines := &ast.LinesClause{Starting: "", Terminated: "\n"}
-	ld = executor.NewLoadDataInfo(ctx, make([]types.Datum, column), tbl, columns)
-	ld.SetMaxRowsInBatch(0)
-	ld.FieldsInfo = fields
-	ld.LinesInfo = lines
-	return
 }
 
 func (s *testSuite) TestBatchInsertDelete(c *C) {
@@ -2030,4 +2020,37 @@ func (s *testSuite) TestReplaceLog(c *C) {
 	c.Assert(expErr.Error() == err.Error(), IsTrue, Commentf("obtained error: (%s)\nexpected error: (%s)", err.Error(), expErr.Error()))
 
 	tk.MustQuery(`admin cleanup index testLog b;`).Check(testkit.Rows("1"))
+}
+
+// For issue 7422.
+// There is no need to do the rebase when updating a record if the auto-increment ID not changed.
+// This could make the auto ID increasing speed slower.
+func (s *testSuite) TestRebaseIfNeeded(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int not null primary key auto_increment, b int unique key);`)
+	tk.MustExec(`insert into t (b) values (1);`)
+
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	tbl, err := s.domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(s.ctx.NewTxn(), IsNil)
+	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
+	// which could simulate another TiDB adds a large auto ID.
+	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
+	c.Assert(err, IsNil)
+	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+
+	tk.MustExec(`update t set b = 3 where a = 30001;`)
+	tk.MustExec(`insert into t (b) values (4);`)
+	tk.MustQuery(`select a from t where b = 4;`).Check(testkit.Rows("2"))
+
+	tk.MustExec(`insert into t set b = 3 on duplicate key update a = a;`)
+	tk.MustExec(`insert into t (b) values (5);`)
+	tk.MustQuery(`select a from t where b = 5;`).Check(testkit.Rows("4"))
+
+	tk.MustExec(`insert into t set b = 3 on duplicate key update a = a + 1;`)
+	tk.MustExec(`insert into t (b) values (6);`)
+	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
 }
