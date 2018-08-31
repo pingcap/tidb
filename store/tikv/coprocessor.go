@@ -31,13 +31,10 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
-
-var copIteratorGP = gp.New(time.Minute)
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -452,9 +449,7 @@ func (it *copIterator) open(ctx context.Context) {
 			finishCh: it.finishCh,
 			vars:     it.vars,
 		}
-		copIteratorGP.Go(func() {
-			worker.run(ctx)
-		})
+		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
 		taskCh:   taskCh,
@@ -463,7 +458,7 @@ func (it *copIterator) open(ctx context.Context) {
 		finishCh: it.finishCh,
 	}
 	taskSender.respChan = it.respChan
-	copIteratorGP.Go(taskSender.run)
+	go taskSender.run()
 }
 
 func (sender *copIteratorTaskSender) run() {
