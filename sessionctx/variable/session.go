@@ -209,7 +209,7 @@ type SessionVars struct {
 	PlanID int
 
 	// PlanColumnID is the unique id for column when building plan.
-	PlanColumnID int
+	PlanColumnID int64
 
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
@@ -364,7 +364,7 @@ func (s *SessionVars) CleanBuffers() {
 }
 
 // AllocPlanColumnID allocates column id for planner.
-func (s *SessionVars) AllocPlanColumnID() int {
+func (s *SessionVars) AllocPlanColumnID() int64 {
 	s.PlanColumnID++
 	return s.PlanColumnID
 }

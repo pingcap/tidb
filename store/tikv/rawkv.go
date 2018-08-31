@@ -23,12 +23,10 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/goroutine_pool"
 	"golang.org/x/net/context"
 )
 
 var (
-	rawKVClientGP = gp.New(3 * time.Minute)
 	// MaxRawKVScanLimit is the maximum scan limit for rawkv Scan.
 	MaxRawKVScanLimit = 10240
 	// ErrMaxScanLimitExceeded is returned when the limit for rawkv Scan is to large.
@@ -349,11 +347,11 @@ func (c *RawKVClient) sendBatchReq(bo *Backoffer, keys [][]byte, cmdType tikvrpc
 	ches := make(chan singleBatchResp, len(batches))
 	for _, batch := range batches {
 		batch1 := batch
-		rawKVClientGP.Go(func() {
+		go func() {
 			singleBatchBackoffer, singleBatchCancel := bo.Fork()
 			defer singleBatchCancel()
 			ches <- c.doBatchReq(singleBatchBackoffer, batch1, cmdType)
-		})
+		}()
 	}
 
 	var firstError error
@@ -507,11 +505,11 @@ func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
 	ch := make(chan error, len(batches))
 	for _, batch := range batches {
 		batch1 := batch
-		rawKVClientGP.Go(func() {
+		go func() {
 			singleBatchBackoffer, singleBatchCancel := bo.Fork()
 			defer singleBatchCancel()
 			ch <- c.doBatchPut(singleBatchBackoffer, batch1)
-		})
+		}()
 	}
 
 	for i := 0; i < len(batches); i++ {

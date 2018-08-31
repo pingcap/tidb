@@ -112,7 +112,7 @@ func (s *testEvaluatorSuite) TestColumn2Expr(c *C) {
 
 	cols := make([]*Column, 0, 5)
 	for i := 0; i < 5; i++ {
-		cols = append(cols, &Column{UniqueID: i})
+		cols = append(cols, &Column{UniqueID: int64(i)})
 	}
 
 	exprs := Column2Exprs(cols)
