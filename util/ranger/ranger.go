@@ -469,7 +469,7 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 }
 
 func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.Expression) expression.Expression {
-	//len(points) cannot be 0 now, we have early termination in extractEqAndInCondition
+	//len(points) cannot be 0 here, since we impose early termination in extractEqAndInCondition
 	sf, _ := expr.(*expression.ScalarFunction)
 	//Constant and Column args should have same RetType, simply get from first arg
 	retType := sf.GetArgs()[0].GetType()
