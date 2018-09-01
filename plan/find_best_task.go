@@ -253,7 +253,7 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (t task, err error) {
 
 	for _, path := range ds.possibleAccessPaths {
 		// if we already know the range of the scan is empty, just return a TableDual
-		if len(path.ranges) == 0 {
+		if len(path.ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
 			dual := PhysicalTableDual{}.init(ds.ctx, ds.stats)
 			dual.SetSchema(ds.schema)
 			return &rootTask{
