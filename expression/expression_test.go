@@ -128,7 +128,7 @@ func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
 	schema := NewSchema(make([]*Column, 0, len(columns))...)
 	for i, col := range columns {
 		schema.Append(&Column{
-			UniqueID: i,
+			UniqueID: int64(i),
 			TblName:  tableInfo.Name,
 			ColName:  col.Name,
 			ID:       col.ID,

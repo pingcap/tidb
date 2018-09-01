@@ -141,6 +141,8 @@ func (b *planBuilder) build(node ast.Node) (Plan, error) {
 		return b.buildExecute(x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
+	case *ast.TraceStmt:
+		return b.buildTrace(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(x)
 	case *ast.LoadDataStmt:
@@ -1357,6 +1359,26 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 
 	p := &DDL{Statement: node}
 	return p
+}
+
+// buildTrace builds a trace plan. Inside this method, it first optimize the
+// underlying query and then constructs a schema, which will be used to constructs
+// rows result.
+func (b *planBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
+	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok {
+		return nil, errors.New("trace only supports select query")
+	}
+
+	p := &Trace{StmtNode: trace.Stmt}
+
+	retFields := []string{"operation", "duration", "spanID"}
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+	schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
+
+	schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
+	schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
+	p.SetSchema(schema)
+	return p, nil
 }
 
 func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {

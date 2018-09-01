@@ -198,7 +198,7 @@ func (s *testInferTypeSuite) createTestCase4Cast() []typeInferTestCase {
 func (s *testInferTypeSuite) createTestCase4Columns() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"c_bit        ", mysql.TypeBit, charset.CharsetBin, mysql.UnsignedFlag, 10, 0},
-		{"c_year       ", mysql.TypeYear, charset.CharsetBin, mysql.ZerofillFlag, 4, 0},
+		{"c_year       ", mysql.TypeYear, charset.CharsetBin, mysql.UnsignedFlag | mysql.ZerofillFlag, 4, 0},
 		{"c_int_d      ", mysql.TypeLong, charset.CharsetBin, 0, 11, 0},
 		{"c_uint_d     ", mysql.TypeLong, charset.CharsetBin, mysql.UnsignedFlag, 10, 0},
 		{"c_bigint_d   ", mysql.TypeLonglong, charset.CharsetBin, 0, 20, 0},
