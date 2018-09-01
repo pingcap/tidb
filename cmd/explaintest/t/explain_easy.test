@@ -66,3 +66,7 @@ explain select * from t where b in (1, 2) and b in (1, 3);
 explain select * from t where a = 1 and a = 1;
 explain select * from t where a = 1 and a = 2;
 explain select * from t where b = 1 and b = 2;
+
+drop table if exists t;
+create table t(a bigint primary key);
+explain select * from t where a = 1 and a = 2;
