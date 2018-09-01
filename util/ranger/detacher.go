@@ -146,7 +146,7 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		err     error
 	)
 
-	accessConds, filterConds, conditions, emptyRange := extractEqAndInCondition(sctx, conditions, cols, lengths)
+	accessConds, filterConds, newConditions, emptyRange := extractEqAndInCondition(sctx, conditions, cols, lengths)
 	if emptyRange {
 		return ranges, nil, nil, 0, nil
 	}
@@ -157,11 +157,11 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		}
 	}
 	// We should remove all accessConds, so that they will not be added to filter conditions.
-	conditions = removeAccessConditions(conditions, accessConds)
+	newConditions = removeAccessConditions(newConditions, accessConds)
 	eqOrInCount := len(accessConds)
 	if eqOrInCount == len(cols) {
 		// If curIndex equals to len of index columns, it means the rest conditions haven't been appended to filter conditions.
-		filterConds = append(filterConds, conditions...)
+		filterConds = append(filterConds, newConditions...)
 		ranges, err = buildCNFIndexRange(sctx.GetSessionVars().StmtCtx, cols, tpSlice, lengths, eqOrInCount, accessConds)
 		if err != nil {
 			return nil, nil, nil, 0, errors.Trace(err)
@@ -174,11 +174,11 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		shouldReserve: lengths[eqOrInCount] != types.UnspecifiedLength,
 	}
 	if considerDNF {
-		accesses, filters := detachColumnCNFConditions(sctx, conditions, checker)
+		accesses, filters := detachColumnCNFConditions(sctx, newConditions, checker)
 		accessConds = append(accessConds, accesses...)
 		filterConds = append(filterConds, filters...)
 	} else {
-		for _, cond := range conditions {
+		for _, cond := range newConditions {
 			if !checker.check(cond) {
 				filterConds = append(filterConds, cond)
 				continue
@@ -197,38 +197,39 @@ func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 	accesses := make([]expression.Expression, len(cols))
 	points := make([][]point, len(cols))
 	mergedAccesses := make([]expression.Expression, len(cols))
-	condOffset := make([]int, len(cols))
+	newConditions := make([]expression.Expression, 0, len(conditions))
 	//should not use range to iterate conditions, because we would delete items while iterating
-	for i := len(conditions) - 1; i >= 0; i-- {
-		offset := getEqOrInColOffset(conditions[i], cols)
+	for _, cond := range conditions {
+		offset := getEqOrInColOffset(cond, cols)
 		if offset == -1 {
+			newConditions = append(newConditions, cond)
 			continue
 		}
 		if accesses[offset] == nil {
-			accesses[offset] = conditions[i]
-			condOffset[offset] = i
+			accesses[offset] = cond
 			continue
 		}
 		//multiple Eq/In conditions for one column in CNF, apply intersection on them
 		//lazily compute the points for the first visited Eq/In
 		if mergedAccesses[offset] == nil {
 			mergedAccesses[offset] = accesses[offset]
-			conditions = append(conditions[:condOffset[offset]], conditions[condOffset[offset]+1:]...)
 			points[offset] = rb.build(accesses[offset])
 		}
-		points[offset] = rb.intersection(points[offset], rb.build(conditions[i]))
+		points[offset] = rb.intersection(points[offset], rb.build(cond))
 		//early termination if false expression found
 		if len(points[offset]) == 0 {
 			return nil, nil, nil, true
 		}
-		conditions = append(conditions[:i], conditions[i+1:]...)
 	}
 	for i, ma := range mergedAccesses {
 		if ma == nil {
+			if accesses[i] != nil {
+				newConditions = append(newConditions, accesses[i])
+			}
 			continue
 		}
 		accesses[i] = points2EqOrInCond(sctx, points[i], mergedAccesses[i])
-		conditions = append(conditions, accesses[i])
+		newConditions = append(newConditions, accesses[i])
 	}
 	for i, cond := range accesses {
 		if cond == nil {
@@ -239,7 +240,7 @@ func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			filters = append(filters, cond)
 		}
 	}
-	return accesses, filters, conditions, false
+	return accesses, filters, newConditions, false
 }
 
 // detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
