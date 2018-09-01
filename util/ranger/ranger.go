@@ -492,6 +492,10 @@ func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.E
 		}
 		values = append(values, value)
 	}
-	f := expression.NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(), values...)
+	funcName := ast.EQ
+	if len(values) > 2 {
+		funcName = ast.In
+	}
+	f := expression.NewFunctionInternal(ctx, funcName, sf.GetType(), values...)
 	return f
 }

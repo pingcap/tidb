@@ -88,9 +88,10 @@ func detachColumnDNFConditions(sctx sessionctx.Context, conditions []expression.
 	return accessConditions, hasResidualConditions
 }
 
-// getEqColOffset checks if the expression is a eq function that one side is constant and another is column.
+// getEqOrInColOffset checks if the expression is a eq function that one side is constant and another is column or an
+// in function which is `column in (constant list)`.
 // If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
-func getEqColOffset(expr expression.Expression, cols []*expression.Column) int {
+func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) int {
 	f, ok := expr.(*expression.ScalarFunction)
 	if !ok {
 		return -1
@@ -114,16 +115,6 @@ func getEqColOffset(expr expression.Expression, cols []*expression.Column) int {
 				}
 			}
 		}
-	}
-	return -1
-}
-
-// getInColOffset checks if the expression is an in function which is `column in (constant list)`.
-// If so, it will return the offset of this column in the slice, otherwise return -1 for not found.
-func getInColOffset(expr expression.Expression, cols []*expression.Column) int {
-	f, ok := expr.(*expression.ScalarFunction)
-	if !ok {
-		return -1
 	}
 	if f.FuncName.L == ast.In {
 		c, ok := f.GetArgs()[0].(*expression.Column)
@@ -209,14 +200,9 @@ func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 	condOffset := make([]int, len(cols))
 	//should not use range to iterate conditions, because we would delete items while iterating
 	for i := len(conditions) - 1; i >= 0; i-- {
-		eqOffset := getEqColOffset(conditions[i], cols)
-		inOffset := getInColOffset(conditions[i], cols)
-		offset := eqOffset
-		if eqOffset == -1 {
-			if inOffset == -1 {
-				continue
-			}
-			offset = inOffset
+		offset := getEqOrInColOffset(conditions[i], cols)
+		if offset == -1 {
+			continue
 		}
 		if accesses[offset] == nil {
 			accesses[offset] = conditions[i]
@@ -234,9 +220,6 @@ func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 		//early termination if false expression found
 		if len(points[offset]) == 0 {
 			return nil, nil, nil, true
-		}
-		if inOffset == -1 {
-			mergedAccesses[offset] = conditions[i]
 		}
 		conditions = append(conditions[:i], conditions[i+1:]...)
 	}
