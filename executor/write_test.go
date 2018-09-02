@@ -1645,7 +1645,6 @@ func (s *testSuite) TestLoadDataIgnoreLines(c *C) {
 	c.Assert(ok, IsTrue)
 	defer ctx.SetValue(executor.LoadDataVarKey, nil)
 	c.Assert(ld, NotNil)
-	// test escape
 	tests := []testCase{
 		{nil, []byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, nil},
 		{nil, []byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, nil},

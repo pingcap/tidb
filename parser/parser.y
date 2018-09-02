@@ -802,6 +802,7 @@ import (
 	OptBinMod		"Optional BINARY mode"
 	OptCharset		"Optional Character setting"
 	OptCollate		"Optional Collate setting"
+	IgnoreLines     "Ignore num(int) lines"
 	NUM			"A number"
 	NumList			"Some numbers"
 	LengthNum		"Field length num(uint64)"
@@ -809,7 +810,6 @@ import (
 	TableOptimizerHintOpt	"Table level optimizer hint"
 	TableOptimizerHints	"Table level optimizer hints"
 	TableOptimizerHintList	"Table level optimizer hint list"
-	IgnoreLines     "Ignore num(int) lines"
 
 %type	<ident>
 	AsOpt			"AS or EmptyString"
