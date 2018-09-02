@@ -137,11 +137,12 @@ func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
 }
 
 func (s *Scanner) getData(bo *Backoffer) error {
-	log.Debugf("txn getData nextStartKey[%q], txn %d, upperBound %q", s.nextStartKey, s.startTS(), s.upperBound)
+	log.Debugf("txn getData nextStartKey[%q], txn %d", s.nextStartKey, s.startTS())
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
 
 	for {
 		if s.upperBound != nil {
+			log.Debugf("txn getData upperBound = %q, nextStartKey = %q", *s.upperBound, s.nextStartKey)
 			if kv.Key(s.nextStartKey).Cmp(*s.upperBound) >= 0 {
 				// nextStartKey >= upperBound
 				s.eof = true
