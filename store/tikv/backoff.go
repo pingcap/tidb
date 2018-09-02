@@ -225,7 +225,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	b.totalSleep += f(b.ctx)
 	b.types = append(b.types, typ)
 
-	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
+	log.Debugf("%v, retry later(totalsleep %dms, maxsleep %dms)", err, b.totalSleep, b.maxSleep)
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
@@ -247,7 +247,7 @@ func (b *Backoffer) String() string {
 	if b.totalSleep == 0 {
 		return ""
 	}
-	return fmt.Sprintf(" backoff(%dms %s)", b.totalSleep, b.types)
+	return fmt.Sprintf(" backoff(%dms %v)", b.totalSleep, b.types)
 }
 
 // Clone creates a new Backoffer which keeps current Backoffer's sleep time and errors, and shares

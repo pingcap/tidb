@@ -356,19 +356,19 @@ func (e *ShowExec) fetchShowIndex() error {
 				subPart = col.Length
 			}
 			e.appendRow([]interface{}{
-				tb.Meta().Name.O,  // Table
-				nonUniq,           // Non_unique
-				idx.Meta().Name.O, // Key_name
-				i + 1,             // Seq_in_index
-				col.Name.O,        // Column_name
-				"A",               // Collation
-				0,                 // Cardinality
-				subPart,           // Sub_part
-				nil,               // Packed
-				"YES",             // Null
+				tb.Meta().Name.O,       // Table
+				nonUniq,                // Non_unique
+				idx.Meta().Name.O,      // Key_name
+				i + 1,                  // Seq_in_index
+				col.Name.O,             // Column_name
+				"A",                    // Collation
+				0,                      // Cardinality
+				subPart,                // Sub_part
+				nil,                    // Packed
+				"YES",                  // Null
 				idx.Meta().Tp.String(), // Index_type
-				"",                 // Comment
-				idx.Meta().Comment, // Index_comment
+				"",                     // Comment
+				idx.Meta().Comment,     // Index_comment
 			})
 		}
 	}
@@ -503,7 +503,8 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				buf.WriteString(" NOT NULL")
 			}
 			if !mysql.HasNoDefaultValueFlag(col.Flag) {
-				switch col.DefaultValue {
+				defaultValue := col.GetDefaultValue()
+				switch defaultValue {
 				case nil:
 					if !mysql.HasNotNullFlag(col.Flag) {
 						if col.Tp == mysql.TypeTimestamp {
@@ -514,7 +515,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
 				default:
-					defaultValStr := fmt.Sprintf("%v", col.DefaultValue)
+					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						buf.WriteString(fmt.Sprintf(" DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true)))

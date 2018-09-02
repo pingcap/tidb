@@ -29,7 +29,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -375,11 +374,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 }
 
 func (s *session) CommitTxn(ctx context.Context) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span = opentracing.StartSpan("session.CommitTxn", opentracing.ChildOf(span.Context()))
-		defer span.Finish()
-	}
-
 	err := s.doCommitWithRetry(ctx)
 	label := metrics.LblOK
 	if err != nil {
@@ -390,11 +384,6 @@ func (s *session) CommitTxn(ctx context.Context) error {
 }
 
 func (s *session) RollbackTxn(ctx context.Context) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span = opentracing.StartSpan("session.RollbackTxn", opentracing.ChildOf(span.Context()))
-		defer span.Finish()
-	}
-
 	var err error
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
@@ -451,9 +440,6 @@ func (s *session) isRetryableError(err error) bool {
 }
 
 func (s *session) retry(ctx context.Context, maxCnt uint) error {
-	span, ctx := opentracing.StartSpanFromContext(ctx, "retry")
-	defer span.Finish()
-
 	connID := s.sessionVars.ConnectionID
 	if s.sessionVars.TxnCtx.ForUpdate {
 		return errForUpdateCantRetry.GenByArgs(connID)
@@ -545,10 +531,7 @@ func (s *session) sysSessionPool() *pools.ResourcePool {
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	var span opentracing.Span
 	ctx := context.TODO()
-	span, ctx = opentracing.StartSpanFromContext(ctx, "session.ExecRestrictedSQL")
-	defer span.Finish()
 
 	// Use special session to execute the sql.
 	tmp, err := s.sysSessionPool().Get()
@@ -712,10 +695,6 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 }
 
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span1 := opentracing.StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
 	s.parser.SetSQLMode(s.sessionVars.SQLMode)
 	return s.parser.Parse(sql, charset, collation)
 }
@@ -770,11 +749,6 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 }
 
 func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.RecordSet, err error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span, ctx = opentracing.StartSpanFromContext(ctx, "session.Execute")
-		defer span.Finish()
-	}
-
 	s.PrepareTxnCtx(ctx)
 	connID := s.sessionVars.ConnectionID
 	err = s.loadCommonGlobalVariablesIfNeeded()

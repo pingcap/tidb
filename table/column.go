@@ -203,6 +203,9 @@ func (c *Column) GetTypeDesc() string {
 	if mysql.HasUnsignedFlag(c.Flag) && c.Tp != mysql.TypeBit && c.Tp != mysql.TypeYear {
 		desc += " UNSIGNED"
 	}
+	if mysql.HasZerofillFlag(c.Flag) && c.Tp != mysql.TypeYear {
+		desc += " ZEROFILL"
+	}
 	return desc
 }
 
@@ -227,7 +230,7 @@ func NewColDesc(col *Column) *ColDesc {
 	}
 	var defaultValue interface{}
 	if !mysql.HasNoDefaultValueFlag(col.Flag) {
-		defaultValue = col.DefaultValue
+		defaultValue = col.GetDefaultValue()
 	}
 
 	extra := ""
@@ -310,7 +313,7 @@ func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (ty
 
 // GetColDefaultValue gets default value of the column.
 func GetColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
-	return getColDefaultValue(ctx, col, col.DefaultValue)
+	return getColDefaultValue(ctx, col, col.GetDefaultValue())
 }
 
 func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVal interface{}) (types.Datum, error) {

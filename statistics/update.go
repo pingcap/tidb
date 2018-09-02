@@ -192,7 +192,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	} else {
 		rate = math.Abs(expected-float64(q.actual)) / float64(q.actual)
 	}
-	if rate >= MinLogErrorRate && (q.actual >= MinLogScanCount || q.expected >= MinLogScanCount) {
+	if rate >= MinLogErrorRate && (q.actual >= MinLogScanCount || q.expected >= MinLogScanCount) && log.GetLevel() == log.DebugLevel {
 		q.logDetailedInfo(h)
 	}
 	metrics.StatsInaccuracyRate.Observe(rate)
@@ -586,10 +586,10 @@ const (
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
 var AutoAnalyzeMinCnt int64 = 1000
 
-// tableAnalyzed checks if the table is analyzed.
-func tableAnalyzed(tbl *Table) bool {
+// TableAnalyzed checks if the table is analyzed.
+func TableAnalyzed(tbl *Table) bool {
 	for _, col := range tbl.Columns {
-		if col.Histogram.Len() > 0 {
+		if col.Count > 0 {
 			return true
 		}
 	}
@@ -607,7 +607,7 @@ func tableAnalyzed(tbl *Table) bool {
 // 2. If the table had been analyzed before, we need to analyze it when
 //    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
 func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
-	analyzed := tableAnalyzed(tbl)
+	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
 		return time.Since(t) >= limit
