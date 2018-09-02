@@ -116,7 +116,7 @@ func (s *testLockSuite) TestScanLockResolveWithSeek(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	iter, err := txn.Seek([]byte("a"))
+	iter, err := txn.Seek([]byte("a"), nil)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert(iter.Valid(), IsTrue)
@@ -133,7 +133,7 @@ func (s *testLockSuite) TestScanLockResolveWithSeekKeyOnly(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	txn.SetOption(kv.KeyOnly, true)
-	iter, err := txn.Seek([]byte("a"))
+	iter, err := txn.Seek([]byte("a"), nil)
 	c.Assert(err, IsNil)
 	for ch := byte('a'); ch <= byte('z'); ch++ {
 		c.Assert(iter.Valid(), IsTrue)

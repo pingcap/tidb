@@ -163,7 +163,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 		finish := true
 		dr.keys = dr.keys[:0]
 		err := kv.RunInNewTxn(dr.store, false, func(txn kv.Transaction) error {
-			iter, err := txn.Seek(oldStartKey)
+			iter, err := txn.Seek(oldStartKey, nil)
 			if err != nil {
 				return errors.Trace(err)
 			}

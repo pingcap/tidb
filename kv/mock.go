@@ -68,7 +68,7 @@ func (t *mockTxn) Get(k Key) ([]byte, error) {
 	return nil, nil
 }
 
-func (t *mockTxn) Seek(k Key) (Iterator, error) {
+func (t *mockTxn) Seek(k Key, upperBound *Key) (Iterator, error) {
 	return nil, nil
 }
 
@@ -211,8 +211,8 @@ func (s *mockSnapshot) BatchGet(keys []Key) (map[string][]byte, error) {
 	return m, nil
 }
 
-func (s *mockSnapshot) Seek(k Key) (Iterator, error) {
-	return s.store.Seek(k)
+func (s *mockSnapshot) Seek(k Key, upperBound *Key) (Iterator, error) {
+	return s.store.Seek(k, upperBound)
 }
 
 func (s *mockSnapshot) SeekReverse(k Key) (Iterator, error) {

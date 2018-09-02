@@ -1759,7 +1759,7 @@ func (s *testDBSuite) TestTruncateTable(c *C) {
 	hasOldTableData := true
 	for i := 0; i < waitForCleanDataRound; i++ {
 		err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-			it, err1 := txn.Seek(tablePrefix)
+			it, err1 := txn.Seek(tablePrefix, nil)
 			if err1 != nil {
 				return err1
 			}
@@ -2687,7 +2687,7 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 
 	s.tk.MustExec("drop table if exists tr;")
 	s.tk.MustExec(` create table tr(
-		id int, name varchar(50), 
+		id int, name varchar(50),
 		purchased date
 	)
 	partition by range( year(purchased) ) (
@@ -2778,7 +2778,7 @@ func checkPartitionDelRangeDone(c *C, s *testDBSuite, partitionPrefix kv.Key) bo
 	hasOldPartitionData := true
 	for i := 0; i < waitForCleanDataRound; i++ {
 		err := kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-			it, err := txn.Seek(partitionPrefix)
+			it, err := txn.Seek(partitionPrefix, nil)
 			if err != nil {
 				return err
 			}
@@ -2829,7 +2829,7 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	s.tk.MustExec("drop table if exists t3;")
 	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec(`create table t3(
-		id int, name varchar(50), 
+		id int, name varchar(50),
 		purchased date
 	)
 	partition by range( year(purchased) ) (
@@ -2868,7 +2868,7 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	s.tk.MustExec("drop table if exists t4;")
 	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec(`create table t4(
-		id int, name varchar(50), 
+		id int, name varchar(50),
 		purchased date
 	)
 	partition by range( year(purchased) ) (

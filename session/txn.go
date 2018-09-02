@@ -160,12 +160,12 @@ func (st *TxnState) Delete(k kv.Key) error {
 }
 
 // Seek overrides the Transaction interface.
-func (st *TxnState) Seek(k kv.Key) (kv.Iterator, error) {
-	bufferIt, err := st.buf.Seek(k)
+func (st *TxnState) Seek(k kv.Key, upperBound *kv.Key) (kv.Iterator, error) {
+	bufferIt, err := st.buf.Seek(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	retrieverIt, err := st.Transaction.Seek(k)
+	retrieverIt, err := st.Transaction.Seek(k, upperBound)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
