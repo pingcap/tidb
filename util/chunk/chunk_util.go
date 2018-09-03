@@ -14,78 +14,86 @@
 package chunk
 
 // CopySelectedJoinRows uses for join to batch copy inner rows and outer row to chunk.
-// This function optimize for join. To be exact, `appendOuterRows` optimizes copy outer row to `dst` chunk.
+// This function optimize for join. To be exact, `copyOuterRows` optimizes copy outer row to `dst` chunk.
 // Because the outer row in join is always same. so we can use batch copy for outer row data.
 func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) bool {
 	if src.NumRows() == 0 {
 		return false
 	}
 
-	selectedRowNum := appendInnerRows(innerColOffset, outerColOffset, src, selected, dst)
-	appendOuterRows(innerColOffset, outerColOffset, src, selectedRowNum, dst)
-	dst.numVirtualRows += selectedRowNum
-	return selectedRowNum > 0
+	numSelected := copySelectedInnerRows(innerColOffset, outerColOffset, src, selected, dst)
+	copyOuterRows(innerColOffset, outerColOffset, src, numSelected, dst)
+	dst.numVirtualRows += numSelected
+	return numSelected > 0
 }
 
-// appendInnerRows appends different inner rows to the chunk.
-func appendInnerRows(innerColOffset, outerColOffset int, src *Chunk, selected []bool, dst *Chunk) int {
+// copySelectedInnerRows appends different inner rows to the chunk.
+func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selected []bool, dst *Chunk) int {
 	oldLen := dst.columns[innerColOffset].length
-	var columns []*column
+	var srcCols []*column
 	if innerColOffset == 0 {
-		columns = src.columns[:outerColOffset]
+		srcCols = src.columns[:outerColOffset]
 	} else {
-		columns = src.columns[innerColOffset:]
+		srcCols = src.columns[innerColOffset:]
 	}
-	for j, rowCol := range columns {
-		chkCol := dst.columns[innerColOffset+j]
-		for i := 0; i < len(selected); i++ {
-			if !selected[i] {
-				continue
-			}
-			chkCol.appendNullBitmap(!rowCol.isNull(i))
-			chkCol.length++
+	for j, srcCol := range srcCols {
+		dstCol := dst.columns[innerColOffset+j]
+		if srcCol.isFixed() {
+			for i := 0; i < len(selected); i++ {
+				if !selected[i] {
+					continue
+				}
+				dstCol.appendNullBitmap(!srcCol.isNull(i))
+				dstCol.length++
 
-			if rowCol.isFixed() {
-				elemLen := len(rowCol.elemBuf)
+				elemLen := len(srcCol.elemBuf)
 				offset := i * elemLen
-				chkCol.data = append(chkCol.data, rowCol.data[offset:offset+elemLen]...)
-			} else {
-				start, end := rowCol.offsets[i], rowCol.offsets[i+1]
-				chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
-				chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+				dstCol.data = append(dstCol.data, srcCol.data[offset:offset+elemLen]...)
+			}
+		} else {
+			for i := 0; i < len(selected); i++ {
+				if !selected[i] {
+					continue
+				}
+				dstCol.appendNullBitmap(!srcCol.isNull(i))
+				dstCol.length++
+
+				start, end := srcCol.offsets[i], srcCol.offsets[i+1]
+				dstCol.data = append(dstCol.data, srcCol.data[start:end]...)
+				dstCol.offsets = append(dstCol.offsets, int32(len(dstCol.data)))
 			}
 		}
 	}
 	return dst.columns[innerColOffset].length - oldLen
 }
 
-// appendOuterRows appends same outer row to the chunk with `numRows` times.
-func appendOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, dst *Chunk) {
+// copyOuterRows appends same outer row to the chunk with `numRows` times.
+func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, dst *Chunk) {
 	row := src.GetRow(0)
-	var columns []*column
+	var srcCols []*column
 	if innerColOffset == 0 {
-		columns = src.columns[outerColOffset:]
+		srcCols = src.columns[outerColOffset:]
 	} else {
-		columns = src.columns[:innerColOffset]
+		srcCols = src.columns[:innerColOffset]
 	}
-	for i, rowCol := range columns {
-		chkCol := dst.columns[outerColOffset+i]
-		chkCol.appendMultiSameNullBitmap(!rowCol.isNull(row.idx), numRows)
-		chkCol.length += numRows
-		if rowCol.isFixed() {
-			elemLen := len(rowCol.elemBuf)
+	for i, srcCol := range srcCols {
+		dstCol := dst.columns[outerColOffset+i]
+		dstCol.appendMultiSameNullBitmap(!srcCol.isNull(row.idx), numRows)
+		dstCol.length += numRows
+		if srcCol.isFixed() {
+			elemLen := len(srcCol.elemBuf)
 			start := row.idx * elemLen
 			end := start + numRows*elemLen
-			chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
+			dstCol.data = append(dstCol.data, srcCol.data[start:end]...)
 		} else {
-			start, end := rowCol.offsets[row.idx], rowCol.offsets[row.idx+numRows]
-			chkCol.data = append(chkCol.data, rowCol.data[start:end]...)
-			offsets := chkCol.offsets
-			l := rowCol.offsets[row.idx+1] - rowCol.offsets[row.idx]
+			start, end := srcCol.offsets[row.idx], srcCol.offsets[row.idx+numRows]
+			dstCol.data = append(dstCol.data, srcCol.data[start:end]...)
+			offsets := dstCol.offsets
+			l := srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx]
 			for j := 0; j < numRows; j++ {
 				offsets = append(offsets, int32(offsets[len(offsets)-1]+l))
 			}
-			chkCol.offsets = offsets
+			dstCol.offsets = offsets
 		}
 	}
 }
