@@ -445,11 +445,11 @@ func setupSignalHandler(ctx context.Context) {
 
 	go func() {
 		quited := false
+		buf := make([]byte, 1<<20)
 		for {
 			select {
 			case sig := <-sc:
 				if sig == syscall.SIGUSR1 {
-					buf := make([]byte, 1<<20)
 					stackLen := runtime.Stack(buf, true)
 					log.Printf("=== Got signal [%s] to goroutine dump===\n*** goroutine dump...\n%s\n*** end\n", sig, buf[:stackLen])
 					continue
