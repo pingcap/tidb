@@ -1125,9 +1125,8 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	n := int(mathutil.MinUint64(v.Count, math.MaxInt64))
 	sortExec := SortExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec).withInitCap(n),
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
