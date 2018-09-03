@@ -90,6 +90,7 @@ type Server struct {
 	// So we just stop the listener and store to force clients to chose other TiDB servers.
 	stopListenerCh chan struct{}
 	statusServer   *http.Server
+	cleanupFunc    func()
 }
 
 // ConnectionCount gets current connection count.
@@ -180,6 +181,11 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	// Init rand seed for randomBuf()
 	rand.Seed(time.Now().UTC().UnixNano())
 	return s, nil
+}
+
+// SetCleanupFunc sets a function that will be called before server close http listener.
+func (s *Server) SetCleanupFunc(cleanupFunc func()) {
+	s.cleanupFunc = cleanupFunc
 }
 
 func (s *Server) loadTLSCertificates() {
@@ -291,6 +297,9 @@ func (s *Server) Close() {
 		err := s.listener.Close()
 		terror.Log(errors.Trace(err))
 		s.listener = nil
+	}
+	if s.cleanupFunc != nil {
+		s.cleanupFunc()
 	}
 	if s.statusServer != nil {
 		err := s.statusServer.Close()
