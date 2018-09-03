@@ -432,16 +432,15 @@ func createServer() {
 }
 
 func setupSignalHandler() {
-	dumpSignalChan := make(chan os.Signal, 1)
-	signal.Notify(dumpSignalChan, syscall.SIGUSR1)
+	usrDefSignalChan := make(chan os.Signal, 1)
+	signal.Notify(usrDefSignalChan, syscall.SIGUSR1)
 	go func() {
 		buf := make([]byte, 1<<16)
 		for {
-			sig := <-dumpSignalChan
+			sig := <-usrDefSignalChan
 			if sig == syscall.SIGUSR1 {
 				stackLen := runtime.Stack(buf, true)
-				log.Printf("=== Got signal [%s] to goroutine dump===\n*** goroutine dump...\n%s\n*** end\n", sig, buf[:stackLen])
-				continue
+				log.Printf("\n=== Got signal [%s] to dump goroutine stack. ===\n%s\n=== Finished dumping goroutine stack. ===\n", sig, buf[:stackLen])
 			}
 		}
 	}()
