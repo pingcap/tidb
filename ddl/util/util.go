@@ -27,10 +27,13 @@ import (
 )
 
 const (
-	loadDeleteRangeSQL        = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.gc_delete_range WHERE ts < %v`
+	deleteRangesTable         = `gc_delete_range`
+	doneDeleteRangesTable     = `gc_delete_range_done`
+	loadDeleteRangeSQL        = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.%s WHERE ts < %v`
 	recordDoneDeletedRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
 	completeDeleteRangeSQL    = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
 	updateDeleteRangeSQL      = `UPDATE mysql.gc_delete_range SET start_key = "%s" WHERE job_id = %d AND element_id = %d AND start_key = "%s"`
+	deleteDoneRecordSQL       = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %d AND element_id = %d`
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
@@ -46,7 +49,16 @@ func (t DelRangeTask) Range() ([]byte, []byte) {
 
 // LoadDeleteRanges loads delete range tasks from gc_delete_range table.
 func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
-	sql := fmt.Sprintf(loadDeleteRangeSQL, safePoint)
+	return loadDeleteRangesFromTable(ctx, deleteRangesTable, safePoint)
+}
+
+// LoadDoneDeleteRanges loads deleted ranges from gc_delete_range_done table.
+func LoadDoneDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRangeTask, _ error) {
+	return loadDeleteRangesFromTable(ctx, doneDeleteRangesTable, safePoint)
+}
+
+func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint uint64) (ranges []DelRangeTask, _ error) {
+	sql := fmt.Sprintf(loadDeleteRangeSQL, table, safePoint)
 	rss, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rss) > 0 {
 		defer terror.Call(rss[0].Close)
@@ -98,6 +110,13 @@ func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
 
 	sql = fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	return errors.Trace(err)
+}
+
+// DeleteDoneRecord removes a record from gc_delete_range_done table.
+func DeleteDoneRecord(ctx sessionctx.Context, dr DelRangeTask) error {
+	sql := fmt.Sprintf(deleteDoneRecordSQL, dr.JobID, dr.ElementID)
+	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
 
