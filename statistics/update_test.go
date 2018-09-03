@@ -910,7 +910,7 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 			result: "[stats-feedback] test.t, index: idx_ba, actual: 1, equality: 1, expected equality: 1, range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}",
 		},
 		{
-			sql: "select b from t use index(idx_bc) where b = 1 and c <= 5",
+			sql:    "select b from t use index(idx_bc) where b = 1 and c <= 5",
 			result: "[stats-feedback] test.t, index: idx_bc, actual: 1, equality: 1, expected equality: 1, range: [-inf,6], pseudo count: 7",
 		},
 		{
