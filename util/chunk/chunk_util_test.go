@@ -38,7 +38,7 @@ func getChk() (*Chunk, *Chunk, []bool) {
 	return srcChk, dstChk, selected
 }
 
-func TestBatchCopyJoinRowToChunk(t *testing.T) {
+func TestCopySelectedJoinRows(t *testing.T) {
 	srcChk, dstChk, selected := getChk()
 	numRows := srcChk.NumRows()
 	for i := 0; i < numRows; i++ {
@@ -56,7 +56,7 @@ func TestBatchCopyJoinRowToChunk(t *testing.T) {
 	}
 }
 
-func BenchmarkChunkBatchCopyJoinRow(b *testing.B) {
+func BenchmarkCopySelectedJoinRows(b *testing.B) {
 	b.ReportAllocs()
 	srcChk, dstChk, selected := getChk()
 	b.ResetTimer()
@@ -66,7 +66,7 @@ func BenchmarkChunkBatchCopyJoinRow(b *testing.B) {
 	}
 }
 
-func BenchmarkChunkAppendRow(b *testing.B) {
+func BenchmarkAppendSelectedRow(b *testing.B) {
 	b.ReportAllocs()
 	srcChk, dstChk, selected := getChk()
 	numRows := srcChk.NumRows()

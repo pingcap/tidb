@@ -13,9 +13,10 @@
 
 package chunk
 
-// CopySelectedJoinRows uses for join to batch copy inner rows and outer row to chunk.
-// This function optimize for join. To be exact, `copyOuterRows` optimizes copy outer row to `dst` chunk.
-// Because the outer row in join is always same. so we can use batch copy for outer row data.
+// CopySelectedJoinRows copies the selected joined rows from the source Chunk
+// to the destination Chunk.
+//
+// NOTE: All the outer rows in the source Chunk should be the same.
 func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) bool {
 	if src.NumRows() == 0 {
 		return false
@@ -27,7 +28,8 @@ func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, select
 	return numSelected > 0
 }
 
-// copySelectedInnerRows appends different inner rows to the chunk.
+// copySelectedInnerRows copies the selected inner rows from the source Chunk
+// to the destination Chunk.
 func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selected []bool, dst *Chunk) int {
 	oldLen := dst.columns[innerColOffset].length
 	var srcCols []*column
@@ -67,8 +69,12 @@ func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selec
 	return dst.columns[innerColOffset].length - oldLen
 }
 
-// copyOuterRows appends same outer row to the chunk with `numRows` times.
+// copyOuterRows copies the continuous 'numRows' outer rows in the source Chunk
+// to the destination Chunk.
 func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, dst *Chunk) {
+	if numRows <= 0 {
+		return
+	}
 	row := src.GetRow(0)
 	var srcCols []*column
 	if innerColOffset == 0 {
@@ -89,9 +95,9 @@ func copyOuterRows(innerColOffset, outerColOffset int, src *Chunk, numRows int, 
 			start, end := srcCol.offsets[row.idx], srcCol.offsets[row.idx+numRows]
 			dstCol.data = append(dstCol.data, srcCol.data[start:end]...)
 			offsets := dstCol.offsets
-			l := srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx]
+			elemLen := srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx]
 			for j := 0; j < numRows; j++ {
-				offsets = append(offsets, int32(offsets[len(offsets)-1]+l))
+				offsets = append(offsets, int32(offsets[len(offsets)-1]+elemLen))
 			}
 			dstCol.offsets = offsets
 		}

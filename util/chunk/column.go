@@ -86,28 +86,28 @@ func (c *column) appendNullBitmap(on bool) {
 }
 
 func (c *column) appendMultiSameNullBitmap(on bool, num int) {
-	l := ((c.length + num - 1) >> 3) - len(c.nullBitmap)
-	for i := 0; i <= l; i++ {
-		c.nullBitmap = append(c.nullBitmap, 0)
+	numNewBytes := ((c.length + num + 7) >> 3) - len(c.nullBitmap)
+	b := byte(0)
+	if on {
+		b = 0xff
+	}
+	for i := 0; i < numNewBytes; i++ {
+		c.nullBitmap = append(c.nullBitmap, b)
 	}
 	if on {
 		idx := c.length >> 3
 		pos := uint(c.length) & 7
-		for num > 0 {
-			if pos == 0 && num > 8 {
-				c.nullBitmap[idx] = 0xff
-				idx++
-				num = num - 8
-			} else {
-				c.nullBitmap[idx] |= byte(1 << pos)
-				pos++
-				num--
-				if pos == 8 {
-					pos = 0
-					idx++
-				}
+		c.nullBitmap[idx] |= ^(byte(1<<pos) - 1)
+		l := uint(len(c.nullBitmap)*8 - c.length - num)
+		// Normally, l will small than 8
+		if l > 8 {
+			for i := int(l / 8); i > 0; i-- {
+				c.nullBitmap[len(c.nullBitmap)-i] = 0
 			}
+			l = l % 8
 		}
+		l = 8 - l
+		c.nullBitmap[len(c.nullBitmap)-1] &= (byte(1<<l) - 1)
 	} else {
 		c.nullCount += num
 	}
