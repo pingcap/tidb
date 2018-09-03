@@ -802,7 +802,7 @@ import (
 	OptBinMod		"Optional BINARY mode"
 	OptCharset		"Optional Character setting"
 	OptCollate		"Optional Collate setting"
-	IgnoreLines     "Ignore num(int) lines"
+	IgnoreLines		"Ignore num(int) lines"
 	NUM			"A number"
 	NumList			"Some numbers"
 	LengthNum		"Field length num(uint64)"
