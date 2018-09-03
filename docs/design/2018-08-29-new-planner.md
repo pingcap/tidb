@@ -31,10 +31,10 @@ consider the order of different optimization rules carefully.
 
 The physical optimization for the operators on the storage layer also suffers
 from the poor extensibility. In the present planner, we use "root" and "cop"
-tasks to distinguish the operators executed on TiDB and the storage layer, that
-is TiKV at the present. "cop" task are highly tied with "root" task, it's very
-hard to push-down another operator to TiKV or supporting another storage engine
-in the future.
+tasks to distinguish the operators executed on TiDB and the storage layer, which
+is TiKV at present. "cop" task is highly tied with the "root" task. It's very
+hard to push-down another operator to TiKV or support another storage engine in
+the future.
 
 ## Glossary
 
@@ -44,7 +44,7 @@ in the future.
   can be expressed to a tree-like structure and the child of an expression is
   also an expression.
 
-- **Expression Group**(or **Group**)
+- **Expression Group** (or **Group**)
 
   Expression group is used to store all the logically equivalent expressions.
   It's a set of **Group Expressions**.
@@ -64,9 +64,9 @@ in the future.
 
 - **Transformation Rule**
 
-  The transform rule is used to transform a logical plan to another equivalent
-  logical plan. It is used to explore all the logically equivalent query plans
-  belonging to an expression group.
+  The transformation rule is used to transform a logical plan to another
+  equivalent logical plan. It is used to explore all the logically equivalent
+  query plans belonging to an expression group.
 
 - **Implementation Rule**
 
@@ -203,7 +203,7 @@ func exploreGroup(g *Group) {
 }
 ```
 
-The child of `GroupExpr` is `Group`. There are many candicate child expressions
+The child of `GroupExpr` is `Group`. There are many candidate child expressions
 for a group expression. All the possible expressions have to be enumerated to
 check whether a group expression matches a transformation rule and apply the
 rule on that expression once matched.
@@ -290,7 +290,7 @@ type transformation interface {
 }
 ```
 
-At the very beginning, there is only one group expression in a `Group`, after
+At the very beginning, there is only one group expression in a `Group`. After
 applying some transformation rules on certain expressions of the `Group`, all
 the equivalent expressions are found and stored in the `Group`. This procedure
 can be regarded as searching for a weak connected component in a directed graph,
@@ -395,10 +395,10 @@ No
 
 1. Adding a session variable named `tidb_enable_volcano_planner` to control
    whether to use the new planner. Once this variable is set, all the
-   optimization steps are handed to the new planner.  The procedure of
-   converting the abstract syntax tree to a logical plan is remained unchanged.
-   The constructed physical plan is also compatible with the existing physical
-   plan. It only affects the optimization algorithm.
+   optimization steps are handed to the new planner. The procedure of converting
+   the abstract syntax tree to a logical plan is remained unchanged.  The
+   constructed physical plan is also compatible with the existing physical plan.
+   It only affects the optimization algorithm.
 
 2. Implementing the framework of the new planner, including the conceptions
    described above: `Group`/`GroupExpr`/`ExprIter`/`Pattern`, the interfaces
@@ -412,7 +412,7 @@ No
    for different storages.
 
 5. Adding some rules which are not easy or can not be added in the old planner
-   to improve the performance on certain scenarios.
+   to improve the performance in certain scenarios.
 
 ## Open issues (if applicable)
 
