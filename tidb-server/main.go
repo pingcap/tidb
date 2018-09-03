@@ -14,6 +14,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net"
@@ -128,7 +129,6 @@ func main() {
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
-
 	registerStores()
 	loadConfig()
 	overrideConfig()
@@ -141,9 +141,11 @@ func main() {
 	setupMetrics()
 	createStoreAndDomain()
 	createServer()
-	setupSignalHandler()
+	ctx, closeSignalHandler := context.WithCancel(context.TODO())
+	setupSignalHandler(ctx)
 	runServer()
 	cleanup()
+	closeSignalHandler()
 	os.Exit(0)
 }
 
@@ -432,25 +434,44 @@ func createServer() {
 	}
 }
 
-func setupSignalHandler() {
+func setupSignalHandler(ctx context.Context) {
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc,
 		syscall.SIGHUP,
 		syscall.SIGINT,
 		syscall.SIGTERM,
-		syscall.SIGQUIT)
+		syscall.SIGQUIT,
+		syscall.SIGUSR1)
 
 	go func() {
-		sig := <-sc
-		log.Infof("Got signal [%s] to exit.", sig)
-		if sig == syscall.SIGQUIT {
-			graceful = true
+		quited := false
+		for {
+			select {
+			case sig := <-sc:
+				if sig == syscall.SIGUSR1 {
+					buf := make([]byte, 1<<20)
+					stackLen := runtime.Stack(buf, true)
+					log.Printf("=== Got signal [%s] to goroutine dump===\n*** goroutine dump...\n%s\n*** end\n", sig, buf[:stackLen])
+					continue
+				}
+				if quited {
+					log.Infof("Got duplicate signal [%s].", sig)
+					continue
+				}
+				quited = true
+				log.Infof("Got signal [%s] to exit.", sig)
+				if sig == syscall.SIGQUIT {
+					graceful = true
+				}
+				if xsvr != nil {
+					xsvr.Close() // Should close xserver before server.
+				}
+				svr.Close()
+			case <-ctx.Done():
+				log.Infof("Shutdown signal handle.")
+				return
+			}
 		}
-
-		if xsvr != nil {
-			xsvr.Close() // Should close xserver before server.
-		}
-		svr.Close()
 	}()
 }
 
