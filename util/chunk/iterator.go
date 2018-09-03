@@ -105,13 +105,15 @@ func NewIterator4Chunk(chk *Chunk) *Iterator4Chunk {
 
 // Iterator4Chunk is used to iterate rows inside a chunk.
 type Iterator4Chunk struct {
-	chk    *Chunk
-	cursor int
+	chk     *Chunk
+	cursor  int
+	numRows int
 }
 
 // Begin implements the Iterator interface.
 func (it *Iterator4Chunk) Begin() Row {
-	if it.chk.NumRows() == 0 {
+	it.numRows = it.chk.NumRows()
+	if it.numRows == 0 {
 		return it.End()
 	}
 	it.cursor = 1
@@ -120,8 +122,8 @@ func (it *Iterator4Chunk) Begin() Row {
 
 // Next implements the Iterator interface.
 func (it *Iterator4Chunk) Next() Row {
-	if it.cursor >= it.chk.NumRows() {
-		it.cursor = it.chk.NumRows() + 1
+	if it.cursor >= it.numRows {
+		it.cursor = it.numRows + 1
 		return it.End()
 	}
 	row := it.chk.GetRow(it.cursor)
