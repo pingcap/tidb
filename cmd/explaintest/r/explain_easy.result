@@ -352,4 +352,4 @@ drop table if exists t;
 create table t(a bigint primary key);
 explain select * from t where a = 1 and a = 2;
 id	count	task	operator info
-TableDual_5	10000.00	root	rows:0
+TableDual_5	0.00	root	rows:0
