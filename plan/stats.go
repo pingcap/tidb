@@ -47,7 +47,6 @@ func (s *statsInfo) scale(factor float64) *statsInfo {
 	profile := &statsInfo{
 		count:          s.count * factor,
 		cardinality:    make([]float64, len(s.cardinality)),
-		histColl:       s.histColl,
 		usePseudoStats: s.usePseudoStats,
 	}
 	for i := range profile.cardinality {
@@ -110,11 +109,10 @@ func (p *baseLogicalPlan) deriveStats() (*statsInfo, error) {
 	return profile, nil
 }
 
-func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
-	profile := &statsInfo{
+func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (profile *statsInfo, histColl *statistics.HistColl) {
+	profile = &statsInfo{
 		count:          float64(ds.statisticTable.Count),
 		cardinality:    make([]float64, len(ds.Columns)),
-		histColl:       ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
 		usePseudoStats: ds.statisticTable.Pseudo,
 	}
 	for i, col := range ds.Columns {
@@ -126,13 +124,13 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *statsInfo {
 			profile.cardinality[i] = profile.count * distinctFactor
 		}
 	}
-	ds.stats = profile
-	selectivity, err := profile.histColl.Selectivity(ds.ctx, conds)
+	histColl = ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns)
+	selectivity, err := histColl.Selectivity(ds.ctx, conds)
 	if err != nil {
 		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 		selectivity = selectionFactor
 	}
-	return profile.scale(selectivity)
+	return profile.scale(selectivity), histColl
 }
 
 func (ds *DataSource) deriveStats() (*statsInfo, error) {
@@ -140,7 +138,8 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
-	ds.stats = ds.getStatsByFilter(ds.pushedDownConds)
+	statsInfo, histColl := ds.getStatsByFilter(ds.pushedDownConds)
+	ds.stats = statsInfo
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path)
@@ -155,7 +154,7 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 			}
 			continue
 		}
-		noIntervalRanges, err := ds.deriveIndexPathStats(path)
+		noIntervalRanges, err := ds.deriveIndexPathStats(path, histColl)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -166,6 +165,8 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 			break
 		}
 	}
+	histColl.Count = int64(ds.stats.count)
+	ds.stats.histColl = histColl
 	return ds.stats, nil
 }
 
@@ -182,6 +183,15 @@ func (p *LogicalSelection) deriveStats() (*statsInfo, error) {
 		}
 	}
 	p.stats = childProfile.scale(factor)
+	if childProfile.histColl != nil {
+		p.stats.histColl = &statistics.HistColl{
+			Count:         int64(p.stats.count),
+			Columns:       childProfile.histColl.Columns,
+			Indices:       childProfile.histColl.Indices,
+			Idx2ColumnIDs: childProfile.histColl.Idx2ColumnIDs,
+			ColID2IdxID:   childProfile.histColl.ColID2IdxID,
+		}
+	}
 	return p.stats, nil
 }
 
