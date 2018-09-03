@@ -445,7 +445,7 @@ func setupSignalHandler(ctx context.Context) {
 
 	go func() {
 		quited := false
-		buf := make([]byte, 1<<20)
+		buf := make([]byte, 1<<16)
 		for {
 			select {
 			case sig := <-sc:
