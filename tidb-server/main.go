@@ -432,38 +432,38 @@ func createServer() {
 }
 
 func setupSignalHandler() {
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc,
+	closeSignalChan := make(chan os.Signal, 1)
+	signal.Notify(closeSignalChan,
 		syscall.SIGHUP,
 		syscall.SIGINT,
 		syscall.SIGTERM,
-		syscall.SIGQUIT,
-		syscall.SIGUSR1)
+		syscall.SIGQUIT)
+
+	dumpSignalChan := make(chan os.Signal, 1)
+	signal.Notify(dumpSignalChan, syscall.SIGUSR1)
 
 	go func() {
-		quited := false
 		buf := make([]byte, 1<<16)
 		for {
-			sig := <-sc
+			sig := <-dumpSignalChan
 			if sig == syscall.SIGUSR1 {
 				stackLen := runtime.Stack(buf, true)
 				log.Printf("=== Got signal [%s] to goroutine dump===\n*** goroutine dump...\n%s\n*** end\n", sig, buf[:stackLen])
 				continue
 			}
-			if quited {
-				log.Infof("Got duplicate quit signal [%s].", sig)
-				continue
-			}
-			quited = true
-			log.Infof("Got signal [%s] to exit.", sig)
-			if sig == syscall.SIGQUIT {
-				graceful = true
-			}
-			if xsvr != nil {
-				xsvr.Close() // Should close xserver before server.
-			}
-			svr.Close()
 		}
+	}()
+
+	go func() {
+		sig := <-closeSignalChan
+		log.Infof("Got signal [%s] to exit.", sig)
+		if sig == syscall.SIGQUIT {
+			graceful = true
+		}
+		if xsvr != nil {
+			xsvr.Close() // Should close xserver before server.
+		}
+		svr.Close()
 	}()
 }
 
