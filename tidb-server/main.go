@@ -14,7 +14,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"net"
@@ -49,7 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/x-server"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
@@ -141,11 +140,9 @@ func main() {
 	setupMetrics()
 	createStoreAndDomain()
 	createServer()
-	ctx, closeSignalHandler := context.WithCancel(context.TODO())
-	setupSignalHandler(ctx)
+	setupSignalHandler()
 	runServer()
 	cleanup()
-	closeSignalHandler()
 	os.Exit(0)
 }
 
@@ -434,7 +431,7 @@ func createServer() {
 	}
 }
 
-func setupSignalHandler(ctx context.Context) {
+func setupSignalHandler() {
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc,
 		syscall.SIGHUP,
@@ -447,30 +444,25 @@ func setupSignalHandler(ctx context.Context) {
 		quited := false
 		buf := make([]byte, 1<<16)
 		for {
-			select {
-			case sig := <-sc:
-				if sig == syscall.SIGUSR1 {
-					stackLen := runtime.Stack(buf, true)
-					log.Printf("=== Got signal [%s] to goroutine dump===\n*** goroutine dump...\n%s\n*** end\n", sig, buf[:stackLen])
-					continue
-				}
-				if quited {
-					log.Infof("Got duplicate signal [%s].", sig)
-					continue
-				}
-				quited = true
-				log.Infof("Got signal [%s] to exit.", sig)
-				if sig == syscall.SIGQUIT {
-					graceful = true
-				}
-				if xsvr != nil {
-					xsvr.Close() // Should close xserver before server.
-				}
-				svr.Close()
-			case <-ctx.Done():
-				log.Infof("Shutdown signal handle.")
-				return
+			sig := <-sc
+			if sig == syscall.SIGUSR1 {
+				stackLen := runtime.Stack(buf, true)
+				log.Printf("=== Got signal [%s] to goroutine dump===\n*** goroutine dump...\n%s\n*** end\n", sig, buf[:stackLen])
+				continue
 			}
+			if quited {
+				log.Infof("Got duplicate quit signal [%s].", sig)
+				continue
+			}
+			quited = true
+			log.Infof("Got signal [%s] to exit.", sig)
+			if sig == syscall.SIGQUIT {
+				graceful = true
+			}
+			if xsvr != nil {
+				xsvr.Close() // Should close xserver before server.
+			}
+			svr.Close()
 		}
 	}()
 }
