@@ -396,7 +396,9 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 	if fastSelect == nil {
 		return nil
 	}
-	checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.UpdatePriv)
+	if checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.UpdatePriv) != nil {
+		return nil
+	}
 	orderedList := buildOrderedList(ctx, fastSelect, updateStmt.List)
 	if orderedList == nil {
 		return nil
