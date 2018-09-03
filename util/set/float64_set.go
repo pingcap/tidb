@@ -13,6 +13,7 @@
 
 package set
 
+// Float64Set is a float64 set.
 type Float64Set map[float64]struct{}
 
 // NewFloat64Set builds a float64 set.

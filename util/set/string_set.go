@@ -13,9 +13,10 @@
 
 package set
 
+// StringSet is a string set.
 type StringSet map[string]struct{}
 
-// NewString64Set builds a float64 set.
+// NewStringSet builds a float64 set.
 func NewStringSet() StringSet {
 	return make(map[string]struct{})
 }

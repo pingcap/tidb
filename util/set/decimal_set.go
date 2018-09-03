@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// DecimalSet is a decimal set.
 type DecimalSet map[types.MyDecimal]struct{}
 
 // NewDecimalSet builds a decimal set.
