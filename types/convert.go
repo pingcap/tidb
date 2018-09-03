@@ -236,13 +236,13 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string) (string, error)
 	if err != nil {
 		return floatPrefix, errors.Trace(err)
 	}
-	return floatStrToIntStr(floatPrefix)
+	return floatStrToIntStr(sc, floatPrefix, str)
 }
 
 // floatStrToIntStr converts a valid float string into valid integer string which can be parsed by
 // strconv.ParseInt, we can't parse float first then convert it to string because precision will
 // be lost.
-func floatStrToIntStr(validFloat string) (string, error) {
+func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (string, error) {
 	var dotIdx = -1
 	var eIdx = -1
 	for i := 0; i < len(validFloat); i++ {
@@ -275,7 +275,8 @@ func floatStrToIntStr(validFloat string) (string, error) {
 	}
 	if exp > 0 && int64(intCnt) > (math.MaxInt64-int64(exp)) {
 		// (exp + incCnt) overflows MaxInt64.
-		return validFloat, ErrOverflow.GenByArgs("BIGINT", validFloat)
+		sc.AppendWarning(ErrOverflow.GenByArgs("BIGINT", oriStr))
+		return validFloat[:eIdx], nil
 	}
 	intCnt += exp
 	if intCnt <= 0 {
@@ -291,8 +292,9 @@ func floatStrToIntStr(validFloat string) (string, error) {
 		// convert scientific notation decimal number
 		extraZeroCount := intCnt - len(digits)
 		if extraZeroCount > 20 {
-			// Return overflow to avoid allocating too much memory.
-			return validFloat, ErrOverflow.GenByArgs("BIGINT", validFloat)
+			// Append overflow warning and return to avoid allocating too much memory.
+			sc.AppendWarning(ErrOverflow.GenByArgs("BIGINT", oriStr))
+			return validFloat[:eIdx], nil
 		}
 		validInt = string(digits) + strings.Repeat("0", extraZeroCount)
 	}

@@ -90,6 +90,8 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 	builder.Request.StartTs = ana.StartTs
 	builder.Request.Data, builder.err = ana.Marshal()
 	builder.Request.NotFillCache = true
+	builder.Request.IsolationLevel = kv.RC
+	builder.Request.Priority = kv.PriorityLow
 	return builder
 }
 

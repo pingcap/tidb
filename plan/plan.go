@@ -156,7 +156,7 @@ func (p *requiredProp) hashCode() []byte {
 
 // String implements fmt.Stringer interface. Just for test.
 func (p *requiredProp) String() string {
-	return fmt.Sprintf("Prop{cols: %s, desc: %v, taskTp: %s, expectedCount: %v}", p.cols, p.desc, p.taskTp, p.expectedCnt)
+	return fmt.Sprintf("Prop{cols: %v, desc: %v, taskTp: %s, expectedCount: %v}", p.cols, p.desc, p.taskTp, p.expectedCnt)
 }
 
 // LogicalPlan is a tree of logical operators.
