@@ -441,7 +441,6 @@ func setupSignalHandler() {
 			if sig == syscall.SIGUSR1 {
 				stackLen := runtime.Stack(buf, true)
 				log.Printf("=== Got signal [%s] to goroutine dump===\n*** goroutine dump...\n%s\n*** end\n", sig, buf[:stackLen])
-				continue
 			}
 		}
 	}()
