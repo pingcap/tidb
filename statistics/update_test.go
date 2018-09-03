@@ -924,84 +924,102 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 	columns := map[int64]*statistics.Column{}
 	columns[1] = &statistics.Column{Count: 1}
 	tests := []struct {
-		tbl     *statistics.Table
-		ratio   float64
-		limit   time.Duration
-		timeStr []string
-		result  bool
+		tbl    *statistics.Table
+		ratio  float64
+		limit  time.Duration
+		start  string
+		end    string
+		now    string
+		result bool
 	}{
 		// table never analyzed and has reach the limit
 		{
-			tbl:     &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
-			limit:   0,
-			ratio:   0,
-			timeStr: []string{"00:00 CST", "00:01 CST", "00:00 CST"},
-			result:  true,
+			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			limit:  0,
+			ratio:  0,
+			start:  "00:00 CST",
+			end:    "00:01 CST",
+			now:    "00:00 CST",
+			result: true,
 		},
 		// table never analyzed but has not reach the limit
 		{
-			tbl:     &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
-			limit:   time.Hour,
-			ratio:   0,
-			timeStr: []string{"00:00 CST", "00:01 CST", "00:00 CST"},
-			result:  false,
+			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			limit:  time.Hour,
+			ratio:  0,
+			start:  "00:00 CST",
+			end:    "00:01 CST",
+			now:    "00:00 CST",
+			result: false,
 		},
 		// table already analyzed but auto analyze is disabled
 		{
-			tbl:     &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
-			limit:   0,
-			ratio:   0,
-			timeStr: []string{"00:00 CST", "00:01 CST", "00:00 CST"},
-			result:  false,
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0,
+			start:  "00:00 CST",
+			end:    "00:01 CST",
+			now:    "00:00 CST",
+			result: false,
 		},
 		// table already analyzed and but modify count is small
 		{
-			tbl:     &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, Count: 1}},
-			limit:   0,
-			ratio:   0.3,
-			timeStr: []string{"00:00 CST", "00:01 CST", "00:00 CST"},
-			result:  false,
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "00:00 CST",
+			end:    "00:01 CST",
+			now:    "00:00 CST",
+			result: false,
 		},
 		// table already analyzed and but not within time period
 		{
-			tbl:     &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
-			limit:   0,
-			ratio:   0.3,
-			timeStr: []string{"00:00 CST", "00:01 CST", "00:02 CST"},
-			result:  false,
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "00:00 CST",
+			end:    "00:01 CST",
+			now:    "00:02 CST",
+			result: false,
 		},
 		// table already analyzed and but not within time period
 		{
-			tbl:     &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
-			limit:   0,
-			ratio:   0.3,
-			timeStr: []string{"22:00 CST", "06:00 CST", "10:02 CST"},
-			result:  false,
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "22:00 CST",
+			end:    "06:00 CST",
+			now:    "10:00 CST",
+			result: false,
 		},
 		// table already analyzed and within time period
 		{
-			tbl:     &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
-			limit:   0,
-			ratio:   0.3,
-			timeStr: []string{"00:00 CST", "00:01 CST", "00:00 CST"},
-			result:  true,
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "00:00 CST",
+			end:    "00:01 CST",
+			now:    "00:00 CST",
+			result: true,
 		},
 		// table already analyzed and within time period
 		{
-			tbl:     &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
-			limit:   0,
-			ratio:   0.3,
-			timeStr: []string{"22:00 CST", "06:00 CST", "23:00 CST"},
-			result:  true,
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "22:00 CST",
+			end:    "06:00 CST",
+			now:    "23:00 CST",
+			result: true,
 		},
 	}
 	for _, test := range tests {
-		ts := make([]time.Time, 0, 3)
-		for _, s := range test.timeStr {
-			t, err := time.ParseInLocation(statistics.TimeFormat, s, time.UTC)
-			c.Assert(err, IsNil)
-			ts = append(ts, t)
-		}
-		c.Assert(statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, ts[0], ts[1], ts[2]), Equals, test.result)
+		start, err := time.ParseInLocation(statistics.TimeFormat, test.start, time.UTC)
+		c.Assert(err, IsNil)
+		end, err := time.ParseInLocation(statistics.TimeFormat, test.end, time.UTC)
+		c.Assert(err, IsNil)
+		now, err := time.ParseInLocation(statistics.TimeFormat, test.now, time.UTC)
+		c.Assert(err, IsNil)
+		c.Assert(statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now), Equals, test.result)
 	}
 }
