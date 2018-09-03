@@ -869,23 +869,26 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 	oriMinError := statistics.MinLogErrorRate
 	oriLevel := log.GetLevel()
 	oriBucketNum := executor.GetMaxBucketSizeForTest()
+	oriLease := s.do.StatsHandle().Lease
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MinLogScanCount = oriMinLogCount
 		statistics.MinLogErrorRate = oriMinError
 		executor.SetMaxBucketSizeForTest(oriBucketNum)
+		s.do.StatsHandle().Lease = oriLease
 		log.SetLevel(oriLevel)
 	}()
 	executor.SetMaxBucketSizeForTest(4)
 	statistics.FeedbackProbability = 1
 	statistics.MinLogScanCount = 0
 	statistics.MinLogErrorRate = 0
+	s.do.StatsHandle().Lease = 1
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b), index idx_ba(b,a))")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), primary key(a), index idx(b), index idx_ba(b,a), index idx_bc(b,c))")
 	for i := 0; i < 20; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
 	testKit.MustExec("analyze table t")
 	tests := []struct {
@@ -905,6 +908,10 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 		{
 			sql:    "select b from t use index(idx_ba) where b = 1 and a <= 5",
 			result: "[stats-feedback] test.t, index: idx_ba, actual: 1, equality: 1, expected equality: 1, range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}",
+		},
+		{
+			sql:    "select b from t use index(idx_bc) where b = 1 and c <= 5",
+			result: "[stats-feedback] test.t, index: idx_bc, actual: 1, equality: 1, expected equality: 1, range: [-inf,6], pseudo count: 7",
 		},
 		{
 			sql:    "select b from t use index(idx_ba) where b = 1",
