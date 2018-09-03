@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,14 +27,14 @@ func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, select
 	return selectedRowNum > 0
 }
 
-// appendInnerRows appends multiple different rows to the chunk.
-func appendInnerRows(innerColOffset, outerColOffset int, chkForJoin *Chunk, selected []bool, dst *Chunk) int {
+// appendInnerRows appends different inner rows to the chunk.
+func appendInnerRows(innerColOffset, outerColOffset int, src *Chunk, selected []bool, dst *Chunk) int {
 	oldLen := dst.columns[innerColOffset].length
 	var columns []*column
 	if innerColOffset == 0 {
-		columns = chkForJoin.columns[:outerColOffset]
+		columns = src.columns[:outerColOffset]
 	} else {
-		columns = chkForJoin.columns[innerColOffset:]
+		columns = src.columns[innerColOffset:]
 	}
 	for j, rowCol := range columns {
 		chkCol := dst.columns[innerColOffset+j]

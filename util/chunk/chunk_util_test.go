@@ -1,3 +1,16 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package chunk
 
 import (
@@ -10,7 +23,6 @@ import (
 func getChk() (*Chunk, *Chunk, []bool) {
 	numRows := 1024
 	srcChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, 16, 0)
-	srcChk.Reset()
 	selected := make([]bool, numRows)
 	var row Row
 	for j := 0; j < numRows; j++ {
@@ -23,7 +35,6 @@ func getChk() (*Chunk, *Chunk, []bool) {
 		srcChk.AppendPartialRow(0, row)
 	}
 	dstChk := newChunkWithInitCap(numRows, 0, 0, 8, 8, 16, 0)
-
 	return srcChk, dstChk, selected
 }
 
@@ -36,7 +47,6 @@ func TestBatchCopyJoinRowToChunk(t *testing.T) {
 		}
 		dstChk.AppendRow(srcChk.GetRow(i))
 	}
-
 	// batch copy
 	dstChk2 := newChunkWithInitCap(numRows, 0, 0, 8, 8, 16, 0)
 	CopySelectedJoinRows(srcChk, 0, 3, selected, dstChk2)

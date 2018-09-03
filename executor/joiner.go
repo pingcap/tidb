@@ -158,16 +158,18 @@ func (j *baseJoiner) makeShallowJoinRow(isRightJoin bool, inner, outer chunk.Row
 	j.shallowRow.ShallowCopyPartialRow(inner.Len(), outer)
 }
 
-func (j *baseJoiner) filter(input, output *chunk.Chunk) ([]bool, error) {
-	return expression.VectorizedFilter(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
-}
-
-func (j *baseJoiner) BatchCopyJoinRowToChunk(outer chunk.Row, src, dst *chunk.Chunk) bool {
-	innerColOffset, outerColOffset := 0, src.NumCols()-outer.Len()
-	if !j.outerIsRight {
-		innerColOffset, outerColOffset = outer.Len(), 0
+func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColsLen int) (bool, error) {
+	var err error
+	j.selected, err = expression.VectorizedFilter(j.ctx, j.conditions, chunk.NewIterator4Chunk(input), j.selected)
+	if err != nil {
+		return false, errors.Trace(err)
 	}
-	return chunk.CopySelectedJoinRows(src, innerColOffset, outerColOffset, j.selected, dst)
+	// batch copy selected row to output chunk
+	innerColOffset, outerColOffset := 0, input.NumCols()-outerColsLen
+	if !j.outerIsRight {
+		innerColOffset, outerColOffset = outerColsLen, 0
+	}
+	return chunk.CopySelectedJoinRows(input, innerColOffset, outerColOffset, j.selected, output), nil
 }
 
 type semiJoiner struct {
@@ -327,7 +329,7 @@ type leftOuterJoiner struct {
 }
 
 // tryToMatch implements joiner interface.
-func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, err error) {
+func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, error) {
 	if inners.Len() == 0 {
 		return false, nil
 	}
@@ -347,11 +349,10 @@ func (j *leftOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk
 	}
 
 	// reach here, chkForJoin is j.chk
-	j.selected, err = j.filter(chkForJoin, chk)
+	matched, err := j.filter(chkForJoin, chk, outer.Len())
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	matched = j.BatchCopyJoinRowToChunk(outer, chkForJoin, chk)
 	return matched, nil
 }
 
@@ -365,7 +366,7 @@ type rightOuterJoiner struct {
 }
 
 // tryToMatch implements joiner interface.
-func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, err error) {
+func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, error) {
 	if inners.Len() == 0 {
 		return false, nil
 	}
@@ -385,11 +386,10 @@ func (j *rightOuterJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, ch
 		return true, nil
 	}
 
-	j.selected, err = j.filter(chkForJoin, chk)
+	matched, err := j.filter(chkForJoin, chk, outer.Len())
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	matched = j.BatchCopyJoinRowToChunk(outer, chkForJoin, chk)
 	return matched, nil
 }
 
@@ -403,7 +403,7 @@ type innerJoiner struct {
 }
 
 // tryToMatch implements joiner interface.
-func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (matched bool, err error) {
+func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk) (bool, error) {
 	if inners.Len() == 0 {
 		return false, nil
 	}
@@ -425,11 +425,10 @@ func (j *innerJoiner) tryToMatch(outer chunk.Row, inners chunk.Iterator, chk *ch
 	}
 
 	// reach here, chkForJoin is j.chk
-	j.selected, err = j.filter(chkForJoin, chk)
+	matched, err := j.filter(chkForJoin, chk, outer.Len())
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	matched = j.BatchCopyJoinRowToChunk(outer, chkForJoin, chk)
 	return matched, nil
 
 }
