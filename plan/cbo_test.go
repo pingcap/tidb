@@ -690,6 +690,28 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 		))
 }
 
+func (s *testAnalyzeSuite) TestHistogramInPlan(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_optimizer_selectivity_level=1")
+	tk.MustExec(`create table t(a enum("a", "b", "c"), index idx(a))`)
+	tk.MustExec(`insert into t values("a"), ("a"), ("a"), ("a"), ("b"), ("b"), ("b"), ("C")`)
+	tk.MustExec("analyze table t")
+	tk.MustQuery("explain select * from t where a = 'c'").
+		Check(testkit.Rows(
+			"Selection_5 1.00 root eq(test.t.a, \"c\")",
+			"└─TableReader_7 8.00 root data:TableScan_6",
+			"  └─TableScan_6 8.00 cop table:t, range:[-inf,+inf], keep order:false",
+		))
+}
+
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockTikvStore()
 	if err != nil {

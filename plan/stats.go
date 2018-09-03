@@ -28,7 +28,7 @@ type statsInfo struct {
 	count       float64
 	cardinality []float64
 
-	histColl statistics.HistColl
+	histColl *statistics.HistColl
 	// usePseudoStats indicates whether the statsInfo is calculated using the
 	// pseudo statistics on a table.
 	usePseudoStats bool
@@ -174,7 +174,14 @@ func (p *LogicalSelection) deriveStats() (*statsInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p.stats = childProfile.scale(selectionFactor)
+	factor := selectionFactor
+	if p.ctx.GetSessionVars().OptimizerSelectivityLevel == 1 && childProfile.histColl != nil {
+		factor, err = childProfile.histColl.Selectivity(p.ctx, p.Conditions)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	p.stats = childProfile.scale(factor)
 	return p.stats, nil
 }
 
@@ -254,7 +261,56 @@ func (p *LogicalProjection) deriveStats() (*statsInfo, error) {
 		cols := expression.ExtractColumns(expr)
 		p.stats.cardinality[i] = getCardinality(cols, p.children[0].Schema(), childProfile)
 	}
+	// If we enables the enhance selectivity we'll try to maintain the histogram.
+	if p.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && !childProfile.histColl.Pseudo {
+		p.deriveHistStats(childProfile)
+	}
 	return p.stats, nil
+}
+
+func (p *LogicalProjection) deriveHistStats(childProfile *statsInfo) {
+	colHistMap := make(map[int64]*statistics.Column)
+	colIDMap := make(map[int64]int64)
+	childHist := childProfile.histColl
+	for i, expr := range p.Exprs {
+		col, ok := expr.(*expression.Column)
+		if !ok {
+			continue
+		}
+		colHist, ok := childHist.Columns[col.UniqueID]
+		if !ok {
+			continue
+		}
+		colHistMap[p.schema.Columns[i].UniqueID] = colHist
+		colIDMap[col.UniqueID] = p.schema.Columns[i].UniqueID
+	}
+
+	colID2IdxID := make(map[int64]int64)
+	idx2ColumnIDs := make(map[int64][]int64)
+	idxHistMap := make(map[int64]*statistics.Index)
+	for id, colIDs := range childHist.Idx2ColumnIDs {
+		newIDList := make([]int64, 0, len(colIDs))
+		for _, id := range colIDs {
+			if newID, ok := colIDMap[id]; ok {
+				newIDList = append(newIDList, newID)
+				continue
+			}
+			break
+		}
+		if len(newIDList) == 0 {
+			continue
+		}
+		colID2IdxID[newIDList[0]] = id
+		idx2ColumnIDs[id] = newIDList
+		idxHistMap[id] = childHist.Indices[id]
+	}
+	p.stats.histColl = &statistics.HistColl{
+		Columns:       colHistMap,
+		Indices:       idxHistMap,
+		Idx2ColumnIDs: idx2ColumnIDs,
+		ColID2IdxID:   colID2IdxID,
+		Count:         childHist.Count,
+	}
 }
 
 func (la *LogicalAggregation) deriveStats() (*statsInfo, error) {
