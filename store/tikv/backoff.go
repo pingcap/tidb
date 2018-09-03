@@ -155,7 +155,7 @@ func (t backoffType) TError() *terror.Error {
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
 	copBuildTaskMaxBackoff         = 5000
-	tsoMaxBackoff                  = 5000
+	tsoMaxBackoff                  = 15000
 	scannerNextMaxBackoff          = 20000
 	batchGetMaxBackoff             = 20000
 	copNextMaxBackoff              = 20000
