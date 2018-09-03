@@ -432,16 +432,8 @@ func createServer() {
 }
 
 func setupSignalHandler() {
-	closeSignalChan := make(chan os.Signal, 1)
-	signal.Notify(closeSignalChan,
-		syscall.SIGHUP,
-		syscall.SIGINT,
-		syscall.SIGTERM,
-		syscall.SIGQUIT)
-
 	dumpSignalChan := make(chan os.Signal, 1)
 	signal.Notify(dumpSignalChan, syscall.SIGUSR1)
-
 	go func() {
 		buf := make([]byte, 1<<16)
 		for {
@@ -454,6 +446,12 @@ func setupSignalHandler() {
 		}
 	}()
 
+	closeSignalChan := make(chan os.Signal, 1)
+	signal.Notify(closeSignalChan,
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT)
 	go func() {
 		sig := <-closeSignalChan
 		log.Infof("Got signal [%s] to exit.", sig)
