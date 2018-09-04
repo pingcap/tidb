@@ -833,7 +833,11 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			datetimePrecision = decimal
 		} else if types.IsTypeNumeric(col.Tp) {
 			numericPrecision = colLen
-			numericScale = decimal
+			if col.Tp != mysql.TypeFloat && col.Tp != mysql.TypeDouble {
+				numericScale = decimal
+			} else if decimal != -1 {
+				numericScale = decimal
+			}
 		}
 		columnType := col.FieldType.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
@@ -1006,24 +1010,24 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 func dataForPseudoProfiling() [][]types.Datum {
 	var rows [][]types.Datum
 	row := types.MakeDatums(
-		0,                      // QUERY_ID
-		0,                      // SEQ
-		"",                     // STATE
+		0,  // QUERY_ID
+		0,  // SEQ
+		"", // STATE
 		types.NewDecFromInt(0), // DURATION
 		types.NewDecFromInt(0), // CPU_USER
 		types.NewDecFromInt(0), // CPU_SYSTEM
-		0,                      // CONTEXT_VOLUNTARY
-		0,                      // CONTEXT_INVOLUNTARY
-		0,                      // BLOCK_OPS_IN
-		0,                      // BLOCK_OPS_OUT
-		0,                      // MESSAGES_SENT
-		0,                      // MESSAGES_RECEIVED
-		0,                      // PAGE_FAULTS_MAJOR
-		0,                      // PAGE_FAULTS_MINOR
-		0,                      // SWAPS
-		0,                      // SOURCE_FUNCTION
-		0,                      // SOURCE_FILE
-		0,                      // SOURCE_LINE
+		0, // CONTEXT_VOLUNTARY
+		0, // CONTEXT_INVOLUNTARY
+		0, // BLOCK_OPS_IN
+		0, // BLOCK_OPS_OUT
+		0, // MESSAGES_SENT
+		0, // MESSAGES_RECEIVED
+		0, // PAGE_FAULTS_MAJOR
+		0, // PAGE_FAULTS_MINOR
+		0, // SWAPS
+		0, // SOURCE_FUNCTION
+		0, // SOURCE_FILE
+		0, // SOURCE_LINE
 	)
 	rows = append(rows, row)
 	return rows
