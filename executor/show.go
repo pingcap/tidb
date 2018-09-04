@@ -503,7 +503,8 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				buf.WriteString(" NOT NULL")
 			}
 			if !mysql.HasNoDefaultValueFlag(col.Flag) {
-				switch col.DefaultValue {
+				defaultValue := col.GetDefaultValue()
+				switch defaultValue {
 				case nil:
 					if !mysql.HasNotNullFlag(col.Flag) {
 						if col.Tp == mysql.TypeTimestamp {
@@ -514,7 +515,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
 				default:
-					defaultValStr := fmt.Sprintf("%v", col.DefaultValue)
+					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						buf.WriteString(fmt.Sprintf(" DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true)))

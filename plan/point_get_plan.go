@@ -127,6 +127,8 @@ func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 			}
 			return fp
 		}
+	case *ast.UpdateStmt:
+		return tryUpdatePointPlan(ctx, x)
 	case *ast.DeleteStmt:
 		return tryDeletePointPlan(ctx, x)
 	}
@@ -382,6 +384,57 @@ func findInPairs(colName string, pairs []nameValuePair) int {
 	return -1
 }
 
+func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan {
+	selStmt := &ast.SelectStmt{
+		Fields:  &ast.FieldList{},
+		From:    updateStmt.TableRefs,
+		Where:   updateStmt.Where,
+		OrderBy: updateStmt.Order,
+		Limit:   updateStmt.Limit,
+	}
+	fastSelect := tryPointGetPlan(ctx, selStmt)
+	if fastSelect == nil {
+		return nil
+	}
+	if checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.UpdatePriv) != nil {
+		return nil
+	}
+	orderedList := buildOrderedList(ctx, fastSelect, updateStmt.List)
+	if orderedList == nil {
+		return nil
+	}
+	updatePlan := &Update{
+		SelectPlan:  fastSelect,
+		OrderedList: orderedList,
+	}
+	updatePlan.SetSchema(fastSelect.schema)
+	return updatePlan
+}
+
+func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*ast.Assignment) []*expression.Assignment {
+	orderedList := make([]*expression.Assignment, 0, len(list))
+	for _, assign := range list {
+		col, err := fastSelect.schema.FindColumn(assign.Column)
+		if err != nil {
+			return nil
+		}
+		if col == nil {
+			return nil
+		}
+		newAssign := &expression.Assignment{
+			Col: col,
+		}
+		expr, err := expression.RewriteSimpleExprWithSchema(ctx, assign.Expr, fastSelect.schema)
+		if err != nil {
+			return nil
+		}
+		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
+		newAssign.Expr = expr.ResolveIndices(fastSelect.schema)
+		orderedList = append(orderedList, newAssign)
+	}
+	return orderedList
+}
+
 func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	if delStmt.IsMultiTable {
 		return nil
@@ -424,7 +477,7 @@ func colInfoToColumn(db model.CIStr, tblName model.CIStr, asName model.CIStr, co
 		TblName:     tblName,
 		RetType:     &col.FieldType,
 		ID:          col.ID,
-		UniqueID:    col.Offset,
+		UniqueID:    int64(col.Offset),
 		Index:       idx,
 	}
 }

@@ -1819,6 +1819,7 @@ func (s *testParserSuite) TestType(c *C) {
 
 		// for year
 		{"create table t (y year(4), y1 year)", true},
+		{"create table t (y year(4) unsigned zerofill zerofill, y1 year signed unsigned zerofill)", true},
 
 		// for national
 		{"create table t (c1 national char(2), c2 national varchar(2))", true},

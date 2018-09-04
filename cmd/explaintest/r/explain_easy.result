@@ -50,8 +50,7 @@ IndexJoin_11	4166.67	root	left outer join, inner:IndexLookUp_10, outer key:test.
   └─TableScan_9	10.00	cop	table:t2, keep order:false, stats:pseudo
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
-TableReader_5	1.00	root	data:TableScan_4
-└─TableScan_4	1.00	cop	table:t1, range:[1,1], keep order:false, stats:pseudo
+Point_Get_1	1.00	root	table:t1, handle:1
 explain delete from t1 where t1.c2 = 1;
 id	count	task	operator info
 IndexLookUp_9	10.00	root	
@@ -274,11 +273,12 @@ Projection_11	10000.00	root	9_aux_0
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
-    └─IndexJoin_43	10000.00	root	inner join, inner:TableReader_42, outer key:s.a, inner key:t1.a
-      ├─TableReader_51	1.00	root	data:TableScan_50
-      │ └─TableScan_50	1.00	cop	table:s, range: decided by [eq(s.a, test.t.a)], keep order:false, stats:pseudo
-      └─TableReader_42	10.00	root	data:TableScan_41
-        └─TableScan_41	10.00	cop	table:t1, range: decided by [s.a], keep order:false, stats:pseudo
+    └─IndexJoin_44	10000.00	root	inner join, inner:TableReader_43, outer key:s.a, inner key:t1.a
+      ├─TableReader_52	1.00	root	data:TableScan_51
+      │ └─TableScan_51	1.00	cop	table:s, range: decided by [eq(s.a, test.t.a)], keep order:false, stats:pseudo
+      └─TableReader_43	8000.00	root	data:Selection_42
+        └─Selection_42	8000.00	cop	eq(t1.a, test.t.a)
+          └─TableScan_41	10.00	cop	table:t1, range: decided by [s.a], keep order:false, stats:pseudo
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	9_aux_0
