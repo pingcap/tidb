@@ -86,8 +86,8 @@ func (c *column) appendNullBitmap(notNull bool) {
 }
 
 // appendMultiSameNullBitmap appends multiple same bit value to `nullBitMap`.
-// notNull mean not null.
-// num mean appends `num` bit value to `nullBitMap`.
+// notNull means not null.
+// num means the number of bits that should be appended.
 func (c *column) appendMultiSameNullBitmap(notNull bool, num int) {
 	numNewBytes := ((c.length + num + 7) >> 3) - len(c.nullBitmap)
 	b := byte(0)
@@ -101,11 +101,11 @@ func (c *column) appendMultiSameNullBitmap(notNull bool, num int) {
 		c.nullCount += num
 		return
 	}
-	// 1. Set all the higher 8-'numOldBits' bits in the last old byte to 1.
+	// 1. Set all the remained bits in the last slot of old c.numBitMap to 1.
 	numOldBits := uint(c.length % 8)
 	bitMask := byte(^((1 << numOldBits) - 1))
 	c.nullBitmap[c.length/8] |= bitMask
-	// 2. Set all the higher 'numRedundantBits' bits in the last new byte to 0.
+	// 2. Set all the redundant bits in the last slot of new c.numBitMap to 0.
 	numRedundantBits := uint(len(c.nullBitmap)*8 - c.length - num)
 	bitMask = byte(1<<(8-numRedundantBits)) - 1
 	c.nullBitmap[len(c.nullBitmap)-1] &= bitMask
