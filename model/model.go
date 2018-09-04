@@ -94,7 +94,7 @@ func (c *ColumnInfo) IsGenerated() bool {
 func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 	c.DefaultValue = value
 	if c.Tp == mysql.TypeBit {
-		// For mysql.TypeBit type, the default value storage format must be a string.
+		// For mysql.TypeBit type, the default value storage format must be a string, default value is null supported.
 		// Other value such as int must convert to string format first.
 		if value == nil {
 			return nil
