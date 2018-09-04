@@ -15,6 +15,7 @@ package chunk
 
 // CopySelectedJoinRows copies the selected joined rows from the source Chunk
 // to the destination Chunk.
+// Return true if at least one joined row was selected.
 //
 // NOTE: All the outer rows in the source Chunk should be the same.
 func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, selected []bool, dst *Chunk) bool {

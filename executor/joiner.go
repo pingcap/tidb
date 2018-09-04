@@ -164,7 +164,7 @@ func (j *baseJoiner) filter(input, output *chunk.Chunk, outerColsLen int) (bool,
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	// batch copy selected row to output chunk
+	// Batch copies selected rows to output chunk.
 	innerColOffset, outerColOffset := 0, input.NumCols()-outerColsLen
 	if !j.outerIsRight {
 		innerColOffset, outerColOffset = outerColsLen, 0

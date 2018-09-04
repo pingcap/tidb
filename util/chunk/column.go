@@ -72,12 +72,12 @@ func (c *column) isNull(rowIdx int) bool {
 	return nullByte&(1<<(uint(rowIdx)&7)) == 0
 }
 
-func (c *column) appendNullBitmap(on bool) {
+func (c *column) appendNullBitmap(notNull bool) {
 	idx := c.length >> 3
 	if idx >= len(c.nullBitmap) {
 		c.nullBitmap = append(c.nullBitmap, 0)
 	}
-	if on {
+	if notNull {
 		pos := uint(c.length) & 7
 		c.nullBitmap[idx] |= byte(1 << pos)
 	} else {
@@ -85,27 +85,30 @@ func (c *column) appendNullBitmap(on bool) {
 	}
 }
 
-func (c *column) appendMultiSameNullBitmap(on bool, num int) {
+// appendMultiSameNullBitmap appends multiple same bit value to `nullBitMap`.
+// notNull mean not not null.
+// num mean appends `num` bit value to `nullBitMap`.
+func (c *column) appendMultiSameNullBitmap(notNull bool, num int) {
 	numNewBytes := ((c.length + num + 7) >> 3) - len(c.nullBitmap)
 	b := byte(0)
-	if on {
+	if notNull {
 		b = 0xff
 	}
 	for i := 0; i < numNewBytes; i++ {
 		c.nullBitmap = append(c.nullBitmap, b)
 	}
-	if on {
-		// 1. Set all the higher 8-'numOldBits' bits in the last old byte to 1.
-		numOldBits := uint(c.length % 8)
-		bitMask := byte(^((1 << numOldBits) - 1))
-		c.nullBitmap[c.length/8] |= bitMask
-		// 2. Set all the higher 'numRedundantBits' bits in the last new byte to 0.
-		numRedundantBits := uint(len(c.nullBitmap)*8 - c.length - num)
-		bitMask = byte(1<<(8-numRedundantBits)) - 1
-		c.nullBitmap[len(c.nullBitmap)-1] &= bitMask
-	} else {
+	if !notNull {
 		c.nullCount += num
+		return
 	}
+	// 1. Set all the higher 8-'numOldBits' bits in the last old byte to 1.
+	numOldBits := uint(c.length % 8)
+	bitMask := byte(^((1 << numOldBits) - 1))
+	c.nullBitmap[c.length/8] |= bitMask
+	// 2. Set all the higher 'numRedundantBits' bits in the last new byte to 0.
+	numRedundantBits := uint(len(c.nullBitmap)*8 - c.length - num)
+	bitMask = byte(1<<(8-numRedundantBits)) - 1
+	c.nullBitmap[len(c.nullBitmap)-1] &= bitMask
 }
 
 func (c *column) appendNull() {
