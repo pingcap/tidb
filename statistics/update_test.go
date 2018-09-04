@@ -932,7 +932,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 		now    string
 		result bool
 	}{
-		// table never analyzed and has reach the limit
+		// table was never analyzed and has reach the limit
 		{
 			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
 			limit:  0,
@@ -942,7 +942,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			now:    "00:00 CST",
 			result: true,
 		},
-		// table never analyzed but has not reach the limit
+		// table was never analyzed but has not reach the limit
 		{
 			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
 			limit:  time.Hour,
@@ -952,7 +952,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			now:    "00:00 CST",
 			result: false,
 		},
-		// table already analyzed but auto analyze is disabled
+		// table was already analyzed but auto analyze is disabled
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
@@ -962,7 +962,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			now:    "00:00 CST",
 			result: false,
 		},
-		// table already analyzed and but modify count is small
+		// table was already analyzed and but modify count is small
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, Count: 1}},
 			limit:  0,
@@ -972,7 +972,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			now:    "00:00 CST",
 			result: false,
 		},
-		// table already analyzed and but not within time period
+		// table was already analyzed and but not within time period
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
@@ -982,7 +982,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			now:    "00:02 CST",
 			result: false,
 		},
-		// table already analyzed and but not within time period
+		// table was already analyzed and but not within time period
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
@@ -992,7 +992,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			now:    "10:00 CST",
 			result: false,
 		},
-		// table already analyzed and within time period
+		// table was already analyzed and within time period
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
@@ -1002,7 +1002,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			now:    "00:00 CST",
 			result: true,
 		},
-		// table already analyzed and within time period
+		// table was already analyzed and within time period
 		{
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,

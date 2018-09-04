@@ -618,7 +618,7 @@ func withinTimePeriod(start, end, now time.Time) bool {
 
 // NeedAnalyzeTable checks if we need to analyze the table:
 // 1. If the table has never been analyzed, we need to analyze it when it has
-//    not been modified for a time.
+//    not been modified for a while.
 // 2. If the table had been analyzed before, we need to analyze it when
 //    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
 // 3. The current time is between `start` and `end`.
