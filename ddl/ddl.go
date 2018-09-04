@@ -447,6 +447,9 @@ func checkJobMaxInterval(job *model.Job) time.Duration {
 	if job.Type == model.ActionAddIndex {
 		return 3 * time.Second
 	}
+	if job.Type == model.ActionCreateTable {
+		return 500 * time.Millisecond
+	}
 	return 1 * time.Second
 }
 
