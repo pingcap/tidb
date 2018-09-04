@@ -21,11 +21,9 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
@@ -51,7 +49,7 @@ type delRangeManager interface {
 
 type delRange struct {
 	store        kv.Storage
-	ctxPool      *pools.ResourcePool
+	sessPool     *sessionPool
 	storeSupport bool
 	emulatorCh   chan struct{}
 	keys         []kv.Key
@@ -61,10 +59,10 @@ type delRange struct {
 }
 
 // newDelRangeManager returns a delRangeManager.
-func newDelRangeManager(store kv.Storage, ctxPool *pools.ResourcePool) delRangeManager {
+func newDelRangeManager(store kv.Storage, sessPool *sessionPool) delRangeManager {
 	dr := &delRange{
 		store:        store,
-		ctxPool:      ctxPool,
+		sessPool:     sessPool,
 		storeSupport: store.SupportDeleteRange(),
 		quitCh:       make(chan struct{}),
 	}
@@ -77,14 +75,11 @@ func newDelRangeManager(store kv.Storage, ctxPool *pools.ResourcePool) delRangeM
 
 // addDelRangeJob implements delRangeManager interface.
 func (dr *delRange) addDelRangeJob(job *model.Job) error {
-	resource, err := dr.ctxPool.Get()
+	ctx, err := dr.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer dr.ctxPool.Put(resource)
-	ctx := resource.(sessionctx.Context)
-	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
-	ctx.GetSessionVars().InRestrictedSQL = true
+	defer dr.sessPool.put(ctx)
 
 	err = insertJobIntoDeleteRangeTable(ctx, job)
 	if err != nil {
@@ -110,7 +105,7 @@ func (dr *delRange) clear() {
 	log.Infof("[ddl] closing delRange session pool")
 	close(dr.quitCh)
 	dr.wait.Wait()
-	dr.ctxPool.Close()
+	dr.sessPool.close()
 }
 
 // startEmulator is only used for those storage engines which don't support
@@ -131,15 +126,12 @@ func (dr *delRange) startEmulator() {
 }
 
 func (dr *delRange) doDelRangeWork() error {
-	resource, err := dr.ctxPool.Get()
+	ctx, err := dr.sessPool.get()
 	if err != nil {
 		log.Errorf("[ddl] delRange emulator get session fail: %s", err)
 		return errors.Trace(err)
 	}
-	defer dr.ctxPool.Put(resource)
-	ctx := resource.(sessionctx.Context)
-	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
-	ctx.GetSessionVars().InRestrictedSQL = true
+	defer dr.sessPool.put(ctx)
 
 	ranges, err := util.LoadDeleteRanges(ctx, math.MaxInt64)
 	if err != nil {
