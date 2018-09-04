@@ -95,19 +95,23 @@ func (c *column) appendMultiSameNullBitmap(on bool, num int) {
 		c.nullBitmap = append(c.nullBitmap, b)
 	}
 	if on {
-		idx := c.length >> 3
-		pos := uint(c.length) & 7
-		c.nullBitmap[idx] |= ^(byte(1<<pos) - 1)
-		l := uint(len(c.nullBitmap)*8 - c.length - num)
-		// Normally, l will small than 8
-		if l > 8 {
-			for i := int(l / 8); i > 0; i-- {
+		// 1. Set all the higher 8-'numOldBits' bits in the last old byte to 1.
+		numOldBits := uint(c.length % 8)
+		bitMask := byte(^((1 << numOldBits) - 1))
+		c.nullBitmap[c.length/8] |= bitMask
+
+		// 2. Set all the higher 'numRedundantBits' bits in the last new byte to 0.
+		numRedundantBits := uint(len(c.nullBitmap)*8 - c.length - num)
+		// Normally, numRedundantBits will small than 8
+		if numRedundantBits > 8 {
+			for i := int(numRedundantBits / 8); i > 0; i-- {
 				c.nullBitmap[len(c.nullBitmap)-i] = 0
 			}
-			l = l % 8
+			numRedundantBits = numRedundantBits % 8
 		}
-		l = 8 - l
-		c.nullBitmap[len(c.nullBitmap)-1] &= (byte(1<<l) - 1)
+		numRedundantBits = 8 - numRedundantBits
+		bitMask = byte(1<<numRedundantBits) - 1
+		c.nullBitmap[len(c.nullBitmap)-1] &= bitMask
 	} else {
 		c.nullCount += num
 	}
