@@ -1711,6 +1711,54 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 		  partition p3 values less than (18446744073709551000 + 1),
 		  partition p4 values less than (18446744073709551000 + 10)
 		);`)
+
+	// Support partitioned by range columns later "ERROR HY000: Field 'a' is of a not allowed type for this type of partitioning".
+	s.tk.MustExec(`create table t29 (
+		a decimal
+	)
+	partition by range columns (a)
+	(partition p0 values less than (0));`)
+}
+
+func (s *testDBSuite) TestCreateTableWithHashPartition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test;")
+	s.tk.MustExec("drop table if exists employees;")
+	s.tk.MustExec(`
+	create table employees (
+		id int not null,
+		fname varchar(30),
+		lname varchar(30),
+		hired date not null default '1970-01-01',
+		separated date not null default '9999-12-31',
+		job_code int,
+		store_id int
+	)
+	partition by hash(store_id) partitions 4;`)
+
+	s.tk.MustExec("drop table if exists employees;")
+	s.tk.MustExec(`
+	create table employees (
+		id int not null,
+		fname varchar(30),
+		lname varchar(30),
+		hired date not null default '1970-01-01',
+		separated date not null default '9999-12-31',
+		job_code int,
+		store_id int
+	)
+	partition by hash( year(hired) ) partitions 4;`)
+}
+
+func (s *testDBSuite) TestCreateTableWithKeyPartition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test;")
+	s.tk.MustExec("drop table if exists tm1;")
+	s.tk.MustExec(`create table tm1
+	(
+		s1 char(32) primary key
+	)
+	partition by key(s1) partitions 10;`)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {

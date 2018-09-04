@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -907,29 +908,34 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	if pi != nil {
-		if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
-			return errors.Trace(err)
-		}
+	if pi != nil && pi.Type == model.PartitionTypeRange {
+		// Check partition by range.
+		if s.Partition.ColumnNames == nil {
+			if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
-			return errors.Trace(err)
-		}
+			if err = checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
-			return errors.Trace(err)
-		}
+			if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-			return errors.Trace(err)
-		}
+			if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
-			return errors.Trace(err)
-		}
+			if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
-			return errors.Trace(err)
+			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+				return errors.Trace(err)
+			} else {
+				// TODO: check partitioned by range columns.
+			}
 		}
 		tbInfo.Partition = pi
 	}
