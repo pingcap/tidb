@@ -307,12 +307,15 @@ func startWithSharp(s *Scanner) (tok int, pos Pos, lit string) {
 
 func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
-	if strings.HasPrefix(s.r.s[pos.Offset:], "-- ") {
-		s.r.incN(3)
-		s.r.incAsLongAs(func(ch rune) bool {
-			return ch != '\n'
-		})
-		return s.scan()
+	if strings.HasPrefix(s.r.s[pos.Offset:], "--") {
+		remainLen := len(s.r.s[pos.Offset:])
+		if remainLen == 2 || (remainLen > 2 && isSpaceOrNewline(s.r.s[pos.Offset+2])) {
+			s.r.incN(2)
+			s.r.incAsLongAs(func(ch rune) bool {
+				return ch != '\n'
+			})
+			return s.scan()
+		}
 	}
 	if strings.HasPrefix(s.r.s[pos.Offset:], "->>") {
 		tok = juss
@@ -327,6 +330,10 @@ func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
 	tok = int('-')
 	s.r.inc()
 	return
+}
+
+func isSpaceOrNewline(c uint8) bool {
+	return c == ' ' || c == '\t' || c == '\n'
 }
 
 func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
