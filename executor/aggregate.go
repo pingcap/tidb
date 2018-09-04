@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"sort"
 	"sync"
 
 	"github.com/juju/errors"
@@ -138,10 +137,10 @@ type HashAggExec struct {
 	FinalAggFuncs    []aggfuncs.AggFunc
 	partialResultMap aggPartialResultMapper
 	groupSet         set.StringSet
-	sortedGroupKey   []string
+	groupKeys        []string
 	cursor4GroupKey  int
 	GroupByItems     []expression.Expression
-	groupKey         []byte
+	groupKeyBuffer   []byte
 	groupValDatums   []types.Datum
 
 	// After we support parallel execution for aggregation functions with distinct,
@@ -234,8 +233,8 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 func (e *HashAggExec) initForUnparallelExec() {
 	e.groupSet = set.NewStringSet()
 	e.partialResultMap = make(aggPartialResultMapper, 0)
-	e.groupKey = make([]byte, 0, 8)
-	e.groupValDatums = make([]types.Datum, 0, len(e.groupKey))
+	e.groupKeyBuffer = make([]byte, 0, 8)
+	e.groupValDatums = make([]types.Datum, 0, len(e.groupKeyBuffer))
 	e.childResult = e.children[0].newChunk()
 }
 
@@ -620,7 +619,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 			// "select count(c) from t;" should return one row [0]
 			// "select count(c) from t group by c1;" should return empty result set.
 			e.groupSet.Insert("")
-			e.sortedGroupKey = append(e.sortedGroupKey, "")
+			e.groupKeys = append(e.groupKeys, "")
 		}
 		e.prepared = true
 	}
@@ -628,9 +627,8 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 
 	// Since we return e.maxChunkSize rows every time, so we should not traverse
 	// `groupSet` because of its randomness.
-	sort.Strings(e.sortedGroupKey)
-	for ; e.cursor4GroupKey < len(e.sortedGroupKey); e.cursor4GroupKey++ {
-		partialResults := e.getPartialResults(e.sortedGroupKey[e.cursor4GroupKey])
+	for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
+		partialResults := e.getPartialResults(e.groupKeys[e.cursor4GroupKey])
 		if len(e.PartialAggFuncs) == 0 {
 			chk.SetNumVirtualRows(chk.NumRows() + 1)
 		}
@@ -664,7 +662,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			}
 			if !e.groupSet.Exist(groupKey) {
 				e.groupSet.Insert(groupKey)
-				e.sortedGroupKey = append(e.sortedGroupKey, groupKey)
+				e.groupKeys = append(e.groupKeys, groupKey)
 			}
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
@@ -690,11 +688,11 @@ func (e *HashAggExec) getGroupKey(row chunk.Row) (string, error) {
 		e.groupValDatums = append(e.groupValDatums, v)
 	}
 	var err error
-	e.groupKey, err = codec.EncodeValue(e.sc, e.groupKey[:0], e.groupValDatums...)
+	e.groupKeyBuffer, err = codec.EncodeValue(e.sc, e.groupKeyBuffer[:0], e.groupValDatums...)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
-	return string(e.groupKey), nil
+	return string(e.groupKeyBuffer), nil
 }
 
 func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResult {
