@@ -1626,11 +1626,11 @@ SignedLiteral:
 	}
 |	'+' NumLiteral
 	{
-		$$ = &ast.UnaryOperationExpr{Op: opcode.Plus, V: ast.NewValueExpr($2)}
+		$$ = ast.NewValueExpr($2)
 	}
 |	'-' NumLiteral
 	{
-		$$ = &ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr($2)}
+		$$ = ast.NewOppositeValueExpr($2)
 	}
 
 NumLiteral:
