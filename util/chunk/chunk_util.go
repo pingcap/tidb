@@ -31,6 +31,7 @@ func CopySelectedJoinRows(src *Chunk, innerColOffset, outerColOffset int, select
 
 // copySelectedInnerRows copies the selected inner rows from the source Chunk
 // to the destination Chunk.
+// return the number of rows which is selected.
 func copySelectedInnerRows(innerColOffset, outerColOffset int, src *Chunk, selected []bool, dst *Chunk) int {
 	oldLen := dst.columns[innerColOffset].length
 	var srcCols []*column

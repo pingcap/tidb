@@ -86,7 +86,7 @@ func (c *column) appendNullBitmap(notNull bool) {
 }
 
 // appendMultiSameNullBitmap appends multiple same bit value to `nullBitMap`.
-// notNull mean not not null.
+// notNull mean not null.
 // num mean appends `num` bit value to `nullBitMap`.
 func (c *column) appendMultiSameNullBitmap(notNull bool, num int) {
 	numNewBytes := ((c.length + num + 7) >> 3) - len(c.nullBitmap)
