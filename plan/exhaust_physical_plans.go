@@ -553,12 +553,9 @@ func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.C
 
 	usableKeys := make([]*expression.Column, 0, len(keys))
 
-	// After predicate push down, the one side conditions of join must be the conditions that cannot be pushed down and
-	// cannot calculate range either. So we only need the innerPlan.pushedDownConds and the eq conditions that we generate.
-	// TODO: There may be a selection that block the index join.
 	conds := make([]expression.Expression, 0, len(keys)+len(innerFilters))
 	eqConds = make([]expression.Expression, 0, len(keys))
-	// Construct a fake equal expression for calculating the range.
+	// Construct a fake equal expression for every join key for calculating the range.
 	for i, key := range keys {
 		if keyOff2IdxOff[i] < 0 {
 			continue
@@ -571,6 +568,7 @@ func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.C
 		eqConds = append(eqConds, eqFunc)
 	}
 
+	// Look into every `innerFilter`, if it contains join keys' column, put this filter into `remained` part directly.
 	remained = make([]expression.Expression, 0, len(innerFilters))
 	for _, filter := range innerFilters {
 		affectedCols := expression.ExtractColumns(filter)
