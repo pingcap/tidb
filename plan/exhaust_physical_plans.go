@@ -518,15 +518,15 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return nil, nil, nil
 	}
 
+	// Extract the filter to calculate access and the filters that must be remained ones.
 	access, eqConds, remained, keyOff2IdxOff := p.buildFakeEqCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan.pushedDownConds)
 
 	if len(keyOff2IdxOff) == 0 {
 		return nil, nil, nil
 	}
 
-	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
-	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
-	// So DetachCondAndBuildRangeForIndex won't miss the equal conditions we generate.
+	// In `buildFakeEqCondsForIndexJoin`, we construct the equal cond for join keys and remove filters that containing the join keys' column.
+	// So the eq cond we built can be successfully used to build range if it can be used. Won't be affected by the existing filters.
 	ranges, accesses, moreRemained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, access, idxCols, colLengths)
 	if err != nil {
 		terror.Log(errors.Trace(err))
