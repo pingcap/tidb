@@ -102,8 +102,8 @@ func (c *column) appendMultiSameNullBitmap(notNull bool, num int) {
 		return
 	}
 	// 1. Set all the remained bits in the last slot of old c.numBitMap to 1.
-	numOldBits := uint(c.length % 8)
-	bitMask := byte(^((1 << numOldBits) - 1))
+	numRemainedBits := uint(c.length % 8)
+	bitMask := byte(^((1 << numRemainedBits) - 1))
 	c.nullBitmap[c.length/8] |= bitMask
 	// 2. Set all the redundant bits in the last slot of new c.numBitMap to 0.
 	numRedundantBits := uint(len(c.nullBitmap)*8 - c.length - num)
