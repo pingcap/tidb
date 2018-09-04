@@ -603,7 +603,7 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 
-	// done means that the added handle is out of taskRange.endHandle.
+	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle,
