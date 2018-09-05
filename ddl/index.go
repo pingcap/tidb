@@ -479,7 +479,7 @@ type addIndexWorker struct {
 	defaultVals        []types.Datum
 	idxRecords         []*indexRecord
 	rowMap             map[int64]types.Datum
-	rowSlice           []types.Datum
+	rowBuffer          []types.Datum
 	row                chunk.Row
 	idxKeyBufs         [][]byte
 	batchCheckKeys     []kv.Key
@@ -521,7 +521,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
 	}
 	if len(colExprMap) != 0 {
-		w.rowSlice = make([]types.Datum, len(t.Cols()))
+		w.rowBuffer = make([]types.Datum, len(t.Cols()))
 	}
 	return w
 }
@@ -547,10 +547,10 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 		for _, col := range w.table.Cols() {
 			ri, ok := w.rowMap[col.ID]
 			if ok {
-				w.rowSlice[col.Offset] = ri
+				w.rowBuffer[col.Offset] = ri
 			}
 		}
-		w.row = chunk.MutRowFromDatums(w.rowSlice).ToRow()
+		w.row = chunk.MutRowFromDatums(w.rowBuffer).ToRow()
 	}
 	for j, v := range idxInfo.Columns {
 		col := cols[v.Offset]
