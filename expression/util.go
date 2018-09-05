@@ -449,3 +449,17 @@ func (s *exprStack) push(expr Expression) {
 func (s *exprStack) len() int {
 	return len(s.stack)
 }
+
+// ColumnSliceIsIntersect checks whether two column slice is intersected.
+func ColumnSliceIsIntersect(s1, s2 []*Column) bool {
+	intSet := map[int64]struct{}{}
+	for _, col := range s1 {
+		intSet[col.UniqueID] = struct{}{}
+	}
+	for _, col := range s2 {
+		if _, ok := intSet[col.UniqueID]; ok {
+			return true
+		}
+	}
+	return false
+}
