@@ -642,8 +642,6 @@ func NeedAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64,
 
 const (
 	minAutoAnalyzeRatio = 0.3
-	// TimeFormat is the format of auto analyze start time and end time.
-	TimeFormat = "15:04 MST"
 )
 
 func (h *Handle) getAutoAnalyzeParameters() map[string]string {
@@ -671,16 +669,16 @@ func parseAutoAnalyzeRatio(ratio string) float64 {
 	return autoAnalyzeRatio
 }
 
-func parseAnalyzePeriod(start, end string) (time.Time, time.Time) {
-	s, err := time.ParseInLocation(TimeFormat, start, time.UTC)
+func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
+	s, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, start, time.UTC)
 	if err != nil {
-		s = time.Date(0, 0, 0, 0, 0, 0, 0, time.UTC)
+		return s, s, errors.Trace(err)
 	}
-	e, err := time.ParseInLocation(TimeFormat, end, time.UTC)
+	e, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, end, time.UTC)
 	if err != nil {
-		e = time.Date(0, 0, 0, 23, 59, 0, 0, time.UTC)
+		return s, e, errors.Trace(err)
 	}
-	return s, e
+	return s, e, nil
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
@@ -688,7 +686,10 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-	start, end := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
+	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {

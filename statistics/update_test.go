@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
@@ -937,9 +938,9 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
 			limit:  0,
 			ratio:  0,
-			start:  "00:00 CST",
-			end:    "00:01 CST",
-			now:    "00:00 CST",
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
 			result: true,
 		},
 		// table was never analyzed but has not reach the limit
@@ -947,9 +948,9 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
 			limit:  time.Hour,
 			ratio:  0,
-			start:  "00:00 CST",
-			end:    "00:01 CST",
-			now:    "00:00 CST",
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
 			result: false,
 		},
 		// table was already analyzed but auto analyze is disabled
@@ -957,9 +958,9 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
 			ratio:  0,
-			start:  "00:00 CST",
-			end:    "00:01 CST",
-			now:    "00:00 CST",
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
 			result: false,
 		},
 		// table was already analyzed and but modify count is small
@@ -967,9 +968,9 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, Count: 1}},
 			limit:  0,
 			ratio:  0.3,
-			start:  "00:00 CST",
-			end:    "00:01 CST",
-			now:    "00:00 CST",
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
 			result: false,
 		},
 		// table was already analyzed and but not within time period
@@ -977,9 +978,9 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
 			ratio:  0.3,
-			start:  "00:00 CST",
-			end:    "00:01 CST",
-			now:    "00:02 CST",
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:02 +0800",
 			result: false,
 		},
 		// table was already analyzed and but not within time period
@@ -987,9 +988,9 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
 			ratio:  0.3,
-			start:  "22:00 CST",
-			end:    "06:00 CST",
-			now:    "10:00 CST",
+			start:  "22:00 +0800",
+			end:    "06:00 +0800",
+			now:    "10:00 +0800",
 			result: false,
 		},
 		// table was already analyzed and within time period
@@ -997,9 +998,9 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
 			ratio:  0.3,
-			start:  "00:00 CST",
-			end:    "00:01 CST",
-			now:    "00:00 CST",
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
 			result: true,
 		},
 		// table was already analyzed and within time period
@@ -1007,18 +1008,18 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
 			limit:  0,
 			ratio:  0.3,
-			start:  "22:00 CST",
-			end:    "06:00 CST",
-			now:    "23:00 CST",
+			start:  "22:00 +0800",
+			end:    "06:00 +0800",
+			now:    "23:00 +0800",
 			result: true,
 		},
 	}
 	for _, test := range tests {
-		start, err := time.ParseInLocation(statistics.TimeFormat, test.start, time.UTC)
+		start, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.start, time.UTC)
 		c.Assert(err, IsNil)
-		end, err := time.ParseInLocation(statistics.TimeFormat, test.end, time.UTC)
+		end, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.end, time.UTC)
 		c.Assert(err, IsNil)
-		now, err := time.ParseInLocation(statistics.TimeFormat, test.now, time.UTC)
+		now, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.now, time.UTC)
 		c.Assert(err, IsNil)
 		c.Assert(statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now), Equals, test.result)
 	}

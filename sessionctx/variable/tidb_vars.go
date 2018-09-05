@@ -193,8 +193,8 @@ const (
 	DefDistSQLScanConcurrency        = 15
 	DefBuildStatsConcurrency         = 4
 	DefAutoAnalyzeRatio              = 0.5
-	DefAutoAnalyzeStartTime          = "00:00 UTC"
-	DefAutoAnalyzeEndTime            = "23:59 UTC"
+	DefAutoAnalyzeStartTime          = "00:00 +0000"
+	DefAutoAnalyzeEndTime            = "23:59 +0000"
 	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
