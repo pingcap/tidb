@@ -1695,6 +1695,22 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 			  partition p1 values less than (to_seconds('2005-01-01')));`)
 	s.tk.MustQuery("show create table t26").Check(
 		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin\nPARTITION BY RANGE ( to_seconds(`a`) ) (\n  PARTITION p0 VALUES LESS THAN (63240134400),\n  PARTITION p1 VALUES LESS THAN (63271756800)\n)"))
+	s.tk.MustExec(`create table t27 (a bigint unsigned not null) 	
+		  partition by range(a) (
+		  partition p0 values less than (10),
+		  partition p1 values less than (100),
+		  partition p2 values less than (1000),
+		  partition p3 values less than (18446744073709551000),
+		  partition p4 values less than (18446744073709551614)
+		);`)
+	s.tk.MustExec(`create table t28 (a bigint unsigned not null) 	
+		  partition by range(a) (
+		  partition p0 values less than (10),
+		  partition p1 values less than (100),
+		  partition p2 values less than (1000),
+		  partition p3 values less than (18446744073709551000 + 1),
+		  partition p4 values less than (18446744073709551000 + 10)
+		);`)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
