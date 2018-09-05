@@ -542,6 +542,7 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chun
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 
+	startTime := time.Now()
 	recordSets, err := se.Execute(ctx, sql)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -566,6 +567,7 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chun
 			fields = rs.Fields()
 		}
 	}
+	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblRestricted).Observe(time.Since(startTime).Seconds())
 	return rows, fields, nil
 }
 
@@ -732,7 +734,11 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		}
 		return nil, errors.Trace(err)
 	}
-	metrics.SessionExecuteRunDuration.Observe(time.Since(startTime).Seconds())
+	restrLabel := metrics.LblGeneral
+	if s.sessionVars.InRestrictedSQL {
+		restrLabel = metrics.LblRestricted
+	}
+	metrics.SessionExecuteRunDuration.WithLabelValues(restrLabel).Observe(time.Since(startTime).Seconds())
 
 	if recordSet != nil {
 		recordSets = append(recordSets, recordSet)
@@ -766,7 +772,11 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
 		return nil, errors.Trace(err)
 	}
-	metrics.SessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
+	restrLabel := metrics.LblGeneral
+	if s.sessionVars.InRestrictedSQL {
+		restrLabel = metrics.LblRestricted
+	}
+	metrics.SessionExecuteParseDuration.WithLabelValues(restrLabel).Observe(time.Since(startTS).Seconds())
 
 	compiler := executor.Compiler{Ctx: s}
 	for _, stmtNode := range stmtNodes {
@@ -784,7 +794,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 			log.Warnf("con:%d compile error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
-		metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
+		metrics.SessionExecuteCompileDuration.WithLabelValues(restrLabel).Observe(time.Since(startTS).Seconds())
 
 		// Step3: Execute the physical plan.
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {

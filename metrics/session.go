@@ -17,30 +17,30 @@ import "github.com/prometheus/client_golang/prometheus"
 
 // Session metrics.
 var (
-	SessionExecuteParseDuration = prometheus.NewHistogram(
+	SessionExecuteParseDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "parse_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in parse SQL.",
 			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
-		})
-	SessionExecuteCompileDuration = prometheus.NewHistogram(
+		}, []string{LblSQLType})
+	SessionExecuteCompileDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "compile_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in query optimize.",
 			Buckets:   prometheus.LinearBuckets(0.00004, 0.00001, 13),
-		})
-	SessionExecuteRunDuration = prometheus.NewHistogram(
+		}, []string{LblSQLType})
+	SessionExecuteRunDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "execute_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in running executor.",
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 13),
-		})
+		}, []string{LblSQLType})
 	SchemaLeaseErrorCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -107,6 +107,9 @@ const (
 	LblRollback    = "rollback"
 	LblType        = "type"
 	LblResult      = "result"
+	LblSQLType     = "sql_type"
+	LblGeneral     = "general"
+	LblRestricted  = "restricted"
 )
 
 func init() {

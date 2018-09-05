@@ -16,6 +16,7 @@ package distsql
 import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -54,6 +55,10 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		}, nil
 	}
 
+	restrLabel := metrics.LblGeneral
+	if sctx.GetSessionVars().InRestrictedSQL {
+		restrLabel = metrics.LblRestricted
+	}
 	return &selectResult{
 		label:      "dag",
 		resp:       resp,
@@ -63,14 +68,20 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		fieldTypes: fieldTypes,
 		ctx:        sctx,
 		feedback:   fb,
+		sqlType:    restrLabel,
 	}, nil
 }
 
 // Analyze do a analyze request.
-func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables) (SelectResult, error) {
+func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables,
+	isRestrict bool) (SelectResult, error) {
 	resp := client.Send(ctx, kvReq, vars)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
+	}
+	restrLabel := metrics.LblGeneral
+	if isRestrict {
+		restrLabel = metrics.LblRestricted
 	}
 	result := &selectResult{
 		label:    "analyze",
@@ -78,6 +89,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 		results:  make(chan resultWithErr, kvReq.Concurrency),
 		closed:   make(chan struct{}),
 		feedback: statistics.NewQueryFeedback(0, nil, 0, false),
+		sqlType:  restrLabel,
 	}
 	return result, nil
 }
@@ -94,6 +106,7 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 		results:  make(chan resultWithErr, kvReq.Concurrency),
 		closed:   make(chan struct{}),
 		feedback: statistics.NewQueryFeedback(0, nil, 0, false),
+		sqlType:  metrics.LblGeneral,
 	}
 	return result, nil
 }
