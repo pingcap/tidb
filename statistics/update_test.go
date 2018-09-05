@@ -20,7 +20,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -868,17 +867,14 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 	oriMinLogCount := statistics.MinLogScanCount
 	oriMinError := statistics.MinLogErrorRate
 	oriLevel := log.GetLevel()
-	oriBucketNum := executor.GetMaxBucketSizeForTest()
 	oriLease := s.do.StatsHandle().Lease
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MinLogScanCount = oriMinLogCount
 		statistics.MinLogErrorRate = oriMinError
-		executor.SetMaxBucketSizeForTest(oriBucketNum)
 		s.do.StatsHandle().Lease = oriLease
 		log.SetLevel(oriLevel)
 	}()
-	executor.SetMaxBucketSizeForTest(4)
 	statistics.FeedbackProbability = 1
 	statistics.MinLogScanCount = 0
 	statistics.MinLogErrorRate = 0
@@ -890,7 +886,7 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t limit 4 buckets")
 	tests := []struct {
 		sql    string
 		result string

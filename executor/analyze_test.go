@@ -62,3 +62,25 @@ PARTITION BY RANGE ( a ) (
 		}
 	}
 }
+
+func (s *testSuite) TestAnalyzeParameters(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	for i := 0; i < 20; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+	}
+
+	tk.MustExec("analyze table t")
+	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	tbl := s.domain.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(tbl.Columns[1].Len(), Equals, 20)
+
+	tk.MustExec("analyze table t limit 4 buckets")
+	tbl = s.domain.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(tbl.Columns[1].Len(), Equals, 4)
+}

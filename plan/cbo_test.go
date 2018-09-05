@@ -21,7 +21,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/session"
@@ -671,10 +670,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 	for i := 0; i < 10; i++ {
 		tk.MustExec("insert into t values (5,5,5), (10,10,10)")
 	}
-	origin := executor.GetMaxBucketSizeForTest()
-	defer func() { executor.SetMaxBucketSizeForTest(origin) }()
-	executor.SetMaxBucketSizeForTest(2)
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t limit 2 buckets")
 	// Force using the histogram to estimate.
 	tk.MustExec("update mysql.stats_histograms set stats_ver = 0")
 	dom.StatsHandle().Clear()

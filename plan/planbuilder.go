@@ -632,7 +632,7 @@ func getPhysicalIDs(tblInfo *model.TableInfo) []int64 {
 }
 
 func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
-	p := &Analyze{}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		physicalIDs := getPhysicalIDs(tbl.TableInfo)
@@ -651,7 +651,7 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 }
 
 func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs := getPhysicalIDs(tblInfo)
 	for _, idxName := range as.IndexNames {
@@ -667,7 +667,7 @@ func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 }
 
 func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
-	p := &Analyze{}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs := getPhysicalIDs(tblInfo)
 	for _, idx := range tblInfo.Indices {

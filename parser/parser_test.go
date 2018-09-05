@@ -2291,6 +2291,8 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t1 index", true},
 		{"analyze table t1 index a", true},
 		{"analyze table t1 index a,b", true},
+		{"analyze table t limit 4 buckets", true},
+		{"analyze table t index a limit 4 buckets", true},
 	}
 	s.RunTest(c, table)
 }

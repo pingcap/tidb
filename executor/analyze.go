@@ -42,14 +42,13 @@ type AnalyzeExec struct {
 	tasks []*analyzeTask
 }
 
-var maxBucketSize = int64(256)
-
 const (
 	maxSampleSize        = 10000
 	maxRegionSampleSize  = 1000
 	maxSketchSize        = 10000
 	defaultCMSketchDepth = 5
 	defaultCMSketchWidth = 2048
+	defaultNumBuckets    = 256
 )
 
 // Next implements the Executor Next interface.
@@ -167,6 +166,7 @@ type AnalyzeIndexExec struct {
 	priority        int
 	analyzePB       *tipb.AnalyzeReq
 	result          distsql.SelectResult
+	maxNumBuckets   uint64
 }
 
 func (e *AnalyzeIndexExec) open() error {
@@ -211,7 +211,7 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), int(maxBucketSize))
+		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), int(e.maxNumBuckets))
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -255,6 +255,7 @@ type AnalyzeColumnsExec struct {
 	keepOrder       bool
 	analyzePB       *tipb.AnalyzeReq
 	resultHandler   *tableResultHandler
+	maxNumBuckets   uint64
 }
 
 func (e *AnalyzeColumnsExec) open() error {
@@ -339,7 +340,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		}
 		sc := e.ctx.GetSessionVars().StmtCtx
 		if e.pkInfo != nil {
-			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), int(maxBucketSize))
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), int(e.maxNumBuckets))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -365,7 +366,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 				return nil, nil, errors.Trace(err)
 			}
 		}
-		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i], &col.FieldType)
+		hg, err := statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), col.ID, collectors[i], &col.FieldType)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -373,14 +374,4 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		cms = append(cms, collectors[i].CMSketch)
 	}
 	return hists, cms, nil
-}
-
-// SetMaxBucketSizeForTest sets the `maxBucketSize`.
-func SetMaxBucketSizeForTest(size int64) {
-	maxBucketSize = size
-}
-
-// GetMaxBucketSizeForTest gets the `maxBucketSize`.
-func GetMaxBucketSizeForTest() int64 {
-	return maxBucketSize
 }

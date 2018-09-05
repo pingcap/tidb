@@ -434,6 +434,7 @@ import (
 
 	/* The following tokens belong to TiDBKeyword. */
 	admin		"ADMIN"
+	buckets		"BUCKETS"
 	cancel		"CANCEL"
 	ddl		"DDL"
 	jobs		"JOBS"
@@ -666,6 +667,7 @@ import (
 	LinesTerminated			"Lines terminated by"
 	LocalOpt			"Local opt"
 	LockClause         		"Alter table lock clause"
+	MaxNumBuckets			"Max number of buckets"
 	NumLiteral			"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt 	"NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType			"Grant statement object type"
@@ -1225,14 +1227,23 @@ TableToTable:
 /*******************************************************************************************/
 
 AnalyzeTableStmt:
-	"ANALYZE" "TABLE" TableNameList
+	"ANALYZE" "TABLE" TableNameList MaxNumBuckets
 	 {
-		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), MaxNumBuckets: $4.(uint64)}
 	 }
-|   "ANALYZE" "TABLE" TableName "INDEX" IndexNameList
-    {
-        $$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr), IndexFlag: true}
-    }
+|	"ANALYZE" "TABLE" TableName "INDEX" IndexNameList MaxNumBuckets
+	{
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr), IndexFlag: true, MaxNumBuckets: $6.(uint64)}
+	}
+
+MaxNumBuckets:
+	{
+		$$ = uint64(0)
+	}
+|	"LIMIT" NUM "BUCKETS"
+	{
+		$$ = getUint64FromNUM($2)
+	}
 
 /*******************************************************************************************/
 Assignment:
@@ -2809,7 +2820,7 @@ UnReservedKeyword:
 
 
 TiDBKeyword:
-"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
+"ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
