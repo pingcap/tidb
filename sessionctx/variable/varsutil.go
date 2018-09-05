@@ -16,6 +16,7 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -26,6 +27,9 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 )
+
+// secondsPerYear represents seconds in a normal year. Leap year is not considered here.
+const secondsPerYear = 60 * 60 * 24 * 365
 
 // SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
 // Max worker count is maxDDLReorgWorkerCount.
@@ -127,12 +131,11 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	if sysVar == nil {
 		return UnknownSystemVar
 	}
-	if value.IsNull() {
-		return vars.deleteSystemVar(name)
-	}
-	var sVal string
+	sVal := ""
 	var err error
-	sVal, err = value.ToString()
+	if !value.IsNull() {
+		sVal, err = value.ToString()
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -162,6 +165,46 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 	return nil
 }
 
+func checkUInt64SystemVar(name, value string, min, max uint64, vars *SessionVars) (string, error) {
+	if value[0] == '-' {
+		_, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenByArgs(name)
+		}
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+		return fmt.Sprintf("%d", min), nil
+	}
+	val, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenByArgs(name)
+	}
+	if val < min {
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+		return fmt.Sprintf("%d", min), nil
+	}
+	if val > max {
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+		return fmt.Sprintf("%d", max), nil
+	}
+	return value, nil
+}
+
+func checkInt64SystemVar(name, value string, min, max int64, vars *SessionVars) (string, error) {
+	val, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return value, ErrWrongTypeForVar.GenByArgs(name)
+	}
+	if val < min {
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+		return fmt.Sprintf("%d", min), nil
+	}
+	if val > max {
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
+		return fmt.Sprintf("%d", max), nil
+	}
+	return value, nil
+}
+
 // ValidateSetSystemVar checks if system variable satisfies specific restriction.
 func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string, error) {
 	if strings.EqualFold(value, "DEFAULT") {
@@ -171,19 +214,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, UnknownSystemVar.GenByArgs(name)
 	}
 	switch name {
+	case ConnectTimeout:
+		return checkUInt64SystemVar(name, value, 2, secondsPerYear, vars)
 	case DefaultWeekFormat:
-		val, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < 0 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "0", nil
-		}
-		if val > 7 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "7", nil
-		}
+		return checkUInt64SystemVar(name, value, 0, 7, vars)
 	case DelayKeyWrite:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "ON", nil
@@ -194,103 +228,25 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		}
 		return value, ErrWrongValueForVar.GenByArgs(name, value)
 	case FlushTime:
-		val, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < 0 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "0", nil
-		}
+		return checkUInt64SystemVar(name, value, 0, secondsPerYear, vars)
 	case GroupConcatMaxLen:
-		val, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
 		// The reasonable range of 'group_concat_max_len' is 4~18446744073709551615(64-bit platforms)
 		// See https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_group_concat_max_len for details
-		if val < 4 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "4", nil
-		}
-		if val > 18446744073709551615 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "18446744073709551615", nil
-		}
+		return checkUInt64SystemVar(name, value, 4, math.MaxUint64, vars)
 	case InteractiveTimeout:
-		val, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < 1 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "1", nil
-		}
+		return checkUInt64SystemVar(name, value, 1, secondsPerYear, vars)
 	case MaxConnections:
-		val, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < 1 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "1", nil
-		}
-		if val > 100000 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "100000", nil
-		}
+		return checkUInt64SystemVar(name, value, 1, 100000, vars)
+	case MaxConnectErrors:
+		return checkUInt64SystemVar(name, value, 1, math.MaxUint64, vars)
 	case MaxSortLength:
-		val, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < 4 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "4", nil
-		}
-		if val > 8388608 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "8388608", nil
-		}
+		return checkUInt64SystemVar(name, value, 4, 8388608, vars)
 	case MaxSpRecursionDepth:
-		val, err := strconv.ParseInt(value, 10, 64)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < 0 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "0", nil
-		}
-		if val > 255 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "255", nil
-		}
-	case OldPasswords:
-		val, err := strconv.Atoi(value)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < 0 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "0", nil
-		}
-		if val > 2 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "2", nil
-		}
+		return checkUInt64SystemVar(name, value, 0, 255, vars)
 	case MaxUserConnections:
-		val, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return value, ErrWrongTypeForVar.GenByArgs(name)
-		}
-		if val < 0 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "0", nil
-		}
-		if val > 4294967295 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenByArgs(name, value))
-			return "4294967295", nil
-		}
+		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
+	case OldPasswords:
+		return checkUInt64SystemVar(name, value, 0, 2, vars)
 	case SessionTrackGtids:
 		if strings.EqualFold(value, "OFF") || value == "0" {
 			return "OFF", nil
@@ -300,6 +256,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "ALL_GTIDS", nil
 		}
 		return value, ErrWrongValueForVar.GenByArgs(name, value)
+	case SQLSelectLimit:
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case TableDefinitionCache:
+		return checkUInt64SystemVar(name, value, 400, 524288, vars)
+	case TmpTableSize:
+		return checkUInt64SystemVar(name, value, 1024, math.MaxUint64, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
@@ -355,6 +317,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, ErrWrongValueForVar.GenByArgs(name)
 		}
 		return value, nil
+	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime:
+		v, err := setAnalyzeTime(vars, value)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		return v, nil
 	}
 	return value, nil
 }
@@ -399,7 +367,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 			if s[0] == '-' {
 				ofst = -ofst
 			}
-			return time.FixedZone("UTC", ofst), nil
+			return time.FixedZone("", ofst), nil
 		}
 	}
 
@@ -432,4 +400,24 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 func GoTimeToTS(t time.Time) uint64 {
 	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
 	return uint64(ts)
+}
+
+const (
+	analyzeLocalTimeFormat = "15:04"
+	// AnalyzeFullTimeFormat is the full format of analyze start time and end time.
+	AnalyzeFullTimeFormat = "15:04 -0700"
+)
+
+func setAnalyzeTime(s *SessionVars, val string) (string, error) {
+	var t time.Time
+	var err error
+	if len(val) <= len(analyzeLocalTimeFormat) {
+		t, err = time.ParseInLocation(analyzeLocalTimeFormat, val, s.TimeZone)
+	} else {
+		t, err = time.ParseInLocation(AnalyzeFullTimeFormat, val, s.TimeZone)
+	}
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return t.Format(AnalyzeFullTimeFormat), nil
 }

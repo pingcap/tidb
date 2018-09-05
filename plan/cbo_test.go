@@ -37,7 +37,7 @@ var _ = Suite(&testAnalyzeSuite{})
 type testAnalyzeSuite struct {
 }
 
-// CBOWithoutAnalyze tests the plan with stats that only have count info.
+// TestCBOWithoutAnalyze tests the plan with stats that only have count info.
 func (s *testAnalyzeSuite) TestCBOWithoutAnalyze(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -411,6 +411,14 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 
 	testKit.MustExec("create table t3 (a int, b int)")
 	testKit.MustExec("create index a on t3 (a)")
+
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec("create table t4 (a int, b int) partition by range (a) (partition p1 values less than (2), partition p2 values less than (3))")
+	testKit.MustExec("create index a on t4 (a)")
+	testKit.MustExec("create index b on t4 (b)")
+	testKit.MustExec("insert into t4 (a,b) values (1,1),(1,2),(1,3),(1,4),(2,5),(2,6),(2,7),(2,8)")
+	testKit.MustExec("analyze table t4")
+
 	tests := []struct {
 		sql  string
 		best string
@@ -450,6 +458,19 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		{
 			sql:  "analyze table t2 index",
 			best: "Analyze{Index(a),Index(b)}",
+		},
+		// Test partitioned table.
+		{
+			sql:  "select * from t4 where t4.a <= 2",
+			best: "UnionAll{TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))->TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))}",
+		},
+		{
+			sql:  "select * from t4 where t4.b < 2",
+			best: "UnionAll{IndexLookUp(Index(t4.b)[[-inf,2)], Table(t4))->IndexLookUp(Index(t4.b)[[-inf,2)], Table(t4))}",
+		},
+		{
+			sql:  "select * from t4 where t4.a = 1 and t4.b <= 2",
+			best: "TableReader(Table(t4)->Sel([eq(test.t4.a, 1) le(test.t4.b, 2)]))",
 		},
 		// TODO: Refine these tests in the future.
 		//{
@@ -602,7 +623,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 		store.Close()
 	}()
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("create table t(a int, b int, c int, index idx(c))")
 	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9),(10,10,10)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
@@ -612,12 +633,26 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─StreamAgg_20 1.00 root funcs:count(1)",
-			"    └─HashRightJoin_22 1.00 root inner join, inner:TableReader_25, equal:[eq(s.a, t1.a)]",
+			"    └─HashLeftJoin_21 1.00 root inner join, inner:TableReader_28, equal:[eq(s.a, t1.a)]",
 			"      ├─TableReader_25 1.00 root data:Selection_24",
 			"      │ └─Selection_24 1.00 cop eq(s.a, test.t.a)",
 			"      │   └─TableScan_23 10.00 cop table:s, range:[-inf,+inf], keep order:false",
-			"      └─TableReader_27 10.00 root data:TableScan_26",
-			"        └─TableScan_26 10.00 cop table:t1, range:[-inf,+inf], keep order:false",
+			"      └─TableReader_28 1.00 root data:Selection_27",
+			"        └─Selection_27 1.00 cop eq(t1.a, test.t.a)",
+			"          └─TableScan_26 10.00 cop table:t1, range:[-inf,+inf], keep order:false",
+		))
+	tk.MustQuery("explain select (select concat(t1.a, \",\", t1.b) from t t1 where t1.a=t.a and t1.c=t.c) from t").
+		Check(testkit.Rows(
+			"Projection_8 10.00 root concat(t1.a, \",\", t1.b)",
+			"└─Apply_10 10.00 root left outer join, inner:MaxOneRow_13",
+			"  ├─TableReader_12 10.00 root data:TableScan_11",
+			"  │ └─TableScan_11 10.00 cop table:t, range:[-inf,+inf], keep order:false",
+			"  └─MaxOneRow_13 1.00 root ",
+			"    └─Projection_14 0.80 root concat(cast(t1.a), \",\", cast(t1.b))",
+			"      └─IndexLookUp_21 0.80 root ",
+			"        ├─IndexScan_18 1.00 cop table:t1, index:c, range: decided by [eq(t1.c, test.t.c)], keep order:false",
+			"        └─Selection_20 0.80 cop eq(t1.a, test.t.a)",
+			"          └─TableScan_19 1.00 cop table:t, keep order:false",
 		))
 }
 

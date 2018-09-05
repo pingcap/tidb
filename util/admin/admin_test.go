@@ -80,11 +80,27 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 		Type:     model.ActionCreateSchema,
 		RowCount: 0,
 	}
+	job1 := &model.Job{
+		SchemaID: dbInfo2.ID,
+		Type:     model.ActionAddIndex,
+		RowCount: 0,
+	}
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
 	info, err := GetDDLInfo(txn)
 	c.Assert(err, IsNil)
-	c.Assert(info.Job, DeepEquals, job)
+	c.Assert(info.Jobs, HasLen, 1)
+	c.Assert(info.Jobs[0], DeepEquals, job)
+	c.Assert(info.ReorgHandle, Equals, int64(0))
+	// Two jobs.
+	t = meta.NewMeta(txn, meta.AddIndexJobListKey)
+	err = t.EnQueueDDLJob(job1)
+	c.Assert(err, IsNil)
+	info, err = GetDDLInfo(txn)
+	c.Assert(err, IsNil)
+	c.Assert(info.Jobs, HasLen, 2)
+	c.Assert(info.Jobs[0], DeepEquals, job)
+	c.Assert(info.Jobs[1], DeepEquals, job1)
 	c.Assert(info.ReorgHandle, Equals, int64(0))
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
@@ -398,7 +414,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	err = CompareIndexData(ctx, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx, nil)
 	c.Assert(err, IsNil)
 
 	idxNames := []string{idx.Meta().Name.L}
@@ -418,7 +434,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(ctx, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx, nil)
 	c.Assert(err, NotNil)
 	record1 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(30))}
 	diffMsg := newDiffRetError("index", record1, nil)
@@ -439,7 +455,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(ctx, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx, nil)
 	c.Assert(err, NotNil)
 	record2 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(31))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -457,7 +473,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CheckRecordAndIndex(ctx, txn, tb, idx)
+	err = CheckRecordAndIndex(ctx, txn, tb, idx, nil)
 	c.Assert(err, NotNil)
 	record2 = &RecordData{Handle: int64(5), Values: types.MakeDatums(int64(30))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -477,7 +493,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(ctx, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx, nil)
 	c.Assert(err, NotNil)
 	record1 = &RecordData{Handle: int64(4), Values: types.MakeDatums(int64(40))}
 	diffMsg = newDiffRetError("index", record1, nil)
@@ -498,7 +514,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(ctx, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx, nil)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("index", nil, record1)
 	c.Assert(err.Error(), DeepEquals, diffMsg)

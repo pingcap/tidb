@@ -41,17 +41,15 @@ var (
 //     1. changed (bool) : does the update really change the row values. e.g. update set i = 1 where i = 1;
 //     2. handleChanged (bool) : is the handle changed after the update.
 //     3. newHandle (int64) : if handleChanged == true, the newHandle means the new handle after update.
-//     4. lastInsertID (uint64) : the lastInsertID should be set by the newData.
-//     5. err (error) : error in the update.
+//     4. err (error) : error in the update.
 func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, modified []bool, t table.Table,
-	onDup bool) (bool, bool, int64, uint64, error) {
+	onDup bool) (bool, bool, int64, error) {
 	var sc = ctx.GetSessionVars().StmtCtx
 	var changed, handleChanged = false, false
 	// onUpdateSpecified is for "UPDATE SET ts_field = old_value", the
 	// timestamp field is explicitly set, but not changed in fact.
 	var onUpdateSpecified = make(map[int]bool)
 	var newHandle int64
-	var lastInsertID uint64
 
 	// We can iterate on public columns not writable columns,
 	// because all of them are sorted by their `Offset`, which
@@ -61,7 +59,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			// Cast changed fields with respective columns.
 			v, err := table.CastValue(ctx, newData[i], col.ToInfo())
 			if err != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(err)
+				return false, handleChanged, newHandle, errors.Trace(err)
 			}
 			newData[i] = v
 		}
@@ -70,31 +68,30 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			var err error
 			newData[i], err = table.GetColDefaultValue(ctx, col.ToInfo())
 			if err != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(err)
-			}
-		}
-		// Rebase auto increment id if the field is changed.
-		if mysql.HasAutoIncrementFlag(col.Flag) {
-			if newData[i].IsNull() {
-				return false, handleChanged, newHandle, 0, table.ErrColumnCantNull.GenByArgs(col.Name)
-			}
-			val, errTI := newData[i].ToInt64(sc)
-			if errTI != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(errTI)
-			}
-			lastInsertID = uint64(val)
-			err := t.RebaseAutoID(ctx, val, true)
-			if err != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(err)
+				return false, handleChanged, newHandle, errors.Trace(err)
 			}
 		}
 		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
 		if err != nil {
-			return false, handleChanged, newHandle, 0, errors.Trace(err)
+			return false, handleChanged, newHandle, errors.Trace(err)
 		}
 		if cmp != 0 {
 			changed = true
 			modified[i] = true
+			// Rebase auto increment id if the field is changed.
+			if mysql.HasAutoIncrementFlag(col.Flag) {
+				if newData[i].IsNull() {
+					return false, handleChanged, newHandle, table.ErrColumnCantNull.GenByArgs(col.Name)
+				}
+				val, errTI := newData[i].ToInt64(sc)
+				if errTI != nil {
+					return false, handleChanged, newHandle, errors.Trace(errTI)
+				}
+				err := t.RebaseAutoID(ctx, val, true)
+				if err != nil {
+					return false, handleChanged, newHandle, errors.Trace(err)
+				}
+			}
 			if col.IsPKHandleColumn(t.Meta()) {
 				handleChanged = true
 				newHandle = newData[i].GetInt64()
@@ -111,7 +108,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	// Check the not-null constraints.
 	err := table.CheckNotNull(t.Cols(), newData)
 	if err != nil {
-		return false, handleChanged, newHandle, 0, errors.Trace(err)
+		return false, handleChanged, newHandle, errors.Trace(err)
 	}
 
 	if !changed {
@@ -119,7 +116,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if ctx.GetSessionVars().ClientCapability&mysql.ClientFoundRows > 0 {
 			sc.AddAffectedRows(1)
 		}
-		return false, handleChanged, newHandle, lastInsertID, nil
+		return false, handleChanged, newHandle, nil
 	}
 
 	// Fill values into on-update-now fields, only if they are really changed.
@@ -127,7 +124,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if mysql.HasOnUpdateNowFlag(col.Flag) && !modified[i] && !onUpdateSpecified[i] {
 			v, errGT := expression.GetTimeValue(ctx, strings.ToUpper(ast.CurrentTimestamp), col.Tp, col.Decimal)
 			if errGT != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(errGT)
+				return false, handleChanged, newHandle, errors.Trace(errGT)
 			}
 			newData[i] = v
 			modified[i] = true
@@ -138,19 +135,15 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		skipHandleCheck := false
 		if sc.DupKeyAsWarning {
 			// if the new handle exists. `UPDATE IGNORE` will avoid removing record, and do nothing.
-			if t1, ok := t.(*tables.PartitionedTable); ok {
-				err = t1.CheckHandleExists(ctx, newHandle, newData)
-			} else {
-				err = tables.CheckHandleExists(ctx, t, newHandle)
-			}
+			err = tables.CheckHandleExists(ctx, t, newHandle, newData)
 			if err != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(err)
+				return false, handleChanged, newHandle, errors.Trace(err)
 			}
 			skipHandleCheck = true
 		}
 		err = t.RemoveRecord(ctx, h, oldData)
 		if err != nil {
-			return false, handleChanged, newHandle, 0, errors.Trace(err)
+			return false, handleChanged, newHandle, errors.Trace(err)
 		}
 		newHandle, err = t.AddRecord(ctx, newData, skipHandleCheck)
 	} else {
@@ -158,7 +151,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		err = t.UpdateRecord(ctx, h, oldData, newData, modified)
 	}
 	if err != nil {
-		return false, handleChanged, newHandle, 0, errors.Trace(err)
+		return false, handleChanged, newHandle, errors.Trace(err)
 	}
 
 	if onDup {
@@ -177,7 +170,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1, colSize)
-	return true, handleChanged, newHandle, lastInsertID, nil
+	return true, handleChanged, newHandle, nil
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.

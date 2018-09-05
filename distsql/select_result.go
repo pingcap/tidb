@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
@@ -33,10 +32,6 @@ import (
 var (
 	_ SelectResult = (*selectResult)(nil)
 	_ SelectResult = (*streamResult)(nil)
-)
-
-var (
-	selectResultGP = gp.New(time.Minute * 2)
 )
 
 // SelectResult is an iterator of coprocessor partial results.
@@ -75,9 +70,7 @@ type selectResult struct {
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
-	selectResultGP.Go(func() {
-		r.fetch(ctx)
-	})
+	go r.fetch(ctx)
 }
 
 func (r *selectResult) fetch(ctx context.Context) {
@@ -159,11 +152,13 @@ func (r *selectResult) getSelectResp() error {
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
 		}
+		sc := r.ctx.GetSessionVars().StmtCtx
 		for _, warning := range r.selectResp.Warnings {
-			r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
+		sc.MergeExecDetails(re.result.GetExecDetails())
 		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}

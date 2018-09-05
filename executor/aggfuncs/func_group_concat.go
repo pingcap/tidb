@@ -82,29 +82,51 @@ func (e *groupConcat) ResetPartialResult(pr PartialResult) {
 
 func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
 	p := (*partialResult4GroupConcat)(pr)
-	v, isNull, isWriteSep := "", false, false
+	v, isNull, preLen := "", false, 0
 	for _, row := range rowsInGroup {
-		isWriteSep = false
+		if p.buffer != nil && p.buffer.Len() != 0 {
+			preLen = p.buffer.Len()
+			p.buffer.WriteString(e.sep)
+		}
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if isNull {
-				continue
+				break
 			}
-			isWriteSep = true
 			if p.buffer == nil {
 				p.buffer = &bytes.Buffer{}
 			}
 			p.buffer.WriteString(v)
 		}
-		if isWriteSep {
-			p.buffer.WriteString(e.sep)
+		if isNull {
+			if p.buffer != nil {
+				p.buffer.Truncate(preLen)
+			}
+			continue
 		}
 	}
-	p.buffer.Truncate(p.buffer.Len() - len(e.sep))
-	return e.truncatePartialResultIfNeed(sctx, p.buffer)
+	if p.buffer != nil {
+		return e.truncatePartialResultIfNeed(sctx, p.buffer)
+	}
+	return nil
+}
+
+func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
+	p1, p2 := (*partialResult4GroupConcat)(src), (*partialResult4GroupConcat)(dst)
+	if p1.buffer == nil {
+		return nil
+	}
+	if p2.buffer == nil {
+		p2.buffer = p1.buffer
+		return nil
+	}
+	p2.buffer.WriteString(e.sep)
+	p2.buffer.WriteString(p1.buffer.String())
+	e.truncatePartialResultIfNeed(sctx, p2.buffer)
+	return nil
 }
 
 type partialResult4GroupConcatDistinct struct {
@@ -140,9 +162,12 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 				return errors.Trace(err)
 			}
 			if isNull {
-				continue
+				break
 			}
 			p.valsBuf.WriteString(v)
+		}
+		if isNull {
+			continue
 		}
 		joinedVals := p.valsBuf.String()
 		if p.valSet.exist(joinedVals) {
@@ -158,5 +183,8 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		// write values
 		p.buffer.WriteString(joinedVals)
 	}
-	return e.truncatePartialResultIfNeed(sctx, p.buffer)
+	if p.buffer != nil {
+		return e.truncatePartialResultIfNeed(sctx, p.buffer)
+	}
+	return nil
 }

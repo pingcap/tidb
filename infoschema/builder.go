@@ -67,7 +67,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		newTableID = diff.TableID
 		tblIDs = append(tblIDs, oldTableID)
 	}
-	b.copySchemaTables(roDBInfo.Name.L)
+	dbInfo := b.copySchemaTables(roDBInfo.Name.L)
 	b.copySortedTables(oldTableID, newTableID)
 
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
@@ -76,21 +76,22 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		if oldTableID == newTableID && diff.Type != model.ActionRenameTable && diff.Type != model.ActionRebaseAutoID {
 			alloc, _ = b.is.AllocByID(oldTableID)
 		}
-		if diff.Type == model.ActionRenameTable {
+		if diff.Type == model.ActionRenameTable && diff.OldSchemaID != diff.SchemaID {
 			oldRoDBInfo, ok := b.is.SchemaByID(diff.OldSchemaID)
 			if !ok {
 				return nil, ErrDatabaseNotExists.GenByArgs(
 					fmt.Sprintf("(Schema ID %d)", diff.OldSchemaID),
 				)
 			}
-			b.applyDropTable(oldRoDBInfo, oldTableID)
+			oldDBInfo := b.copySchemaTables(oldRoDBInfo.Name.L)
+			b.applyDropTable(oldDBInfo, oldTableID)
 		} else {
-			b.applyDropTable(roDBInfo, oldTableID)
+			b.applyDropTable(dbInfo, oldTableID)
 		}
 	}
 	if tableIDIsValid(newTableID) {
 		// All types except DropTable.
-		err := b.applyCreateTable(m, roDBInfo, newTableID, alloc)
+		err := b.applyCreateTable(m, dbInfo, newTableID, alloc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -141,6 +142,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	}
 
 	ids := make([]int64, 0, len(di.Tables))
+	di = di.Clone()
 	for _, tbl := range di.Tables {
 		b.applyDropTable(di, tbl.ID)
 		// TODO: If the table ID doesn't exist.
@@ -156,8 +158,8 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.is.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID int64, alloc autoid.Allocator) error {
-	tblInfo, err := m.GetTable(roDBInfo.ID, tableID)
+func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, alloc autoid.Allocator) error {
+	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -165,19 +167,19 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 		// When we apply an old schema diff, the table may has been dropped already, so we need to fall back to
 		// full load.
 		return ErrTableNotExists.GenByArgs(
-			fmt.Sprintf("(Schema ID %d)", roDBInfo.ID),
+			fmt.Sprintf("(Schema ID %d)", dbInfo.ID),
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
 	if alloc == nil {
-		schemaID := roDBInfo.ID
+		schemaID := dbInfo.ID
 		alloc = autoid.NewAllocator(b.handle.store, tblInfo.GetDBID(schemaID))
 	}
 	tbl, err := tables.TableFromMeta(alloc, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tableNames := b.is.schemaMap[roDBInfo.Name.L]
+	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
@@ -187,31 +189,31 @@ func (b *Builder) applyCreateTable(m *meta.Meta, roDBInfo *model.DBInfo, tableID
 
 	newTbl, ok := b.is.TableByID(tableID)
 	if ok {
-		roDBInfo.Tables = append(roDBInfo.Tables, newTbl.Meta())
+		dbInfo.Tables = append(dbInfo.Tables, newTbl.Meta())
 	}
 	return nil
 }
 
-func (b *Builder) applyDropTable(roDBInfo *model.DBInfo, tableID int64) {
+func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64) {
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
 	idx := sortedTbls.searchTable(tableID)
 	if idx == -1 {
 		return
 	}
-	if tableNames, ok := b.is.schemaMap[roDBInfo.Name.L]; ok {
+	if tableNames, ok := b.is.schemaMap[dbInfo.Name.L]; ok {
 		delete(tableNames.tables, sortedTbls[idx].Meta().Name.L)
 	}
 	// Remove the table in sorted table slice.
 	b.is.sortedTablesBuckets[bucketIdx] = append(sortedTbls[0:idx], sortedTbls[idx+1:]...)
 
 	// The old DBInfo still holds a reference to old table info, we need to remove it.
-	for i, tblInfo := range roDBInfo.Tables {
+	for i, tblInfo := range dbInfo.Tables {
 		if tblInfo.ID == tableID {
-			if i == len(roDBInfo.Tables)-1 {
-				roDBInfo.Tables = roDBInfo.Tables[:i]
+			if i == len(dbInfo.Tables)-1 {
+				dbInfo.Tables = dbInfo.Tables[:i]
 			} else {
-				roDBInfo.Tables = append(roDBInfo.Tables[:i], roDBInfo.Tables[i+1:]...)
+				dbInfo.Tables = append(dbInfo.Tables[:i], dbInfo.Tables[i+1:]...)
 			}
 			break
 		}
@@ -235,16 +237,17 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 
 // copySchemaTables creates a new schemaTables instance when a table in the database has changed.
 // It also does modifications on the new one because old schemaTables must be read-only.
-func (b *Builder) copySchemaTables(dbName string) {
+func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 	oldSchemaTables := b.is.schemaMap[dbName]
 	newSchemaTables := &schemaTables{
-		dbInfo: oldSchemaTables.dbInfo,
+		dbInfo: oldSchemaTables.dbInfo.Copy(),
 		tables: make(map[string]table.Table, len(oldSchemaTables.tables)),
 	}
 	for k, v := range oldSchemaTables.tables {
 		newSchemaTables.tables[k] = v
 	}
 	b.is.schemaMap[dbName] = newSchemaTables
+	return newSchemaTables.dbInfo
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo and schema version.

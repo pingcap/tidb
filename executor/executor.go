@@ -40,7 +40,6 @@ import (
 
 var (
 	_ Executor = &CheckTableExec{}
-	_ Executor = &ExistsExec{}
 	_ Executor = &HashAggExec{}
 	_ Executor = &LimitExec{}
 	_ Executor = &MaxOneRowExec{}
@@ -199,13 +198,17 @@ func (e *ShowDDLExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
-	ddlJob := ""
-	if e.ddlInfo.Job != nil {
-		ddlJob = e.ddlInfo.Job.String()
+	ddlJobs := ""
+	l := len(e.ddlInfo.Jobs)
+	for i, job := range e.ddlInfo.Jobs {
+		ddlJobs += job.String()
+		if i != l-1 {
+			ddlJobs += "\n"
+		}
 	}
 	chk.AppendInt64(0, e.ddlInfo.SchemaVer)
 	chk.AppendString(1, e.ddlOwnerID)
-	chk.AppendString(2, ddlJob)
+	chk.AppendString(2, ddlJobs)
 	chk.AppendString(3, e.selfID)
 	e.done = true
 	return nil
@@ -349,6 +352,8 @@ type CheckTableExec struct {
 	tables []*ast.TableName
 	done   bool
 	is     infoschema.InfoSchema
+
+	genExprs map[string]expression.Expression
 }
 
 // Open implements the Executor Open interface.
@@ -366,13 +371,12 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 	defer func() { e.done = true }()
-	dbName := model.NewCIStr(e.ctx.GetSessionVars().CurrentDB)
 	for _, t := range e.tables {
+		dbName := t.DBInfo.Name
 		tb, err := e.is.TableByName(dbName, t.Name)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		if tb.Meta().GetPartitionInfo() != nil {
 			err = e.doCheckPartitionedTable(tb.(table.PartitionedTable))
 		} else {
@@ -380,6 +384,10 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		if err != nil {
 			log.Warnf("%v error:%v", t.Name, errors.ErrorStack(err))
+			if admin.ErrDataInConsistent.Equal(err) {
+				return ErrAdminCheckTable.Gen("%v err:%v", t.Name, err)
+			}
+
 			return errors.Errorf("%v err:%v", t.Name, err)
 		}
 	}
@@ -401,7 +409,7 @@ func (e *CheckTableExec) doCheckPartitionedTable(tbl table.PartitionedTable) err
 func (e *CheckTableExec) doCheckTable(tbl table.Table) error {
 	for _, idx := range tbl.Indices() {
 		txn := e.ctx.Txn()
-		err := admin.CompareIndexData(e.ctx, txn, tbl, idx)
+		err := admin.CompareIndexData(e.ctx, txn, tbl, idx, e.genExprs)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -862,48 +870,6 @@ func (e *TableScanExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// ExistsExec represents exists executor.
-type ExistsExec struct {
-	baseExecutor
-
-	evaluated   bool
-	childResult *chunk.Chunk
-}
-
-// Open implements the Executor Open interface.
-func (e *ExistsExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return errors.Trace(err)
-	}
-	e.childResult = e.children[0].newChunk()
-	e.evaluated = false
-	return nil
-}
-
-// Next implements the Executor Next interface.
-func (e *ExistsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	if !e.evaluated {
-		e.evaluated = true
-		err := e.children[0].Next(ctx, e.childResult)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if e.childResult.NumRows() > 0 {
-			chk.AppendInt64(0, 1)
-		} else {
-			chk.AppendInt64(0, 0)
-		}
-	}
-	return nil
-}
-
-// Close implements the Executor Close interface.
-func (e *ExistsExec) Close() error {
-	e.childResult = nil
-	return errors.Trace(e.baseExecutor.Close())
-}
-
 // MaxOneRowExec checks if the number of rows that a query returns is at maximum one.
 // It's built from subquery expression.
 type MaxOneRowExec struct {
@@ -938,11 +904,17 @@ func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			chk.AppendNull(i)
 		}
 		return nil
-	} else if num == 1 {
-		return nil
+	} else if num != 1 {
+		return errors.New("subquery returns more than 1 row")
 	}
 
-	return errors.New("subquery returns more than 1 row")
+	childChunk := e.children[0].newChunk()
+	err = e.children[0].Next(ctx, childChunk)
+	if childChunk.NumRows() != 0 {
+		return errors.New("subquery returns more than 1 row")
+	}
+
+	return nil
 }
 
 // UnionExec pulls all it's children's result and returns to its parent directly.

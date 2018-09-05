@@ -15,6 +15,7 @@ package variable
 
 import (
 	"crypto/tls"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -208,7 +209,7 @@ type SessionVars struct {
 	PlanID int
 
 	// PlanColumnID is the unique id for column when building plan.
-	PlanColumnID int
+	PlanColumnID int64
 
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
@@ -284,6 +285,9 @@ type SessionVars struct {
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition bool
 
+	// DDLReorgPriority is the operation priority of adding indices.
+	DDLReorgPriority int
+
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
@@ -309,6 +313,7 @@ func NewSessionVars() *SessionVars {
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                DefTiDBRetryLimit,
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:          kv.PriorityLow,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -359,7 +364,7 @@ func (s *SessionVars) CleanBuffers() {
 }
 
 // AllocPlanColumnID allocates column id for planner.
-func (s *SessionVars) AllocPlanColumnID() int {
+func (s *SessionVars) AllocPlanColumnID() int64 {
 	s.PlanColumnID++
 	return s.PlanColumnID
 }
@@ -451,6 +456,20 @@ func (s *SessionVars) deleteSystemVar(name string) error {
 	}
 	delete(s.systems, name)
 	return nil
+}
+
+func (s *SessionVars) setDDLReorgPriority(val string) {
+	val = strings.ToLower(val)
+	switch val {
+	case "priority_low":
+		s.DDLReorgPriority = kv.PriorityLow
+	case "priority_normal":
+		s.DDLReorgPriority = kv.PriorityNormal
+	case "priority_high":
+		s.DDLReorgPriority = kv.PriorityHigh
+	default:
+		s.DDLReorgPriority = kv.PriorityLow
+	}
 }
 
 // SetSystemVar sets the value of a system variable.
@@ -554,6 +573,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableTablePartition = TiDBOptOn(val)
 	case TiDBDDLReorgWorkerCount:
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
+	case TiDBDDLReorgPriority:
+		s.setDDLReorgPriority(val)
 	}
 	s.systems[name] = val
 	return nil

@@ -62,21 +62,24 @@ type worker struct {
 	quitCh   chan struct{}
 	wg       sync.WaitGroup
 
-	reorgCtx        *reorgCtx // reorgCtx is used for reorganization.
+	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
+	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 }
 
 func newWorker(tp workerType, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
+	sessPool := &sessionPool{resPool: ctxPool}
 	worker := &worker{
 		id:       atomic.AddInt32(&ddlWorkerID, 1),
 		tp:       tp,
 		ddlJobCh: make(chan struct{}, 1),
 		quitCh:   make(chan struct{}),
 		reorgCtx: &reorgCtx{notifyCancelReorgJob: 0},
+		sessPool: sessPool,
 	}
 
 	if ctxPool != nil {
-		worker.delRangeManager = newDelRangeManager(store, ctxPool)
+		worker.delRangeManager = newDelRangeManager(store, sessPool)
 		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", !store.SupportDeleteRange())
 	} else {
 		worker.delRangeManager = newMockDelRangeManager()
@@ -104,6 +107,7 @@ func (w *worker) String() string {
 func (w *worker) close() {
 	close(w.quitCh)
 	w.delRangeManager.clear()
+	w.sessPool.close()
 	w.wg.Wait()
 	log.Infof("[ddl-%s] close DDL worker", w)
 }
@@ -209,7 +213,7 @@ func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		return errors.Trace(err)
 	})
-	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
 
@@ -278,7 +282,7 @@ func (w *worker) deleteRange(job *model.Job) error {
 func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	startTime := time.Now()
 	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
 	switch job.Type {
@@ -396,7 +400,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
 			log.Infof("[ddl-%s] run DDL job error, sleeps a while:%v then retries it.", w, WaitTimeWhenErrorOccured)
-			metrics.DDLJobErrCounter.Inc()
 			time.Sleep(WaitTimeWhenErrorOccured)
 		}
 
@@ -447,6 +450,10 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	log.Infof("[ddl-%s] run DDL job %s", w, job)
+	timeStart := time.Now()
+	defer func() {
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+	}()
 	if job.IsFinished() {
 		return
 	}
@@ -498,7 +505,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropForeignKey:
 		ver, err = onDropForeignKey(t, job)
 	case model.ActionTruncateTable:
-		ver, err = onTruncateTable(t, job)
+		ver, err = onTruncateTable(d, t, job)
 	case model.ActionRebaseAutoID:
 		ver, err = onRebaseAutoID(d.store, t, job)
 	case model.ActionRenameTable:
@@ -554,7 +561,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 	timeStart := time.Now()
 	var err error
 	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 
 	if latestSchemaVersion == 0 {

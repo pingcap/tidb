@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -319,30 +318,15 @@ func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// SubqueryExec represents a subquery executor interface.
-// This interface is implemented in executor and used in plan/evaluator.
-// It will execute the subselect and get the result.
-type SubqueryExec interface {
-	// EvalRows executes the subquery and returns the multi rows with rowCount.
-	// rowCount < 0 means no limit.
-	// If the ColumnCount is 1, we will return a column result like {1, 2, 3},
-	// otherwise, we will return a table result like {{1, 1}, {2, 2}}.
-	EvalRows(ctx sessionctx.Context, rowCount int) ([]types.Datum, error)
-
-	// ColumnCount returns column count for the sub query.
-	ColumnCount() (int, error)
-}
-
 // SubqueryExpr represents a subquery.
 type SubqueryExpr struct {
 	exprNode
 	// Query is the query SelectNode.
-	Query        ResultSetNode
-	SubqueryExec SubqueryExec
-	Evaluated    bool
-	Correlated   bool
-	MultiRows    bool
-	Exists       bool
+	Query      ResultSetNode
+	Evaluated  bool
+	Correlated bool
+	MultiRows  bool
+	Exists     bool
 }
 
 // Format the ExprNode into a Writer.
@@ -357,9 +341,6 @@ func (n *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SubqueryExpr)
-	if n.SubqueryExec != nil {
-		return v.Leave(n)
-	}
 	node, ok := n.Query.Accept(v)
 	if !ok {
 		return n, false

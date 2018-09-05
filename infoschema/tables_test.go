@@ -23,6 +23,32 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
+func (s *testSuite) TestInfoschemaFielValue(c *C) {
+	testleak.BeforeTest()
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	session.SetStatsLease(0)
+	do, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer do.Close()
+
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists numschema, timeschema")
+	tk.MustExec("create table numschema(i int(2), f float(4,2), d decimal(4,3))")
+	tk.MustExec("create table timeschema(d date, dt datetime(3), ts timestamp(3), t time(4), y year(4))")
+	tk.MustExec("create table strschema(c char(3), c2 varchar(3), b blob(3), t text(3))")
+
+	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='numschema'").
+		Check(testkit.Rows("<nil> <nil> 2 0 <nil>", "<nil> <nil> 4 2 <nil>", "<nil> <nil> 4 3 <nil>")) // FIXME: for mysql first one will be "<nil> <nil> 10 0 <nil>"
+	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='timeschema'").
+		Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 4", "<nil> <nil> <nil> <nil> <nil>"))
+	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='strschema'").
+		Check(testkit.Rows("3 3 <nil> <nil> <nil>", "3 3 <nil> <nil> <nil>", "3 3 <nil> <nil> <nil>", "3 3 <nil> <nil> <nil>")) // FIXME: for mysql last two will be "255 255 <nil> <nil> <nil>", "255 255 <nil> <nil> <nil>"
+}
+
 func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	testleak.BeforeTest()
 	defer testleak.AfterTest(c)()
@@ -76,6 +102,16 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 
 	tk.MustExec("create user xxx")
 	tk.MustExec("flush privileges")
+
+	// Test for length of enum and set
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t ( s set('a','bc','def','ghij') default NULL, e1 enum('a', 'ab', 'cdef'), s2 SET('1','2','3','4','1585','ONE','TWO','Y','N','THREE'))")
+	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 's'").Check(
+		testkit.Rows("s 13"))
+	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 's2'").Check(
+		testkit.Rows("s2 30"))
+	tk.MustQuery("select column_name, character_maximum_length from information_schema.columns where table_schema=Database() and table_name = 't' and column_name = 'e1'").Check(
+		testkit.Rows("e1 4"))
 
 	tk1 := testkit.NewTestKit(c, store)
 	tk1.MustExec("use test")

@@ -15,6 +15,7 @@ package kv
 
 import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/execdetails"
 	"golang.org/x/net/context"
 )
 
@@ -45,6 +46,8 @@ const (
 	// BypassLatch option tells 2PC commit to bypass latches, it would be true when the
 	// transaction is not conflict-retryable, for example: 'select for update', 'load data'.
 	BypassLatch
+	// KeyOnly retrieve only keys, it can be used in scan now.
+	KeyOnly
 )
 
 // Priority value for transaction priority.
@@ -212,6 +215,8 @@ type ResultSubset interface {
 	GetData() []byte
 	// GetStartKey gets the start key.
 	GetStartKey() Key
+	// GetExecDetails gets the detail information.
+	GetExecDetails() *execdetails.ExecDetails
 }
 
 // Response represents the response returned from KV layer.

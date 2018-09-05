@@ -17,8 +17,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
-// canProjectionBeEliminatedLoose checks whether a projection can be eliminated, returns true if
-// every expression is a single column.
+// canProjectionBeEliminatedLoose checks whether a projection can be eliminated,
+// returns true if every expression is a single column.
 func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 	for _, expr := range p.Exprs {
 		_, ok := expr.(*expression.Column)
@@ -29,8 +29,8 @@ func canProjectionBeEliminatedLoose(p *LogicalProjection) bool {
 	return true
 }
 
-// canProjectionBeEliminatedStrict checks whether a projection can be eliminated, returns true if
-// the projection just copy its child's output.
+// canProjectionBeEliminatedStrict checks whether a projection can be
+// eliminated, returns true if the projection just copy its child's output.
 func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 	if p.Schema().Len() == 0 {
 		return true
@@ -51,9 +51,9 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
 	dst := replace[string(origin.HashCode(nil))]
 	if dst != nil {
-		colName := origin.ColName
+		colName, retType := origin.ColName, origin.RetType
 		*origin = *dst
-		origin.ColName = colName
+		origin.ColName, origin.RetType = colName, retType
 	}
 }
 
@@ -83,8 +83,8 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	return child
 }
 
-// eliminatePhysicalProjection should be called after physical optimization to eliminate the redundant projection
-// left after logical projection elimination.
+// eliminatePhysicalProjection should be called after physical optimization to
+// eliminate the redundant projection left after logical projection elimination.
 func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 	oldSchema := p.Schema()
 	newRoot := doPhysicalProjectionElimination(p)

@@ -12,15 +12,15 @@ set @@session.tidb_opt_insubquery_unfold = 1;
 set @@session.tidb_opt_agg_push_down = 1;
 explain select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	count	task	operator info
-Projection_13	1600.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d
-└─HashLeftJoin_14	1600.00	root	semi join, inner:StreamAgg_30, equal:[eq(cast(test.t3.a), sel_agg_1)]
-  ├─Projection_15	2000.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a)
-  │ └─TableReader_17	2000.00	root	data:TableScan_16
-  │   └─TableScan_16	2000.00	cop	table:t3, range:[-inf,+inf], keep order:false
-  └─StreamAgg_30	1.00	root	funcs:sum(col_0)
-    └─TableReader_31	1.00	root	data:StreamAgg_22
-      └─StreamAgg_22	1.00	cop	funcs:sum(s.a)
-        └─TableScan_29	2000.00	cop	table:s, range:[-inf,+inf], keep order:false
+Projection_12	1600.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d
+└─HashLeftJoin_13	1600.00	root	semi join, inner:StreamAgg_29, equal:[eq(cast(test.t3.a), sel_agg_1)]
+  ├─Projection_14	2000.00	root	test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a)
+  │ └─TableReader_16	2000.00	root	data:TableScan_15
+  │   └─TableScan_15	2000.00	cop	table:t3, range:[-inf,+inf], keep order:false
+  └─StreamAgg_29	1.00	root	funcs:sum(col_0)
+    └─TableReader_30	1.00	root	data:StreamAgg_21
+      └─StreamAgg_21	1.00	cop	funcs:sum(s.a)
+        └─TableScan_28	2000.00	cop	table:s, range:[-inf,+inf], keep order:false
 explain select * from t1;
 id	count	task	operator info
 TableReader_5	1999.00	root	data:TableScan_4
@@ -56,8 +56,7 @@ Projection_6	2481.25	root	test.t1.c1, test.t1.c2, test.t1.c3, test.t2.c1, test.t
     └─TableScan_20	1985.00	cop	table:t2, keep order:false
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
-TableReader_5	1.00	root	data:TableScan_4
-└─TableScan_4	1.00	cop	table:t1, range:[1,1], keep order:false
+Point_Get_1	1.00	root	table:t1, handle:1
 explain delete from t1 where t1.c2 = 1;
 id	count	task	operator info
 IndexLookUp_9	0.00	root	

@@ -518,16 +518,17 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		return nil, nil, nil
 	}
 
-	conds, eqConds, keyOff2IdxOff := p.buildFakeEqCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan)
+	// Extract the filter to calculate access and the filters that must be remained ones.
+	access, eqConds, remained, keyOff2IdxOff := p.buildFakeEqCondsForIndexJoin(innerJoinKeys, idxCols, colLengths, innerPlan.pushedDownConds)
 
 	if len(keyOff2IdxOff) == 0 {
 		return nil, nil, nil
 	}
 
-	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
-	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
-	// So DetachCondAndBuildRangeForIndex won't miss the equal conditions we generate.
-	ranges, accesses, remained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conds, idxCols, colLengths)
+	// In `buildFakeEqCondsForIndexJoin`, we construct the equal conditions for join keys and remove filters that contain the join keys' column.
+	// When t1.a = t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as the access condition.
+	// So the equal conditions we built can be successfully used to build a range if they can be used. They won't be affected by the existing filters.
+	ranges, accesses, moreRemained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, access, idxCols, colLengths)
 	if err != nil {
 		terror.Log(errors.Trace(err))
 		return nil, nil, nil
@@ -540,27 +541,27 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 		}
 	}
 
-	return ranges, remained, keyOff2IdxOff
+	return ranges, append(remained, moreRemained...), keyOff2IdxOff
 }
 
 func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.Column, colLengths []int,
-	innerPlan *DataSource) (accesses, eqConds []expression.Expression, keyOff2IdxOff []int) {
+	innerFilters []expression.Expression) (accesses, eqConds, remained []expression.Expression, keyOff2IdxOff []int) {
 	// Check whether all join keys match one column from index.
 	keyOff2IdxOff = joinKeysMatchIndex(keys, idxCols, colLengths)
 	if keyOff2IdxOff == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
-	// After predicate push down, the one side conditions of join must be the conditions that cannot be pushed down and
-	// cannot calculate range either. So we only need the innerPlan.pushedDownConds and the eq conditions that we generate.
-	// TODO: There may be a selection that block the index join.
-	conds := make([]expression.Expression, 0, len(keys)+len(innerPlan.pushedDownConds))
+	usableKeys := make([]*expression.Column, 0, len(keys))
+
+	conds := make([]expression.Expression, 0, len(keys)+len(innerFilters))
 	eqConds = make([]expression.Expression, 0, len(keys))
-	// Construct a fake equal expression for calculating the range.
+	// Construct a fake equal expression for every join key for calculating the range.
 	for i, key := range keys {
 		if keyOff2IdxOff[i] < 0 {
 			continue
 		}
+		usableKeys = append(usableKeys, key)
 		// Int datum 1 can convert to all column's type(numeric type, string type, json, time type, enum, set) safely.
 		fakeConstant := &expression.Constant{Value: types.NewIntDatum(1), RetType: key.GetType()}
 		eqFunc := expression.NewFunctionInternal(p.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), key, fakeConstant)
@@ -568,8 +569,18 @@ func (p *LogicalJoin) buildFakeEqCondsForIndexJoin(keys, idxCols []*expression.C
 		eqConds = append(eqConds, eqFunc)
 	}
 
-	conds = append(conds, innerPlan.pushedDownConds...)
-	return conds, eqConds, keyOff2IdxOff
+	// Look into every `innerFilter`, if it contains join keys' column, put this filter into `remained` part directly.
+	remained = make([]expression.Expression, 0, len(innerFilters))
+	for _, filter := range innerFilters {
+		affectedCols := expression.ExtractColumns(filter)
+		if expression.ColumnSliceIsIntersect(affectedCols, usableKeys) {
+			remained = append(remained, filter)
+			continue
+		}
+		conds = append(conds, filter)
+	}
+
+	return conds, eqConds, remained, keyOff2IdxOff
 }
 
 // tryToGetIndexJoin will get index join by hints. If we can generate a valid index join by hint, the second return value
@@ -887,15 +898,6 @@ func (ls *LogicalSort) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 		return ret
 	}
 	return nil
-}
-
-func (p *LogicalExists) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
-	if !prop.isEmpty() {
-		return nil
-	}
-	exists := PhysicalExists{}.init(p.ctx, p.stats, &requiredProp{expectedCnt: 1})
-	exists.SetSchema(p.schema)
-	return []PhysicalPlan{exists}
 }
 
 func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {

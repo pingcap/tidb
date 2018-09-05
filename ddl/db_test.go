@@ -403,61 +403,12 @@ func (s *testDBSuite) TestCancelAddIndex(c *C) {
 	var checkErr error
 	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
-	first := true
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	// let hook.OnJobUpdatedExported has chance to cancel the job.
 	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
 	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
 	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	hook.OnJobUpdatedExported = func(job *model.Job) {
-		addIndexNotFirstReorg := job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
-		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
-		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
-		if !addIndexNotFirstReorg {
-			// Get the index's meta.
-			if c3IdxInfo != nil {
-				return
-			}
-			t := s.testGetTable(c, "t1")
-			for _, index := range t.WritableIndices() {
-				if index.Meta().Name.L == "c3_index" {
-					c3IdxInfo = index.Meta()
-				}
-			}
-			return
-		}
-		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
-		if first {
-			first = false
-			return
-		}
-		if checkErr != nil {
-			return
-		}
-		hookCtx := mock.NewContext()
-		hookCtx.Store = s.store
-		var err error
-		err = hookCtx.NewTxn()
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		jobIDs := []int64{job.ID}
-		errs, err := admin.CancelJobs(hookCtx.Txn(), jobIDs)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		// It only tests cancel one DDL job.
-		if errs[0] != nil {
-			checkErr = errors.Trace(errs[0])
-			return
-		}
-		err = hookCtx.Txn().Commit(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
-	}
+	hook.OnJobUpdatedExported, c3IdxInfo = backgroundExecOnJobUpdatedExported(c, s, hook, checkErr)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "create unique index c3_index on t1 (c3)", done)
@@ -1576,6 +1527,56 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testDBSuite) TestBitDefaultValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_bit (c1 bit(10) default 250, c2 int);")
+	tk.MustExec("insert into t_bit set c2=1;")
+	tk.MustQuery("select bin(c1),c2 from t_bit").Check(testkit.Rows("11111010 1"))
+	tk.MustExec("drop table t_bit")
+	tk.MustExec(`create table testalltypes1 (
+    field_1 bit default 1,
+    field_2 tinyint null default null
+	);`)
+	tk.MustExec(`create table testalltypes2 (
+    field_1 bit null default null,
+    field_2 tinyint null default null,
+    field_3 tinyint unsigned null default null,
+    field_4 bigint null default null,
+    field_5 bigint unsigned null default null,
+    field_6 mediumblob null default null,
+    field_7 longblob null default null,
+    field_8 blob null default null,
+    field_9 tinyblob null default null,
+    field_10 varbinary(255) null default null,
+    field_11 binary(255) null default null,
+    field_12 mediumtext null default null,
+    field_13 longtext null default null,
+    field_14 text null default null,
+    field_15 tinytext null default null,
+    field_16 char(255) null default null,
+    field_17 numeric null default null,
+    field_18 decimal null default null,
+    field_19 integer null default null,
+    field_20 integer unsigned null default null,
+    field_21 int null default null,
+    field_22 int unsigned null default null,
+    field_23 mediumint null default null,
+    field_24 mediumint unsigned null default null,
+    field_25 smallint null default null,
+    field_26 smallint unsigned null default null,
+    field_27 float null default null,
+    field_28 double null default null,
+    field_29 double precision null default null,
+    field_30 real null default null,
+    field_31 varchar(255) null default null,
+    field_32 date null default null,
+    field_33 time null default null,
+    field_34 datetime null default null,
+    field_35 timestamp null default null
+	);`)
+}
+
 func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
@@ -1723,6 +1724,34 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 
 	// test check order. The sql below have 2 problem: 1. ErrFieldTypeNotAllowedAsPartitionField  2. ErrPartitionMaxvalue , mysql will return ErrPartitionMaxvalue.
 	s.testErrorCode(c, `create TABLE t25 (c1 float) partition by range( c1 ) (partition p1 values less than maxvalue,partition p0 values less than (2000));`, tmysql.ErrPartitionMaxvalue)
+
+	// Fix issue 7362.
+	s.tk.MustExec("create table test_partition(id bigint, name varchar(255), primary key(id)) ENGINE=InnoDB DEFAULT CHARSET=utf8 PARTITION BY RANGE  COLUMNS(id) (PARTITION p1 VALUES LESS THAN (10) ENGINE = InnoDB);")
+
+	// 'Less than' in partition expression could be a constant expression, notice that
+	// the SHOW result changed.
+	s.tk.MustExec(`create table t26 (a date)
+			  partition by range(to_seconds(a))(
+			  partition p0 values less than (to_seconds('2004-01-01')),
+			  partition p1 values less than (to_seconds('2005-01-01')));`)
+	s.tk.MustQuery("show create table t26").Check(
+		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin\nPARTITION BY RANGE ( to_seconds(`a`) ) (\n  PARTITION p0 VALUES LESS THAN (63240134400),\n  PARTITION p1 VALUES LESS THAN (63271756800)\n)"))
+	s.tk.MustExec(`create table t27 (a bigint unsigned not null) 	
+		  partition by range(a) (
+		  partition p0 values less than (10),
+		  partition p1 values less than (100),
+		  partition p2 values less than (1000),
+		  partition p3 values less than (18446744073709551000),
+		  partition p4 values less than (18446744073709551614)
+		);`)
+	s.tk.MustExec(`create table t28 (a bigint unsigned not null) 	
+		  partition by range(a) (
+		  partition p0 values less than (10),
+		  partition p1 values less than (100),
+		  partition p2 values less than (1000),
+		  partition p3 values less than (18446744073709551000 + 1),
+		  partition p4 values less than (18446744073709551000 + 10)
+		);`)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
@@ -1757,7 +1786,7 @@ func (s *testDBSuite) TestTableDDLWithTimeType(c *C) {
 	s.testErrorCode(c, "alter table t change column a aa time(7)", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "alter table t change column a aa datetime(7)", tmysql.ErrTooBigPrecision)
 	s.testErrorCode(c, "alter table t change column a aa timestamp(7)", tmysql.ErrTooBigPrecision)
-	s.mustExec(c, "alter table t change column a aa timestamp(0)")
+	s.mustExec(c, "alter table t change column a aa datetime(0)")
 	s.mustExec(c, "drop table t")
 }
 
@@ -2145,24 +2174,29 @@ func (s *testDBSuite) TestRebaseAutoID(c *C) {
 	s.testErrorCode(c, "alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", tmysql.ErrUnknown)
 }
 
-func (s *testDBSuite) TestYearTypeCreateTable(c *C) {
+func (s *testDBSuite) TestZeroFillCreateTable(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop table if exists abc;")
-	s.tk.MustExec("create table abc(y year, x int, primary key(y));")
+	s.tk.MustExec("create table abc(y year, z tinyint(10) zerofill, primary key(y));")
 	is := s.dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("abc"))
 	c.Assert(err, IsNil)
-	var yearCol *model.ColumnInfo
+	var yearCol, zCol *model.ColumnInfo
 	for _, col := range tbl.Meta().Columns {
 		if col.Name.String() == "y" {
 			yearCol = col
-			break
+		}
+		if col.Name.String() == "z" {
+			zCol = col
 		}
 	}
 	c.Assert(yearCol, NotNil)
 	c.Assert(yearCol.Tp, Equals, mysql.TypeYear)
-	c.Assert(mysql.HasUnsignedFlag(yearCol.Flag), IsFalse)
+	c.Assert(mysql.HasUnsignedFlag(yearCol.Flag), IsTrue)
+
+	c.Assert(zCol, NotNil)
+	c.Assert(mysql.HasUnsignedFlag(zCol.Flag), IsTrue)
 }
 
 func (s *testDBSuite) TestCheckColumnDefaultValue(c *C) {
@@ -2303,7 +2337,7 @@ func (s *testDBSuite) getMaxTableRowID(ctx *testMaxTableRowIDContext) (int64, bo
 	tbl := ctx.tbl
 	curVer, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl)
+	maxID, emptyTable, err := d.GetTableMaxRowID(curVer.Ver, tbl.(table.PhysicalTable))
 	c.Assert(err, IsNil)
 	return maxID, emptyTable
 }
@@ -3119,10 +3153,224 @@ func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	s.testErrorCode(c, sql8, tmysql.ErrUniqueKeyNeedAllFieldsInPf)
 }
 
+func (s *testDBSuite) TestPartitionDropIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	done := make(chan error, 1)
+	s.tk.MustExec("use " + s.schemaName)
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
+	s.tk.MustExec("drop table if exists partition_drop_idx;")
+	s.tk.MustExec(`create table partition_drop_idx (
+		c1 int, c2 int, c3 int
+	)
+	partition by range( c1 ) (
+    	partition p0 values less than (3),
+    	partition p1 values less than (5),
+    	partition p2 values less than (7),
+    	partition p3 values less than (11),
+    	partition p4 values less than (15),
+    	partition p5 values less than (20),
+		partition p6 values less than (maxvalue)
+   	);`)
+
+	num := 20
+	for i := 0; i < num; i++ {
+		s.mustExec(c, "insert into partition_drop_idx values (?, ?, ?)", i, i, i)
+	}
+	s.tk.MustExec("alter table partition_drop_idx add index idx1 (c1)")
+
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("partition_drop_idx"))
+	c.Assert(err, IsNil)
+
+	var idx1 table.Index
+	for _, pidx := range t.Indices() {
+		if pidx.Meta().Name.L == "idx1" {
+			idx1 = pidx
+			break
+		}
+	}
+	c.Assert(idx1, NotNil)
+
+	sessionExecInGoroutine(c, s.store, "drop index idx1 on partition_drop_idx;", done)
+	ticker := time.NewTicker(s.lease / 2)
+	defer ticker.Stop()
+LOOP:
+	for {
+		select {
+		case err = <-done:
+			if err == nil {
+				break LOOP
+			}
+			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+		case <-ticker.C:
+			step := 10
+			rand.Seed(time.Now().Unix())
+			for i := num; i < num+step; i++ {
+				n := rand.Intn(num)
+				s.mustExec(c, "update partition_drop_idx set c2 = 1 where c1 = ?", n)
+				s.mustExec(c, "insert into partition_drop_idx values (?, ?, ?)", i, i, i)
+			}
+			num += step
+		}
+	}
+
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr(s.schemaName), model.NewCIStr("partition_drop_idx"))
+	c.Assert(err, IsNil)
+	// Only one partition id test is taken here.
+	pid := t.Meta().Partition.Definitions[0].ID
+	var idxn table.Index
+	t.Indices()
+	for _, idx := range t.Indices() {
+		if idx.Meta().Name.L == "idx1" {
+			idxn = idx
+			break
+		}
+	}
+	c.Assert(idxn, IsNil)
+	idx := tables.NewIndex(pid, t.Meta(), idx1.Meta())
+	checkDelRangeDone(c, ctx, idx)
+	s.tk.MustExec("drop table partition_drop_idx;")
+}
+
+func (s *testDBSuite) TestPartitionCancelAddIndex(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "set @@session.tidb_enable_table_partition=1;")
+	s.mustExec(c, "drop table if exists t1;")
+	s.mustExec(c, `create table t1 (
+		c1 int, c2 int, c3 int
+	)
+	partition by range( c1 ) (
+    	partition p0 values less than (1024),
+    	partition p1 values less than (2048),
+    	partition p2 values less than (3072),
+    	partition p3 values less than (4096),
+		partition p4 values less than (maxvalue)
+   	);`)
+	base := defaultBatchSize * 2
+	count := base
+	// add some rows
+	for i := 0; i < count; i++ {
+		s.mustExec(c, "insert into t1 values (?, ?, ?)", i, i, i)
+	}
+
+	var checkErr error
+	var c3IdxInfo *model.IndexInfo
+	hook := &ddl.TestDDLCallback{}
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 10 * time.Millisecond
+	hook.OnJobUpdatedExported, c3IdxInfo = backgroundExecOnJobUpdatedExported(c, s, hook, checkErr)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	done := make(chan error, 1)
+	go backgroundExec(s.store, "create index c3_index on t1 (c3)", done)
+
+	times := 0
+	ticker := time.NewTicker(s.lease / 2)
+	defer ticker.Stop()
+LOOP:
+	for {
+		select {
+		case err := <-done:
+			c.Assert(checkErr, IsNil)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			break LOOP
+		case <-ticker.C:
+			if times >= 10 {
+				break
+			}
+			step := 10
+			rand.Seed(time.Now().Unix())
+			// delete some rows, and add some data
+			for i := count; i < count+step; i++ {
+				n := rand.Intn(count)
+				s.mustExec(c, "delete from t1 where c1 = ?", n)
+				s.mustExec(c, "insert into t1 values (?, ?, ?)", i+10, i, i)
+			}
+			count += step
+			times++
+		}
+	}
+
+	t := s.testGetTable(c, "t1")
+	// Only one partition id test is taken here.
+	pid := t.Meta().Partition.Definitions[0].ID
+	for _, tidx := range t.Indices() {
+		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsFalse)
+	}
+
+	ctx := s.s.(sessionctx.Context)
+	idx := tables.NewIndex(pid, t.Meta(), c3IdxInfo)
+	checkDelRangeDone(c, ctx, idx)
+
+	s.mustExec(c, "drop table t1")
+	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
+	callback := &ddl.TestDDLCallback{}
+	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
+}
+
+func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLCallback, checkErr error) (func(*model.Job), *model.IndexInfo) {
+	first := true
+	ddl.ReorgWaitTimeout = 10 * time.Millisecond
+	c3IdxInfo := &model.IndexInfo{}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		addIndexNotFirstReorg := job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
+		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
+		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
+		if !addIndexNotFirstReorg {
+			// Get the index's meta.
+			if c3IdxInfo != nil {
+				return
+			}
+			t := s.testGetTable(c, "t1")
+			for _, index := range t.WritableIndices() {
+				if index.Meta().Name.L == "c3_index" {
+					c3IdxInfo = index.Meta()
+				}
+			}
+			return
+		}
+		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
+		if first {
+			first = false
+			return
+		}
+		if checkErr != nil {
+			return
+		}
+		hookCtx := mock.NewContext()
+		hookCtx.Store = s.store
+		var err error
+		err = hookCtx.NewTxn()
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		jobIDs := []int64{job.ID}
+		errs, err := admin.CancelJobs(hookCtx.Txn(), jobIDs)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		// It only tests cancel one DDL job.
+		if errs[0] != nil {
+			checkErr = errors.Trace(errs[0])
+			return
+		}
+		err = hookCtx.Txn().Commit(context.Background())
+		if err != nil {
+			checkErr = errors.Trace(err)
+		}
+	}
+	return hook.OnJobUpdatedExported, c3IdxInfo
+}
+
 func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_table_partition = 1")
+	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
 	hired date not null
@@ -3141,6 +3389,18 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 
 	tk.MustExec("alter table partition_add_idx add index idx1 (hired)")
 	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("partition_add_idx"))
+	c.Assert(err, IsNil)
+	var idx1 table.Index
+	for _, idx := range t.Indices() {
+		if idx.Meta().Name.L == "idx1" {
+			idx1 = idx
+			break
+		}
+	}
+	c.Assert(idx1, NotNil)
 
 	tk.MustQuery("select count(hired) from partition_add_idx use index(idx1)").Check(testkit.Rows("500"))
 	tk.MustQuery("select count(id) from partition_add_idx use index(idx2)").Check(testkit.Rows("500"))

@@ -163,6 +163,13 @@ func mergeQueryFeedback(lq []*QueryFeedback, rq []*QueryFeedback) []*QueryFeedba
 	return lq
 }
 
+var (
+	// MinLogScanCount is the minimum scan count for a feedback to be logged.
+	MinLogScanCount = int64(1000)
+	// MinLogErrorRate is the minimum error rate for a feedback to be logged.
+	MinLogErrorRate = 0.5
+)
+
 // StoreQueryFeedback will merges the feedback into stats collector.
 func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle) error {
 	q := feedback.(*QueryFeedback)
@@ -184,6 +191,9 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 		}
 	} else {
 		rate = math.Abs(expected-float64(q.actual)) / float64(q.actual)
+	}
+	if rate >= MinLogErrorRate && (q.actual >= MinLogScanCount || q.expected >= MinLogScanCount) && log.GetLevel() == log.DebugLevel {
+		q.logDetailedInfo(h)
 	}
 	metrics.StatsInaccuracyRate.Observe(rate)
 	s.Lock()
@@ -495,18 +505,25 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 // handleSingleHistogramUpdate updates the Histogram and CM Sketch using these feedbacks. All the feedbacks for
 // the same index or column are gathered in `rows`.
 func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []chunk.Row) (err error) {
-	tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
+	physicalTableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
 	defer func() {
 		if err == nil {
-			err = errors.Trace(h.deleteOutdatedFeedback(tableID, histID, isIndex))
+			err = errors.Trace(h.deleteOutdatedFeedback(physicalTableID, histID, isIndex))
 		}
 	}()
-	table, ok := is.TableByID(tableID)
+	h.mu.Lock()
+	table, ok := h.getTableByPhysicalID(is, physicalTableID)
+	h.mu.Unlock()
 	// The table has been deleted.
 	if !ok {
 		return nil
 	}
-	tbl := h.GetTableStats(table.Meta())
+	var tbl *Table
+	if table.Meta().GetPartitionInfo() != nil {
+		tbl = h.GetPartitionStats(table.Meta(), physicalTableID)
+	} else {
+		tbl = h.GetTableStats(table.Meta())
+	}
 	var cms *CMSketch
 	var hist *Histogram
 	if isIndex == 1 {
@@ -538,7 +555,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	if table.Meta().PKIsHandle && isIndex == 0 {
 		hist.NDV = int64(hist.totalRowCount())
 	}
-	err = h.dumpStatsUpdateToKV(tableID, isIndex, q, hist, cms)
+	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
 	return errors.Trace(err)
 }
 
@@ -569,10 +586,10 @@ const (
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
 var AutoAnalyzeMinCnt int64 = 1000
 
-// tableAnalyzed checks if the table is analyzed.
-func tableAnalyzed(tbl *Table) bool {
+// TableAnalyzed checks if the table is analyzed.
+func TableAnalyzed(tbl *Table) bool {
 	for _, col := range tbl.Columns {
-		if col.Histogram.Len() > 0 {
+		if col.Count > 0 {
 			return true
 		}
 	}
@@ -584,13 +601,29 @@ func tableAnalyzed(tbl *Table) bool {
 	return false
 }
 
-// needAnalyzeTable checks if we need to analyze the table:
+// withinTimePeriod tests whether `now` is between `start` and `end`.
+func withinTimePeriod(start, end, now time.Time) bool {
+	// Converts to UTC and only keeps the hour and minute info.
+	start, end, now = start.UTC(), end.UTC(), now.UTC()
+	start = time.Date(0, 0, 0, start.Hour(), start.Minute(), 0, 0, time.UTC)
+	end = time.Date(0, 0, 0, end.Hour(), end.Minute(), 0, 0, time.UTC)
+	now = time.Date(0, 0, 0, now.Hour(), now.Minute(), 0, 0, time.UTC)
+	// for cases like from 00:00 to 06:00
+	if end.Sub(start) >= 0 {
+		return now.Sub(start) >= 0 && now.Sub(end) <= 0
+	}
+	// for cases like from 22:00 to 06:00
+	return now.Sub(end) <= 0 || now.Sub(start) >= 0
+}
+
+// NeedAnalyzeTable checks if we need to analyze the table:
 // 1. If the table has never been analyzed, we need to analyze it when it has
-//    not been modified for a time.
+//    not been modified for a while.
 // 2. If the table had been analyzed before, we need to analyze it when
 //    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
-func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
-	analyzed := tableAnalyzed(tbl)
+// 3. The current time is between `start` and `end`.
+func NeedAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64, start, end, now time.Time) bool {
+	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
 		return time.Since(t) >= limit
@@ -599,23 +632,36 @@ func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64)
 	if autoAnalyzeRatio == 0 {
 		return false
 	}
-	return float64(tbl.ModifyCount)/float64(tbl.Count) > autoAnalyzeRatio
+	// No need to analyze it.
+	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
+		return false
+	}
+	// Tests if current time is within the time period.
+	return withinTimePeriod(start, end, now)
 }
 
-const minAutoAnalyzeRatio = 0.3
+const (
+	minAutoAnalyzeRatio = 0.3
+)
 
-func (h *Handle) getAutoAnalyzeRatio() float64 {
-	sql := fmt.Sprintf("select variable_value from mysql.global_variables where variable_name = '%s'", variable.TiDBAutoAnalyzeRatio)
+func (h *Handle) getAutoAnalyzeParameters() map[string]string {
+	sql := fmt.Sprintf("select variable_name, variable_value from mysql.global_variables where variable_name in ('%s', '%s', '%s')",
+		variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if err != nil {
-		return variable.DefAutoAnalyzeRatio
+		return map[string]string{}
 	}
-	autoAnalyzeRatio := variable.DefAutoAnalyzeRatio
-	if len(rows) > 0 {
-		autoAnalyzeRatio, err = strconv.ParseFloat(rows[0].GetString(0), 64)
-		if err != nil {
-			return variable.DefAutoAnalyzeRatio
-		}
+	parameters := make(map[string]string)
+	for _, row := range rows {
+		parameters[row.GetString(0)] = row.GetString(1)
+	}
+	return parameters
+}
+
+func parseAutoAnalyzeRatio(ratio string) float64 {
+	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
+	if err != nil {
+		return variable.DefAutoAnalyzeRatio
 	}
 	if autoAnalyzeRatio > 0 {
 		autoAnalyzeRatio = math.Max(autoAnalyzeRatio, minAutoAnalyzeRatio)
@@ -623,10 +669,27 @@ func (h *Handle) getAutoAnalyzeRatio() float64 {
 	return autoAnalyzeRatio
 }
 
+func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
+	s, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, start, time.UTC)
+	if err != nil {
+		return s, s, errors.Trace(err)
+	}
+	e, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, end, time.UTC)
+	if err != nil {
+		return s, e, errors.Trace(err)
+	}
+	return s, e, nil
+}
+
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 	dbs := is.AllSchemaNames()
-	autoAnalyzeRatio := h.getAutoAnalyzeRatio()
+	parameters := h.getAutoAnalyzeParameters()
+	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
@@ -636,7 +699,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 				continue
 			}
 			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
-			if needAnalyzeTable(statsTbl, 20*h.Lease, autoAnalyzeRatio) {
+			if NeedAnalyzeTable(statsTbl, 20*h.Lease, autoAnalyzeRatio, start, end, time.Now()) {
 				sql := fmt.Sprintf("analyze table %s", tblName)
 				log.Infof("[stats] auto analyze table %s now", tblName)
 				return errors.Trace(h.execAutoAnalyze(sql))
