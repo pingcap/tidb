@@ -186,7 +186,7 @@ const (
 		element_id BIGINT NOT NULL COMMENT "the schema element ID",
 		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
-		ts BIGINT NOT NULL COMMENT "timestamp in int64",
+		ts BIGINT NOT NULL COMMENT "timestamp in uint64",
 		UNIQUE KEY delete_range_index (job_id, element_id)
 	);`
 
@@ -196,7 +196,7 @@ const (
 		element_id BIGINT NOT NULL COMMENT "the schema element ID",
 		start_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
 		end_key VARCHAR(255) NOT NULL COMMENT "encoded in hex",
-		ts BIGINT NOT NULL COMMENT "timestamp in int64",
+		ts BIGINT NOT NULL COMMENT "timestamp in uint64",
 		UNIQUE KEY delete_range_done_index (job_id, element_id)
 	);`
 
