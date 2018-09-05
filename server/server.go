@@ -36,11 +36,11 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	// For pprof
+	_ "net/http/pprof"
 	"sync"
 	"sync/atomic"
 	"time"
-	// For pprof
-	_ "net/http/pprof"
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/juju/errors"
