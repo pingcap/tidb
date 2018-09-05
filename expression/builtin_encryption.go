@@ -174,7 +174,42 @@ type decodeFunctionClass struct {
 }
 
 func (c *decodeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "DECODE")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
+
+	bf.tp.Flen = args[0].GetType().Flen
+	sig := &builtinDecodeSig{bf}
+	return sig, nil
+}
+
+type builtinDecodeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinDecodeSig) Clone() builtinFunc {
+	newSig := &builtinDecodeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals DECODE(str, password_str).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_decode
+func (b *builtinDecodeSig) evalString(row chunk.Row) (string, bool, error) {
+	dataStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	passwordStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	decodeStr, _ := encrypt.SQLDecode(dataStr, passwordStr)
+	return decodeStr, false, nil
 }
 
 type desDecryptFunctionClass struct {
@@ -198,7 +233,42 @@ type encodeFunctionClass struct {
 }
 
 func (c *encodeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "ENCODE")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETString)
+
+	bf.tp.Flen = args[0].GetType().Flen
+	sig := &builtinEncodeSig{bf}
+	return sig, nil
+}
+
+type builtinEncodeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinEncodeSig) Clone() builtinFunc {
+	newSig := &builtinEncodeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals ENCODE(crypt_str, password_str).
+// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_encode
+func (b *builtinEncodeSig) evalString(row chunk.Row) (string, bool, error) {
+	decodeStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	passwordStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", true, errors.Trace(err)
+	}
+
+	dataStr, _ := encrypt.SQLEncode(decodeStr, passwordStr)
+	return dataStr, false, nil
 }
 
 type encryptFunctionClass struct {

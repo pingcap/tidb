@@ -26,6 +26,45 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 )
 
+var cryptTests = []struct {
+	origin   interface{}
+	password interface{}
+	crypt    interface{}
+}{
+	{"", "", ""},
+	{"pingcap", "1234567890123456", "2C35B5A4ADF391"},
+	{"pingcap", "asdfjasfwefjfjkj", "351CC412605905"},
+	{"pingcap123", "123456789012345678901234", "7698723DC6DFE7724221"},
+	{"pingcap#%$%^", "*^%YTu1234567", "8634B9C55FF55E5B6328F449"},
+	{"pingcap", "", "4A77B524BD2C5C"},
+}
+
+func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Decode]
+	for _, tt := range cryptTests {
+		str := types.NewDatum(tt.origin)
+		password := types.NewDatum(tt.password)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, password}))
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
+	}
+}
+
+func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.Encode]
+	for _, test := range aesTests {
+		cryptStr := fromHex(test.crypt)
+		password := types.NewDatum(test.password)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{cryptStr, password}))
+		str, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(str, DeepEquals, types.NewDatum(test.origin))
+	}
+}
+
 var aesTests = []struct {
 	origin interface{}
 	key    interface{}
