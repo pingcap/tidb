@@ -403,7 +403,7 @@ func (t *Table) ColumnEqualRowCount(sc *stmtctx.StatementContext, value types.Da
 func (coll *HistColl) GetRowCountByIntColumnRanges(sc *stmtctx.StatementContext, colID int64, intRanges []*ranger.Range) (float64, error) {
 	if coll.ColumnIsInvalid(sc, colID) {
 		if len(intRanges) == 0 {
-			return float64(coll.Count), nil
+			return 0, nil
 		}
 		if intRanges[0].LowVal[0].Kind() == types.KindInt64 {
 			return getPseudoRowCountBySignedIntRanges(intRanges, float64(coll.Count)), nil
