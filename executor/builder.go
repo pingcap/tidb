@@ -1228,7 +1228,7 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	columns2Handle := buildColumns2Handle(v.Schema(), tblID2table)
+	columns2Handle := buildColumns2Handle(v.SelectPlan.Schema(), tblID2table)
 	updateExec := &UpdateExec{
 		baseExecutor:   newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
 		SelectExec:     selExec,
