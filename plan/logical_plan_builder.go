@@ -115,7 +115,9 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	for _, col := range p.Schema().Columns {
 		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
-		schema4Agg.Append(col)
+		newCol, _ := col.Clone().(*expression.Column)
+		newCol.RetType = newFunc.RetTp
+		schema4Agg.Append(newCol)
 	}
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
@@ -594,6 +596,9 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) *LogicalAggre
 	}
 	plan4Agg.SetChildren(child)
 	plan4Agg.SetSchema(child.Schema().Clone())
+	for i, col := range plan4Agg.schema.Columns {
+		col.RetType = plan4Agg.AggFuncs[i].RetTp
+	}
 	// Distinct will be rewritten as first_row, we reset the type here since the return type
 	// of first_row is not always the same as the column arg of first_row.
 	for i, col := range plan4Agg.schema.Columns {
