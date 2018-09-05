@@ -95,6 +95,7 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	c.Assert(valid, Equals, ResultUnknown)
 
 	close(exit)
+	time.Sleep(time.Millisecond)
 }
 
 func reload(validator SchemaValidator, leaseGrantCh chan leaseGrantItem, ids ...int64) int64 {
