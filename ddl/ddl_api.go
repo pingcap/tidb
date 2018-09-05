@@ -908,7 +908,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 
 	if pi != nil && pi.Type == model.PartitionTypeRange {
-		// Check partition by range.
+		// Check range partition.
+		// 1. partition by range(expr).
+		// 2. partitioned by range columns(column_list).
 		if s.Partition.ColumnNames == nil {
 			if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
 				return errors.Trace(err)

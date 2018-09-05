@@ -1712,7 +1712,8 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 		  partition p4 values less than (18446744073709551000 + 10)
 		);`)
 
-	// Support partitioned by range columns later "ERROR HY000: Field 'a' is of a not allowed type for this type of partitioning".
+	// Range columns partition parser has been implemented, but not yet supported.
+	// So executing the following sql does not expect to see the error.
 	s.tk.MustExec(`create table t29 (
 		a decimal
 	)
