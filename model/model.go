@@ -96,7 +96,7 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 	if c.Tp == mysql.TypeBit {
 		// For mysql.TypeBit type, the default value storage format must be a string.
 		// Other value such as int must convert to string format first.
-		// For mysql.TypeBit type, the default value is null is supported.
+		// The mysql.TypeBit type supports the null default value.
 		if value == nil {
 			return nil
 		}
