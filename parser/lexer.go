@@ -307,12 +307,14 @@ func startWithSharp(s *Scanner) (tok int, pos Pos, lit string) {
 
 func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
-	if strings.HasPrefix(s.r.s[pos.Offset:], "-- ") {
-		s.r.incN(3)
-		s.r.incAsLongAs(func(ch rune) bool {
-			return ch != '\n'
-		})
-		return s.scan()
+	if strings.HasPrefix(s.r.s[pos.Offset:], "--") {
+		remainLen := len(s.r.s[pos.Offset:])
+		if remainLen == 2 || (remainLen > 2 && unicode.IsSpace(rune(s.r.s[pos.Offset+2]))) {
+			s.r.incAsLongAs(func(ch rune) bool {
+				return ch != '\n'
+			})
+			return s.scan()
+		}
 	}
 	if strings.HasPrefix(s.r.s[pos.Offset:], "->>") {
 		tok = juss
