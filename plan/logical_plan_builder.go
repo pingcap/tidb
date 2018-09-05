@@ -208,6 +208,17 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 		} else if allFromLeft {
 			leftCond = append(leftCond, expr)
 		} else {
+			// Relax expr to two supersets: leftRelaxedCond and rightRelaxedCond, the expression now is
+			// `expr AND leftRelaxedCond AND rightRelaxedCond`. Motivation is to push filters down to
+			// children as much as possible.
+			leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, left.Schema())
+			if leftRelaxedCond != nil {
+				leftCond = append(leftCond, leftRelaxedCond)
+			}
+			rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, right.Schema())
+			if rightRelaxedCond != nil {
+				rightCond = append(rightCond, rightRelaxedCond)
+			}
 			otherCond = append(otherCond, expr)
 		}
 	}
