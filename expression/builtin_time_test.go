@@ -256,7 +256,6 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		c.Assert(v, testutil.DatumEquals, t["YearWeek"][0])
 	}
 
-
 	// test nil with 'NO_ZERO_DATE' set in sql_mode
 	tblNil = []struct {
 		Input      interface{}

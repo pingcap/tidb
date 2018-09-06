@@ -1035,7 +1035,7 @@ func (b *builtinMonthNameSig) evalString(row chunk.Row) (string, bool, error) {
 	mon := arg.Time.Month()
 	if (arg.IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()) || mon < 0 || mon > len(types.MonthNames) {
 		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(arg.String())))
-	} else if mon == 0 || arg.IsZero(){
+	} else if mon == 0 || arg.IsZero() {
 		return "", true, nil
 	}
 	return types.MonthNames[mon-1], false, nil
