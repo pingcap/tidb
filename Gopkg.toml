@@ -78,3 +78,7 @@ required = ["github.com/pingcap/tidb-tools/pkg/etcd", "github.com/pingcap/tidb-t
 [[constraint]]
   branch = "master"
   name = "github.com/etcd-io/gofail"
+
+[[constraint]]
+  branch = "develop"
+  name = "github.com/pingcap/tidb-tools"
