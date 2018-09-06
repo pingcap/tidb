@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -428,7 +429,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 		Ranges:           ranger.FullRange(),
 		KeepOrder:        false,
 	}.init(b.ctx)
-	is.stats = &statsInfo{}
+	is.stats = &property.StatsInfo{}
 	cop := &copTask{indexPlan: is}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.init(b.ctx)
@@ -1220,7 +1221,7 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 	// Check to guarantee that there's no generated column.
 	// This check should be done after the above one to make its behavior compatible with MySQL.
 	// For example, table t has two columns, namely a and b, and b is a generated column.
-	// "insert into t (b) select * from t" will raise an error that the column count is not matched.
+	// "insert into t (b) select * from t" will raise an error that the column RowCount is not matched.
 	// "insert into t select * from t" will raise an error that there's a generated column in the column list.
 	// If we do this check before the above one, "insert into t (b) select * from t" will raise an error
 	// that there's a generated column in the column list.
@@ -1409,7 +1410,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 	p := &Explain{StmtPlan: pp}
 	switch strings.ToLower(explain.Format) {
 	case ast.ExplainFormatROW:
-		retFields := []string{"id", "count", "task", "operator info"}
+		retFields := []string{"id", "RowCount", "task", "operator info"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		for _, fieldName := range retFields {
 			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))

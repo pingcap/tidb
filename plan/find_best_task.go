@@ -371,15 +371,15 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 			}
 		}
 	}
-	// Only use expectedCnt when it's smaller than the count we calculated.
-	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.count` is count2. count1 is the one we need to calculate
+	// Only use expectedCnt when it's smaller than the RowCount we calculated.
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if (matchProperty || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.count {
-		selectivity := ds.stats.count / path.countAfterAccess
+	if (matchProperty || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
+		selectivity := ds.stats.RowCount / path.countAfterAccess
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
-	is.stats = newSimpleStats(rowCount)
-	is.stats.usePseudoStats = ds.statisticTable.Pseudo
+	is.stats = property.NewSimpleStats(rowCount)
+	is.stats.UsePseudoStats = ds.statisticTable.Pseudo
 	cop.cst = rowCount * scanFactor
 	task = cop
 	if matchProperty {
@@ -446,9 +446,9 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		count := path.countAfterAccess
 		if count >= 1.0 {
 			selectivity := path.countAfterIndex / path.countAfterAccess
-			count = is.stats.count * selectivity
+			count = is.stats.RowCount * selectivity
 		}
-		stats := &statsInfo{count: count}
+		stats := &property.StatsInfo{RowCount: count}
 		indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx, stats)
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
@@ -456,7 +456,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	if tableConds != nil {
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * cpuFactor
-		tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.stats.scaleByExpectCnt(expectedCnt))
+		tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.stats.ScaleByExpectCnt(expectedCnt))
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
@@ -549,15 +549,15 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *
 	}
 	task = copTask
 	matchProperty := len(prop.Cols) == 1 && pkCol != nil && prop.Cols[0].Equal(nil, pkCol)
-	// Only use expectedCnt when it's smaller than the count we calculated.
-	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.count` is count2. count1 is the one we need to calculate
+	// Only use expectedCnt when it's smaller than the RowCount we calculated.
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if (matchProperty || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.count {
-		selectivity := ds.stats.count / rowCount
+	if (matchProperty || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
+		selectivity := ds.stats.RowCount / rowCount
 		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
-	ts.stats = newSimpleStats(rowCount)
-	ts.stats.usePseudoStats = ds.statisticTable.Pseudo
+	ts.stats = property.NewSimpleStats(rowCount)
+	ts.stats.UsePseudoStats = ds.statisticTable.Pseudo
 	copTask.cst = rowCount * scanFactor
 	if matchProperty {
 		if prop.Desc {
@@ -566,7 +566,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
-		ts.addPushedDownSelection(copTask, ds.stats.scaleByExpectCnt(prop.ExpectedCnt))
+		ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	} else {
 		expectedCnt := math.MaxFloat64
 		if prop.IsEmpty() {
@@ -574,7 +574,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *
 		} else {
 			return invalidTask, nil
 		}
-		ts.addPushedDownSelection(copTask, ds.stats.scaleByExpectCnt(expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(expectedCnt))
 	}
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
@@ -584,7 +584,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *
 	return task, nil
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *statsInfo) {
+func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
 		copTask.cst += copTask.count() * cpuFactor

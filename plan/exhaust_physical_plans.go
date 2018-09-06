@@ -132,7 +132,7 @@ func (p *LogicalJoin) getMergeJoin(prop *property.PhysicalProperty) []PhysicalPl
 			DefaultValues:   p.DefaultValues,
 			LeftKeys:        leftKeys,
 			RightKeys:       rightKeys,
-		}.init(p.ctx, p.stats.scaleByExpectCnt(prop.ExpectedCnt))
+		}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 		mergeJoin.SetSchema(p.schema)
 		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
@@ -238,7 +238,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty) []Ph
 		LeftKeys:        leftKeys,
 		RightKeys:       rightKeys,
 		OtherConditions: p.OtherConditions,
-	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.ExpectedCnt))
+	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	enforcedPhysicalMergeJoin.SetSchema(p.schema)
 	enforcedPhysicalMergeJoin.childrenReqProps = []*property.PhysicalProperty{lProp, rProp}
 	return []PhysicalPlan{enforcedPhysicalMergeJoin}
@@ -274,7 +274,7 @@ func (p *LogicalJoin) getHashJoin(prop *property.PhysicalProperty, innerIdx int)
 		Concurrency:     uint(p.ctx.GetSessionVars().HashJoinConcurrency),
 		DefaultValues:   p.DefaultValues,
 		InnerChildIdx:   innerIdx,
-	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	hashJoin.SetSchema(p.schema)
 	return hashJoin
 }
@@ -345,7 +345,7 @@ func (p *LogicalJoin) constructIndexJoin(prop *property.PhysicalProperty, innerJ
 		innerPlan:       innerPlan,
 		KeyOff2IdxOff:   newKeyOff,
 		Ranges:          ranges,
-	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	join.SetSchema(p.schema)
 	return []PhysicalPlan{join}
 }
@@ -455,8 +455,8 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
 	}
 
-	ts.stats = newSimpleStats(rowCount)
-	ts.stats.usePseudoStats = ds.statisticTable.Pseudo
+	ts.stats = property.NewSimpleStats(rowCount)
+	ts.stats.UsePseudoStats = ds.statisticTable.Pseudo
 
 	copTask := &copTask{
 		tablePlan:         ts,
@@ -489,8 +489,8 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	} else {
 		rowCount = ds.statisticTable.PseudoAvgCountPerValue()
 	}
-	is.stats = newSimpleStats(rowCount)
-	is.stats.usePseudoStats = ds.statisticTable.Pseudo
+	is.stats = property.NewSimpleStats(rowCount)
+	is.stats.UsePseudoStats = ds.statisticTable.Pseudo
 
 	cop := &copTask{
 		indexPlan: is,
@@ -694,7 +694,7 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	proj := PhysicalProjection{
 		Exprs:            p.Exprs,
 		CalculateNoDelay: p.calculateNoDelay,
-	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.ExpectedCnt), newProp)
+	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), newProp)
 	proj.SetSchema(p.schema)
 	return []PhysicalPlan{proj}
 }
@@ -757,7 +757,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) []
 		OuterSchema:   la.corCols,
 		rightChOffset: la.children[0].Schema().Len(),
 	}.init(la.ctx,
-		la.stats.scaleByExpectCnt(prop.ExpectedCnt),
+		la.stats.ScaleByExpectCnt(prop.ExpectedCnt),
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, Cols: prop.Cols, Desc: prop.Desc},
 		&property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	apply.SetSchema(la.schema)
@@ -786,7 +786,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	streamAggs := make([]PhysicalPlan, 0, len(la.possibleProperties)*(len(wholeTaskTypes)-1))
 	childProp := &property.PhysicalProperty{
 		Desc:        prop.Desc,
-		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.count, prop.ExpectedCnt),
+		ExpectedCnt: math.Max(prop.ExpectedCnt*la.inputCount/la.stats.RowCount, prop.ExpectedCnt),
 	}
 
 	for _, possibleChildProperty := range la.possibleProperties {
@@ -810,7 +810,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			agg := basePhysicalAgg{
 				GroupByItems: la.GroupByItems,
 				AggFuncs:     la.AggFuncs,
-			}.initForStream(la.ctx, la.stats.scaleByExpectCnt(prop.ExpectedCnt), copiedChildProperty)
+			}.initForStream(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), copiedChildProperty)
 			agg.SetSchema(la.schema.Clone())
 			streamAggs = append(streamAggs, agg)
 		}
@@ -827,7 +827,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 		agg := basePhysicalAgg{
 			GroupByItems: la.GroupByItems,
 			AggFuncs:     la.AggFuncs,
-		}.initForHash(la.ctx, la.stats.scaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
+		}.initForHash(la.ctx, la.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp})
 		agg.SetSchema(la.schema.Clone())
 		hashAggs = append(hashAggs, agg)
 	}
@@ -844,7 +844,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	sel := PhysicalSelection{
 		Conditions: p.Conditions,
-	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.ExpectedCnt), prop)
+	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
 	return []PhysicalPlan{sel}
 }
 
@@ -867,7 +867,7 @@ func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) []P
 func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) []PhysicalPlan {
 	lock := PhysicalLock{
 		Lock: p.Lock,
-	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.ExpectedCnt), prop)
+	}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), prop)
 	return []PhysicalPlan{lock}
 }
 
@@ -880,12 +880,12 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	for range p.children {
 		chReqProps = append(chReqProps, &property.PhysicalProperty{ExpectedCnt: prop.ExpectedCnt})
 	}
-	ua := PhysicalUnionAll{}.init(p.ctx, p.stats.scaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
+	ua := PhysicalUnionAll{}.init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), chReqProps...)
 	return []PhysicalPlan{ua}
 }
 
 func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {
-	ps := PhysicalSort{ByItems: ls.ByItems}.init(ls.ctx, ls.stats.scaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
+	ps := PhysicalSort{ByItems: ls.ByItems}.init(ls.ctx, ls.stats.ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64})
 	return ps
 }
 

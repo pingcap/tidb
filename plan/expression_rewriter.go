@@ -481,7 +481,7 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 }
 
 // handleNEAny handles the case of != any. For example, if the query is t.id != any (select s.id from s), it will be rewrote to
-// t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
+// t.id != s.id or RowCount(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
 // there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
 	firstRowFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
@@ -508,7 +508,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 }
 
 // handleEQAll handles the case of = all. For example, if the query is t.id = all (select s.id from s), it will be rewrote to
-// t.id = (select s.id from s having count(distinct s.id) <= 1 and [all checker]).
+// t.id = (select s.id from s having RowCount(distinct s.id) <= 1 and [all checker]).
 func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np LogicalPlan) {
 	firstRowFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	countFunc := aggregation.NewAggFuncDesc(er.ctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
@@ -578,7 +578,7 @@ out:
 	for {
 		switch plan := p.(type) {
 		// This can be removed when in exists clause,
-		// e.g. exists(select count(*) from t order by a) is equal to exists t.
+		// e.g. exists(select RowCount(*) from t order by a) is equal to exists t.
 		case *LogicalProjection, *LogicalSort:
 			p = p.Children()[0]
 		case *LogicalAggregation:

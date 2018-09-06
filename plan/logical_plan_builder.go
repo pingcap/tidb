@@ -1730,7 +1730,7 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 // getStatsTable gets statistics information for a table specified by "tableID".
 // A pseudo statistics table is returned in any of the following scenario:
 // 1. tidb-server started and statistics handle has not been initialized.
-// 2. table row count from statistics is zero.
+// 2. table row RowCount from statistics is zero.
 // 3. statistics is outdated.
 func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
@@ -1747,7 +1747,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 		statsTbl = statsHandle.GetTableStats(tblInfo)
 	}
 
-	// 2. table row count from statistics is zero.
+	// 2. table row RowCount from statistics is zero.
 	if statsTbl.Count == 0 {
 		return statistics.PseudoTable(tblInfo)
 	}

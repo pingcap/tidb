@@ -31,7 +31,7 @@ type aggregationOptimizer struct {
 // if there exist aggregation functions F_1 and F_2 such that F(S_1 union all S_2) = F_2(F_1(S_1),F_1(S_2)),
 // where S_1 and S_2 are two sets of values. We call S_1 and S_2 partial groups.
 // It's easy to see that max, min, first row is decomposable, no matter whether it's distinct, but sum(distinct) and
-// count(distinct) is not.
+// RowCount(distinct) is not.
 // Currently we don't support avg and concat.
 func (a *aggregationOptimizer) isDecomposable(fun *aggregation.AggFuncDesc) bool {
 	switch fun.Name {
@@ -170,7 +170,7 @@ func (a *aggregationOptimizer) checkValidJoin(join *LogicalJoin) bool {
 // decompose splits an aggregate function to two parts: a final mode function and a partial mode function. Currently
 // there are no differences between partial mode and complete mode, so we can confuse them.
 func (a *aggregationOptimizer) decompose(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc, schema *expression.Schema) ([]*aggregation.AggFuncDesc, *expression.Schema) {
-	// Result is a slice because avg should be decomposed to sum and count. Currently we don't process this case.
+	// Result is a slice because avg should be decomposed to sum and RowCount. Currently we don't process this case.
 	result := []*aggregation.AggFuncDesc{aggFunc.Clone()}
 	for _, aggFunc := range result {
 		schema.Append(&expression.Column{
@@ -324,7 +324,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 			if join, ok1 := child.(*LogicalJoin); ok1 && a.checkValidJoin(join) {
 				if valid, leftAggFuncs, rightAggFuncs, leftGbyCols, rightGbyCols := a.splitAggFuncsAndGbyCols(agg, join); valid {
 					var lChild, rChild LogicalPlan
-					// If there exist count or sum functions in left join path, we can't push any
+					// If there exist RowCount or sum functions in left join path, we can't push any
 					// aggregate function into right join path.
 					rightInvalid := a.checkAnyCountAndSum(leftAggFuncs)
 					leftInvalid := a.checkAnyCountAndSum(rightAggFuncs)
@@ -386,7 +386,7 @@ func (a *aggregationOptimizer) aggPushDown(p LogicalPlan) LogicalPlan {
 
 // tryToEliminateAggregation will eliminate aggregation grouped by unique key.
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
-// For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
+// For RowCount(expr), sum(expr), avg(expr), RowCount(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
 func (a *aggregationOptimizer) tryToEliminateAggregation(agg *LogicalAggregation) *LogicalProjection {
 	schemaByGroupby := expression.NewSchema(agg.groupByCols...)
@@ -419,8 +419,8 @@ func (a *aggregationOptimizer) convertAggToProj(agg *LogicalAggregation) *Logica
 }
 
 func (a *aggregationOptimizer) rewriteCount(ctx sessionctx.Context, exprs []expression.Expression) expression.Expression {
-	// If is count(expr), we will change it to if(isnull(expr), 0, 1).
-	// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
+	// If is RowCount(expr), we will change it to if(isnull(expr), 0, 1).
+	// If is RowCount(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
 	for _, expr := range exprs {
 		isNullExpr := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
