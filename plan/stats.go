@@ -176,7 +176,7 @@ func (p *LogicalSelection) deriveStats() (*statsInfo, error) {
 		return nil, errors.Trace(err)
 	}
 	factor := selectionFactor
-	if p.ctx.GetSessionVars().OptimizerSelectivityLevel == 1 && childProfile.histColl != nil {
+	if p.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && childProfile.histColl != nil {
 		factor, err = childProfile.histColl.Selectivity(p.ctx, p.Conditions)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -278,6 +278,7 @@ func (p *LogicalProjection) deriveStats() (*statsInfo, error) {
 	return p.stats, nil
 }
 
+// deriveHistStats maintains histograms information for projection using its child's `HistColl`.
 func (p *LogicalProjection) deriveHistStats(childProfile *statsInfo) {
 	colHistMap := make(map[int64]*statistics.Column)
 	colIDMap := make(map[int64]int64)

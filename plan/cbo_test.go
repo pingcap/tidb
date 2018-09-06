@@ -690,6 +690,7 @@ func (s *testAnalyzeSuite) TestInconsistentEstimation(c *C) {
 		))
 }
 
+// Test the row count estimation when we maintain histogram in planner, i.e. set `tidb_optimizer_selectivity_level` to 1.
 func (s *testAnalyzeSuite) TestHistogramInPlan(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
