@@ -93,6 +93,7 @@ const (
 	boServerBusy
 	BoNotLeader
 	BoStaleEpoch
+	BoTransferLeader
 )
 
 func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
@@ -118,6 +119,8 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
 		return NewBackoffFn(1, 500, NoJitter)
 	case BoStaleEpoch:
 		return NewBackoffFn(1, 500, NoJitter)
+	case BoTransferLeader:
+		return NewBackoffFn(1, 500, NoJitter)
 	}
 	return nil
 }
@@ -142,6 +145,8 @@ func (t backoffType) String() string {
 		return "notLeader"
 	case BoStaleEpoch:
 		return "staleEpoch"
+	case BoTransferLeader:
+		return "transferLeader"
 	}
 	return ""
 }

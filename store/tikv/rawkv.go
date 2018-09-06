@@ -16,6 +16,7 @@ package tikv
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/juju/errors"
@@ -329,6 +330,8 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Respon
 				tp = BoNotLeader
 			} else if regionErr.GetStaleEpoch() != nil {
 				tp = BoStaleEpoch
+			} else if strings.Contains(regionErr.String(), "raft: proposal dropped") {
+				tp = BoTransferLeader
 			}
 			msg := fmt.Sprintf("[region %v] %s", loc.Region.GetID(), regionErr.String())
 			err := bo.Backoff(tp, errors.New(msg))
