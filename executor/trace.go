@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"bytes"
+	"fmt"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
@@ -61,6 +63,7 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	optimizeSp.LogKV("optimize", "finished")
 	optimizeSp.Finish()
 
 	pp, ok := stmtPlan.(plannercore.PhysicalPlan)
@@ -110,6 +113,18 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
+func generateMessage(sp basictracer.RawSpan) string {
+	start := sp.Start
+	msg := bytes.NewBufferString("")
+	for i, l := range sp.Logs {
+		msg.WriteString(fmt.Sprintf("%s tooks %s", l.Fields[0].String(), l.Timestamp.Sub(start).String()))
+		if i != len(sp.Logs)-1 {
+			msg.WriteString("\n")
+		}
+	}
+	return msg.String()
+}
+
 func dfsTree(span basictracer.RawSpan, tree map[uint64][]basictracer.RawSpan, prefix string, isLast bool, chk *chunk.Chunk) {
 	suffix := ""
 	spans := tree[span.Context.SpanID]
@@ -128,7 +143,7 @@ func dfsTree(span basictracer.RawSpan, tree map[uint64][]basictracer.RawSpan, pr
 
 	chk.AppendString(0, prefix+suffix+span.Operation)
 	chk.AppendString(1, span.Start.Format(time.StampNano))
-	chk.AppendString(2, span.Duration.String())
+	chk.AppendString(2, generateMessage(span))
 
 	for i, sp := range spans {
 		dfsTree(sp, tree, newPrefix, i == (len(spans))-1 /*last element of array*/, chk)

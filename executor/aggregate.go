@@ -215,6 +215,7 @@ func (e *HashAggExec) Close() error {
 	for range e.finalOutputCh {
 	}
 
+	e.trace.Finish()
 	return errors.Trace(e.baseExecutor.Close())
 }
 
@@ -505,6 +506,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	e.trace.LogKV("next", "finished")
 	chk.Reset()
 	if e.isUnparallelExec {
 		return errors.Trace(e.unparallelExec(ctx, chk))

@@ -16,6 +16,9 @@ package distsql
 import (
 	"time"
 
+<<<<<<< HEAD
+	"github.com/juju/errors"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -68,6 +71,7 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+	trace        opentracing.Span
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -75,6 +79,7 @@ func (r *selectResult) Fetch(ctx context.Context) {
 }
 
 func (r *selectResult) fetch(ctx context.Context) {
+	defer r.trace.LogKV("fetch", "finished")
 	startTime := time.Now()
 	defer func() {
 		close(r.results)
@@ -104,6 +109,7 @@ func (r *selectResult) fetch(ctx context.Context) {
 
 // NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
+	defer r.trace.LogKV("NextRaw", "finished")
 	re := <-r.results
 	r.partialCount++
 	r.feedback.Invalidate()
@@ -115,6 +121,7 @@ func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 
 // Next reads data to the chunk.
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
+	defer r.trace.LogKV("Next", "finished")
 	chk.Reset()
 	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
@@ -135,6 +142,7 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 func (r *selectResult) getSelectResp() error {
+	defer r.trace.LogKV("Next", "finished")
 	r.respChkIdx = 0
 	for {
 		re := <-r.results
@@ -191,5 +199,6 @@ func (r *selectResult) Close() error {
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	close(r.closed)
+	r.trace.Finish()
 	return r.resp.Close()
 }

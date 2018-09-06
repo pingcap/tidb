@@ -168,6 +168,7 @@ func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk
 func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) error {
 	if !e.prepared {
 		e.prepare(ctx)
+		e.trace.LogKV("prepare", "finished")
 		e.prepared = true
 	}
 
@@ -240,6 +241,7 @@ func (e *ProjectionExec) Close() error {
 		}
 		e.outputCh = nil
 	}
+	e.trace.LogKV("next", "finished")
 	e.trace.Finish()
 	return errors.Trace(e.baseExecutor.Close())
 }

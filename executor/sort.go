@@ -76,6 +76,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	defer e.trace.LogKV("next", "finished")
 	chk.Reset()
 	if !e.fetched {
 		err := e.fetchRowChunks(ctx)

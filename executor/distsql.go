@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -243,6 +244,7 @@ func (e *IndexReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	defer e.trace.LogKV("next", "finished")
 	err := e.result.Next(ctx, chk)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -252,6 +254,7 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 
 // Open implements the Executor Open interface.
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
+	e.trace, ctx = tracing.ChildSpan(ctx, e.id)
 	var err error
 	if e.corColInAccess {
 		e.ranges, err = rebuildIndexRanges(e.ctx, e.plans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
@@ -343,6 +346,7 @@ type IndexLookUpExecutor struct {
 
 // Open implements the Executor Open interface.
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
+	e.trace, ctx = tracing.ChildSpan(ctx, e.id)
 	var err error
 	if e.corColInAccess {
 		e.ranges, err = rebuildIndexRanges(e.ctx, e.idxPlans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
@@ -507,11 +511,13 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.finished = nil
 	e.memTracker.Detach()
 	e.memTracker = nil
+	e.trace.Finish()
 	return nil
 }
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	defer e.trace.LogKV("next", "finished")
 	chk.Reset()
 	for {
 		resultTask, err := e.getResultTask()
