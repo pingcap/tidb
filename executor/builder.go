@@ -422,7 +422,7 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	n := int(mathutil.MinUint64(v.Count, math.MaxInt64))
+	n := int(mathutil.MinUint64(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
 	e := &LimitExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec).withInitCap(n),
 		begin:        v.Offset,
