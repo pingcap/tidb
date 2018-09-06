@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -919,5 +921,109 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 		s.hook.results = ""
 		testKit.MustQuery(t.sql)
 		c.Assert(s.hook.results, Equals, t.result)
+	}
+}
+
+func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
+	columns := map[int64]*statistics.Column{}
+	columns[1] = &statistics.Column{Count: 1}
+	tests := []struct {
+		tbl    *statistics.Table
+		ratio  float64
+		limit  time.Duration
+		start  string
+		end    string
+		now    string
+		result bool
+	}{
+		// table was never analyzed and has reach the limit
+		{
+			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			limit:  0,
+			ratio:  0,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: true,
+		},
+		// table was never analyzed but has not reach the limit
+		{
+			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			limit:  time.Hour,
+			ratio:  0,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: false,
+		},
+		// table was already analyzed but auto analyze is disabled
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: false,
+		},
+		// table was already analyzed and but modify count is small
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: false,
+		},
+		// table was already analyzed and but not within time period
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:02 +0800",
+			result: false,
+		},
+		// table was already analyzed and but not within time period
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "22:00 +0800",
+			end:    "06:00 +0800",
+			now:    "10:00 +0800",
+			result: false,
+		},
+		// table was already analyzed and within time period
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: true,
+		},
+		// table was already analyzed and within time period
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "22:00 +0800",
+			end:    "06:00 +0800",
+			now:    "23:00 +0800",
+			result: true,
+		},
+	}
+	for _, test := range tests {
+		start, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.start, time.UTC)
+		c.Assert(err, IsNil)
+		end, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.end, time.UTC)
+		c.Assert(err, IsNil)
+		now, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.now, time.UTC)
+		c.Assert(err, IsNil)
+		c.Assert(statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now), Equals, test.result)
 	}
 }
