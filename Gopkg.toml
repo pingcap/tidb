@@ -70,8 +70,7 @@ required = ["github.com/golang/protobuf/jsonpb"]
 
 [[constraint]]
   name = "github.com/pingcap/pd"
-  branch = "misono/get-all-stores"
-  source = "https://github.com/MyonKeminta/pd"
+  branch = "master"
 
 [[constraint]]
   name = "github.com/pingcap/kvproto"

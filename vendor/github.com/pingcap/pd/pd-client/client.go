@@ -559,26 +559,26 @@ type TSFuture interface {
 	Wait() (int64, int64, error)
 }
 
-func (req *tsoRequest) Wait() (int64, int64, error) {
+func (req *tsoRequest) Wait() (physical int64, logical int64, err error) {
 	// If tso command duration is observed very high, the reason could be it
 	// takes too long for Wait() be called.
 	cmdDuration.WithLabelValues("tso_async_wait").Observe(time.Since(req.start).Seconds())
 	select {
-	case err := <-req.done:
+	case err = <-req.done:
 		defer tsoReqPool.Put(req)
 		if err != nil {
 			cmdFailedDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds())
 			return 0, 0, errors.WithStack(err)
 		}
-		physical, logical := req.physical, req.logical
+		physical, logical = req.physical, req.logical
 		cmdDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds())
-		return physical, logical, err
+		return
 	case <-req.ctx.Done():
 		return 0, 0, errors.WithStack(req.ctx.Err())
 	}
 }
 
-func (c *client) GetTS(ctx context.Context) (int64, int64, error) {
+func (c *client) GetTS(ctx context.Context) (physical int64, logical int64, err error) {
 	resp := c.GetTSAsync(ctx)
 	return resp.Wait()
 }

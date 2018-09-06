@@ -372,7 +372,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
 
-		err = w.sendDestroyRangeRequest(ctx, startKey, endKey)
+		err = w.sendUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -408,7 +408,7 @@ func (w *GCWorker) reDeleteRanges(ctx context.Context, safePoint uint64) error {
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
 
-		err = w.sendDestroyRangeRequest(ctx, startKey, endKey)
+		err = w.sendUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -425,7 +425,7 @@ func (w *GCWorker) reDeleteRanges(ctx context.Context, safePoint uint64) error {
 	return nil
 }
 
-func (w *GCWorker) sendDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte) error {
+func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte) error {
 	// Get all stores every time deleting a region. So the store list is less probably to be stale.
 	stores, err := w.pdClient.GetAllStores(ctx)
 	if err != nil {
@@ -434,8 +434,8 @@ func (w *GCWorker) sendDestroyRangeRequest(ctx context.Context, startKey []byte,
 	}
 
 	req := &tikvrpc.Request{
-		Type: tikvrpc.CmdDestroyRange,
-		DestroyRange: &kvrpcpb.DestroyRangeRequest{
+		Type: tikvrpc.CmdUnsafeDestroyRange,
+		UnsafeDestroyRange: &kvrpcpb.UnsafeDestroyRangeRequest{
 			StartKey: startKey,
 			EndKey:   endKey,
 		},
@@ -446,7 +446,7 @@ func (w *GCWorker) sendDestroyRangeRequest(ctx context.Context, startKey []byte,
 			continue
 		}
 
-		_, err1 := w.store.GetTiKVClient().SendRequest(ctx, store.Address, req, tikv.DestroyRangeTimeout)
+		_, err1 := w.store.GetTiKVClient().SendRequest(ctx, store.Address, req, tikv.UnsafeDestroyRangeTimeout)
 		if err1 != nil {
 			log.Errorf("[gc worker] %s destroy range on store %v failed with error: %v", w.uuid, store.Id, errors.ErrorStack(err))
 			err = err1
@@ -945,7 +945,7 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 }
 
 func (w *GCWorker) saveValueToSysTable(key, value string) error {
-	stmt := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	stmt := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[2]s', comment = '%[3]s'`,
 		key, value, gcVariableComments[key])
