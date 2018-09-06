@@ -48,7 +48,6 @@ const (
 	maxSketchSize        = 10000
 	defaultCMSketchDepth = 5
 	defaultCMSketchWidth = 2048
-	defaultNumBuckets    = 256
 )
 
 // Next implements the Executor Next interface.

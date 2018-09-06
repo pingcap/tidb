@@ -1387,14 +1387,10 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 	}
-	maxNumBuckets := v.MaxNumBuckets
-	if maxNumBuckets == 0 {
-		maxNumBuckets = defaultNumBuckets
-	}
 	for _, task := range v.ColTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: colTask,
-			colExec:  b.buildAnalyzeColumnsPushdown(task, maxNumBuckets),
+			colExec:  b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets),
 		})
 		if b.err != nil {
 			b.err = errors.Trace(b.err)
@@ -1404,7 +1400,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	for _, task := range v.IdxTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: idxTask,
-			idxExec:  b.buildAnalyzeIndexPushdown(task, maxNumBuckets),
+			idxExec:  b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets),
 		})
 		if b.err != nil {
 			b.err = errors.Trace(b.err)

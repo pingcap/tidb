@@ -1240,7 +1240,7 @@ MaxNumBuckets:
 	{
 		$$ = uint64(0)
 	}
-|	"LIMIT" NUM "BUCKETS"
+|	"WITH" NUM "BUCKETS"
 	{
 		$$ = getUint64FromNUM($2)
 	}

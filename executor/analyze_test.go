@@ -80,7 +80,7 @@ func (s *testSuite) TestAnalyzeParameters(c *C) {
 	tbl := s.domain.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(tbl.Columns[1].Len(), Equals, 20)
 
-	tk.MustExec("analyze table t limit 4 buckets")
+	tk.MustExec("analyze table t with 4 buckets")
 	tbl = s.domain.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(tbl.Columns[1].Len(), Equals, 4)
 }

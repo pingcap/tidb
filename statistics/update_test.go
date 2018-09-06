@@ -886,7 +886,7 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
-	testKit.MustExec("analyze table t limit 4 buckets")
+	testKit.MustExec("analyze table t with 4 buckets")
 	tests := []struct {
 		sql    string
 		result string
