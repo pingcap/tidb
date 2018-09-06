@@ -908,8 +908,8 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 
 	if pi != nil && pi.Type == model.PartitionTypeRange {
-		// Only range type partition are now supported.
-		// Range columns partition only implement parser so do not check.
+		// Only range type partition is now supported.
+		// Range columns partition only implements the parser, so it will not be checked.
 		if s.Partition.ColumnNames == nil {
 			if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
 				return errors.Trace(err)
