@@ -208,14 +208,14 @@ func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 			accesses[offset] = cond
 			continue
 		}
-		//multiple Eq/In conditions for one column in CNF, apply intersection on them
-		//lazily compute the points for the previously visited Eq/In
+		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
+		// Lazily compute the points for the previously visited Eq/In
 		if mergedAccesses[offset] == nil {
 			mergedAccesses[offset] = accesses[offset]
 			points[offset] = rb.build(accesses[offset])
 		}
 		points[offset] = rb.intersection(points[offset], rb.build(cond))
-		//early termination if false expression found
+		// Early termination if false expression found
 		if len(points[offset]) == 0 {
 			return nil, nil, nil, true
 		}
