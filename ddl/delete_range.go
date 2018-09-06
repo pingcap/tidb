@@ -21,13 +21,10 @@ import (
 	"sync"
 
 	"github.com/juju/errors"
-	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -51,7 +48,7 @@ type delRangeManager interface {
 
 type delRange struct {
 	store        kv.Storage
-	ctxPool      *pools.ResourcePool
+	sessPool     *sessionPool
 	storeSupport bool
 	emulatorCh   chan struct{}
 	keys         []kv.Key
@@ -61,10 +58,10 @@ type delRange struct {
 }
 
 // newDelRangeManager returns a delRangeManager.
-func newDelRangeManager(store kv.Storage, ctxPool *pools.ResourcePool) delRangeManager {
+func newDelRangeManager(store kv.Storage, sessPool *sessionPool) delRangeManager {
 	dr := &delRange{
 		store:        store,
-		ctxPool:      ctxPool,
+		sessPool:     sessPool,
 		storeSupport: store.SupportDeleteRange(),
 		quitCh:       make(chan struct{}),
 	}
@@ -77,14 +74,11 @@ func newDelRangeManager(store kv.Storage, ctxPool *pools.ResourcePool) delRangeM
 
 // addDelRangeJob implements delRangeManager interface.
 func (dr *delRange) addDelRangeJob(job *model.Job) error {
-	resource, err := dr.ctxPool.Get()
+	ctx, err := dr.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer dr.ctxPool.Put(resource)
-	ctx := resource.(sessionctx.Context)
-	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
-	ctx.GetSessionVars().InRestrictedSQL = true
+	defer dr.sessPool.put(ctx)
 
 	err = insertJobIntoDeleteRangeTable(ctx, job)
 	if err != nil {
@@ -110,7 +104,7 @@ func (dr *delRange) clear() {
 	log.Infof("[ddl] closing delRange session pool")
 	close(dr.quitCh)
 	dr.wait.Wait()
-	dr.ctxPool.Close()
+	dr.sessPool.close()
 }
 
 // startEmulator is only used for those storage engines which don't support
@@ -131,15 +125,12 @@ func (dr *delRange) startEmulator() {
 }
 
 func (dr *delRange) doDelRangeWork() error {
-	resource, err := dr.ctxPool.Get()
+	ctx, err := dr.sessPool.get()
 	if err != nil {
 		log.Errorf("[ddl] delRange emulator get session fail: %s", err)
 		return errors.Trace(err)
 	}
-	defer dr.ctxPool.Put(resource)
-	ctx := resource.(sessionctx.Context)
-	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
-	ctx.GetSessionVars().InRestrictedSQL = true
+	defer dr.sessPool.put(ctx)
 
 	ranges, err := util.LoadDeleteRanges(ctx, math.MaxInt64)
 	if err != nil {
@@ -216,7 +207,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 // and inserts a new record into gc_delete_range table. The primary key is
 // job ID, so we ignore key conflict error.
 func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error {
-	now, err := getNowTS(ctx)
+	now, err := getNowTSO(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -310,7 +301,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 	return nil
 }
 
-func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, endKey kv.Key, ts int64) error {
+func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, endKey kv.Key, ts uint64) error {
 	log.Infof("[ddl] insert into delete-range table with key: (%d,%d)", jobID, elementID)
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
@@ -319,12 +310,11 @@ func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, end
 	return errors.Trace(err)
 }
 
-// getNowTS gets the current timestamp, in second.
-func getNowTS(ctx sessionctx.Context) (int64, error) {
+// getNowTS gets the current timestamp, in TSO.
+func getNowTSO(ctx sessionctx.Context) (uint64, error) {
 	currVer, err := ctx.GetStore().CurrentVersion()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	physical := oracle.ExtractPhysical(currVer.Ver)
-	return physical / 1e3, nil
+	return currVer.Ver, nil
 }

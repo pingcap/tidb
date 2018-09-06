@@ -1,3 +1,11 @@
+---
+name: "\U0001F41B Bug Report"
+about: Something isn't working as expected
+
+---
+
+## Bug Report
+
 Please answer these questions before submitting your issue. Thanks!
 
 1. What did you do?
