@@ -173,7 +173,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 	}
 }
 
-func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
+func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan, derive bool) (
 	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
 	otherCond []expression.Expression) {
 	for _, expr := range conditions {
@@ -211,13 +211,15 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 			// Relax expr to two supersets: leftRelaxedCond and rightRelaxedCond, the expression now is
 			// `expr AND leftRelaxedCond AND rightRelaxedCond`. Motivation is to push filters down to
 			// children as much as possible.
-			leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, left.Schema())
-			if leftRelaxedCond != nil {
-				leftCond = append(leftCond, leftRelaxedCond)
-			}
-			rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, right.Schema())
-			if rightRelaxedCond != nil {
-				rightCond = append(rightCond, rightRelaxedCond)
+			if derive {
+				leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, left.Schema())
+				if leftRelaxedCond != nil {
+					leftCond = append(leftCond, leftRelaxedCond)
+				}
+				rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, right.Schema())
+				if rightRelaxedCond != nil {
+					rightCond = append(rightCond, rightRelaxedCond)
+				}
 			}
 			otherCond = append(otherCond, expr)
 		}
