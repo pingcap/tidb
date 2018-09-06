@@ -151,7 +151,7 @@ type Column struct {
 	// We'll try to remove it in the future.
 	ID int64
 	// UniqueID is the unique id of this column.
-	UniqueID int
+	UniqueID int64
 	// IsAggOrSubq means if this column is referenced to a Aggregation column or a Subquery column.
 	// If so, this column's name will be the plain sql text.
 	IsAggOrSubq bool
@@ -374,4 +374,22 @@ func IndexInfo2Cols(cols []*Column, index *model.IndexInfo) ([]*Column, []int) {
 		}
 	}
 	return retCols, lengths
+}
+
+// FindPrefixOfIndex will find columns in index by checking the unique id.
+// So it will return at once no matching column is found.
+func FindPrefixOfIndex(cols []*Column, idxColIDs []int64) []*Column {
+	retCols := make([]*Column, 0, len(idxColIDs))
+idLoop:
+	for _, id := range idxColIDs {
+		for _, col := range cols {
+			if col.UniqueID == id {
+				retCols = append(retCols, col)
+				continue idLoop
+			}
+		}
+		// If no matching column is found, just return.
+		return retCols
+	}
+	return retCols
 }

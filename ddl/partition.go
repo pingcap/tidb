@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -103,28 +104,43 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) 
 }
 
 // checkPartitionFuncValid checks partition function validly.
-func checkPartitionFuncValid(expr ast.ExprNode) error {
+func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, expr ast.ExprNode) error {
 	switch v := expr.(type) {
-	case *ast.CaseExpr:
-		return ErrPartitionFunctionIsNotAllowed
+	case *ast.FuncCastExpr, *ast.CaseExpr:
+		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.FuncCallExpr:
 		// check function which allowed in partitioning expressions
 		// see https://dev.mysql.com/doc/mysql-partitioning-excerpt/5.7/en/partitioning-limitations-functions.html
 		switch v.FnName.L {
 		case ast.Abs, ast.Ceiling, ast.DateDiff, ast.Day, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear, ast.Extract, ast.Floor,
 			ast.Hour, ast.MicroSecond, ast.Minute, ast.Mod, ast.Month, ast.Quarter, ast.Second, ast.TimeToSec, ast.ToDays,
-			ast.ToSeconds, ast.UnixTimestamp, ast.Weekday, ast.Year, ast.YearWeek:
+			ast.ToSeconds, ast.Weekday, ast.Year, ast.YearWeek:
 			return nil
-		default:
-			return ErrPartitionFunctionIsNotAllowed
+		case ast.UnixTimestamp:
+			if len(v.Args) == 1 {
+				col, err := expression.RewriteSimpleExprWithTableInfo(ctx, tblInfo, v.Args[0])
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if col.GetType().Tp != mysql.TypeTimestamp {
+					return errors.Trace(errWrongExprInPartitionFunc)
+				}
+				return nil
+			}
 		}
+		return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 	case *ast.BinaryOperationExpr:
 		// The DIV operator (opcode.IntDiv) is also supported; the / operator ( opcode.Div ) is not permitted.
 		// see https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html
-		if v.Op == opcode.Div {
-			return ErrPartitionFunctionIsNotAllowed
+		switch v.Op {
+		case opcode.Or, opcode.And, opcode.Xor, opcode.LeftShift, opcode.RightShift, opcode.BitNeg, opcode.Div:
+			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 		}
 		return nil
+	case *ast.UnaryOperationExpr:
+		if v.Op == opcode.BitNeg {
+			return errors.Trace(ErrPartitionFunctionIsNotAllowed)
+		}
 	}
 	return nil
 }
@@ -162,7 +178,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 
 // checkCreatePartitionValue checks whether `less than value` is strictly increasing for each partition.
 // Side effect: it may simplify the partition range definition from a constant expression to an integer.
-func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo, pi *model.PartitionInfo) error {
+func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo, pi *model.PartitionInfo, cols []*table.Column) error {
 	defs := pi.Definitions
 	if len(defs) <= 1 {
 		return nil
@@ -171,13 +187,14 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	var prevRangeValue int64
+	isUnsignedBigint := isRangePartitionColUnsignedBigint(cols, pi)
+	var prevRangeValue interface{}
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
 			return errors.Trace(ErrPartitionMaxvalue)
 		}
 
-		currentRangeValue, fromExpr, err := getRangeValue(ctx, tblInfo, defs[i].LessThan[0])
+		currentRangeValue, fromExpr, err := getRangeValue(ctx, tblInfo, defs[i].LessThan[0], isUnsignedBigint)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -191,8 +208,14 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo,
 			continue
 		}
 
-		if currentRangeValue <= prevRangeValue {
-			return errors.Trace(ErrRangeNotIncreasing)
+		if isUnsignedBigint {
+			if currentRangeValue.(uint64) <= prevRangeValue.(uint64) {
+				return errors.Trace(ErrRangeNotIncreasing)
+			}
+		} else {
+			if currentRangeValue.(int64) <= prevRangeValue.(int64) {
+				return errors.Trace(ErrRangeNotIncreasing)
+			}
 		}
 		prevRangeValue = currentRangeValue
 	}
@@ -201,23 +224,34 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo,
 
 // getRangeValue gets an integer from the range value string.
 // The returned boolean value indicates whether the input string is a constant expression.
-func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string) (int64, bool, error) {
+func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string, unsignedBigint bool) (interface{}, bool, error) {
+	// Unsigned bigint was converted to uint64 handle.
+	if unsignedBigint {
+		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
+			return value, false, nil
+		}
 
-	if value, err := strconv.ParseInt(str, 10, 64); err == nil {
-		return value, false, nil
-	}
-
-	// The range value maybe not an integer, it could be a constant expression.
-	// For example, the following two cases are the same:
-	// PARTITION p0 VALUES LESS THAN (TO_SECONDS('2004-01-01'))
-	// PARTITION p0 VALUES LESS THAN (63340531200)
-	if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
-		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-		if err2 == nil && isNull == false {
-			return res, true, nil
+		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
+			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+			if err2 == nil && isNull == false {
+				return uint64(res), true, nil
+			}
+		}
+	} else {
+		if value, err := strconv.ParseInt(str, 10, 64); err == nil {
+			return value, false, nil
+		}
+		// The range value maybe not an integer, it could be a constant expression.
+		// For example, the following two cases are the same:
+		// PARTITION p0 VALUES LESS THAN (TO_SECONDS('2004-01-01'))
+		// PARTITION p0 VALUES LESS THAN (63340531200)
+		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
+			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+			if err2 == nil && isNull == false {
+				return res, true, nil
+			}
 		}
 	}
-
 	return 0, false, ErrNotAllowedTypeInPartition.GenByArgs(str)
 }
 
@@ -371,4 +405,15 @@ func checkConstraintIncludePartKey(partkeys []string, constraints map[string]str
 		}
 	}
 	return true
+}
+
+// isRangePartitionColUnsignedBigint returns true if the partitioning key column type is unsigned bigint type.
+func isRangePartitionColUnsignedBigint(cols []*table.Column, pi *model.PartitionInfo) bool {
+	for _, col := range cols {
+		isUnsigned := col.Tp == mysql.TypeLonglong && mysql.HasUnsignedFlag(col.Flag)
+		if isUnsigned && strings.Contains(strings.ToLower(pi.Expr), col.Name.L) {
+			return true
+		}
+	}
+	return false
 }

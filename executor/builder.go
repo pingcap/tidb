@@ -89,6 +89,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildDelete(v)
 	case *plan.Execute:
 		return b.buildExecute(v)
+	case *plan.Trace:
+		return b.buildTrace(v)
 	case *plan.Explain:
 		return b.buildExplain(v)
 	case *plan.PointGetPlan:
@@ -248,6 +250,7 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		tables:       v.Tables,
 		is:           b.is,
+		genExprs:     v.GenExprs,
 	}
 	return e
 }
@@ -616,6 +619,16 @@ func (b *executorBuilder) buildDDL(v *plan.DDL) Executor {
 		is:           b.is,
 	}
 	return e
+}
+
+// buildTrace builds a TraceExec for future executing. This method will be called
+// at build().
+func (b *executorBuilder) buildTrace(v *plan.Trace) Executor {
+	return &TraceExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		stmtNode:     v.StmtNode,
+		builder:      b,
+	}
 }
 
 // buildExplain builds a explain executor. `e.rows` collects final result to `ExplainExec`.
@@ -1215,7 +1228,7 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	columns2Handle := buildColumns2Handle(v.Schema(), tblID2table)
+	columns2Handle := buildColumns2Handle(v.SelectPlan.Schema(), tblID2table)
 	updateExec := &UpdateExec{
 		baseExecutor:   newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
 		SelectExec:     selExec,

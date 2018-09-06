@@ -843,22 +843,22 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 			HighVal: []types.Datum{ran.HighVal[rangePosition]},
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
-		var rangeString string
 		// prefer index stats over column stats
-		if idx, ok := t.colName2Idx[colName]; ok {
-			if t.Indices[idx] == nil {
-				return
-			}
-			rangeString = logForIndexRange(t.Indices[idx], &rang, -1, factor)
+		if idxHist := t.indexStartWithColumnForDebugLog(colName); idxHist != nil && idxHist.Histogram.Len() > 0 {
+			rangeString := logForIndexRange(idxHist, &rang, -1, factor)
+			log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
+				actual[i], equalityString, equalityCount, rangeString)
+		} else if colHist := t.columnByNameForDebugLog(colName); colHist != nil && colHist.Histogram.Len() > 0 {
+			rangeString := colRangeToStr(colHist, &rang, -1, factor)
+			log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
+				actual[i], equalityString, equalityCount, rangeString)
 		} else {
-			id := t.colName2ID[colName]
-			if t.Columns[id] == nil {
-				return
+			count, err := getPseudoRowCountByColumnRanges(sc, float64(t.Count), []*ranger.Range{&rang}, 0)
+			if err == nil {
+				log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, range: %s, pseudo count: %.0f", prefix, idx.Info.Name.O,
+					actual[i], equalityString, equalityCount, rang.String(), count)
 			}
-			rangeString = colRangeToStr(t.Columns[t.colName2ID[colName]], &rang, -1, factor)
 		}
-		log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
-			actual[i], equalityString, equalityCount, rangeString)
 	}
 }
 

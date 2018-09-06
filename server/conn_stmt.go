@@ -42,6 +42,7 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"golang.org/x/net/context"
 )
@@ -245,12 +246,20 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 	var isNull bool
 
 	for i := 0; i < len(args); i++ {
-		if nullBitmap[i>>3]&(1<<(uint(i)%8)) > 0 {
-			args[i] = nil
-			continue
-		}
+		// if params had received via ComStmtSendLongData, use them directly.
+		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
+		// see clientConn#handleStmtSendLongData
 		if boundParams[i] != nil {
 			args[i] = boundParams[i]
+			continue
+		}
+
+		// check nullBitMap to determine the NULL arguments.
+		// ref https://dev.mysql.com/doc/internals/en/com-stmt-execute.html
+		// notice: some client(e.g. mariadb) will set nullBitMap even if data had be sent via ComStmtSendLongData,
+		// so this check need place after boundParam's check.
+		if nullBitmap[i>>3]&(1<<(uint(i)%8)) > 0 {
+			args[i] = nil
 			continue
 		}
 
@@ -354,7 +363,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			pos++
 			switch length {
 			case 0:
-				args[i] = "0"
+				args[i] = types.ZeroDatetimeStr
 			case 4:
 				pos, args[i] = parseBinaryDate(pos, paramValues)
 			case 7:

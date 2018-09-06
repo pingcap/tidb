@@ -80,7 +80,7 @@ func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
 			}
 
 			// Update row
-			changed, _, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
+			changed, _, _, err1 := updateRecord(e.ctx, handle, oldData, newTableData, flags, tbl, false)
 			if err1 == nil {
 				if changed {
 					e.updatedRowKeys[id][handle] = struct{}{}

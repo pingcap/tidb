@@ -57,9 +57,6 @@ type TableReaderExecutor struct {
 
 // Open initialzes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
-	span, ctx := startSpanFollowsContext(ctx, "executor.TableReader.Open")
-	defer span.Finish()
-
 	var err error
 	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
@@ -101,11 +98,11 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
-	err := e.resultHandler.nextChunk(ctx, chk)
-	if err != nil {
+	if err := e.resultHandler.nextChunk(ctx, chk); err != nil {
 		e.feedback.Invalidate()
+		return err
 	}
-	return errors.Trace(err)
+	return errors.Trace(nil)
 }
 
 // Close implements the Executor Close interface.
@@ -115,7 +112,7 @@ func (e *TableReaderExecutor) Close() error {
 	return errors.Trace(err)
 }
 
-// buildResp first build request and send it to tikv using distsql.Select. It uses SelectResut returned by the callee
+// buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder

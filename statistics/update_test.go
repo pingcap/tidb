@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -403,6 +405,40 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(hg.NDV, Equals, int64(3))
 	c.Assert(hg.Len(), Equals, 3)
+}
+
+func (s *testStatsUpdateSuite) TestTableAnalyzed(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a int)")
+	testKit.MustExec("insert into t values (1)")
+
+	is := s.do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := s.do.StatsHandle()
+
+	h.Update(is)
+	statsTbl := h.GetTableStats(tableInfo)
+	c.Assert(statistics.TableAnalyzed(statsTbl), IsFalse)
+
+	testKit.MustExec("analyze table t")
+	h.Update(is)
+	statsTbl = h.GetTableStats(tableInfo)
+	c.Assert(statistics.TableAnalyzed(statsTbl), IsTrue)
+
+	h.Clear()
+	oriLease := h.Lease
+	// set it to non-zero so we will use load by need strategy
+	h.Lease = 1
+	defer func() {
+		h.Lease = oriLease
+	}()
+	h.Update(is)
+	statsTbl = h.GetTableStats(tableInfo)
+	c.Assert(statistics.TableAnalyzed(statsTbl), IsTrue)
 }
 
 func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
@@ -835,23 +871,26 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 	oriMinError := statistics.MinLogErrorRate
 	oriLevel := log.GetLevel()
 	oriBucketNum := executor.GetMaxBucketSizeForTest()
+	oriLease := s.do.StatsHandle().Lease
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MinLogScanCount = oriMinLogCount
 		statistics.MinLogErrorRate = oriMinError
 		executor.SetMaxBucketSizeForTest(oriBucketNum)
+		s.do.StatsHandle().Lease = oriLease
 		log.SetLevel(oriLevel)
 	}()
 	executor.SetMaxBucketSizeForTest(4)
 	statistics.FeedbackProbability = 1
 	statistics.MinLogScanCount = 0
 	statistics.MinLogErrorRate = 0
+	s.do.StatsHandle().Lease = 1
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b), index idx_ba(b,a))")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), primary key(a), index idx(b), index idx_ba(b,a), index idx_bc(b,c))")
 	for i := 0; i < 20; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
 	testKit.MustExec("analyze table t")
 	tests := []struct {
@@ -873,6 +912,10 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 			result: "[stats-feedback] test.t, index: idx_ba, actual: 1, equality: 1, expected equality: 1, range: [-inf,6], actual: -1, expected: 6, buckets: {num: 8 lower_bound: 0 upper_bound: 7 repeats: 1}",
 		},
 		{
+			sql:    "select b from t use index(idx_bc) where b = 1 and c <= 5",
+			result: "[stats-feedback] test.t, index: idx_bc, actual: 1, equality: 1, expected equality: 1, range: [-inf,6], pseudo count: 7",
+		},
+		{
 			sql:    "select b from t use index(idx_ba) where b = 1",
 			result: "[stats-feedback] test.t, index: idx_ba, value: 1, actual: 1, expected: 1",
 		},
@@ -882,5 +925,109 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 		s.hook.results = ""
 		testKit.MustQuery(t.sql)
 		c.Assert(s.hook.results, Equals, t.result)
+	}
+}
+
+func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
+	columns := map[int64]*statistics.Column{}
+	columns[1] = &statistics.Column{Count: 1}
+	tests := []struct {
+		tbl    *statistics.Table
+		ratio  float64
+		limit  time.Duration
+		start  string
+		end    string
+		now    string
+		result bool
+	}{
+		// table was never analyzed and has reach the limit
+		{
+			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			limit:  0,
+			ratio:  0,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: true,
+		},
+		// table was never analyzed but has not reach the limit
+		{
+			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			limit:  time.Hour,
+			ratio:  0,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: false,
+		},
+		// table was already analyzed but auto analyze is disabled
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: false,
+		},
+		// table was already analyzed and but modify count is small
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: false,
+		},
+		// table was already analyzed and but not within time period
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:02 +0800",
+			result: false,
+		},
+		// table was already analyzed and but not within time period
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "22:00 +0800",
+			end:    "06:00 +0800",
+			now:    "10:00 +0800",
+			result: false,
+		},
+		// table was already analyzed and within time period
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: true,
+		},
+		// table was already analyzed and within time period
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "22:00 +0800",
+			end:    "06:00 +0800",
+			now:    "23:00 +0800",
+			result: true,
+		},
+	}
+	for _, test := range tests {
+		start, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.start, time.UTC)
+		c.Assert(err, IsNil)
+		end, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.end, time.UTC)
+		c.Assert(err, IsNil)
+		now, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.now, time.UTC)
+		c.Assert(err, IsNil)
+		c.Assert(statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now), Equals, test.result)
 	}
 }
