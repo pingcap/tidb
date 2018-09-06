@@ -171,11 +171,114 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		YearWeek   interface{}
 	}{
 		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
+		{"0000-00-00 00:00:00", 0, 0, nil, 0, nil, nil, nil, nil, nil, nil, nil},
+		{"0000-00-00", 0, 0, nil, 0, nil, nil, nil, nil, nil, nil, nil},
+	}
+
+	dtblNil := tblToDtbl(tblNil)
+	for _, t := range dtblNil {
+		fc := funcs[ast.Year]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Year"][0])
+
+		fc = funcs[ast.Month]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Month"][0])
+
+		fc = funcs[ast.MonthName]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["MonthName"][0])
+
+		fc = funcs[ast.DayOfMonth]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["DayOfMonth"][0])
+
+		fc = funcs[ast.DayOfWeek]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["DayOfWeek"][0])
+
+		fc = funcs[ast.DayOfYear]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["DayOfYear"][0])
+
+		fc = funcs[ast.Weekday]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["WeekDay"][0])
+
+		fc = funcs[ast.DayName]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["DayName"][0])
+
+		fc = funcs[ast.Week]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Week"][0])
+
+		fc = funcs[ast.WeekOfYear]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["WeekOfYear"][0])
+
+		fc = funcs[ast.YearWeek]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["YearWeek"][0])
+	}
+
+
+	// test nil with 'NO_ZERO_DATE' set in sql_mode
+	tblNil = []struct {
+		Input      interface{}
+		Year       interface{}
+		Month      interface{}
+		MonthName  interface{}
+		DayOfMonth interface{}
+		DayOfWeek  interface{}
+		DayOfYear  interface{}
+		WeekDay    interface{}
+		DayName    interface{}
+		Week       interface{}
+		WeekOfYear interface{}
+		YearWeek   interface{}
+	}{
+		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 		{"0000-00-00 00:00:00", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 		{"0000-00-00", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 	}
 
-	dtblNil := tblToDtbl(tblNil)
+	dtblNil = tblToDtbl(tblNil)
+	s.ctx.GetSessionVars().SetSystemVar("sql_mode", "NO_ZERO_DATE")
 	for _, t := range dtblNil {
 		fc := funcs[ast.Year]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))

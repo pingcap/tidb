@@ -968,7 +968,7 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row chunk.Row) (res types.Time, i
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc, string(val.ToString()), b.tp.Tp, b.tp.Decimal)
+	res, err = types.ParseTimeFromFloatString(sc, string(val.ToString()), b.tp.Tp, b.tp.Decimal)
 	if err != nil {
 		return res, false, errors.Trace(err)
 	}
@@ -1175,7 +1175,7 @@ func (b *builtinCastStringAsTimeSig) evalTime(row chunk.Row) (res types.Time, is
 	sc := b.ctx.GetSessionVars().StmtCtx
 	res, err = types.ParseTime(sc, val, b.tp.Tp, b.tp.Decimal)
 	if err != nil {
-		return res, false, errors.Trace(err)
+		return res, false, err
 	}
 	if b.tp.Tp == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
