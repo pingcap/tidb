@@ -194,7 +194,7 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		if notLeader.GetLeader() != nil {
 			boType = BoUpdateLeader
 		} else {
-			boType = BoRegionMiss
+			boType = BoNotLeader
 		}
 
 		if err = bo.Backoff(boType, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {

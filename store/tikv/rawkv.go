@@ -323,11 +323,13 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Respon
 			return nil, nil, errors.Trace(err)
 		}
 		if regionErr != nil {
-			// Region cache has been updated, we can retry without backoff.
-			if regionErr.GetStaleEpoch() != nil {
-				continue
+			tp := BoRegionMiss
+			if regionErr.GetNotLeader() != nil {
+				tp = BoNotLeader
+			} else if regionErr.GetStaleEpoch() != nil {
+				tp = BoStaleEpoch
 			}
-			err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+			err := bo.Backoff(tp, errors.New(regionErr.String()))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}

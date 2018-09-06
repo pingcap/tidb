@@ -91,6 +91,8 @@ const (
 	BoRegionMiss
 	BoUpdateLeader
 	boServerBusy
+	BoNotLeader
+	BoStaleEpoch
 )
 
 func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
@@ -112,6 +114,10 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
 		return NewBackoffFn(1, 10, NoJitter)
 	case boServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
+	case BoNotLeader:
+		return NewBackoffFn(1, 500, NoJitter)
+	case BoStaleEpoch:
+		return NewBackoffFn(1, 500, NoJitter)
 	}
 	return nil
 }
@@ -132,6 +138,10 @@ func (t backoffType) String() string {
 		return "updateLeader"
 	case boServerBusy:
 		return "serverBusy"
+	case BoNotLeader:
+		return "notLeader"
+	case BoStaleEpoch:
+		return "staleEpoch"
 	}
 	return ""
 }
