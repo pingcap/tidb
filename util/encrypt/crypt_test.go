@@ -41,7 +41,7 @@ func (s *testEncryptSuite) TestSQLDecode(c *C) {
 			continue
 		}
 		c.Assert(err, IsNil, Commentf("%v", t))
-		result := toHex([]type(crypted))
+		result := toHex([]byte(crypted))
 		c.Assert(result, Equals, t.expect, Commentf("%v", t))
 	}
 }
