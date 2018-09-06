@@ -908,9 +908,8 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	}
 
 	if pi != nil && pi.Type == model.PartitionTypeRange {
-		// Check range partition.
-		// 1. partition by range(expr).
-		// 2. partitioned by range columns(column_list).
+		// Only range type partition are now supported.
+		// Range columns partition only implement parser so do not check.
 		if s.Partition.ColumnNames == nil {
 			if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
 				return errors.Trace(err)
@@ -935,8 +934,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
 				return errors.Trace(err)
 			}
-		} else {
-			// TODO: check partitioned by range columns.
 		}
 		tbInfo.Partition = pi
 	}

@@ -1712,8 +1712,8 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 		  partition p4 values less than (18446744073709551000 + 10)
 		);`)
 
-	// Range columns partition parser has been implemented, but not yet supported.
-	// So executing the following sql does not expect to see the error.
+	// Only range type partition are now supported, range columns partition only implement parser so do not check.
+	// So executing the following sql can be executed successfully.
 	s.tk.MustExec(`create table t29 (
 		a decimal
 	)
