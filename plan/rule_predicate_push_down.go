@@ -94,9 +94,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	leftPlan := p.children[0]
 	rightPlan := p.children[1]
 	var equalCond []*expression.ScalarFunction
-	var (
-		leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
-	)
+	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		// Handle where conditions
