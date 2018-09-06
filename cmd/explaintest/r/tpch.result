@@ -1219,7 +1219,7 @@ Projection_25	100.00	root	tpch.supplier.s_name, 17_col_0
   └─HashAgg_31	320000.00	root	group by:tpch.supplier.s_name, funcs:count(1), firstrow(tpch.supplier.s_name)
     └─Selection_32	3786715.90	root	not(16_aux_0)
       └─IndexJoin_38	4733394.87	root	left outer semi join, inner:IndexLookUp_37, outer key:l1.l_orderkey, inner key:l3.l_orderkey, other cond:ne(l3.l_suppkey, l1.l_suppkey)
-        ├─IndexJoin_82	4733394.87	root	semi join, inner:IndexLookUp_81, outer key:l1.l_orderkey, inner key:l2.l_orderkey, other cond:ne(l2.l_suppkey, l1.l_suppkey)
+        ├─IndexJoin_82	4733394.87	root	semi join, inner:IndexLookUp_81, outer key:l1.l_orderkey, inner key:l2.l_orderkey, other cond:ne(l2.l_suppkey, l1.l_suppkey), ne(l2.l_suppkey, tpch.supplier.s_suppkey)
         │ ├─HashLeftJoin_88	5916743.59	root	inner join, inner:TableReader_117, equal:[eq(tpch.supplier.s_nationkey, tpch.nation.n_nationkey)]
         │ │ ├─HashLeftJoin_93	147918589.81	root	inner join, inner:TableReader_114, equal:[eq(l1.l_suppkey, tpch.supplier.s_suppkey)]
         │ │ │ ├─IndexJoin_100	147918589.81	root	inner join, inner:IndexLookUp_99, outer key:tpch.orders.o_orderkey, inner key:l1.l_orderkey
