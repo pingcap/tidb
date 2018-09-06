@@ -1,5 +1,5 @@
 ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "github.com/coreos/etcd/auth"]
-required = ["github.com/pingcap/tidb-tools/pkg/etcd", "github.com/pingcap/tidb-tools/pkg/etcd/utils", "github.com/pingcap/tidb-tools/tidb-binlog/node", "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"]
+required = ["github.com/pingcap/tidb-tools/pkg/etcd", "github.com/pingcap/tidb-tools/pkg/utils", "github.com/pingcap/tidb-tools/tidb-binlog/node", "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"]
 
 [prune]
   non-go = true
