@@ -26,24 +26,24 @@ type randStruct struct {
 
 func (rs *randStruct) randomInit(password []byte, length int) {
 	// hash password
-	var nr,add,nr2,tmp uint32      
-        nr = 1345345333
-        add=7
-        nr2=0x12345671
+	var nr, add, nr2, tmp uint32
+	nr = 1345345333
+	add = 7
+	nr2 = 0x12345671
 
-        for i:=0; i< length; i++ {
+	for i := 0; i < length; i++ {
 		pswChar := password[i]
 		if pswChar == ' ' || pswChar == '\t' {
-			continue;
+			continue
 		}
 		tmp = uint32(pswChar)
-		nr^= (((nr & 63)+add)*tmp)+ (nr << 8)
-    		nr2+=(nr2 << 8) ^ nr
-    		add+=tmp
-        }
-	
-	seed1 := nr & ((uint32(1) << 31) -uint32(1))
-	seed2 := nr2 & ((uint32(1) << 31) -uint32(1))
+		nr ^= (((nr & 63) + add) * tmp) + (nr << 8)
+		nr2 += (nr2 << 8) ^ nr
+		add += tmp
+	}
+
+	seed1 := nr & ((uint32(1) << 31) - uint32(1))
+	seed2 := nr2 & ((uint32(1) << 31) - uint32(1))
 
 	fmt.Println(seed1)
 	fmt.Println(seed2)
@@ -59,7 +59,7 @@ func (rs *randStruct) myRand() float64 {
 	rs.seed1 = (rs.seed1*3 + rs.seed2) % rs.maxValue
 	rs.seed2 = (rs.seed1 + rs.seed2 + 33) % rs.maxValue
 
-	return ((float64(rs.seed1))/ rs.maxValueDbl)
+	return ((float64(rs.seed1)) / rs.maxValueDbl)
 }
 
 type SqlCrypt struct {
@@ -116,26 +116,26 @@ func (sc *SqlCrypt) decode(str []byte, length int) {
 	}
 }
 
-func SQLDecode(str string, password string) (string,error) {
+func SQLDecode(str string, password string) (string, error) {
 	var sqlCrypt SqlCrypt
-	
+
 	strByte := []byte(str)
 	passwdByte := []byte(password)
 
-	sqlCrypt.init(passwdByte,len(passwdByte))
-        sqlCrypt.decode(strByte,len(strByte))
+	sqlCrypt.init(passwdByte, len(passwdByte))
+	sqlCrypt.decode(strByte, len(strByte))
 
-	return string(strByte),nil
+	return string(strByte), false
 }
 
 func SQLEncode(cryptStr string, password string) (string, error) {
 	var sqlCrypt SqlCrypt
 
-        cryptStrByte := []byte(cryptStr)
-        passwdByte := []byte(password)
+	cryptStrByte := []byte(cryptStr)
+	passwdByte := []byte(password)
 
-        sqlCrypt.init(passwdByte,len(passwdByte))
-        sqlCrypt.encode(cryptStrByte,len(cryptStrByte))
-	
-	return string(cryptStrByte),nil
+	sqlCrypt.init(passwdByte, len(passwdByte))
+	sqlCrypt.encode(cryptStrByte, len(cryptStrByte))
+
+	return string(cryptStrByte), false
 }

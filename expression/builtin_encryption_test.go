@@ -55,7 +55,7 @@ func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
 func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Encode]
-	for _, test := range aesTests {
+	for _, test := range cryptTests {
 		cryptStr := fromHex(test.crypt)
 		password := types.NewDatum(test.password)
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{cryptStr, password}))
