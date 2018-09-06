@@ -1033,7 +1033,7 @@ func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCou
 	if sum <= 1 {
 		return nil
 	}
-	// We assumes that each part contributes the same error rate.
+	// We assume that each part contributes the same error rate.
 	adjustFactor := rangeCount / sum
 	for i, r := range ranges {
 		q.feedback = append(q.feedback, feedback{lower: &r.LowVal[0], upper: &r.HighVal[0], count: int64(counts[i] * adjustFactor)})
