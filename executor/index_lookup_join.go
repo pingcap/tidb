@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/util/tracing"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -128,6 +129,7 @@ type innerWorker struct {
 
 // Open implements the Executor interface.
 func (e *IndexLookUpJoin) Open(ctx context.Context) error {
+	e.trace, ctx = tracing.ChildSpan(ctx, e.id)
 	err := e.children[0].Open(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -574,5 +576,6 @@ func (e *IndexLookUpJoin) Close() error {
 	e.workerWg.Wait()
 	e.memTracker.Detach()
 	e.memTracker = nil
+	e.trace.Finish()
 	return errors.Trace(e.children[0].Close())
 }

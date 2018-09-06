@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/cznic/mathutil"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -71,6 +72,7 @@ type baseExecutor struct {
 	maxChunkSize  int
 	children      []Executor
 	retFieldTypes []*types.FieldType
+	trace         opentracing.Span
 }
 
 // Open initializes children recursively and "childrenResults" according to children's schemas.

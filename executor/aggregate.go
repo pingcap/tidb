@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/util/mvmap"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
 )
@@ -212,11 +214,13 @@ func (e *HashAggExec) Close() error {
 	}
 	for range e.finalOutputCh {
 	}
+
 	return errors.Trace(e.baseExecutor.Close())
 }
 
 // Open implements the Executor Open interface.
 func (e *HashAggExec) Open(ctx context.Context) error {
+	e.trace, ctx = tracing.ChildSpan(ctx, e.id)
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}

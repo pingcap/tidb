@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/util/tracing"
 	"golang.org/x/net/context"
 )
 
@@ -39,7 +40,9 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false
 	}
+	child, ctx := tracing.ChildSpan(ctx, "distsql_select")
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars)
+	child.Finish()
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return nil, errors.Trace(err)

@@ -62,6 +62,7 @@ type ProjectionExec struct {
 
 // Open implements the Executor Open interface.
 func (e *ProjectionExec) Open(ctx context.Context) error {
+	e.trace, ctx = tracing.ChildSpan(ctx, e.id)
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -142,6 +143,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	sp, ctx := tracing.ChildSpanFromContxt(ctx, e.id)
+	sp, ctx := tracing.ChildSpan(ctx, e.id)
 	defer sp.Finish()
 	if e.isUnparallelExec() {
 		return errors.Trace(e.unParallelExecute(ctx, chk))
@@ -238,6 +240,7 @@ func (e *ProjectionExec) Close() error {
 		}
 		e.outputCh = nil
 	}
+	e.trace.Finish()
 	return errors.Trace(e.baseExecutor.Close())
 }
 
