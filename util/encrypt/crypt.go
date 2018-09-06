@@ -63,6 +63,7 @@ func (rs *randStruct) myRand() float64 {
 	return ((float64(rs.seed1)) / rs.maxValueDbl)
 }
 
+// SQLCrypt use to store initialization results
 type SQLCrypt struct {
 	rand    randStruct
 	orgRand randStruct
