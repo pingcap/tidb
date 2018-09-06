@@ -24,8 +24,9 @@ type randStruct struct {
 	maxValueDbl float64
 }
 
+// randomInit random generation structure initialization
 func (rs *randStruct) randomInit(password []byte, length int) {
-	// hash password
+	// Generate binary hash from raw text string
 	var nr, add, nr2, tmp uint32
 	nr = 1345345333
 	add = 7
@@ -48,7 +49,7 @@ func (rs *randStruct) randomInit(password []byte, length int) {
 	fmt.Println(seed1)
 	fmt.Println(seed2)
 
-	// init rand struct
+	//  New (MySQL 3.21+) random generation structure initialization
 	rs.maxValue = 0x3FFFFFFF
 	rs.maxValueDbl = float64(rs.maxValue)
 	rs.seed1 = seed1 % rs.maxValue
@@ -62,7 +63,7 @@ func (rs *randStruct) myRand() float64 {
 	return ((float64(rs.seed1)) / rs.maxValueDbl)
 }
 
-type SqlCrypt struct {
+type SQLCrypt struct {
 	rand    randStruct
 	orgRand randStruct
 
@@ -71,7 +72,7 @@ type SqlCrypt struct {
 	shift      uint32
 }
 
-func (sc *SqlCrypt) init(password []byte, length int) {
+func (sc *SQLCrypt) init(password []byte, length int) {
 	sc.rand.randomInit(password, length)
 
 	for i := 0; i <= 255; i++ {
@@ -93,12 +94,12 @@ func (sc *SqlCrypt) init(password []byte, length int) {
 	sc.shift = 0
 }
 
-func (sc *SqlCrypt) reinit() {
+func (sc *SQLCrypt) reinit() {
 	sc.shift = 0
 	sc.rand = sc.orgRand
 }
 
-func (sc *SqlCrypt) encode(str []byte, length int) {
+func (sc *SQLCrypt) encode(str []byte, length int) {
 	for i := 0; i < length; i++ {
 		sc.shift ^= uint32(sc.rand.myRand() * 255.0)
 		idx := uint32(str[i])
@@ -107,7 +108,7 @@ func (sc *SqlCrypt) encode(str []byte, length int) {
 	}
 }
 
-func (sc *SqlCrypt) decode(str []byte, length int) {
+func (sc *SQLCrypt) decode(str []byte, length int) {
 	for i := 0; i < length; i++ {
 		sc.shift ^= uint32(sc.rand.myRand() * 255.0)
 		idx := uint32(str[i] ^ byte(sc.shift))
@@ -116,8 +117,9 @@ func (sc *SqlCrypt) decode(str []byte, length int) {
 	}
 }
 
+//SQLDecode Function to handle the decode() function
 func SQLDecode(str string, password string) (string, error) {
-	var sqlCrypt SqlCrypt
+	var sqlCrypt SQLCrypt
 
 	strByte := []byte(str)
 	passwdByte := []byte(password)
@@ -128,8 +130,9 @@ func SQLDecode(str string, password string) (string, error) {
 	return string(strByte), nil
 }
 
+// SQLEncode Function to handle the encode() function
 func SQLEncode(cryptStr string, password string) (string, error) {
-	var sqlCrypt SqlCrypt
+	var sqlCrypt SQLCrypt
 
 	cryptStrByte := []byte(cryptStr)
 	passwdByte := []byte(password)
