@@ -150,7 +150,7 @@ func (s *testSuite) TestAnalyze(c *C) {
 	result, ok := response.(*selectResult)
 	c.Assert(ok, IsTrue)
 	c.Assert(result.label, Equals, "analyze")
-	c.Assert(result.sqlType, Equals, "restricted")
+	c.Assert(result.sqlType, Equals, "internal")
 
 	response.Fetch(context.TODO())
 

@@ -109,7 +109,7 @@ const (
 	LblResult      = "result"
 	LblSQLType     = "sql_type"
 	LblGeneral     = "general"
-	LblRestricted  = "restricted"
+	LblInternal    = "internal"
 )
 
 func init() {

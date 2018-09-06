@@ -55,9 +55,9 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		}, nil
 	}
 
-	restrLabel := metrics.LblGeneral
+	label := metrics.LblGeneral
 	if sctx.GetSessionVars().InRestrictedSQL {
-		restrLabel = metrics.LblRestricted
+		label = metrics.LblInternal
 	}
 	return &selectResult{
 		label:      "dag",
@@ -68,7 +68,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		fieldTypes: fieldTypes,
 		ctx:        sctx,
 		feedback:   fb,
-		sqlType:    restrLabel,
+		sqlType:    label,
 	}, nil
 }
 
@@ -79,9 +79,9 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
-	restrLabel := metrics.LblGeneral
+	label := metrics.LblGeneral
 	if isRestrict {
-		restrLabel = metrics.LblRestricted
+		label = metrics.LblInternal
 	}
 	result := &selectResult{
 		label:    "analyze",
@@ -89,7 +89,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 		results:  make(chan resultWithErr, kvReq.Concurrency),
 		closed:   make(chan struct{}),
 		feedback: statistics.NewQueryFeedback(0, nil, 0, false),
-		sqlType:  restrLabel,
+		sqlType:  label,
 	}
 	return result, nil
 }
