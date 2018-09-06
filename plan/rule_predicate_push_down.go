@@ -91,17 +91,38 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		newJoin := e.resultJoin
 		return newJoin.PredicatePushDown(predicates)
 	}
-	var leftCond, rightCond []expression.Expression
 	leftPlan := p.children[0]
 	rightPlan := p.children[1]
+	var equalCond []*expression.ScalarFunction
 	var (
-		equalCond                              []*expression.ScalarFunction
-		leftPushCond, rightPushCond, otherCond []expression.Expression
+		leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	)
-	if p.JoinType != InnerJoin {
+	switch p.JoinType {
+	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		// Handle where conditions
 		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
-		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan, true)
-	} else {
+		// Only derive left where condition, because right where condition cannot be pushed down
+		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan, true, false)
+		leftCond = leftPushCond
+		// Handle join conditions, only derive right join condition, because left join condition cannot be pushed down
+		_, derivedRightJoinCond := deriveOtherConditions(p, false, true)
+		rightCond = append(p.RightConditions, derivedRightJoinCond...)
+		p.RightConditions = nil
+		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
+		ret = append(ret, rightPushCond...)
+	case RightOuterJoin:
+		// Handle where conditions
+		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
+		// Only derive right where condition, because left where condition cannot be pushed down
+		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(predicates, leftPlan, rightPlan, false, true)
+		rightCond = rightPushCond
+		// Handle join conditions, only derive left join condition, because right join condition cannot be pushed down
+		derivedLeftJoinCond, _ := deriveOtherConditions(p, true, false)
+		leftCond = append(p.LeftConditions, derivedLeftJoinCond...)
+		p.LeftConditions = nil
+		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
+		ret = append(ret, leftPushCond...)
+	case SemiJoin, AntiSemiJoin, InnerJoin:
 		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
 		tempCond = append(tempCond, p.LeftConditions...)
 		tempCond = append(tempCond, p.RightConditions...)
@@ -109,27 +130,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
-		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(p.ctx, tempCond), leftPlan, rightPlan, true)
-	}
-	switch p.JoinType {
-	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		rightCond = p.RightConditions
-		p.RightConditions = nil
-		leftCond = leftPushCond
-		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
-		ret = append(ret, rightPushCond...)
-	case RightOuterJoin:
-		leftCond = p.LeftConditions
-		p.LeftConditions = nil
-		rightCond = rightPushCond
-		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
-		ret = append(ret, leftPushCond...)
-	case SemiJoin, AntiSemiJoin:
-		leftCond = append(p.LeftConditions, leftPushCond...)
-		rightCond = append(p.RightConditions, rightPushCond...)
-		p.LeftConditions = nil
-		p.RightConditions = nil
-	case InnerJoin:
+		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(p.ctx, tempCond), leftPlan, rightPlan, true, true)
 		p.LeftConditions = nil
 		p.RightConditions = nil
 		p.EqualConditions = equalCond
