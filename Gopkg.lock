@@ -281,7 +281,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:5d1ffbb5f63904390f71350a6f9d91e9b2e018dbbded1d8be71cd04df6635093"
+  digest = "1:84db0209caf3c48beaec43d15bd22ca6256d958b807c2ac626e2425e232e92c4"
   name = "github.com/pingcap/kvproto"
   packages = [
     "pkg/coprocessor",
@@ -294,15 +294,15 @@
     "pkg/tikvpb",
   ]
   pruneopts = "NUT"
-  revision = "279515615485b0f2d12f1421cc412fe2784e0190"
+  revision = "529c652955d8fa74faf56f91b2f428d5779fd7d5"
 
 [[projects]]
   branch = "master"
-  digest = "1:c9481427c87777d146d7e299c66cf08cf90a2ea2be035bb6581cfa1a78cdd39f"
+  digest = "1:6a846fb5ccc09741c0735f9e9897bbc95915314fab98c5ee56680f1a9591d48d"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
   pruneopts = "NUT"
-  revision = "47a950e6649fa0151a6c5d0fc48a97c080012e3d"
+  revision = "5d1bac04f3eab9842ee0988ed46c483d2ce4e854"
 
 [[projects]]
   branch = "master"

@@ -162,6 +162,16 @@ func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.St
 	return c.client.GetStore(ctx, storeID)
 }
 
+func (c *mockPDClient) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
+	c.RLock()
+	defer c.Unlock()
+
+	if c.stop {
+		return nil, errors.Trace(errStopped)
+	}
+	return c.client.GetAllStores(ctx)
+}
+
 func (c *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
 	panic("unimplemented")
 }
