@@ -83,29 +83,29 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 
 	// 3. Compare datum, then handle some flags.
 	for i, col := range t.Cols() {
-		if cmp, err := newData[i].CompareDatum(sc, &oldData[i]); err == nil {
-			if cmp != 0 {
-				changed = true
-				modified[i] = true
-				// Rebase auto increment id if the field is changed.
-				if mysql.HasAutoIncrementFlag(col.Flag) {
-					if err = t.RebaseAutoID(ctx, newData[i].GetInt64(), true); err != nil {
-						return false, false, 0, errors.Trace(err)
-					}
+		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
+		if err != nil {
+			return false, false, 0, errors.Trace(err)
+		}
+		if cmp != 0 {
+			changed = true
+			modified[i] = true
+			// Rebase auto increment id if the field is changed.
+			if mysql.HasAutoIncrementFlag(col.Flag) {
+				if err = t.RebaseAutoID(ctx, newData[i].GetInt64(), true); err != nil {
+					return false, false, 0, errors.Trace(err)
 				}
-				if col.IsPKHandleColumn(t.Meta()) {
-					handleChanged = true
-					newHandle = newData[i].GetInt64()
-				}
-			} else {
-				if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
-					// It's for "UPDATE t SET ts = ts" and ts is a timestamp.
-					onUpdateSpecified[i] = true
-				}
-				modified[i] = false
+			}
+			if col.IsPKHandleColumn(t.Meta()) {
+				handleChanged = true
+				newHandle = newData[i].GetInt64()
 			}
 		} else {
-			return false, false, 0, errors.Trace(err)
+			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
+				// It's for "UPDATE t SET ts = ts" and ts is a timestamp.
+				onUpdateSpecified[i] = true
+			}
+			modified[i] = false
 		}
 	}
 
