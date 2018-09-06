@@ -125,7 +125,7 @@ func SQLDecode(str string, password string) (string, error) {
 	sqlCrypt.init(passwdByte, len(passwdByte))
 	sqlCrypt.decode(strByte, len(strByte))
 
-	return string(strByte), false
+	return string(strByte), nil
 }
 
 func SQLEncode(cryptStr string, password string) (string, error) {
@@ -137,5 +137,5 @@ func SQLEncode(cryptStr string, password string) (string, error) {
 	sqlCrypt.init(passwdByte, len(passwdByte))
 	sqlCrypt.encode(cryptStrByte, len(cryptStrByte))
 
-	return string(cryptStrByte), false
+	return string(cryptStrByte), nil
 }

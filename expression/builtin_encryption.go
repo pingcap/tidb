@@ -209,7 +209,7 @@ func (b *builtinDecodeSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	decodeStr, err := encrypt.SQLDecode(dataStr, passwordStr)
-	return decodeStr, err, nil
+	return decodeStr, false, err
 }
 
 type desDecryptFunctionClass struct {
@@ -268,7 +268,7 @@ func (b *builtinEncodeSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	dataStr, err := encrypt.SQLEncode(decodeStr, passwordStr)
-	return dataStr, err, nil
+	return dataStr, false, err
 }
 
 type encryptFunctionClass struct {
