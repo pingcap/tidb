@@ -42,11 +42,11 @@ You can view the list of TiDB adopters [here](https://github.com/pingcap/docs/bl
 
 ## Roadmap
 
-Read the [Roadmap](https://github.com/pingcap/docs/blob/master/ROADMAP.md).
+Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
 
 ## Quick start
 
-Read the [Quick Start](https://pingcap.com/doc-QUICKSTART).
+Read the [Quick Start](https://pingcap.com/docs/QUICKSTART).
 
 ## Documentation
 
