@@ -680,11 +680,11 @@ func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
 	return p
 }
 
-const defaultNumBuckets = 256
+const defaultMaxNumBuckets = 256
 
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	if as.MaxNumBuckets == 0 {
-		as.MaxNumBuckets = defaultNumBuckets
+		as.MaxNumBuckets = defaultMaxNumBuckets
 	}
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
