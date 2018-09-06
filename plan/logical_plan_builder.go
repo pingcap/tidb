@@ -173,6 +173,9 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 	}
 }
 
+// extractOnCondition divide conditions in CNF of join node into 4 groups.
+// These conditions can be where conditions, join conditions, or collection of both.
+// If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
 func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan,
 	deriveLeft bool, deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
@@ -229,6 +232,8 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 	return
 }
 
+// deriveOtherConditions given a LogicalJoin, check the OtherConditions to see if we can derive more
+// conditions for left/right child pushdown.
 func deriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (leftCond []expression.Expression,
 	rightCond []expression.Expression) {
 	leftPlan := p.children[0]
