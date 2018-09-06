@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -84,7 +85,7 @@ func (p *PointGetPlan) ExplainInfo() string {
 }
 
 // getChildReqProps gets the required property by child index.
-func (p *PointGetPlan) getChildReqProps(idx int) *requiredProp {
+func (p *PointGetPlan) getChildReqProps(idx int) *property.PhysicalProperty {
 	return nil
 }
 
