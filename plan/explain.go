@@ -168,7 +168,7 @@ func (p *PhysicalSort) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalLimit) ExplainInfo() string {
-	return fmt.Sprintf("offset:%v, RowCount:%v", p.Offset, p.Count)
+	return fmt.Sprintf("offset:%v, count:%v", p.Offset, p.Count)
 }
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -282,6 +282,6 @@ func (p *PhysicalTopN) ExplainInfo() string {
 			buffer.WriteString(", ")
 		}
 	}
-	fmt.Fprintf(buffer, ", offset:%v, RowCount:%v", p.Offset, p.Count)
+	fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
 	return buffer.String()
 }

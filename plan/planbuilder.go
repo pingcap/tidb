@@ -1410,7 +1410,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 	p := &Explain{StmtPlan: pp}
 	switch strings.ToLower(explain.Format) {
 	case ast.ExplainFormatROW:
-		retFields := []string{"id", "RowCount", "task", "operator info"}
+		retFields := []string{"id", "count", "task", "operator info"}
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 		for _, fieldName := range retFields {
 			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
