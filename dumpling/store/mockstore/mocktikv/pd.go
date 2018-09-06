@@ -96,6 +96,10 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 	return store, nil
 }
 
+func (c *pdClient) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
+	panic("unimplemented")
+}
+
 func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
 	panic("unimplemented")
 }
