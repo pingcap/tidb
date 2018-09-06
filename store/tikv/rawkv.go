@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"bytes"
+	"fmt"
 	"time"
 
 	"github.com/juju/errors"
@@ -329,7 +330,8 @@ func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request) (*tikvrpc.Respon
 			} else if regionErr.GetStaleEpoch() != nil {
 				tp = BoStaleEpoch
 			}
-			err := bo.Backoff(tp, errors.New(regionErr.String()))
+			msg := fmt.Sprintf("[region %v] %s", loc.Region.GetID(), regionErr.String())
+			err := bo.Backoff(tp, errors.New(msg))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
