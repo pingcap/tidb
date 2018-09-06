@@ -42,6 +42,10 @@ import (
 	"golang.org/x/net/context"
 )
 
+const (
+	gcReDeleteRangeDelay = 24 * time.Hour
+)
+
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
 	uuid        string
@@ -394,7 +398,7 @@ func (w *GCWorker) reDeleteRanges(ctx context.Context, safePoint uint64) error {
 
 	// We check delete range records that are deleted about 24 hours ago.
 	safePointTime := oracle.PhysicalToTime(oracle.ExtractPhysical(safePoint))
-	reDeleteTs := oracle.ComposeTS(oracle.GetPhysical(safePointTime.Add(-60*time.Hour)), 0)
+	reDeleteTs := oracle.ComposeTS(oracle.GetPhysical(safePointTime.Add(-gcReDeleteRangeDelay)), 0)
 
 	se := createSession(w.store)
 	ranges, err := util.LoadDoneDeleteRanges(se, reDeleteTs)
