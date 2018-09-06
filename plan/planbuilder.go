@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -680,11 +681,16 @@ func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
 	return p
 }
 
-const defaultMaxNumBuckets = 256
+const (
+	defaultMaxNumBuckets = 256
+	numBucketsLimit      = 1024
+)
 
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	if as.MaxNumBuckets == 0 {
 		as.MaxNumBuckets = defaultMaxNumBuckets
+	} else {
+		as.MaxNumBuckets = mathutil.MinUint64(as.MaxNumBuckets, numBucketsLimit)
 	}
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
