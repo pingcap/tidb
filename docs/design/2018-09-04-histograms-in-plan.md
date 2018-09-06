@@ -1,6 +1,6 @@
 # Proposal: Maintain statistics in `Plan`
 
-- Author:     Yiding CUI
+- Author:     [Yiding CUI](https://github.com/winoros)
 - Last updated:  2018-09-04
 
 ## Abstract
@@ -11,6 +11,7 @@ This proposal proposes to maintain the histogram in `Plan`’s statistics inform
 ## Background
 
 Currently, TiDB only uses statistics when deciding which physical scan method a table should use. And TiDB only stores simple statistics in the plan structure. But when deciding the join order and considering some other optimization rules, we need more detailed statistics.
+
 So we need to maintain the statistics in the plan structure to get sufficient statistics information to do optimizations.
 
 ## Proposal
@@ -75,7 +76,7 @@ For `Selection` and `Join`, we need to cut off the things which are not in range
 
 For `Aggregation`, we only need to cut off the things which are not in ranges when doing estimation. There is no need to update the ranges information.
 
-For `TopN`, we now have the alibity to maintain histograms of the order-by items.
+For `TopN`, we now have the ability to maintain histograms of the order-by items.
 
 
 ## Rationale
@@ -84,7 +85,7 @@ For `TopN`, we now have the alibity to maintain histograms of the order-by items
 
 I’ve looked into Spark. They did nearly the same thing with what I said. They only maintain the max and min values, rather than the `ranges` information. And they don’t have the index, so they only maintain the column’s max/min value which make problem much easier to solve.
 
-As for Orca and Calcite, I haven’t discovered where they maintain this information. But there’s something about statistics in Orca’s paper. According to the paper, I think they construct new histogram during planning and cache it to avoid building too many times.
+As for Orca and Calcite, I haven’t discovered where they maintain this information. But there’s something about statistics in Orca’s paper. According to the paper, I think they construct new histograms during planning and cache it to avoid building too many times.
 
 ### What is the disadvantage of this design?
 
@@ -94,7 +95,7 @@ For now, only join reorder and the position `after logical optimize before physi
 
 And the `expectedCount` we used in physical plan is something same with `Limit`. So the row count modification during physical plan won’t be affected.
 
-After we switch to the cascade-like planner. The rule that needs cost to make decision is still a small set of all. And the existence of `Group` can also help us. If we lazily construct the `statsInfo`, this may not be the bottleneck.
+After we switch to the cascade-like planner, the rule that needs cost to make decision is still a small set of all. And the existence of `Group` can also help us. If we lazily construct the `statsInfo`, this may not be the bottleneck.
 
 ### What is the impact of not doing this?
 
