@@ -1229,7 +1229,7 @@ func (b *executorBuilder) buildUpdate(v *plan.Update) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	columns2Handle := buildColumns2Handle(v.Schema(), tblID2table)
+	columns2Handle := buildColumns2Handle(v.SelectPlan.Schema(), tblID2table)
 	updateExec := &UpdateExec{
 		baseExecutor:   newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec),
 		SelectExec:     selExec,
@@ -1319,7 +1319,7 @@ func (b *executorBuilder) buildDelete(v *plan.Delete) Executor {
 	return deleteExec
 }
 
-func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) *AnalyzeIndexExec {
+func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask, maxNumBuckets uint64) *AnalyzeIndexExec {
 	_, offset := zone(b.ctx)
 	e := &AnalyzeIndexExec{
 		ctx:             b.ctx,
@@ -1332,9 +1332,10 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			TimeZoneOffset: offset,
 		},
+		maxNumBuckets: maxNumBuckets,
 	}
 	e.analyzePB.IdxReq = &tipb.AnalyzeIndexReq{
-		BucketSize: maxBucketSize,
+		BucketSize: int64(maxNumBuckets),
 		NumColumns: int32(len(task.IndexInfo.Columns)),
 	}
 	depth := int32(defaultCMSketchDepth)
@@ -1344,7 +1345,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plan.AnalyzeIndexTask) 
 	return e
 }
 
-func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTask) *AnalyzeColumnsExec {
+func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTask, maxNumBuckets uint64) *AnalyzeColumnsExec {
 	cols := task.ColsInfo
 	keepOrder := false
 	if task.PKInfo != nil {
@@ -1366,11 +1367,12 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plan.AnalyzeColumnsTa
 			Flags:          statementContextToFlags(b.ctx.GetSessionVars().StmtCtx),
 			TimeZoneOffset: offset,
 		},
+		maxNumBuckets: maxNumBuckets,
 	}
 	depth := int32(defaultCMSketchDepth)
 	width := int32(defaultCMSketchWidth)
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
-		BucketSize:    maxBucketSize,
+		BucketSize:    int64(maxNumBuckets),
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
 		ColumnsInfo:   model.ColumnsToProto(cols, task.PKInfo != nil),
@@ -1389,7 +1391,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	for _, task := range v.ColTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: colTask,
-			colExec:  b.buildAnalyzeColumnsPushdown(task),
+			colExec:  b.buildAnalyzeColumnsPushdown(task, v.MaxNumBuckets),
 		})
 		if b.err != nil {
 			b.err = errors.Trace(b.err)
@@ -1399,7 +1401,7 @@ func (b *executorBuilder) buildAnalyze(v *plan.Analyze) Executor {
 	for _, task := range v.IdxTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: idxTask,
-			idxExec:  b.buildAnalyzeIndexPushdown(task),
+			idxExec:  b.buildAnalyzeIndexPushdown(task, v.MaxNumBuckets),
 		})
 		if b.err != nil {
 			b.err = errors.Trace(b.err)

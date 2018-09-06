@@ -137,6 +137,11 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		if v.Sel == nil {
 			sr.inToExpression(len(v.List), v.Not, &v.Type)
 		}
+	case *ast.ParamMarkerExpr:
+		tp := types.NewFieldType(mysql.TypeUnspecified)
+		types.DefaultParamTypeForValue(v.GetValue(), tp)
+		value := &Constant{Value: v.Datum, RetType: tp}
+		sr.push(value)
 	case *ast.RowExpr:
 		sr.rowToScalarFunc(v)
 	case *ast.ParenthesesExpr:
