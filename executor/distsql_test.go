@@ -207,3 +207,9 @@ func (s *testSuite) TestUniqueKeyNullValueSelect(c *C) {
 	res = tk.MustQuery("select * from t where id is null;")
 	res.Check(testkit.Rows("<nil> a", "<nil> b", "<nil> c"))
 }
+
+func (s *testSuite) TestgetTZNameFromFileName(c *C) {
+	tz, err := getTZNameFromFileName("/user/share/zoneinfo/Asia/Shanghai")
+	c.Assert(err, IsNil)
+	c.Assert(tz, Equals, "Asia/Shanghai")
+}
