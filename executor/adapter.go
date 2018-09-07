@@ -354,15 +354,19 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	if len(sessVars.StmtCtx.IndexIDs) > 0 {
 		indexIDs = strings.Replace(fmt.Sprintf("index_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
 	}
-	user := a.Ctx.GetSessionVars().User
+	user := sessVars.User
+	var internal string
+	if sessVars.InRestrictedSQL {
+		internal = "[INTERNAL] "
+	}
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debugf(
-			"[QUERY] cost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			internal, costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
 		logutil.SlowQueryLogger.Warnf(
-			"[SLOW_QUERY] cost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[SLOW_QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			internal, costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 	}
 }
 
