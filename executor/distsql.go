@@ -119,7 +119,7 @@ func closeAll(objs ...Closeable) error {
 	return errors.Trace(err)
 }
 
-// GetTZNameFromFileName gets IANA timezone name from zoninfo path.
+// GetTZNameFromFileName gets IANA timezone name from zoneinfo path.
 // TODO It will be refined later. This is just a quick fix.
 func GetTZNameFromFileName(path string) (string, error) {
 	// phase1 only support read /etc/localtime which is a softlink to zoneinfo file
@@ -128,7 +128,7 @@ func GetTZNameFromFileName(path string) (string, error) {
 		idx := strings.Index(path, substr)
 		return string(path[idx+len(substr)+1:]), nil
 	}
-	return "", errors.New("only support softlink has share/zoneinfo as a suffix" + path)
+	return "", errors.New("only support softlink has share/zoneinfo in the middle" + path)
 }
 
 var localStr string

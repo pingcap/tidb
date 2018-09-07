@@ -165,16 +165,6 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	return ctx, e, dagReq, err
 }
 
-func getTZNameFromFileName(path string) (string, error) {
-	// phase1 only support read /etc/localtime which is a softlink to zoneinfo file
-	substr := "share/zoneinfo"
-	if strings.Contains(path, substr) {
-		idx := strings.Index(path, substr)
-		return string(path[idx+len(substr)+1:]), nil
-	}
-	return "", errors.New("only support softlink has share/zoneinfo as a suffix" + path)
-}
-
 // constructTimeZone constructs timezone by name first. When the timezone name
 // is set, the daylight saving problem must be considered. Otherwise the
 // timezone offset in seconds east of UTC is used to constructed the timezone.
