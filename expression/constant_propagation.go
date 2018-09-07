@@ -135,11 +135,11 @@ func (s *propagateConstantSolver) propagateColumnEQ() {
 					continue
 				}
 				cond := s.conditions[k]
-				replaced, _, newExpr := s.tryToReplaceCond(coli, colj, cond)
+				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond)
 				if replaced {
 					s.conditions = append(s.conditions, newExpr)
 				}
-				replaced, _, newExpr = s.tryToReplaceCond(colj, coli, cond)
+				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond)
 				if replaced {
 					s.conditions = append(s.conditions, newExpr)
 				}
@@ -149,7 +149,7 @@ func (s *propagateConstantSolver) propagateColumnEQ() {
 }
 
 // validEqualCond checks if the cond is an expression like [column eq constant].
-func (s *propagateConstantSolver) validEqualCond(cond Expression) (*Column, *Constant) {
+func validEqualCond(cond Expression) (*Column, *Constant) {
 	if eq, ok := cond.(*ScalarFunction); ok {
 		if eq.FuncName.L != ast.EQ {
 			return nil, nil
@@ -178,7 +178,7 @@ func (s *propagateConstantSolver) validEqualCond(cond Expression) (*Column, *Con
 //  for 'a, b, a < 3', it returns 'true, false, b < 3'
 //  for 'a, b, sin(a) + cos(a) = 5', it returns 'true, false, returns sin(b) + cos(b) = 5'
 //  for 'a, b, cast(a) < rand()', it returns 'false, true, cast(a) < rand()'
-func (s *propagateConstantSolver) tryToReplaceCond(src *Column, tgt *Column, cond Expression) (bool, bool, Expression) {
+func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Expression) (bool, bool, Expression) {
 	sf, ok := cond.(*ScalarFunction)
 	if !ok {
 		return false, false, cond
@@ -197,7 +197,7 @@ func (s *propagateConstantSolver) tryToReplaceCond(src *Column, tgt *Column, con
 			}
 			args[idx] = tgt
 		} else {
-			subReplaced, isNonDeterminisitic, subExpr := s.tryToReplaceCond(src, tgt, expr)
+			subReplaced, isNonDeterminisitic, subExpr := tryToReplaceCond(ctx, src, tgt, expr)
 			if isNonDeterminisitic {
 				return false, true, cond
 			} else if subReplaced {
@@ -211,7 +211,7 @@ func (s *propagateConstantSolver) tryToReplaceCond(src *Column, tgt *Column, con
 		}
 	}
 	if replaced {
-		return true, false, NewFunctionInternal(s.ctx, sf.FuncName.L, sf.GetType(), args...)
+		return true, false, NewFunctionInternal(ctx, sf.FuncName.L, sf.GetType(), args...)
 	}
 	return false, false, cond
 }
@@ -230,7 +230,7 @@ func (s *propagateConstantSolver) pickNewEQConds(visited []bool) (retMapper map[
 		if visited[i] {
 			continue
 		}
-		col, con := s.validEqualCond(cond)
+		col, con := validEqualCond(cond)
 		// Then we check if this CNF item is a false constant. If so, we will set the whole condition to false.
 		var ok bool
 		if col == nil {
