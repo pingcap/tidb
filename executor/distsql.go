@@ -131,6 +131,9 @@ func GetTZNameFromFileName(path string) (string, error) {
 	return "", errors.New("only support softlink has share/zoneinfo as a suffix" + path)
 }
 
+var localStr string
+var localOnce sync.Once
+
 // zone returns the current timezone name and timezone offset in seconds.
 // In compatible with MySQL, we change `Local` to `System`.
 // TODO: Golang team plan to return system timezone name intead of
@@ -141,17 +144,20 @@ func zone(sctx sessionctx.Context) (string, int64) {
 	var name string
 	name = loc.String()
 	if name == "Local" {
-		path, err := filepath.EvalSymlinks("/etc/localtime")
-		if err != nil {
-			log.Errorln(err)
-			return "System", int64(offset)
-		}
-		name, err = GetTZNameFromFileName(path)
-		if err != nil {
-			log.Errorln(err)
-			return "System", int64(offset)
-		}
-		return name, int64(offset)
+		localOnce.Do(func() {
+			path, err := filepath.EvalSymlinks("/etc/localtime")
+			if err != nil {
+				log.Errorln(err)
+				localStr = "System"
+			}
+			localStr, err = GetTZNameFromFileName(path)
+			if err != nil {
+				log.Errorln(err)
+				localStr = "System"
+			}
+		})
+
+		return localStr, int64(offset)
 	}
 
 	return name, int64(offset)
