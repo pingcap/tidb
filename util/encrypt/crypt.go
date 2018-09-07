@@ -13,10 +13,6 @@
 
 package encrypt
 
-import (
-	"fmt"
-)
-
 type randStruct struct {
 	seed1       uint32
 	seed2       uint32
@@ -46,9 +42,6 @@ func (rs *randStruct) randomInit(password []byte, length int) {
 	seed1 := nr & ((uint32(1) << 31) - uint32(1))
 	seed2 := nr2 & ((uint32(1) << 31) - uint32(1))
 
-	fmt.Println(seed1)
-	fmt.Println(seed2)
-
 	//  New (MySQL 3.21+) random generation structure initialization
 	rs.maxValue = 0x3FFFFFFF
 	rs.maxValueDbl = float64(rs.maxValue)
@@ -63,8 +56,8 @@ func (rs *randStruct) myRand() float64 {
 	return ((float64(rs.seed1)) / rs.maxValueDbl)
 }
 
-// SQLCrypt use to store initialization results
-type SQLCrypt struct {
+// sqlCrypt use to store initialization results
+type sqlCrypt struct {
 	rand    randStruct
 	orgRand randStruct
 
@@ -73,7 +66,7 @@ type SQLCrypt struct {
 	shift      uint32
 }
 
-func (sc *SQLCrypt) init(password []byte, length int) {
+func (sc *sqlCrypt) init(password []byte, length int) {
 	sc.rand.randomInit(password, length)
 
 	for i := 0; i <= 255; i++ {
@@ -95,12 +88,12 @@ func (sc *SQLCrypt) init(password []byte, length int) {
 	sc.shift = 0
 }
 
-func (sc *SQLCrypt) reinit() {
+func (sc *sqlCrypt) reinit() {
 	sc.shift = 0
 	sc.rand = sc.orgRand
 }
 
-func (sc *SQLCrypt) encode(str []byte, length int) {
+func (sc *sqlCrypt) encode(str []byte, length int) {
 	for i := 0; i < length; i++ {
 		sc.shift ^= uint32(sc.rand.myRand() * 255.0)
 		idx := uint32(str[i])
@@ -109,7 +102,7 @@ func (sc *SQLCrypt) encode(str []byte, length int) {
 	}
 }
 
-func (sc *SQLCrypt) decode(str []byte, length int) {
+func (sc *sqlCrypt) decode(str []byte, length int) {
 	for i := 0; i < length; i++ {
 		sc.shift ^= uint32(sc.rand.myRand() * 255.0)
 		idx := uint32(str[i] ^ byte(sc.shift))
@@ -120,26 +113,26 @@ func (sc *SQLCrypt) decode(str []byte, length int) {
 
 //SQLDecode Function to handle the decode() function
 func SQLDecode(str string, password string) (string, error) {
-	var sqlCrypt SQLCrypt
+	var sc sqlCrypt
 
 	strByte := []byte(str)
 	passwdByte := []byte(password)
 
-	sqlCrypt.init(passwdByte, len(passwdByte))
-	sqlCrypt.decode(strByte, len(strByte))
+	sc.init(passwdByte, len(passwdByte))
+	sc.decode(strByte, len(strByte))
 
 	return string(strByte), nil
 }
 
 // SQLEncode Function to handle the encode() function
 func SQLEncode(cryptStr string, password string) (string, error) {
-	var sqlCrypt SQLCrypt
+	var sc sqlCrypt
 
 	cryptStrByte := []byte(cryptStr)
 	passwdByte := []byte(password)
 
-	sqlCrypt.init(passwdByte, len(passwdByte))
-	sqlCrypt.encode(cryptStrByte, len(cryptStrByte))
+	sc.init(passwdByte, len(passwdByte))
+	sc.encode(cryptStrByte, len(cryptStrByte))
 
 	return string(cryptStrByte), nil
 }
