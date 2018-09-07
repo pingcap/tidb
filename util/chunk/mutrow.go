@@ -68,6 +68,15 @@ func MutRowFromTypes(types []*types.FieldType) MutRow {
 	return MutRow{c: c, idx: 0}
 }
 
+//func MutRowFromColumns(cols []*table.Column) MutRow {
+//	c := &Chunk{}
+//	for _, col := range cols {
+//		col := makeMutRowColumn(zeroValForType(&col.FieldType))
+//		c.columns = append(c.columns, col)
+//	}
+//	return MutRow{c: c, idx: 0}
+//}
+
 func zeroValForType(tp *types.FieldType) interface{} {
 	switch tp.Tp {
 	case mysql.TypeFloat:
