@@ -915,7 +915,7 @@ func makeupIndexColFieldMapAndColExpr(sessCtx sessionctx.Context, t table.Table,
 					colFieldMap[c.ID] = &c.FieldType
 				}
 			}
-			e, err := expression.ParseSimpleExprWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta())
+			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta(), &col.FieldType)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
