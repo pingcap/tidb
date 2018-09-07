@@ -42,10 +42,6 @@ import (
 	"golang.org/x/net/context"
 )
 
-const (
-	gcReDeleteRangeDelay = 24 * time.Hour
-)
-
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
 	uuid        string
@@ -110,6 +106,7 @@ const (
 	gcRunIntervalKey     = "tikv_gc_run_interval"
 	gcDefaultRunInterval = time.Minute * 10
 	gcWaitTime           = time.Minute * 1
+	gcReDeleteRangeDelay = 24 * time.Hour
 
 	gcLifeTimeKey        = "tikv_gc_life_time"
 	gcDefaultLifeTime    = time.Minute * 10
@@ -445,17 +442,25 @@ func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey [
 		},
 	}
 
+	var wg sync.WaitGroup
+
 	for _, store := range stores {
 		if store.State != metapb.StoreState_Up {
 			continue
 		}
 
-		_, err1 := w.store.GetTiKVClient().SendRequest(ctx, store.Address, req, tikv.UnsafeDestroyRangeTimeout)
-		if err1 != nil {
-			log.Errorf("[gc worker] %s destroy range on store %v failed with error: %v", w.uuid, store.Id, errors.ErrorStack(err))
-			err = err1
-		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err1 := w.store.GetTiKVClient().SendRequest(ctx, store.Address, req, tikv.UnsafeDestroyRangeTimeout)
+			if err1 != nil {
+				log.Errorf("[gc worker] %s destroy range on store %v failed with error: %v", w.uuid, store.Id, errors.ErrorStack(err))
+				err = err1
+			}
+		}()
 	}
+
+	wg.Wait()
 
 	return errors.Trace(err)
 }
