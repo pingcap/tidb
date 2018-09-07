@@ -230,20 +230,12 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		innerTable, outerTable = outerTable, innerTable
 	}
 
-	var fullConditions []expression.Expression
-
 	// first simplify embedded outer join.
-	// When trying to simplify an embedded outer join operation in a query,
-	// we must take into account the join condition for the embedding outer join together with the WHERE condition.
 	if innerPlan, ok := innerTable.(*LogicalJoin); ok {
-		fullConditions = concatOnAndWhereConds(p, predicates)
-		simplifyOuterJoin(innerPlan, fullConditions)
+		simplifyOuterJoin(innerPlan, predicates)
 	}
 	if outerPlan, ok := outerTable.(*LogicalJoin); ok {
-		if fullConditions != nil {
-			fullConditions = concatOnAndWhereConds(p, predicates)
-		}
-		simplifyOuterJoin(outerPlan, fullConditions)
+		simplifyOuterJoin(outerPlan, predicates)
 	}
 
 	if p.JoinType == InnerJoin {
