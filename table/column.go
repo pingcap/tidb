@@ -339,7 +339,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 
 func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
 	if !mysql.HasNotNullFlag(col.Flag) {
-		return types.Datum{}, nil
+		return types.NewDatum(nil), nil
 	}
 	if col.Tp == mysql.TypeEnum {
 		// For enum type, if no default value and not null is set,
@@ -348,7 +348,10 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	}
 	if mysql.HasAutoIncrementFlag(col.Flag) {
 		// Auto increment column doesn't has default value and we should not return error.
-		return types.Datum{}, nil
+		return GetZeroValue(col), nil
+	}
+	if col.IsGenerated() {
+		return types.NewDatum(nil), nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	if sc.BadNullAsWarning {
