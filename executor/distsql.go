@@ -144,7 +144,7 @@ func zone(sctx sessionctx.Context) (string, int64) {
 		path, err := filepath.EvalSymlinks("/etc/localtime")
 		if err != nil {
 			log.Errorln(err)
-			return "Sysytem", int64(offset)
+			return "System", int64(offset)
 		}
 		name, err = GetTZNameFromFileName(path)
 		if err != nil {
