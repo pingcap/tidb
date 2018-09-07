@@ -209,7 +209,7 @@ func (s *testSuite) TestUniqueKeyNullValueSelect(c *C) {
 }
 
 func (s *testSuite) TestgetTZNameFromFileName(c *C) {
-	tz, err := getTZNameFromFileName("/user/share/zoneinfo/Asia/Shanghai")
+	tz, err := executor.GetTZNameFromFileName("/user/share/zoneinfo/Asia/Shanghai")
 	c.Assert(err, IsNil)
 	c.Assert(tz, Equals, "Asia/Shanghai")
 }

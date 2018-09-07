@@ -119,7 +119,9 @@ func closeAll(objs ...Closeable) error {
 	return errors.Trace(err)
 }
 
-func getTZNameFromFileName(path string) (string, error) {
+// GetTZNameFromFileName gets IANA timezone name from zoninfo path.
+// TODO It will be refined later. This is just a quick fix.
+func GetTZNameFromFileName(path string) (string, error) {
 	// phase1 only support read /etc/localtime which is a softlink to zoneinfo file
 	substr := "share/zoneinfo"
 	if strings.Contains(path, substr) {
@@ -144,7 +146,7 @@ func zone(sctx sessionctx.Context) (string, int64) {
 			log.Errorln(err)
 			return "Sysytem", int64(offset)
 		}
-		name, err = getTZNameFromFileName(path)
+		name, err = GetTZNameFromFileName(path)
 		if err != nil {
 			log.Errorln(err)
 			return "System", int64(offset)
