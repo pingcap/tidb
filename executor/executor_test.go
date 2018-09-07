@@ -292,7 +292,9 @@ type testCase struct {
 
 func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
+	origin := ld.IgnoreLines
 	for _, tt := range tests {
+		ld.IgnoreLines = origin
 		c.Assert(ctx.NewTxn(), IsNil)
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
