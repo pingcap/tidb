@@ -127,6 +127,26 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
+	// cast('125e342.83' as unsigned)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("125e342.83"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.GetUint64() == 125, IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+
+	// cast('1e9223372036854775807' as unsigned)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("1e9223372036854775807"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.GetUint64() == 1, IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+
 	// cast('18446744073709551616' as signed);
 	mask := ^mysql.UnsignedFlag
 	tp1.Flag &= uint(mask)
@@ -148,6 +168,26 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
 	c.Assert(terror.ErrorEqual(types.ErrCastAsSignedOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+
+	// cast('125e342.83' as signed)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("125e342.83"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.GetInt64() == 125, IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+
+	// cast('1e9223372036854775807' as signed)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("1e9223372036854775807"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.GetInt64() == 1, IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
 	// create table t1(s1 time);
 	// insert into t1 values('11:11:11');
