@@ -109,7 +109,8 @@ const (
 	LblVersion = "version"
 )
 
-func init() {
+// RegisterMetrics registers the metrics which are ONLY used in TiDB server.
+func RegisterMetrics() {
 	prometheus.MustRegister(JobsGauge)
 	prometheus.MustRegister(HandleJobHistogram)
 	prometheus.MustRegister(BatchAddIdxHistogram)
