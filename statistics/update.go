@@ -417,7 +417,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 		newTblStats := tblStats.copy()
 		if fb.hist.isIndexHist() {
 			idx, ok := tblStats.Indices[fb.hist.ID]
-			if !ok {
+			if !ok || idx.Histogram.Len() == 0 {
 				continue
 			}
 			newIdx := *idx
@@ -428,7 +428,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			newTblStats.Indices[fb.hist.ID] = &newIdx
 		} else {
 			col, ok := tblStats.Columns[fb.hist.ID]
-			if !ok {
+			if !ok || col.Histogram.Len() == 0 {
 				continue
 			}
 			newCol := *col
@@ -528,14 +528,14 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	var hist *Histogram
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
-		if ok {
+		if ok && idx.Histogram.Len() > 0 {
 			idxHist := idx.Histogram
 			hist = &idxHist
 			cms = idx.CMSketch.copy()
 		}
 	} else {
 		col, ok := tbl.Columns[histID]
-		if ok {
+		if ok && col.Histogram.Len() > 0 {
 			colHist := col.Histogram
 			hist = &colHist
 		}

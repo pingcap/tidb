@@ -661,8 +661,18 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		c.Assert(len(feedback), Equals, 0)
 	}
 
-	// Test that the outdated feedback won't cause panic.
+	// Test that after drop stats, the feedback won't cause panic.
 	statistics.FeedbackProbability = 1
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+	}
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	testKit.MustExec("drop stats t")
+	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+
+	// Test that the outdated feedback won't cause panic.
+	testKit.MustExec("analyze table t")
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
 	}
@@ -845,6 +855,10 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 
 	// Test that it won't cause panic after update.
 	testKit.MustQuery("select * from t use index(idx) where b > 0")
+
+	// Test that after drop stats, it won't cause panic.
+	testKit.MustExec("drop stats t")
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 }
 
 type logHook struct {
