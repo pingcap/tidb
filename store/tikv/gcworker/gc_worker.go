@@ -449,12 +449,14 @@ func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey [
 			continue
 		}
 
+		address := store.Address
+		storeID := store.Id
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err1 := w.store.GetTiKVClient().SendRequest(ctx, store.Address, req, tikv.UnsafeDestroyRangeTimeout)
+			_, err1 := w.store.GetTiKVClient().SendRequest(ctx, address, req, tikv.UnsafeDestroyRangeTimeout)
 			if err1 != nil {
-				log.Errorf("[gc worker] %s destroy range on store %v failed with error: %v", w.uuid, store.Id, errors.ErrorStack(err))
+				log.Errorf("[gc worker] %s destroy range on store %v failed with error: %v", w.uuid, storeID, errors.ErrorStack(err))
 				err = err1
 			}
 		}()
