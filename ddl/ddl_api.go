@@ -907,29 +907,33 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	if pi != nil {
-		if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
-			return errors.Trace(err)
-		}
+	if pi != nil && pi.Type == model.PartitionTypeRange {
+		// Only range type partition is now supported.
+		// Range columns partition only implements the parser, so it will not be checked.
+		if s.Partition.ColumnNames == nil {
+			if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
-			return errors.Trace(err)
-		}
+			if err = checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
-			return errors.Trace(err)
-		}
+			if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-			return errors.Trace(err)
-		}
+			if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
-			return errors.Trace(err)
-		}
+			if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
-			return errors.Trace(err)
+			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+				return errors.Trace(err)
+			}
 		}
 		tbInfo.Partition = pi
 	}
