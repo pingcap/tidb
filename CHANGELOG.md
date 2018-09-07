@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV changelog](https://github.com/pingcap/tikv/blob/master/CHANGELOG.md) and [PD changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [2.0.7] - 2018-09-07
+### New Feature
+  - Add the `PROCESSLIST` table in `information_schema` [#7286](https://github.com/pingcap/tidb/pull/7286)
+### Improvements
+  - Collect more details about SQL statement execution and output the information in the `SLOW QUERY` log [#7364](https://github.com/pingcap/tidb/pull/7364)
+  - Drop the partition information in `SHOW CREATE TABLE` [#7388](https://github.com/pingcap/tidb/pull/7388)
+  - Improve the execution efficiency of the `ANALYZE` statement by setting it to the RC isolation level and low priority [#7500](https://github.com/pingcap/tidb/pull/7500)
+  - Speed up adding a unique index [#7562](https://github.com/pingcap/tidb/pull/7562)
+  - Add an option of controlling the DDL concurrency [#7563](https://github.com/pingcap/tidb/pull/7563)
+### Bug Fixes
+  - Fix the issue that `USE INDEX(`PRIMARY`)` cannot be used in a table whose primary key is an integer [#7298](https://github.com/pingcap/tidb/pull/7298)
+  - Fix the issue that `Merge Join` and `Index Join` output incorrect results when the inner row is `NULL` [#7301](https://github.com/pingcap/tidb/pull/7301)
+  - Fix the issue that `Join` outputs an incorrect result when the chunk size is set too small [#7315](https://github.com/pingcap/tidb/pull/7315)
+  - Fix the panic issue caused by a statement of creating a table involving `range column` [#7379](https://github.com/pingcap/tidb/pull/7379)
+  - Fix the issue that `admin check table` mistakenly reports an error of a time-type column [#7457](https://github.com/pingcap/tidb/pull/7457)
+  - Fix the issue that the data with a default value `current_timestamp` cannot be queried using the `=` condition [#7467](https://github.com/pingcap/tidb/pull/7467)
+  - Fix the issue that the zero-length parameter inserted by using the `ComStmtSendLongData` command is mistakenly parsed to NULL [#7508](https://github.com/pingcap/tidb/pull/7508)
+  - Fix the issue that `auto analyze` is repeatedly executed in specific scenarios [#7556](https://github.com/pingcap/tidb/pull/7556)
+  - Fix the issue that the parser cannot parse a single line comment ended with a newline character [#7635](https://github.com/pingcap/tidb/pull/7635)
+
 ## [2.0.6] - 2018-08-06
 ### Improvements
   - Make “set system variable” log shorter to save disk space [#7031](https://github.com/pingcap/tidb/pull/7031)
