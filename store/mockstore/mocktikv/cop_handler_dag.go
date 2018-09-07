@@ -42,7 +42,6 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
-	"path/filepath"
 )
 
 var dummySlice = make([]byte, 0)

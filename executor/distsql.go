@@ -15,8 +15,10 @@ package executor
 
 import (
 	"math"
+	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -139,9 +141,15 @@ func zone(sctx sessionctx.Context) (string, int64) {
 	if name == "Local" {
 		path, err := filepath.EvalSymlinks("/etc/localtime")
 		if err != nil {
+			log.Errorln(err)
 			return "Sysytem", int64(offset)
 		}
-		return getTZNameFromFileName(path), int64(offset)
+		name, err = getTZNameFromFileName(path)
+		if err != nil {
+			log.Errorln(err)
+			return "System", int64(offset)
+		}
+		return name, int64(offset)
 	}
 
 	return name, int64(offset)
