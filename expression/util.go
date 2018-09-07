@@ -398,10 +398,10 @@ func DeriveRelaxedFiltersFromDNF(expr Expression, schema *Schema) Expression {
 				continue
 			}
 			// This cnfItem must be simple expression now
+			// If it cannot be fully covered by schema, just drop this CNF item
 			if ExprFromSchema(cnfItem, schema) {
 				newCNFItems = append(newCNFItems, cnfItem)
 			}
-			// If simple cnfItem cannot be fully covered by schema, just drop this CNF item
 		}
 		// If this DNF item involves no column of specified schema, the relaxed expression must be universal set
 		if len(newCNFItems) == 0 {
