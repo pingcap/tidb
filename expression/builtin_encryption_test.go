@@ -37,12 +37,12 @@ var cryptTests = []struct {
 	{"pingcap123", "123456789012345678901234", "7698723DC6DFE7724221"},
 	{"pingcap#%$%^", "*^%YTu1234567", "8634B9C55FF55E5B6328F449"},
 	{"pingcap", "", "4A77B524BD2C5C"},
-        {"分布式データベース","pass1234@#$%%^^&","80CADC8D328B3026D04FB285F36FED04BBCA0CC685BF78B1E687CE"},
-        {"分布式データベース","分布式7782734adgwy1242","0E24CFEF272EE32B6E0BFBDB89F29FB43B4B30DAA95C3F914444BC"},
-        {"pingcap","密匙","CE5C02A5010010"},
-        {"pingcap数据库","数据库passwd12345667","36D5F90D3834E30E396BE3226E3B4ED3"},
-        {"数据库5667",123.435,"B22196D0569386237AE12F8AAB"},
-        {nil,"数据库passwd12345667",nil},
+	{"分布式データベース", "pass1234@#$%%^^&", "80CADC8D328B3026D04FB285F36FED04BBCA0CC685BF78B1E687CE"},
+	{"分布式データベース", "分布式7782734adgwy1242", "0E24CFEF272EE32B6E0BFBDB89F29FB43B4B30DAA95C3F914444BC"},
+	{"pingcap", "密匙", "CE5C02A5010010"},
+	{"pingcap数据库", "数据库passwd12345667", "36D5F90D3834E30E396BE3226E3B4ED3"},
+	{"数据库5667", 123.435, "B22196D0569386237AE12F8AAB"},
+	{nil, "数据库passwd12345667", nil},
 }
 
 func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
@@ -57,7 +57,7 @@ func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
 	}
-	 s.testNullInput(c, ast.Decode)
+	s.testNullInput(c, ast.Decode)
 }
 
 func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
@@ -73,7 +73,7 @@ func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(str, DeepEquals, types.NewDatum(test.origin))
 	}
-	 s.testNullInput(c, ast.Encode)
+	s.testNullInput(c, ast.Encode)
 }
 
 var aesTests = []struct {
