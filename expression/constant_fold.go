@@ -86,7 +86,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		}
 
 		args := x.GetArgs()
-		allConstArg := true
+		nonConstArgIdx := make([]int, 0, len(args))
 		hasNullArg := false
 		isDeferredConst := false
 		for i := 0; i < len(args); i++ {
@@ -98,14 +98,24 @@ func foldConstant(expr Expression) (Expression, bool) {
 					hasNullArg = true
 				}
 			} else {
-				allConstArg = false
+				nonConstArgIdx = append(nonConstArgIdx, i)
 			}
 			isDeferredConst = isDeferredConst || isDeferred
 		}
-		if !allConstArg && !hasNullArg {
-			return expr, isDeferredConst
+		if len(nonConstArgIdx) > 0 {
+			if !hasNullArg {
+				return expr, isDeferredConst
+			}
+			dummyScalarFunc, _ := x.Clone().(*ScalarFunction)
+			for _, idx := range nonConstArgIdx {
+				dummyScalarFunc.GetArgs()[idx] = One
+			}
+			value, err := dummyScalarFunc.Eval(chunk.Row{})
+			if err != nil || !value.IsNull() {
+				return expr, isDeferredConst
+			}
+			return &Constant{Value: value, RetType: x.RetType}, false
 		}
-		// Convert Column and ScalarFunction to DummyConstant
 		value, err := x.Eval(chunk.Row{})
 		if err != nil {
 			log.Warnf("fold constant %s: %s", x.ExplainInfo(), err.Error())
