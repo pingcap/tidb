@@ -31,7 +31,6 @@ func init() {
 
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.
 func FoldConstant(expr Expression) Expression {
-	expr = PushDownNot(nil, expr, false)
 	e, _ := foldConstant(expr)
 	return e
 }
