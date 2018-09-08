@@ -108,7 +108,7 @@ func Local() *time.Location {
 //  if valid Location is not found.
 func (lm *locCache) getLoc(name string) (*time.Location, error) {
 	if name == "System" {
-		name = "Local"
+		return time.Local, nil
 	}
 	lm.RLock()
 	if v, ok := lm.locMap[name]; ok {

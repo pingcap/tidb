@@ -124,8 +124,6 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 // timezone offset in seconds east of UTC is used to constructed the timezone.
 func constructTimeZone(name string, offset int) (*time.Location, error) {
 	if name != "" {
-		// no need to care about case since name is retreved
-		// from go std library call
 		return timeutil.LoadLocation(name)
 	}
 

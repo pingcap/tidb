@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 func (s *testEvaluatorSuite) TestDate(c *C) {
@@ -774,7 +775,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		fc  functionClass
 		now func() time.Time
 	}{
-		{funcs[ast.Now], func() time.Time { return time.Now() }},
+		{funcs[ast.Now], func() time.Time { return time.Now().In(s.ctx.GetSessionVars().Location()) }},
 		{funcs[ast.UTCTimestamp], func() time.Time { return time.Now().UTC() }},
 	} {
 		f, err := x.fc.getFunction(s.ctx, s.datumsToConstants(nil))
@@ -997,7 +998,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	fc := funcs[ast.Sysdate]
 
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	ctx.GetSessionVars().StmtCtx.TimeZone = timeutil.Local()
 	timezones := []types.Datum{types.NewDatum(1234), types.NewDatum(0)}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
@@ -1011,7 +1012,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 		c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
 	}
 
-	last := time.Now()
+	last := time.Now().In(s.ctx.GetSessionVars().Location())
 	f, err := fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(6)))
 	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1156,7 +1157,7 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	defer testleak.AfterTest(c)()
 	tfStr := "15:04:05"
 
-	last := time.Now()
+	last := time.Now().In(s.ctx.GetSessionVars().Location())
 	fc := funcs[ast.CurrentTime]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(err, IsNil)
