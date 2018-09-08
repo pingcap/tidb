@@ -42,7 +42,6 @@ var cryptTests = []struct {
         {"pingcap","密匙","CE5C02A5010010"},
         {"pingcap数据库","数据库passwd12345667","36D5F90D3834E30E396BE3226E3B4ED3"},
         {"数据库5667",123.435,"B22196D0569386237AE12F8AAB"},
-        {"数据库",nil,nil},
         {nil,"数据库passwd12345667",nil},
 }
 
@@ -58,6 +57,7 @@ func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(toHex(crypt), DeepEquals, types.NewDatum(tt.crypt))
 	}
+	 s.testNullInput(c, ast.Decode)
 }
 
 func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
@@ -73,6 +73,7 @@ func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(str, DeepEquals, types.NewDatum(test.origin))
 	}
+	 s.testNullInput(c, ast.Encode)
 }
 
 var aesTests = []struct {
