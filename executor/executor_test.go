@@ -3121,7 +3121,6 @@ func (s *testSuite) TestCurrentTimestampValueSelection(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,t1")
 
-	tk.MustExec("set time_zone='Asia/Shanghai'")
 	tk.MustExec("create table t (id int, t0 timestamp null default current_timestamp, t1 timestamp(1) null default current_timestamp(1), t2 timestamp(2) null default current_timestamp(2) on update current_timestamp(2))")
 	tk.MustExec("insert into t (id) values (1)")
 	rs := tk.MustQuery("select t0, t1, t2 from t where id = 1")

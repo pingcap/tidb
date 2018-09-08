@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
+	"os"
 )
 
 var (
@@ -133,6 +135,39 @@ func GetTZNameFromFileName(path string) (string, error) {
 
 var localStr string
 var localOnce sync.Once
+var zoneSources = []string{
+	"/usr/share/zoneinfo/",
+	"/usr/share/lib/zoneinfo/",
+	"/usr/lib/locale/TZ/",
+}
+
+func initLocalStr() {
+	// consult $TZ to find the time zone to use.
+	// no $TZ means use the system default /etc/localtime.
+	// $TZ="" means use UTC.
+	// $TZ="foo" means use /usr/share/zoneinfo/foo.
+
+	tz, ok := syscall.Getenv("TZ")
+	if ok && tz != "" {
+		for _, source := range zoneSources {
+			if _, err := os.Stat(source + tz); os.IsExist(err) {
+				localStr = tz
+				break
+			}
+		}
+	} else if tz == "" {
+		localStr = "UTC"
+	} else {
+		path, err := filepath.EvalSymlinks("/etc/localtime")
+		if err == nil {
+			localStr, err = GetTZNameFromFileName(path)
+			if err == nil {
+				return
+			}
+		}
+		localStr = "System"
+	}
+}
 
 // zone returns the current timezone name and timezone offset in seconds.
 // In compatible with MySQL, we change `Local` to `System`.
@@ -144,16 +179,7 @@ func zone(sctx sessionctx.Context) (string, int64) {
 	var name string
 	name = loc.String()
 	if name == "Local" {
-		localOnce.Do(func() {
-			path, err := filepath.EvalSymlinks("/etc/localtime")
-			if err == nil {
-				localStr, err = GetTZNameFromFileName(path)
-				if err == nil {
-					return
-				}
-			}
-			localStr = "System"
-		})
+		localOnce.Do(initLocalStr)
 
 		return localStr, int64(offset)
 	}
