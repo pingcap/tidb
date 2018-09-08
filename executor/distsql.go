@@ -146,15 +146,13 @@ func zone(sctx sessionctx.Context) (string, int64) {
 	if name == "Local" {
 		localOnce.Do(func() {
 			path, err := filepath.EvalSymlinks("/etc/localtime")
-			if err != nil {
-				log.Errorln(err)
-				localStr = "System"
+			if err == nil {
+				localStr, err = GetTZNameFromFileName(path)
+				if err == nil {
+					return
+				}
 			}
-			localStr, err = GetTZNameFromFileName(path)
-			if err != nil {
-				log.Errorln(err)
-				localStr = "System"
-			}
+			localStr = "System"
 		})
 
 		return localStr, int64(offset)
