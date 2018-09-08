@@ -286,9 +286,8 @@ func mockContext() sessionctx.Context {
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
-		sql   string
-		first string
-		best  string
+		sql  string
+		best string
 	}{
 		{
 			sql:  "select count(*) from t a, t b where a.a = b.a",
@@ -567,11 +566,6 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 		},
 	}
 	for _, ca := range tests {
-		comment := Commentf("for %s", ca.sql)
-		stmt, err := s.ParseOneStmt(ca.sql, "", "")
-		c.Assert(err, IsNil, comment)
-		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
-		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		proj, ok := p.(*LogicalProjection)
@@ -590,6 +584,58 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
 		c.Assert(leftCond, Equals, ca.left, comment)
 		c.Assert(rightCond, Equals, ca.right, comment)
+	}
+}
+
+func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql      string
+		best     string
+		joinType string
+	}{
+		{
+			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where t1.c > 1 or t2.c > 1;",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Sel([or(gt(t1.c, 1), gt(t2.c, 1))])->Projection",
+			joinType: "left outer join",
+		},
+		{
+			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where t1.c > 1 and t2.c > 1;",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			joinType: "inner join",
+		},
+		{
+			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 or t2.c > 1);",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			joinType: "inner join",
+		},
+		{
+			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 and t2.c > 1);",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Sel([not(and(le(t1.c, 1), le(t2.c, 1)))])->Projection",
+			joinType: "left outer join",
+		},
+		{
+			sql:      "select * from t t1 left join t t2 on t1.b > 1 where t1.c = t2.c;",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(t1.c,t2.c)->Projection",
+			joinType: "inner join",
+		},
+	}
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
+		c.Assert(err, IsNil, comment)
+		c.Assert(ToString(p), Equals, ca.best, comment)
+		join, ok := p.(LogicalPlan).Children()[0].(*LogicalJoin)
+		if !ok {
+			join, ok = p.(LogicalPlan).Children()[0].Children()[0].(*LogicalJoin)
+			c.Assert(ok, IsTrue, comment)
+		}
+		joinType := fmt.Sprintf("%s", join.JoinType.String())
+		c.Assert(joinType, Equals, ca.joinType, comment)
 	}
 }
 
