@@ -24,6 +24,7 @@ import (
 	"time"
 	"unsafe"
 
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -155,6 +156,7 @@ func zone(sctx sessionctx.Context) (string, int64) {
 			localStr = "System"
 		})
 
+		fmt.Println(localStr)
 		return localStr, int64(offset)
 	}
 
