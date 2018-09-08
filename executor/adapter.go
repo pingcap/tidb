@@ -22,6 +22,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -367,6 +368,9 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		logutil.SlowQueryLogger.Warnf(
 			"[SLOW_QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
 			internal, costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+		if !sessVars.InRestrictedSQL {
+			domain.GetDomain(a.Ctx).LogTopNSlowQuery(sql, a.startTime, costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, txnTS, user.String(), currentDB, tableIDs, indexIDs)
+		}
 	}
 }
 
