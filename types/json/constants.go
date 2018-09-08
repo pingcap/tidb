@@ -212,12 +212,15 @@ var (
 	ErrInvalidJSONPath = terror.ClassJSON.New(mysql.ErrInvalidJSONPath, mysql.MySQLErrName[mysql.ErrInvalidJSONPath])
 	// ErrInvalidJSONData means invalid JSON data.
 	ErrInvalidJSONData = terror.ClassJSON.New(mysql.ErrInvalidJSONData, mysql.MySQLErrName[mysql.ErrInvalidJSONData])
+	// ErrInvalidJSONPathWildcard means invalid JSON path that contain wildcard characters.
+	ErrInvalidJSONPathWildcard = terror.ClassJSON.New(mysql.ErrInvalidJSONPathWildcard, mysql.MySQLErrName[mysql.ErrInvalidJSONPathWildcard])
 )
 
 func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassJSON] = map[terror.ErrCode]uint16{
-		mysql.ErrInvalidJSONText: mysql.ErrInvalidJSONText,
-		mysql.ErrInvalidJSONPath: mysql.ErrInvalidJSONPath,
-		mysql.ErrInvalidJSONData: mysql.ErrInvalidJSONData,
+		mysql.ErrInvalidJSONText:         mysql.ErrInvalidJSONText,
+		mysql.ErrInvalidJSONPath:         mysql.ErrInvalidJSONPath,
+		mysql.ErrInvalidJSONData:         mysql.ErrInvalidJSONData,
+		mysql.ErrInvalidJSONPathWildcard: mysql.ErrInvalidJSONPathWildcard,
 	}
 }

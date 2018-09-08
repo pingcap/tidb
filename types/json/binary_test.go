@@ -293,3 +293,34 @@ func BenchmarkBinaryMarshal(b *testing.B) {
 		bj.MarshalJSON()
 	}
 }
+
+func (s *testJSONSuite) TestBinaryJSONContains(c *C) {
+	var tests = []struct {
+		input    string
+		target   string
+		expected bool
+	}{
+		{`{}`, `{}`, true},
+		{`{"a":1}`, `{}`, true},
+		{`{"a":1}`, `1`, false},
+		{`{"a":[1]}`, `[1]`, false},
+		{`{"b":2, "c":3}`, `{"c":3}`, true},
+		{`1`, `1`, true},
+		{`[1]`, `1`, true},
+		{`[1,2]`, `[1]`, true},
+		{`[1,2]`, `[1,3]`, false},
+		{`[1,2]`, `["1"]`, false},
+		{`[1,2,[1,3]]`, `[1,3]`, true},
+		{`[1,2,[1,[5,[3]]]]`, `[1,3]`, true},
+		{`[1,2,[1,[5,{"a":[2,3]}]]]`, `[1,{"a":[3]}]`, true},
+		{`[{"a":1}]`, `{"a":1}`, true},
+		{`[{"a":1,"b":2}]`, `{"a":1}`, true},
+		{`[{"a":{"a":1},"b":2}]`, `{"a":1}`, false},
+	}
+
+	for _, tt := range tests {
+		obj := mustParseBinaryFromString(c, tt.input)
+		target := mustParseBinaryFromString(c, tt.target)
+		c.Assert(ContainsBinary(obj, target), Equals, tt.expected)
+	}
+}

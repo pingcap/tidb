@@ -889,6 +889,7 @@ const (
 	ErrInvalidJSONText                                              = 3140
 	ErrInvalidJSONPath                                              = 3143
 	ErrInvalidJSONData                                              = 3146
+	ErrInvalidJSONPathWildcard                                      = 3149
 	ErrJSONUsedAsKey                                                = 3152
 
 	// TiDB self-defined errors.
