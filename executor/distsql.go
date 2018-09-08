@@ -155,8 +155,6 @@ func initLocalStr() {
 				break
 			}
 		}
-	} else if tz == "" {
-		localStr = "UTC"
 	} else {
 		path, err := filepath.EvalSymlinks("/etc/localtime")
 		if err == nil {
@@ -167,6 +165,7 @@ func initLocalStr() {
 		}
 		localStr = "System"
 	}
+	println(localStr)
 }
 
 // zone returns the current timezone name and timezone offset in seconds.
@@ -180,7 +179,6 @@ func zone(sctx sessionctx.Context) (string, int64) {
 	name = loc.String()
 	if name == "Local" {
 		localOnce.Do(initLocalStr)
-
 		return localStr, int64(offset)
 	}
 
