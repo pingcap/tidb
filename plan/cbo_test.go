@@ -144,7 +144,8 @@ func (s *testAnalyzeSuite) TestTableDual(c *C) {
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 
 	testKit.MustQuery(`explain select * from t where 1 = 0`).Check(testkit.Rows(
-		`TableDual_6 0.00 root rows:0`,
+		`Projection_5 0.00 root test.t.a`,
+		`└─TableDual_6 0.00 root rows:0`,
 	))
 
 	testKit.MustQuery(`explain select * from t where 1 = 1 limit 0`).Check(testkit.Rows(

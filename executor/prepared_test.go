@@ -229,10 +229,7 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 		plan.SetPreparedPlanCache(orgEnable)
 		plan.PreparedPlanCacheCapacity = orgCapacity
 	}()
-	// Disable this test for plan cache enabled setting temporarily
-	// Reopen it when issue #7579 is fixed
-	// flags := []bool{false, true}
-	flags := []bool{false}
+	flags := []bool{false, true}
 	for _, flag := range flags {
 		plan.SetPreparedPlanCache(flag)
 		plan.PreparedPlanCacheCapacity = 100
