@@ -275,20 +275,6 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 	return false
 }
 
-// concatOnAndWhereConds concatenate ON conditions with WHERE conditions.
-func concatOnAndWhereConds(join *LogicalJoin, predicates []expression.Expression) []expression.Expression {
-	numAllFilters := len(join.EqualConditions) + len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions) + len(predicates)
-	allFilters := make([]expression.Expression, 0, numAllFilters)
-	for _, equalCond := range join.EqualConditions {
-		allFilters = append(allFilters, equalCond)
-	}
-	allFilters = append(allFilters, join.LeftConditions...)
-	allFilters = append(allFilters, join.RightConditions...)
-	allFilters = append(allFilters, join.OtherConditions...)
-	allFilters = append(allFilters, predicates...)
-	return allFilters
-}
-
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan LogicalPlan) {
 	var push = make([]expression.Expression, 0, p.Schema().Len())
