@@ -41,7 +41,7 @@ var cryptTests = []struct {
         {"分布式データベース","分布式7782734adgwy1242","0E24CFEF272EE32B6E0BFBDB89F29FB43B4B30DAA95C3F914444BC"},
         {"pingcap","密匙","CE5C02A5010010"},
         {"pingcap数据库","数据库passwd12345667","36D5F90D3834E30E396BE3226E3B4ED3"},
-        {7382.3456,"数据库passwd12345667","B6484047F783239225"},
+        {"数据库5667",123.435,"B22196D0569386237AE12F8AAB"},
         {"数据库",nil,nil},
         {nil,"数据库passwd12345667",nil},
 }
@@ -52,6 +52,7 @@ func (s *testEvaluatorSuite) TestSQLDecode(c *C) {
 	for _, tt := range cryptTests {
 		str := types.NewDatum(tt.origin)
 		password := types.NewDatum(tt.password)
+
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{str, password}))
 		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
@@ -63,10 +64,12 @@ func (s *testEvaluatorSuite) TestSQLEncode(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.Encode]
 	for _, test := range cryptTests {
-		cryptStr := fromHex(test.crypt)
 		password := types.NewDatum(test.password)
+		cryptStr := fromHex(test.crypt)
+
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{cryptStr, password}))
 		str, err := evalBuiltinFunc(f, chunk.Row{})
+
 		c.Assert(err, IsNil)
 		c.Assert(str, DeepEquals, types.NewDatum(test.origin))
 	}
