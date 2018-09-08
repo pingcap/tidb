@@ -86,20 +86,26 @@ func foldConstant(expr Expression) (Expression, bool) {
 		}
 
 		args := x.GetArgs()
-		canFold := true
+		allConstArg := true
+		hasNullArg := false
 		isDeferredConst := false
 		for i := 0; i < len(args); i++ {
 			foldedArg, isDeferred := foldConstant(args[i])
 			x.GetArgs()[i] = foldedArg
-			_, conOK := foldedArg.(*Constant)
-			if !conOK {
-				canFold = false
+			con, conOK := foldedArg.(*Constant)
+			if conOK {
+				if con.Value.IsNull() {
+					hasNullArg = true
+				}
+			} else {
+				allConstArg = false
 			}
 			isDeferredConst = isDeferredConst || isDeferred
 		}
-		if !canFold {
+		if !allConstArg && !hasNullArg {
 			return expr, isDeferredConst
 		}
+		// Convert Column and ScalarFunction to DummyConstant
 		value, err := x.Eval(chunk.Row{})
 		if err != nil {
 			log.Warnf("fold constant %s: %s", x.ExplainInfo(), err.Error())
