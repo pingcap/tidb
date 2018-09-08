@@ -31,6 +31,7 @@ func init() {
 
 // FoldConstant does constant folding optimization on an expression excluding deferred ones.
 func FoldConstant(expr Expression) Expression {
+	expr = PushDownNot(nil, expr, false)
 	e, _ := foldConstant(expr)
 	return e
 }
@@ -86,6 +87,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 		}
 
 		args := x.GetArgs()
+		sc := x.GetCtx().GetSessionVars().StmtCtx
 		nonConstArgIdx := make([]int, 0, len(args))
 		hasNullArg := false
 		isDeferredConst := false
@@ -103,7 +105,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 			isDeferredConst = isDeferredConst || isDeferred
 		}
 		if len(nonConstArgIdx) > 0 {
-			if !hasNullArg {
+			if !hasNullArg || !sc.InNullRejectCheck {
 				return expr, isDeferredConst
 			}
 			dummyScalarFunc, _ := x.Clone().(*ScalarFunction)
