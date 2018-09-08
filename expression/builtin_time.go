@@ -993,7 +993,10 @@ func (b *builtinMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	if date.IsZero() {
-		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(date.String())))
+		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+			return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(date.String())))
+		}
+		return 0, false, nil
 	}
 
 	return int64(date.Time.Month()), false, nil
@@ -1030,9 +1033,9 @@ func (b *builtinMonthNameSig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	mon := arg.Time.Month()
-	if arg.IsZero() || mon < 0 || mon > len(types.MonthNames) {
+	if (arg.IsZero() && b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode()) || mon < 0 || mon > len(types.MonthNames) {
 		return "", true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(arg.String())))
-	} else if mon == 0 {
+	} else if mon == 0 || arg.IsZero() {
 		return "", true, nil
 	}
 	return types.MonthNames[mon-1], false, nil
@@ -1111,7 +1114,10 @@ func (b *builtinDayOfMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, err))
 	}
 	if arg.IsZero() {
-		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(arg.String())))
+		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+			return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(arg.String())))
+		}
+		return 0, false, nil
 	}
 	return int64(arg.Time.Day()), false, nil
 }
@@ -1393,9 +1399,11 @@ func (b *builtinYearSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 
 	if date.IsZero() {
-		return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(date.String())))
+		if b.ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+			return 0, true, errors.Trace(handleInvalidTimeError(b.ctx, types.ErrIncorrectDatetimeValue.GenByArgs(date.String())))
+		}
+		return 0, false, nil
 	}
-
 	return int64(date.Time.Year()), false, nil
 }
 
