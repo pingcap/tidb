@@ -87,7 +87,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 
 		args := x.GetArgs()
 		sc := x.GetCtx().GetSessionVars().StmtCtx
-		argIsConst := make([]int, 0, len(args))
+		argIsConst := make([]bool, 0, len(args))
 		hasNullArg := false
 		allConstArg := true
 		isDeferredConst := false
@@ -118,7 +118,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 					constArgs[i] = One
 				}
 			}
-			dummyScalarFunc := NewFunctionInternal(x.GetCtx(), x.FuncName, x.GetType(), constArgs...)
+			dummyScalarFunc := NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), constArgs...)
 			value, err := dummyScalarFunc.Eval(chunk.Row{})
 			if err != nil {
 				return expr, isDeferredConst
