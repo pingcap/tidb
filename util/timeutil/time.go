@@ -59,6 +59,7 @@ func initLocalStr() {
 	// $TZ="foo" means use /usr/share/zoneinfo/foo.
 	tz, ok := syscall.Getenv("TZ")
 	if ok && tz != "" {
+		fmt.Printf("initLocalStr tz %s", tz)
 		for _, source := range zoneSources {
 			if _, err := os.Stat(source + tz); os.IsExist(err) {
 				localStr = tz
@@ -96,7 +97,6 @@ func getTZNameFromFileName(path string) (string, error) {
 // Local returns time.Local's IANA timezone name.
 func Local() *time.Location {
 	localOnce.Do(initLocalStr)
-	fmt.Printf("local time zone name is %s\n", localStr)
 	loc, err := LoadLocation(localStr)
 	if err != nil {
 		return time.Local
