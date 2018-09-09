@@ -271,7 +271,7 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 	}
 	if x.Value.IsNull() {
 		return true
-	} else if isTrue, err := x.Value.ToBool(sc); err != nil || isTrue == 0 {
+	} else if isTrue, err := x.Value.ToBool(sc); err == nil && isTrue == 0 {
 		return true
 	}
 	return false

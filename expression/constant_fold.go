@@ -87,35 +87,49 @@ func foldConstant(expr Expression) (Expression, bool) {
 
 		args := x.GetArgs()
 		sc := x.GetCtx().GetSessionVars().StmtCtx
-		nonConstArgIdx := make([]int, 0, len(args))
+		argIsConst := make([]int, 0, len(args))
 		hasNullArg := false
+		allConstArg := true
 		isDeferredConst := false
 		for i := 0; i < len(args); i++ {
 			foldedArg, isDeferred := foldConstant(args[i])
 			x.GetArgs()[i] = foldedArg
 			con, conOK := foldedArg.(*Constant)
 			if conOK {
+				argIsConst[i] = true
 				if con.Value.IsNull() {
 					hasNullArg = true
 				}
 			} else {
-				nonConstArgIdx = append(nonConstArgIdx, i)
+				allConstArg = false
+				argIsConst[i] = false
 			}
 			isDeferredConst = isDeferredConst || isDeferred
 		}
-		if len(nonConstArgIdx) > 0 {
+		if !allConstArg {
 			if !hasNullArg || !sc.InNullRejectCheck {
 				return expr, isDeferredConst
 			}
-			dummyScalarFunc, _ := x.Clone().(*ScalarFunction)
-			for _, idx := range nonConstArgIdx {
-				dummyScalarFunc.GetArgs()[idx] = One
+			constArgs := make([]Expression, 0, len(args))
+			for i, arg := range args {
+				if argIsConst[i] {
+					constArgs[i] = arg
+				} else {
+					constArgs[i] = One
+				}
 			}
+			dummyScalarFunc := NewFunctionInternal(x.GetCtx(), x.FuncName, x.GetType(), constArgs...)
 			value, err := dummyScalarFunc.Eval(chunk.Row{})
-			if err != nil || !value.IsNull() {
+			if err != nil {
 				return expr, isDeferredConst
 			}
-			return &Constant{Value: value, RetType: x.RetType}, false
+			if value.IsNull() {
+				return &Constant{Value: value, RetType: x.RetType}, false
+			}
+			if isTrue, err := value.ToBool(sc); err == nil && isTrue == 0 {
+				return &Constant{Value: value, RetType: x.RetType}, false
+			}
+			return expr, isDeferredConst
 		}
 		value, err := x.Eval(chunk.Row{})
 		if err != nil {
