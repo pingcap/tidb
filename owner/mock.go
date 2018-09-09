@@ -76,3 +76,11 @@ func (m *mockManager) CampaignOwner(_ context.Context) error {
 	m.SetOwner(true)
 	return nil
 }
+
+// ResignOwner lets the owner start a new election.
+func (m *mockManager) ResignOwner(ctx context.Context) error {
+	if m.IsOwner() {
+		m.SetOwner(false)
+	}
+	return nil
+}

@@ -18,6 +18,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -51,6 +52,8 @@ type Manager interface {
 	GetOwnerID(ctx context.Context) (string, error)
 	// CampaignOwner campaigns the owner.
 	CampaignOwner(ctx context.Context) error
+	// ResignOwner lets the owner start a new election.
+	ResignOwner(ctx context.Context) error
 	// Cancel cancels this etcd ownerManager campaign.
 	Cancel()
 }
@@ -70,22 +73,26 @@ type DDLOwnerChecker interface {
 
 // ownerManager represents the structure which is used for electing owner.
 type ownerManager struct {
-	owner   int32
-	id      string // id is the ID of the manager.
-	key     string
-	prompt  string
-	etcdCli *clientv3.Client
-	cancel  context.CancelFunc
+	owner     int32
+	id        string // id is the ID of the manager.
+	key       string
+	prompt    string
+	logPrefix string
+	etcdCli   *clientv3.Client
+	cancel    context.CancelFunc
+	elec      *concurrency.Election
+	mu        sync.Mutex
 }
 
 // NewOwnerManager creates a new Manager.
 func NewOwnerManager(etcdCli *clientv3.Client, prompt, id, key string, cancel context.CancelFunc) Manager {
 	return &ownerManager{
-		etcdCli: etcdCli,
-		id:      id,
-		key:     key,
-		prompt:  prompt,
-		cancel:  cancel,
+		etcdCli:   etcdCli,
+		id:        id,
+		key:       key,
+		prompt:    prompt,
+		cancel:    cancel,
+		logPrefix: fmt.Sprintf("[%s] %s ownerManager %s", prompt, key, id),
 	}
 }
 
@@ -179,6 +186,37 @@ func (m *ownerManager) CampaignOwner(ctx context.Context) error {
 	return nil
 }
 
+// ResignOwner lets the owner start a new election.
+func (m *ownerManager) ResignOwner(ctx context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.IsOwner() || m.elec == nil {
+		return errors.Errorf("This node is not a ddl owner, can't be resigned.")
+	}
+
+	err := m.elec.Resign(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	log.Warnf("%s Resign ddl owner success!", m.logPrefix)
+	return nil
+}
+
+func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
+	m.mu.Lock()
+	m.elec = elec
+	m.SetOwner(true)
+	m.mu.Unlock()
+}
+
+func (m *ownerManager) retireOwner() {
+	m.mu.Lock()
+	m.SetOwner(false)
+	m.elec = nil
+	m.mu.Unlock()
+}
+
 func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrency.Session) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -188,7 +226,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		}
 	}()
 
-	logPrefix := fmt.Sprintf("[%s] %s ownerManager %s", m.prompt, m.key, m.id)
+	logPrefix := m.logPrefix
 	var err error
 	for {
 		if err != nil {
@@ -222,7 +260,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		}
 
 		elec := concurrency.NewElection(etcdSession, m.key)
-		err = elec.Campaign(ctx, m.id)
+		err := elec.Campaign(ctx, m.id)
 		if err != nil {
 			log.Infof("%s failed to campaign, err %v", logPrefix, err)
 			continue
@@ -232,9 +270,10 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		if err != nil {
 			continue
 		}
-		m.SetOwner(true)
+
+		m.toBeOwner(elec)
 		m.watchOwner(ctx, etcdSession, ownerKey)
-		m.SetOwner(false)
+		m.retireOwner()
 
 		metrics.CampaignOwnerCounter.WithLabelValues(m.prompt, metrics.NoLongerOwner).Inc()
 		log.Warnf("%s isn't the owner", logPrefix)
