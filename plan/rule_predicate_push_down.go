@@ -395,15 +395,18 @@ func deriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (l
 
 // conds2TableDual build a LogicalTableDual if cond is constant false or null
 func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
-	if len(conds) == 1 {
-		if con, ok := conds[0].(*expression.Constant); ok {
-			sc := p.context().GetSessionVars().StmtCtx
-			if isTrue, err := con.Value.ToBool(sc); (err == nil && isTrue == 0) || con.Value.IsNull() {
-				dual := LogicalTableDual{}.init(p.context())
-				dual.SetSchema(p.Schema())
-				return dual
-			}
-		}
+	if len(conds) != 1 {
+		return nil
+	}
+	con, ok := conds[0].(*expression.Constant)
+	if !ok {
+		return nil
+	}
+	sc := p.context().GetSessionVars().StmtCtx
+	if isTrue, err := con.Value.ToBool(sc); (err == nil && isTrue == 0) || con.Value.IsNull() {
+		dual := LogicalTableDual{}.init(p.context())
+		dual.SetSchema(p.Schema())
+		return dual
 	}
 	return nil
 }
