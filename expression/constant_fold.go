@@ -110,7 +110,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 			if !hasNullArg || !sc.InNullRejectCheck {
 				return expr, isDeferredConst
 			}
-			constArgs := make([]Expression, 0, len(args))
+			constArgs := make([]Expression, len(args))
 			for i, arg := range args {
 				if argIsConst[i] {
 					constArgs[i] = arg
