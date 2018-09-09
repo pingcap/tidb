@@ -566,6 +566,11 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 		},
 	}
 	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
 		p, err = logicalOptimize(flagPredicatePushDown|flagDecorrelate|flagPrunColumns, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		proj, ok := p.(*LogicalProjection)
