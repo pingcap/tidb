@@ -8,8 +8,8 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/juju/errors"
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb-tools/pkg/etcd"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 

@@ -18,7 +18,6 @@ import (
 	"net"
 	"time"
 
-	"github.com/ngaut/log"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pb "github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
@@ -64,7 +63,7 @@ func NewPumpStatus(status *node.Status, security *tls.Config) *PumpStatus {
 
 	err := pumpStatus.createGrpcClient(security)
 	if err != nil {
-		log.Errorf("[pumps client] create grpc client for %s failed, error %v", status.NodeID, err)
+		Logger.Errorf("[pumps client] create grpc client for %s failed, error %v", status.NodeID, err)
 		pumpStatus.IsAvaliable = false
 	}
 
@@ -81,7 +80,7 @@ func (p *PumpStatus) createGrpcClient(security *tls.Config) error {
 	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("tcp", addr, timeout)
 	})
-	log.Debugf("[pumps client] create gcpc client at %s", p.Addr)
+	Logger.Debugf("[pumps client] create gcpc client at %s", p.Addr)
 	var clientConn *grpc.ClientConn
 	var err error
 	if security != nil {

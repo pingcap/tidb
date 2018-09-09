@@ -33,14 +33,6 @@
   revision = "62e368e1c4700c34b4b6f77afd49b215211574c2"
 
 [[projects]]
-  branch = "master"
-  digest = "1:afea4ad0d6b3bf7efe0c248049c3efd427136bdb6e10985dd956fde5c57010a3"
-  name = "github.com/cockroachdb/cmux"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "30d10be492927e2dcae0089c374c455d42414fcb"
-
-[[projects]]
   digest = "1:60142a898f3808b3e6aa604e5f3296bdef921e625ef3223b6019c1a345b8765c"
   name = "github.com/codahale/hdrhistogram"
   packages = ["."]
@@ -48,108 +40,19 @@
   revision = "f8ad88b59a584afeee9d334eff879b104439117b"
 
 [[projects]]
-  digest = "1:4c7a379d06f493d3cf4301a08667d9b83011a92b1d9defc7ec58a10ade19e796"
-  name = "github.com/coreos/bbolt"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "583e8937c61f1af6513608ccc75c97b6abdf4ff9"
-  version = "v1.3.0"
-
-[[projects]]
-  digest = "1:e2cdbe52bb9bf2e77583599ea6360db074ac8655a19103dcf9d9b3a8d0dae40d"
+  digest = "1:d99a7470dd48ec1cd1b9da3dd2f30cad30da390fb67747d2cfd9ff3fcfac8267"
   name = "github.com/coreos/etcd"
   packages = [
     "auth/authpb",
-    "client",
     "clientv3",
     "clientv3/concurrency",
-    "clientv3/namespace",
-    "clientv3/naming",
-    "embed",
-    "error",
-    "etcdserver/api",
-    "etcdserver/api/etcdhttp",
-    "etcdserver/api/v2http",
-    "etcdserver/api/v2http/httptypes",
-    "etcdserver/api/v3client",
-    "etcdserver/api/v3election",
-    "etcdserver/api/v3election/v3electionpb",
-    "etcdserver/api/v3election/v3electionpb/gw",
-    "etcdserver/api/v3lock",
-    "etcdserver/api/v3lock/v3lockpb",
-    "etcdserver/api/v3lock/v3lockpb/gw",
-    "etcdserver/api/v3rpc",
     "etcdserver/api/v3rpc/rpctypes",
-    "etcdserver/auth",
     "etcdserver/etcdserverpb",
-    "etcdserver/etcdserverpb/gw",
-    "etcdserver/membership",
-    "etcdserver/stats",
-    "integration",
-    "lease",
-    "lease/leasehttp",
-    "lease/leasepb",
-    "mvcc/backend",
     "mvcc/mvccpb",
-    "pkg/adt",
-    "pkg/cors",
-    "pkg/cpuutil",
-    "pkg/crc",
-    "pkg/debugutil",
-    "pkg/fileutil",
-    "pkg/httputil",
-    "pkg/ioutil",
-    "pkg/logutil",
-    "pkg/monotime",
-    "pkg/netutil",
-    "pkg/pathutil",
-    "pkg/pbutil",
-    "pkg/runtime",
-    "pkg/srv",
-    "pkg/testutil",
-    "pkg/tlsutil",
-    "pkg/transport",
-    "pkg/types",
-    "proxy/grpcproxy",
-    "proxy/grpcproxy/adapter",
-    "proxy/grpcproxy/cache",
-    "raft",
-    "raft/raftpb",
-    "rafthttp",
-    "snap",
-    "snap/snappb",
-    "store",
-    "version",
-    "wal",
-    "wal/walpb",
   ]
   pruneopts = "NUT"
   revision = "fb5cd6f1c72c2b98e0c4453444cdfba306da867b"
   version = "v3.2.14"
-
-[[projects]]
-  digest = "1:0ef770954bca104ee99b3b6b7f9b240605ac03517d9f98cbc1893daa03f3c038"
-  name = "github.com/coreos/go-semver"
-  packages = ["semver"]
-  pruneopts = "NUT"
-  revision = "8ab6407b697782a06568d4b7f1db25550ec2e4c6"
-  version = "v0.2.0"
-
-[[projects]]
-  digest = "1:e3b55611cb86797357cc1cd2b3d38faf07ae3c4079f04b32e84d497422ab0d60"
-  name = "github.com/coreos/go-systemd"
-  packages = ["journal"]
-  pruneopts = "NUT"
-  revision = "39ca1b05acc7ad1220e09f133283b8859a8b71ab"
-  version = "v17"
-
-[[projects]]
-  digest = "1:22332f13485f13511589dc1f59eb97594e8636d3606b69d172a9a85421ad465d"
-  name = "github.com/coreos/pkg"
-  packages = ["capnslog"]
-  pruneopts = "NUT"
-  revision = "97fdf19511ea361ae1c100dd393cc47f8dcfa1e1"
-  version = "v4"
 
 [[projects]]
   digest = "1:883ab1d72c3c5851413baad190ebe3ceaf31bb8dece09a943ac07f9e722f811c"
@@ -204,14 +107,6 @@
   revision = "51ce9a71510a58bad5ae66ddd278ef28762a1550"
 
 [[projects]]
-  digest = "1:81466b4218bf6adddac2572a30ac733a9255919bc2f470b4827a317bd4ee1756"
-  name = "github.com/ghodss/yaml"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "0ca9ea5df5451ffdf184b4428c902747c2c11cd7"
-  version = "v1.0.0"
-
-[[projects]]
   digest = "1:973dbcbbb1be662b61604319582383c315add70906a68d14894f31542ffc3a25"
   name = "github.com/go-sql-driver/mysql"
   packages = ["."]
@@ -227,18 +122,9 @@
   version = "v1.1.1"
 
 [[projects]]
-  branch = "master"
-  digest = "1:3fb07f8e222402962fa190eb060608b34eddfb64562a18e2167df2de0ece85d8"
-  name = "github.com/golang/groupcache"
-  packages = ["lru"]
-  pruneopts = "NUT"
-  revision = "24b0969c4cb722950103eed87108c8d291a8df00"
-
-[[projects]]
-  digest = "1:0622d116371311ee5a49e148ff2092b016c192a37b4dd7e19fb3fe7edd3e3ac6"
+  digest = "1:893020f6e8476db411db5d19e2e8c495bba22374f7bd7f3456fb35fe1df05b4c"
   name = "github.com/golang/protobuf"
   packages = [
-    "jsonpb",
     "proto",
     "protoc-gen-go/descriptor",
     "ptypes",
@@ -300,26 +186,6 @@
   version = "v1.1"
 
 [[projects]]
-  digest = "1:5c3363169fc963321cd0789dda2ddff90562817d277e78011b0e1bbf51a6b473"
-  name = "github.com/grpc-ecosystem/grpc-gateway"
-  packages = [
-    "runtime",
-    "runtime/internal",
-    "utilities",
-  ]
-  pruneopts = "NUT"
-  revision = "92583770e3f01b09a0d3e9bdf64321d8bebd48f2"
-  version = "v1.4.1"
-
-[[projects]]
-  digest = "1:6b1eae4bb93e5ccd23cb09d1e005ecb391316d27701b7a5264f8555a6e2f3d87"
-  name = "github.com/jonboulle/clockwork"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "2eee05ed794112d45db504eb05aa693efd2b8b09"
-  version = "v0.1.0"
-
-[[projects]]
   digest = "1:e8fd2854e80293d75ff2aab6df2ea0887bb604c2119f343dbd63e25dcf9f10ef"
   name = "github.com/juju/errors"
   packages = ["."]
@@ -333,14 +199,6 @@
   packages = ["pbutil"]
   pruneopts = "NUT"
   revision = "c12348ce28de40eed0136aa2b644d0ee0650e56c"
-
-[[projects]]
-  branch = "master"
-  digest = "1:034a8af20bb9b0e286dd822938b69f8a6e15faad919874dca0931a7e481bbb30"
-  name = "github.com/ngaut/log"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "b8e36e7ba5ac61ce5644e570f1cc42d97dbaf8ed"
 
 [[projects]]
   branch = "master"
@@ -442,16 +300,15 @@
 
 [[projects]]
   branch = "develop"
-  digest = "1:f22933dc74cfc5ea5c4411e08c79b9ef600303cbb0400e22b9705e5dcb58c09f"
+  digest = "1:91cff6bc4d69014ab51d43c1540b1a0b6fda7ed0d83118d3b1618146c796e57f"
   name = "github.com/pingcap/tidb-tools"
   packages = [
-    "pkg/etcd",
     "pkg/utils",
     "tidb-binlog/node",
     "tidb-binlog/pump_client",
   ]
   pruneopts = "NUT"
-  revision = "2d93db2240611148bad2ff0c79d48f3b668d2c5c"
+  revision = "fba8b92a5d81fd6b1c110a7997d350b287c4ca1b"
 
 [[projects]]
   branch = "master"
@@ -561,33 +418,6 @@
   version = "v1.1.0"
 
 [[projects]]
-  digest = "1:919fc2a81add8ac4a7a236dceaf3e4c29ba4df96d13c3f2ce13a4d0132ebefb8"
-  name = "github.com/ugorji/go"
-  packages = ["codec"]
-  pruneopts = "NUT"
-  revision = "b4c50a2b199d93b13dc15e78929cfb23bfdf21ab"
-  version = "v1.1.1"
-
-[[projects]]
-  digest = "1:e4ffb3b860a4c71f7805415b4ba1e9a27e04eb9c4c03ddd943e9ff1790eda506"
-  name = "github.com/xiang90/probing"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "07dd2e8dfe18522e9c447ba95f2fe95262f63bb2"
-  version = "0.0.1"
-
-[[projects]]
-  branch = "master"
-  digest = "1:1ecf2a49df33be51e757d0033d5d51d5f784f35f68e5a38f797b2d3f03357d71"
-  name = "golang.org/x/crypto"
-  packages = [
-    "bcrypt",
-    "blowfish",
-  ]
-  pruneopts = "NUT"
-  revision = "0709b304e793a5edb4a2c0145f281ecdc20838a4"
-
-[[projects]]
   digest = "1:686219a880e6ec42870431372756a66c19c1396e9fe203b659179422d3c6bf96"
   name = "golang.org/x/net"
   packages = [
@@ -639,14 +469,6 @@
   revision = "4ee4af566555f5fbe026368b75596286a312663a"
 
 [[projects]]
-  branch = "master"
-  digest = "1:c9e7a4b4d47c0ed205d257648b0e5b0440880cb728506e318f8ac7cd36270bc4"
-  name = "golang.org/x/time"
-  packages = ["rate"]
-  pruneopts = "NUT"
-  revision = "fbb02b2291d28baffd63558aa44b4b56f178d650"
-
-[[projects]]
   digest = "1:0efcfe82e59b828eb6f4115bba88ff45c0898c38e823fbe7f450bdffed9e739b"
   name = "google.golang.org/genproto"
   packages = [
@@ -692,14 +514,6 @@
   revision = "dd45e6a67c53f673bb49ca8a001fd3a63ceb640e"
   version = "v2.0"
 
-[[projects]]
-  digest = "1:7c95b35057a0ff2e19f707173cc1a947fa43a6eb5c4d300d196ece0334046082"
-  name = "gopkg.in/yaml.v2"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "5420a8b6744d3b0345ab293f6fcba19c978f1183"
-  version = "v2.2.1"
-
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
@@ -741,9 +555,6 @@
     "github.com/pingcap/kvproto/pkg/metapb",
     "github.com/pingcap/kvproto/pkg/tikvpb",
     "github.com/pingcap/pd/pd-client",
-    "github.com/pingcap/tidb-tools/pkg/etcd",
-    "github.com/pingcap/tidb-tools/pkg/utils",
-    "github.com/pingcap/tidb-tools/tidb-binlog/node",
     "github.com/pingcap/tidb-tools/tidb-binlog/pump_client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-mysqlx",

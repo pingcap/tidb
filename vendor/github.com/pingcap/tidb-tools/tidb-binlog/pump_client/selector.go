@@ -18,7 +18,6 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/ngaut/log"
 	pb "github.com/pingcap/tipb/go-binlog"
 )
 
@@ -256,7 +255,7 @@ func NewSelector(algorithm string) PumpSelector {
 	case Score:
 		selector = NewScoreSelector()
 	default:
-		log.Warnf("unknow algorithm %s, use range as default", algorithm)
+		Logger.Warnf("unknow algorithm %s, use range as default", algorithm)
 		selector = NewRangeSelector()
 	}
 
