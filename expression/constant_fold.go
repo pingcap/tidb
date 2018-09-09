@@ -95,15 +95,9 @@ func foldConstant(expr Expression) (Expression, bool) {
 			foldedArg, isDeferred := foldConstant(args[i])
 			x.GetArgs()[i] = foldedArg
 			con, conOK := foldedArg.(*Constant)
-			if conOK {
-				argIsConst[i] = true
-				if con.Value.IsNull() {
-					hasNullArg = true
-				}
-			} else {
-				allConstArg = false
-				argIsConst[i] = false
-			}
+			argIsConst[i] = conOK
+			allConstArg = allConstArg && conOK
+			hasNullArg = hasNullArg || (conOK && con.Value.IsNull())
 			isDeferredConst = isDeferredConst || isDeferred
 		}
 		if !allConstArg {
