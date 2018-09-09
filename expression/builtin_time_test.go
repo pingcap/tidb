@@ -775,7 +775,7 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		fc  functionClass
 		now func() time.Time
 	}{
-		{funcs[ast.Now], func() time.Time { return time.Now().In(s.ctx.GetSessionVars().Location()) }},
+		{funcs[ast.Now], func() time.Time { return time.Now() }},
 		{funcs[ast.UTCTimestamp], func() time.Time { return time.Now().UTC() }},
 	} {
 		f, err := x.fc.getFunction(s.ctx, s.datumsToConstants(nil))
@@ -1012,7 +1012,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 		c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
 	}
 
-	last := time.Now().In(s.ctx.GetSessionVars().Location())
+	last := time.Now()
 	f, err := fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(6)))
 	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1157,7 +1157,7 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	defer testleak.AfterTest(c)()
 	tfStr := "15:04:05"
 
-	last := time.Now().In(s.ctx.GetSessionVars().Location())
+	last := time.Now()
 	fc := funcs[ast.CurrentTime]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(err, IsNil)

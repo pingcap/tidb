@@ -40,6 +40,8 @@ var zoneSources = []string{
 	"/usr/share/zoneinfo/",
 	"/usr/share/lib/zoneinfo/",
 	"/usr/lib/locale/TZ/",
+	// this is for macos
+	"/var/db/timezone/zoneinfo",
 }
 
 // locCache is a simple map with lock. It stores all used timezone during the lifetime of tidb instance.
@@ -57,20 +59,10 @@ func initLocalStr() {
 	// no $TZ means use the system default /etc/localtime.
 	// $TZ="" means use UTC.
 	// $TZ="foo" means use /usr/share/zoneinfo/foo.
+
 	tz, ok := syscall.Getenv("TZ")
-	if ok && tz != "" {
-		fmt.Println("first if")
-		for _, source := range zoneSources {
-			if _, err := os.Stat(source + tz); os.IsExist(err) {
-				localStr = tz
-				break
-			}
-		}
-	} else if tz == "" {
-		fmt.Println("first else if")
-		localStr = "UTC"
-	} else {
-		fmt.Println("else")
+	switch {
+	case !ok:
 		path, err := filepath.EvalSymlinks("/etc/localtime")
 		if err == nil {
 			localStr, err = getTZNameFromFileName(path)
@@ -80,8 +72,17 @@ func initLocalStr() {
 			log.Errorln(err)
 		}
 		log.Errorln(err)
+	case tz == "":
+	case tz == "UTC":
+		localStr = "UTC"
+	case tz != "" && tz != "UTC":
+		for _, source := range zoneSources {
+			if _, err := os.Stat(source + tz); err == nil {
+				localStr = tz
+				return
+			}
+		}
 	}
-	fmt.Printf("localStr is %s", localStr)
 	localStr = "System"
 }
 

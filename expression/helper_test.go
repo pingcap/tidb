@@ -68,7 +68,7 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 		Ret  interface{}
 	}{
 		{"2012-12-12 00:00:00", "2012-12-12 00:00:00"},
-		{ast.CurrentTimestamp, time.Unix(1234, 0).In(ctx.GetSessionVars().Location()).Format(types.TimeFormat)},
+		{ast.CurrentTimestamp, time.Unix(1234, 0).Format(types.TimeFormat)},
 		{types.ZeroDatetimeStr, "0000-00-00 00:00:00"},
 		{ast.NewValueExpr("2012-12-12 00:00:00"), "2012-12-12 00:00:00"},
 		{ast.NewValueExpr(int64(0)), "0000-00-00 00:00:00"},

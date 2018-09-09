@@ -121,7 +121,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 }
 
 func getSystemTimestamp(ctx sessionctx.Context) (time.Time, error) {
-	now := time.Now().In(ctx.GetSessionVars().Location())
+	now := time.Now()
 
 	if ctx == nil {
 		return now, nil
