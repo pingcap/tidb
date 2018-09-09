@@ -34,7 +34,7 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 		return
 	}
 	conditions = expression.PropagateConstant(p.context(), conditions)
-	// Return table dual when filter is constant false or null
+	// Return table dual when filter is constant false or null.
 	dual := conds2TableDual(child, conditions)
 	if dual != nil {
 		p.Children()[chIdx] = dual
@@ -61,7 +61,7 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 	retConditions, child := p.children[0].PredicatePushDown(append(p.Conditions, predicates...))
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
-		// Return table dual when filter is constant false or null
+		// Return table dual when filter is constant false or null.
 		dual := conds2TableDual(p, p.Conditions)
 		if dual != nil {
 			return nil, dual
@@ -141,7 +141,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
 		tempCond = expression.PropagateConstant(p.ctx, tempCond)
-		// Return table dual when filter is constant false or null
+		// Return table dual when filter is constant false or null.
 		dual := conds2TableDual(p, tempCond)
 		if dual != nil {
 			return ret, dual
@@ -396,7 +396,7 @@ func deriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (l
 	return
 }
 
-// conds2TableDual build a LogicalTableDual if cond is constant false or null
+// conds2TableDual builds a LogicalTableDual if cond is constant false or null.
 func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	if len(conds) != 1 {
 		return nil
