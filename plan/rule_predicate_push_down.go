@@ -34,6 +34,12 @@ func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expr
 		return
 	}
 	conditions = expression.PropagateConstant(p.context(), conditions)
+	// Return table dual when filter is constant false or null
+	dual := conds2TableDual(child, conditions)
+	if dual != nil {
+		p.Children()[chIdx] = dual
+		return
+	}
 	selection := LogicalSelection{Conditions: conditions}.init(p.context())
 	selection.SetChildren(child)
 	p.Children()[chIdx] = selection
@@ -55,6 +61,11 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression)
 	retConditions, child := p.children[0].PredicatePushDown(append(p.Conditions, predicates...))
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
+		// Return table dual when filter is constant false or null
+		dual := conds2TableDual(p, p.Conditions)
+		if dual != nil {
+			return nil, dual
+		}
 		return nil, p
 	}
 	return nil, child
@@ -129,7 +140,13 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.ctx, tempCond)
-		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(expression.PropagateConstant(p.ctx, tempCond), leftPlan, rightPlan, true, true)
+		tempCond = expression.PropagateConstant(p.ctx, tempCond)
+		// Return table dual when filter is constant false or null
+		dual := conds2TableDual(p, tempCond)
+		if dual != nil {
+			return ret, dual
+		}
+		equalCond, leftPushCond, rightPushCond, otherCond = extractOnCondition(tempCond, leftPlan, rightPlan, true, true)
 		p.LeftConditions = nil
 		p.RightConditions = nil
 		p.EqualConditions = equalCond
@@ -374,4 +391,19 @@ func deriveOtherConditions(p *LogicalJoin, deriveLeft bool, deriveRight bool) (l
 		}
 	}
 	return
+}
+
+// conds2TableDual build a LogicalTableDual if cond is constant false or null
+func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
+	if len(conds) == 1 {
+		if con, ok := conds[0].(*expression.Constant); ok {
+			sc := p.context().GetSessionVars().StmtCtx
+			if isTrue, err := con.Value.ToBool(sc); (err == nil && isTrue == 0) || con.Value.IsNull() {
+				dual := LogicalTableDual{}.init(p.context())
+				dual.SetSchema(p.Schema())
+				return dual
+			}
+		}
+	}
+	return nil
 }
