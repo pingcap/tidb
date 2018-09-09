@@ -670,6 +670,12 @@ func parseAutoAnalyzeRatio(ratio string) float64 {
 }
 
 func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
+	if start == "" {
+		start = variable.DefAutoAnalyzeStartTime
+	}
+	if end == "" {
+		end = variable.DefAutoAnalyzeEndTime
+	}
 	s, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, start, time.UTC)
 	if err != nil {
 		return s, s, errors.Trace(err)
