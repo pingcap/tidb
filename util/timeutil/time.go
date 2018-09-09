@@ -96,6 +96,7 @@ func getTZNameFromFileName(path string) (string, error) {
 // Local returns time.Local's IANA timezone name.
 func Local() *time.Location {
 	localOnce.Do(initLocalStr)
+	fmt.Printf("local time zone name is %s\n", localStr)
 	loc, err := LoadLocation(localStr)
 	if err != nil {
 		return time.Local
