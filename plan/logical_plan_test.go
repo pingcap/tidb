@@ -547,8 +547,8 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 	}{
 		// issue #7628, left join with where condition
 		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2)",
-			sel:   "[or(and(eq(t1.a, 1), eq(t2.a, 1)), and(eq(t1.a, 2), eq(t2.a, 2)))]",
+			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.a=1 and t2.a is null) or (t1.a=2 and t2.a=2)",
+			sel:   "[or(and(eq(t1.a, 1), isnull(t2.a)), and(eq(t1.a, 2), eq(t2.a, 2)))]",
 			left:  "[or(eq(t1.a, 1), eq(t1.a, 2))]",
 			right: "[]",
 		},
@@ -559,8 +559,8 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 			right: "[]",
 		},
 		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4))) or (t1.a=2 and t2.a=2)",
-			sel:   "[or(and(eq(t1.c, 1), or(and(eq(t1.a, 3), eq(t2.a, 3)), and(eq(t1.a, 4), eq(t2.a, 4)))), and(eq(t1.a, 2), eq(t2.a, 2)))]",
+			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4))) or (t1.a=2 and t2.a is null)",
+			sel:   "[or(and(eq(t1.c, 1), or(and(eq(t1.a, 3), eq(t2.a, 3)), and(eq(t1.a, 4), eq(t2.a, 4)))), and(eq(t1.a, 2), isnull(t2.a)))]",
 			left:  "[or(and(eq(t1.c, 1), or(eq(t1.a, 3), eq(t1.a, 4))), eq(t1.a, 2))]",
 			right: "[]",
 		},
