@@ -624,6 +624,11 @@ func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
 			best:     "Join{DataScan(t1)->DataScan(t2)}(t1.c,t2.c)->Projection",
 			joinType: "inner join",
 		},
+		{
+			sql:      "select * from t t1 left join t t2 on true where t1.b <=> t2.b;",
+			best:     "Join{DataScan(t1)->DataScan(t2)}->Sel([nulleq(t1.b, t2.b)])->Projection",
+			joinType: "left outer join",
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
