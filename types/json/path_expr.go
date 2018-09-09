@@ -117,6 +117,11 @@ func (pe PathExpression) popOneLastLeg() (PathExpression, pathLeg) {
 	return PathExpression{legs: pe.legs[:lastLegIdx]}, lastLeg
 }
 
+// ContainsAnyAsterisk returns true if pe contains any asterisk.
+func (pe PathExpression) ContainsAnyAsterisk() bool {
+	return pe.flags.containsAnyAsterisk()
+}
+
 // ParseJSONPathExpr parses a JSON path expression. Returns a PathExpression
 // object which can be used in JSON_EXTRACT, JSON_SET and so on.
 func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {

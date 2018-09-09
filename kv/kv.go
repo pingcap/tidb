@@ -46,6 +46,8 @@ const (
 	// BypassLatch option tells 2PC commit to bypass latches, it would be true when the
 	// transaction is not conflict-retryable, for example: 'select for update', 'load data'.
 	BypassLatch
+	// KeyOnly retrieve only keys, it can be used in scan now.
+	KeyOnly
 )
 
 // Priority value for transaction priority.

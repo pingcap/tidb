@@ -45,8 +45,6 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache
 			ModifyCount:    row.GetInt64(2),
 			Columns:        make(map[int64]*Column, len(tableInfo.Columns)),
 			Indices:        make(map[int64]*Index, len(tableInfo.Indices)),
-			colName2Idx:    make(map[string]int64, len(tableInfo.Columns)),
-			colName2ID:     make(map[string]int64, len(tableInfo.Columns)),
 		}
 		tbl := &Table{
 			HistColl: newHistColl,
@@ -60,7 +58,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables statsCache
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	sql := "select version, table_id, modify_count, count from mysql.stats_meta"
+	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -130,7 +128,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables stat
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables statsCache) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	sql := "select table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver from mysql.stats_histograms"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver from mysql.stats_histograms"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -202,7 +200,7 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables statsCache, iter *chu
 func (h *Handle) initStatsBuckets(tables statsCache) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	sql := "select table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -238,7 +236,6 @@ func (h *Handle) initStatsBuckets(tables statsCache) error {
 			}
 			col.PreCalculateScalar()
 		}
-		table.buildColNameMapper()
 	}
 	return nil
 }

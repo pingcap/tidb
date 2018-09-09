@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -143,15 +142,10 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 
 // runStmt executes the ast.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, sctx sessionctx.Context, s ast.Statement) (ast.RecordSet, error) {
-	span, ctx1 := opentracing.StartSpanFromContext(ctx, "runStmt")
-	span.LogKV("sql", s.OriginText())
-	defer span.Finish()
-
 	var err error
 	var rs ast.RecordSet
 	se := sctx.(*session)
 	rs, err = s.Exec(ctx)
-	span.SetTag("txn.id", se.sessionVars.TxnCtx.StartTS)
 	// All the history should be added here.
 	se.GetSessionVars().TxnCtx.StatementCount++
 	if !s.IsReadOnly() {
@@ -169,17 +163,17 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s ast.Statement) (ast
 	if !se.sessionVars.InTxn() {
 		if err != nil {
 			log.Info("RollbackTxn for ddl/autocommit error.")
-			err1 := se.RollbackTxn(ctx1)
+			err1 := se.RollbackTxn(ctx)
 			terror.Log(errors.Trace(err1))
 		} else {
-			err = se.CommitTxn(ctx1)
+			err = se.CommitTxn(ctx)
 		}
 	} else {
 		// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 		// So we limit the statement count in a transaction here.
 		history := GetHistory(sctx)
 		if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
-			err1 := se.RollbackTxn(ctx1)
+			err1 := se.RollbackTxn(ctx)
 			terror.Log(errors.Trace(err1))
 			return rs, errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
 				history.Count(), sctx.GetSessionVars().IsAutocommit())

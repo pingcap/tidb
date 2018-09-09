@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -141,6 +142,8 @@ func (b *planBuilder) build(node ast.Node) (Plan, error) {
 		return b.buildExecute(x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
+	case *ast.TraceStmt:
+		return b.buildTrace(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(x)
 	case *ast.LoadDataStmt:
@@ -630,7 +633,7 @@ func getPhysicalIDs(tblInfo *model.TableInfo) []int64 {
 }
 
 func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
-	p := &Analyze{}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		physicalIDs := getPhysicalIDs(tbl.TableInfo)
@@ -649,7 +652,7 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 }
 
 func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs := getPhysicalIDs(tblInfo)
 	for _, idxName := range as.IndexNames {
@@ -665,7 +668,7 @@ func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 }
 
 func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
-	p := &Analyze{}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs := getPhysicalIDs(tblInfo)
 	for _, idx := range tblInfo.Indices {
@@ -678,7 +681,17 @@ func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
 	return p
 }
 
+const (
+	defaultMaxNumBuckets = 256
+	numBucketsLimit      = 1024
+)
+
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	if as.MaxNumBuckets == 0 {
+		as.MaxNumBuckets = defaultMaxNumBuckets
+	} else {
+		as.MaxNumBuckets = mathutil.MinUint64(as.MaxNumBuckets, numBucketsLimit)
+	}
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
 			return b.buildAnalyzeAllIndex(as), nil
@@ -1255,12 +1268,13 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 
 func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 	p := &LoadData{
-		IsLocal:    ld.IsLocal,
-		Path:       ld.Path,
-		Table:      ld.Table,
-		Columns:    ld.Columns,
-		FieldsInfo: ld.FieldsInfo,
-		LinesInfo:  ld.LinesInfo,
+		IsLocal:     ld.IsLocal,
+		Path:        ld.Path,
+		Table:       ld.Table,
+		Columns:     ld.Columns,
+		FieldsInfo:  ld.FieldsInfo,
+		LinesInfo:   ld.LinesInfo,
+		IgnoreLines: ld.IgnoreLines,
 	}
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
@@ -1357,6 +1371,26 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 
 	p := &DDL{Statement: node}
 	return p
+}
+
+// buildTrace builds a trace plan. Inside this method, it first optimize the
+// underlying query and then constructs a schema, which will be used to constructs
+// rows result.
+func (b *planBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
+	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok {
+		return nil, errors.New("trace only supports select query")
+	}
+
+	p := &Trace{StmtNode: trace.Stmt}
+
+	retFields := []string{"operation", "duration", "spanID"}
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+	schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
+
+	schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
+	schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
+	p.SetSchema(schema)
+	return p, nil
 }
 
 func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
