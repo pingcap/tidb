@@ -59,16 +59,18 @@ func initLocalStr() {
 	// $TZ="foo" means use /usr/share/zoneinfo/foo.
 	tz, ok := syscall.Getenv("TZ")
 	if ok && tz != "" {
-		fmt.Printf("initLocalStr tz %s", tz)
+		fmt.Println("first if")
 		for _, source := range zoneSources {
 			if _, err := os.Stat(source + tz); os.IsExist(err) {
 				localStr = tz
 				break
 			}
 		}
-		// } else if tz == "" {
-		// localStr = "UTC"
+	} else if tz == "" {
+		fmt.Println("first else if")
+		localStr = "UTC"
 	} else {
+		fmt.Println("else")
 		path, err := filepath.EvalSymlinks("/etc/localtime")
 		if err == nil {
 			localStr, err = getTZNameFromFileName(path)
@@ -79,6 +81,7 @@ func initLocalStr() {
 		}
 		log.Errorln(err)
 	}
+	fmt.Printf("localStr is %s", localStr)
 	localStr = "System"
 }
 
@@ -132,4 +135,21 @@ func (lm *locCache) getLoc(name string) (*time.Location, error) {
 // LoadLocation loads time.Location by IANA timezone time.
 func LoadLocation(name string) (*time.Location, error) {
 	return LocCache.getLoc(name)
+}
+
+// Zone returns the current timezone name and timezone offset in seconds.
+// In compatible with MySQL, we change `Local` to `System`.
+// TODO: Golang team plan to return system timezone name intead of
+// returning `Local` when `loc` is `time.Local`. We need keep an eye on this.
+func Zone(loc *time.Location) (string, int64) {
+	_, offset := time.Now().In(loc).Zone()
+	var name string
+	name = loc.String()
+	// when we found name is "Local", we have no chice but push down
+	// "System" to tikv side.
+	if name == "Local" {
+		name = "System"
+	}
+
+	return name, int64(offset)
 }
