@@ -129,6 +129,7 @@ func main() {
 		os.Exit(0)
 	}
 	registerStores()
+	registerMetrics()
 	loadConfig()
 	overrideConfig()
 	validateConfig()
@@ -152,6 +153,10 @@ func registerStores() {
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
 	err = session.RegisterStore("mocktikv", mockstore.MockDriver{})
 	terror.MustNil(err)
+}
+
+func registerMetrics() {
+	metrics.RegisterMetrics()
 }
 
 func createStoreAndDomain() {
