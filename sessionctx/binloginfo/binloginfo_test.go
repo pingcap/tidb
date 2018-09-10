@@ -122,7 +122,7 @@ func (s *testBinlogSuite) MockPumpsClient(clientConn *grpc.ClientConn) *pumpcli.
 	pump := &pumpcli.PumpStatus{
 		Status: node.Status{
 			NodeID: nodeID,
-			State:  pumpcli.Online,
+			State:  node.Online,
 		},
 		IsAvaliable: true,
 		Client:      binlog.NewPumpClient(clientConn),
