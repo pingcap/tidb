@@ -373,7 +373,11 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 			"[SLOW_QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
 			internal, costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 		if !sessVars.InRestrictedSQL {
-			domain.GetDomain(a.Ctx).LogTopNSlowQuery(sql, a.startTime, costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, txnTS, user.String(), currentDB, tableIDs, indexIDs)
+			var userString string
+			if user != nil {
+				userString = user.String()
+			}
+			domain.GetDomain(a.Ctx).LogTopNSlowQuery(sql, a.startTime, costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, txnTS, userString, currentDB, tableIDs, indexIDs)
 		}
 	}
 }
