@@ -135,14 +135,12 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 	return e
 }
 
-func (e baseExecutor) withInitCap(initCap int) (ret baseExecutor) {
+func (e *baseExecutor) setInitCap(initCap int) {
 	e.initCap = initCap
-	return e
 }
 
-func (e baseExecutor) withMaxChunkSize(maxChunkSize int) (ret baseExecutor) {
+func (e *baseExecutor) setMaxChunkSize(maxChunkSize int) {
 	e.maxChunkSize = maxChunkSize
-	return e
 }
 
 // Executor is the physical implementation of a algebra operator.

@@ -555,7 +555,7 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chun
 	)
 	// Execute all recordset, take out the first one as result.
 	for i, rs := range recordSets {
-		tmp, err := drainRecordSet(ctx, sctx, rs)
+		tmp, err := drainRecordSet(ctx, se, rs)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -604,7 +604,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 	}
 }
 
-func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs ast.RecordSet) ([]chunk.Row, error) {
+func drainRecordSet(ctx context.Context, se *session, rs ast.RecordSet) ([]chunk.Row, error) {
 	var rows []chunk.Row
 	chk := rs.NewChunk()
 	for {
@@ -616,12 +616,7 @@ func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs ast.RecordS
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
 			rows = append(rows, r)
 		}
-		if sctx == nil {
-			// sadness, statistic will pass nil sctx
-			chk = chunk.Renew(chk, variable.DefMaxChunkSize)
-			continue
-		}
-		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
+		chk = chunk.Renew(chk, se.sessionVars.MaxChunkSize)
 	}
 }
 
