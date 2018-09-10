@@ -90,7 +90,7 @@ type PrepareExec struct {
 // NewPrepareExec creates a new PrepareExec.
 func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
 	base := newBaseExecutor(ctx, nil, "PrepareStmt")
-	base.setInitCap(chunk.NoDataChunkCap)
+	base.initCap = chunk.NoDataChunkCap
 	return &PrepareExec{
 		baseExecutor: base,
 		is:           is,

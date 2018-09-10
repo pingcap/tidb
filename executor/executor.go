@@ -135,14 +135,6 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 	return e
 }
 
-func (e *baseExecutor) setInitCap(initCap int) {
-	e.initCap = initCap
-}
-
-func (e *baseExecutor) setMaxChunkSize(maxChunkSize int) {
-	e.maxChunkSize = maxChunkSize
-}
-
 // Executor is the physical implementation of a algebra operator.
 //
 // In TiDB, all algebra operators are implemented as iterators, i.e., they
