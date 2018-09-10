@@ -53,10 +53,3 @@ var (
 		},
 	)
 )
-
-func init() {
-	prometheus.MustRegister(DistSQLQueryHistgram)
-	prometheus.MustRegister(DistSQLScanKeysPartialHistogram)
-	prometheus.MustRegister(DistSQLScanKeysHistogram)
-	prometheus.MustRegister(DistSQLPartialCountHistogram)
-}
