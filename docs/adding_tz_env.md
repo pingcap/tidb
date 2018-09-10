@@ -1,4 +1,4 @@
-Proposal: adding TZ as an environment variable as a necessary condition before starting TiDB
+Proposal: adding TZ as an environment variable 
 
 # Proposal: adding TZ as an environment variable as a necessary condition before starting TiDB
 
@@ -26,7 +26,7 @@ The std means the IANA timezone name; the offset means timezone offset; the dst 
 
 In our case, which I mean both `TiDB` and `TiKV`, we need care the first and third formats. For answering why we do not need the second format, we need to review how Golang evaluates timezone. In `time` package, the method `LoadLocation` reads tzData from pre-specified sources(directories may contain tzData) and then builds `time. Location` from such tzData which already contains daylight saving time information. 
 
-In this proposal, we suggest setting `TZ` to a valid IANA timezone name which can be read from `DB`. If `TiDB` can't get `TZ` or the supply of `TZ` is invalid, `TiDB` just quits and prints an understandable message telling the user you should set `TZ` properly. Setting `TZ` can be done in our `tidb-ansible` project. It is the configuration in config file and it will never go wrong. 
+In this proposal, we suggest setting `TZ` to a valid IANA timezone name which can be read from `TiDB`. If `TiDB` can't get `TZ` or the supply of `TZ` is invalid, `TiDB` just fallback to evaluates the path of the soft link of `/etc/localtime`. An warning message telling the user you should set `TZ` properly will be printed. Setting `TZ` can be done in our `tidb-ansible` project. The value of `localStr` should initialized at `TiDB`'s bootstrap stage in order to ensure the uniqueness of gloabl timezone name. If system timezone can not be read from `mysql.tidb`, `UTC` will be used as default timezone name.
 
 The positive side of this change is resolving performance delegation issue to avoid any potential time-related calculation. 
 
@@ -35,7 +35,7 @@ The negative side is just adding a config item which is a very small matter and 
 
 ## Rationale
 
-We tried to read system timezone name by checking the path of the soft link of `/etc/localtime` but, sadly, failed. The failed case is docker. In docker image, it copies the real timezone file and links to `/usr/share/zoneinfo/utc`. The timezone data is correct but the path is not. Regarding of `UTC`, Golang just returns `UTC` instance and will not further read tzdata from sources. I guess that why docker chooses to link real timezone file to `/usr/share/zoneinfo/utc`. 
+We tried to read system timezone name by checking the path of the soft link of `/etc/localtime` but, sadly, failed. The failed case is docker. In docker image, it copies the real timezone file and links to `/usr/share/zoneinfo/utc`. The timezone data is correct but the path is not. Regarding of `UTC`, Golang just returns `UTC` instance and will not further read tzdata from sources.
 
 The impact of this proposed change affects the deploying logic of TiDB, which is just a small matter. 
 
