@@ -303,25 +303,6 @@ func (t *tikvHandlerTool) getAllHistoryDDL() ([]*model.Job, error) {
 	return jobs, nil
 }
 
-func (t *tikvHandlerTool) resignDDLOwner() error {
-	s, err := session.CreateSession(t.store.(kv.Storage))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if s != nil {
-		defer s.Close()
-	}
-
-	dom := domain.GetDomain(s.(sessionctx.Context))
-	ownerMgr := dom.DDL().OwnerManager()
-	err = ownerMgr.ResignOwner(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
 // settingsHandler is the handler for list tidb server settings.
 type settingsHandler struct {
 }
@@ -355,7 +336,7 @@ type ddlHistoryJobHandler struct {
 
 // ddlResignOwnerHandler is the handler for resigning ddl owner.
 type ddlResignOwnerHandler struct {
-	*tikvHandlerTool
+	store kv.Storage
 }
 
 type serverInfoHandler struct {
@@ -737,8 +718,27 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	return
 }
 
+func (h ddlResignOwnerHandler) resignDDLOwner() error {
+	dom, err := session.GetDomain(h.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ownerMgr := dom.DDL().OwnerManager()
+	err = ownerMgr.ResignOwner(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // ServeHTTP handles request of resigning ddl owner.
 func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method."))
+		return
+	}
+
 	err := h.resignDDLOwner()
 	if err != nil {
 		log.Error(err)

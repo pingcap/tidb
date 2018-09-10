@@ -136,7 +136,7 @@ timezone.*
 1. Resign the ddl owner, let tidb start a new ddl owner election.
 
     ```shell
-    curl http://{TiDBIP}:10080/ddl/owner/resign
+    curl -X POST http://{TiDBIP}:10080/ddl/owner/resign
     ```
     
     **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`
