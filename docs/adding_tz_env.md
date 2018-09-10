@@ -1,6 +1,6 @@
 # Proposal: adding TZ as an environment variable 
 
-- Author(s):  [Zhexuan Yang](www.github.com/zhexuany)  
+- Author(s):  [Zhexuan Yang](www.github.com/zhexuany)
 - Last updated:  2018/09/09
 - Discussion at: Not applicable 
 
