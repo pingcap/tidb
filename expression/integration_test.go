@@ -1928,6 +1928,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("2017-01-02 03:04:01"))
 	result = tk.MustQuery(`select cast("1701020304.111" as datetime);`)
 	result.Check(testkit.Rows("2017-01-02 03:04:11"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1701020304.111'"))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")

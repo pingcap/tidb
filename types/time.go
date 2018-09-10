@@ -600,7 +600,7 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
+func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bool) (Time, error) {
 	// Try to split str with delimiter.
 	// TODO: only punctuation can be the delimiter for date parts or time parts.
 	// But only space and T can be the delimiter between the date and time part.
@@ -661,8 +661,11 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 				second = 0
 			case 1:
 				_, err = fmt.Sscanf(fracStr, "%1d", &second)
+			case 2:
+				_, err = fmt.Sscanf(fracStr, "%2d", &second)
 			default:
 				_, err = fmt.Sscanf(fracStr[:2], "%2d", &second)
+				sc.AppendWarning(ErrIncorrectDatetimeValue.GenByArgs(str))
 			}
 		}
 	case 3:
@@ -1241,7 +1244,7 @@ func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFlo
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
 
-	t, err := parseDatetime(str, fsp, isFloat)
+	t, err := parseDatetime(sc, str, fsp, isFloat)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
