@@ -55,15 +55,18 @@ func (q *topNSlowQuery) Push(info *slowQueryInfo) {
 		for i := 0; i < q.offset; {
 			left := 2*i + 1
 			right := 2 * (i + 1)
-			if q.data[i].duration > q.data[left].duration {
-				q.data[i], q.data[left] = q.data[left], q.data[i]
-				i = left
-			} else if q.data[i].duration > q.data[right].duration {
-				q.data[i], q.data[right] = q.data[right], q.data[i]
-				i = right
-			} else {
+			if left >= q.offset {
 				break
 			}
+			smaller := left
+			if right < q.offset && q.data[right].duration < q.data[left].duration {
+				smaller = right
+			}
+			if q.data[i].duration <= q.data[smaller].duration {
+				break
+			}
+			q.data[i], q.data[smaller] = q.data[smaller], q.data[i]
+			i = smaller
 		}
 	}
 }
@@ -83,7 +86,8 @@ func (q *topNSlowQuery) Refresh(now time.Time) {
 	// Remove outdated slow query element.
 	idx := 0
 	for i := 0; i < q.offset; i++ {
-		if q.data[i].start.Add(q.recent).Before(now) {
+		outdateTime := q.data[i].start.Add(q.recent)
+		if outdateTime.After(now) {
 			q.data[idx] = q.data[i]
 			idx++
 		}
