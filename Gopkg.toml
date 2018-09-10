@@ -73,7 +73,10 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
   name = "github.com/sirupsen/logrus"
   revision = "3bcb09397d6d88e7676a9bc8433ca11ba5304837"
 
-
 [[constraint]]
   branch = "master"
   name = "github.com/etcd-io/gofail"
+
+[[constraint]]
+  name = "github.com/pingcap/tidb-tools"
+  revision = "a47b49eaff863a5ec3700944365c8ae50f7c354b"
