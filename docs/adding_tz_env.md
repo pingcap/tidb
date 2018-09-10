@@ -26,9 +26,11 @@ The std means the IANA timezone name; the offset means timezone offset; the dst 
 
 In our case, which I mean both `TiDB` and `TiKV`, we need care the first and third formats. For answering why we do not need the second format, we need to review how Golang evaluates timezone. In `time` package, the method `LoadLocation` reads tzData from pre-specified sources(directories may contain tzData) and then builds `time. Location` from such tzData which already contains daylight saving time information. 
 
-In this proposal, we suggest setting `TZ` to a valid IANA timezone name which can be read from `TiDB`. If `TiDB` can't get `TZ` or the supply of `TZ` is invalid, `TiDB` just fallback to evaluates the path of the soft link of `/etc/localtime`. An warning message telling the user you should set `TZ` properly will be printed. Setting `TZ` can be done in our `tidb-ansible` project. The value of `localStr` should initialized at `TiDB`'s bootstrap stage in order to ensure the uniqueness of gloabl timezone name. If system timezone can not be read from `mysql.tidb`, `UTC` will be used as default timezone name.
+In this proposal, we suggest setting `TZ` to a valid IANA timezone name which can be read from `TiDB` later. If `TiDB` can't get `TZ` or the supply of `TZ` is invalid, `TiDB` just falls back to evaluates the path of the soft link of `/etc/localtime`. In addition, an warning message telling the user you should set `TZ` properly will be printed. Setting `TZ` can be done in our `tidb-ansible` project, it is also can be done at user side by `export TZ="Asia/Shanghai"`. If both of them are failed, `TiDB` will use `UTC` as timezone name.
 
-The positive side of this change is resolving performance delegation issue to avoid any potential time-related calculation. 
+The value of `localStr` should be initialized by method `initLocalStr()`at `TiDB`'s bootstrap stage. `localStr` will be stored in `mysql.tidb` under `system_tz` column. If system timezone can not get valid IANA timezone name from `mysql.tidb`, `UTC` will be used as default timezone name.
+
+The positive side of this change is to resolve performance degradation issue and to ensure the uniqueness of gloabl timezone name in multiple `TiDB` instances. 
 
 The negative side is just adding a config item which is a very small matter and the user probably does not care it if we can take care of it and more importantly guarantee the correctness. 
 
@@ -47,9 +49,9 @@ It does not have compatibility issue as long as the user deploys by `tidb-ansibl
 ## Implementation
 
 The implementation is relatively easy. We just get `TZ` environment from system and check whether it is valid or not. If it is invalid, TiDB evaluates the path of soft link of `/etc/localtime`. 
-In addition, a warning message needs to be printed indicating user has to set `TZ` variable. For example, if `/etc/localtime` links to /usr/share/zoneinfo/Asia/Shanghai, then timezone name should be `Asia/Shangahi`.  
+In addition, a warning message needs to be printed indicating user has to set `TZ` variable. For example, if `/etc/localtime` links to /usr/share/zoneinfo/Asia/Shanghai, then timezone name should be `Asia/Shangahi`.
 
-In order to ensure the uniqueness of global timezone, we need to write timezone name into `mysql.tidb` under column `system_tz`. 
+In order to ensure the uniqueness of global timezone across multiple `TiDB` instances, we need to write timezone name into `mysql.tidb` under column `system_tz`. 
  
 ## Open issues (if applicable)
 
