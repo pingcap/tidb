@@ -850,7 +850,7 @@ func (t *Table) Type() table.Type {
 }
 
 func shouldWriteBinlog(ctx sessionctx.Context) bool {
-	if !binloginfo.IsValidePumpsClient(ctx.GetSessionVars().BinlogClient) {
+	if !binloginfo.IsValidPumpsClient(ctx.GetSessionVars().BinlogClient) {
 		return false
 	}
 	return !ctx.GetSessionVars().InRestrictedSQL

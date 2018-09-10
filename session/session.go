@@ -30,7 +30,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
-	pClient "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -291,7 +291,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
-	if binloginfo.IsValidePumpsClient(s.sessionVars.BinlogClient) {
+	if binloginfo.IsValidPumpsClient(s.sessionVars.BinlogClient) {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
 			prewriteData, err := prewriteValue.Marshal()
@@ -303,7 +303,7 @@ func (s *session) doCommit(ctx context.Context) error {
 					Tp:            binlog.BinlogType_Prewrite,
 					PrewriteValue: prewriteData,
 				},
-				Client: s.sessionVars.BinlogClient.(*pClient.PumpsClient),
+				Client: s.sessionVars.BinlogClient.(*pumpcli.PumpsClient),
 			}
 			s.txn.SetOption(kv.BinlogInfo, info)
 		}

@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
-	pClient "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -35,33 +35,37 @@ import (
 func init() {
 	grpc.EnableTracing = false
 	// don't need output pumps client's log
-	pClient.Logger.Out = ioutil.Discard
+	pumpcli.Logger.Out = ioutil.Discard
 }
 
 var binlogWriteTimeout = 15 * time.Second
 
 // pumpsClient is the client to write binlog, it is opened on server start and never close,
 // shared by all sessions.
-var pumpsClient *pClient.PumpsClient
+var pumpsClient *pumpcli.PumpsClient
 var pumpsClientLock sync.RWMutex
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {
 	Data   *binlog.Binlog
-	Client *pClient.PumpsClient
+	Client *pumpcli.PumpsClient
 }
 
 // GetPumpsClient gets the pumps client instance.
-func GetPumpsClient() *pClient.PumpsClient {
+func GetPumpsClient() *pumpcli.PumpsClient {
 	pumpsClientLock.RLock()
 	client := pumpsClient
 	pumpsClientLock.RUnlock()
 	return client
 }
 
-// IsValidePumpsClient returns true if client is not a nil PumpsClient.
-func IsValidePumpsClient(client interface{}) bool {
-	return client.(*pClient.PumpsClient) != nil
+// IsValidPumpsClient returns true if client is not a nil PumpsClient.
+func IsValidPumpsClient(client interface{}) bool {
+	if client == nil {
+		return false
+	}
+
+	return client.(*pumpcli.PumpsClient) != nil
 }
 
 // SetGRPCTimeout sets grpc timeout for writing binlog.
@@ -74,7 +78,7 @@ func SetGRPCTimeout(timeout time.Duration) {
 }
 
 // SetPumpsClient sets the pumps client instance.
-func SetPumpsClient(client *pClient.PumpsClient) {
+func SetPumpsClient(client *pumpcli.PumpsClient) {
 	pumpsClientLock.Lock()
 	pumpsClient = client
 	pumpsClientLock.Unlock()
@@ -143,7 +147,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.
 func SetDDLBinlog(client interface{}, txn kv.Transaction, jobID int64, ddlQuery string) {
-	if !IsValidePumpsClient(client) {
+	if !IsValidPumpsClient(client) {
 		return
 	}
 
@@ -154,7 +158,7 @@ func SetDDLBinlog(client interface{}, txn kv.Transaction, jobID int64, ddlQuery 
 			DdlJobId: jobID,
 			DdlQuery: []byte(ddlQuery),
 		},
-		Client: client.(*pClient.PumpsClient),
+		Client: client.(*pumpcli.PumpsClient),
 	}
 	txn.SetOption(kv.BinlogInfo, info)
 }
