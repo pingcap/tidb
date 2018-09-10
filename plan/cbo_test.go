@@ -553,7 +553,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		testKit.MustExec("insert into t values (1), (2), (3)")
 
 		sql := "select * from t where id = ?"
-		best := "IndexReader(Index(t.id)[])"
+		best := "Dual"
 
 		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := session.Parse(ctx, sql)

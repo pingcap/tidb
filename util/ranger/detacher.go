@@ -146,7 +146,10 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		err     error
 	)
 
-	accessConds, filterConds := extractEqAndInCondition(conditions, cols, lengths)
+	accessConds, filterConds, newConditions, emptyRange := extractEqAndInCondition(sctx, conditions, cols, lengths)
+	if emptyRange {
+		return ranges, nil, nil, 0, nil
+	}
 
 	for ; eqCount < len(accessConds); eqCount++ {
 		if accessConds[eqCount].(*expression.ScalarFunction).FuncName.L != ast.EQ {
@@ -154,11 +157,11 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		}
 	}
 	// We should remove all accessConds, so that they will not be added to filter conditions.
-	conditions = removeAccessConditions(conditions, accessConds)
+	newConditions = removeAccessConditions(newConditions, accessConds)
 	eqOrInCount := len(accessConds)
 	if eqOrInCount == len(cols) {
 		// If curIndex equals to len of index columns, it means the rest conditions haven't been appended to filter conditions.
-		filterConds = append(filterConds, conditions...)
+		filterConds = append(filterConds, newConditions...)
 		ranges, err = buildCNFIndexRange(sctx.GetSessionVars().StmtCtx, cols, tpSlice, lengths, eqOrInCount, accessConds)
 		if err != nil {
 			return nil, nil, nil, 0, errors.Trace(err)
@@ -171,11 +174,11 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 		shouldReserve: lengths[eqOrInCount] != types.UnspecifiedLength,
 	}
 	if considerDNF {
-		accesses, filters := detachColumnCNFConditions(sctx, conditions, checker)
+		accesses, filters := detachColumnCNFConditions(sctx, newConditions, checker)
 		accessConds = append(accessConds, accesses...)
 		filterConds = append(filterConds, filters...)
 	} else {
-		for _, cond := range conditions {
+		for _, cond := range newConditions {
 			if !checker.check(cond) {
 				filterConds = append(filterConds, cond)
 				continue
@@ -187,14 +190,45 @@ func detachCNFCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []ex
 	return ranges, accessConds, filterConds, eqCount, errors.Trace(err)
 }
 
-func extractEqAndInCondition(conditions []expression.Expression, cols []*expression.Column,
-	lengths []int) (accesses, filters []expression.Expression) {
-	accesses = make([]expression.Expression, len(cols))
+func extractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Expression,
+	cols []*expression.Column, lengths []int) ([]expression.Expression, []expression.Expression, []expression.Expression, bool) {
+	var filters []expression.Expression
+	rb := builder{sc: sctx.GetSessionVars().StmtCtx}
+	accesses := make([]expression.Expression, len(cols))
+	points := make([][]point, len(cols))
+	mergedAccesses := make([]expression.Expression, len(cols))
+	newConditions := make([]expression.Expression, 0, len(conditions))
 	for _, cond := range conditions {
 		offset := getEqOrInColOffset(cond, cols)
-		if offset != -1 {
-			accesses[offset] = cond
+		if offset == -1 {
+			newConditions = append(newConditions, cond)
+			continue
 		}
+		if accesses[offset] == nil {
+			accesses[offset] = cond
+			continue
+		}
+		// Multiple Eq/In conditions for one column in CNF, apply intersection on them
+		// Lazily compute the points for the previously visited Eq/In
+		if mergedAccesses[offset] == nil {
+			mergedAccesses[offset] = accesses[offset]
+			points[offset] = rb.build(accesses[offset])
+		}
+		points[offset] = rb.intersection(points[offset], rb.build(cond))
+		// Early termination if false expression found
+		if len(points[offset]) == 0 {
+			return nil, nil, nil, true
+		}
+	}
+	for i, ma := range mergedAccesses {
+		if ma == nil {
+			if accesses[i] != nil {
+				newConditions = append(newConditions, accesses[i])
+			}
+			continue
+		}
+		accesses[i] = points2EqOrInCond(sctx, points[i], mergedAccesses[i])
+		newConditions = append(newConditions, accesses[i])
 	}
 	for i, cond := range accesses {
 		if cond == nil {
@@ -205,7 +239,7 @@ func extractEqAndInCondition(conditions []expression.Expression, cols []*express
 			filters = append(filters, cond)
 		}
 	}
-	return accesses, filters
+	return accesses, filters, newConditions, false
 }
 
 // detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
