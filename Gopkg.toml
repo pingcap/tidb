@@ -1,4 +1,4 @@
-ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "github.com/coreos/etcd/auth", "github.com/pingcap/tidb-tools/pkg/etcd"]
+ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "github.com/coreos/etcd/auth", "github.com/coreos/etcd/integration"]
 required = []
 
 [prune]
