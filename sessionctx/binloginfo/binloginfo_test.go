@@ -117,7 +117,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	s.ddl.WorkerVars().BinlogClient = s.client
 }
 
-func (s *testBinlogSuite) MockPumpsClient(clientCon *grpc.ClientConn) pumpcli.PumpsClient {
+func (s *testBinlogSuite) MockPumpsClient(clientConn *grpc.ClientConn) *pumpcli.PumpsClient {
 	nodeID := "pump-1"
 	pump := &pumpcli.PumpStatus{
 		Status: node.Status{
@@ -125,24 +125,20 @@ func (s *testBinlogSuite) MockPumpsClient(clientCon *grpc.ClientConn) pumpcli.Pu
 			State:  pumpcli.Online,
 		},
 		IsAvaliable: true,
-		grpcConn:    clientCon,
-		Client:      binlog.NewPumpClient(clientCon),
+		Client:      binlog.NewPumpClient(clientConn),
 	}
 
 	selector := pumpcli.NewSelector(pumpcli.Range)
 	selector.SetPumps([]*pumpcli.PumpStatus{pump})
 
 	pumpInfos := &pumpcli.PumpInfos{
-		Pumps:          make(map[string]*PumpStatus),
-		AvaliablePumps: make(map[string]*PumpStatus),
+		Pumps:          make(map[string]*pumpcli.PumpStatus),
+		AvaliablePumps: make(map[string]*pumpcli.PumpStatus),
 	}
 	pumpInfos.Pumps[nodeID] = pump
 	pumpInfos.AvaliablePumps[nodeID] = pump
 
-	ctx, cancel := context.WithCancel(context.Background())
 	return &pumpcli.PumpsClient{
-		ctx:       ctx,
-		cancel:    cancel,
 		ClusterID: 1,
 		Pumps:     pumpInfos,
 		Selector:  selector,
