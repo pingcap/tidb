@@ -260,7 +260,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		}
 
 		elec := concurrency.NewElection(etcdSession, m.key)
-		err := elec.Campaign(ctx, m.id)
+		err = elec.Campaign(ctx, m.id)
 		if err != nil {
 			log.Infof("%s failed to campaign, err %v", logPrefix, err)
 			continue
