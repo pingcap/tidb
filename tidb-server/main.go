@@ -56,14 +56,13 @@ import (
 
 // Flag Names
 const (
-	nmVersion   = "V"
-	nmConfig    = "config"
-	nmStore     = "store"
-	nmStorePath = "path"
-	nmHost      = "host"
-	nmPort      = "P"
-	nmSocket    = "socket"
-	//nmBinlogSocket    = "binlog-socket"
+	nmVersion         = "V"
+	nmConfig          = "config"
+	nmStore           = "store"
+	nmStorePath       = "path"
+	nmHost            = "host"
+	nmPort            = "P"
+	nmSocket          = "socket"
 	nmEnableBinlog    = "enable-binlog"
 	nmRunDDL          = "run-ddl"
 	nmLogLevel        = "L"
@@ -165,7 +164,6 @@ func createStoreAndDomain() {
 
 func setupBinlogClient() {
 	if !cfg.Binlog.Enable {
-		log.Info("no pump client")
 		return
 	}
 

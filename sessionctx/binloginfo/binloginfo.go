@@ -117,8 +117,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 	}
 
 	if info.Client == nil {
-		log.Error("pump client is nil")
-		return errors.New("pump client is nil")
+		return errors.New("pumps client is nil")
 	}
 
 	// will retry in PumpsClient if write binlog fail.
@@ -141,9 +140,10 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.
 func SetDDLBinlog(client interface{}, txn kv.Transaction, jobID int64, ddlQuery string) {
-	if client.(*pClient.PumpsClient) == nil {
+	if !IsValidePumpsClient(client) {
 		return
 	}
+
 	ddlQuery = addSpecialComment(ddlQuery)
 	info := &BinlogInfo{
 		Data: &binlog.Binlog{

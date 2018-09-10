@@ -124,21 +124,6 @@ func (s *testMainSuite) TestRetryOpenStore(c *C) {
 	c.Assert(uint64(elapse), GreaterEqual, uint64(3*time.Second))
 }
 
-func (s *testMainSuite) TestRetryDialPumpClient(c *C) {
-	retryDialPumpClientMustFail := func(binlogSocket string, clientCon *grpc.ClientConn, maxRetries int, dialerOpt grpc.DialOption) (err error) {
-		return util.RunWithRetry(maxRetries, 10, func() (bool, error) {
-			// Assume that it'll always return an error.
-			return true, errors.New("must fail")
-		})
-	}
-	begin := time.Now()
-	err := retryDialPumpClientMustFail("", nil, 3, nil)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "must fail")
-	elapse := time.Since(begin)
-	c.Assert(uint64(elapse), GreaterEqual, uint64(6*10*time.Millisecond))
-}
-
 func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
 	c.Skip("make leak should check it")
 	// TODO: testleak package should be able to find this leak.
