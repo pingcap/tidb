@@ -291,7 +291,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.changeToInvalid()
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	}()
-	if s.sessionVars.BinlogClient != nil {
+	if binloginfo.IsValidePumpsClient(s.sessionVars.BinlogClient) {
 		prewriteValue := binloginfo.GetPrewriteValue(s, false)
 		if prewriteValue != nil {
 			prewriteData, err := prewriteValue.Marshal()

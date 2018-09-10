@@ -56,6 +56,11 @@ func GetPumpsClient() *pClient.PumpsClient {
 	return client
 }
 
+// IsValidePumpsClient returns true if client is not a nil PumpsClient.
+func IsValidePumpsClient(client interface{}) bool {
+	return client.(*pClient.PumpsClient) != nil
+}
+
 // SetGRPCTimeout sets grpc timeout for writing binlog.
 func SetGRPCTimeout(timeout time.Duration) {
 	if timeout < 300*time.Millisecond {
@@ -116,13 +121,12 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 		return errors.New("pump client is nil")
 	}
 
-	log.Debugf("begin write binlog, start ts: %d, type: %s", info.Data.StartTs, info.Data.Tp)
+	// will retry in PumpsClient if write binlog fail.
 	err := info.Client.WriteBinlog(info.Data)
-	log.Debugf("end write binlog, start ts: %d, type: %s", info.Data.StartTs, info.Data.Tp)
 	if err != nil {
 		log.Errorf("write binlog fail %v", errors.ErrorStack(err))
 		if atomic.LoadUint32(&ignoreError) == 1 {
-			log.Errorf("write binlog fail but error ignored: %s", errors.ErrorStack(err))
+			log.Error("write binlog fail but error ignored")
 			metrics.CriticalErrorCounter.Add(1)
 			// If error happens once, we'll stop writing binlog.
 			atomic.CompareAndSwapUint32(&skipBinlog, skip, skip+1)
@@ -137,7 +141,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.
 func SetDDLBinlog(client interface{}, txn kv.Transaction, jobID int64, ddlQuery string) {
-	if client == nil {
+	if client.(*pClient.PumpsClient) == nil {
 		return
 	}
 	ddlQuery = addSpecialComment(ddlQuery)

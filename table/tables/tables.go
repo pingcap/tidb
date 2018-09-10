@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -849,7 +850,7 @@ func (t *Table) Type() table.Type {
 }
 
 func shouldWriteBinlog(ctx sessionctx.Context) bool {
-	if ctx.GetSessionVars().BinlogClient == nil {
+	if !binloginfo.IsValidePumpsClient(ctx.GetSessionVars().BinlogClient) {
 		return false
 	}
 	return !ctx.GetSessionVars().InRestrictedSQL
