@@ -129,6 +129,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().MaxChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
+		trace:        tracing.NoopSpan(),
 	}
 	if schema != nil {
 		cols := schema.Columns

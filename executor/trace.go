@@ -119,7 +119,7 @@ func generateMessage(sp basictracer.RawSpan) string {
 	for i, l := range sp.Logs {
 		msg.WriteString(fmt.Sprintf("%s tooks %s", l.Fields[0].String(), l.Timestamp.Sub(start).String()))
 		if i != len(sp.Logs)-1 {
-			msg.WriteString("\n")
+			msg.WriteString(" ")
 		}
 	}
 	return msg.String()

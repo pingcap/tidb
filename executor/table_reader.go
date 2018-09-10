@@ -100,9 +100,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.trace != nil {
-		defer e.trace.LogKV("next", "finished")
-	}
+	defer e.trace.LogKV("next", "finished")
 	if err := e.resultHandler.nextChunk(ctx, chk); err != nil {
 		e.feedback.Invalidate()
 		return err
@@ -116,9 +114,7 @@ func (e *TableReaderExecutor) Close() error {
 	err := e.resultHandler.Close()
 	// TODO wired, open -next -close should be in order
 	// there is no way taht e.trace is nil
-	if e.trace != nil {
-		e.trace.Finish()
-	}
+	e.trace.Finish()
 	return errors.Trace(err)
 }
 
