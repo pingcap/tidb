@@ -47,52 +47,9 @@ func (s *testSuite) TestInfoschemaFielValue(c *C) {
 		Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 4", "<nil> <nil> <nil> <nil> <nil>"))
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='strschema'").
 		Check(testkit.Rows("3 3 <nil> <nil> <nil>", "3 3 <nil> <nil> <nil>", "3 3 <nil> <nil> <nil>", "3 3 <nil> <nil> <nil>")) // FIXME: for mysql last two will be "255 255 <nil> <nil> <nil>", "255 255 <nil> <nil> <nil>"
-}
-
-func (s *testSuite) TestDataForTableRowsCountField(c *C) {
-	testleak.BeforeTest()
-	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockTikvStore()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	session.SetStatsLease(0)
-	do, err := session.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer do.Close()
-
-	h := do.StatsHandle()
-	is := do.InfoSchema()
-	tk := testkit.NewTestKit(c, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (c int, d int)")
-	h.HandleDDLEvent(<-h.DDLEventCh())
-	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("0"))
-	tk.MustExec("insert into t(c, d) values(1, 2), (2, 3), (3, 4)")
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
-	h.Update(is)
-	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("3"))
-	tk.MustExec("insert into t(c, d) values(4, 5)")
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
-	h.Update(is)
-	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("4"))
-	tk.MustExec("delete from t where c >= 3")
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
-	h.Update(is)
-	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("2"))
-	tk.MustExec("delete from t where c=3")
-	h.DumpStatsDeltaToKV(statistics.DumpAll)
-	h.Update(is)
-	tk.MustQuery("select table_rows from information_schema.tables where table_name='t'").Check(
-		testkit.Rows("2"))
 
 	// Test for auto increment ID.
-	tk.MustExec("drop table t")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int auto_increment primary key, d int)")
 	tk.MustQuery("select auto_increment from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("1"))
@@ -121,4 +78,47 @@ func (s *testSuite) TestDataForTableRowsCountField(c *C) {
 	}, nil, nil), IsTrue)
 
 	tk1.MustQuery("select distinct(table_schema) from information_schema.tables").Check(testkit.Rows("INFORMATION_SCHEMA"))
+}
+
+func (s *testSuite) TestDataForTableStatsField(c *C) {
+	testleak.BeforeTest()
+	defer testleak.AfterTest(c)()
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	session.SetStatsLease(0)
+	do, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer do.Close()
+
+	h := do.StatsHandle()
+	is := do.InfoSchema()
+	tk := testkit.NewTestKit(c, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("0 0 0 0"))
+	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.Update(is)
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("3 17 51 3"))
+	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.Update(is)
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("4 17 68 4"))
+	tk.MustExec("delete from t where c >= 3")
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.Update(is)
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("2 17 34 2"))
+	tk.MustExec("delete from t where c=3")
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.Update(is)
+	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
+		testkit.Rows("2 17 34 2"))
 }

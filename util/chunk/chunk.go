@@ -53,8 +53,8 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	chk.columns = make([]*column, 0, len(fields))
 	chk.capacity = mathutil.Min(cap, maxChunkSize)
 	for _, f := range fields {
-		elemLen := getFixedLen(f)
-		if elemLen == varElemLen {
+		elemLen := f.Length()
+		if elemLen == types.VarElemLen {
 			chk.columns = append(chk.columns, newVarLenColumn(chk.capacity, nil))
 		} else {
 			chk.columns = append(chk.columns, newFixedLenColumn(elemLen, chk.capacity))
