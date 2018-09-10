@@ -121,6 +121,7 @@ func (s *testSuite) TestInsertWrongValueForField(c *C) {
 func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
+	tk.MustExec(`use test;`)
 	tk.MustExec(`set time_zone="+09:00";`)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (id int, c1 datetime not null default CURRENT_TIMESTAMP);`)
