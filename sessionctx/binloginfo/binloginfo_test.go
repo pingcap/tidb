@@ -23,6 +23,8 @@ import (
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb-tools/tidb-binlog/node"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -80,7 +82,7 @@ type testBinlogSuite struct {
 	unixFile string
 	serv     *grpc.Server
 	pump     *mockBinlogPump
-	client   binlog.PumpClient
+	client   *pumpcli.PumpsClient
 	ddl      ddl.DDL
 }
 
@@ -111,8 +113,40 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	sessionDomain := domain.GetDomain(tk.Se.(sessionctx.Context))
 	s.ddl = sessionDomain.DDL()
 
-	s.client = binlog.NewPumpClient(clientCon)
+	s.client = s.MockPumpsClient(clientCon)
 	s.ddl.WorkerVars().BinlogClient = s.client
+}
+
+func (s *testBinlogSuite) MockPumpsClient(clientCon *grpc.ClientConn) pumpcli.PumpsClient {
+	nodeID := "pump-1"
+	pump := &pumpcli.PumpStatus{
+		Status: node.Status{
+			NodeID: nodeID,
+			State:  pumpcli.Online,
+		},
+		IsAvaliable: true,
+		grpcConn:    clientCon,
+		Client:      binlog.NewPumpClient(clientCon),
+	}
+
+	selector := pumpcli.NewSelector(pumpcli.Range)
+	selector.SetPumps([]*pumpcli.PumpStatus{pump})
+
+	pumpInfos := &pumpcli.PumpInfos{
+		Pumps:          make(map[string]*PumpStatus),
+		AvaliablePumps: make(map[string]*PumpStatus),
+	}
+	pumpInfos.Pumps[nodeID] = pump
+	pumpInfos.AvaliablePumps[nodeID] = pump
+
+	ctx, cancel := context.WithCancel(context.Background())
+	return &pumpcli.PumpsClient{
+		ctx:       ctx,
+		cancel:    cancel,
+		ClusterID: 1,
+		Pumps:     pumpInfos,
+		Selector:  selector,
+	}
 }
 
 func (s *testBinlogSuite) TearDownSuite(c *C) {
