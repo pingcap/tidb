@@ -182,14 +182,19 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				agg.SetSchema(apply.Schema())
 				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().Keys[0])
 				newAggFuncs := make([]*aggregation.AggFuncDesc, 0, apply.Schema().Len())
+
+				outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())
 				for i, col := range outerPlan.Schema().Columns {
 					first := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 					newAggFuncs = append(newAggFuncs, first)
-					outerPlan.Schema().Columns[i].RetType = first.RetTp
+
+					outerCol, _ := outerPlan.Schema().Columns[i].Clone().(*expression.Column)
+					outerCol.RetType = first.RetTp
+					outerColsInSchema = append(outerColsInSchema, outerCol)
 				}
 				newAggFuncs = append(newAggFuncs, agg.AggFuncs...)
 				agg.AggFuncs = newAggFuncs
-				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
+				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
 				np, err := s.optimize(p)
 				if err != nil {
 					return nil, errors.Trace(err)
