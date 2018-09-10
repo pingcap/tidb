@@ -1,5 +1,4 @@
-ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "github.com/coreos/etcd/auth", "github.com/coreos/etcd/integration"]
-required = []
+ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "github.com/coreos/etcd/auth"]
 
 [prune]
   non-go = true
@@ -78,7 +77,6 @@ required = []
   branch = "master"
   name = "github.com/etcd-io/gofail"
 
-
 [[constraint]]
   name = "github.com/pingcap/tidb-tools"
-  revision = "0c7e7dacd1b9b64e0a7eb4c8c8bf9061a99f7478"
+  revision = "a47b49eaff863a5ec3700944365c8ae50f7c354b"
