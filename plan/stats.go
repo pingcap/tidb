@@ -147,8 +147,8 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// If there's only point range. Just remove other possible paths.
-			if noIntervalRanges {
+			// If we have point or empty range, just remove other possible paths.
+			if noIntervalRanges || len(path.ranges) == 0 {
 				ds.possibleAccessPaths[0] = path
 				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 				break
@@ -159,8 +159,8 @@ func (ds *DataSource) deriveStats() (*statsInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// If there's only point range and this index is unique key. Just remove other possible paths.
-		if noIntervalRanges && path.index.Unique {
+		// If we have empty range, or point range on unique index, just remove other possible paths.
+		if (noIntervalRanges && path.index.Unique) || len(path.ranges) == 0 {
 			ds.possibleAccessPaths[0] = path
 			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 			break
