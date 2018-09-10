@@ -61,7 +61,7 @@ type Domain struct {
 	etcdClient      *clientv3.Client
 	wg              sync.WaitGroup
 	gvc             GlobalVariableCache
-	slowQuery       *topNSlowQuery
+	slowQuery       *topNSlowQueries
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
@@ -366,7 +366,7 @@ func (do *Domain) topNSlowQueryLoop() {
 			if !ok {
 				return
 			}
-			do.slowQuery.Push(info)
+			do.slowQuery.Append(info)
 		}
 	}
 }
@@ -514,7 +514,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, resourceIdleTimeout),
 		statsLease:      statsLease,
 		infoHandle:      infoschema.NewHandle(store),
-		slowQuery:       newTopNSlowQuery(30, time.Hour*24*7),
+		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7),
 	}
 }
 
