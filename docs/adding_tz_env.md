@@ -6,13 +6,13 @@
 
 ## Abstract
 
-When it comes to time-related calculation, it is hard for the distributed system. This proposal tries to resolve two problems: 1. timezone may be inconsistent across multiple `TiDB` instance, 2. performance degradation casued by pushing `System` down to `TiKV`. The impact of this proposal is changing the way of `TiDB` inferring system's timezone name. Before this proposal, the default timezone name pushed down to TiKV is `System` when session's timezone is not set. After this, TiDB evaluates system's timezone name via `TZ` environment variable and then pushes the real name down to `TiKV` rather than `System`.
+When it comes to time-related calculation, it is hard for the distributed system. This proposal tries to resolve two problems: 1. timezone may be inconsistent across multiple `TiDB` instances, 2. performance degradation casued by pushing `System` down to `TiKV`. The impact of this proposal is changing the way of `TiDB` inferring system's timezone name. Before this proposal, the default timezone name pushed down to TiKV is `System` when session's timezone is not set. After this, TiDB evaluates system's timezone name via `TZ` environment variable and the path of the soft link of `/etc/localtime`. If both of them are failed, `TiDB` then push `UTC` to `TiKV`.
 
 ## Background
 
-After we solved the daylight saving time issue, we found the performance degradation of TiKV side. Thanks for the investigation done by engineers from TiKV. The root cause of such performance delegation is that TiKV infers `System` timezone name via a third party lib, which calls a syscall and costs a lot. In our internal benchmark system, after [this PR](https://github.com/pingcap/tidb/search?q=daylight+saving+time&type=Issues), our codebase is 1000 times slower than before. We have to address this. 
+After we solved the daylight saving time issue, we found the performance degradation of TiKV side. Thanks for the investigation done by engineers from TiKV. The root cause of such performance degradation is that TiKV infers `System` timezone name via a third party lib, which calls a syscall and costs a lot. In our internal benchmark system, after [this PR](https://github.com/pingcap/tidb/pull/6823), our codebase is 1000 times slower than before. We have to address this. 
 
-Another problem needs also to be addressed is the the poentially incosistent timezone name across multiple `TiDB` instances. `TiDB` instances may reside at different timezone which could produce incorrect calculation when it comes to time-related calculation. Just getting `TiDB`'s sytem timezone could be be broken. We need find a way to ensure the uniqueness of global timezone name across multiple `TiDB`'s timezone name.
+Another problem needs also to be addressed is the potentially incosistent timezone name across multiple `TiDB` instances. `TiDB` instances may reside at different timezone which could produce incorrect calculation when it comes to time-related calculation. Just getting `TiDB`'s sytem timezone could be be broken. We need find a way to ensure the uniqueness of global timezone name across multiple `TiDB`'s timezone name.
 
 ## Proposal
 
