@@ -12,7 +12,7 @@ When it comes to time-related calculation, it is hard for the distributed system
 
 ## Background
 
-After we solved the daylight saving time issue, we found the performance delegation of TiKV side. Thanks for the investigation done by engineers from TiKV. The root cause of such performance delegation is that TiKV infers `System` timezone name via a third party lib, which calls a syscall and costs a lot. In our internal benchmark system, after [this PR](https://github.com/pingcap/tidb/search?q=daylight+saving+time&type=Issues), our codebase is 1000 times slower than before. We have to address this. 
+After we solved the daylight saving time issue, we found the performance degradation of TiKV side. Thanks for the investigation done by engineers from TiKV. The root cause of such performance delegation is that TiKV infers `System` timezone name via a third party lib, which calls a syscall and costs a lot. In our internal benchmark system, after [this PR](https://github.com/pingcap/tidb/search?q=daylight+saving+time&type=Issues), our codebase is 1000 times slower than before. We have to address this. 
 
 ## Proposal
 
