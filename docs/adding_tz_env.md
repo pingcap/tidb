@@ -1,4 +1,4 @@
-# Proposal: adding TZ as an environment variable 
+# Proposal: Infer the System Timezone of a TiDB cluster via TZ environment variable
 
 - Author(s):  [Zhexuan Yang](www.github.com/zhexuany)
 - Last updated:  2018/09/09
