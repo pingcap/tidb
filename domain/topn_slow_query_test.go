@@ -81,29 +81,29 @@ func (t *testTopNSlowQuerySuite) TestRefresh(c *C) {
 	c.Assert(slowQuery.data[0].duration, Equals, 2*time.Nanosecond)
 
 	slowQuery.Refresh(now.Add(5 * time.Second))
-	c.Assert(slowQuery.offset, Equals, 2)
+	c.Assert(len(slowQuery.data), Equals, 2)
 	c.Assert(slowQuery.data[0].duration, Equals, 2*time.Nanosecond)
 
 	slowQuery.Push(&slowQueryInfo{start: now.Add(3 * time.Second), duration: 3})
 	slowQuery.Push(&slowQueryInfo{start: now.Add(4 * time.Second), duration: 2})
 	slowQuery.Push(&slowQueryInfo{start: now.Add(5 * time.Second), duration: 1})
 	slowQuery.Push(&slowQueryInfo{start: now.Add(6 * time.Second), duration: 0})
-	c.Assert(slowQuery.offset, Equals, 6)
+	c.Assert(len(slowQuery.data), Equals, 6)
 	c.Assert(slowQuery.data[0].duration, Equals, 0*time.Nanosecond)
 
 	slowQuery.Refresh(now.Add(6 * time.Second))
-	c.Assert(slowQuery.offset, Equals, 4)
+	c.Assert(len(slowQuery.data), Equals, 4)
 	c.Assert(slowQuery.data[0].duration, Equals, 0*time.Nanosecond)
 }
 
 func checkHeap(q *topNSlowQuery, c *C) {
-	for i := 0; i < q.offset; i++ {
+	for i := 0; i < len(q.data); i++ {
 		left := 2*i + 1
 		right := 2*i + 2
-		if left < q.offset {
+		if left < len(q.data) {
 			c.Assert(q.data[i].duration, LessEqual, q.data[left].duration)
 		}
-		if right < q.offset {
+		if right < len(q.data) {
 			c.Assert(q.data[i].duration, LessEqual, q.data[right].duration)
 		}
 	}

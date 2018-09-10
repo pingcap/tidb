@@ -14,23 +14,45 @@
 package domain
 
 import (
+	"container/heap"
 	"time"
 
 	"github.com/pingcap/tidb/util/execdetails"
 )
 
+type slowQueryInfoHeap []*slowQueryInfo
+
+func (h slowQueryInfoHeap) Len() int           { return len(h) }
+func (h slowQueryInfoHeap) Less(i, j int) bool { return h[i].duration < h[j].duration }
+func (h slowQueryInfoHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *slowQueryInfoHeap) Push(x interface{}) {
+	// Push and Pop use pointer receivers because they modify the slice's length,
+	// not just its contents.
+	*h = append(*h, x.(*slowQueryInfo))
+}
+
+func (h *slowQueryInfoHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
 // topNSlowQuery maintains a heap to store recent slow queries.
 // N = 30, recent = 7 days by default.
 type topNSlowQuery struct {
-	data   []*slowQueryInfo
-	offset int
+	data   slowQueryInfoHeap
+	topN   int
 	recent time.Duration
 	ch     chan *slowQueryInfo
 }
 
 func newTopNSlowQuery(topN int, recent time.Duration) *topNSlowQuery {
 	return &topNSlowQuery{
-		data:   make([]*slowQueryInfo, topN),
+		data:   make([]*slowQueryInfo, 0, topN),
+		topN:   topN,
 		recent: recent,
 		ch:     make(chan *slowQueryInfo, 1000),
 	}
@@ -42,65 +64,35 @@ func (q *topNSlowQuery) Close() {
 
 func (q *topNSlowQuery) Push(info *slowQueryInfo) {
 	// Heap is not full, append to it and sift up.
-	if q.offset < len(q.data) {
-		q.data[q.offset] = info
-		q.siftUp(q.offset)
-		q.offset++
+	if len(q.data) < q.topN {
+		heap.Push(&q.data, info)
 		return
 	}
 
 	// Replace the heap top and sift down.
 	if info.duration > q.data[0].duration {
-		q.data[0] = info
-		for i := 0; i < q.offset; {
-			left := 2*i + 1
-			right := 2 * (i + 1)
-			if left >= q.offset {
-				break
-			}
-			smaller := left
-			if right < q.offset && q.data[right].duration < q.data[left].duration {
-				smaller = right
-			}
-			if q.data[i].duration <= q.data[smaller].duration {
-				break
-			}
-			q.data[i], q.data[smaller] = q.data[smaller], q.data[i]
-			i = smaller
-		}
-	}
-}
-
-func (q *topNSlowQuery) siftUp(end int) {
-	for i := end; i > 0; {
-		j := (i - 1) / 2
-		if q.data[j].duration < q.data[i].duration {
-			break
-		}
-		q.data[i], q.data[j] = q.data[j], q.data[i]
-		i = j
+		heap.Pop(&q.data)
+		heap.Push(&q.data, info)
 	}
 }
 
 func (q *topNSlowQuery) Refresh(now time.Time) {
 	// Remove outdated slow query element.
 	idx := 0
-	for i := 0; i < q.offset; i++ {
+	for i := 0; i < len(q.data); i++ {
 		outdateTime := q.data[i].start.Add(q.recent)
 		if outdateTime.After(now) {
 			q.data[idx] = q.data[i]
 			idx++
 		}
 	}
-	if q.offset == idx {
+	if len(q.data) == idx {
 		return
 	}
-	q.offset = idx
 
 	// Rebuild the heap.
-	for i := 1; i < q.offset; i++ {
-		q.siftUp(i)
-	}
+	q.data = q.data[:idx]
+	heap.Init(&q.data)
 }
 
 type slowQueryInfo struct {
