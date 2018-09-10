@@ -1091,10 +1091,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err := tk.Exec(`insert into t select year("aa")`)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue, Commentf("err %v", err))
-	_, err = tk.Exec(`insert into t select year("0000-00-00 00:00:00")`)
+	tk.MustExec(`insert into t select year("0000-00-00 00:00:00")`)
+	tk.MustExec(`set sql_mode="NO_ZERO_DATE";`)
+	tk.MustExec(`insert into t select year("0000-00-00 00:00:00")`)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustExec(`set sql_mode="NO_ZERO_DATE,STRICT_TRANS_TABLES";`)
+	_, err = tk.Exec(`insert into t select year("0000-00-00 00:00:00");`)
 	c.Assert(err, NotNil)
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue, Commentf("err %v", err))
 	tk.MustExec(`insert into t select 1`)
+	tk.MustExec(`set sql_mode="STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION";`)
 	_, err = tk.Exec(`update t set a = year("aa")`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec(`delete from t where a = year("aa")`)
@@ -1114,9 +1120,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`insert into t select month("aa")`)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
-	_, err = tk.Exec(`insert into t select month("0000-00-00 00:00:00")`)
+	tk.MustExec(`insert into t select month("0000-00-00 00:00:00")`)
+	tk.MustExec(`set sql_mode="NO_ZERO_DATE";`)
+	tk.MustExec(`insert into t select month("0000-00-00 00:00:00")`)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustExec(`set sql_mode="NO_ZERO_DATE,STRICT_TRANS_TABLES";`)
+	_, err = tk.Exec(`insert into t select month("0000-00-00 00:00:00");`)
 	c.Assert(err, NotNil)
-	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue, Commentf("err %v", err))
+	tk.MustExec(`insert into t select 1`)
+	tk.MustExec(`set sql_mode="STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION";`)
 	tk.MustExec(`insert into t select 1`)
 	_, err = tk.Exec(`update t set a = month("aa")`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
@@ -1442,6 +1455,14 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`select dayOfYear(null), dayOfYear("2017-08-12"), dayOfYear("0000-00-00"), dayOfYear("2017-00-00"), dayOfYear("0000-00-00 12:12:12"), dayOfYear("2017-00-00 12:12:12")`)
 	result.Check(testkit.Rows("<nil> 224 <nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`select dayOfMonth(null), dayOfMonth("2017-08-12"), dayOfMonth("0000-00-00"), dayOfMonth("2017-00-00"), dayOfMonth("0000-00-00 12:12:12"), dayOfMonth("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 12 0 0 0 0"))
+
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
+	result = tk.MustQuery(`select dayOfWeek(null), dayOfWeek("2017-08-12"), dayOfWeek("0000-00-00"), dayOfWeek("2017-00-00"), dayOfWeek("0000-00-00 12:12:12"), dayOfWeek("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 7 <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select dayOfYear(null), dayOfYear("2017-08-12"), dayOfYear("0000-00-00"), dayOfYear("2017-00-00"), dayOfYear("0000-00-00 12:12:12"), dayOfYear("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 224 <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select dayOfMonth(null), dayOfMonth("2017-08-12"), dayOfMonth("0000-00-00"), dayOfMonth("2017-00-00"), dayOfMonth("0000-00-00 12:12:12"), dayOfMonth("2017-00-00 12:12:12")`)
 	result.Check(testkit.Rows("<nil> 12 <nil> 0 0 0"))
 
 	tk.MustExec(`drop table if exists t`)
@@ -1458,6 +1479,13 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 
 	_, err = tk.Exec("insert into t value(dayOfMonth('2017-00-00'))")
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+	tk.MustExec("insert into t value(dayOfMonth('0000-00-00'))")
+	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE';")
+	tk.MustExec("insert into t value(dayOfMonth('0000-00-00'))")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE,STRICT_TRANS_TABLES';")
 	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	tk.MustExec("insert into t value(0)")
@@ -1539,8 +1567,15 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec(`insert into t value("abc")`)
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 
-	_, err = tk.Exec("insert into t value(monthname('0000-00-00'))")
-	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+	tk.MustExec("insert into t value(monthname('0000-00-00'))")
+	tk.MustExec(`update t set a = monthname("0000-00-00")`)
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
+	tk.MustExec("insert into t value(monthname('0000-00-00'))")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustExec(`update t set a = monthname("0000-00-00")`)
+	tk.MustExec("set sql_mode = ''")
+	tk.MustExec("insert into t value(monthname('0000-00-00'))")
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_DATE'")
 	_, err = tk.Exec(`update t set a = monthname("0000-00-00")`)
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = monthname(123)`)
@@ -1879,6 +1914,9 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery(`select cast(cast('2017-01-01 01:01:11.12' as date) as datetime(2));`)
 	result.Check(testkit.Rows("2017-01-01 00:00:00.00"))
+
+	result = tk.MustQuery(`select cast(20170118.999 as datetime);`)
+	result.Check(testkit.Rows("2017-01-18 00:00:00"))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
@@ -3205,6 +3243,52 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	tk.MustExec(`update table_json set a=json_set(a,'$.a',json_object('a',1,'b',2)) where json_extract(a,'$.a[1]') = '2'`)
 	r = tk.MustQuery(`select json_extract(a, '$.a.a'), json_extract(a, '$.a.b') from table_json`)
 	r.Check(testkit.Rows("1 2", "<nil> <nil>"))
+
+	r = tk.MustQuery(`select json_contains(NULL, '1'), json_contains('1', NULL), json_contains('1', '1', NULL)`)
+	r.Check(testkit.Rows("<nil> <nil> <nil>"))
+	r = tk.MustQuery(`select json_contains('{}','{}'), json_contains('[1]','1'), json_contains('[1]','"1"'), json_contains('[1,2,[1,[5,[3]]]]', '[1,3]', '$[2]'), json_contains('[1,2,[1,[5,{"a":[2,3]}]]]', '[1,{"a":[3]}]', "$[2]"), json_contains('{"a":1}', '{"a":1,"b":2}', "$")`)
+	r.Check(testkit.Rows("1 1 0 1 1 0"))
+	r = tk.MustQuery(`select json_contains('{"a": 1}', '1', "$.c"), json_contains('{"a": [1, 2]}', '1', "$.a[2]"), json_contains('{"a": [1, {"a": 1}]}', '1', "$.a[1].b")`)
+	r.Check(testkit.Rows("<nil> <nil> <nil>"))
+	rs, err := tk.Exec("select json_contains('1','1','$.*')")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	_, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[json:3149]In this situation, path expressions may not contain the * and ** tokens.")
+
+	r = tk.MustQuery(`select 
+		json_contains_path(NULL, 'one', "$.c"), 
+		json_contains_path(NULL, 'all', "$.c"), 
+		json_contains_path('{"a": 1}', NULL, "$.c"), 
+		json_contains_path('{"a": 1}', 'one', NULL), 
+		json_contains_path('{"a": 1}', 'all', NULL)
+	`)
+	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+
+	r = tk.MustQuery(`select 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.c.d'), 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a.d'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.c.d'), 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a.d')
+	`)
+	r.Check(testkit.Rows("1 0 1 0"))
+
+	r = tk.MustQuery(`select 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a', '$.e'), 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a', '$.b'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a', '$.e'), 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a', '$.b')
+	`)
+	r.Check(testkit.Rows("1 1 0 1"))
+
+	r = tk.MustQuery(`select 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.*'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$[*]'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.*'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$[*]')
+	`)
+	r.Check(testkit.Rows("1 0 1 0"))
 }
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
