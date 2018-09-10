@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
@@ -33,10 +32,6 @@ import (
 var (
 	_ SelectResult = (*selectResult)(nil)
 	_ SelectResult = (*streamResult)(nil)
-)
-
-var (
-	selectResultGP = gp.New(time.Minute * 2)
 )
 
 // SelectResult is an iterator of coprocessor partial results.
@@ -72,12 +67,11 @@ type selectResult struct {
 
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
+	sqlType      string
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
-	selectResultGP.Go(func() {
-		r.fetch(ctx)
-	})
+	go r.fetch(ctx)
 }
 
 func (r *selectResult) fetch(ctx context.Context) {
@@ -85,7 +79,7 @@ func (r *selectResult) fetch(ctx context.Context) {
 	defer func() {
 		close(r.results)
 		duration := time.Since(startTime)
-		metrics.DistSQLQueryHistgram.WithLabelValues(r.label).Observe(duration.Seconds())
+		metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(duration.Seconds())
 	}()
 	for {
 		resultSubset, err := r.resp.Next(ctx)

@@ -29,7 +29,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -375,11 +374,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 }
 
 func (s *session) CommitTxn(ctx context.Context) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span = opentracing.StartSpan("session.CommitTxn", opentracing.ChildOf(span.Context()))
-		defer span.Finish()
-	}
-
 	err := s.doCommitWithRetry(ctx)
 	label := metrics.LblOK
 	if err != nil {
@@ -390,11 +384,6 @@ func (s *session) CommitTxn(ctx context.Context) error {
 }
 
 func (s *session) RollbackTxn(ctx context.Context) error {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span = opentracing.StartSpan("session.RollbackTxn", opentracing.ChildOf(span.Context()))
-		defer span.Finish()
-	}
-
 	var err error
 	if s.txn.Valid() {
 		terror.Log(s.txn.Rollback())
@@ -451,9 +440,6 @@ func (s *session) isRetryableError(err error) bool {
 }
 
 func (s *session) retry(ctx context.Context, maxCnt uint) error {
-	span, ctx := opentracing.StartSpanFromContext(ctx, "retry")
-	defer span.Finish()
-
 	connID := s.sessionVars.ConnectionID
 	if s.sessionVars.TxnCtx.ForUpdate {
 		return errForUpdateCantRetry.GenByArgs(connID)
@@ -545,10 +531,7 @@ func (s *session) sysSessionPool() *pools.ResourcePool {
 // Unlike normal Exec, it doesn't reset statement status, doesn't commit or rollback the current transaction
 // and doesn't write binlog.
 func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chunk.Row, []*ast.ResultField, error) {
-	var span opentracing.Span
 	ctx := context.TODO()
-	span, ctx = opentracing.StartSpanFromContext(ctx, "session.ExecRestrictedSQL")
-	defer span.Finish()
 
 	// Use special session to execute the sql.
 	tmp, err := s.sysSessionPool().Get()
@@ -559,6 +542,7 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chun
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 
+	startTime := time.Now()
 	recordSets, err := se.Execute(ctx, sql)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -583,6 +567,7 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chun
 			fields = rs.Fields()
 		}
 	}
+	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
 	return rows, fields, nil
 }
 
@@ -712,10 +697,6 @@ func (s *session) SetGlobalSysVar(name, value string) error {
 }
 
 func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span1 := opentracing.StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-	}
 	s.parser.SetSQLMode(s.sessionVars.SQLMode)
 	return s.parser.Parse(sql, charset, collation)
 }
@@ -753,7 +734,11 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		}
 		return nil, errors.Trace(err)
 	}
-	metrics.SessionExecuteRunDuration.Observe(time.Since(startTime).Seconds())
+	label := metrics.LblGeneral
+	if s.sessionVars.InRestrictedSQL {
+		label = metrics.LblInternal
+	}
+	metrics.SessionExecuteRunDuration.WithLabelValues(label).Observe(time.Since(startTime).Seconds())
 
 	if recordSet != nil {
 		recordSets = append(recordSets, recordSet)
@@ -770,11 +755,6 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []ast.Rec
 }
 
 func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.RecordSet, err error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span, ctx = opentracing.StartSpanFromContext(ctx, "session.Execute")
-		defer span.Finish()
-	}
-
 	s.PrepareTxnCtx(ctx)
 	connID := s.sessionVars.ConnectionID
 	err = s.loadCommonGlobalVariablesIfNeeded()
@@ -792,7 +772,11 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
 		return nil, errors.Trace(err)
 	}
-	metrics.SessionExecuteParseDuration.Observe(time.Since(startTS).Seconds())
+	label := metrics.LblGeneral
+	if s.sessionVars.InRestrictedSQL {
+		label = metrics.LblInternal
+	}
+	metrics.SessionExecuteParseDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
 
 	compiler := executor.Compiler{Ctx: s}
 	for _, stmtNode := range stmtNodes {
@@ -810,7 +794,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 			log.Warnf("con:%d compile error:\n%v\n%s", connID, err, sql)
 			return nil, errors.Trace(err)
 		}
-		metrics.SessionExecuteCompileDuration.Observe(time.Since(startTS).Seconds())
+		metrics.SessionExecuteCompileDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
 
 		// Step3: Execute the physical plan.
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {

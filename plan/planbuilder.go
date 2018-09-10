@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
@@ -141,6 +142,8 @@ func (b *planBuilder) build(node ast.Node) (Plan, error) {
 		return b.buildExecute(x)
 	case *ast.ExplainStmt:
 		return b.buildExplain(x)
+	case *ast.TraceStmt:
+		return b.buildTrace(x)
 	case *ast.InsertStmt:
 		return b.buildInsert(x)
 	case *ast.LoadDataStmt:
@@ -441,11 +444,13 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 
 func (b *planBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 	var ret Plan
-
+	var err error
 	switch as.Tp {
 	case ast.AdminCheckTable:
-		p := &CheckTable{Tables: as.Tables}
-		ret = p
+		ret, err = b.buildAdminCheckTable(as)
+		if err != nil {
+			return ret, errors.Trace(err)
+		}
 	case ast.AdminCheckIndex:
 		dbName := as.Tables[0].Schema
 		readerPlan, err := b.buildCheckIndex(dbName, as)
@@ -502,6 +507,47 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 	// Admin command can only be executed by administrator.
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
 	return ret, nil
+}
+
+func (b *planBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, error) {
+	p := &CheckTable{Tables: as.Tables}
+	p.GenExprs = make(map[string]expression.Expression)
+
+	mockTablePlan := LogicalTableDual{}.init(b.ctx)
+	for _, tbl := range p.Tables {
+		tableInfo := tbl.TableInfo
+		schema := expression.TableInfo2SchemaWithDBName(b.ctx, tbl.Schema, tableInfo)
+		table, ok := b.is.TableByID(tableInfo.ID)
+		if !ok {
+			return nil, infoschema.ErrTableNotExists.GenByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
+		}
+
+		mockTablePlan.SetSchema(schema)
+
+		// Calculate generated columns.
+		columns := table.Cols()
+		for _, column := range columns {
+			if !column.IsGenerated() {
+				continue
+			}
+			columnName := &ast.ColumnName{Name: column.Name}
+			columnName.SetText(column.Name.O)
+
+			colExpr, _, err := mockTablePlan.findColumn(columnName)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			expr, _, err := b.rewrite(column.GeneratedExpr, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
+			genColumnName := model.GetTableColumnID(tableInfo, column.ColumnInfo)
+			p.GenExprs[genColumnName] = expr
+		}
+	}
+	return p, nil
 }
 
 func (b *planBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {
@@ -587,7 +633,7 @@ func getPhysicalIDs(tblInfo *model.TableInfo) []int64 {
 }
 
 func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
-	p := &Analyze{}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		physicalIDs := getPhysicalIDs(tbl.TableInfo)
@@ -606,7 +652,7 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 }
 
 func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs := getPhysicalIDs(tblInfo)
 	for _, idxName := range as.IndexNames {
@@ -622,7 +668,7 @@ func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 }
 
 func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
-	p := &Analyze{}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs := getPhysicalIDs(tblInfo)
 	for _, idx := range tblInfo.Indices {
@@ -635,7 +681,17 @@ func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
 	return p
 }
 
+const (
+	defaultMaxNumBuckets = 256
+	numBucketsLimit      = 1024
+)
+
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	if as.MaxNumBuckets == 0 {
+		as.MaxNumBuckets = defaultMaxNumBuckets
+	} else {
+		as.MaxNumBuckets = mathutil.MinUint64(as.MaxNumBuckets, numBucketsLimit)
+	}
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
 			return b.buildAnalyzeAllIndex(as), nil
@@ -1212,12 +1268,13 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 
 func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 	p := &LoadData{
-		IsLocal:    ld.IsLocal,
-		Path:       ld.Path,
-		Table:      ld.Table,
-		Columns:    ld.Columns,
-		FieldsInfo: ld.FieldsInfo,
-		LinesInfo:  ld.LinesInfo,
+		IsLocal:     ld.IsLocal,
+		Path:        ld.Path,
+		Table:       ld.Table,
+		Columns:     ld.Columns,
+		FieldsInfo:  ld.FieldsInfo,
+		LinesInfo:   ld.LinesInfo,
+		IgnoreLines: ld.IgnoreLines,
 	}
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
@@ -1314,6 +1371,26 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 
 	p := &DDL{Statement: node}
 	return p
+}
+
+// buildTrace builds a trace plan. Inside this method, it first optimize the
+// underlying query and then constructs a schema, which will be used to constructs
+// rows result.
+func (b *planBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
+	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok {
+		return nil, errors.New("trace only supports select query")
+	}
+
+	p := &Trace{StmtNode: trace.Stmt}
+
+	retFields := []string{"operation", "duration", "spanID"}
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+	schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
+
+	schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
+	schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
+	p.SetSchema(schema)
+	return p, nil
 }
 
 func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {

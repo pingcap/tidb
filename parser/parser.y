@@ -434,6 +434,7 @@ import (
 
 	/* The following tokens belong to TiDBKeyword. */
 	admin		"ADMIN"
+	buckets		"BUCKETS"
 	cancel		"CANCEL"
 	ddl		"DDL"
 	jobs		"JOBS"
@@ -666,6 +667,7 @@ import (
 	LinesTerminated			"Lines terminated by"
 	LocalOpt			"Local opt"
 	LockClause         		"Alter table lock clause"
+	MaxNumBuckets			"Max number of buckets"
 	NumLiteral			"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt 	"NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType			"Grant statement object type"
@@ -802,6 +804,7 @@ import (
 	OptBinMod		"Optional BINARY mode"
 	OptCharset		"Optional Character setting"
 	OptCollate		"Optional Collate setting"
+	IgnoreLines		"Ignore num(int) lines"
 	NUM			"A number"
 	NumList			"Some numbers"
 	LengthNum		"Field length num(uint64)"
@@ -1225,14 +1228,23 @@ TableToTable:
 /*******************************************************************************************/
 
 AnalyzeTableStmt:
-	"ANALYZE" "TABLE" TableNameList
+	"ANALYZE" "TABLE" TableNameList MaxNumBuckets
 	 {
-		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), MaxNumBuckets: $4.(uint64)}
 	 }
-|   "ANALYZE" "TABLE" TableName "INDEX" IndexNameList
-    {
-        $$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr), IndexFlag: true}
-    }
+|	"ANALYZE" "TABLE" TableName "INDEX" IndexNameList MaxNumBuckets
+	{
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr), IndexFlag: true, MaxNumBuckets: $6.(uint64)}
+	}
+
+MaxNumBuckets:
+	{
+		$$ = uint64(0)
+	}
+|	"WITH" NUM "BUCKETS"
+	{
+		$$ = getUint64FromNUM($2)
+	}
 
 /*******************************************************************************************/
 Assignment:
@@ -2809,7 +2821,7 @@ UnReservedKeyword:
 
 
 TiDBKeyword:
-"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
+"ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
@@ -6321,7 +6333,7 @@ DateAndTimeType:
 		}
 		$$ = x
 	}
-|	"YEAR" OptFieldLen
+|	"YEAR" OptFieldLen FieldOpts
 	{
 		x := types.NewFieldType(mysql.TypeYear)
 		x.Flen = $2.(int)
@@ -6883,12 +6895,13 @@ RevokeStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName CharsetOpt Fields Lines ColumnNameListOptWithBrackets
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameListOptWithBrackets
 	{
 		x := &ast.LoadDataStmt{
 			Path:       $5,
 			Table:      $8.(*ast.TableName),
-			Columns:    $12.([]*ast.ColumnName),
+			Columns:    $13.([]*ast.ColumnName),
+			IgnoreLines:$12.(uint64),
 		}
 		if $3 != nil {
 			x.IsLocal = true
@@ -6901,6 +6914,15 @@ LoadDataStmt:
 		}
 		$$ = x
 	}
+
+IgnoreLines:
+    {
+        $$ = uint64(0)
+    }
+|   "IGNORE" NUM "LINES"
+    {
+        $$ = getUint64FromNUM($2)
+    }
 
 CharsetOpt:
 	{}

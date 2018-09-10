@@ -10,21 +10,21 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// +build leak
 
-package gp
+package metrics
 
-import "time"
+import (
+	"github.com/prometheus/client_golang/prometheus"
+)
 
-type Pool struct{}
-
-// New returns a new *Pool object.
-// When compile with leak flag, goroutine will not be reusing.
-func New(idleTimeout time.Duration) *Pool {
-	return &Pool{}
-}
-
-// Go run f() in a new goroutine.
-func (pool *Pool) Go(f func()) {
-	go f()
-}
+// Metrics for the timestamp oracle.
+var (
+	TSFutureWaitDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "pdclient",
+			Name:      "ts_future_wait_seconds",
+			Help:      "Bucketed histogram of seconds cost for waiting timestamp future.",
+			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 18), // 5us ~ 128 ms
+		})
+)

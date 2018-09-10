@@ -35,6 +35,8 @@ var (
 	_ functionClass = &jsonMergeFunctionClass{}
 	_ functionClass = &jsonObjectFunctionClass{}
 	_ functionClass = &jsonArrayFunctionClass{}
+	_ functionClass = &jsonContainsFunctionClass{}
+	_ functionClass = &jsonContainsPathFunctionClass{}
 
 	// Type of JSON value.
 	_ builtinFunc = &builtinJSONTypeSig{}
@@ -56,6 +58,8 @@ var (
 	_ builtinFunc = &builtinJSONRemoveSig{}
 	// Merge JSON documents, preserving duplicate keys.
 	_ builtinFunc = &builtinJSONMergeSig{}
+	// Check JSON document contains specific target.
+	_ builtinFunc = &builtinJSONContainsSig{}
 )
 
 type jsonTypeFunctionClass struct {
@@ -510,6 +514,69 @@ func (b *builtinJSONArraySig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNu
 	return json.CreateBinary(jsons), false, nil
 }
 
+type jsonContainsPathFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONContainsPathSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONContainsPathSig) Clone() builtinFunc {
+	newSig := &builtinJSONContainsPathSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (c *jsonContainsPathFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := []types.EvalType{types.ETJson, types.ETString}
+	for i := 3; i <= len(args); i++ {
+		argTps = append(argTps, types.ETString)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	sig := &builtinJSONContainsPathSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonContainsPathSig)
+	return sig, nil
+}
+
+func (b *builtinJSONContainsPathSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	containType, isNull, err := b.args[1].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	if containType != json.ContainsPathAll && containType != json.ContainsPathOne {
+		return res, true, json.ErrInvalidJSONContainsPathType
+	}
+	var pathExpr json.PathExpression
+	contains := int64(1)
+	for i := 2; i < len(b.args); i++ {
+		path, isNull, err := b.args[i].EvalString(b.ctx, row)
+		if isNull || err != nil {
+			return res, isNull, errors.Trace(err)
+		}
+		if pathExpr, err = json.ParseJSONPathExpr(path); err != nil {
+			return res, true, errors.Trace(err)
+		}
+		_, exists := obj.Extract([]json.PathExpression{pathExpr})
+		switch {
+		case exists && containType == json.ContainsPathOne:
+			return 1, false, nil
+		case !exists && containType == json.ContainsPathOne:
+			contains = 0
+		case !exists && containType == json.ContainsPathAll:
+			return 0, false, nil
+		}
+	}
+	return contains, false, nil
+}
+
 func jsonModify(ctx sessionctx.Context, args []Expression, row chunk.Row, mt json.ModifyType) (res json.BinaryJSON, isNull bool, err error) {
 	res, isNull, err = args[0].EvalJSON(ctx, row)
 	if isNull || err != nil {
@@ -547,4 +614,67 @@ func jsonModify(ctx sessionctx.Context, args []Expression, row chunk.Row, mt jso
 		return res, true, errors.Trace(err)
 	}
 	return res, false, nil
+}
+
+type jsonContainsFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinJSONContainsSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONContainsSig) Clone() builtinFunc {
+	newSig := &builtinJSONContainsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (c *jsonContainsFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+	argTps := []types.EvalType{types.ETJson, types.ETJson}
+	if len(args) == 3 {
+		argTps = append(argTps, types.ETString)
+	}
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	sig := &builtinJSONContainsSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonContainsSig)
+	return sig, nil
+}
+
+func (b *builtinJSONContainsSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	target, isNull, err := b.args[1].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+	var pathExpr json.PathExpression
+	if len(b.args) == 3 {
+		path, isNull, err := b.args[2].EvalString(b.ctx, row)
+		if isNull || err != nil {
+			return res, isNull, errors.Trace(err)
+		}
+		pathExpr, err = json.ParseJSONPathExpr(path)
+		if err != nil {
+			return res, true, errors.Trace(err)
+		}
+		if pathExpr.ContainsAnyAsterisk() {
+			return res, true, json.ErrInvalidJSONPathWildcard
+		}
+		var exists bool
+		obj, exists = obj.Extract([]json.PathExpression{pathExpr})
+		if !exists {
+			return res, true, nil
+		}
+	}
+
+	if json.ContainsBinary(obj, target) {
+		return 1, false, nil
+	}
+	return 0, false, nil
 }

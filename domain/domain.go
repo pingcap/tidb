@@ -668,7 +668,10 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	} else {
 		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
 	}
-	defer recoverInDomain("updateStatsWorker", false)
+	defer func() {
+		recoverInDomain("updateStatsWorker", false)
+		do.wg.Done()
+	}()
 	for {
 		select {
 		case <-loadTicker.C:
@@ -678,7 +681,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 		case <-do.exit:
 			statsHandle.FlushStats()
-			do.wg.Done()
 			return
 			// This channel is sent only by ddl owner.
 		case t := <-statsHandle.DDLEventCh():
@@ -727,7 +729,10 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer analyzeTicker.Stop()
-	defer recoverInDomain("autoAnalyzeWorker", false)
+	defer func() {
+		recoverInDomain("autoAnalyzeWorker", false)
+		do.wg.Done()
+	}()
 	for {
 		select {
 		case <-analyzeTicker.C:
@@ -738,7 +743,6 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 				}
 			}
 		case <-do.exit:
-			do.wg.Done()
 			return
 		}
 	}

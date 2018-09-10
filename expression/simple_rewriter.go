@@ -56,6 +56,8 @@ func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo
 	return rewriter.pop(), nil
 }
 
+// ParseSimpleExprsWithSchema parses simple expression string to Expression.
+// The expression string must only reference the column in the given schema.
 func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *Schema) ([]Expression, error) {
 	exprStr = "select " + exprStr
 	stmts, err := parser.New().Parse(exprStr, "", "")
@@ -74,6 +76,7 @@ func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *
 	return exprs, nil
 }
 
+// RewriteSimpleExprWithSchema rewrites simple ast.ExprNode to expression.Expression.
 func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema) (Expression, error) {
 	rewriter := &simpleRewriter{ctx: ctx, schema: schema}
 	expr.Accept(rewriter)
@@ -134,6 +137,11 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		if v.Sel == nil {
 			sr.inToExpression(len(v.List), v.Not, &v.Type)
 		}
+	case *ast.ParamMarkerExpr:
+		tp := types.NewFieldType(mysql.TypeUnspecified)
+		types.DefaultParamTypeForValue(v.GetValue(), tp)
+		value := &Constant{Value: v.Datum, RetType: tp}
+		sr.push(value)
 	case *ast.RowExpr:
 		sr.rowToScalarFunc(v)
 	case *ast.ParenthesesExpr:

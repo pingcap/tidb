@@ -97,6 +97,18 @@ func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 2 3`))
 }
 
+func (s *testSuite) TestUpdateDuplicateKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table c(i int,j int,k int,primary key(i,j,k));`)
+	tk.MustExec(`insert into c values(1,2,3);`)
+	tk.MustExec(`insert into c values(1,2,4);`)
+	_, err := tk.Exec(`update c set i=1,j=2,k=4 where i=1 and j=2 and k=3;`)
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
+}
+
 func (s *testSuite) TestInsertWrongValueForField(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -104,4 +116,19 @@ func (s *testSuite) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t1(a bigint);`)
 	_, err := tk.Exec(`insert into t1 values("asfasdfsajhlkhlksdaf");`)
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
+}
+
+func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec(`use test;`)
+	tk.MustExec(`set time_zone="+09:00";`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (id int, c1 datetime not null default CURRENT_TIMESTAMP);`)
+	tk.MustExec(`set TIMESTAMP = 1234;`)
+	tk.MustExec(`insert t (id) values (1);`)
+
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
+		`1 1970-01-01 09:20:34`,
+	))
 }
