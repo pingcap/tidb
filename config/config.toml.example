@@ -229,7 +229,8 @@ commit-timeout = "41s"
 [binlog]
 
 # Socket file to write binlog.
-binlog-socket = ""
+#binlog-socket = ""
+enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
 write-timeout = "15s"

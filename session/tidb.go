@@ -38,8 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 )
 
 type domainMap struct {
@@ -281,33 +279,6 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 		return kv.IsRetryableError(err), err
 	})
 	return s, errors.Trace(err)
-}
-
-// DialPumpClientWithRetry tries to dial to binlogSocket,
-// if any error happens, it will try to re-dial,
-// or return this error when timeout.
-func DialPumpClientWithRetry(binlogSocket string, maxRetries int, dialerOpt grpc.DialOption) (*grpc.ClientConn, error) {
-	var clientCon *grpc.ClientConn
-	err := util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
-		log.Infof("setup binlog client")
-		var err error
-		tlsConfig, err := config.GetGlobalConfig().Security.ToTLSConfig()
-		if err != nil {
-			log.Infof("error happen when setting binlog client: %s", errors.ErrorStack(err))
-		}
-
-		if tlsConfig != nil {
-			clientCon, err = grpc.Dial(binlogSocket, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)), dialerOpt)
-		} else {
-			clientCon, err = grpc.Dial(binlogSocket, grpc.WithInsecure(), dialerOpt)
-		}
-
-		if err != nil {
-			log.Infof("error happen when setting binlog client: %s", errors.ErrorStack(err))
-		}
-		return true, errors.Trace(err)
-	})
-	return clientCon, errors.Trace(err)
 }
 
 var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin"}
