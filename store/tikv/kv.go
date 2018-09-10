@@ -165,7 +165,7 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	}
 
 	if startTime < cachedSafePoint {
-		return ErrGCTooEarly
+		return ErrGCTooEarly.GenByArgs(startTime, cachedSafePoint)
 	}
 
 	return nil
