@@ -16,6 +16,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	"math"
 	"strings"
 	"sync/atomic"
@@ -477,7 +478,7 @@ type addIndexWorker struct {
 	defaultVals        []types.Datum
 	idxRecords         []*indexRecord
 	rowMap             map[int64]types.Datum
-	rowDecoder         tablecodec.RowDecoder
+	rowDecoder         decoder.RowDecoder
 	idxKeyBufs         [][]byte
 	batchCheckKeys     []kv.Key
 	distinctCheckFlags []bool
@@ -516,7 +517,7 @@ func mergeAddIndexCtxToResult(taskCtx *addIndexTaskContext, result *addIndexResu
 	result.scanCount += taskCtx.scanCount
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, rowDecoder tablecodec.RowDecoder) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, rowDecoder decoder.RowDecoder) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	w := &addIndexWorker{
 		id:          id,
@@ -530,7 +531,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		rowDecoder:  rowDecoder,
 		priority:    kv.PriorityLow,
 		defaultVals: make([]types.Datum, len(t.Cols())),
-		rowMap:      make(map[int64]types.Datum, len(rowDecoder.Cols)),
+		rowMap:      make(map[int64]types.Datum, rowDecoder.DecodeColumnLength()),
 	}
 	return w
 }
@@ -547,7 +548,7 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	t := w.table
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
-	_, err := w.rowDecoder.DecodeRowAndExprWithMap(w.sessCtx, rawRecord, time.UTC, w.rowMap)
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, rawRecord, time.UTC, w.rowMap)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -860,32 +861,31 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 	log.Infof("[ddl-reorg] worker[%v] exit", w.id)
 }
 
-func makeupIndexColFieldMapAndColExpr(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (tablecodec.RowDecoder, error) {
+func makeupIndexColFieldMapAndColExpr(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (decoder.RowDecoder, error) {
 	cols := t.Cols()
-	colsTpExpr := make(map[int64]tablecodec.ColumnTpExpr)
+	colsExprMap := make(map[int64]decoder.Column, len(indexInfo.Columns))
 	for _, v := range indexInfo.Columns {
 		col := cols[v.Offset]
-		tpExpr := tablecodec.ColumnTpExpr{
-			ColInfo: col.ToInfo(),
+		tpExpr := decoder.Column{
+			Info: col.ToInfo(),
 		}
 		if col.IsGenerated() && col.GeneratedStored == false {
 			for _, c := range cols {
 				if strings.Contains(col.GeneratedExprString, c.Name.L) {
-					colsTpExpr[c.ID] = tablecodec.ColumnTpExpr{
-						ColInfo: c.ToInfo(),
+					colsExprMap[c.ID] = decoder.Column{
+						Info: c.ToInfo(),
 					}
 				}
 			}
 			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta(), &col.FieldType)
 			if err != nil {
-				return tablecodec.RowDecoder{}, errors.Trace(err)
+				return decoder.RowDecoder{}, errors.Trace(err)
 			}
 			tpExpr.GenExpr = e
 		}
-		colsTpExpr[col.ID] = tpExpr
+		colsExprMap[col.ID] = tpExpr
 	}
-	fmt.Printf("\n\ncolsExpr: %#v\n\n", colsTpExpr)
-	return tablecodec.NewRowDecoder(cols, colsTpExpr), nil
+	return decoder.NewRowDecoder(cols, colsExprMap), nil
 }
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,

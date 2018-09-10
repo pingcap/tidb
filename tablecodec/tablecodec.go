@@ -16,11 +16,6 @@ package tablecodec
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/chunk"
 	"math"
 	"time"
 
@@ -353,104 +348,6 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 				break
 			}
 		}
-	}
-	return row, nil
-}
-
-type ColumnTpExpr struct {
-	ColInfo *model.ColumnInfo
-	GenExpr expression.Expression
-}
-
-type RowDecoder struct {
-	mutRow chunk.MutRow
-	Cols   map[int64]ColumnTpExpr
-}
-
-func NewRowDecoder(cols []*table.Column, colsTpExpr map[int64]ColumnTpExpr) RowDecoder {
-	tps := make([]*types.FieldType, len(cols))
-	for _, col := range cols {
-		tps[col.Offset] = &col.FieldType
-	}
-	return RowDecoder{
-		mutRow: chunk.MutRowFromTypes(tps),
-		Cols:   colsTpExpr,
-	}
-}
-
-func (rd RowDecoder) DecodeRowAndExprWithMap(ctx sessionctx.Context, b []byte, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
-	cols := rd.Cols
-	if row == nil {
-		row = make(map[int64]types.Datum, len(cols))
-	}
-	if b == nil {
-		return nil, nil
-	}
-	if len(b) == 1 && b[0] == codec.NilFlag {
-		return nil, nil
-	}
-	cnt := 0
-	var (
-		data []byte
-		err  error
-	)
-	for len(b) > 0 {
-		// Get col id.
-		data, b, err = codec.CutOne(b)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		_, cid, err := codec.DecodeOne(data)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		// Get col value.
-		data, b, err = codec.CutOne(b)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		id := cid.GetInt64()
-		col, ok := cols[id]
-		if ok {
-			_, v, err := codec.DecodeOne(data)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			v, err = unflatten(v, &col.ColInfo.FieldType, loc)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			row[id] = v
-			cnt++
-			if cnt == len(cols) {
-				// Get enough data.
-				break
-			}
-		}
-	}
-
-	// may have virtual column
-	flag := false
-	for id, col := range cols {
-		if _, ok := row[id]; ok || col.GenExpr == nil {
-			continue
-		}
-		if flag == false {
-			for i, v := range row {
-				rd.mutRow.SetValue(cols[i].ColInfo.Offset, v.GetValue())
-			}
-			flag = true
-		}
-		// Eval the column value
-		val, err := col.GenExpr.Eval(rd.mutRow.ToRow())
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		val, err = table.CastValue(ctx, val, col.ColInfo)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		row[id] = val
 	}
 	return row, nil
 }
