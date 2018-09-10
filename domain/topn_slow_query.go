@@ -41,15 +41,15 @@ func (q *topNSlowQuery) Close() {
 }
 
 func (q *topNSlowQuery) Push(info *slowQueryInfo) {
-	// Heap is not full, append to it and shift up.
+	// Heap is not full, append to it and sift up.
 	if q.offset < len(q.data) {
 		q.data[q.offset] = info
-		q.shiftUp(q.offset)
+		q.siftUp(q.offset)
 		q.offset++
 		return
 	}
 
-	// Replace the heap top and shift down.
+	// Replace the heap top and sift down.
 	if info.duration > q.data[0].duration {
 		q.data[0] = info
 		for i := 0; i < q.offset; {
@@ -71,7 +71,7 @@ func (q *topNSlowQuery) Push(info *slowQueryInfo) {
 	}
 }
 
-func (q *topNSlowQuery) shiftUp(end int) {
+func (q *topNSlowQuery) siftUp(end int) {
 	for i := end; i > 0; {
 		j := (i - 1) / 2
 		if q.data[j].duration < q.data[i].duration {
@@ -99,7 +99,7 @@ func (q *topNSlowQuery) Refresh(now time.Time) {
 
 	// Rebuild the heap.
 	for i := 1; i < q.offset; i++ {
-		q.shiftUp(i)
+		q.siftUp(i)
 	}
 }
 
