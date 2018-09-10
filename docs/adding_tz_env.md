@@ -26,7 +26,7 @@ The std means the IANA timezone name; the offset means timezone offset; the dst 
 
 In our case, which means both `TiDB` and `TiKV`, we need care the first and third formats. For answering why we do not need the second format, we need to review how Golang evaluates timezone. In `time` package, the method `LoadLocation` reads tzData from pre-specified sources(directories may contain tzData) and then builds `time. Location` from such tzData which already contains daylight saving time information. 
 
-In this proposal, we suggest setting `TZ` to a valid IANA timezone name which can be read from `TiDB` later. If `TiDB` can't get `TZ` or the supply of `TZ` is invalid, `TiDB` just falls back to evaluates the path of the soft link of `/etc/localtime`. In addition, an warning message telling the user you should set `TZ` properly will be printed. Setting `TZ` can be done in our `tidb-ansible` project, it is also can be done at user side by `export TZ="Asia/Shanghai"`. If both of them are failed, `TiDB` will use `UTC` as timezone name.
+In this proposal, we suggest setting `TZ` to a valid IANA timezone name which can be read from `TiDB` later. If `TiDB` can't get `TZ` or the supply of `TZ` is invalid, `TiDB` just falls back to evaluate the path of the soft link of `/etc/localtime`. In addition, a warning message telling the user you should set `TZ` properly will be printed. Setting `TZ` can be done in our `tidb-ansible` project, it is also can be done at user side by `export TZ="Asia/Shanghai"`. If both of them are failed, `TiDB` will use `UTC` as timezone name.
 
 The positive side of this change is resolving performance degradation issue and ensuring the uniqueness of gloabl timezone name in multiple `TiDB` instances. 
 
