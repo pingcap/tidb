@@ -1,6 +1,4 @@
-Proposal: adding TZ as an environment variable 
-
-# Proposal: adding TZ as an environment variable as a necessary condition before starting TiDB
+# Proposal: adding TZ as an environment variable 
 
 - Author(s):  [Zhexuan Yang](www.github.com/zhexuany)  
 - Last updated:  2018/09/09
