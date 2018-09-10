@@ -3256,6 +3256,39 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	_, err = session.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[json:3149]In this situation, path expressions may not contain the * and ** tokens.")
+
+	r = tk.MustQuery(`select 
+		json_contains_path(NULL, 'one', "$.c"), 
+		json_contains_path(NULL, 'all', "$.c"), 
+		json_contains_path('{"a": 1}', NULL, "$.c"), 
+		json_contains_path('{"a": 1}', 'one', NULL), 
+		json_contains_path('{"a": 1}', 'all', NULL)
+	`)
+	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+
+	r = tk.MustQuery(`select 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.c.d'), 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a.d'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.c.d'), 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a.d')
+	`)
+	r.Check(testkit.Rows("1 0 1 0"))
+
+	r = tk.MustQuery(`select 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a', '$.e'), 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a', '$.b'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a', '$.e'), 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a', '$.b')
+	`)
+	r.Check(testkit.Rows("1 1 0 1"))
+
+	r = tk.MustQuery(`select 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.*'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$[*]'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.*'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$[*]')
+	`)
+	r.Check(testkit.Rows("1 0 1 0"))
 }
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
