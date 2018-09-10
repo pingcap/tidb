@@ -37,6 +37,7 @@ var (
 	ErrInvalidYear            = errors.New("invalid year")
 	ErrZeroDate               = errors.New("datetime zero in date")
 	ErrIncorrectDatetimeValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: '%s'")
+	ErrTruncatedWrongValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 )
 
 // Time format without fractional seconds precision.
@@ -665,7 +666,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 				_, err = fmt.Sscanf(fracStr, "%2d", &second)
 			default:
 				_, err = fmt.Sscanf(fracStr[:2], "%2d", &second)
-				sc.AppendWarning(ErrIncorrectDatetimeValue.GenByArgs(str))
+				sc.AppendWarning(ErrTruncatedWrongValue.GenByArgs("datetime", str))
 			}
 		}
 	case 3:
