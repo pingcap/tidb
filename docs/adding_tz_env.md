@@ -6,7 +6,7 @@
 
 ## Abstract
 
-When it comes to time-related calculation, it is hard for the distributed system. This proposal tries to resolve two problems: 1. timezone maybe inconsisten across multiple `TiDB` instance, 2. performance degradation casued by pushing `System` down to `TiKV`. The impact of this proposal is changing the way of `TiDB` inferring system's timezone name. Before this proposal, the default timezone name pushed down to TiKV is `System` when session's timezone is not set. After this, TiDB evaluates system's timezone name via `TZ` environment variable and then pushes the real name down to `TiKV` rather than `System`.
+When it comes to time-related calculation, it is hard for the distributed system. This proposal tries to resolve two problems: 1. timezone may be inconsistent across multiple `TiDB` instance, 2. performance degradation casued by pushing `System` down to `TiKV`. The impact of this proposal is changing the way of `TiDB` inferring system's timezone name. Before this proposal, the default timezone name pushed down to TiKV is `System` when session's timezone is not set. After this, TiDB evaluates system's timezone name via `TZ` environment variable and then pushes the real name down to `TiKV` rather than `System`.
 
 ## Background
 
