@@ -67,6 +67,7 @@ type selectResult struct {
 
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
+	sqlType      string
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -78,7 +79,7 @@ func (r *selectResult) fetch(ctx context.Context) {
 	defer func() {
 		close(r.results)
 		duration := time.Since(startTime)
-		metrics.DistSQLQueryHistgram.WithLabelValues(r.label).Observe(duration.Seconds())
+		metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(duration.Seconds())
 	}()
 	for {
 		resultSubset, err := r.resp.Next(ctx)
