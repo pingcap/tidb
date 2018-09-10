@@ -14,6 +14,7 @@
 package binloginfo
 
 import (
+	"io/ioutil"
 	"regexp"
 	"strings"
 	"sync"
@@ -33,6 +34,8 @@ import (
 
 func init() {
 	grpc.EnableTracing = false
+	// don't need output pumps client's log
+	pClient.Logger.Out = ioutil.Discard
 }
 
 var binlogWriteTimeout = 15 * time.Second

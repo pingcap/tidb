@@ -178,6 +178,7 @@ func setupBinlogClient() {
 	})
 	terror.MustNil(err)
 
+	// TODO: pumps client use default timeout value, will support set timeout later.
 	binloginfo.SetGRPCTimeout(parseDuration(cfg.Binlog.WriteTimeout))
 	binloginfo.SetPumpsClient(client)
 	log.Infof("create pumps client success, ignore binlog error %v", cfg.Binlog.IgnoreError)
