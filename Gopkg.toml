@@ -92,3 +92,7 @@ required = ["github.com/golang/protobuf/jsonpb"]
 [[constraint]]
   branch = "master"
   name = "github.com/etcd-io/gofail"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/pingcap/tipb"
