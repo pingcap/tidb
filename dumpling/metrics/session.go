@@ -111,16 +111,3 @@ const (
 	LblGeneral     = "general"
 	LblInternal    = "internal"
 )
-
-func init() {
-	prometheus.MustRegister(SessionExecuteParseDuration)
-	prometheus.MustRegister(SessionExecuteCompileDuration)
-	prometheus.MustRegister(SessionExecuteRunDuration)
-	prometheus.MustRegister(SchemaLeaseErrorCounter)
-	prometheus.MustRegister(SessionRetry)
-	prometheus.MustRegister(SessionRetryErrorCounter)
-	prometheus.MustRegister(TransactionCounter)
-	prometheus.MustRegister(SessionRestrictedSQLCounter)
-	prometheus.MustRegister(StatementPerTransaction)
-	prometheus.MustRegister(TransactionDuration)
-}
