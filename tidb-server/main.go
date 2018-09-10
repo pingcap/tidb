@@ -129,6 +129,7 @@ func main() {
 		os.Exit(0)
 	}
 	registerStores()
+	registerMetrics()
 	loadConfig()
 	overrideConfig()
 	validateConfig()
@@ -152,6 +153,10 @@ func registerStores() {
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
 	err = session.RegisterStore("mocktikv", mockstore.MockDriver{})
 	terror.MustNil(err)
+}
+
+func registerMetrics() {
+	metrics.RegisterMetrics()
 }
 
 func createStoreAndDomain() {
@@ -190,7 +195,6 @@ func pushMetric(addr string, interval time.Duration) {
 		log.Info("disable Prometheus push client")
 		return
 	}
-	metrics.RegisterMetrics()
 	log.Infof("start Prometheus push client with server addr %s and interval %s", addr, interval)
 	go prometheusPushClient(addr, interval)
 }
