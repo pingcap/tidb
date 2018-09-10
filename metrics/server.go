@@ -122,20 +122,6 @@ var (
 		})
 )
 
-func init() {
-	prometheus.MustRegister(QueryDurationHistogram)
-	prometheus.MustRegister(QueryTotalCounter)
-	prometheus.MustRegister(ConnGauge)
-	prometheus.MustRegister(ExecuteErrorCounter)
-	prometheus.MustRegister(CriticalErrorCounter)
-	prometheus.MustRegister(ServerEventCounter)
-	prometheus.MustRegister(TimeJumpBackCounter)
-	prometheus.MustRegister(KeepAliveCounter)
-	prometheus.MustRegister(PlanCacheCounter)
-	prometheus.MustRegister(HandShakeErrorCounter)
-	prometheus.MustRegister(GetTokenDurationHistogram)
-}
-
 // ExecuteErrorToLabel converts an execute error to label.
 func ExecuteErrorToLabel(err error) string {
 	err = errors.Cause(err)
