@@ -214,13 +214,25 @@ var (
 	ErrInvalidJSONData = terror.ClassJSON.New(mysql.ErrInvalidJSONData, mysql.MySQLErrName[mysql.ErrInvalidJSONData])
 	// ErrInvalidJSONPathWildcard means invalid JSON path that contain wildcard characters.
 	ErrInvalidJSONPathWildcard = terror.ClassJSON.New(mysql.ErrInvalidJSONPathWildcard, mysql.MySQLErrName[mysql.ErrInvalidJSONPathWildcard])
+	// ErrInvalidJSONContainsPathType means invalid JSON contains path type.
+	ErrInvalidJSONContainsPathType = terror.ClassJSON.New(mysql.ErrInvalidJSONContainsPathType, mysql.MySQLErrName[mysql.ErrInvalidJSONContainsPathType])
 )
 
 func init() {
 	terror.ErrClassToMySQLCodes[terror.ClassJSON] = map[terror.ErrCode]uint16{
-		mysql.ErrInvalidJSONText:         mysql.ErrInvalidJSONText,
-		mysql.ErrInvalidJSONPath:         mysql.ErrInvalidJSONPath,
-		mysql.ErrInvalidJSONData:         mysql.ErrInvalidJSONData,
-		mysql.ErrInvalidJSONPathWildcard: mysql.ErrInvalidJSONPathWildcard,
+		mysql.ErrInvalidJSONText:             mysql.ErrInvalidJSONText,
+		mysql.ErrInvalidJSONPath:             mysql.ErrInvalidJSONPath,
+		mysql.ErrInvalidJSONData:             mysql.ErrInvalidJSONData,
+		mysql.ErrInvalidJSONPathWildcard:     mysql.ErrInvalidJSONPathWildcard,
+		mysql.ErrInvalidJSONContainsPathType: mysql.ErrInvalidJSONContainsPathType,
 	}
 }
+
+// json_contains_path function type choices
+// See: https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-contains-path
+const (
+	// 'all': 1 if all paths exist within the document, 0 otherwise.
+	ContainsPathAll = "all"
+	// 'one': 1 if at least one path exists within the document, 0 otherwise.
+	ContainsPathOne = "one"
+)
