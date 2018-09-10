@@ -205,7 +205,7 @@ type LogicalAggregation struct {
 	groupByCols []*expression.Column
 
 	possibleProperties [][]*expression.Column
-	inputCount         float64 // inputCount is the input RowCount of this plan.
+	inputCount         float64 // inputCount is the input count of this plan.
 }
 
 func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -311,9 +311,9 @@ type accessPath struct {
 	idxCols    []*expression.Column
 	idxColLens []int
 	ranges     []*ranger.Range
-	// countAfterAccess is the row RowCount after we apply range seek and before we use other filter to filter data.
+	// countAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	countAfterAccess float64
-	// countAfterIndex is the row RowCount after we apply filters on index and before we apply the table filters.
+	// countAfterIndex is the row count after we apply filters on index and before we apply the table filters.
 	countAfterIndex float64
 	accessConds     []expression.Expression
 	eqCondCount     int

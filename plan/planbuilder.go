@@ -1221,7 +1221,7 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 	// Check to guarantee that there's no generated column.
 	// This check should be done after the above one to make its behavior compatible with MySQL.
 	// For example, table t has two columns, namely a and b, and b is a generated column.
-	// "insert into t (b) select * from t" will raise an error that the column RowCount is not matched.
+	// "insert into t (b) select * from t" will raise an error that the column count is not matched.
 	// "insert into t select * from t" will raise an error that there's a generated column in the column list.
 	// If we do this check before the above one, "insert into t (b) select * from t" will raise an error
 	// that there's a generated column in the column list.

@@ -127,7 +127,7 @@ type PhysicalPlan interface {
 	// getChildReqProps gets the required property by child index.
 	getChildReqProps(idx int) *property.PhysicalProperty
 
-	// StatsCount returns the RowCount of property.StatsInfo for this plan.
+	// StatsCount returns the count of property.StatsInfo for this plan.
 	StatsCount() float64
 
 	// Get all the children.

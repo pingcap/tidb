@@ -65,7 +65,7 @@ func (la *LogicalApply) canPullUpAgg() bool {
 	return len(la.children[0].Schema().Keys) > 0
 }
 
-// canPullUp checks if an aggregation can be pulled up. An aggregate function like RowCount(*) cannot be pulled up.
+// canPullUp checks if an aggregation can be pulled up. An aggregate function like count(*) cannot be pulled up.
 func (la *LogicalAggregation) canPullUp() bool {
 	if len(la.GroupByItems) > 0 {
 		return false

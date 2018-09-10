@@ -37,7 +37,7 @@ func NewSimpleStats(rowCount float64) *StatsInfo {
 
 // String implements fmt.Stringer interface.
 func (s *StatsInfo) String() string {
-	return fmt.Sprintf("RowCount %v, Cardinality %v", s.RowCount, s.Cardinality)
+	return fmt.Sprintf("count %v, Cardinality %v", s.RowCount, s.Cardinality)
 }
 
 // Count gets the RowCount in the StatsInfo.

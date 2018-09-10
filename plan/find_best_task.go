@@ -371,7 +371,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *
 			}
 		}
 	}
-	// Only use expectedCnt when it's smaller than the RowCount we calculated.
+	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
 	if (matchProperty || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
@@ -549,7 +549,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *
 	}
 	task = copTask
 	matchProperty := len(prop.Cols) == 1 && pkCol != nil && prop.Cols[0].Equal(nil, pkCol)
-	// Only use expectedCnt when it's smaller than the RowCount we calculated.
+	// Only use expectedCnt when it's smaller than the count we calculated.
 	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
 	if (matchProperty || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
