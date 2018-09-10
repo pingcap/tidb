@@ -1918,6 +1918,17 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery(`select cast(20170118.999 as datetime);`)
 	result.Check(testkit.Rows("2017-01-18 00:00:00"))
 
+	result = tk.MustQuery(`select cast("170102034" as datetime);`)
+	result.Check(testkit.Rows("2017-01-02 03:04:00"))
+	result = tk.MustQuery(`select cast("1701020304" as datetime);`)
+	result.Check(testkit.Rows("2017-01-02 03:04:00"))
+	result = tk.MustQuery(`select cast("1701020304." as datetime);`)
+	result.Check(testkit.Rows("2017-01-02 03:04:00"))
+	result = tk.MustQuery(`select cast("1701020304.1" as datetime);`)
+	result.Check(testkit.Rows("2017-01-02 03:04:01"))
+	result = tk.MustQuery(`select cast("1701020304.111" as datetime);`)
+	result.Check(testkit.Rows("2017-01-02 03:04:11"))
+
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, d char(10), e datetime, f float, g decimal(10, 3))")
@@ -3257,32 +3268,32 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[json:3149]In this situation, path expressions may not contain the * and ** tokens.")
 
-	r = tk.MustQuery(`select 
-		json_contains_path(NULL, 'one', "$.c"), 
-		json_contains_path(NULL, 'all', "$.c"), 
-		json_contains_path('{"a": 1}', NULL, "$.c"), 
-		json_contains_path('{"a": 1}', 'one', NULL), 
+	r = tk.MustQuery(`select
+		json_contains_path(NULL, 'one', "$.c"),
+		json_contains_path(NULL, 'all', "$.c"),
+		json_contains_path('{"a": 1}', NULL, "$.c"),
+		json_contains_path('{"a": 1}', 'one', NULL),
 		json_contains_path('{"a": 1}', 'all', NULL)
 	`)
 	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
 
-	r = tk.MustQuery(`select 
-		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.c.d'), 
+	r = tk.MustQuery(`select
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.c.d'),
 		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a.d'),
-		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.c.d'), 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.c.d'),
 		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a.d')
 	`)
 	r.Check(testkit.Rows("1 0 1 0"))
 
-	r = tk.MustQuery(`select 
-		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a', '$.e'), 
+	r = tk.MustQuery(`select
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a', '$.e'),
 		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a', '$.b'),
-		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a', '$.e'), 
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a', '$.e'),
 		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a', '$.b')
 	`)
 	r.Check(testkit.Rows("1 1 0 1"))
 
-	r = tk.MustQuery(`select 
+	r = tk.MustQuery(`select
 		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.*'),
 		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$[*]'),
 		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.*'),
