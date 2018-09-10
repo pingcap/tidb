@@ -66,6 +66,10 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 		if dbName == "" && col.TblName.L != "" {
 			dbName = defaultDB
 		}
+		origColName := col.OrigColName
+		if origColName.L == "" {
+			origColName = col.ColName
+		}
 		rf := &ast.ResultField{
 			ColumnAsName: col.ColName,
 			TableAsName:  col.TblName,
@@ -73,7 +77,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 			Table:        &model.TableInfo{Name: col.OrigTblName},
 			Column: &model.ColumnInfo{
 				FieldType: *col.RetType,
-				Name:      col.ColName,
+				Name:      origColName,
 			},
 		}
 		rfs = append(rfs, rf)
