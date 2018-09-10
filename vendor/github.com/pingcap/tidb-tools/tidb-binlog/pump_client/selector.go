@@ -202,7 +202,9 @@ func (r *RangeSelector) Select(binlog *pb.Binlog) *PumpStatus {
 func (r *RangeSelector) Next(pump *PumpStatus, binlog *pb.Binlog, retryTime int) *PumpStatus {
 	r.Lock()
 	defer func() {
-		r.Offset = (r.Offset + 1) % len(r.Pumps)
+		if len(r.Pumps) != 0 {
+			r.Offset = (r.Offset + 1) % len(r.Pumps)
+		}
 		r.Unlock()
 	}()
 

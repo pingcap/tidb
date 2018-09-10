@@ -299,8 +299,7 @@
   revision = "eed819b6999186a4bf2d25255f8d61b371a450d6"
 
 [[projects]]
-  branch = "develop"
-  digest = "1:91cff6bc4d69014ab51d43c1540b1a0b6fda7ed0d83118d3b1618146c796e57f"
+  digest = "1:717770cc0e91257907fb3eda68211b0bf89e06a5fca31cc4716e7010e6a7c7ea"
   name = "github.com/pingcap/tidb-tools"
   packages = [
     "pkg/utils",
@@ -308,7 +307,7 @@
     "tidb-binlog/pump_client",
   ]
   pruneopts = "NUT"
-  revision = "fba8b92a5d81fd6b1c110a7997d350b287c4ca1b"
+  revision = "0c7e7dacd1b9b64e0a7eb4c8c8bf9061a99f7478"
 
 [[projects]]
   branch = "master"

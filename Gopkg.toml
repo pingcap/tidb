@@ -78,6 +78,7 @@ required = []
   branch = "master"
   name = "github.com/etcd-io/gofail"
 
+
 [[constraint]]
-  branch = "develop"
   name = "github.com/pingcap/tidb-tools"
+  revision = "0c7e7dacd1b9b64e0a7eb4c8c8bf9061a99f7478"
