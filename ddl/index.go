@@ -15,8 +15,6 @@ package ddl
 
 import (
 	"context"
-	"fmt"
-	"github.com/pingcap/tidb/util/rowDecoder"
 	"math"
 	"strings"
 	"sync/atomic"
@@ -39,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -552,7 +551,6 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fmt.Printf("\n\nrowMap: %#v\n\n", w.rowMap)
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	for j, v := range idxInfo.Columns {
 		col := cols[v.Offset]

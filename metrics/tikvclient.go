@@ -179,24 +179,3 @@ var (
 			Help:      "Counter of region cache.",
 		}, []string{LblType, LblResult})
 )
-
-func init() {
-	prometheus.MustRegister(TiKVTxnCounter)
-	prometheus.MustRegister(TiKVSnapshotCounter)
-	prometheus.MustRegister(TiKVTxnCmdHistogram)
-	prometheus.MustRegister(TiKVBackoffCounter)
-	prometheus.MustRegister(TiKVBackoffHistogram)
-	prometheus.MustRegister(TiKVSendReqHistogram)
-	prometheus.MustRegister(TiKVConnPoolHistogram)
-	prometheus.MustRegister(TiKVCoprocessorHistogram)
-	prometheus.MustRegister(TiKVLockResolverCounter)
-	prometheus.MustRegister(TiKVRegionErrorCounter)
-	prometheus.MustRegister(TiKVTxnWriteKVCountHistogram)
-	prometheus.MustRegister(TiKVTxnWriteSizeHistogram)
-	prometheus.MustRegister(TiKVRawkvCmdHistogram)
-	prometheus.MustRegister(TiKVRawkvSizeHistogram)
-	prometheus.MustRegister(TiKVTxnRegionsNumHistogram)
-	prometheus.MustRegister(TiKVLoadSafepointCounter)
-	prometheus.MustRegister(TiKVSecondaryLockCleanupFailureCounter)
-	prometheus.MustRegister(TiKVRegionCacheCounter)
-}
