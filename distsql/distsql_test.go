@@ -122,7 +122,7 @@ func (s *testSuite) TestSelectStreaming(c *C) {
 	response.Fetch(context.TODO())
 
 	// Test Next.
-	chk := chunk.New(colTypes, 32, 32*3)
+	chk := chunk.New(colTypes, 32, 32)
 	numAllRows := 0
 	for {
 		err = response.Next(context.TODO(), chk)
