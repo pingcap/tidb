@@ -55,7 +55,10 @@ type ShowDDLJobQueries struct {
 type CheckTable struct {
 	baseSchemaProducer
 
-	Tables []*ast.TableName
+	DBName             string
+	TblInfo            *model.TableInfo
+	Indices            []table.Index
+	IndexLookUpReaders []*PhysicalIndexLookUpReader
 
 	GenExprs map[string]expression.Expression
 }

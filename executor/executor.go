@@ -349,9 +349,14 @@ func getTableName(is infoschema.InfoSchema, id int64) string {
 type CheckTableExec struct {
 	baseExecutor
 
-	tables []*ast.TableName
-	done   bool
-	is     infoschema.InfoSchema
+	dbName  string
+	tblInfo *model.TableInfo
+	indices []table.Index
+	srcs    []*IndexLookUpExecutor
+	done    bool
+	is      infoschema.InfoSchema
+	exitCh  chan struct{}
+	errCh   chan error
 
 	genExprs map[string]expression.Expression
 }
@@ -361,56 +366,111 @@ func (e *CheckTableExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
+	for _, src := range e.srcs {
+		if err := src.Open(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	e.done = false
+	return nil
+}
+
+// Close implements the Executor Close interface.
+func (e *CheckTableExec) Close() error {
+	if e.done {
+		return nil
+	}
+
+	var err error
+	for _, src := range e.srcs {
+		err = src.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	close(e.exitCh)
+	return nil
+}
+
+func (e *CheckTableExec) checkIndex(ctx context.Context, src *IndexLookUpExecutor) error {
+	chk := src.newChunk()
+	for {
+		err := src.Next(ctx, chk)
+		if err != nil {
+			select {
+			case e.errCh <- errors.Trace(err):
+				log.Warnf(".................. err %v", err)
+				return errors.Trace(err)
+			default:
+			}
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		select {
+		case <-e.exitCh:
+			return nil
+		default:
+		}
+	}
 	return nil
 }
 
 // Next implements the Executor Next interface.
 func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.done {
+	if e.done || len(e.srcs) == 0 {
 		return nil
 	}
 	defer func() { e.done = true }()
-	for _, t := range e.tables {
-		dbName := t.DBInfo.Name
-		tb, err := e.is.TableByName(dbName, t.Name)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if tb.Meta().GetPartitionInfo() != nil {
-			err = e.doCheckPartitionedTable(tb.(table.PartitionedTable))
-		} else {
-			err = e.doCheckTable(tb)
-		}
-		if err != nil {
-			log.Warnf("%v error:%v", t.Name, errors.ErrorStack(err))
-			if admin.ErrDataInConsistent.Equal(err) {
-				return ErrAdminCheckTable.Gen("%v err:%v", t.Name, err)
-			}
 
-			return errors.Errorf("%v err:%v", t.Name, err)
-		}
+	idxNames := make([]string, 0, len(e.indices))
+	for _, idx := range e.indices {
+		idxNames = append(idxNames, idx.Meta().Name.O)
 	}
-	return nil
+	greater, idxOffset, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tblInfo.Name.O, idxNames)
+	if err != nil {
+		log.Warnf("check table, greater %v index %s error %v", greater, idxNames[idxOffset], errors.ErrorStack(err))
+		t := e.srcs[idxOffset].table
+		txn := e.ctx.Txn()
+		if greater == admin.IdxCntGreater {
+			err = e.checkIndex(ctx, e.srcs[idxOffset])
+		} else {
+			if t.Meta().GetPartitionInfo() != nil {
+				err = e.doCheckPartitionedTable(txn, t.(table.PartitionedTable), e.indices[idxOffset])
+			} else {
+				err = admin.CheckRecordAndIndex(e.ctx, txn, t, e.indices[idxOffset], e.genExprs)
+			}
+		}
+		if err != nil && admin.ErrDataInConsistent.Equal(err) {
+			return ErrAdminCheckTable.Gen("%v err:%v", t.Meta().Name, err)
+		}
+		return errors.Trace(err)
+	}
+
+	wg := sync.WaitGroup{}
+	for _, src := range e.srcs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			e.checkIndex(ctx, src)
+		}()
+	}
+	wg.Wait()
+
+	select {
+	case err = <-e.errCh:
+	default:
+	}
+	return errors.Trace(err)
 }
 
-func (e *CheckTableExec) doCheckPartitionedTable(tbl table.PartitionedTable) error {
+func (e *CheckTableExec) doCheckPartitionedTable(txn kv.Transaction, tbl table.PartitionedTable, idx table.Index) error {
 	info := tbl.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.GetPartition(pid)
-		if err := e.doCheckTable(partition); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func (e *CheckTableExec) doCheckTable(tbl table.Table) error {
-	for _, idx := range tbl.Indices() {
-		txn := e.ctx.Txn()
-		err := admin.CompareIndexData(e.ctx, txn, tbl, idx, e.genExprs)
-		if err != nil {
+		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, e.genExprs); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -455,7 +515,7 @@ func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	defer func() { e.done = true }()
 
-	err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
+	_, _, err := admin.CheckIndicesCount(e.ctx, e.dbName, e.tableName, []string{e.idxName})
 	if err != nil {
 		return errors.Trace(err)
 	}

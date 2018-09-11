@@ -231,28 +231,42 @@ func getCount(ctx sessionctx.Context, sql string) (int64, error) {
 	return rows[0].GetInt64(0), nil
 }
 
+const (
+	TblCntGreater byte = 1
+	IdxCntGreater byte = 2
+)
+
 // CheckIndicesCount compares indices count with table count.
 // It returns nil if the count from the index is equal to the count from the table columns,
 // otherwise it returns an error with a different information.
-func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) error {
+func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Add `` for some names like `table name`.
 	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s`", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
-	for _, idx := range indices {
+	for i, idx := range indices {
 		sql = fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX(`%s`)", dbName, tableName, idx)
 		idxCnt, err := getCount(ctx, sql)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, 0, errors.Trace(err)
 		}
-		if tblCnt != idxCnt {
-			return errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
+
+		if tblCnt == idxCnt {
+			continue
 		}
+
+		var ret byte
+		if tblCnt > idxCnt {
+			ret = TblCntGreater
+		} else if idxCnt > tblCnt {
+			ret = IdxCntGreater
+		}
+		return ret, i, errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
 	}
 
-	return nil
+	return 0, 0, nil
 }
 
 // ScanIndexData scans the index handles and values in a limited number, according to the index information.

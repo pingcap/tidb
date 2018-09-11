@@ -246,10 +246,27 @@ func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
 }
 
 func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
+	readerExecs := make([]*IndexLookUpExecutor, 0, len(v.IndexLookUpReaders))
+	for _, readerPlan := range v.IndexLookUpReaders {
+		readerExec, err := buildNoRangeIndexLookUpReader(b, readerPlan)
+		if err != nil {
+			b.err = errors.Trace(err)
+			return nil
+		}
+		readerExec.ranges = ranger.FullRange()
+		readerExec.isCheckOp = true
+		readerExecs = append(readerExecs, readerExec)
+	}
+
 	e := &CheckTableExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		tables:       v.Tables,
+		dbName:       v.DBName,
+		tblInfo:      v.TblInfo,
+		indices:      v.Indices,
 		is:           b.is,
+		srcs:         readerExecs,
+		exitCh:       make(chan struct{}),
+		errCh:        make(chan error, 1),
 		genExprs:     v.GenExprs,
 	}
 	return e

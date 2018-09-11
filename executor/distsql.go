@@ -14,6 +14,7 @@
 package executor
 
 import (
+	//"fmt"
 	"math"
 	"runtime"
 	"sort"
@@ -760,6 +761,11 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
+	//	var rowsStr string
+	//	for i, r := range task.rows {
+	//		rowsStr += fmt.Sprintf("no.%d row: %v, ", i, r.GetInt64(w.handleIdx))
+	//	}
+	//	log.Warnf("----------------------------------- handles %v, rows %v, cnt %d, len %d", task.handles, rowsStr, handleCnt, len(task.rows))
 	if w.isCheckOp && handleCnt != len(task.rows) {
 		obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
 		for _, row := range task.rows {
