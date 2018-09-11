@@ -62,21 +62,24 @@ type worker struct {
 	quitCh   chan struct{}
 	wg       sync.WaitGroup
 
-	reorgCtx        *reorgCtx // reorgCtx is used for reorganization.
+	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
+	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 }
 
 func newWorker(tp workerType, store kv.Storage, ctxPool *pools.ResourcePool) *worker {
+	sessPool := &sessionPool{resPool: ctxPool}
 	worker := &worker{
 		id:       atomic.AddInt32(&ddlWorkerID, 1),
 		tp:       tp,
 		ddlJobCh: make(chan struct{}, 1),
 		quitCh:   make(chan struct{}),
 		reorgCtx: &reorgCtx{notifyCancelReorgJob: 0},
+		sessPool: sessPool,
 	}
 
 	if ctxPool != nil {
-		worker.delRangeManager = newDelRangeManager(store, ctxPool)
+		worker.delRangeManager = newDelRangeManager(store, sessPool)
 		log.Infof("[ddl] start delRangeManager OK, with emulator: %t", !store.SupportDeleteRange())
 	} else {
 		worker.delRangeManager = newMockDelRangeManager()
@@ -104,6 +107,7 @@ func (w *worker) String() string {
 func (w *worker) close() {
 	close(w.quitCh)
 	w.delRangeManager.clear()
+	w.sessPool.close()
 	w.wg.Wait()
 	log.Infof("[ddl-%s] close DDL worker", w)
 }

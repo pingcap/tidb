@@ -292,7 +292,9 @@ type testCase struct {
 
 func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
+	origin := ld.IgnoreLines
 	for _, tt := range tests {
+		ld.IgnoreLines = origin
 		c.Assert(ctx.NewTxn(), IsNil)
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
@@ -1766,26 +1768,31 @@ func (s *testSuite) TestColumnName(c *C) {
 	fields := rs.Fields()
 	c.Check(len(fields), Equals, 2)
 	c.Check(fields[0].Column.Name.L, Equals, "1 + c")
+	c.Check(fields[0].ColumnAsName.L, Equals, "1 + c")
 	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
+	c.Check(fields[1].ColumnAsName.L, Equals, "count(*)")
 	rs, err = tk.Exec("select (c) > all (select c from t) from t")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
+	c.Check(fields[0].ColumnAsName.L, Equals, "(c) > all (select c from t)")
 	tk.MustExec("begin")
 	tk.MustExec("insert t values(1,1)")
 	rs, err = tk.Exec("select c d, d c from t")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 2)
-	c.Check(fields[0].Column.Name.L, Equals, "d")
-	c.Check(fields[1].Column.Name.L, Equals, "c")
+	c.Check(fields[0].Column.Name.L, Equals, "c")
+	c.Check(fields[0].ColumnAsName.L, Equals, "d")
+	c.Check(fields[1].Column.Name.L, Equals, "d")
+	c.Check(fields[1].ColumnAsName.L, Equals, "c")
 	// Test case for query a column of a table.
 	// In this case, all attributes have values.
 	rs, err = tk.Exec("select c as a from t as t2")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
-	c.Check(fields[0].Column.Name.L, Equals, "a")
+	c.Check(fields[0].Column.Name.L, Equals, "c")
 	c.Check(fields[0].ColumnAsName.L, Equals, "a")
 	c.Check(fields[0].Table.Name.L, Equals, "t")
 	c.Check(fields[0].TableAsName.L, Equals, "t2")
@@ -3024,7 +3031,7 @@ func (s *testSuite) TestUnionAutoSignedCast(c *C) {
 func (s *testSuite) TestUpdateJoin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2, t3, t4, t5")
+	tk.MustExec("drop table if exists t1, t2, t3, t4, t5, t6, t7")
 	tk.MustExec("create table t1(k int, v int)")
 	tk.MustExec("create table t2(k int, v int)")
 	tk.MustExec("create table t3(id int auto_increment, k int, v int, primary key(id))")
@@ -3032,6 +3039,8 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustExec("create table t5(v int, k int, primary key(k))")
 	tk.MustExec("insert into t1 values (1, 1)")
 	tk.MustExec("insert into t4 values (3, 3)")
+	tk.MustExec("create table t6 (id int, v longtext)")
+	tk.MustExec("create table t7 (x int, id int, v longtext, primary key(id))")
 
 	// test the normal case that update one row for a single table.
 	tk.MustExec("update t1 set v = 0 where k = 1")
@@ -3086,6 +3095,10 @@ func (s *testSuite) TestUpdateJoin(c *C) {
 	tk.MustQuery("select k, v from t1").Check(testkit.Rows("<nil> 2"))
 	tk.MustQuery("select k, v from t5").Check(testkit.Rows("0 0"))
 
+	tk.MustExec("insert into t6 values (1, NULL)")
+	tk.MustExec("insert into t7 values (5, 1, 'a')")
+	tk.MustExec("update t6, t7 set t6.v = t7.v where t6.id = t7.id and t7.x = 5")
+	tk.MustQuery("select v from t6").Check(testkit.Rows("a"))
 }
 
 func (s *testSuite) TestMaxOneRow(c *C) {

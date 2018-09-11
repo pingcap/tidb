@@ -373,20 +373,22 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	baseSchemaProducer
 
-	ColTasks []AnalyzeColumnsTask
-	IdxTasks []AnalyzeIndexTask
+	ColTasks      []AnalyzeColumnsTask
+	IdxTasks      []AnalyzeIndexTask
+	MaxNumBuckets uint64
 }
 
 // LoadData represents a loaddata plan.
 type LoadData struct {
 	baseSchemaProducer
 
-	IsLocal    bool
-	Path       string
-	Table      *ast.TableName
-	Columns    []*ast.ColumnName
-	FieldsInfo *ast.FieldsClause
-	LinesInfo  *ast.LinesClause
+	IsLocal     bool
+	Path        string
+	Table       *ast.TableName
+	Columns     []*ast.ColumnName
+	FieldsInfo  *ast.FieldsClause
+	LinesInfo   *ast.LinesClause
+	IgnoreLines uint64
 
 	GenCols InsertGeneratedColumns
 }

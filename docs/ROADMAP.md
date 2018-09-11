@@ -43,7 +43,7 @@ This document defines the roadmap for TiDB development.
 ##### __Storage__  
 - [x] BoltDB
 - [x] GoLevelDB
-- [x] Homemade distributed KV ([pingcap/tikv](https://github.com/pingcap/tikv)):
+- [x] Homemade distributed KV ([tikv/tikv](https://github.com/tikv/tikv)):
     - [x] Transactions
     - [x] Replicate log using Raft
     - [x] Scale-out (Auto-rebalance)

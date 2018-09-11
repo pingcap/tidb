@@ -844,16 +844,20 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		// prefer index stats over column stats
-		if idxHist := t.indexStartWithColumnForDebugLog(colName); idxHist != nil {
+		if idxHist := t.indexStartWithColumnForDebugLog(colName); idxHist != nil && idxHist.Histogram.Len() > 0 {
 			rangeString := logForIndexRange(idxHist, &rang, -1, factor)
 			log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
 				actual[i], equalityString, equalityCount, rangeString)
-		} else if colHist := t.columnByNameForDebugLog(colName); colHist != nil {
+		} else if colHist := t.columnByNameForDebugLog(colName); colHist != nil && colHist.Histogram.Len() > 0 {
 			rangeString := colRangeToStr(colHist, &rang, -1, factor)
 			log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
 				actual[i], equalityString, equalityCount, rangeString)
 		} else {
-			return
+			count, err := getPseudoRowCountByColumnRanges(sc, float64(t.Count), []*ranger.Range{&rang}, 0)
+			if err == nil {
+				log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, range: %s, pseudo count: %.0f", prefix, idx.Info.Name.O,
+					actual[i], equalityString, equalityCount, rang.String(), count)
+			}
 		}
 	}
 }
@@ -876,13 +880,13 @@ func (q *QueryFeedback) logDetailedInfo(h *Handle) {
 	logPrefix := fmt.Sprintf("[stats-feedback] %s,", t.name)
 	if isIndex {
 		idx := t.Indices[q.hist.ID]
-		if idx == nil {
+		if idx == nil || idx.Histogram.Len() == 0 {
 			return
 		}
 		logForIndex(logPrefix, t, idx, ranges, actual, idx.getIncreaseFactor(t.Count))
 	} else {
 		c := t.Columns[q.hist.ID]
-		if c == nil {
+		if c == nil || c.Histogram.Len() == 0 {
 			return
 		}
 		logForPK(logPrefix, c, ranges, actual, c.getIncreaseFactor(t.Count))
