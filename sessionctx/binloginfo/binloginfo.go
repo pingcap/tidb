@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/juju/errors"
+	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -173,4 +174,36 @@ func addSpecialComment(ddlQuery string) string {
 		return ddlQuery
 	}
 	return ddlQuery[:loc[0]] + specialPrefix + ddlQuery[loc[0]:loc[1]] + ` */` + ddlQuery[loc[1]:]
+}
+
+// MockPumpsClient creates a PumpsClient, used for test.
+func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
+	nodeID := "pump-1"
+	pump := &pumpcli.PumpStatus{
+		Status: node.Status{
+			NodeID: nodeID,
+			State:  node.Online,
+		},
+		IsAvaliable: true,
+		Client:      client,
+	}
+
+	pumpInfos := &pumpcli.PumpInfos{
+		Pumps:            make(map[string]*pumpcli.PumpStatus),
+		AvaliablePumps:   make(map[string]*pumpcli.PumpStatus),
+		UnAvaliablePumps: make(map[string]*pumpcli.PumpStatus),
+	}
+	pumpInfos.Pumps[nodeID] = pump
+	pumpInfos.AvaliablePumps[nodeID] = pump
+
+	pCli := &pumpcli.PumpsClient{
+		ClusterID:          1,
+		Pumps:              pumpInfos,
+		Selector:           pumpcli.NewSelector(pumpcli.Range),
+		RetryTime:          1,
+		BinlogWriteTimeout: 15 * time.Second,
+	}
+	pCli.Selector.SetPumps([]*pumpcli.PumpStatus{pump})
+
+	return pCli
 }
