@@ -46,8 +46,8 @@ type Manager interface {
 	ID() string
 	// IsOwner returns whether the ownerManager is the owner.
 	IsOwner() bool
-	// SetOwner sets whether the ownerManager is the owner.
-	SetOwner(isOwner bool)
+	// RetireOwner make the manager to be a not owner. It's exported for testing
+	RetireOwner()
 	// GetOwnerID gets the owner ID.
 	GetOwnerID(ctx context.Context) (string, error)
 	// CampaignOwner campaigns the owner.
@@ -73,7 +73,6 @@ type DDLOwnerChecker interface {
 
 // ownerManager represents the structure which is used for electing owner.
 type ownerManager struct {
-	owner     int32
 	id        string // id is the ID of the manager.
 	key       string
 	prompt    string
@@ -102,16 +101,7 @@ func (m *ownerManager) ID() string {
 
 // IsOwner implements Manager.IsOwner interface.
 func (m *ownerManager) IsOwner() bool {
-	return atomic.LoadInt32(&m.owner) == 1
-}
-
-// SetOwner implements Manager.SetOwner interface.
-func (m *ownerManager) SetOwner(isOwner bool) {
-	if isOwner {
-		atomic.StoreInt32(&m.owner, 1)
-	} else {
-		atomic.StoreInt32(&m.owner, 0)
-	}
+	return atomic.LoadPointer(&m.elec) != unsafe.Pointer(nil)
 }
 
 // Cancel implements Manager.Cancel interface.
@@ -203,11 +193,10 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 
 func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
 	atomic.StorePointer(&m.elec, unsafe.Pointer(elec))
-	m.SetOwner(true)
 }
 
-func (m *ownerManager) retireOwner() {
-	m.SetOwner(false)
+// RetireOwner make the manager to be a not owner.
+func (m *ownerManager) RetireOwner() {
 	atomic.StorePointer(&m.elec, nil)
 }
 
@@ -267,7 +256,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 
 		m.toBeOwner(elec)
 		m.watchOwner(ctx, etcdSession, ownerKey)
-		m.retireOwner()
+		m.RetireOwner()
 
 		metrics.CampaignOwnerCounter.WithLabelValues(m.prompt, metrics.NoLongerOwner).Inc()
 		log.Warnf("%s isn't the owner", logPrefix)
