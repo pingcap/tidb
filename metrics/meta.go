@@ -46,8 +46,3 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
 		}, []string{LblType, LblResult})
 )
-
-func init() {
-	prometheus.MustRegister(AutoIDHistogram)
-	prometheus.MustRegister(MetaHistogram)
-}

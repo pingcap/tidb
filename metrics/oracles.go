@@ -11,14 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package oracles
+package metrics
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// Metrics for the timestamp oracle.
 var (
-	tsFutureWaitDuration = prometheus.NewHistogram(
+	TSFutureWaitDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "pdclient",
@@ -27,7 +28,3 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.000005, 2, 18), // 5us ~ 128 ms
 		})
 )
-
-func init() {
-	prometheus.MustRegister(tsFutureWaitDuration)
-}
