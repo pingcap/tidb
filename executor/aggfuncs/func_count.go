@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/set"
 )
 
 type baseCount struct {
@@ -220,20 +221,20 @@ type countOriginalWithDistinct struct {
 type partialResult4CountWithDistinct struct {
 	count int64
 
-	valSet stringSet
+	valSet set.StringSet
 }
 
 func (e *countOriginalWithDistinct) AllocPartialResult() PartialResult {
 	return PartialResult(&partialResult4CountWithDistinct{
 		count:  0,
-		valSet: newStringSet(),
+		valSet: set.NewStringSet(),
 	})
 }
 
 func (e *countOriginalWithDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountWithDistinct)(pr)
 	p.count = 0
-	p.valSet = newStringSet()
+	p.valSet = set.NewStringSet()
 }
 
 func (e *countOriginalWithDistinct) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -265,10 +266,10 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 			}
 		}
 		encodedString := string(encodedBytes)
-		if hasNull || p.valSet.exist(encodedString) {
+		if hasNull || p.valSet.Exist(encodedString) {
 			continue
 		}
-		p.valSet.insert(encodedString)
+		p.valSet.Insert(encodedString)
 		p.count++
 	}
 

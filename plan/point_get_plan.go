@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -84,21 +85,21 @@ func (p *PointGetPlan) ExplainInfo() string {
 }
 
 // getChildReqProps gets the required property by child index.
-func (p *PointGetPlan) getChildReqProps(idx int) *requiredProp {
+func (p *PointGetPlan) getChildReqProps(idx int) *property.PhysicalProperty {
 	return nil
 }
 
-// StatsCount will return the the count of statsInfo for this plan.
+// StatsCount will return the the RowCount of property.StatsInfo for this plan.
 func (p *PointGetPlan) StatsCount() float64 {
 	return 1
 }
 
-// StatsCount will return the the count of statsInfo for this plan.
-func (p *PointGetPlan) statsInfo() *statsInfo {
+// StatsCount will return the the RowCount of property.StatsInfo for this plan.
+func (p *PointGetPlan) statsInfo() *property.StatsInfo {
 	if p.stats == nil {
-		p.stats = &statsInfo{}
+		p.stats = &property.StatsInfo{}
 	}
-	p.stats.count = 1
+	p.stats.RowCount = 1
 	return p.stats
 }
 
