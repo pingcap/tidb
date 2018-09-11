@@ -281,7 +281,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:5d1ffbb5f63904390f71350a6f9d91e9b2e018dbbded1d8be71cd04df6635093"
+  digest = "1:84db0209caf3c48beaec43d15bd22ca6256d958b807c2ac626e2425e232e92c4"
   name = "github.com/pingcap/kvproto"
   packages = [
     "pkg/coprocessor",
@@ -294,37 +294,27 @@
     "pkg/tikvpb",
   ]
   pruneopts = "NUT"
-  revision = "279515615485b0f2d12f1421cc412fe2784e0190"
+  revision = "529c652955d8fa74faf56f91b2f428d5779fd7d5"
 
 [[projects]]
   branch = "master"
-  digest = "1:c9481427c87777d146d7e299c66cf08cf90a2ea2be035bb6581cfa1a78cdd39f"
+  digest = "1:6a846fb5ccc09741c0735f9e9897bbc95915314fab98c5ee56680f1a9591d48d"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
   pruneopts = "NUT"
-  revision = "47a950e6649fa0151a6c5d0fc48a97c080012e3d"
+  revision = "5d1bac04f3eab9842ee0988ed46c483d2ce4e854"
 
 [[projects]]
   branch = "master"
-  digest = "1:5b504d252d8014e70c12a6492878d041a0534b2deace4b8a4d71609bec7d4049"
+  digest = "1:14d83225e335cfa449b1f74d03c03ed70db64bf6af83a6e04c43e6e0021d6b94"
   name = "github.com/pingcap/tipb"
   packages = [
     "go-binlog",
-    "go-mysqlx",
-    "go-mysqlx/Connection",
-    "go-mysqlx/Crud",
-    "go-mysqlx/Datatypes",
-    "go-mysqlx/Expect",
-    "go-mysqlx/Expr",
-    "go-mysqlx/Notice",
-    "go-mysqlx/Resultset",
-    "go-mysqlx/Session",
-    "go-mysqlx/Sql",
     "go-tipb",
     "sharedbytes",
   ]
   pruneopts = "NUT"
-  revision = "5e46e0ec647edfee8fe001c5b51609460fb655bf"
+  revision = "371b48b15d93924a3a5375019e42b4420bc13d17"
 
 [[projects]]
   digest = "1:5cf3f025cbee5951a4ee961de067c8a89fc95a5adabead774f82822efabab121"
@@ -566,16 +556,6 @@
     "github.com/pingcap/kvproto/pkg/tikvpb",
     "github.com/pingcap/pd/pd-client",
     "github.com/pingcap/tipb/go-binlog",
-    "github.com/pingcap/tipb/go-mysqlx",
-    "github.com/pingcap/tipb/go-mysqlx/Connection",
-    "github.com/pingcap/tipb/go-mysqlx/Crud",
-    "github.com/pingcap/tipb/go-mysqlx/Datatypes",
-    "github.com/pingcap/tipb/go-mysqlx/Expect",
-    "github.com/pingcap/tipb/go-mysqlx/Expr",
-    "github.com/pingcap/tipb/go-mysqlx/Notice",
-    "github.com/pingcap/tipb/go-mysqlx/Resultset",
-    "github.com/pingcap/tipb/go-mysqlx/Session",
-    "github.com/pingcap/tipb/go-mysqlx/Sql",
     "github.com/pingcap/tipb/go-tipb",
     "github.com/prometheus/client_golang/prometheus",
     "github.com/prometheus/client_golang/prometheus/push",
