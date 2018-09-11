@@ -64,7 +64,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 	tk.MustExec("create table t1(id bigint primary key, a int, b int);")
 	tk.MustExec("create table t2(id bigint primary key, a int, b int);")
 
-	// Positive tests
+	// Positive tests.
 	tk.MustQuery("explain select * from t1 left join t2 on t1.a > t2.a and t1.a = 1;").Check(testkit.Rows(
 		"HashLeftJoin_6 33233333.33 root left outer join, inner:TableReader_11, left cond:[eq(test.t1.a, 1)]",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
@@ -133,7 +133,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"└─TableReader_11 10000.00 root data:TableScan_10",
 		"  └─TableScan_10 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
-	// Negative tests
+	// Negative tests.
 	tk.MustQuery("explain select * from t1 left join t2 on t1.a = t2.a and t2.a > 1;").Check(testkit.Rows(
 		"HashLeftJoin_6 10000.00 root left outer join, inner:TableReader_11, equal:[eq(test.t1.a, test.t2.a)]",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
@@ -181,7 +181,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"  └─Selection_10 2666.67 cop eq(test.t2.a, test.t2.b), gt(test.t2.a, 1)",
 		"    └─TableScan_9 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
-	// Constant equal condition merge in outer join
+	// Constant equal condition merge in outer join.
 	tk.MustQuery("explain select * from t1 left join t2 on true where t1.a = 1 and false;").Check(testkit.Rows(
 		"TableDual_8 0.00 root rows:0",
 	))
@@ -229,7 +229,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"  └─Selection_10 0.00 cop eq(test.t2.a, 1), eq(test.t2.a, 2)",
 		"    └─TableScan_9 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
-	// Test constant propagation for DNF in outer join
+	// Constant propagation for DNF in outer join.
 	tk.MustQuery("explain select * from t1 left join t2 on t1.a = 1 or (t1.a = 2 and t1.a = 3);").Check(testkit.Rows(
 		"HashLeftJoin_6 100000000.00 root left outer join, inner:TableReader_10, left cond:[or(eq(test.t1.a, 1), 0)]",
 		"├─TableReader_8 10000.00 root data:TableScan_7",
@@ -245,7 +245,7 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		"└─TableReader_12 10000.00 root data:TableScan_11",
 		"  └─TableScan_11 10000.00 cop table:t2, range:[-inf,+inf], keep order:false, stats:pseudo",
 	))
-	// Test constant propagation over left outer semi join, filter with aux column should be be derived
+	// Constant propagation over left outer semi join, filter with aux column should be be derived.
 	tk.MustQuery("explain select * from t1 where t1.b > 1 or t1.b in (select b from t2);").Check(testkit.Rows(
 		"Projection_7 8000.00 root test.t1.id, test.t1.a, test.t1.b",
 		"└─Selection_8 8000.00 root or(gt(test.t1.b, 1), 5_aux_0)",

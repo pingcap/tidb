@@ -308,15 +308,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
-	for i, cond := range s.conditions {
-		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
-			dnfItems := SplitDNFItems(cond)
-			for j, item := range dnfItems {
-				dnfItems[j] = ComposeCNFCondition(s.ctx, PropagateConstant(s.ctx, []Expression{item})...)
-			}
-			s.conditions[i] = ComposeDNFCondition(s.ctx, dnfItems...)
-		}
-	}
+	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
 	return s.conditions
 }
 
@@ -351,6 +343,7 @@ func (s *propOuterJoinConstSolver) setConds2ConstFalse(jConds, fConds bool) {
 	}
 }
 
+// pickNewEQCondsFunc picks constant equal expression from specified conditions.
 func (s *propOuterJoinConstSolver) pickNewEQCondsFunc(retMapper map[int]*Constant, visited []bool, fConds bool) map[int]*Constant {
 	var conds []Expression
 	var condsOffset int
@@ -382,7 +375,7 @@ func (s *propOuterJoinConstSolver) pickNewEQCondsFunc(retMapper map[int]*Constan
 			}
 			continue
 		}
-		// Only extract `outerTable = const` expressions.
+		// Only extract `outerCol = const` expressions.
 		if !s.outerSchema.Contains(col) {
 			continue
 		}
@@ -403,16 +396,20 @@ func (s *propOuterJoinConstSolver) pickNewEQCondsFunc(retMapper map[int]*Constan
 	return retMapper
 }
 
+// pickNewEQConds picks constant equal expressions from join and filter conditions.
 func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Constant {
 	retMapper := make(map[int]*Constant)
 	retMapper = s.pickNewEQCondsFunc(retMapper, visited, true)
 	if retMapper == nil {
+		// Filter is constant false, enforce early termination.
 		return nil
 	}
 	retMapper = s.pickNewEQCondsFunc(retMapper, visited, false)
 	return retMapper
 }
 
+// propagateConstantEQ propagates expressions like `outerCol = const` by substituting `outerCol` in *JOIN* condition
+// with `const`, the procedure repeats multiple times.
 func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 	s.eqList = make([]*Constant, len(s.columns))
 	lenFilters := len(s.fConds)
@@ -428,7 +425,6 @@ func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 			cols = append(cols, s.columns[id])
 			cons = append(cons, con)
 		}
-		// Only substitute join conditions for outer join.
 		for i, cond := range s.jConds {
 			if !visited[i+lenFilters] {
 				s.jConds[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
@@ -447,10 +443,10 @@ func (s *propOuterJoinConstSolver) colsFromOuterAndInner(col1, col2 *Column) (*C
 	return nil, nil
 }
 
-// validColEqualCond check if expression is the column equql condition we can use for constant
-// propagation over outer join. We only use expression like `t1.a = t2.a`, for expressions like
-// `t1.a = t1.b` or `t2.a = t2.b`, they do not help deriving new conditions on inner table, which
-// are intended to be pushed down to children plan nodes.
+// validColEqualCond checks if expression is column equql condition that we can use for constant
+// propagation over outer join. We only use expression like `outerCol = innerCol`, for expressions like
+// `outerCol1 = outerCol2` or `innerCol1 = innerCol2`, they do not help deriving new inner table conditions
+// which can be pushed down to children plan nodes, so we do not pick them.
 func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, *Column) {
 	if fun, ok := cond.(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 		lCol, lOk := fun.GetArgs()[0].(*Column)
@@ -463,13 +459,47 @@ func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, 
 
 }
 
+// deriveConds given `outerCol = innerCol`, derive new expression for specified conditions.
+func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schema *Schema, fCondsOffset int, visited []bool, fConds bool) []bool {
+	var offset, condsLen int
+	var conds []Expression
+	if fConds {
+		conds = s.fConds
+		offset = fCondsOffset
+		condsLen = len(s.fConds)
+	} else {
+		conds = s.jConds
+		condsLen = fCondsOffset
+	}
+	for k := 0; k < condsLen; k++ {
+		if visited[k+offset] {
+			// condition has been used to retrieve equality relation or contains column beyond children schema.
+			continue
+		}
+		cond := conds[k]
+		if !ExprFromSchema(cond, schema) {
+			visited[k+offset] = true
+			continue
+		}
+		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond)
+		if replaced {
+			s.jConds = append(s.jConds, newExpr)
+		}
+	}
+	return visited
+}
+
+// propagateColumnEQ propagates expressions like 'outerCol = innerCol' by adding extra filters
+// 'expression(..., innerCol, ...)' derived from 'expression(..., outerCol, ...)' as long as
+// 'expression(..., outerCol, ...)' does not reference columns outside children schemas of join node.
+// Derived new expressions must be appended into join condition, not filter condition.
 func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 	visited := make([]bool, len(s.jConds)+len(s.fConds))
 	s.unionSet = &multiEqualSet{}
 	s.unionSet.init(len(s.columns))
 	var outerCol, innerCol *Column
 	// Only consider column equal condition in joinConds.
-	// If we have column equal in filter condition, the outer join should be simplified already.
+	// If we have column equal in filter condition, the outer join should have been simplified already.
 	for i := range s.jConds {
 		outerCol, innerCol = s.validColEqualCond(s.jConds[i])
 		if outerCol != nil {
@@ -492,37 +522,8 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 			if outerCol == nil {
 				continue
 			}
-			for k := 0; k < lenJoinConds; k++ {
-				if visited[k] {
-					// cond_k has been used to retrieve equality relation or contains column beyond children schema.
-					continue
-				}
-				cond := s.jConds[k]
-				if !ExprFromSchema(cond, mergedSchema) {
-					visited[k] = true
-					continue
-				}
-				replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond)
-				if replaced {
-					// Must append to join condition, otherwise it is not semantially equivalent regarding outer join.
-					s.jConds = append(s.jConds, newExpr)
-				}
-			}
-			for k, cond := range s.fConds {
-				if visited[k+lenJoinConds] {
-					// condition contains column beyond children schema.
-					continue
-				}
-				if !ExprFromSchema(cond, mergedSchema) {
-					visited[k+lenJoinConds] = true
-					continue
-				}
-				replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond)
-				if replaced {
-					// Must append to join condition, otherwise it is not semantially equivalent regarding outer join.
-					s.jConds = append(s.jConds, newExpr)
-				}
-			}
+			visited = s.deriveConds(outerCol, innerCol, mergedSchema, lenJoinConds, visited, false)
+			visited = s.deriveConds(outerCol, innerCol, mergedSchema, lenJoinConds, visited, true)
 		}
 	}
 }
@@ -546,25 +547,23 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
-	for i, cond := range s.jConds {
-		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
-			dnfItems := SplitDNFItems(cond)
-			for j, item := range dnfItems {
-				dnfItems[j] = ComposeCNFCondition(s.ctx, PropagateConstant(s.ctx, []Expression{item})...)
-			}
-			s.jConds[i] = ComposeDNFCondition(s.ctx, dnfItems...)
-		}
-	}
-	for i, cond := range s.fConds {
-		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
-			dnfItems := SplitDNFItems(cond)
-			for j, item := range dnfItems {
-				dnfItems[j] = ComposeCNFCondition(s.ctx, PropagateConstant(s.ctx, []Expression{item})...)
-			}
-			s.fConds[i] = ComposeDNFCondition(s.ctx, dnfItems...)
-		}
-	}
+	s.jConds = propagateConstantDNF(s.ctx, s.jConds)
+	s.fConds = propagateConstantDNF(s.ctx, s.fConds)
 	return s.jConds, s.fConds
+}
+
+// propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
+func propagateConstantDNF(ctx sessionctx.Context, conds []Expression) []Expression {
+	for i, cond := range conds {
+		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
+			dnfItems := SplitDNFItems(cond)
+			for j, item := range dnfItems {
+				dnfItems[j] = ComposeCNFCondition(ctx, PropagateConstant(ctx, []Expression{item})...)
+			}
+			conds[i] = ComposeDNFCondition(ctx, dnfItems...)
+		}
+	}
+	return conds
 }
 
 // PropConstOverOuterJoin propagate constant equal and column equal conditions over outer join.

@@ -109,9 +109,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		// Propagate constant first for outer join
 		predicates = p.outerJoinPropConst(predicates)
-		// Check if filter condition is constant false or null
 		dual := conds2TableDual(p, predicates)
 		if dual != nil {
 			return ret, dual
@@ -128,9 +126,7 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
-		// Propagate constant first for outer join
 		predicates = p.outerJoinPropConst(predicates)
-		// Check if filter condition is constant false or null
 		dual := conds2TableDual(p, predicates)
 		if dual != nil {
 			return ret, dual
@@ -428,6 +424,7 @@ func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 	return nil
 }
 
+// outerJoinPropConst propagates constant equal and column equal conditions over outer join.
 func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []expression.Expression {
 	if p.JoinType == InnerJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
 		return predicates
