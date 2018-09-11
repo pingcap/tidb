@@ -237,7 +237,7 @@ const (
 	tidbServerVersionVar = "tidb_server_version"
 	// The variable name in mysql.tidb table and it will be used when we want to know
 	// system timezone.
-	systemTZ = "system_tz"
+	tidbSystemTZ = "system_tz"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -660,8 +660,8 @@ func upgradeToVer23(s Session) {
 
 // upgradeToVer24 initializes `Sysstem` timezone according to docs/design/2018-09-10-adding-tz-env.md
 func upgradeToVer24(s Session) {
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", "%s", "TiDB Global System Timezone).")`,
-		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, timeutil.Local().String())
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", "%s", "TiDB Global System Timezone.")`,
+		mysql.SystemDB, mysql.TiDBTable, tidbSystemTZ, timeutil.Local().String())
 	mustExecute(s, sql)
 }
 
