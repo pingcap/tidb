@@ -334,6 +334,11 @@ type ddlHistoryJobHandler struct {
 	*tikvHandlerTool
 }
 
+// ddlResignOwnerHandler is the handler for resigning ddl owner.
+type ddlResignOwnerHandler struct {
+	store kv.Storage
+}
+
 type serverInfoHandler struct {
 	*tikvHandlerTool
 }
@@ -711,6 +716,37 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 	writeData(w, jobs)
 	return
+}
+
+func (h ddlResignOwnerHandler) resignDDLOwner() error {
+	dom, err := session.GetDomain(h.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ownerMgr := dom.DDL().OwnerManager()
+	err = ownerMgr.ResignOwner(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// ServeHTTP handles request of resigning ddl owner.
+func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method."))
+		return
+	}
+
+	err := h.resignDDLOwner()
+	if err != nil {
+		log.Error(err)
+		writeError(w, err)
+		return
+	}
+
+	writeData(w, "success!")
 }
 
 func (h tableHandler) getPDAddr() ([]string, error) {
