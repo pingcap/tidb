@@ -57,5 +57,5 @@ func EncodeTSO(ts int64) uint64 {
 // GetTimeFromTS extracts time.Time from a timestamp.
 func GetTimeFromTS(ts uint64) time.Time {
 	ms := ExtractPhysical(ts)
-	return time.Unix(ms/1000, (ms%1000)*1e6)
+	return time.Unix(ms/1e3, (ms%1e3)*1e6)
 }
