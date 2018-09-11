@@ -554,6 +554,12 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 	return s.jConds, s.fConds
 }
 
+// PropConstOverOuterJoin propagate constant equal and column equal conditions over outer join.
+// First step is to extract `outerCol = const` from join conditions and filter conditions,
+// and substitute `outerCol` in join conditions with `const`;
+// Second step is to extract `outerCol = innerCol` from join conditions, and derive new join
+// conditions based on this column equal condition and `outerCol` related
+// expressions in join conditions and filter conditions;
 func PropConstOverOuterJoin(ctx sessionctx.Context, joinConds, filterConds []Expression, outerSchema, innerSchema *Schema) ([]Expression, []Expression) {
 	solver := &propOuterJoinConstSolver{
 		outerSchema: outerSchema,
