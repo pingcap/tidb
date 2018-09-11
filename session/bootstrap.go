@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -233,7 +234,10 @@ const (
 	bootstrappedVarTrue = "True"
 	// The variable name in mysql.TiDB table.
 	// It is used for getting the version of the TiDB server which bootstrapped the store.
-	tidbServerVersionVar = "tidb_server_version" //
+	tidbServerVersionVar = "tidb_server_version"
+	// The variable name in mysql.tidb table and it will be used when we want to know
+	// system timezone.
+	systemTZ = "system_tz"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -257,6 +261,7 @@ const (
 	version21 = 21
 	version22 = 22
 	version23 = 23
+	version24 = 24
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -405,6 +410,10 @@ func upgrade(s Session) {
 
 	if ver < version23 {
 		upgradeToVer23(s)
+	}
+
+	if ver < version24 {
+		upgradeToVer24(s)
 	}
 
 	updateBootstrapVer(s)
@@ -647,6 +656,13 @@ func upgradeToVer22(s Session) {
 
 func upgradeToVer23(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `flag` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
+}
+
+// upgradeToVer24 initializes `Sysstem` timezone according to docs/design/2018-09-10-adding-tz-env.md
+func upgradeToVer24(s Session) {
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", "%s", "TiDB Global System Timezone).")`,
+		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, timeutil.Local().String())
+	mustExecute(s, sql)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
