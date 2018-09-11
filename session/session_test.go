@@ -21,6 +21,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -44,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	binlog "github.com/pingcap/tipb/go-binlog"
-	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
@@ -93,7 +93,7 @@ func (s *testSessionSuite) TearDownTest(c *C) {
 type mockBinlogPump struct {
 }
 
-var _ binlog.PumpClient = &pumpcli.PumpsClient{}
+var _ binlog.PumpClient = &mockBinlogPump{}
 
 func (p *mockBinlogPump) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
 	return &binlog.WriteBinlogResp{}, nil
@@ -131,7 +131,7 @@ func (s *testSessionSuite) TestForCoverage(c *C) {
 	tk.MustExec("admin check table t")
 
 	// Cover dirty table operations in StateTxn.
-	tk.Se.GetSessionVars().BinlogClient = &mockBinlogPump{}
+	tk.Se.GetSessionVars().BinlogClient = &pumpcli.PumpsClient{}
 	tk.MustExec("begin")
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert t values ()")

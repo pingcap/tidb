@@ -140,9 +140,11 @@ func (s *testBinlogSuite) MockPumpsClient(clientConn *grpc.ClientConn) *pumpcli.
 	pumpInfos.AvaliablePumps[nodeID] = pump
 
 	pCli := &pumpcli.PumpsClient{
-		ClusterID: 1,
-		Pumps:     pumpInfos,
-		Selector:  pumpcli.NewSelector(pumpcli.Range),
+		ClusterID:          1,
+		Pumps:              pumpInfos,
+		Selector:           pumpcli.NewSelector(pumpcli.Range),
+		RetryTime:          1,
+		BinlogWriteTimeout: 15 * time.Second,
 	}
 	pCli.Selector.SetPumps([]*pumpcli.PumpStatus{pump})
 
@@ -305,6 +307,7 @@ func (s *testBinlogSuite) TestMaxRecvSize(c *C) {
 	}
 	err := info.WriteBinlog(1)
 	c.Assert(err, NotNil)
+	c.Assert(terror.ErrCritical.Equal(err), IsFalse)
 	c.Assert(terror.ErrCritical.Equal(err), IsFalse, Commentf("%v", err))
 }
 

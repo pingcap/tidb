@@ -130,6 +130,11 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 			return nil
 		}
 
+		if strings.Contains(err.Error(), "received message larger than max") {
+			// This kind of error is not critical, return directly.
+			return errors.Errorf("binlog data is too large (%s)", err.Error())
+		}
+
 		return terror.ErrCritical.GenByArgs(err)
 	}
 
