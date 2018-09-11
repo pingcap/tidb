@@ -26,7 +26,7 @@ const (
 	TypeLonglong  byte = 8
 	TypeInt24     byte = 9
 	TypeDate      byte = 10
-	/* Original name was TypeTime, renamed to Duration to resolve the conflict with Go type Time.*/
+	/* TypeDuration original name was TypeTime, renamed to TypeDuration to resolve the conflict with Go type Time.*/
 	TypeDuration byte = 11
 	TypeDatetime byte = 12
 	TypeYear     byte = 13
