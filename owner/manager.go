@@ -63,6 +63,7 @@ const (
 	NewSessionDefaultRetryCnt = 3
 	// NewSessionRetryUnlimited is the unlimited retry times when create new session.
 	NewSessionRetryUnlimited = math.MaxInt64
+	keyOpDefaultTimeout      = 5 * time.Second
 )
 
 // DDLOwnerChecker is used to check whether tidb is owner.
@@ -182,7 +183,9 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 		return errors.Errorf("This node is not a ddl owner, can't be resigned.")
 	}
 
-	err := elec.Resign(ctx)
+	childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
+	err := elec.Resign(childCtx)
+	cancel()
 	if err != nil {
 		return errors.Trace(err)
 	}
