@@ -193,7 +193,7 @@ func (ft *FieldType) CompactStr() string {
 	suffix := ""
 
 	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.Tp)
-	isFlenNotDefault := ft.Flen != defaultFlen && ft.Flen != 0 && ft.Flen != UnspecifiedLength
+	//isFlenNotDefault := ft.Flen != defaultFlen && ft.Flen != 0 && ft.Flen != UnspecifiedLength
 	isDecimalNotDefault := ft.Decimal != defaultDecimal && ft.Decimal != 0 && ft.Decimal != UnspecifiedLength
 
 	// displayFlen and displayDecimal are flen and decimal values with `-1` substituted with default value.
@@ -227,17 +227,7 @@ func (ft *FieldType) CompactStr() string {
 			suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
 		}
 	case mysql.TypeNewDecimal:
-		if isFlenNotDefault || isDecimalNotDefault {
-			suffix = fmt.Sprintf("(%d", displayFlen)
-			if isDecimalNotDefault {
-				suffix += fmt.Sprintf(",%d", displayDecimal)
-			} else {
-				suffix += fmt.Sprintf(",%d", 0)
-			}
-			suffix += ")"
-		} else {
-			suffix = fmt.Sprintf("(%d,0)", defaultFlen)
-		}
+		suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
 	case mysql.TypeBit, mysql.TypeShort, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
 		// Flen is always shown.
 		suffix = fmt.Sprintf("(%d)", displayFlen)
