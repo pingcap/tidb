@@ -10,13 +10,13 @@ This proposal tries to illustrate some rules that can be added to current constr
 
 ## Background
 
-For now, most of the constraint propagation work in TiDB is done by `propagateConstantSolver`, it does:
+Currently, most of the constraint propagation work in TiDB is done by `propagateConstantSolver`, which does:
 
-1. Find `column = constant` expression and substitue the constant for column, as well as try to fold the substituted constant expression if possible, for example:
+1. Find the `column = constant` expression and substitute the constant for the column, as well as try to fold the substituted constant expression if possible, for example:
 
- Given `a = b and a = 2 and b = 3`, it becomes `2 = 3` after substitution and lead to a final `false` constant.
+ Given `a = b and a = 2 and b = 3`, it becomes `2 = 3` after substitution and leads to a final `false` constant.
 
-2. Find `column A = column B` expression(which happens in `join` statements mostly) and propagate expressions like `column op constant`(as well as `constant op column`) based on the equliaty relation, the supported operators are:
+2. Find the `column A = column B` expression (which happens in `join` statements mostly) and propagate expressions like `column op constant` (as well as `constant op column`) based on the equality relation. The supported operators are:
 
  * `ast.LT('<')`
  * `ast.GT('>')`
@@ -24,9 +24,9 @@ For now, most of the constraint propagation work in TiDB is done by `propagateCo
  * `ast.GE('>=')`
  * `ast.NE('!=')`
 
-The `propagateConstantSolver` makes more detailed/explicit filters/constraints, which can be used within other optimization rule. For example, in predicate-pushdown optimization, it generates more predicates that can be pushed closer to the data source(TiKV), and thus reduce the amount of data in the whole data path.
+The `propagateConstantSolver` makes more detailed/explicit filters/constraints, which can be used within other optimization rules. For example, in the predicate-pushdown optimization, it generates more predicates that can be pushed closer to the data source (TiKV), and thus reduces the amount of data in the whole data path.
 
-We can further do the optimization by introduce more rules and infer/propagate more constraints from the existings ones, which helps us building better logical plan.
+We can further do the optimization by introducing more rules and inferring/propagating more constraints from the existing ones, which helps us build a better logical plan.
 
 ## Proposal
 
@@ -41,31 +41,35 @@ Here are proposed rules we can consider:
 
  For example, 
 
- `t1.a = t2.a and t1.a < 5` => `t2.a < 5`
-
- `t1.a = t2.a and t1.a in (12, 13) and t2.a in (14, 15)` => `t1.a in (14, 15) and t2.a in (12, 13)`
-
- `t1.a = t2.a and cast(t1.a, varchar(20) rlike 'abc'` => `cast(t1.a, varchar(20)) rlike 'abc'`
+| original expressions                       | propagated filters               |
+| --------------------                       | ------------------               |
+| a = b and a < 5                            | b < 5                            |
+| a = b and a in (12, 13) and b in (14, 15)  | a in (14, 15) and b in (12, 13)  |
+| a = b and cast(a, varchar(20)) rlike 'abc' | cast(b, varchar(20)) rlike 'abc' |
   
  Equality propagation should also be included:
 
- `t1.a = t2.a and cast(t1.a, varchar(20) = 5` and` => `cast(t2.a, varchar(20)) = 5`
+| original expressions               | propagated filters       |
+| --------------------               | ------------------       |
+| a = b and cast(a, varchar(20)) = 5 | cast(b, varchar(20)) = 5 |
 
  But following predicates cannot be propagated:
 
- `t1.a = t2.a and t1.a < random()` -- the expression is non-deterministic
+| unpropagateable expressions | reason                              |
+| --------------------------- | ------                              |
+| a = b and a < random()      | the expression is non-deterministic |
+| a = b and a < sleep()       | the expression has side effect      |
 
- `t1.a = t2.a and t1.a < sleep()` -- the expression has side effect
+2. Infer NotNULL filters from null-rejected scalar expression
 
-2. Infer NotNULL filters from comparison operator
+ We can infer `NotNULL` constraints from a scalar expression that doesn’t accept NULL, then we can know that involved columns cannot be NULL and add `NotNull` filter to them:
 
- We can infer `NotNULL` constraints from a comparison operator that doesn’t accept NULL, then we can know that related columns cannot be NULL and add `NotNull` filter to them:
-
- `t1.a = t2.a` => `not(isnull(a)) and not(isnull(b))`
-
- `t1.a != t2.a` => `not(isnull(a)) and not(isnull(b))`
-
- `a < 5` => `not(isnull(a))`
+| original expressions | inferred filters                  |
+| -------------------- | ----------------                  |
+| a = b                | not(isnull(a)) and not(isnull(b)) |
+| a != b               | not(isnull(a)) and not(isnull(b)) |
+| a < 5                | not(isnull(a))                    |
+| abs(a) < 3           | not(isnull(a))                    |
 
  NOTE: Those columns should not have `NotNULL` constraint attribute, or the inferred filters are unnecessary.
 
@@ -73,21 +77,17 @@ Here are proposed rules we can consider:
 
  After the propagations we may produce some duplicates predicates, and they can be combined. We should analyze all of the conditions and try to make the predicates clean:
 
- `a = b and b = a` -> `a = b`
-
- `a < 3 and 3 > a` -> `a < 3`
-
- `a < 5 and a > 5` -> `False`
-
- `a < 10 and a <= 5` => `a <= 5`
-
- `isnull(a) and not(isnull(a))` => `False`
-
- `a < 3 or a >= 3` => `True`
-
- `a in (1, 2) and a in (3, 5)` => `False`
-
- `a in (1, 2) or a in (3, 5)` => `a in (1, 2, 3, 5)`
+| original expressions         | combined expression |
+| --------------------         | ------------------  |
+| a = b and b = a              | a = b               |
+| a < 3 and 3 > a              | a < 3               |
+| a < 5                        | not(isnull(a))      |
+| a < 5 and a > 5              | false               |
+| a < 10 and a <= 5            | a <= 5              |
+| isnull(a) and not(isnull(a)) | false               |
+| a < 3 or a >= 3              | true                |
+| a in (1, 2) and a in (3, 5)  | false               |
+| a in (1, 2) or a in (3, 5)   | a in (1, 2, 3, 5)   |
 
 4. Filter propagation for outer join
 
@@ -113,7 +113,7 @@ TiDB(localhost:4000) > desc select * from t1 left join t2 on t1.a=t2.a where t1.
 
  NOTE: in this case, `t1.a in (12, 13)` works on the result of the outer join and we have pushed it down to the outer table.
 
- But we can further push this filter down to the inner table, since only the the records satisfy `t2.a in (12, 13)` could make join predicate `t1.a = t2.a` be positive in the join operator. So we can optimize this query to:
+ But we can further push this filter down to the inner table, since only the the records satisfied `t2.a in (12, 13)` could make join predicate `t1.a = t2.a` be positive in the join operator. So we can optimize this query to:
 
  `select * from t1 left join t2 on t1.a=t2.a and t2.a in (12, 13) where t1.a in (12, 13);`
 
@@ -137,19 +137,19 @@ TiDB(localhost:4000) > desc select * from t1 left join t2 on t1.a=t2.a and t2.a 
 
 ## Rationale
 
-Constraint propagation is commonly used as logcial plan optimization in traditional databases, for example, [this doc](https://dev.mysql.com/doc/internals/en/optimizer-constant-propagation.html) explained some details of constant propagtions in MySQL. It is is also widely adopted in distributed analytical engines, like Apache Hive, Apache SparkSQL, Apache Impala, et al, those engines usually query on huge amount of data.
+Constraint propagation is commonly used as logical plan optimization in traditional databases. For example, [this doc](https://dev.mysql.com/doc/internals/en/optimizer-constant-propagation.html) explains some details of constant propagations in MySQL. It is is also widely adopted in distributed analytical engines, like Apache Hive, Apache SparkSQL, Apache Impala, et al. Those engines usually query on a huge amount of data.
 
 ### Advantages:
 
- Constraint propagation brings more detailed, explicit constraints to each data source involved in a query. With those constraints we can filter data as early as possible, and thus reduce disc/network IO and computational overheads during the execution of a query. In TiDB, most propagated filters can be pushed down to the storage level(TiKV) as a coprocessor task, and lead to the following benefits:
+ Constraint propagation brings more detailed, explicit constraints to each data source involved in a query. With those constraints, we can filter data as early as possible, and thus reduce disc/network I/O and computational overheads during the execution of a query. In TiDB, most propagated filters can be pushed down to the storage level (TiKV), as a Coprocessor task, and leads to the following benefits:
 
- * Apply the filters at each TiKV instance, which make the calculation distributed.
+ * Apply the filters at each storage segment (Region), which make the calculation distributed.
 
- * When loading data, skip some table partitions if its data range doesn't pass the filter
+ * When loading data, skip some partitions of a table if the partitioning expression doesn't pass the filter.
 
  * For the columnar storage format to be supported in the future, we may apply some filters directly when accessing the raw storage.
 
- * Reduce the data transfered from TiKV to TiDB
+ * Reduce the data transfered from TiKV to TiDB.
 
 ### Disadvantages:
 
@@ -157,21 +157,21 @@ Constraint propagation is commonly used as logcial plan optimization in traditio
 
  For a query `select * from t0, t1 on t0.a = t1.a where t1.a < 5`, we get a propagation `t0.a < 5`, but if all `t0.a` is greater than 5, applying the filter brings unnecessary overheads.
 
-Considering the trade-off, most of the time we gain benefits from constraint propagation and still treat it useful.
+Considering the trade-off, we still gain a lot of benefits from constraint propagation in most of cases; hence it still can be treated it as useful.
 
 ## Compatibility
 
-All rules mentioned in this proposal are logical plan optimization, they should not change the semantic of a query, and thus dont't lead to any compatibility issue
+All rules mentioned in this proposal are logical plan optimization, which do not change the semantics of a query, and thus this proposal will not lead to any compatibility issue
 
 ## Implementation
 
 Here are rough ideas about possible implementations:
 
- * For proposal #1, we can extend current `propagateConstantSolver` to support wider types of operators from column equiality.
+ * For proposal #1, we can extend the current `propagateConstantSolver` to support wider types of operators from column equality.
 
- * For proposal #2, `propagateConstantSolver` is also a applicable way to add `NotNULL` filter(`not(isnull())`), but should examine if the column doesn't have `NotNULL` constraint.
+ * For proposal #2, `propagateConstantSolver` is also an applicable way to add `NotNULL` filter(`not(isnull())`), but should examine whether the column has the `NotNULL` constraint already.
 
- * For proposal #3, the [ranger](https://github.com/pingcap/tidb/blob/6fb1a637fbfd41b2004048d8cb995de6442085e2/util/ranger/ranger.go#L14) may be useful to help us collecting and folding comparison constraints
+ * For proposal #3, the [ranger](https://github.com/pingcap/tidb/blob/6fb1a637fbfd41b2004048d8cb995de6442085e2/util/ranger/ranger.go#L14) may be useful to help us collect and fold comparison constraints
 
  * For proposal #4, current rule [PredicatePushDown](https://github.com/pingcap/tidb/blob/b3d4ed79b978efadf2974f78db8eeb711509e545/plan/rule_predicate_push_down.go#L1) may be enhanced to archive it
 
