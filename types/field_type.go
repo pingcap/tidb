@@ -236,7 +236,7 @@ func (ft *FieldType) CompactStr() string {
 			}
 			suffix += ")"
 		} else {
-			suffix = "(10,0)"
+			suffix = fmt.Sprintf("(%d,0)", defaultFlen)
 		}
 	case mysql.TypeBit, mysql.TypeShort, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
 		// Flen is always shown.
