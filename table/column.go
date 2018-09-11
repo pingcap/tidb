@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
@@ -289,6 +290,19 @@ func (c *Column) CheckNotNull(data types.Datum) error {
 		return ErrColumnCantNull.GenByArgs(c.Name)
 	}
 	return nil
+}
+
+// HandleBadNull handles the bad null error.
+// If BadNullAsWarning is true, it will append the error as a warning, else return the error.
+func (c *Column) HandleBadNull(d types.Datum, sc *stmtctx.StatementContext) (types.Datum, error) {
+	if err := c.CheckNotNull(d); err != nil {
+		if sc.BadNullAsWarning {
+			sc.AppendWarning(err)
+			return GetZeroValue(c.ToInfo()), nil
+		}
+		return types.Datum{}, errors.Trace(err)
+	}
+	return d, nil
 }
 
 // IsPKHandleColumn checks if the column is primary key handle column.

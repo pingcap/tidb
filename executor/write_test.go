@@ -635,11 +635,16 @@ commit;`
 	tk.MustQuery(`SELECT * FROM t1;`).Check(testkit.Rows("1"))
 
 	testSQL = `DROP TABLE IF EXISTS t1;
-	CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT UNIQUE);
+	CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT NOT NULL UNIQUE);
 	INSERT t1 VALUES (1, 1);`
 	tk.MustExec(testSQL)
 	tk.MustExec(`INSERT t1 VALUES (1, 1), (1, 1) ON DUPLICATE KEY UPDATE f1 = 2, f2 = 2;`)
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 1", "2 2"))
+	_, err := tk.Exec(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
+	c.Assert(err, NotNil)
+	tk.MustExec(`INSERT IGNORE t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'f2' cannot be null"))
+	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 }
 
 func (s *testSuite) TestInsertIgnoreOnDup(c *C) {
@@ -1055,6 +1060,15 @@ func (s *testSuite) TestUpdate(c *C) {
 	c.Assert(err.Error(), Equals, "cannot convert datum from bigint to type year.")
 
 	tk.MustExec("update (select * from t) t set c1 = 1111111")
+
+	// test update ignore for bad null error
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (i int not null default 10)`)
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("update ignore t set i = null;")
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1048 Column 'i' cannot be null"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {

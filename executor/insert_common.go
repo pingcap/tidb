@@ -385,7 +385,8 @@ func (e *InsertValues) fillRow(cols []*table.Column, row []types.Datum, hasValue
 		// Evaluate the generated columns.
 		if c.IsGenerated() {
 			for i, expr := range e.GenExprs {
-				val, err := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
+				var val types.Datum
+				val, err = expr.Eval(chunk.MutRowFromDatums(row).ToRow())
 				if e.filterErr(err) != nil {
 					return nil, errors.Trace(err)
 				}
@@ -396,15 +397,9 @@ func (e *InsertValues) fillRow(cols []*table.Column, row []types.Datum, hasValue
 			}
 		}
 
-		// Null checks.
-		if mysql.HasNotNullFlag(c.Flag) && row[i].IsNull() {
-			sc := e.ctx.GetSessionVars().StmtCtx
-			if sc.BadNullAsWarning {
-				sc.AppendWarning(table.ErrColumnCantNull.GenByArgs(c.Name))
-				row[i] = table.GetZeroValue(c.ToInfo())
-			} else {
-				return nil, errors.Trace(table.ErrColumnCantNull.GenByArgs(c.Name))
-			}
+		// Handle the bad null error.
+		if row[i], err = c.HandleBadNull(row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return row, nil
