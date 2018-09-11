@@ -46,7 +46,7 @@ type Manager interface {
 	ID() string
 	// IsOwner returns whether the ownerManager is the owner.
 	IsOwner() bool
-	// RetireOwner make the manager to be a not owner. It's exported for testing
+	// RetireOwner make the manager to be a not owner. It's exported for testing.
 	RetireOwner()
 	// GetOwnerID gets the owner ID.
 	GetOwnerID(ctx context.Context) (string, error)

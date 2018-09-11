@@ -53,7 +53,7 @@ func (m *mockManager) toBeOwner() {
 	atomic.StoreInt32(&m.owner, 1)
 }
 
-// setOwner implements Manager.RetireOwner interface.
+// RetireOwner implements Manager.RetireOwner interface.
 func (m *mockManager) RetireOwner() {
 	atomic.StoreInt32(&m.owner, 0)
 }
