@@ -88,7 +88,7 @@ check-setup:
 check: check-setup fmt lint vet
 
 # These need to be fixed before they can be ran regularly
-check-fail: goword check-static check-slow
+check-fail: goword check-static # check-slow
 
 fmt:
 	@echo "gofmt (simplify)"
@@ -105,11 +105,11 @@ check-static:
 	  --enable ineffassign \
 	  $$($(PACKAGE_DIRECTORIES))
 
-check-slow:
-	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all \
-	  --enable errcheck \
-	  $$($(PACKAGE_DIRECTORIES))
-	CGO_ENABLED=0 retool do gosec $$($(PACKAGE_DIRECTORIES))
+# check-slow:
+# 	CGO_ENABLED=0 retool do gometalinter.v2 --disable-all \
+# 	  --enable errcheck \
+# 	  $$($(PACKAGE_DIRECTORIES))
+# 	CGO_ENABLED=0 retool do gosec $$($(PACKAGE_DIRECTORIES))
 
 lint:
 	@echo "linting"
@@ -171,13 +171,13 @@ tikv_integration_test: parserlib
 	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
-RACE_FLAG = 
+RACE_FLAG =
 ifeq ("$(WITH_RACE)", "1")
 	RACE_FLAG = -race
 	GOBUILD   = GOPATH=$(GOPATH) CGO_ENABLED=1 $(GO) build
 endif
 
-CHECK_FLAG = 
+CHECK_FLAG =
 ifeq ("$(WITH_CHECK)", "1")
 	CHECK_FLAG = $(TEST_LDFLAGS)
 endif

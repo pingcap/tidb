@@ -1,7 +1,7 @@
 {
   "Tools": [
     {
-      "Repository": "gopkg.in/alecthomas/gometalinter.v2",
+      "Repository": "github.com/alecthomas/gometalinter",
       "Commit": "46cc1ea3778b247666c2949669a3333c532fa9c6"
     },
     {
@@ -23,10 +23,6 @@
     {
       "Repository": "github.com/dnephin/govet",
       "Commit": "4a96d43e39d340b63daa8bc5576985aa599885f6"
-    },
-    {
-      "Repository": "github.com/securego/gosec/cmd/gosec",
-      "Commit": "5fb530cda357c16175f2c049577d2030de735b28"
     },
     {
       "Repository": "github.com/kisielk/errcheck",
