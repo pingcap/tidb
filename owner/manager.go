@@ -18,9 +18,9 @@ import (
 	"math"
 	"os"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
@@ -80,8 +80,7 @@ type ownerManager struct {
 	logPrefix string
 	etcdCli   *clientv3.Client
 	cancel    context.CancelFunc
-	elec      *concurrency.Election
-	mu        sync.Mutex
+	elec      unsafe.Pointer
 }
 
 // NewOwnerManager creates a new Manager.
@@ -188,13 +187,12 @@ func (m *ownerManager) CampaignOwner(ctx context.Context) error {
 
 // ResignOwner lets the owner start a new election.
 func (m *ownerManager) ResignOwner(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if !m.IsOwner() || m.elec == nil {
+	elec := (*concurrency.Election)(atomic.LoadPointer(&m.elec))
+	if elec == nil {
 		return errors.Errorf("This node is not a ddl owner, can't be resigned.")
 	}
 
-	err := m.elec.Resign(ctx)
+	err := elec.Resign(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -204,17 +202,13 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 }
 
 func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
-	m.mu.Lock()
-	m.elec = elec
+	atomic.StorePointer(&m.elec, unsafe.Pointer(elec))
 	m.SetOwner(true)
-	m.mu.Unlock()
 }
 
 func (m *ownerManager) retireOwner() {
-	m.mu.Lock()
 	m.SetOwner(false)
-	m.elec = nil
-	m.mu.Unlock()
+	atomic.StorePointer(&m.elec, nil)
 }
 
 func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrency.Session) {
