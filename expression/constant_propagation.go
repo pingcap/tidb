@@ -480,6 +480,7 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 		}
 	}
 	lenJoinConds := len(s.jConds)
+	mergedSchema := MergeSchema(s.outerSchema, s.innerSchema)
 	for i, coli := range s.columns {
 		for j := i + 1; j < len(s.columns); j++ {
 			// unionSet doesn't have iterate(), we use a two layer loop to iterate col_i = col_j relation.
@@ -493,17 +494,29 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 			}
 			for k := 0; k < lenJoinConds; k++ {
 				if visited[k] {
-					// cond_k has been used to retrieve equality relation.
+					// cond_k has been used to retrieve equality relation or contains column beyond children schema.
 					continue
 				}
 				cond := s.jConds[k]
+				if !ExprFromSchema(cond, mergedSchema) {
+					visited[k] = true
+					continue
+				}
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond)
 				if replaced {
 					// Must append to join condition, otherwise it is not semantially equivalent regarding outer join.
 					s.jConds = append(s.jConds, newExpr)
 				}
 			}
-			for _, cond := range s.fConds {
+			for k, cond := range s.fConds {
+				if visited[k+lenJoinConds] {
+					// condition contains column beyond children schema.
+					continue
+				}
+				if !ExprFromSchema(cond, mergedSchema) {
+					visited[k+lenJoinConds] = true
+					continue
+				}
 				replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond)
 				if replaced {
 					// Must append to join condition, otherwise it is not semantially equivalent regarding outer join.
