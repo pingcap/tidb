@@ -358,7 +358,59 @@ func (s *testEvaluatorSuite) TestJSONContains(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if t.success {
+			c.Assert(err, IsNil)
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
+			} else {
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
+			}
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
+}
 
+func (s *testEvaluatorSuite) TestJSONContainsPath(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONContainsPath]
+	jsonString := `{"a": 1, "b": 2, "c": {"d": 4}}`
+	invalidJSON := `{"a": 1`
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// Tests nil arguments
+		{[]interface{}{nil, json.ContainsPathOne, "$.c"}, nil, true},
+		{[]interface{}{nil, json.ContainsPathAll, "$.c"}, nil, true},
+		{[]interface{}{jsonString, nil, "$.a[3]"}, nil, true},
+		{[]interface{}{jsonString, json.ContainsPathOne, nil}, nil, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, nil}, nil, true},
+		// Tests with one path expression
+		{[]interface{}{jsonString, json.ContainsPathOne, "$.c.d"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathOne, "$.a.d"}, 0, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, "$.c.d"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, "$.a.d"}, 0, true},
+		// Tests with multiple path expression
+		{[]interface{}{jsonString, json.ContainsPathOne, "$.a", "$.e"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathOne, "$.a", "$.c"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, "$.a", "$.e"}, 0, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, "$.a", "$.c"}, 1, true},
+		// Tests path expression contains any asterisk
+		{[]interface{}{jsonString, json.ContainsPathOne, "$.*"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathOne, "$[*]"}, 0, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, "$.*"}, 1, true},
+		{[]interface{}{jsonString, json.ContainsPathAll, "$[*]"}, 0, true},
+		// Tests invalid json document
+		{[]interface{}{invalidJSON, json.ContainsPathOne, "$.a"}, nil, false},
+		{[]interface{}{invalidJSON, json.ContainsPathAll, "$.a"}, nil, false},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 		if t.success {
 			c.Assert(err, IsNil)
 			if t.expected == nil {

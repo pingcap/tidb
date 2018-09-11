@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
@@ -465,4 +466,39 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 	default:
 		return tp
 	}
+}
+
+// points2EqOrInCond constructs a 'EQUAL' or 'IN' scalar function based on the
+// 'points'. The target column is extracted from the 'expr'.
+// NOTE:
+// 1. 'expr' must be either 'EQUAL' or 'IN' function.
+// 2. 'points' should not be empty.
+func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.Expression) expression.Expression {
+	// len(points) cannot be 0 here, since we impose early termination in extractEqAndInCondition
+	sf, _ := expr.(*expression.ScalarFunction)
+	// Constant and Column args should have same RetType, simply get from first arg
+	retType := sf.GetArgs()[0].GetType()
+	args := make([]expression.Expression, 0, len(points)/2)
+	if sf.FuncName.L == ast.EQ {
+		if c, ok := sf.GetArgs()[0].(*expression.Column); ok {
+			args = append(args, c)
+		} else if c, ok := sf.GetArgs()[1].(*expression.Column); ok {
+			args = append(args, c)
+		}
+	} else {
+		args = append(args, sf.GetArgs()[0])
+	}
+	for i := 0; i < len(points); i = i + 2 {
+		value := &expression.Constant{
+			Value:   points[i].value,
+			RetType: retType,
+		}
+		args = append(args, value)
+	}
+	funcName := ast.EQ
+	if len(args) > 2 {
+		funcName = ast.In
+	}
+	f := expression.NewFunctionInternal(ctx, funcName, sf.GetType(), args...)
+	return f
 }

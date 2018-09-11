@@ -142,6 +142,7 @@ func (col *CorrelatedColumn) resolveIndices(_ *Schema) {
 
 // Column represents a column.
 type Column struct {
+	OrigColName model.CIStr
 	ColName     model.CIStr
 	DBName      model.CIStr
 	OrigTblName model.CIStr
