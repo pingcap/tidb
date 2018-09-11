@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
+	util2 "github.com/pingcap/tidb/util"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
 	"golang.org/x/net/context"
@@ -369,7 +370,10 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		d.workers[addIdxWorker] = newWorker(addIdxWorker, d.store, ctxPool)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
-			go worker.start(d.ddlCtx)
+			w := worker
+			go util2.WithRecovery(ctx, func(ctx context.Context) {
+				w.start(d.ddlCtx)
+			}, util2.WithPanicLogf("[ddl-%s] ddl %s", w, d.uuid), util2.WithPanicMetricInc(metrics.LabelDDL))
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
 
 			// When the start function is called, we will send a fake job to let worker
