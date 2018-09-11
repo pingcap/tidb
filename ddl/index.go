@@ -496,6 +496,22 @@ type addIndexResult struct {
 	err        error
 }
 
+// addIndexTaskContext is the context of the batch adding indices.
+// After finishing the batch adding indices, result in addIndexTaskContext will be merged into addIndexResult.
+type addIndexTaskContext struct {
+	nextHandle int64
+	done       bool
+	addedCount int
+	scanCount  int
+}
+
+// mergeAddIndexCtxToResult merge partial result in taskCtx into result.
+func mergeAddIndexCtxToResult(taskCtx *addIndexTaskContext, result *addIndexResult) {
+	result.nextHandle = taskCtx.nextHandle
+	result.addedCount += taskCtx.addedCount
+	result.scanCount += taskCtx.scanCount
+}
+
 func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	return &addIndexWorker{
@@ -707,21 +723,19 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
-func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, taskDone bool, addedCount, scanCount int, errInTxn error) {
+func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx addIndexTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
-		addedCount = 0
-		scanCount = 0
+		taskCtx.addedCount = 0
+		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
 
-		var (
-			idxRecords []*indexRecord
-			err        error
-		)
-		idxRecords, nextHandle, taskDone, err = w.fetchRowColVals(txn, handleRange)
+		idxRecords, nextHandle, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		taskCtx.nextHandle = nextHandle
+		taskCtx.done = taskDone
 
 		err = w.batchCheckUniqueKey(txn, idxRecords)
 		if err != nil {
@@ -729,7 +743,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 		}
 
 		for _, idxRecord := range idxRecords {
-			scanCount++
+			taskCtx.scanCount++
 			// The index is already exists, we skip it, no needs to backfill it.
 			// The following update, delete, insert on these rows, TiDB can handle it correctly.
 			if idxRecord.skip {
@@ -753,7 +767,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 
 				return errors.Trace(err)
 			}
-			addedCount++
+			taskCtx.addedCount++
 		}
 
 		return nil
@@ -771,8 +785,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	startTime := time.Now()
 
 	for {
-		addedCount := 0
-		nextHandle, taskDone, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
+		taskCtx, err := w.backfillIndexInTxn(handleRange)
 		if err == nil {
 			// Because reorgIndexTask may run a long time,
 			// we should check whether this ddl job is still runnable.
@@ -783,19 +796,17 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 			return result
 		}
 
-		result.nextHandle = nextHandle
-		result.addedCount += addedCount
-		result.scanCount += scanCount
-		w.ddlWorker.reorgCtx.increaseRowCount(int64(addedCount))
+		mergeAddIndexCtxToResult(&taskCtx, result)
+		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.addedCount))
 
 		if result.scanCount-lastLogCount >= 30000 {
 			lastLogCount = result.scanCount
 			log.Infof("[ddl-reorg] worker(%v), finish batch addedCount:%v backfill, task addedCount:%v, task scanCount:%v, nextHandle:%v",
-				w.id, addedCount, result.addedCount, result.scanCount, nextHandle)
+				w.id, taskCtx.addedCount, result.addedCount, result.scanCount, taskCtx.nextHandle)
 		}
 
-		handleRange.startHandle = nextHandle
-		if taskDone {
+		handleRange.startHandle = taskCtx.nextHandle
+		if taskCtx.done {
 			break
 		}
 	}

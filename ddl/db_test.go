@@ -1534,6 +1534,47 @@ func (s *testDBSuite) TestBitDefaultValue(c *C) {
 	tk.MustExec("insert into t_bit set c2=1;")
 	tk.MustQuery("select bin(c1),c2 from t_bit").Check(testkit.Rows("11111010 1"))
 	tk.MustExec("drop table t_bit")
+	tk.MustExec(`create table testalltypes1 (
+    field_1 bit default 1,
+    field_2 tinyint null default null
+	);`)
+	tk.MustExec(`create table testalltypes2 (
+    field_1 bit null default null,
+    field_2 tinyint null default null,
+    field_3 tinyint unsigned null default null,
+    field_4 bigint null default null,
+    field_5 bigint unsigned null default null,
+    field_6 mediumblob null default null,
+    field_7 longblob null default null,
+    field_8 blob null default null,
+    field_9 tinyblob null default null,
+    field_10 varbinary(255) null default null,
+    field_11 binary(255) null default null,
+    field_12 mediumtext null default null,
+    field_13 longtext null default null,
+    field_14 text null default null,
+    field_15 tinytext null default null,
+    field_16 char(255) null default null,
+    field_17 numeric null default null,
+    field_18 decimal null default null,
+    field_19 integer null default null,
+    field_20 integer unsigned null default null,
+    field_21 int null default null,
+    field_22 int unsigned null default null,
+    field_23 mediumint null default null,
+    field_24 mediumint unsigned null default null,
+    field_25 smallint null default null,
+    field_26 smallint unsigned null default null,
+    field_27 float null default null,
+    field_28 double null default null,
+    field_29 double precision null default null,
+    field_30 real null default null,
+    field_31 varchar(255) null default null,
+    field_32 date null default null,
+    field_33 time null default null,
+    field_34 datetime null default null,
+    field_35 timestamp null default null
+	);`)
 }
 
 func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
@@ -1711,6 +1752,55 @@ func (s *testDBSuite) TestCreateTableWithPartition(c *C) {
 		  partition p3 values less than (18446744073709551000 + 1),
 		  partition p4 values less than (18446744073709551000 + 10)
 		);`)
+
+	// Only range type partition is now supported, range columns partition only implements the parser, so it will not be checked.
+	// So the following SQL statements can be executed successfully.
+	s.tk.MustExec(`create table t29 (
+		a decimal
+	)
+	partition by range columns (a)
+	(partition p0 values less than (0));`)
+}
+
+func (s *testDBSuite) TestCreateTableWithHashPartition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test;")
+	s.tk.MustExec("drop table if exists employees;")
+	s.tk.MustExec(`
+	create table employees (
+		id int not null,
+		fname varchar(30),
+		lname varchar(30),
+		hired date not null default '1970-01-01',
+		separated date not null default '9999-12-31',
+		job_code int,
+		store_id int
+	)
+	partition by hash(store_id) partitions 4;`)
+
+	s.tk.MustExec("drop table if exists employees;")
+	s.tk.MustExec(`
+	create table employees (
+		id int not null,
+		fname varchar(30),
+		lname varchar(30),
+		hired date not null default '1970-01-01',
+		separated date not null default '9999-12-31',
+		job_code int,
+		store_id int
+	)
+	partition by hash( year(hired) ) partitions 4;`)
+}
+
+func (s *testDBSuite) TestCreateTableWithKeyPartition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test;")
+	s.tk.MustExec("drop table if exists tm1;")
+	s.tk.MustExec(`create table tm1
+	(
+		s1 char(32) primary key
+	)
+	partition by key(s1) partitions 10;`)
 }
 
 func (s *testDBSuite) TestTableDDLWithFloatType(c *C) {
