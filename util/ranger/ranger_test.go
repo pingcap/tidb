@@ -447,6 +447,20 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			resultStr:   "[(NULL +inf,1 NULL) (1 +inf,2 NULL) (2 +inf,3 NULL) (3 +inf,+inf +inf]]",
 		},
 		{
+			indexPos:    1,
+			exprStr:     "c in (1, 2) and c in (1, 3)",
+			accessConds: "[eq(test.t.c, 1)]",
+			filterConds: "[]",
+			resultStr:   "[[1,1]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "c = 1 and c = 2",
+			accessConds: "[]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
 			indexPos:    0,
 			exprStr:     "a in (NULL)",
 			accessConds: "[in(test.t.a, <nil>)]",
