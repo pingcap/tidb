@@ -48,7 +48,7 @@ The upgrading process need to be handled in particular. `TZ` environment variabl
 
 The implementation is relatively easy. We just get `TZ` environment from system and check whether it is valid or not. If it is invalid, TiDB evaluates the path of soft link of `/etc/localtime`. In addition, a warning message needs to be printed indicating user has to set `TZ` variable properly. For example, if `/etc/localtime` links to `/usr/share/zoneinfo/Asia/Shanghai`, then timezone name `TiDB` gets should be `Asia/Shangahi`.
 
-In order to ensure the uniqueness of global timezone across multiple `TiDB` instances, we need to write timezone name into `mysql.tidb` under column `system_tz`.  This cached value can be read once `TiDB` finishs its bootstrap stage. A method `loadLocalStr` can do this job.
+In order to ensure the uniqueness of global timezone across multiple `TiDB` instances, we need to write timezone name into `variable_value` with variable name `system_tz` in `mysql.tidb`.  This cached value can be read once `TiDB` finishs its bootstrap stage. A method `loadLocalStr` can do this job.
  
 ## Open issues (if applicable)
 
