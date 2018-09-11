@@ -335,7 +335,7 @@ func (do *Domain) Reload() error {
 func (do *Domain) LogTopNSlowQuery(sql string, start time.Time, duration time.Duration,
 	detail execdetails.ExecDetails,
 	succ bool, connID, txnTS uint64,
-	user, db, tableIDs, indexIDs string) {
+	user, db, tableIDs, indexIDs string, internal bool) {
 	select {
 	case do.slowQuery.ch <- &slowQueryInfo{
 		sql:      sql,
@@ -349,6 +349,7 @@ func (do *Domain) LogTopNSlowQuery(sql string, start time.Time, duration time.Du
 		db:       db,
 		tableIDs: tableIDs,
 		indexIDs: indexIDs,
+		internal: internal,
 	}:
 	default:
 	}

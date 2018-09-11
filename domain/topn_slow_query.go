@@ -20,75 +20,94 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 )
 
-// topNSlowQueries maintains a heap to store recent slow queries.
-// N = 30, recent = 7 days by default.
-type topNSlowQueries struct {
-	data   []*slowQueryInfo
-	topN   int
-	recent time.Duration
-	ch     chan *slowQueryInfo
+type slowQueryHeap struct {
+	data []*slowQueryInfo
 }
 
-func newTopNSlowQueries(topN int, recent time.Duration) *topNSlowQueries {
-	return &topNSlowQueries{
-		data:   make([]*slowQueryInfo, 0, topN),
-		topN:   topN,
-		recent: recent,
-		ch:     make(chan *slowQueryInfo, 1000),
-	}
+func (h *slowQueryHeap) Len() int           { return len(h.data) }
+func (h *slowQueryHeap) Less(i, j int) bool { return h.data[i].duration < h.data[j].duration }
+func (h *slowQueryHeap) Swap(i, j int)      { h.data[i], h.data[j] = h.data[j], h.data[i] }
+
+func (h *slowQueryHeap) Push(x interface{}) {
+	h.data = append(h.data, x.(*slowQueryInfo))
 }
 
-func (q *topNSlowQueries) Close() {
-	close(q.ch)
-}
-
-func (q *topNSlowQueries) Len() int           { return len(q.data) }
-func (q *topNSlowQueries) Less(i, j int) bool { return q.data[i].duration < q.data[j].duration }
-func (q *topNSlowQueries) Swap(i, j int)      { q.data[i], q.data[j] = q.data[j], q.data[i] }
-
-func (q *topNSlowQueries) Push(x interface{}) {
-	q.data = append(q.data, x.(*slowQueryInfo))
-}
-
-func (q *topNSlowQueries) Pop() interface{} {
-	old := q.data
+func (h *slowQueryHeap) Pop() interface{} {
+	old := h.data
 	n := len(old)
 	x := old[n-1]
-	q.data = old[0 : n-1]
+	h.data = old[0 : n-1]
 	return x
 }
 
-func (q *topNSlowQueries) Append(info *slowQueryInfo) {
-	// Heap is not full, append to it and sift up.
-	if len(q.data) < q.topN {
-		heap.Push(q, info)
-		return
-	}
-
-	// Replace the heap top and sift down.
-	if info.duration > q.data[0].duration {
-		heap.Pop(q)
-		heap.Push(q, info)
-	}
-}
-
-func (q *topNSlowQueries) Refresh(now time.Time) {
+func (h *slowQueryHeap) Refresh(now time.Time, recent time.Duration) {
 	// Remove outdated slow query element.
 	idx := 0
-	for i := 0; i < len(q.data); i++ {
-		outdateTime := q.data[i].start.Add(q.recent)
+	for i := 0; i < len(h.data); i++ {
+		outdateTime := h.data[i].start.Add(recent)
 		if outdateTime.After(now) {
-			q.data[idx] = q.data[i]
+			h.data[idx] = h.data[i]
 			idx++
 		}
 	}
-	if len(q.data) == idx {
+	if len(h.data) == idx {
 		return
 	}
 
 	// Rebuild the heap.
-	q.data = q.data[:idx]
-	heap.Init(q)
+	h.data = h.data[:idx]
+	heap.Init(h)
+}
+
+// topNSlowQueries maintains two heaps to store recent slow queries: one for user's and one for internal.
+// N = 30, recent = 7 days by default.
+type topNSlowQueries struct {
+	user     slowQueryHeap
+	internal slowQueryHeap
+	topN     int
+	recent   time.Duration
+	ch       chan *slowQueryInfo
+}
+
+func newTopNSlowQueries(topN int, recent time.Duration) *topNSlowQueries {
+	ret := &topNSlowQueries{
+		topN:   topN,
+		recent: recent,
+		ch:     make(chan *slowQueryInfo, 1000),
+	}
+	ret.user.data = make([]*slowQueryInfo, 0, topN)
+	ret.internal.data = make([]*slowQueryInfo, 0, topN)
+	return ret
+}
+
+func (q *topNSlowQueries) Append(info *slowQueryInfo) {
+	var h *slowQueryHeap
+	if info.internal {
+		h = &q.internal
+	} else {
+		h = &q.user
+	}
+
+	// Heap is not full.
+	if len(h.data) < q.topN {
+		heap.Push(h, info)
+		return
+	}
+
+	// Replace the heap top.
+	if info.duration > h.data[0].duration {
+		heap.Pop(h)
+		heap.Push(h, info)
+	}
+}
+
+func (q *topNSlowQueries) Refresh(now time.Time) {
+	q.user.Refresh(now, q.recent)
+	q.internal.Refresh(now, q.recent)
+}
+
+func (q *topNSlowQueries) Close() {
+	close(q.ch)
 }
 
 type slowQueryInfo struct {
@@ -103,4 +122,5 @@ type slowQueryInfo struct {
 	db       string
 	tableIDs string
 	indexIDs string
+	internal bool
 }

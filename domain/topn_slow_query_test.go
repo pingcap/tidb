@@ -36,37 +36,37 @@ func (t *testTopNSlowQuerySuite) TestPush(c *C) {
 	slowQuery.Append(&slowQueryInfo{duration: 1000 * time.Millisecond})
 	slowQuery.Append(&slowQueryInfo{duration: 1100 * time.Millisecond})
 	slowQuery.Append(&slowQueryInfo{duration: 1200 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 300*time.Millisecond)
-	checkHeap(slowQuery, c)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 300*time.Millisecond)
+	checkHeap(&slowQuery.user, c)
 
 	// Update all data in the heap.
 	slowQuery.Append(&slowQueryInfo{duration: 1300 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 400*time.Millisecond)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 400*time.Millisecond)
 	slowQuery.Append(&slowQueryInfo{duration: 1400 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 500*time.Millisecond)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 500*time.Millisecond)
 	slowQuery.Append(&slowQueryInfo{duration: 1500 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 600*time.Millisecond)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 600*time.Millisecond)
 	slowQuery.Append(&slowQueryInfo{duration: 1500 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 700*time.Millisecond)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 700*time.Millisecond)
 	slowQuery.Append(&slowQueryInfo{duration: 1600 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 800*time.Millisecond)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 800*time.Millisecond)
 	slowQuery.Append(&slowQueryInfo{duration: 1700 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 900*time.Millisecond)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 900*time.Millisecond)
 	slowQuery.Append(&slowQueryInfo{duration: 1800 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 1000*time.Millisecond)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 1000*time.Millisecond)
 	slowQuery.Append(&slowQueryInfo{duration: 1900 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 1100*time.Millisecond)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 1100*time.Millisecond)
 	slowQuery.Append(&slowQueryInfo{duration: 2000 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 1200*time.Millisecond)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 1200*time.Millisecond)
 	slowQuery.Append(&slowQueryInfo{duration: 2100 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 1300*time.Millisecond)
-	checkHeap(slowQuery, c)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 1300*time.Millisecond)
+	checkHeap(&slowQuery.user, c)
 
 	// Data smaller than heap top will not be inserted.
 	slowQuery.Append(&slowQueryInfo{duration: 1200 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 1300*time.Millisecond)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 1300*time.Millisecond)
 	slowQuery.Append(&slowQueryInfo{duration: 666 * time.Millisecond})
-	c.Assert(slowQuery.data[0].duration, Equals, 1300*time.Millisecond)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 1300*time.Millisecond)
 }
 
 func (t *testTopNSlowQuerySuite) TestRefresh(c *C) {
@@ -78,25 +78,25 @@ func (t *testTopNSlowQuerySuite) TestRefresh(c *C) {
 	slowQuery.Append(&slowQueryInfo{start: now.Add(2 * time.Second), duration: 4})
 	slowQuery.Append(&slowQueryInfo{start: now.Add(3 * time.Second), duration: 3})
 	slowQuery.Append(&slowQueryInfo{start: now.Add(4 * time.Second), duration: 2})
-	c.Assert(slowQuery.data[0].duration, Equals, 2*time.Nanosecond)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 2*time.Nanosecond)
 
 	slowQuery.Refresh(now.Add(5 * time.Second))
-	c.Assert(len(slowQuery.data), Equals, 2)
-	c.Assert(slowQuery.data[0].duration, Equals, 2*time.Nanosecond)
+	c.Assert(len(slowQuery.user.data), Equals, 2)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 2*time.Nanosecond)
 
 	slowQuery.Append(&slowQueryInfo{start: now.Add(3 * time.Second), duration: 3})
 	slowQuery.Append(&slowQueryInfo{start: now.Add(4 * time.Second), duration: 2})
 	slowQuery.Append(&slowQueryInfo{start: now.Add(5 * time.Second), duration: 1})
 	slowQuery.Append(&slowQueryInfo{start: now.Add(6 * time.Second), duration: 0})
-	c.Assert(len(slowQuery.data), Equals, 6)
-	c.Assert(slowQuery.data[0].duration, Equals, 0*time.Nanosecond)
+	c.Assert(len(slowQuery.user.data), Equals, 6)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 0*time.Nanosecond)
 
 	slowQuery.Refresh(now.Add(6 * time.Second))
-	c.Assert(len(slowQuery.data), Equals, 4)
-	c.Assert(slowQuery.data[0].duration, Equals, 0*time.Nanosecond)
+	c.Assert(len(slowQuery.user.data), Equals, 4)
+	c.Assert(slowQuery.user.data[0].duration, Equals, 0*time.Nanosecond)
 }
 
-func checkHeap(q *topNSlowQueries, c *C) {
+func checkHeap(q *slowQueryHeap, c *C) {
 	for i := 0; i < len(q.data); i++ {
 		left := 2*i + 1
 		right := 2*i + 2
