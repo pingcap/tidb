@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/execdetails"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -332,25 +331,9 @@ func (do *Domain) Reload() error {
 }
 
 // LogTopNSlowQuery keeps topN recent slow queries in domain.
-func (do *Domain) LogTopNSlowQuery(sql string, start time.Time, duration time.Duration,
-	detail execdetails.ExecDetails,
-	succ bool, connID, txnTS uint64,
-	user, db, tableIDs, indexIDs string, internal bool) {
+func (do *Domain) LogTopNSlowQuery(query *SlowQueryInfo) {
 	select {
-	case do.slowQuery.ch <- &slowQueryInfo{
-		sql:      sql,
-		start:    start,
-		duration: duration,
-		detail:   detail,
-		succ:     succ,
-		connID:   connID,
-		txnTS:    txnTS,
-		user:     user,
-		db:       db,
-		tableIDs: tableIDs,
-		indexIDs: indexIDs,
-		internal: internal,
-	}:
+	case do.slowQuery.ch <- query:
 	default:
 	}
 }

@@ -21,15 +21,15 @@ import (
 )
 
 type slowQueryHeap struct {
-	data []*slowQueryInfo
+	data []*SlowQueryInfo
 }
 
 func (h *slowQueryHeap) Len() int           { return len(h.data) }
-func (h *slowQueryHeap) Less(i, j int) bool { return h.data[i].duration < h.data[j].duration }
+func (h *slowQueryHeap) Less(i, j int) bool { return h.data[i].Duration < h.data[j].Duration }
 func (h *slowQueryHeap) Swap(i, j int)      { h.data[i], h.data[j] = h.data[j], h.data[i] }
 
 func (h *slowQueryHeap) Push(x interface{}) {
-	h.data = append(h.data, x.(*slowQueryInfo))
+	h.data = append(h.data, x.(*SlowQueryInfo))
 }
 
 func (h *slowQueryHeap) Pop() interface{} {
@@ -44,7 +44,7 @@ func (h *slowQueryHeap) Refresh(now time.Time, recent time.Duration) {
 	// Remove outdated slow query element.
 	idx := 0
 	for i := 0; i < len(h.data); i++ {
-		outdateTime := h.data[i].start.Add(recent)
+		outdateTime := h.data[i].Start.Add(recent)
 		if outdateTime.After(now) {
 			h.data[idx] = h.data[i]
 			idx++
@@ -66,23 +66,23 @@ type topNSlowQueries struct {
 	internal slowQueryHeap
 	topN     int
 	recent   time.Duration
-	ch       chan *slowQueryInfo
+	ch       chan *SlowQueryInfo
 }
 
 func newTopNSlowQueries(topN int, recent time.Duration) *topNSlowQueries {
 	ret := &topNSlowQueries{
 		topN:   topN,
 		recent: recent,
-		ch:     make(chan *slowQueryInfo, 1000),
+		ch:     make(chan *SlowQueryInfo, 1000),
 	}
-	ret.user.data = make([]*slowQueryInfo, 0, topN)
-	ret.internal.data = make([]*slowQueryInfo, 0, topN)
+	ret.user.data = make([]*SlowQueryInfo, 0, topN)
+	ret.internal.data = make([]*SlowQueryInfo, 0, topN)
 	return ret
 }
 
-func (q *topNSlowQueries) Append(info *slowQueryInfo) {
+func (q *topNSlowQueries) Append(info *SlowQueryInfo) {
 	var h *slowQueryHeap
-	if info.internal {
+	if info.Internal {
 		h = &q.internal
 	} else {
 		h = &q.user
@@ -95,7 +95,7 @@ func (q *topNSlowQueries) Append(info *slowQueryInfo) {
 	}
 
 	// Replace the heap top.
-	if info.duration > h.data[0].duration {
+	if info.Duration > h.data[0].Duration {
 		heap.Pop(h)
 		heap.Push(h, info)
 	}
@@ -110,17 +110,18 @@ func (q *topNSlowQueries) Close() {
 	close(q.ch)
 }
 
-type slowQueryInfo struct {
-	sql      string
-	start    time.Time
-	duration time.Duration
-	detail   execdetails.ExecDetails
-	succ     bool
-	connID   uint64
-	txnTS    uint64
-	user     string
-	db       string
-	tableIDs string
-	indexIDs string
-	internal bool
+// SlowQueryInfo is a struct to record slow query info.
+type SlowQueryInfo struct {
+	SQL      string
+	Start    time.Time
+	Duration time.Duration
+	Detail   execdetails.ExecDetails
+	Succ     bool
+	ConnID   uint64
+	TxnTS    uint64
+	User     string
+	DB       string
+	TableIDs string
+	IndexIDs string
+	Internal bool
 }
