@@ -127,14 +127,6 @@ func (w *worker) start(d *ddlCtx) {
 
 	ticker := time.NewTicker(checkTime)
 	defer ticker.Stop()
-	defer func() {
-		r := recover()
-		if r != nil {
-			buf := util.GetStack()
-			log.Errorf("[ddl-%s] ddl %s, %v %s", w, d.uuid, r, buf)
-			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-		}
-	}()
 
 	for {
 		select {
