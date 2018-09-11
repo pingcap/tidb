@@ -355,6 +355,7 @@ func (do *Domain) LogTopNSlowQuery(sql string, start time.Time, duration time.Du
 }
 
 func (do *Domain) topNSlowQueryLoop() {
+	defer recoverInDomain("topNSlowQueryLoop", false)
 	defer do.wg.Done()
 	ticker := time.NewTicker(time.Minute * 10)
 	defer ticker.Stop()
