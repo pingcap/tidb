@@ -27,17 +27,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	log "github.com/sirupsen/logrus"
-	// For MySQL X Protocol
-	_ "github.com/pingcap/tipb/go-mysqlx"
-	_ "github.com/pingcap/tipb/go-mysqlx/Connection"
-	_ "github.com/pingcap/tipb/go-mysqlx/Crud"
-	_ "github.com/pingcap/tipb/go-mysqlx/Datatypes"
-	_ "github.com/pingcap/tipb/go-mysqlx/Expect"
-	_ "github.com/pingcap/tipb/go-mysqlx/Expr"
-	_ "github.com/pingcap/tipb/go-mysqlx/Notice"
-	_ "github.com/pingcap/tipb/go-mysqlx/Resultset"
-	_ "github.com/pingcap/tipb/go-mysqlx/Session"
-	_ "github.com/pingcap/tipb/go-mysqlx/Sql"
 )
 
 var (

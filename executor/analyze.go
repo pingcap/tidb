@@ -176,7 +176,7 @@ func (e *AnalyzeIndexExec) open() error {
 		SetConcurrency(e.concurrency).
 		Build()
 	ctx := context.TODO()
-	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
+	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -295,7 +295,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		return nil, errors.Trace(err)
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
