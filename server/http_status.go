@@ -97,7 +97,7 @@ func (s *Server) startHTTPServer() {
 	}
 }
 
-// TiDB status
+// status of TiDB.
 type status struct {
 	Connections int    `json:"connections"`
 	Version     string `json:"version"`
