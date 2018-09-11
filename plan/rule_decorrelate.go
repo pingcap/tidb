@@ -189,6 +189,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 					newAggFuncs = append(newAggFuncs, first)
 
 					outerCol, _ := outerPlan.Schema().Columns[i].Clone().(*expression.Column)
+					outerCol.UniqueID = agg.ctx.GetSessionVars().AllocPlanColumnID()
 					outerCol.RetType = first.RetTp
 					outerColsInSchema = append(outerColsInSchema, outerCol)
 				}
