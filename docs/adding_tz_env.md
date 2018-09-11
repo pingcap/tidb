@@ -41,6 +41,8 @@ We tried to read system timezone name by checking the path of the soft link of `
 
 It does not have compatibility issue as long as the user deploys by `tidb-ansible`. We may mention this in our release-node and the message printed before tidb quits, which must be easy to understand.
 
+The upgrading process need to be handled in particular. `TZ` environment variable has to be set before we start new `TiDB` binary. In this way, the following bootstrap process can benefit from this and avoid any hazard happening.
+
 
 ## Implementation
 
