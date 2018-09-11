@@ -342,7 +342,7 @@ type allServerInfoHandler struct {
 	*tikvHandlerTool
 }
 
-// valueHandle is the handler for get value.
+// valueHandler is the handler for get value.
 type valueHandler struct {
 }
 
@@ -353,7 +353,7 @@ const (
 	opStopTableScatter = "stop-scatter-table"
 )
 
-// mvccTxnHandler is the handler for txn debugger
+// mvccTxnHandler is the handler for txn debugger.
 type mvccTxnHandler struct {
 	*tikvHandlerTool
 	op string
