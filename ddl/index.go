@@ -288,7 +288,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		tblInfo.Indices = append(tblInfo.Indices, indexInfo)
 		log.Infof("[ddl] add index, run DDL job %s, index info %#v", job, indexInfo)
 	}
-
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
@@ -516,9 +515,10 @@ func mergeAddIndexCtxToResult(taskCtx *addIndexTaskContext, result *addIndexResu
 	result.scanCount += taskCtx.scanCount
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, rowDecoder decoder.RowDecoder) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-	w := &addIndexWorker{
+	rowDecoder := decoder.NewRowDecoder(t.Cols(), decodeColMap)
+	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
 		batchCnt:    DefaultTaskHandleCnt,
@@ -530,9 +530,8 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		rowDecoder:  rowDecoder,
 		priority:    kv.PriorityLow,
 		defaultVals: make([]types.Datum, len(t.Cols())),
-		rowMap:      make(map[int64]types.Datum, rowDecoder.DecodeColumnLength()),
+		rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
 	}
-	return w
 }
 
 func (w *addIndexWorker) close() {
@@ -859,9 +858,9 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 	log.Infof("[ddl-reorg] worker[%v] exit", w.id)
 }
 
-func makeupIndexColFieldMapAndColExpr(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (decoder.RowDecoder, error) {
+func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
 	cols := t.Cols()
-	colsExprMap := make(map[int64]decoder.Column, len(indexInfo.Columns))
+	decodeColMap := make(map[int64]decoder.Column, len(indexInfo.Columns))
 	for _, v := range indexInfo.Columns {
 		col := cols[v.Offset]
 		tpExpr := decoder.Column{
@@ -870,20 +869,20 @@ func makeupIndexColFieldMapAndColExpr(sessCtx sessionctx.Context, t table.Table,
 		if col.IsGenerated() && col.GeneratedStored == false {
 			for _, c := range cols {
 				if strings.Contains(col.GeneratedExprString, c.Name.L) {
-					colsExprMap[c.ID] = decoder.Column{
+					decodeColMap[c.ID] = decoder.Column{
 						Info: c.ToInfo(),
 					}
 				}
 			}
 			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta(), &col.FieldType)
 			if err != nil {
-				return decoder.RowDecoder{}, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			tpExpr.GenExpr = e
 		}
-		colsExprMap[col.ID] = tpExpr
+		decodeColMap[col.ID] = tpExpr
 	}
-	return decoder.NewRowDecoder(cols, colsExprMap), nil
+	return decodeColMap, nil
 }
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
@@ -1087,7 +1086,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 	job := reorgInfo.Job
 	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
 	sessCtx := newContext(reorgInfo.d.store)
-	rowDecoder, err := makeupIndexColFieldMapAndColExpr(sessCtx, t, indexInfo)
+	decodeColMap, err := makeupDecodeColMap(sessCtx, t, indexInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1097,7 +1096,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 	idxWorkers := make([]*addIndexWorker, workerCnt)
 	for i := 0; i < int(workerCnt); i++ {
 		sessCtx := newContext(reorgInfo.d.store)
-		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, rowDecoder)
+		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap)
 		idxWorkers[i].priority = job.Priority
 		go idxWorkers[i].run(reorgInfo.d)
 	}

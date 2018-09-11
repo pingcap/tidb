@@ -41,16 +41,15 @@ type RowDecoder struct {
 }
 
 // NewRowDecoder return a new RowDecoder.
-func NewRowDecoder(cols []*table.Column, colInfoExprs map[int64]Column) RowDecoder {
-	colFieldMap := make(map[int64]*types.FieldType, len(colInfoExprs))
+func NewRowDecoder(cols []*table.Column, decodeColMap map[int64]Column) RowDecoder {
+	colFieldMap := make(map[int64]*types.FieldType, len(decodeColMap))
 	haveGenCol := false
-	for id, col := range colInfoExprs {
+	for id, col := range decodeColMap {
 		colFieldMap[id] = &col.Info.FieldType
 		if col.GenExpr != nil {
 			haveGenCol = true
 		}
 	}
-
 	if !haveGenCol {
 		return RowDecoder{
 			colTypes: colFieldMap,
@@ -63,7 +62,7 @@ func NewRowDecoder(cols []*table.Column, colInfoExprs map[int64]Column) RowDecod
 	}
 	return RowDecoder{
 		mutRow:        chunk.MutRowFromTypes(tps),
-		columns:       colInfoExprs,
+		columns:       decodeColMap,
 		colTypes:      colFieldMap,
 		haveGenColumn: haveGenCol,
 	}
@@ -75,7 +74,6 @@ func (rd RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, l
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	if !rd.haveGenColumn {
 		return row, nil
 	}
@@ -83,7 +81,6 @@ func (rd RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, l
 	for id, v := range row {
 		rd.mutRow.SetValue(rd.columns[id].Info.Offset, v.GetValue())
 	}
-
 	for id, col := range rd.columns {
 		if _, ok := row[id]; ok || col.GenExpr == nil {
 			continue
@@ -100,9 +97,4 @@ func (rd RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, l
 		row[id] = val
 	}
 	return row, nil
-}
-
-// DecodeColumnLength return the length of decode columns.
-func (rd RowDecoder) DecodeColumnLength() int {
-	return len(rd.colTypes)
 }
