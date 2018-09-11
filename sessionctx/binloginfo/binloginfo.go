@@ -59,15 +59,6 @@ func GetPumpsClient() *pumpcli.PumpsClient {
 	return client
 }
 
-// IsValidPumpsClient returns true if client is not a nil PumpsClient.
-func IsValidPumpsClient(client interface{}) bool {
-	if client == nil {
-		return false
-	}
-
-	return client.(*pumpcli.PumpsClient) != nil
-}
-
 // SetGRPCTimeout sets grpc timeout for writing binlog.
 func SetGRPCTimeout(timeout time.Duration) {
 	if timeout < 300*time.Millisecond {
@@ -146,8 +137,8 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 }
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.
-func SetDDLBinlog(client interface{}, txn kv.Transaction, jobID int64, ddlQuery string) {
-	if !IsValidPumpsClient(client) {
+func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, ddlQuery string) {
+	if client == nil {
 		return
 	}
 
@@ -158,7 +149,7 @@ func SetDDLBinlog(client interface{}, txn kv.Transaction, jobID int64, ddlQuery 
 			DdlJobId: jobID,
 			DdlQuery: []byte(ddlQuery),
 		},
-		Client: client.(*pumpcli.PumpsClient),
+		Client: client,
 	}
 	txn.SetOption(kv.BinlogInfo, info)
 }

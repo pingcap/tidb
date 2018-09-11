@@ -132,17 +132,21 @@ func (s *testBinlogSuite) MockPumpsClient(clientConn *grpc.ClientConn) *pumpcli.
 	selector.SetPumps([]*pumpcli.PumpStatus{pump})
 
 	pumpInfos := &pumpcli.PumpInfos{
-		Pumps:          make(map[string]*pumpcli.PumpStatus),
-		AvaliablePumps: make(map[string]*pumpcli.PumpStatus),
+		Pumps:            make(map[string]*pumpcli.PumpStatus),
+		AvaliablePumps:   make(map[string]*pumpcli.PumpStatus),
+		UnAvaliablePumps: make(map[string]*pumpcli.PumpStatus),
 	}
 	pumpInfos.Pumps[nodeID] = pump
 	pumpInfos.AvaliablePumps[nodeID] = pump
 
-	return &pumpcli.PumpsClient{
+	pCli := &pumpcli.PumpsClient{
 		ClusterID: 1,
 		Pumps:     pumpInfos,
-		Selector:  selector,
+		Selector:  pumpcli.NewSelector(pumpcli.Range),
 	}
+	pCli.Selector.SetPumps([]*pumpcli.PumpStatus{pump})
+
+	return pCli
 }
 
 func (s *testBinlogSuite) TearDownSuite(c *C) {

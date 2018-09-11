@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
@@ -92,7 +93,7 @@ func (s *testSessionSuite) TearDownTest(c *C) {
 type mockBinlogPump struct {
 }
 
-var _ binlog.PumpClient = &mockBinlogPump{}
+var _ binlog.PumpClient = &pumpcli.PumpsClient{}
 
 func (p *mockBinlogPump) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
 	return &binlog.WriteBinlogResp{}, nil
