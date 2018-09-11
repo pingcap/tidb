@@ -37,6 +37,7 @@ var (
 	ErrInvalidYear            = errors.New("invalid year")
 	ErrZeroDate               = errors.New("datetime zero in date")
 	ErrIncorrectDatetimeValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: '%s'")
+	ErrTruncatedWrongValue    = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 )
 
 // Time format without fractional seconds precision.
@@ -600,7 +601,7 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
+func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bool) (Time, error) {
 	// Try to split str with delimiter.
 	// TODO: only punctuation can be the delimiter for date parts or time parts.
 	// But only space and T can be the delimiter between the date and time part.
@@ -614,8 +615,8 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 	seps, fracStr := splitDateTime(str)
 	switch len(seps) {
 	case 1:
-		len := len(seps[0])
-		switch len {
+		l := len(seps[0])
+		switch l {
 		case 14: // No delimiter.
 			// YYYYMMDDHHMMSS
 			_, err = fmt.Sscanf(seps[0], "%4d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
@@ -628,6 +629,12 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d%2d%2d%1d", &year, &month, &day, &hour, &minute, &second)
 			year = adjustYear(year)
 			hhmmss = true
+		case 10: // YYMMDDHHMM
+			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute)
+			year = adjustYear(year)
+		case 9: // YYMMDDHHM
+			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d%2d%1d", &year, &month, &day, &hour, &minute)
+			year = adjustYear(year)
 		case 8: // YYYYMMDD
 			_, err = fmt.Sscanf(seps[0], "%4d%2d%2d", &year, &month, &day)
 		case 6:
@@ -637,7 +644,7 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 		default:
 			return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenByArgs(str))
 		}
-		if len == 6 || len == 8 {
+		if l == 6 || l == 8 {
 			// YYMMDD or YYYYMMDD
 			// We must handle float => string => datetime, the difference is that fractional
 			// part of float type is discarded directly, while fractional part of string type
@@ -647,6 +654,19 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 			} else {
 				// '20170118.123423' => 2017-01-18 12:34:23.234
 				fmt.Sscanf(fracStr, "%2d%2d%2d", &hour, &minute, &second)
+			}
+		}
+		if l == 9 || l == 10 {
+			switch len(fracStr) {
+			case 0:
+				second = 0
+			case 1:
+				_, err = fmt.Sscanf(fracStr, "%1d", &second)
+			case 2:
+				_, err = fmt.Sscanf(fracStr, "%2d", &second)
+			default:
+				_, err = fmt.Sscanf(fracStr[:2], "%2d", &second)
+				sc.AppendWarning(ErrTruncatedWrongValue.GenByArgs("datetime", str))
 			}
 		}
 	case 3:
@@ -1225,7 +1245,7 @@ func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFlo
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
 
-	t, err := parseDatetime(str, fsp, isFloat)
+	t, err := parseDatetime(sc, str, fsp, isFloat)
 	if err != nil {
 		return Time{Time: ZeroTime, Type: tp}, errors.Trace(err)
 	}
