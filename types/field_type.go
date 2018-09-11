@@ -231,8 +231,12 @@ func (ft *FieldType) CompactStr() string {
 			suffix = fmt.Sprintf("(%d", displayFlen)
 			if isDecimalNotDefault {
 				suffix += fmt.Sprintf(",%d", displayDecimal)
+			} else {
+				suffix += fmt.Sprintf(",%d", 0)
 			}
 			suffix += ")"
+		} else {
+			suffix = "(10,0)"
 		}
 	case mysql.TypeBit, mysql.TypeShort, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
 		// Flen is always shown.
