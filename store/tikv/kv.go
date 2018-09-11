@@ -165,7 +165,9 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	}
 
 	if startTime < cachedSafePoint {
-		return ErrGCTooEarly.GenByArgs(startTime, cachedSafePoint)
+		t1 := oracle.GetTimeFromTS(startTime)
+		t2 := oracle.GetTimeFromTS(cachedSafePoint)
+		return ErrGCTooEarly.GenByArgs(t1, t2)
 	}
 
 	return nil
