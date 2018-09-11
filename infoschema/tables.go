@@ -16,6 +16,7 @@ package infoschema
 import (
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
@@ -697,12 +698,12 @@ type tableHistID struct {
 	histID  int64
 }
 
-func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]int64, error) {
+func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, error) {
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	colLengthMap := make(map[tableHistID]int64, len(rows))
+	colLengthMap := make(map[tableHistID]uint64, len(rows))
 	for _, row := range rows {
 		tableID := row.GetInt64(0)
 		histID := row.GetInt64(1)
@@ -710,23 +711,23 @@ func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]int64, error
 		if totalSize < 0 {
 			totalSize = 0
 		}
-		colLengthMap[tableHistID{tableID: tableID, histID: histID}] = totalSize
+		colLengthMap[tableHistID{tableID: tableID, histID: histID}] = uint64(totalSize)
 	}
 	return colLengthMap, nil
 }
 
-func getDataAndIndexLength(info *model.TableInfo, rowCount uint64, columnLengthMap map[tableHistID]int64) (uint64, uint64) {
+func getDataAndIndexLength(info *model.TableInfo, rowCount uint64, columnLengthMap map[tableHistID]uint64) (uint64, uint64) {
 	columnLength := make(map[string]uint64)
 	for _, col := range info.Columns {
 		if col.State != model.StatePublic {
 			continue
 		}
-		length := col.FieldType.Length()
-		if length != types.VarElemLen {
+		length := col.FieldType.StorageLength()
+		if length != types.VarStorageLen {
 			columnLength[col.Name.L] = rowCount * uint64(length)
 		} else {
 			length := columnLengthMap[tableHistID{tableID: info.ID, histID: col.ID}]
-			columnLength[col.Name.L] = uint64(length)
+			columnLength[col.Name.L] = length
 		}
 	}
 	dataLength, indexLength := uint64(0), uint64(0)
@@ -746,6 +747,38 @@ func getDataAndIndexLength(info *model.TableInfo, rowCount uint64, columnLengthM
 		}
 	}
 	return dataLength, indexLength
+}
+
+type statsCache struct {
+	mu         sync.Mutex
+	modifyTime time.Time
+	tableRows  map[int64]uint64
+	colLength  map[tableHistID]uint64
+}
+
+var tableStatsCache = &statsCache{}
+
+// TableStatsCacheExpiry is the expiry time for table stats cache.
+var TableStatsCacheExpiry = 3 * time.Second
+
+func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if time.Now().Sub(c.modifyTime) < TableStatsCacheExpiry {
+		return c.tableRows, c.colLength, nil
+	}
+	tableRows, err := getRowCountAllTable(ctx)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	colLength, err := getColLengthAllTables(ctx)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	c.tableRows = tableRows
+	c.colLength = colLength
+	c.modifyTime = time.Now()
+	return tableRows, colLength, nil
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
@@ -772,11 +805,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 }
 
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
-	tableRowsMap, err := getRowCountAllTable(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	colLengthMap, err := getColLengthAllTables(ctx)
+	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

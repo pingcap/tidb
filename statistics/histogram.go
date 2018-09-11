@@ -108,12 +108,20 @@ func (c *Column) AvgColSize(count int64) float64 {
 	if count == 0 {
 		return 0
 	}
-	len := c.Histogram.tp.Length()
-	if len != types.VarElemLen {
-		return float64(len)
+	switch c.Histogram.tp.Tp {
+	case mysql.TypeFloat:
+		return 4
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeDouble, mysql.TypeYear:
+		return 8
+	case mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return 16
+	case mysql.TypeNewDecimal:
+		return types.MyDecimalStructSize
+	default:
+		// Keep two decimal place.
+		return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
 	}
-	// Keep two decimal place.
-	return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
 }
 
 // AppendBucket appends a bucket into `hg`.

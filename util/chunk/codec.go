@@ -19,6 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -123,7 +124,7 @@ func (c *Codec) decodeColumn(buffer []byte, col *column, ordinal int) (remained 
 	}
 
 	// decode offsets.
-	numFixedBytes := c.colTypes[ordinal].Length()
+	numFixedBytes := getFixedLen(c.colTypes[ordinal])
 	numDataBytes := numFixedBytes * col.length
 	if numFixedBytes == -1 {
 		numOffsetBytes := (col.length + 1) * 4
@@ -160,6 +161,25 @@ func (c *Codec) bytesToI32Slice(b []byte) (i32s []int32) {
 	hdr.Cap = hdr.Len
 	hdr.Data = uintptr(unsafe.Pointer(&b[0]))
 	return i32s
+}
+
+// varElemLen indicates this column is a variable length column.
+const varElemLen = -1
+
+func getFixedLen(colType *types.FieldType) int {
+	switch colType.Tp {
+	case mysql.TypeFloat:
+		return 4
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
+		mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeYear, mysql.TypeDuration:
+		return 8
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		return 16
+	case mysql.TypeNewDecimal:
+		return types.MyDecimalStructSize
+	default:
+		return varElemLen
+	}
 }
 
 func init() {

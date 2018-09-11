@@ -15,6 +15,7 @@ package infoschema_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -90,6 +91,9 @@ func (s *testSuite) TestDataForTableStatsField(c *C) {
 	do, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	defer do.Close()
+	oldExpiryTime := infoschema.TableStatsCacheExpiry
+	infoschema.TableStatsCacheExpiry = 0
+	defer func() { infoschema.TableStatsCacheExpiry = oldExpiryTime }()
 
 	h := do.StatsHandle()
 	is := do.InfoSchema()
