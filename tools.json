@@ -1,7 +1,7 @@
 {
   "Tools": [
     {
-      "Repository": "gopkg.in/alecthomas/gometalinter.v2",
+      "Repository": "github.com/alecthomas/gometalinter",
       "Commit": "46cc1ea3778b247666c2949669a3333c532fa9c6"
     },
     {
