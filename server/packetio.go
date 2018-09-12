@@ -38,9 +38,9 @@ import (
 	"bufio"
 	"io"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 )
 
 const defaultWriterSize = 16 * 1024
@@ -72,7 +72,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 
 	sequence := header[3]
 	if sequence != p.sequence {
-		return nil, errInvalidSequence.Gen("invalid sequence %d != %d", sequence, p.sequence)
+		return nil, errInvalidSequence.GenWithStack("invalid sequence %d != %d", sequence, p.sequence)
 	}
 
 	p.sequence++

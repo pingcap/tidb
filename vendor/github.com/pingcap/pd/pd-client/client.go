@@ -135,10 +135,10 @@ func NewClient(pdAddrs []string, security SecurityOption) (Client, error) {
 	c.connMu.clientConns = make(map[string]*grpc.ClientConn)
 
 	if err := c.initClusterID(); err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 	if err := c.updateLeader(); err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 	log.Infof("[pd] init cluster id %v", c.clusterID)
 
@@ -192,10 +192,7 @@ func (c *client) updateLeader() error {
 			}
 		}
 		c.updateURLs(members.GetMembers())
-		if err = c.switchLeader(members.GetLeader().GetClientUrls()); err != nil {
-			return errors.WithStack(err)
-		}
-		return nil
+		return c.switchLeader(members.GetLeader().GetClientUrls())
 	}
 	return errors.Errorf("failed to get leader from %v", c.urls)
 }
@@ -203,7 +200,7 @@ func (c *client) updateLeader() error {
 func (c *client) getMembers(ctx context.Context, url string) (*pdpb.GetMembersResponse, error) {
 	cc, err := c.getOrCreateGRPCConn(url)
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 	members, err := pdpb.NewPDClient(cc).GetMembers(ctx, &pdpb.GetMembersRequest{})
 	if err != nil {
@@ -226,7 +223,7 @@ func (c *client) switchLeader(addrs []string) error {
 
 	log.Infof("[pd] leader switches to: %v, previous: %v", addr, oldLeader)
 	if _, err := c.getOrCreateGRPCConn(addr); err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 
 	c.connMu.Lock()
@@ -370,7 +367,7 @@ func (c *client) tsLoop() {
 				log.Errorf("[pd] create tso stream error: %v", err)
 				c.ScheduleCheckLeader()
 				cancel()
-				c.revokeTSORequest(err)
+				c.revokeTSORequest(errors.WithStack(err))
 				select {
 				case <-time.After(time.Second):
 				case <-loopCtx.Done():
@@ -443,21 +440,21 @@ func (c *client) processTSORequests(stream pdpb.PD_TsoClient, requests []*tsoReq
 	}
 
 	if err := stream.Send(req); err != nil {
+		err = errors.WithStack(err)
 		c.finishTSORequest(requests, 0, 0, err)
-		return errors.WithStack(err)
+		return err
 	}
 	resp, err := stream.Recv()
 	if err != nil {
-		c.finishTSORequest(requests, 0, 0, errors.WithStack(err))
-		return errors.WithStack(err)
+		err = errors.WithStack(err)
+		c.finishTSORequest(requests, 0, 0, err)
+		return err
 	}
 	requestDuration.WithLabelValues("tso").Observe(time.Since(start).Seconds())
-	if err == nil && resp.GetCount() != uint32(len(requests)) {
-		err = errTSOLength
-	}
-	if err != nil {
-		c.finishTSORequest(requests, 0, 0, errors.WithStack(err))
-		return errors.WithStack(err)
+	if resp.GetCount() != uint32(len(requests)) {
+		err = errors.WithStack(errTSOLength)
+		c.finishTSORequest(requests, 0, 0, err)
+		return err
 	}
 
 	physical, logical := resp.GetTimestamp().GetPhysical(), resp.GetTimestamp().GetLogical()
@@ -481,7 +478,7 @@ func (c *client) revokeTSORequest(err error) {
 	n := len(c.tsoRequests)
 	for i := 0; i < n; i++ {
 		req := <-c.tsoRequests
-		req.done <- errors.WithStack(err)
+		req.done <- err
 	}
 }
 
@@ -489,7 +486,7 @@ func (c *client) Close() {
 	c.cancel()
 	c.wg.Wait()
 
-	c.revokeTSORequest(errClosing)
+	c.revokeTSORequest(errors.WithStack(errClosing))
 
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
@@ -565,10 +562,11 @@ func (req *tsoRequest) Wait() (physical int64, logical int64, err error) {
 	cmdDuration.WithLabelValues("tso_async_wait").Observe(time.Since(req.start).Seconds())
 	select {
 	case err = <-req.done:
+		err = errors.WithStack(err)
 		defer tsoReqPool.Put(req)
 		if err != nil {
 			cmdFailedDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds())
-			return 0, 0, errors.WithStack(err)
+			return 0, 0, err
 		}
 		physical, logical = req.physical, req.logical
 		cmdDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds())

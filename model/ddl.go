@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 )
 
 // ActionType is the type for DDL action.

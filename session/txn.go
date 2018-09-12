@@ -14,7 +14,6 @@
 package session
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )

@@ -14,10 +14,10 @@
 package tikv
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

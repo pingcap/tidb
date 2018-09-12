@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -168,7 +168,7 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 		if s.IfExists {
 			err = nil
 		} else {
-			err = infoschema.ErrDatabaseDropExists.GenByArgs(s.Name)
+			err = infoschema.ErrDatabaseDropExists.GenWithStackByArgs(s.Name)
 		}
 	}
 	sessionVars := e.ctx.GetSessionVars()
@@ -246,7 +246,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 		}
 	}
 	if len(notExistTables) > 0 && !s.IfExists {
-		return infoschema.ErrTableDropExists.GenByArgs(strings.Join(notExistTables, ","))
+		return infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
 	}
 	return nil
 }

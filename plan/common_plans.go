@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 )
 
 // ShowDDL is for showing DDL information.
@@ -167,7 +167,7 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		// if this time it failed, the real reason for the error is schema changed.
 		err := Preprocess(ctx, prepared.Stmt, is, true)
 		if err != nil {
-			return ErrSchemaChanged.Gen("Schema change caused error: %s", err.Error())
+			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
