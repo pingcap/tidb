@@ -16,9 +16,9 @@ package plan
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan/property"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 

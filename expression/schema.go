@@ -16,8 +16,8 @@ package expression
 import (
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pkg/errors"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.

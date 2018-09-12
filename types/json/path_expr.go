@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 /*
@@ -129,12 +129,12 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	// pathExpr[0: dollarIndex), return an ErrInvalidJSONPath error.
 	dollarIndex := strings.Index(pathExpr, "$")
 	if dollarIndex < 0 {
-		err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+		err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 		return
 	}
 	for i := 0; i < dollarIndex; i++ {
 		if !isBlank(rune(pathExpr[i])) {
-			err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+			err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 			return
 		}
 	}
@@ -142,7 +142,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	pathExprSuffix := strings.TrimFunc(pathExpr[dollarIndex+1:], isBlank)
 	indices := jsonPathExprLegRe.FindAllStringIndex(pathExprSuffix, -1)
 	if len(indices) == 0 && len(pathExprSuffix) != 0 {
-		err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+		err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 		return
 	}
 
@@ -156,7 +156,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 		// Check all characters between two legs are blank.
 		for i := lastEnd; i < start; i++ {
 			if !isBlank(rune(pathExprSuffix[i])) {
-				err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+				err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 				return
 			}
 		}
@@ -185,7 +185,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 			} else if key[0] == '"' {
 				// We need unquote the origin string.
 				if key, err = unquoteString(key[1 : len(key)-1]); err != nil {
-					err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+					err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 					return
 				}
 			}
@@ -199,7 +199,7 @@ func ParseJSONPathExpr(pathExpr string) (pe PathExpression, err error) {
 	if len(pe.legs) > 0 {
 		// The last leg of a path expression cannot be '**'.
 		if pe.legs[len(pe.legs)-1].typ == pathLegDoubleAsterisk {
-			err = ErrInvalidJSONPath.GenByArgs(pathExpr)
+			err = ErrInvalidJSONPath.GenWithStackByArgs(pathExpr)
 			return
 		}
 	}

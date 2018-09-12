@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -51,16 +51,16 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 	for _, ic := range idxColNames {
 		col := model.FindColumnInfo(columns, ic.Column.Name.O)
 		if col == nil {
-			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
+			return nil, errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Column.Name)
 		}
 
 		if col.Flen == 0 {
-			return nil, errors.Trace(errWrongKeyColumn.GenByArgs(ic.Column.Name))
+			return nil, errors.Trace(errWrongKeyColumn.GenWithStackByArgs(ic.Column.Name))
 		}
 
 		// JSON column cannot index.
 		if col.FieldType.Tp == mysql.TypeJSON {
-			return nil, errors.Trace(errJSONUsedAsKey.GenByArgs(col.Name.O))
+			return nil, errors.Trace(errJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
 		}
 
 		// Length must be specified for BLOB and TEXT column indexes.
@@ -100,7 +100,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 				if length, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
 					sumLength += length
 				} else {
-					return nil, errUnknownTypeLength.GenByArgs(col.FieldType.Tp)
+					return nil, errUnknownTypeLength.GenWithStackByArgs(col.FieldType.Tp)
 				}
 
 				// Special case for time fraction.
@@ -109,7 +109,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 					if length, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
 						sumLength += length
 					} else {
-						return nil, errUnknownFractionLength.GenByArgs(col.FieldType.Tp, col.FieldType.Decimal)
+						return nil, errUnknownFractionLength.GenWithStackByArgs(col.FieldType.Tp, col.FieldType.Decimal)
 					}
 				}
 			}
@@ -180,7 +180,7 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 
 func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
 	if fromIdx := findIndexByName(from.L, tbl.Indices); fromIdx == nil {
-		return false, errors.Trace(infoschema.ErrKeyNotExists.GenByArgs(from.O, tbl.Name))
+		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(from.O, tbl.Name))
 	}
 	// Take case-sensitivity into account, if `FromKey` and  `ToKey` are the same, nothing need to be changed
 	if from.O == to.O {
@@ -190,7 +190,7 @@ func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 	// e.g: from `inDex` to `IndEX`. Otherwise, we try to rename an index to another different index which already exists,
 	// that's illegal by rule.
 	if toIdx := findIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
-		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenByArgs(toIdx.Name.O))
+		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenWithStackByArgs(toIdx.Name.O))
 	}
 	return false, nil
 }
@@ -258,7 +258,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
-		return ver, ErrDupKeyName.Gen("index already exist %s", indexName)
+		return ver, ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
 	if indexInfo == nil {
@@ -349,7 +349,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
-		err = ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
+		err = ErrInvalidIndexState.GenWithStack("invalid index state %v", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -371,7 +371,7 @@ func convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo,
 	}
 
 	if kv.ErrKeyExists.Equal(err) {
-		return ver, kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
+		return ver, kv.ErrKeyExists.GenWithStack("Duplicate for key %s", indexInfo.Name.O)
 	}
 
 	return ver, errors.Trace(err)
@@ -393,7 +393,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo == nil {
 		job.State = model.JobStateCancelled
-		return ver, ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
+		return ver, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
 	originalState := indexInfo.State
@@ -439,7 +439,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
 		}
 	default:
-		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
+		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
 	return ver, errors.Trace(err)
 }

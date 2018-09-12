@@ -22,7 +22,6 @@ import (
 	"unicode"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -139,7 +139,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 		case *ast.TableName:
 			p, err = b.buildDataSource(v)
 		default:
-			err = ErrUnsupportedType.GenByArgs(v)
+			err = ErrUnsupportedType.GenWithStackByArgs(v)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -161,7 +161,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 		for _, col := range p.Schema().Columns {
 			name := col.ColName.O
 			if _, ok := dupNames[name]; ok {
-				return nil, ErrDupFieldName.GenByArgs(name)
+				return nil, ErrDupFieldName.GenWithStackByArgs(name)
 			}
 			dupNames[name] = struct{}{}
 		}
@@ -171,7 +171,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 	case *ast.UnionStmt:
 		return b.buildUnion(x)
 	default:
-		return nil, ErrUnsupportedType.Gen("Unsupported ast.ResultSetNode(%T) for buildResultSetNode()", x)
+		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.ResultSetNode(%T) for buildResultSetNode()", x)
 	}
 }
 
@@ -407,7 +407,7 @@ func (b *planBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	if len(filter) > 0 && len(filter) != commonLen {
 		for col, notExist := range filter {
 			if notExist {
-				return ErrUnknownColumn.GenByArgs(col, "from clause")
+				return ErrUnknownColumn.GenWithStackByArgs(col, "from clause")
 			}
 		}
 	}
@@ -733,7 +733,7 @@ func (b *planBuilder) divideUnionSelectPlans(selects []*ast.SelectStmt) (distinc
 			columnNums = selectPlan.Schema().Len()
 		}
 		if selectPlan.Schema().Len() != columnNums {
-			return nil, nil, ErrWrongNumberOfColumnsInSelect.GenByArgs()
+			return nil, nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 		}
 		children[i] = selectPlan
 	}
@@ -815,14 +815,14 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 	if limit.Offset != nil {
 		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
 		if err != nil {
-			return nil, ErrWrongArguments.GenByArgs("LIMIT")
+			return nil, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
 	}
 
 	if limit.Count != nil {
 		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
 		if err != nil {
-			return nil, ErrWrongArguments.GenByArgs("LIMIT")
+			return nil, ErrWrongArguments.GenWithStackByArgs("LIMIT")
 		}
 	}
 
@@ -892,7 +892,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 				index = i
 			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) &&
 				!colMatch(curCol.Name, matchedExpr.(*ast.ColumnNameExpr).Name) {
-				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L, clauseMsg[fieldList])
+				return -1, ErrAmbiguous.GenWithStackByArgs(curCol.Name.Name.L, clauseMsg[fieldList])
 			}
 		}
 	}
@@ -1021,7 +1021,7 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 					return n, true
 				}
 			}
-			a.err = ErrUnknownColumn.GenByArgs(v.Name.OrigColName(), clauseMsg[a.curClause])
+			a.err = ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), clauseMsg[a.curClause])
 			return node, false
 		}
 		if a.inAggFunc {
@@ -1127,7 +1127,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				ret := g.fields[index].Expr
 				ret.Accept(extractor)
 				if len(extractor.AggFuncs) != 0 {
-					err = ErrIllegalReference.GenByArgs(v.Name.OrigColName(), "reference to group function")
+					err = ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to group function")
 				} else {
 					return ret, true
 				}
@@ -1143,7 +1143,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		ret := g.fields[v.N-1].Expr
 		ret.Accept(extractor)
 		if len(extractor.AggFuncs) != 0 {
-			g.err = ErrWrongGroupField.GenByArgs(g.fields[v.N-1].Text())
+			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[v.N-1].Text())
 			return inNode, false
 		}
 		return ret, true
@@ -1404,9 +1404,9 @@ func (b *planBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 		}
 		switch errExprLoc.Loc {
 		case ErrExprInSelect:
-			return ErrFieldNotInGroupBy.GenByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.Fields.Fields[errExprLoc.Offset].Text())
+			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.Fields.Fields[errExprLoc.Offset].Text())
 		case ErrExprInOrderBy:
-			return ErrFieldNotInGroupBy.GenByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.OrderBy.Items[errExprLoc.Offset].Expr.Text())
+			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.OrderBy.Items[errExprLoc.Offset].Expr.Text())
 		}
 		return nil
 	}
@@ -1455,7 +1455,7 @@ func (c *colResolverForOnlyFullGroupBy) Leave(node ast.Node) (ast.Node, bool) {
 
 func (c *colResolverForOnlyFullGroupBy) Check() error {
 	if c.hasAggFunc && c.firstNonAggCol != nil {
-		return ErrMixOfGroupFuncAndFields.GenByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
+		return ErrMixOfGroupFuncAndFields.GenWithStackByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
 	}
 	return nil
 }
@@ -1549,7 +1549,7 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 			}
 		}
 		if !findTblNameInSchema {
-			return nil, ErrBadTable.GenByArgs(tblName)
+			return nil, ErrBadTable.GenWithStackByArgs(tblName)
 		}
 	}
 	return resultList, nil
@@ -2087,7 +2087,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		tableInfo := tn.TableInfo
 		tableVal, found := b.is.TableByID(tableInfo.ID)
 		if !found {
-			return nil, nil, infoschema.ErrTableNotExists.GenByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
+			return nil, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
 		}
 		for i, colInfo := range tableInfo.Columns {
 			if !colInfo.IsGenerated() {
@@ -2095,7 +2095,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
 			if _, ok := modifyColumns[columnFullName]; ok {
-				return nil, nil, ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
+				return nil, nil, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
 			for _, asName := range tableAsName[tableInfo] {
 				virtualAssignments = append(virtualAssignments, &ast.Assignment{
@@ -2259,11 +2259,11 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 					}
 					if asName == tblName {
 						// check sql like: `delete a from (select * from t) as a, t`
-						return nil, ErrNonUpdatableTable.GenByArgs(tn.Name.O, "DELETE")
+						return nil, ErrNonUpdatableTable.GenWithStackByArgs(tn.Name.O, "DELETE")
 					}
 				}
 				// check sql like: `delete b from (select * from t) as a, t`
-				return nil, ErrUnknownTable.GenByArgs(tn.Name.O, "MULTI DELETE")
+				return nil, ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tn.Schema.L, tn.TableInfo.Name.L, "")
 		}

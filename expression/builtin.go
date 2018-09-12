@@ -298,7 +298,7 @@ type baseFunctionClass struct {
 func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 	l := len(args)
 	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
-		return ErrIncorrectParameterCount.GenByArgs(b.funcName)
+		return ErrIncorrectParameterCount.GenWithStackByArgs(b.funcName)
 	}
 	return nil
 }

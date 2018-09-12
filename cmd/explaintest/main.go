@@ -26,12 +26,12 @@ import (
 
 	"flag"
 	"github.com/go-sql-driver/mysql"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"time"
 )
