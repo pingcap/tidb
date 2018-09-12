@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -385,7 +385,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err != nil {
 			log.Warnf("%v error:%v", t.Name, errors.ErrorStack(err))
 			if admin.ErrDataInConsistent.Equal(err) {
-				return ErrAdminCheckTable.Gen("%v err:%v", t.Name, err)
+				return ErrAdminCheckTable.GenWithStack("%v err:%v", t.Name, err)
 			}
 
 			return errors.Errorf("%v err:%v", t.Name, err)

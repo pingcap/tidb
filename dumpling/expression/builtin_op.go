@@ -17,13 +17,13 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -727,12 +727,12 @@ func (b *builtinUnaryMinusIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 	if mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		uval := uint64(val)
 		if uval > uint64(-math.MinInt64) {
-			return 0, false, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("-%v", uval))
+			return 0, false, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("-%v", uval))
 		} else if uval == uint64(-math.MinInt64) {
 			return math.MinInt64, false, nil
 		}
 	} else if val == math.MinInt64 {
-		return 0, false, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("-%v", val))
+		return 0, false, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("-%v", val))
 	}
 	return -val, false, nil
 }

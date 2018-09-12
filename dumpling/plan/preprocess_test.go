@@ -14,7 +14,6 @@
 package plan_test
 
 import (
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -159,7 +159,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE `t` (`a` varchar(10) DEFAULT now());", false, types.ErrInvalidDefault},
 		{"CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );", false, nil},
 
-		{`explain format = "xx" select 100;`, false, plan.ErrUnknownExplainFormat.GenByArgs("xx")},
+		{`explain format = "xx" select 100;`, false, plan.ErrUnknownExplainFormat.GenWithStackByArgs("xx")},
 
 		// issue 4472
 		{`select sum(distinct(if('a', (select adddate(elt(999, count(*)), interval 1 day)), .1))) as foo;`, true, nil},
