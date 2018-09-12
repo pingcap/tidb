@@ -17,11 +17,11 @@ import (
 	"bytes"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pkg/errors"
 )
 
 type baseGroupConcat4String struct {
