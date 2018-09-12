@@ -115,7 +115,9 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	for _, col := range p.Schema().Columns {
 		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
-		schema4Agg.Append(col)
+		newCol, _ := col.Clone().(*expression.Column)
+		newCol.RetType = newFunc.RetTp
+		schema4Agg.Append(newCol)
 	}
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
