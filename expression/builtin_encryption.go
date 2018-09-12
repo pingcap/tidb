@@ -118,7 +118,7 @@ func (c *aesDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	if mode.ivRequired {
 		if len(args) != 3 {
-			return nil, ErrIncorrectParameterCount.GenByArgs("aes_decrypt")
+			return nil, ErrIncorrectParameterCount.GenWithStackByArgs("aes_decrypt")
 		}
 		return &builtinAesDecryptIVSig{bf, mode}, nil
 	}
@@ -151,7 +151,7 @@ func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	if !b.ivRequired && len(b.args) == 3 {
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenByArgs("IV"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
 	}
 
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
@@ -199,7 +199,7 @@ func (b *builtinAesDecryptIVSig) evalString(row chunk.Row) (string, bool, error)
 		return "", true, errors.Trace(err)
 	}
 	if len(iv) < aes.BlockSize {
-		return "", true, errIncorrectArgs.Gen("The initialization vector supplied to aes_decrypt is too short. Must be at least %d bytes long", aes.BlockSize)
+		return "", true, errIncorrectArgs.GenWithStack("The initialization vector supplied to aes_decrypt is too short. Must be at least %d bytes long", aes.BlockSize)
 	}
 	// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
 	iv = iv[0:aes.BlockSize]
@@ -241,7 +241,7 @@ func (c *aesEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	if mode.ivRequired {
 		if len(args) != 3 {
-			return nil, ErrIncorrectParameterCount.GenByArgs("aes_encrypt")
+			return nil, ErrIncorrectParameterCount.GenWithStackByArgs("aes_encrypt")
 		}
 		return &builtinAesEncryptIVSig{bf, mode}, nil
 	}
@@ -274,7 +274,7 @@ func (b *builtinAesEncryptSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	if !b.ivRequired && len(b.args) == 3 {
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenByArgs("IV"))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
 	}
 
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
@@ -322,7 +322,7 @@ func (b *builtinAesEncryptIVSig) evalString(row chunk.Row) (string, bool, error)
 		return "", true, errors.Trace(err)
 	}
 	if len(iv) < aes.BlockSize {
-		return "", true, errIncorrectArgs.Gen("The initialization vector supplied to aes_encrypt is too short. Must be at least %d bytes long", aes.BlockSize)
+		return "", true, errIncorrectArgs.GenWithStack("The initialization vector supplied to aes_encrypt is too short. Must be at least %d bytes long", aes.BlockSize)
 	}
 	// init_vector must be 16 bytes or longer (bytes in excess of 16 are ignored)
 	iv = iv[0:aes.BlockSize]
