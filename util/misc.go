@@ -14,12 +14,12 @@
 package util
 
 import (
+	"fmt"
 	"runtime"
 	"time"
-	"fmt"
 
-	"github.com/pkg/errors"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
