@@ -639,7 +639,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 		return v, true
 	}
 	// If it's not the form of `not in (SUBQUERY)`, has no correlated column and don't need to append a scalar value. We can rewrite it to inner join.
-	if er.ctx.GetSessionVars().AllowInSubqueryRewriting && !v.Not && !asScalar && len(np.extractCorrelatedCols()) == 0 {
+	if er.ctx.GetSessionVars().AllowInSubqToJoinAndAgg && !v.Not && !asScalar && len(np.extractCorrelatedCols()) == 0 {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		er.b.optFlag |= flagEliminateAgg
 		er.b.optFlag |= flagEliminateProjection2

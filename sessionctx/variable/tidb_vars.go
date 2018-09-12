@@ -118,7 +118,7 @@ const (
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
 	// tidb_opt_insubquery_rewriting is used to enable/disable the optimizer rule of rewriting IN subquery.
-	TiDBOptInSubqRewriting = "tidb_opt_insubquery_rewriting"
+	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
 
 	// tidb_index_join_batch_size is used to set the batch size of a index lookup join.
 	// The index lookup join fetches batches of data from outer executor and constructs ranges for inner executor.
@@ -198,7 +198,7 @@ const (
 	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
-	DefOptInSubqRewriting            = true
+	DefOptInSubqToJoinAndAgg         = true
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false
 	DefCurretTS                      = 0
