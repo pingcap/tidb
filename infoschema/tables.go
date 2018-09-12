@@ -770,6 +770,7 @@ func getDataAndIndexLength(info *model.TableInfo, rowCount uint64, columnLengthM
 
 type statsCache struct {
 	mu         sync.Mutex
+	loading    bool
 	modifyTime time.Time
 	tableRows  map[int64]uint64
 	colLength  map[tableHistID]uint64
@@ -780,23 +781,39 @@ var tableStatsCache = &statsCache{}
 // TableStatsCacheExpiry is the expiry time for table stats cache.
 var TableStatsCacheExpiry = 3 * time.Second
 
+func (c *statsCache) setLoading(loading bool) {
+	c.mu.Lock()
+	c.loading = loading
+	c.mu.Unlock()
+}
+
 func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if time.Now().Sub(c.modifyTime) < TableStatsCacheExpiry {
-		return c.tableRows, c.colLength, nil
+	if time.Now().Sub(c.modifyTime) < TableStatsCacheExpiry || c.loading {
+		tableRows, colLength := c.tableRows, c.colLength
+		c.mu.Unlock()
+		return tableRows, colLength, nil
 	}
+	c.loading = true
+	c.mu.Unlock()
+
 	tableRows, err := getRowCountAllTable(ctx)
 	if err != nil {
+		c.setLoading(false)
 		return nil, nil, errors.Trace(err)
 	}
 	colLength, err := getColLengthAllTables(ctx)
 	if err != nil {
+		c.setLoading(false)
 		return nil, nil, errors.Trace(err)
 	}
+
+	c.mu.Lock()
+	c.loading = false
 	c.tableRows = tableRows
 	c.colLength = colLength
 	c.modifyTime = time.Now()
+	c.mu.Unlock()
 	return tableRows, colLength, nil
 }
 
