@@ -16,7 +16,7 @@ package kv
 import (
 	"bytes"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 // UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.

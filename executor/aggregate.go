@@ -16,7 +16,6 @@ package executor
 import (
 	"sync"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/set"
+	"github.com/pkg/errors"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
 )
