@@ -67,7 +67,7 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 		}
 		if r != nil {
 			buf := GetStack()
-			log.Errorf("goroutine meet panic !!! result: %v, stack: %s", r, buf)
+			log.Errorf("panic in the recoverable goroutine: %v, stack trace:\n%s", r, buf)
 		}
 	}()
 	exec()
