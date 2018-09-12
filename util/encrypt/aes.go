@@ -18,7 +18,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 type blockModeBuild func(block cipher.Block) cipher.BlockMode

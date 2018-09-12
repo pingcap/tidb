@@ -16,8 +16,8 @@ package structure
 import (
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pkg/errors"
 )
 
 // Set sets the string value of the key.

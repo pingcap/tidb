@@ -41,7 +41,7 @@ func (a *LogOnExceed) Action(t *Tracker) {
 	defer a.mutex.Unlock()
 	if !a.acted {
 		a.acted = true
-		log.Warnf(errMemExceedThreshold.GenByArgs(t.label, t.BytesConsumed(), t.bytesLimit, t.String()).Error())
+		log.Warnf(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.bytesLimit, t.String()).Error())
 	}
 }
 

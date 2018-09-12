@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -818,21 +818,21 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 func (s *testDBSuite) TestAddIndexWithDupCols(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	err1 := infoschema.ErrColumnExists.GenByArgs("b")
-	err2 := infoschema.ErrColumnExists.GenByArgs("B")
+	err1 := infoschema.ErrColumnExists.GenWithStackByArgs("b")
+	err2 := infoschema.ErrColumnExists.GenWithStackByArgs("B")
 
 	s.tk.MustExec("create table test_add_index_with_dup (a int, b int)")
 	_, err := s.tk.Exec("create index c on test_add_index_with_dup(b, a, b)")
-	c.Check(err1.Equal(err), Equals, true)
+	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
 
 	_, err = s.tk.Exec("create index c on test_add_index_with_dup(b, a, B)")
-	c.Check(err2.Equal(err), Equals, true)
+	c.Check(errors.Cause(err2).(*terror.Error).Equal(err), Equals, true)
 
 	_, err = s.tk.Exec("alter table test_add_index_with_dup add index c (b, a, b)")
-	c.Check(err1.Equal(err), Equals, true)
+	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
 
 	_, err = s.tk.Exec("alter table test_add_index_with_dup add index c (b, a, B)")
-	c.Check(err2.Equal(err), Equals, true)
+	c.Check(errors.Cause(err2).(*terror.Error).Equal(err), Equals, true)
 
 	s.tk.MustExec("drop table test_add_index_with_dup")
 }
@@ -856,7 +856,7 @@ func (s *testDBSuite) TestIssue6101(c *C) {
 	s.tk.MustExec("use " + s.schemaName)
 	s.tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
 	_, err := s.tk.Exec("insert into t1 values (500), (-500), (~0), (-1);")
-	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(tmysql.ErrWarnDataOutOfRange))
 	s.tk.MustExec("drop table t1")
 

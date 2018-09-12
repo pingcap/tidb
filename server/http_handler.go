@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -334,6 +334,11 @@ type ddlHistoryJobHandler struct {
 	*tikvHandlerTool
 }
 
+// ddlResignOwnerHandler is the handler for resigning ddl owner.
+type ddlResignOwnerHandler struct {
+	store kv.Storage
+}
+
 type serverInfoHandler struct {
 	*tikvHandlerTool
 }
@@ -342,7 +347,7 @@ type allServerInfoHandler struct {
 	*tikvHandlerTool
 }
 
-// valueHandle is the handler for get value.
+// valueHandler is the handler for get value.
 type valueHandler struct {
 }
 
@@ -353,7 +358,7 @@ const (
 	opStopTableScatter = "stop-scatter-table"
 )
 
-// mvccTxnHandler is the handler for txn debugger
+// mvccTxnHandler is the handler for txn debugger.
 type mvccTxnHandler struct {
 	*tikvHandlerTool
 	op string
@@ -614,7 +619,7 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeData(w, tbsInfo)
 			return
 		}
-		writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
+		writeError(w, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName))
 		return
 	}
 
@@ -626,14 +631,14 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if tid < 0 {
-			writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 			return
 		}
 		if data, ok := schema.TableByID(int64(tid)); ok {
 			writeData(w, data.Meta())
 			return
 		}
-		writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 		return
 	}
 
@@ -711,6 +716,37 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 	writeData(w, jobs)
 	return
+}
+
+func (h ddlResignOwnerHandler) resignDDLOwner() error {
+	dom, err := session.GetDomain(h.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ownerMgr := dom.DDL().OwnerManager()
+	err = ownerMgr.ResignOwner(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// ServeHTTP handles request of resigning ddl owner.
+func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method."))
+		return
+	}
+
+	err := h.resignDDLOwner()
+	if err != nil {
+		log.Error(err)
+		writeError(w, err)
+		return
+	}
+
+	writeData(w, "success!")
 }
 
 func (h tableHandler) getPDAddr() ([]string, error) {
