@@ -19,12 +19,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )

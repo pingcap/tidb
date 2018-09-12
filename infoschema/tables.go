@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 )
 
 const (

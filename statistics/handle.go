@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 

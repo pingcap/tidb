@@ -19,11 +19,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // SchemaState is the state for schema elements.
@@ -104,7 +104,7 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 			c.DefaultValueBit = []byte(v)
 			return nil
 		}
-		return types.ErrInvalidDefault.GenByArgs(c.Name)
+		return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 	}
 	return nil
 }

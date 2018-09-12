@@ -20,7 +20,6 @@ import (
 	"math"
 	"sync"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )

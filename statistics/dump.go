@@ -16,13 +16,13 @@ package statistics
 import (
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // JSONTable is used for dumping statistics.

@@ -16,7 +16,6 @@ package expression
 import (
 	"reflect"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 func evalBuiltinFunc(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
@@ -139,7 +139,7 @@ func (s *testEvaluatorSuite) TestLock(c *C) {
 func newFunctionForTest(ctx sessionctx.Context, funcName string, args ...Expression) (Expression, error) {
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenByArgs("FUNCTION", funcName)
+		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
