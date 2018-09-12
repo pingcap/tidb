@@ -421,9 +421,9 @@ func upgrade(s Session) {
 
 	timeutil.LoadSystemTZ = func() string {
 		sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
-		rss, err := s.Execute(context.Background(), sql)
-		if err != nil {
-			log.Fatal(err)
+		rss, errLoad := s.Execute(context.Background(), sql)
+		if errLoad != nil {
+			log.Fatal(errLoad)
 		}
 		chk := rss[0].NewChunk()
 		rss[0].Next(context.Background(), chk)
