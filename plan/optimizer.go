@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/plan/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 )
@@ -162,9 +163,9 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 
 	logic.preparePossibleProperties()
 
-	prop := &requiredProp{
-		taskTp:      rootTaskType,
-		expectedCnt: math.MaxFloat64,
+	prop := &property.PhysicalProperty{
+		TaskTp:      property.RootTaskType,
+		ExpectedCnt: math.MaxFloat64,
 	}
 
 	t, err := logic.findBestTask(prop)

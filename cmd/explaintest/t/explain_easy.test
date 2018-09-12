@@ -55,3 +55,15 @@ explain select t.a = '123455' from t;
 explain select t.a > '123455' from t;
 explain select t.a != '123455' from t;
 explain select t.a = 12345678912345678998789678687678.111 from t;
+
+drop table if exists t;
+create table t(a bigint, b bigint, index idx(a, b));
+explain select * from t where a in (1, 2) and a in (1, 3);
+explain select * from t where b in (1, 2) and b in (1, 3);
+explain select * from t where a = 1 and a = 1;
+explain select * from t where a = 1 and a = 2;
+explain select * from t where b = 1 and b = 2;
+
+drop table if exists t;
+create table t(a bigint primary key);
+explain select * from t where a = 1 and a = 2;

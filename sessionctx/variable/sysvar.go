@@ -623,6 +623,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBOptAggPushDown, boolToIntStr(DefOptAggPushDown)},
 	{ScopeGlobal | ScopeSession, TiDBBuildStatsConcurrency, strconv.Itoa(DefBuildStatsConcurrency)},
 	{ScopeGlobal, TiDBAutoAnalyzeRatio, strconv.FormatFloat(DefAutoAnalyzeRatio, 'f', -1, 64)},
+	{ScopeGlobal, TiDBAutoAnalyzeStartTime, DefAutoAnalyzeStartTime},
+	{ScopeGlobal, TiDBAutoAnalyzeEndTime, DefAutoAnalyzeEndTime},
 	{ScopeSession, TiDBChecksumTableConcurrency, strconv.Itoa(DefChecksumTableConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBDistSQLScanConcurrency, strconv.Itoa(DefDistSQLScanConcurrency)},
 	{ScopeGlobal | ScopeSession, TiDBOptInSubqRewriting, boolToIntStr(DefOptInSubqRewriting)},

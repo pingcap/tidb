@@ -64,6 +64,7 @@ func (s *testSuite) TestSelectNormal(c *C) {
 	result, ok := response.(*selectResult)
 	c.Assert(ok, IsTrue)
 	c.Assert(result.label, Equals, "dag")
+	c.Assert(result.sqlType, Equals, "general")
 	c.Assert(result.rowLen, Equals, len(colTypes))
 
 	response.Fetch(context.TODO())
@@ -143,12 +144,13 @@ func (s *testSuite) TestAnalyze(c *C) {
 		Build()
 	c.Assert(err, IsNil)
 
-	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars)
+	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars, true)
 	c.Assert(err, IsNil)
 
 	result, ok := response.(*selectResult)
 	c.Assert(ok, IsTrue)
 	c.Assert(result.label, Equals, "analyze")
+	c.Assert(result.sqlType, Equals, "internal")
 
 	response.Fetch(context.TODO())
 

@@ -317,6 +317,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return value, ErrWrongValueForVar.GenByArgs(name)
 		}
 		return value, nil
+	case TiDBAutoAnalyzeStartTime, TiDBAutoAnalyzeEndTime:
+		v, err := setAnalyzeTime(vars, value)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		return v, nil
 	}
 	return value, nil
 }
@@ -394,4 +400,24 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 func GoTimeToTS(t time.Time) uint64 {
 	ts := (t.UnixNano() / int64(time.Millisecond)) << epochShiftBits
 	return uint64(ts)
+}
+
+const (
+	analyzeLocalTimeFormat = "15:04"
+	// AnalyzeFullTimeFormat is the full format of analyze start time and end time.
+	AnalyzeFullTimeFormat = "15:04 -0700"
+)
+
+func setAnalyzeTime(s *SessionVars, val string) (string, error) {
+	var t time.Time
+	var err error
+	if len(val) <= len(analyzeLocalTimeFormat) {
+		t, err = time.ParseInLocation(analyzeLocalTimeFormat, val, s.TimeZone)
+	} else {
+		t, err = time.ParseInLocation(AnalyzeFullTimeFormat, val, s.TimeZone)
+	}
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return t.Format(AnalyzeFullTimeFormat), nil
 }

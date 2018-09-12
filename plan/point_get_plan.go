@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -84,21 +85,21 @@ func (p *PointGetPlan) ExplainInfo() string {
 }
 
 // getChildReqProps gets the required property by child index.
-func (p *PointGetPlan) getChildReqProps(idx int) *requiredProp {
+func (p *PointGetPlan) getChildReqProps(idx int) *property.PhysicalProperty {
 	return nil
 }
 
-// StatsCount will return the the count of statsInfo for this plan.
+// StatsCount will return the the RowCount of property.StatsInfo for this plan.
 func (p *PointGetPlan) StatsCount() float64 {
 	return 1
 }
 
-// StatsCount will return the the count of statsInfo for this plan.
-func (p *PointGetPlan) statsInfo() *statsInfo {
+// StatsCount will return the the RowCount of property.StatsInfo for this plan.
+func (p *PointGetPlan) statsInfo() *property.StatsInfo {
 	if p.stats == nil {
-		p.stats = &statsInfo{}
+		p.stats = &property.StatsInfo{}
 	}
-	p.stats.count = 1
+	p.stats.RowCount = 1
 	return p.stats
 }
 
@@ -127,6 +128,8 @@ func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 			}
 			return fp
 		}
+	case *ast.UpdateStmt:
+		return tryUpdatePointPlan(ctx, x)
 	case *ast.DeleteStmt:
 		return tryDeletePointPlan(ctx, x)
 	}
@@ -382,6 +385,57 @@ func findInPairs(colName string, pairs []nameValuePair) int {
 	return -1
 }
 
+func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan {
+	selStmt := &ast.SelectStmt{
+		Fields:  &ast.FieldList{},
+		From:    updateStmt.TableRefs,
+		Where:   updateStmt.Where,
+		OrderBy: updateStmt.Order,
+		Limit:   updateStmt.Limit,
+	}
+	fastSelect := tryPointGetPlan(ctx, selStmt)
+	if fastSelect == nil {
+		return nil
+	}
+	if checkFastPlanPrivilege(ctx, fastSelect, mysql.SelectPriv, mysql.UpdatePriv) != nil {
+		return nil
+	}
+	orderedList := buildOrderedList(ctx, fastSelect, updateStmt.List)
+	if orderedList == nil {
+		return nil
+	}
+	updatePlan := &Update{
+		SelectPlan:  fastSelect,
+		OrderedList: orderedList,
+	}
+	updatePlan.SetSchema(fastSelect.schema)
+	return updatePlan
+}
+
+func buildOrderedList(ctx sessionctx.Context, fastSelect *PointGetPlan, list []*ast.Assignment) []*expression.Assignment {
+	orderedList := make([]*expression.Assignment, 0, len(list))
+	for _, assign := range list {
+		col, err := fastSelect.schema.FindColumn(assign.Column)
+		if err != nil {
+			return nil
+		}
+		if col == nil {
+			return nil
+		}
+		newAssign := &expression.Assignment{
+			Col: col,
+		}
+		expr, err := expression.RewriteSimpleExprWithSchema(ctx, assign.Expr, fastSelect.schema)
+		if err != nil {
+			return nil
+		}
+		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
+		newAssign.Expr = expr.ResolveIndices(fastSelect.schema)
+		orderedList = append(orderedList, newAssign)
+	}
+	return orderedList
+}
+
 func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 	if delStmt.IsMultiTable {
 		return nil
@@ -424,7 +478,7 @@ func colInfoToColumn(db model.CIStr, tblName model.CIStr, asName model.CIStr, co
 		TblName:     tblName,
 		RetType:     &col.FieldType,
 		ID:          col.ID,
-		UniqueID:    col.Offset,
+		UniqueID:    int64(col.Offset),
 		Index:       idx,
 	}
 }

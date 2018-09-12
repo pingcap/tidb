@@ -72,7 +72,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		},
 		{
 			sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
-			best: "IndexLookUp(Index(t.c_d_e)[], Table(t))",
+			best: "Dual",
 		},
 		// Test TopN to table branch in double read.
 		{
@@ -87,7 +87,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test Null Range but the column has not null flag.
 		{
 			sql:  "select * from t where t.c is null",
-			best: "IndexLookUp(Index(t.c_d_e)[], Table(t))",
+			best: "Dual",
 		},
 		// Test TopN to index branch in double read.
 		{
@@ -407,6 +407,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 join t t2 where t1.f=t2.f and t1.a=t2.a",
 			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(t1.a,t2.a)",
 		},
+		{
+			sql:  "select /*+ TIDB_INLJ(t1) */ * from t t1 join t t2 where t1.a=t2.a and t2.a in (1, 2)",
+			best: "IndexJoin{TableReader(Table(t))->TableReader(Table(t)->Sel([in(t2.a, 1, 2)]))}(t1.a,t2.a)",
+		},
 	}
 	for i, tt := range tests {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
@@ -467,7 +471,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		// Test Apply.
 		{
 			sql:  "select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
-			best: "Apply{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(s.a,t1.a)->StreamAgg}->Projection",
+			best: "Apply{TableReader(Table(t))->IndexJoin{TableReader(Table(t))->TableReader(Table(t)->Sel([eq(t1.a, test.t.a)]))}(s.a,t1.a)->StreamAgg}->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
@@ -1025,7 +1029,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
-			best: "IndexReader(Index(t.c_d_e)[])->Projection",
+			best: "Dual->Projection",
 		},
 		{
 			sql:  "select a from t where c in (1, 2, 3) and (d > 2 and d < 4 or d > 5 and d < 7)",

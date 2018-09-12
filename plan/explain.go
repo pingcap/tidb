@@ -51,7 +51,7 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 		}
 	}
 	if len(p.rangeDecidedBy) > 0 {
-		fmt.Fprintf(buffer, ", range: decided by %s", p.rangeDecidedBy)
+		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
 	} else if haveCorCol {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
@@ -67,7 +67,7 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.usePseudoStats {
+	if p.stats.UsePseudoStats {
 		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
@@ -92,7 +92,7 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 		}
 	}
 	if len(p.rangeDecidedBy) > 0 {
-		fmt.Fprintf(buffer, ", range: decided by %s", p.rangeDecidedBy)
+		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
 	} else if haveCorCol {
 		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
 	} else if len(p.Ranges) > 0 {
@@ -108,7 +108,7 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}
-	if p.stats.usePseudoStats {
+	if p.stats.UsePseudoStats {
 		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
@@ -228,7 +228,7 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
 	if len(p.EqualConditions) > 0 {
-		fmt.Fprintf(buffer, ", equal:%s", p.EqualConditions)
+		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
 	}
 	if len(p.LeftConditions) > 0 {
 		fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)

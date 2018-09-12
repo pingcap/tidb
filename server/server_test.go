@@ -320,7 +320,7 @@ func runTestPreparedString(t *C) {
 	})
 }
 
-// This test case does not really cover binary timestamp format, because MySQL driver in golang
+// runTestPreparedTimestamp does not really cover binary timestamp format, because MySQL driver in golang
 // does not use this format. MySQL driver in golang will convert the timestamp to a string.
 // This case guarantees it could work.
 func runTestPreparedTimestamp(t *C) {
@@ -425,7 +425,7 @@ func runTestLoadData(c *C, server *Server) {
 		dbt.Assert(err, IsNil)
 		lastID, err = rs.LastInsertId()
 		dbt.Assert(err, IsNil)
-		dbt.Assert(lastID, Equals, int64(6))
+		dbt.Assert(lastID, Equals, int64(7))
 		affectedRows, err = rs.RowsAffected()
 		dbt.Assert(err, IsNil)
 		dbt.Assert(affectedRows, Equals, int64(4))
@@ -464,7 +464,7 @@ func runTestLoadData(c *C, server *Server) {
 		dbt.Assert(err, IsNil)
 		lastID, err = rs.LastInsertId()
 		dbt.Assert(err, IsNil)
-		dbt.Assert(lastID, Equals, int64(10))
+		dbt.Assert(lastID, Equals, int64(11))
 		affectedRows, err = rs.RowsAffected()
 		dbt.Assert(err, IsNil)
 		dbt.Assert(affectedRows, Equals, int64(799))
