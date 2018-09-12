@@ -16,13 +16,13 @@ package executor
 import (
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/opentracing/basictracer-go"
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/tracing"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

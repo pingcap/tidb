@@ -16,8 +16,8 @@ package structure
 import (
 	"encoding/binary"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pkg/errors"
 )
 
 type listMeta struct {

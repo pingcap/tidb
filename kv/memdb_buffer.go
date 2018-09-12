@@ -18,13 +18,13 @@ package kv
 import (
 	"sync/atomic"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/goleveldb/leveldb"
 	"github.com/pingcap/goleveldb/leveldb/comparer"
 	"github.com/pingcap/goleveldb/leveldb/iterator"
 	"github.com/pingcap/goleveldb/leveldb/memdb"
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 )
 
 // memDbBuffer implements the MemBuffer interface.

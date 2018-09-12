@@ -14,9 +14,9 @@
 package ddl
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/table"
+	"github.com/pkg/errors"
 )
 
 // columnGenerationInDDL is a struct for validating generated columns in DDL.

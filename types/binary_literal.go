@@ -22,8 +22,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pkg/errors"
 )
 
 // BinaryLiteral is the internal type for storing bit / hex literal type.

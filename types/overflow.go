@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 // AddUint64 adds uint64 a and b if no overflow, else returns error.
