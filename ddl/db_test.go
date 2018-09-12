@@ -823,16 +823,16 @@ func (s *testDBSuite) TestAddIndexWithDupCols(c *C) {
 
 	s.tk.MustExec("create table test_add_index_with_dup (a int, b int)")
 	_, err := s.tk.Exec("create index c on test_add_index_with_dup(b, a, b)")
-	c.Check(err1.Equal(err), Equals, true)
+	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
 
 	_, err = s.tk.Exec("create index c on test_add_index_with_dup(b, a, B)")
-	c.Check(err2.Equal(err), Equals, true)
+	c.Check(errors.Cause(err2).(*terror.Error).Equal(err), Equals, true)
 
 	_, err = s.tk.Exec("alter table test_add_index_with_dup add index c (b, a, b)")
-	c.Check(err1.Equal(err), Equals, true)
+	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
 
 	_, err = s.tk.Exec("alter table test_add_index_with_dup add index c (b, a, B)")
-	c.Check(err2.Equal(err), Equals, true)
+	c.Check(errors.Cause(err2).(*terror.Error).Equal(err), Equals, true)
 
 	s.tk.MustExec("drop table test_add_index_with_dup")
 }

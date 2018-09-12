@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 // Kind constants.
@@ -1218,7 +1219,8 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
-		err = errors.Wrap(err, ErrTruncated)
+		log.Error(err)
+		err = errors.Trace(ErrTruncated)
 	}
 	ret.SetValue(e)
 	return ret, err

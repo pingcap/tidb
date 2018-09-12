@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -183,7 +184,8 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 // so we reset the error msg here, and wrap old err with errors.Wrap.
 func resetErrDataTooLong(colName string, rowIdx int, err error) error {
 	newErr := types.ErrDataTooLong.Gen("Data too long for column '%v' at row %v", colName, rowIdx)
-	return errors.Wrap(err, newErr)
+	log.Error(err)
+	return errors.Trace(newErr)
 }
 
 func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int {

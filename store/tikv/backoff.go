@@ -136,7 +136,7 @@ func (t backoffType) String() string {
 	return ""
 }
 
-func (t backoffType) TError() *terror.Error {
+func (t backoffType) TError() error {
 	switch t {
 	case boTiKVRPC:
 		return ErrTiKVServerTimeout

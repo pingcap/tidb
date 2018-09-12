@@ -16,7 +16,6 @@ package terror
 import (
 	"encoding/json"
 	"fmt"
-	"runtime"
 	"strconv"
 
 	"github.com/pingcap/tidb/mysql"
@@ -218,25 +217,23 @@ func (e *Error) getMsg() string {
 }
 
 // Gen generates a new *Error with the same class and code, and a new formatted message.
-func (e *Error) Gen(format string, args ...interface{}) *Error {
+func (e *Error) Gen(format string, args ...interface{}) error {
 	err := *e
 	err.message = format
 	err.args = args
-	_, err.file, err.line, _ = runtime.Caller(1)
-	return &err
+	return errors.AddStack(&err)
 }
 
 // GenByArgs generates a new *Error with the same class and code, and new arguments.
-func (e *Error) GenByArgs(args ...interface{}) *Error {
+func (e *Error) GenByArgs(args ...interface{}) error {
 	err := *e
 	err.args = args
-	_, err.file, err.line, _ = runtime.Caller(1)
-	return &err
+	return errors.AddStack(&err)
 }
 
 // FastGen generates a new *Error with the same class and code, and a new formatted message.
 // This will not call runtime.Caller to get file and line.
-func (e *Error) FastGen(format string, args ...interface{}) *Error {
+func (e *Error) FastGen(format string, args ...interface{}) error {
 	err := *e
 	err.message = format
 	err.args = args
