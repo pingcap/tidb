@@ -116,7 +116,6 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
 		newCol, _ := col.Clone().(*expression.Column)
-		newCol.UniqueID = plan4Agg.ctx.GetSessionVars().AllocPlanColumnID()
 		newCol.RetType = newFunc.RetTp
 		schema4Agg.Append(newCol)
 	}

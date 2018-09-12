@@ -258,7 +258,6 @@ func (a *aggregationOptimizer) makeNewAgg(ctx sessionctx.Context, aggFuncs []*ag
 	for _, gbyCol := range gbyCols {
 		firstRow := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
 		newCol, _ := gbyCol.Clone().(*expression.Column)
-		newCol.UniqueID = ctx.GetSessionVars().AllocPlanColumnID()
 		newCol.RetType = firstRow.RetTp
 		newAggFuncDescs = append(newAggFuncDescs, firstRow)
 		schema.Append(newCol)
