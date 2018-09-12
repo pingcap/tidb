@@ -22,14 +22,18 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-type aggregationEliminater struct {
+type aggregationRecursiveEliminater struct {
+	aggregationEliminateChecker
+}
+
+type aggregationEliminateChecker struct {
 }
 
 // tryToEliminateAggregation will eliminate aggregation grouped by unique key.
 // e.g. select min(b) from t group by a. If a is a unique key, then this sql is equal to `select b from t group by a`.
 // For count(expr), sum(expr), avg(expr), count(distinct expr, [expr...]) we may need to rewrite the expr. Details are shown below.
 // If we can eliminate agg successful, we return a projection. Else we return a nil pointer.
-func (a *aggregationEliminater) tryToEliminateAggregation(agg *LogicalAggregation) *LogicalProjection {
+func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *LogicalAggregation) *LogicalProjection {
 	schemaByGroupby := expression.NewSchema(agg.groupByCols...)
 	coveredByUniqueKey := false
 	for _, key := range agg.children[0].Schema().Keys {
@@ -47,7 +51,7 @@ func (a *aggregationEliminater) tryToEliminateAggregation(agg *LogicalAggregatio
 	return nil
 }
 
-func (a *aggregationEliminater) convertAggToProj(agg *LogicalAggregation) *LogicalProjection {
+func (a *aggregationEliminateChecker) convertAggToProj(agg *LogicalAggregation) *LogicalProjection {
 	proj := LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
 	}.init(agg.ctx)
@@ -60,7 +64,7 @@ func (a *aggregationEliminater) convertAggToProj(agg *LogicalAggregation) *Logic
 }
 
 // rewriteExpr will rewrite the aggregate function to expression doesn't contain aggregate function.
-func (a *aggregationEliminater) rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) expression.Expression {
+func (a *aggregationEliminateChecker) rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) expression.Expression {
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
 		if aggFunc.Mode == aggregation.FinalMode {
@@ -75,7 +79,7 @@ func (a *aggregationEliminater) rewriteExpr(ctx sessionctx.Context, aggFunc *agg
 	}
 }
 
-func (a *aggregationEliminater) rewriteCount(ctx sessionctx.Context, exprs []expression.Expression) expression.Expression {
+func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs []expression.Expression) expression.Expression {
 	// If is count(expr), we will change it to if(isnull(expr), 0, 1).
 	// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
@@ -91,7 +95,7 @@ func (a *aggregationEliminater) rewriteCount(ctx sessionctx.Context, exprs []exp
 // See https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
 // The SUM() and AVG() functions return a DECIMAL value for exact-value arguments (integer or DECIMAL),
 // and a DOUBLE value for approximate-value arguments (FLOAT or DOUBLE).
-func (a *aggregationEliminater) rewriteSumOrAvg(ctx sessionctx.Context, exprs []expression.Expression) expression.Expression {
+func (a *aggregationEliminateChecker) rewriteSumOrAvg(ctx sessionctx.Context, exprs []expression.Expression) expression.Expression {
 	// FIXME: Consider the case that avg is final mode.
 	expr := exprs[0]
 	switch expr.GetType().Tp {
@@ -107,7 +111,7 @@ func (a *aggregationEliminater) rewriteSumOrAvg(ctx sessionctx.Context, exprs []
 	}
 }
 
-func (a *aggregationEliminater) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (a *aggregationRecursiveEliminater) optimize(p LogicalPlan) (LogicalPlan, error) {
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		newChild, _ := a.optimize(child)
