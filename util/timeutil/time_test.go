@@ -21,6 +21,7 @@ import (
 	"os"
 	"testing"
 
+	"fmt"
 	. "github.com/pingcap/check"
 )
 
@@ -40,19 +41,21 @@ func (s *testTimeSuite) TestgetTZNameFromFileName(c *C) {
 
 func (s *testTimeSuite) TestLocal(c *C) {
 	os.Setenv("TZ", "Asia/Shanghai")
-	GetSystemTZ()
+	LocalStr = GetSystemTZ()
 	loc := Local()
+	fmt.Println(LocalStr)
+	c.Assert(LocalStr, Equals, "Asia/Shanghai")
 	c.Assert(loc.String(), Equals, "Asia/Shanghai")
 
 	os.Setenv("TZ", "UTC")
 	// reset localStr
-	GetSystemTZ()
+	LocalStr = GetSystemTZ()
 	loc = Local()
 	c.Assert(loc.String(), Equals, "UTC")
 
 	os.Setenv("TZ", "")
 	// reset localStr
-	GetSystemTZ()
+	LocalStr = GetSystemTZ()
 	loc = Local()
 	c.Assert(loc.String(), Equals, "UTC")
 	os.Unsetenv("TZ")
