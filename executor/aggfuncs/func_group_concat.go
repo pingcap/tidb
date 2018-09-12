@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/set"
 )
 
 type baseGroupConcat4String struct {
@@ -132,7 +133,7 @@ func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
 	valsBuf *bytes.Buffer
-	valSet  stringSet
+	valSet  set.StringSet
 }
 
 type groupConcatDistinct struct {
@@ -142,13 +143,13 @@ type groupConcatDistinct struct {
 func (e *groupConcatDistinct) AllocPartialResult() PartialResult {
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
-	p.valSet = newStringSet()
+	p.valSet = set.NewStringSet()
 	return PartialResult(p)
 }
 
 func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
-	p.buffer, p.valSet = nil, newStringSet()
+	p.buffer, p.valSet = nil, set.NewStringSet()
 }
 
 func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (err error) {
@@ -170,10 +171,10 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 		joinedVals := p.valsBuf.String()
-		if p.valSet.exist(joinedVals) {
+		if p.valSet.Exist(joinedVals) {
 			continue
 		}
-		p.valSet.insert(joinedVals)
+		p.valSet.Insert(joinedVals)
 		// write separator
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}

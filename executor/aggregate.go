@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mvmap"
+	"github.com/pingcap/tidb/util/set"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
 )
@@ -73,8 +73,7 @@ type HashAggFinalWorker struct {
 	rowBuffer           []types.Datum
 	mutableRow          chunk.MutRow
 	partialResultMap    aggPartialResultMapper
-	groupSet            *mvmap.MVMap
-	groupVals           [][]byte
+	groupSet            set.StringSet
 	inputCh             chan *HashAggIntermData
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
@@ -137,11 +136,12 @@ type HashAggExec struct {
 	PartialAggFuncs  []aggfuncs.AggFunc
 	FinalAggFuncs    []aggfuncs.AggFunc
 	partialResultMap aggPartialResultMapper
-	groupMap         *mvmap.MVMap
-	groupIterator    *mvmap.Iterator
+	groupSet         set.StringSet
+	groupKeys        []string
+	cursor4GroupKey  int
 	GroupByItems     []expression.Expression
-	groupKey         []byte
-	groupVals        [][]byte
+	groupKeyBuffer   []byte
+	groupValDatums   []types.Datum
 
 	// After we support parallel execution for aggregation functions with distinct,
 	// we can remove this attribute.
@@ -172,16 +172,16 @@ type HashAggInput struct {
 
 // HashAggIntermData indicates the intermediate data of aggregation execution.
 type HashAggIntermData struct {
-	groupKeys        [][]byte
+	groupKeys        []string
 	cursor           int
 	partialResultMap aggPartialResultMapper
 }
 
 // getPartialResultBatch fetches a batch of partial results from HashAggIntermData.
-func (d *HashAggIntermData) getPartialResultBatch(sc *stmtctx.StatementContext, prs [][]aggfuncs.PartialResult, aggFuncs []aggfuncs.AggFunc, maxChunkSize int) (_ [][]aggfuncs.PartialResult, groupKeys [][]byte, reachEnd bool) {
+func (d *HashAggIntermData) getPartialResultBatch(sc *stmtctx.StatementContext, prs [][]aggfuncs.PartialResult, aggFuncs []aggfuncs.AggFunc, maxChunkSize int) (_ [][]aggfuncs.PartialResult, groupKeys []string, reachEnd bool) {
 	keyStart := d.cursor
 	for ; d.cursor < len(d.groupKeys) && len(prs) < maxChunkSize; d.cursor++ {
-		prs = append(prs, d.partialResultMap[string(d.groupKeys[d.cursor])])
+		prs = append(prs, d.partialResultMap[d.groupKeys[d.cursor]])
 	}
 	if d.cursor == len(d.groupKeys) {
 		reachEnd = true
@@ -193,8 +193,7 @@ func (d *HashAggIntermData) getPartialResultBatch(sc *stmtctx.StatementContext, 
 func (e *HashAggExec) Close() error {
 	if e.isUnparallelExec {
 		e.childResult = nil
-		e.groupMap = nil
-		e.groupIterator = nil
+		e.groupSet = nil
 		e.partialResultMap = nil
 		return nil
 	}
@@ -232,11 +231,10 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 }
 
 func (e *HashAggExec) initForUnparallelExec() {
-	e.groupMap = mvmap.NewMVMap()
-	e.groupIterator = e.groupMap.NewIterator()
+	e.groupSet = set.NewStringSet()
 	e.partialResultMap = make(aggPartialResultMapper, 0)
-	e.groupKey = make([]byte, 0, 8)
-	e.groupVals = make([][]byte, 0, 8)
+	e.groupKeyBuffer = make([]byte, 0, 8)
+	e.groupValDatums = make([]types.Datum, 0, len(e.groupKeyBuffer))
 	e.childResult = e.children[0].newChunk()
 }
 
@@ -271,6 +269,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			globalOutputCh:    e.finalOutputCh,
 			partialResultsMap: make(aggPartialResultMapper, 0),
 			groupByItems:      e.GroupByItems,
+			groupValDatums:    make([]types.Datum, 0, len(e.GroupByItems)),
 			chk:               e.children[0].newChunk(),
 		}
 
@@ -286,8 +285,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		e.finalWorkers[i] = HashAggFinalWorker{
 			baseHashAggWorker:   newBaseHashAggWorker(e.finishCh, e.FinalAggFuncs, e.maxChunkSize),
 			partialResultMap:    make(aggPartialResultMapper, 0),
-			groupSet:            mvmap.NewMVMap(),
-			groupVals:           make([][]byte, 0, 8),
+			groupSet:            set.NewStringSet(),
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,
 			finalResultHolderCh: make(chan *chunk.Chunk, 1),
@@ -357,14 +355,13 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 // shuffleIntermData shuffles the intermediate data of partial workers to corresponded final workers.
 // We only support parallel execution for single-machine, so process of encode and decode can be skipped.
 func (w *HashAggPartialWorker) shuffleIntermData(sc *stmtctx.StatementContext, finalConcurrency int) {
-	groupKeysSlice := make([][][]byte, finalConcurrency)
+	groupKeysSlice := make([][]string, finalConcurrency)
 	for groupKey := range w.partialResultsMap {
-		groupKeyBytes := []byte(groupKey)
-		finalWorkerIdx := int(murmur3.Sum32(groupKeyBytes)) % finalConcurrency
+		finalWorkerIdx := int(murmur3.Sum32([]byte(groupKey))) % finalConcurrency
 		if groupKeysSlice[finalWorkerIdx] == nil {
-			groupKeysSlice[finalWorkerIdx] = make([][]byte, 0, len(w.partialResultsMap)/finalConcurrency)
+			groupKeysSlice[finalWorkerIdx] = make([]string, 0, len(w.partialResultsMap)/finalConcurrency)
 		}
-		groupKeysSlice[finalWorkerIdx] = append(groupKeysSlice[finalWorkerIdx], groupKeyBytes)
+		groupKeysSlice[finalWorkerIdx] = append(groupKeysSlice[finalWorkerIdx], groupKey)
 	}
 
 	for i := range groupKeysSlice {
@@ -426,7 +423,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		input            *HashAggIntermData
 		ok               bool
 		intermDataBuffer [][]aggfuncs.PartialResult
-		groupKeys        [][]byte
+		groupKeys        []string
 		sc               = sctx.GetSessionVars().StmtCtx
 	)
 	for {
@@ -440,11 +437,11 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		for reachEnd := false; !reachEnd; {
 			intermDataBuffer, groupKeys, reachEnd = input.getPartialResultBatch(sc, intermDataBuffer[:0], w.aggFuncs, w.maxChunkSize)
 			for i, groupKey := range groupKeys {
-				if len(w.groupSet.Get(groupKey, w.groupVals[:0])) == 0 {
-					w.groupSet.Put(groupKey, []byte{})
+				if !w.groupSet.Exist(groupKey) {
+					w.groupSet.Insert(groupKey)
 				}
 				prs := intermDataBuffer[i]
-				finalPartialResults := w.getPartialResult(sc, groupKey, w.partialResultMap)
+				finalPartialResults := w.getPartialResult(sc, []byte(groupKey), w.partialResultMap)
 				for j, af := range w.aggFuncs {
 					if err = af.MergePartialResult(sctx, prs[j], finalPartialResults[j]); err != nil {
 						return errors.Trace(err)
@@ -456,21 +453,13 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 }
 
 func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
-	groupIter := w.groupSet.NewIterator()
 	result, finished := w.receiveFinalResultHolder()
 	if finished {
 		return
 	}
 	result.Reset()
-	for {
-		groupKey, _ := groupIter.Next()
-		if groupKey == nil {
-			if result.NumRows() > 0 {
-				w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
-			}
-			return
-		}
-		partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, groupKey, w.partialResultMap)
+	for groupKey := range w.groupSet {
+		partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, []byte(groupKey), w.partialResultMap)
 		for i, af := range w.aggFuncs {
 			af.AppendFinalResult2Chunk(sctx, partialResults[i], result)
 		}
@@ -485,6 +474,9 @@ func (w *HashAggFinalWorker) getFinalResult(sctx sessionctx.Context) {
 			}
 			result.Reset()
 		}
+	}
+	if result.NumRows() > 0 {
+		w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 	}
 }
 
@@ -621,22 +613,22 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if (e.groupMap.Len() == 0) && len(e.GroupByItems) == 0 {
+		if (len(e.groupSet) == 0) && len(e.GroupByItems) == 0 {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]
 			// "select count(c) from t group by c1;" should return empty result set.
-			e.groupMap.Put([]byte{}, []byte{})
+			e.groupSet.Insert("")
+			e.groupKeys = append(e.groupKeys, "")
 		}
 		e.prepared = true
 	}
 	chk.Reset()
-	for {
-		groupKey, _ := e.groupIterator.Next()
-		if groupKey == nil {
-			return nil
-		}
-		partialResults := e.getPartialResults(groupKey)
+
+	// Since we return e.maxChunkSize rows every time, so we should not traverse
+	// `groupSet` because of its randomness.
+	for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
+		partialResults := e.getPartialResults(e.groupKeys[e.cursor4GroupKey])
 		if len(e.PartialAggFuncs) == 0 {
 			chk.SetNumVirtualRows(chk.NumRows() + 1)
 		}
@@ -644,9 +636,11 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 			af.AppendFinalResult2Chunk(e.ctx, partialResults[i], chk)
 		}
 		if chk.NumRows() == e.maxChunkSize {
+			e.cursor4GroupKey++
 			return nil
 		}
 	}
+	return nil
 }
 
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
@@ -666,8 +660,9 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if len(e.groupMap.Get(groupKey, e.groupVals[:0])) == 0 {
-				e.groupMap.Put(groupKey, []byte{})
+			if !e.groupSet.Exist(groupKey) {
+				e.groupSet.Insert(groupKey)
+				e.groupKeys = append(e.groupKeys, groupKey)
 			}
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
@@ -680,35 +675,34 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 	}
 }
 
-func (e *HashAggExec) getGroupKey(row chunk.Row) ([]byte, error) {
-	vals := make([]types.Datum, 0, len(e.GroupByItems))
+func (e *HashAggExec) getGroupKey(row chunk.Row) (string, error) {
+	e.groupValDatums = e.groupValDatums[:0]
 	for _, item := range e.GroupByItems {
 		v, err := item.Eval(row)
 		if item.GetType().Tp == mysql.TypeNewDecimal {
 			v.SetLength(0)
 		}
 		if err != nil {
-			return nil, errors.Trace(err)
+			return "", errors.Trace(err)
 		}
-		vals = append(vals, v)
+		e.groupValDatums = append(e.groupValDatums, v)
 	}
 	var err error
-	e.groupKey, err = codec.EncodeValue(e.sc, e.groupKey[:0], vals...)
+	e.groupKeyBuffer, err = codec.EncodeValue(e.sc, e.groupKeyBuffer[:0], e.groupValDatums...)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return "", errors.Trace(err)
 	}
-	return e.groupKey, nil
+	return string(e.groupKeyBuffer), nil
 }
 
-func (e *HashAggExec) getPartialResults(groupKey []byte) []aggfuncs.PartialResult {
-	groupKeyString := string(groupKey)
-	partialResults, ok := e.partialResultMap[groupKeyString]
+func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResult {
+	partialResults, ok := e.partialResultMap[groupKey]
 	if !ok {
 		partialResults = make([]aggfuncs.PartialResult, 0, len(e.PartialAggFuncs))
 		for _, af := range e.PartialAggFuncs {
 			partialResults = append(partialResults, af.AllocPartialResult())
 		}
-		e.partialResultMap[groupKeyString] = partialResults
+		e.partialResultMap[groupKey] = partialResults
 	}
 	return partialResults
 }
