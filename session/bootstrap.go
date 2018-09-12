@@ -416,6 +416,9 @@ func upgrade(s Session) {
 		upgradeToVer24(s)
 	}
 
+	updateBootstrapVer(s)
+	_, err = s.Execute(context.Background(), "COMMIT")
+
 	timeutil.LoadSystemTZ = func() string {
 		sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
 		rss, err := s.Execute(context.Background(), sql)
@@ -428,9 +431,6 @@ func upgrade(s Session) {
 	}
 
 	timeutil.LocalStr = timeutil.LoadSystemTZ()
-
-	updateBootstrapVer(s)
-	_, err = s.Execute(context.Background(), "COMMIT")
 
 	if err != nil {
 		time.Sleep(1 * time.Second)

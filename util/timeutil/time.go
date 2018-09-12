@@ -59,6 +59,7 @@ type locCache struct {
 }
 
 // GetSystemTZ reads system timezone from `TZ`, the path of the soft link of `/etc/localtime`. If both of them are failed, system timezone will be set to `UTC`.
+// It is exported because we need to use it during bootstap stage. And it should be only used at that stage.
 func GetSystemTZ() string {
 	// consult $TZ to find the time zone to use.
 	// no $TZ means use the system default /etc/localtime.
