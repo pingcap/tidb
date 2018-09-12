@@ -37,7 +37,7 @@ const (
 	flagMaxMinEliminate
 	flagPredicatePushDown
 	flagPartitionProcessor
-	flagAggregationOptimize
+	flagPushDownAgg
 	flagPushDownTopN
 )
 
@@ -45,7 +45,7 @@ var optRuleList = []logicalOptRule{
 	&columnPruner{},
 	&projectionEliminater{},
 	&buildKeySolver{},
-	&aggregationRecursiveEliminater{},
+	&aggregationEliminater{},
 	&decorrelateSolver{},
 	&maxMinEliminator{},
 	&ppdSolver{},

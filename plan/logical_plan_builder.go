@@ -68,7 +68,7 @@ func (la *LogicalAggregation) collectGroupByColumns() {
 
 func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression) (LogicalPlan, map[int]int, error) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagAggregationOptimize
+	b.optFlag = b.optFlag | flagPushDownAgg
 	// We may apply aggregation eliminate optimization.
 	// So we add the flagMaxMinEliminate to try to convert max/min to topn and flagPushDownTopN to handle the newly added topn operator.
 	b.optFlag = b.optFlag | flagMaxMinEliminate
@@ -586,7 +586,7 @@ func (b *planBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 
 func (b *planBuilder) buildDistinct(child LogicalPlan, length int) *LogicalAggregation {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
-	b.optFlag = b.optFlag | flagAggregationOptimize
+	b.optFlag = b.optFlag | flagPushDownAgg
 	plan4Agg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
