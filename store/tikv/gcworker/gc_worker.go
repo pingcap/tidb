@@ -331,6 +331,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
+	time.Sleep(time.Second * 60)
 	// Process all delete range records whose ts < safePoint in table `gc_delete_range`
 	err = w.deleteRanges(ctx, safePoint)
 	if err != nil {
