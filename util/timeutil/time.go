@@ -68,15 +68,15 @@ func GetSystemTZ() string {
 	tz, ok := syscall.Getenv("TZ")
 	switch {
 	case !ok:
-		path, err := filepath.EvalSymlinks("/etc/localtime")
-		if err == nil {
-			name, err := getTZNameFromFileName(path)
-			if err == nil {
+		path, err1 := filepath.EvalSymlinks("/etc/localtime")
+		if err1 == nil {
+			name, err2 := getTZNameFromFileName(path)
+			if err2 == nil {
 				return name
 			}
-			log.Errorln(err)
+			log.Errorln(err2)
 		}
-		log.Errorln(err)
+		log.Errorln(err1)
 	case tz != "" && tz != "UTC":
 		for _, source := range zoneSources {
 			if _, err := os.Stat(source + tz); err == nil {
