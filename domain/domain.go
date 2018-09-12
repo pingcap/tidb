@@ -60,6 +60,7 @@ type Domain struct {
 	etcdClient      *clientv3.Client
 	wg              sync.WaitGroup
 	gvc             GlobalVariableCache
+	slowQuery       *topNSlowQueries
 
 	MockReloadFailed MockFailure // It mocks reload failed.
 }
@@ -329,6 +330,32 @@ func (do *Domain) Reload() error {
 	return nil
 }
 
+// LogTopNSlowQuery keeps topN recent slow queries in domain.
+func (do *Domain) LogTopNSlowQuery(query *SlowQueryInfo) {
+	select {
+	case do.slowQuery.ch <- query:
+	default:
+	}
+}
+
+func (do *Domain) topNSlowQueryLoop() {
+	defer recoverInDomain("topNSlowQueryLoop", false)
+	defer do.wg.Done()
+	ticker := time.NewTicker(time.Minute * 10)
+	defer ticker.Stop()
+	for {
+		select {
+		case now := <-ticker.C:
+			do.slowQuery.Refresh(now)
+		case info, ok := <-do.slowQuery.ch:
+			if !ok {
+				return
+			}
+			do.slowQuery.Append(info)
+		}
+	}
+}
+
 func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 	defer do.wg.Done()
 	// Lease renewal can run at any frequency.
@@ -408,6 +435,7 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
+	do.slowQuery.Close()
 	do.sysSessionPool.Close()
 	do.wg.Wait()
 	log.Info("[domain] close")
@@ -471,6 +499,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, resourceIdleTimeout),
 		statsLease:      statsLease,
 		infoHandle:      infoschema.NewHandle(store),
+		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7),
 	}
 }
 
@@ -529,6 +558,8 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ddlLease)
 	}
+	do.wg.Add(1)
+	go do.topNSlowQueryLoop()
 
 	return nil
 }
