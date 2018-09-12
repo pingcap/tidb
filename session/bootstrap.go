@@ -416,6 +416,19 @@ func upgrade(s Session) {
 		upgradeToVer24(s)
 	}
 
+	timeutil.LoadSystemTZ = func() string {
+		sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
+		rss, err := s.Execute(context.Background(), sql)
+		if err != nil {
+			log.Fatal(err)
+		}
+		chk := rss[0].NewChunk()
+		rss[0].Next(context.Background(), chk)
+		return chk.GetRow(0).GetString(0)
+	}
+
+	timeutil.LocalStr = timeutil.LoadSystemTZ()
+
 	updateBootstrapVer(s)
 	_, err = s.Execute(context.Background(), "COMMIT")
 
@@ -658,11 +671,16 @@ func upgradeToVer23(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `flag` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
-// upgradeToVer24 initializes `Sysstem` timezone according to docs/design/2018-09-10-adding-tz-env.md
-func upgradeToVer24(s Session) {
-	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", "%s", "TiDB Global System Timezone.")`,
-		mysql.SystemDB, mysql.TiDBTable, tidbSystemTZ, timeutil.Local().String())
+//writeSystemTZ writes system timezone info into mysql.tidb
+func writeSystemTZ(s Session) {
+	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", "%s", "TiDB Global System Timezone.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
+		mysql.SystemDB, mysql.TiDBTable, tidbSystemTZ, timeutil.GetSystemTZ(), timeutil.GetSystemTZ())
 	mustExecute(s, sql)
+}
+
+// upgradeToVer24 initializes `System` timezone according to docs/design/2018-09-10-adding-tz-env.md
+func upgradeToVer24(s Session) {
+	writeSystemTZ(s)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -748,6 +766,7 @@ func doDMLWorks(s Session) {
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion)
 	mustExecute(s, sql)
 
+	writeSystemTZ(s)
 	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {
 		time.Sleep(1 * time.Second)

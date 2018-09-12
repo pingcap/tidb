@@ -34,13 +34,17 @@ func init() {
 
 // LocCache is a simple cache policy to improve the performance of 'time.LoadLocation'.
 var LocCache *locCache
-var localStr string
-var localOnce sync.Once
+
+// LoadSystemTZ loads system timezone from mysql.tidb and returns the value.
+var LoadSystemTZ func() string
+
+// LocalStr is current TiDB's system timezone name.
+var LocalStr string
 var zoneSources = []string{
 	"/usr/share/zoneinfo/",
 	"/usr/share/lib/zoneinfo/",
 	"/usr/lib/locale/TZ/",
-	// this is for macos
+	// this is for macOS
 	"/var/db/timezone/zoneinfo",
 }
 
@@ -54,36 +58,32 @@ type locCache struct {
 	locMap map[string]*time.Location
 }
 
-func initLocalStr() {
+// GetSystemTZ reads system timezone from `TZ`, the path of the soft link of `/etc/localtime`. If both of them are failed, system timezone will be set to `UTC`.
+func GetSystemTZ() string {
 	// consult $TZ to find the time zone to use.
 	// no $TZ means use the system default /etc/localtime.
 	// $TZ="" means use UTC.
 	// $TZ="foo" means use /usr/share/zoneinfo/foo.
-
 	tz, ok := syscall.Getenv("TZ")
 	switch {
 	case !ok:
 		path, err := filepath.EvalSymlinks("/etc/localtime")
 		if err == nil {
-			localStr, err = getTZNameFromFileName(path)
+			name, err := getTZNameFromFileName(path)
 			if err == nil {
-				return
+				return name
 			}
 			log.Errorln(err)
 		}
 		log.Errorln(err)
-	case tz == "":
-	case tz == "UTC":
-		localStr = "UTC"
 	case tz != "" && tz != "UTC":
 		for _, source := range zoneSources {
 			if _, err := os.Stat(source + tz); err == nil {
-				localStr = tz
-				return
+				return tz
 			}
 		}
 	}
-	localStr = "System"
+	return "UTC"
 }
 
 // getTZNameFromFileName gets IANA timezone name from zoneinfo path.
@@ -100,8 +100,7 @@ func getTZNameFromFileName(path string) (string, error) {
 
 // Local returns time.Local's IANA timezone name.
 func Local() *time.Location {
-	localOnce.Do(initLocalStr)
-	loc, err := LoadLocation(localStr)
+	loc, err := LoadLocation(LocalStr)
 	if err != nil {
 		return time.Local
 	}
