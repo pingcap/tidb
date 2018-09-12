@@ -59,9 +59,9 @@ func (t *rootTask) invalid() bool {
 
 func (t *copTask) count() float64 {
 	if t.indexPlanFinished {
-		return t.tablePlan.statsInfo().count
+		return t.tablePlan.statsInfo().RowCount
 	}
-	return t.indexPlan.statsInfo().count
+	return t.indexPlan.statsInfo().RowCount
 }
 
 func (t *copTask) addCost(cst float64) {
@@ -237,7 +237,7 @@ func (t *rootTask) copy() task {
 }
 
 func (t *rootTask) count() float64 {
-	return t.p.statsInfo().count
+	return t.p.statsInfo().RowCount
 }
 
 func (t *rootTask) addCost(cst float64) {
@@ -485,7 +485,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
-	cardinality := p.statsInfo().count
+	cardinality := p.statsInfo().RowCount
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()

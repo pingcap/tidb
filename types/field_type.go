@@ -193,7 +193,6 @@ func (ft *FieldType) CompactStr() string {
 	suffix := ""
 
 	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.Tp)
-	isFlenNotDefault := ft.Flen != defaultFlen && ft.Flen != 0 && ft.Flen != UnspecifiedLength
 	isDecimalNotDefault := ft.Decimal != defaultDecimal && ft.Decimal != 0 && ft.Decimal != UnspecifiedLength
 
 	// displayFlen and displayDecimal are flen and decimal values with `-1` substituted with default value.
@@ -227,13 +226,7 @@ func (ft *FieldType) CompactStr() string {
 			suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
 		}
 	case mysql.TypeNewDecimal:
-		if isFlenNotDefault || isDecimalNotDefault {
-			suffix = fmt.Sprintf("(%d", displayFlen)
-			if isDecimalNotDefault {
-				suffix += fmt.Sprintf(",%d", displayDecimal)
-			}
-			suffix += ")"
-		}
+		suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
 	case mysql.TypeBit, mysql.TypeShort, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
 		// Flen is always shown.
 		suffix = fmt.Sprintf("(%d)", displayFlen)
@@ -1436,7 +1429,7 @@ func (ft *FieldType) StorageLength() int {
 		return 8
 	case mysql.TypeNewDecimal:
 		precision, frac := ft.Flen-ft.Decimal, ft.Decimal
-		return precision/digitsPerWord + dig2bytes[precision%digitsPerWord] + frac/digitsPerWord + dig2bytes[frac%digitsPerWord]
+		return precision/digitsPerWord*wordSize + dig2bytes[precision%digitsPerWord] + frac/digitsPerWord*wordSize + dig2bytes[frac%digitsPerWord]
 	default:
 		return VarStorageLen
 	}
