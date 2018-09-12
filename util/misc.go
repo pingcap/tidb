@@ -14,11 +14,9 @@
 package util
 
 import (
-	"fmt"
 	"runtime"
 	"time"
 
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -61,39 +59,16 @@ func GetStack() []byte {
 // WithRecovery wraps goroutine startup call with recovery handle.
 // There are two out of box common handlers `WithPanicLogf` and `WithPanicMetricInc`,
 // Caller can custom define new handler use last optional parameters.
-func WithRecovery(ctx context.Context, fn func(ctx context.Context), handlerOpts ...func(r interface{})) {
-	if len(handlerOpts) == 0 {
-		handlerOpts = append(handlerOpts, DefaultLogPanicHandler)
-	}
+func WithRecovery(ctx context.Context, fn func(ctx context.Context), handler func(r interface{})) {
 	defer func() {
 		r := recover()
-		for _, handler := range handlerOpts {
+		if handler != nil {
 			handler(r)
+		}
+		if r != nil {
+			buf := GetStack()
+			log.Errorf("goroutine meet panic !!! result: %v, stack: %s", r, buf)
 		}
 	}()
 	fn(ctx)
-}
-
-// DefaultLogPanicHandler will be added if call WithRecovery without any handlerOpts.
-var DefaultLogPanicHandler = WithPanicLogf("goroutine")
-
-// WithPanicLogf defines a panic handler that write a log with goroutine full stack.
-func WithPanicLogf(format string, args ...interface{}) func(r interface{}) {
-	return func(r interface{}) {
-		if r == nil {
-			return
-		}
-		buf := GetStack()
-		log.Errorf("%s meet panic !!! result: %v, stack: %s", fmt.Sprintf(format, args...), r, buf)
-	}
-}
-
-// WithPanicMetricInc defines a panic handler that record a panic counter metric.
-func WithPanicMetricInc(labelValues ...string) func(r interface{}) {
-	return func(r interface{}) {
-		if r == nil {
-			return
-		}
-		metrics.PanicCounter.WithLabelValues(labelValues...).Inc()
-	}
 }

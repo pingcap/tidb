@@ -314,19 +314,15 @@ func (e *HashJoinExec) initializeForProbe() {
 func (e *HashJoinExec) fetchOuterAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
 	e.workerWaitGroup.Add(1)
-	go util.WithRecovery(ctx, e.fetchOuterChunks, util.WithPanicLogf("hash join outer fetcher"), e.disposeOuterFetcher)
+	go util.WithRecovery(ctx, e.fetchOuterChunks, e.disposeOuterFetcher)
 
 	// Start e.concurrency join workers to probe hash table and join inner and outer rows.
 	for i := uint(0); i < e.concurrency; i++ {
 		e.workerWaitGroup.Add(1)
 		workID := i
-		go util.WithRecovery(ctx, func(ctx context.Context) {
-			e.runJoinWorker(workID)
-		}, util.WithPanicLogf("hash join worker %v", workID), e.disposeJoinWorker)
+		go util.WithRecovery(ctx, func(ctx context.Context) { e.runJoinWorker(workID) }, e.disposeJoinWorker)
 	}
-	go util.WithRecovery(ctx, func(ctx context.Context) {
-		e.waitJoinWorkersAndCloseResultChan()
-	})
+	go util.WithRecovery(ctx, func(ctx context.Context) { e.waitJoinWorkersAndCloseResultChan() }, nil)
 }
 
 func (e *HashJoinExec) disposeOuterFetcher(r interface{}) {
@@ -489,8 +485,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
-		go util.WithRecovery(ctx, e.fetchInnerAndBuildHashTable,
-			util.WithPanicLogf("fetchInnerAndBuildHashTable"), e.disposeFetchInnerAndBuildHashTable)
+		go util.WithRecovery(ctx, e.fetchInnerAndBuildHashTable, e.disposeFetchInnerAndBuildHashTable)
 		e.fetchOuterAndProbeHashTable(ctx)
 		e.prepared = true
 	}
@@ -522,9 +517,7 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	// innerResultCh transfer inner result chunk from inner fetch to build hash table.
 	innerResultCh := make(chan *chunk.Chunk, e.concurrency)
 	doneCh := make(chan struct{})
-	go util.WithRecovery(ctx, func(ctx context.Context) {
-		e.fetchInnerRows(ctx, innerResultCh, doneCh)
-	}, util.WithPanicLogf("hash join inner fetcher"))
+	go util.WithRecovery(ctx, func(ctx context.Context) { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
 
 	if e.finished.Load().(bool) {
 		return
