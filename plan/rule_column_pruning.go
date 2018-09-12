@@ -132,6 +132,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) {
 	for _, child := range p.Children() {
 		child.PruneColumns(parentUsedCols)
 	}
+	p.schema.Columns = p.children[0].Schema().Columns
 }
 
 // PruneColumns implements LogicalPlan interface.
