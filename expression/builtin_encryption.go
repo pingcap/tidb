@@ -16,6 +16,7 @@ package expression
 import (
 	"bytes"
 	"compress/zlib"
+	"crypto/aes"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha1"
@@ -27,7 +28,6 @@ import (
 	"io"
 	"strings"
 
-	"crypto/aes"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
