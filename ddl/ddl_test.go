@@ -78,7 +78,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 		worker.wg.Add(1)
 		worker.quitCh = make(chan struct{})
 		w := worker
-		go util.WithRecovery(ctx, func(ctx context.Context) { w.start(d.ddlCtx) },
+		go util.WithRecovery(func() { w.start(d.ddlCtx) },
 			func(r interface{}) {
 				if r != nil {
 					log.Errorf("[ddl-%s] ddl %s meet panic", w, d.uuid)

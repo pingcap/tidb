@@ -19,7 +19,6 @@ import (
 
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/net/context"
 )
 
 const (
@@ -56,19 +55,20 @@ func GetStack() []byte {
 	return buf
 }
 
-// WithRecovery wraps goroutine startup call with recovery handle.
-// There are two out of box common handlers `WithPanicLogf` and `WithPanicMetricInc`,
-// Caller can custom define new handler use last optional parameters.
-func WithRecovery(ctx context.Context, fn func(ctx context.Context), handler func(r interface{})) {
+// WithRecovery wraps goroutine startup call with force recovery.
+// it will dump current goroutine stack into log if catch any recover result.
+//   exec:      execute logic function.
+//   recoverFn: handler will be called after recover and before dump stack, passing `nil` means noop.
+func WithRecovery(exec func(), recoverFn func(r interface{})) {
 	defer func() {
 		r := recover()
-		if handler != nil {
-			handler(r)
+		if recoverFn != nil {
+			recoverFn(r)
 		}
 		if r != nil {
 			buf := GetStack()
 			log.Errorf("goroutine meet panic !!! result: %v, stack: %s", r, buf)
 		}
 	}()
-	fn(ctx)
+	exec()
 }

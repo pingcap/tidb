@@ -371,7 +371,8 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			w := worker
-			go util2.WithRecovery(ctx, func(ctx context.Context) { w.start(d.ddlCtx) },
+			go util2.WithRecovery(
+				func() { w.start(d.ddlCtx) },
 				func(r interface{}) {
 					if r != nil {
 						log.Errorf("[ddl-%s] ddl %s meet panic", w, d.uuid)
