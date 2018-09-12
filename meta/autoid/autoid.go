@@ -99,7 +99,7 @@ func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 // The real base may be greater than the required base.
 func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error {
 	if tableID == 0 {
-		return errInvalidTableID.Gen("Invalid tableID")
+		return errInvalidTableID.GenWithStack("Invalid tableID")
 	}
 
 	alloc.mu.Lock()
@@ -151,7 +151,7 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 // Alloc implements autoid.Allocator Alloc interface.
 func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	if tableID == 0 {
-		return 0, errInvalidTableID.Gen("Invalid tableID")
+		return 0, errInvalidTableID.GenWithStack("Invalid tableID")
 	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
@@ -221,7 +221,7 @@ func (alloc *memoryAllocator) Rebase(tableID, newBase int64, allocIDs bool) erro
 // Alloc implements autoid.Allocator Alloc interface.
 func (alloc *memoryAllocator) Alloc(tableID int64) (int64, error) {
 	if tableID == 0 {
-		return 0, errInvalidTableID.Gen("Invalid tableID")
+		return 0, errInvalidTableID.GenWithStack("Invalid tableID")
 	}
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()

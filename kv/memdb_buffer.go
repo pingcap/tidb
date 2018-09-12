@@ -95,15 +95,15 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 		return errors.Trace(ErrCannotSetNilValue)
 	}
 	if len(k)+len(v) > m.entrySizeLimit {
-		return ErrEntryTooLarge.Gen("entry too large, size: %d", len(k)+len(v))
+		return ErrEntryTooLarge.GenWithStack("entry too large, size: %d", len(k)+len(v))
 	}
 
 	err := m.db.Put(k, v)
 	if m.Size() > m.bufferSizeLimit {
-		return ErrTxnTooLarge.Gen("transaction too large, size:%d", m.Size())
+		return ErrTxnTooLarge.GenWithStack("transaction too large, size:%d", m.Size())
 	}
 	if m.Len() > int(m.bufferLenLimit) {
-		return ErrTxnTooLarge.Gen("transaction too large, len:%d", m.Len())
+		return ErrTxnTooLarge.GenWithStack("transaction too large, len:%d", m.Len())
 	}
 	return errors.Trace(err)
 }

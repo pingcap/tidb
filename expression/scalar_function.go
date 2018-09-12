@@ -80,7 +80,7 @@ func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldTy
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenByArgs("FUNCTION", funcName)
+		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)

@@ -143,7 +143,7 @@ func (t backoffType) TError() error {
 	case BoTxnLock, boTxnLockFast:
 		return ErrResolveLockTimeout
 	case boPDRPC:
-		return ErrPDServerTimeout.GenByArgs(txnRetryableMark)
+		return ErrPDServerTimeout.GenWithStackByArgs(txnRetryableMark)
 	case BoRegionMiss, BoUpdateLeader:
 		return ErrRegionUnavailable
 	case boServerBusy:

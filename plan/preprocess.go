@@ -97,7 +97,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.inCreateOrDropTable = false
 	case *ast.ParamMarkerExpr:
 		if !p.inPrepare {
-			p.err = parser.ErrSyntax.Gen("syntax error, unexpected '?'")
+			p.err = parser.ErrSyntax.GenWithStack("syntax error, unexpected '?'")
 			return
 		}
 	case *ast.ExplainStmt:
@@ -112,7 +112,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			}
 		}
 		if !valid {
-			p.err = ErrUnknownExplainFormat.GenByArgs(x.Format)
+			p.err = ErrUnknownExplainFormat.GenWithStackByArgs(x.Format)
 		}
 	case *ast.TableName:
 		p.handleTableName(x)
@@ -232,11 +232,11 @@ func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
 			continue
 		}
 		if sel.Limit != nil {
-			p.err = ErrWrongUsage.GenByArgs("UNION", "LIMIT")
+			p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "LIMIT")
 			return
 		}
 		if sel.OrderBy != nil {
-			p.err = ErrWrongUsage.GenByArgs("UNION", "ORDER BY")
+			p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "ORDER BY")
 			return
 		}
 	}
@@ -244,20 +244,20 @@ func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
-		p.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
+		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
-		p.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
+		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
-		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
 	countPrimaryKey := 0
@@ -306,7 +306,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
-			p.err = ddl.ErrWrongTableName.GenByArgs(t.Name.String())
+			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
 	}
@@ -332,7 +332,7 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]inter
 	if ts, ok := node.(*ast.TableSource); ok {
 		_, exists := tableAliases[ts.AsName.L]
 		if len(ts.AsName.L) != 0 && exists {
-			return ErrNonUniqTable.GenByArgs(ts.AsName)
+			return ErrNonUniqTable.GenWithStackByArgs(ts.AsName)
 		}
 		tableAliases[ts.AsName.L] = nil
 	}
@@ -351,7 +351,7 @@ func isPrimary(ops []*ast.ColumnOption) int {
 func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
-		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNames)
@@ -362,12 +362,12 @@ func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 	newTable := stmt.NewTable.Name.String()
 
 	if isIncorrectName(oldTable) {
-		p.err = ddl.ErrWrongTableName.GenByArgs(oldTable)
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(oldTable)
 		return
 	}
 
 	if isIncorrectName(newTable) {
-		p.err = ddl.ErrWrongTableName.GenByArgs(newTable)
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(newTable)
 		return
 	}
 }
@@ -375,7 +375,7 @@ func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
-		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
+		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
 	specs := stmt.Specs
@@ -383,7 +383,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		if spec.NewTable != nil {
 			ntName := spec.NewTable.Name.String()
 			if isIncorrectName(ntName) {
-				p.err = ddl.ErrWrongTableName.GenByArgs(ntName)
+				p.err = ddl.ErrWrongTableName.GenWithStackByArgs(ntName)
 				return
 			}
 		}
@@ -416,7 +416,7 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 	for _, indexColName := range indexColNames {
 		name := indexColName.Column.Name
 		if _, ok := colNames[name.L]; ok {
-			return infoschema.ErrColumnExists.GenByArgs(name)
+			return infoschema.ErrColumnExists.GenWithStackByArgs(name)
 		}
 		colNames[name.L] = struct{}{}
 	}
@@ -426,10 +426,10 @@ func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
 // checkIndexInfo checks index name and index column names.
 func checkIndexInfo(indexName string, indexColNames []*ast.IndexColName) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
-		return ddl.ErrWrongNameForIndex.GenByArgs(indexName)
+		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
 	if len(indexColNames) > mysql.MaxKeyParts {
-		return infoschema.ErrTooManyKeyParts.GenByArgs(mysql.MaxKeyParts)
+		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
 	}
 	return checkDuplicateColumnName(indexColNames)
 }
@@ -440,11 +440,11 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	// Check column name.
 	cName := colDef.Name.Name.String()
 	if isIncorrectName(cName) {
-		return ddl.ErrWrongColumnName.GenByArgs(cName)
+		return ddl.ErrWrongColumnName.GenWithStackByArgs(cName)
 	}
 
 	if isInvalidDefaultValue(colDef) {
-		return types.ErrInvalidDefault.GenByArgs(colDef.Name.Name.O)
+		return types.ErrInvalidDefault.GenWithStackByArgs(colDef.Name.Name.O)
 	}
 
 	// Check column type.
@@ -453,13 +453,13 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		return nil
 	}
 	if tp.Flen > math.MaxUint32 {
-		return types.ErrTooBigDisplayWidth.Gen("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, math.MaxUint32)
+		return types.ErrTooBigDisplayWidth.GenWithStack("Display width out of range for column '%s' (max = %d)", colDef.Name.Name.O, math.MaxUint32)
 	}
 
 	switch tp.Tp {
 	case mysql.TypeString:
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.MaxFieldCharLength {
-			return types.ErrTooBigFieldLength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
+			return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, mysql.MaxFieldCharLength)
 		}
 	case mysql.TypeVarchar:
 		maxFlen := mysql.MaxFieldVarCharLength
@@ -476,32 +476,32 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		}
 		maxFlen /= desc.Maxlen
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > maxFlen {
-			return types.ErrTooBigFieldLength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
+			return types.ErrTooBigFieldLength.GenWithStack("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
 		}
 	case mysql.TypeFloat, mysql.TypeDouble:
 		if tp.Decimal > mysql.MaxFloatingTypeScale {
-			return types.ErrTooBigScale.GenByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
+			return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
 		}
 		if tp.Flen > mysql.MaxFloatingTypeWidth {
-			return types.ErrTooBigPrecision.GenByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
+			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
 		}
 	case mysql.TypeSet:
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
-			return types.ErrTooBigSet.Gen("Too many strings for column %s and SET", colDef.Name.Name.O)
+			return types.ErrTooBigSet.GenWithStack("Too many strings for column %s and SET", colDef.Name.Name.O)
 		}
 		// Check set elements. See https://dev.mysql.com/doc/refman/5.7/en/set.html .
 		for _, str := range colDef.Tp.Elems {
 			if strings.Contains(str, ",") {
-				return types.ErrIllegalValueForType.GenByArgs(types.TypeStr(tp.Tp), str)
+				return types.ErrIllegalValueForType.GenWithStackByArgs(types.TypeStr(tp.Tp), str)
 			}
 		}
 	case mysql.TypeNewDecimal:
 		if tp.Decimal > mysql.MaxDecimalScale {
-			return types.ErrTooBigScale.GenByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
+			return types.ErrTooBigScale.GenWithStackByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxDecimalScale)
 		}
 
 		if tp.Flen > mysql.MaxDecimalWidth {
-			return types.ErrTooBigPrecision.GenByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
+			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxDecimalWidth)
 		}
 	default:
 		// TODO: Add more types.
@@ -557,11 +557,11 @@ func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 	for _, colDef := range stmt.Cols {
 		// check schema and table names.
 		if colDef.Name.Schema.O != sName && len(colDef.Name.Schema.O) != 0 {
-			p.err = ddl.ErrWrongDBName.GenByArgs(colDef.Name.Schema.O)
+			p.err = ddl.ErrWrongDBName.GenWithStackByArgs(colDef.Name.Schema.O)
 			return
 		}
 		if colDef.Name.Table.O != tName && len(colDef.Name.Table.O) != 0 {
-			p.err = ddl.ErrWrongTableName.GenByArgs(colDef.Name.Table.O)
+			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(colDef.Name.Table.O)
 			return
 		}
 	}

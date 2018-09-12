@@ -183,7 +183,7 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 // types.ErrDataTooLong is produced in types.ProduceStrWithSpecifiedTp, there is no column info in there,
 // so we reset the error msg here, and wrap old err with errors.Wrap.
 func resetErrDataTooLong(colName string, rowIdx int, err error) error {
-	newErr := types.ErrDataTooLong.Gen("Data too long for column '%v' at row %v", colName, rowIdx)
+	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
 	log.Error(err)
 	return errors.Trace(newErr)
 }

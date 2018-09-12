@@ -162,7 +162,7 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 	case *plan.PhysicalIndexLookUpReader:
 		return b.buildIndexLookUpReader(v)
 	default:
-		b.err = ErrUnknownPlan.Gen("Unknown Plan %T", p)
+		b.err = ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
 		return nil
 	}
 }

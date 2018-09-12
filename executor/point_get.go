@@ -102,7 +102,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	if len(val) == 0 {
 		if e.idxInfo != nil {
-			return kv.ErrNotExist.Gen("inconsistent extra index %s, handle %d not found in table",
+			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 				e.idxInfo.Name.O, e.handle)
 		}
 		return nil

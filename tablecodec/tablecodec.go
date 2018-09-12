@@ -97,12 +97,12 @@ func hasRecordPrefixSep(key kv.Key) bool {
 // DecodeRecordKey decodes the key and gets the tableID, handle.
 func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 	if len(key) <= prefixLen {
-		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", key)
+		return 0, 0, errInvalidRecordKey.GenWithStack("invalid record key - %q", key)
 	}
 
 	k := key
 	if !hasTablePrefix(key) {
-		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
+		return 0, 0, errInvalidRecordKey.GenWithStack("invalid record key - %q", k)
 	}
 
 	key = key[tablePrefixLength:]
@@ -112,7 +112,7 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle int64, err error) {
 	}
 
 	if !hasRecordPrefixSep(key) {
-		return 0, 0, errInvalidRecordKey.Gen("invalid record key - %q", k)
+		return 0, 0, errInvalidRecordKey.GenWithStack("invalid record key - %q", k)
 	}
 
 	key = key[recordPrefixSepLength:]
@@ -132,7 +132,7 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 		return 0, 0, nil, errors.Trace(err)
 	}
 	if isRecord {
-		return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q", k)
+		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q", k)
 	}
 	key = key[prefixLen+idLen:]
 
@@ -141,11 +141,11 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 		// the column. For instance, MysqlTime is internally saved as uint64.
 		remain, d, e := codec.DecodeOne(key)
 		if e != nil {
-			return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q %v", k, e)
+			return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", k, e)
 		}
 		str, e1 := d.ToString()
 		if e1 != nil {
-			return 0, 0, nil, errInvalidIndexKey.Gen("invalid index key - %q %v", k, e1)
+			return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", k, e1)
 		}
 		indexValues = append(indexValues, str)
 		key = remain
@@ -158,7 +158,7 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 	isRecordKey = false
 	k := key
 	if !key.HasPrefix(tablePrefix) {
-		err = errInvalidKey.Gen("invalid key - %q", k)
+		err = errInvalidKey.GenWithStack("invalid key - %q", k)
 		return
 	}
 
@@ -174,7 +174,7 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 		return
 	}
 	if !key.HasPrefix(indexPrefixSep) {
-		err = errInvalidKey.Gen("invalid key - %q", k)
+		err = errInvalidKey.GenWithStack("invalid key - %q", k)
 		return
 	}
 
@@ -203,7 +203,7 @@ func DecodeTableID(key kv.Key) int64 {
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (int64, error) {
 	if len(key) != recordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
-		return 0, errInvalidKey.Gen("invalid key - %q", key)
+		return 0, errInvalidKey.GenWithStack("invalid key - %q", key)
 	}
 	u := binary.BigEndian.Uint64(key[prefixLen:])
 	return codec.DecodeCmpUintToInt(u), nil

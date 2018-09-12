@@ -167,7 +167,7 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		// if this time it failed, the real reason for the error is schema changed.
 		err := Preprocess(ctx, prepared.Stmt, is, true)
 		if err != nil {
-			return ErrSchemaChanged.Gen("Schema change caused error: %s", err.Error())
+			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}

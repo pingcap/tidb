@@ -128,7 +128,7 @@ func (b *builtinRegexpBinarySig) evalInt(row chunk.Row) (int64, bool, error) {
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
 	re, err := regexp.Compile(pat)
 	if err != nil {
-		return 0, true, ErrRegexp.GenByArgs(err.Error())
+		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
 	return boolToInt64(re.MatchString(expr)), false, nil
 }
@@ -159,7 +159,7 @@ func (b *builtinRegexpSig) evalInt(row chunk.Row) (int64, bool, error) {
 	// TODO: We don't need to compile pattern if it has been compiled or it is static.
 	re, err := regexp.Compile("(?i)" + pat)
 	if err != nil {
-		return 0, true, ErrRegexp.GenByArgs(err.Error())
+		return 0, true, ErrRegexp.GenWithStackByArgs(err.Error())
 	}
 	return boolToInt64(re.MatchString(expr)), false, nil
 }

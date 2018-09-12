@@ -661,7 +661,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(e.DBName.O)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
 	}
 
 	var buf bytes.Buffer

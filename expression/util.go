@@ -384,7 +384,7 @@ func GetRowLen(e Expression) int {
 func CheckArgsNotMultiColumnRow(args ...Expression) error {
 	for _, arg := range args {
 		if GetRowLen(arg) != 1 {
-			return ErrOperandColumns.GenByArgs(1)
+			return ErrOperandColumns.GenWithStackByArgs(1)
 		}
 	}
 	return nil

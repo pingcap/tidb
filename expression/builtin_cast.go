@@ -902,7 +902,7 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row chunk.Row) (res int64, isNull b
 	}
 
 	if types.ErrOverflow.Equal(err) {
-		warnErr := types.ErrTruncatedWrongVal.GenByArgs("DECIMAL", val)
+		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", val)
 		err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
 	}
 
@@ -1053,7 +1053,7 @@ func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string
 			uval := uint64(math.MaxUint64)
 			res = int64(uval)
 		}
-		warnErr := types.ErrTruncatedWrongVal.GenByArgs("INTEGER", origStr)
+		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", origStr)
 		err = sc.HandleOverflow(origErr, warnErr)
 	}
 	return

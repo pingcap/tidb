@@ -121,7 +121,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				e.ctx.StmtCommit()
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
+					return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 				}
 				rowCount = 0
 			}

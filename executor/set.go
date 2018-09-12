@@ -114,7 +114,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
-		return variable.UnknownSystemVar.GenByArgs(name)
+		return variable.UnknownSystemVar.GenWithStackByArgs(name)
 	}
 	if sysVar.Scope == variable.ScopeNone {
 		return errors.Errorf("Variable '%s' is a read only variable", name)
@@ -201,7 +201,7 @@ func validateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
 	}
 	safePointTS := variable.GoTimeToTS(safePointTime)
 	if safePointTS > snapshotTS {
-		return variable.ErrSnapshotTooOld.GenByArgs(safePointString)
+		return variable.ErrSnapshotTooOld.GenWithStackByArgs(safePointString)
 	}
 	return nil
 }

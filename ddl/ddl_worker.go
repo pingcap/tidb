@@ -272,7 +272,7 @@ func (w *worker) deleteRange(job *model.Job) error {
 	if job.Version <= currentVersion {
 		err = w.delRangeManager.addDelRangeJob(job)
 	} else {
-		err = errInvalidJobVersion.GenByArgs(job.Version, currentVersion)
+		err = errInvalidJobVersion.GenWithStackByArgs(job.Version, currentVersion)
 	}
 	return errors.Trace(err)
 }
@@ -519,7 +519,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
-		err = errInvalidDDLJob.Gen("invalid ddl job %v", job)
+		err = errInvalidDDLJob.GenWithStack("invalid ddl job %v", job)
 	}
 
 	// Save errors in job, so that others can know errors happened.

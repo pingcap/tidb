@@ -216,16 +216,16 @@ func (e *Error) getMsg() string {
 	return e.message
 }
 
-// Gen generates a new *Error with the same class and code, and a new formatted message.
-func (e *Error) Gen(format string, args ...interface{}) error {
+// GenWithStack generates a new *Error with the same class and code, and a new formatted message.
+func (e *Error) GenWithStack(format string, args ...interface{}) error {
 	err := *e
 	err.message = format
 	err.args = args
 	return errors.AddStack(&err)
 }
 
-// GenByArgs generates a new *Error with the same class and code, and new arguments.
-func (e *Error) GenByArgs(args ...interface{}) error {
+// GenWithStackByArgs generates a new *Error with the same class and code, and new arguments.
+func (e *Error) GenWithStackByArgs(args ...interface{}) error {
 	err := *e
 	err.args = args
 	return errors.AddStack(&err)

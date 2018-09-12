@@ -396,10 +396,10 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 		addr := cc.bufReadConn.RemoteAddr().String()
 		host, _, err1 := net.SplitHostPort(addr)
 		if err1 != nil {
-			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
+			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, "YES"))
 		}
 		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
-			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
+			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, "YES"))
 		}
 	}
 	if cc.dbname != "" {

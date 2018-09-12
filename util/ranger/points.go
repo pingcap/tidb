@@ -302,12 +302,12 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
-			r.err = ErrUnsupportedType.Gen("expr:%v is not constant", e)
+			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
 			return fullRange, hasNull
 		}
 		dt, err := v.Eval(chunk.Row{})
 		if err != nil {
-			r.err = ErrUnsupportedType.Gen("expr:%v is not evaluated", e)
+			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
 			return fullRange, hasNull
 		}
 		if dt.IsNull() {
@@ -458,7 +458,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 		return retRangePoints
 	case ast.Like:
 		// Pattern not like is not supported.
-		r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
+		r.err = ErrUnsupportedType.GenWithStack("NOT LIKE is not supported.")
 		return fullRange
 	case ast.IsNull:
 		startPoint := point{value: types.MinNotNullDatum(), start: true}

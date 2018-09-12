@@ -385,7 +385,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err != nil {
 			log.Warnf("%v error:%v", t.Name, errors.ErrorStack(err))
 			if admin.ErrDataInConsistent.Equal(err) {
-				return ErrAdminCheckTable.Gen("%v err:%v", t.Name, err)
+				return ErrAdminCheckTable.GenWithStack("%v err:%v", t.Name, err)
 			}
 
 			return errors.Errorf("%v err:%v", t.Name, err)

@@ -93,7 +93,7 @@ func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *
 	} else if pos.Tp == ast.ColumnPositionAfter {
 		c := model.FindColumnInfo(cols, pos.RelativeColumn.Name.L)
 		if c == nil {
-			return nil, 0, infoschema.ErrColumnNotExists.GenByArgs(pos.RelativeColumn, tblInfo.Name)
+			return nil, 0, infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
 
 		// Insert position is after the mentioned column.
@@ -139,7 +139,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if columnInfo.State == model.StatePublic {
 			// We already have a column with the same column name.
 			job.State = model.JobStateCancelled
-			return ver, infoschema.ErrColumnExists.GenByArgs(col.Name)
+			return ver, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
 		}
 	} else {
 		columnInfo, offset, err = createColumnInfo(tblInfo, col, pos)
@@ -189,7 +189,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfo: columnInfo})
 	default:
-		err = ErrInvalidColumnState.Gen("invalid column state %v", columnInfo.State)
+		err = ErrInvalidColumnState.GenWithStack("invalid column state %v", columnInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -212,7 +212,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil {
 		job.State = model.JobStateCancelled
-		return ver, ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
+		return ver, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
@@ -251,7 +251,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 	default:
-		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
+		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
 	return ver, errors.Trace(err)
 }
@@ -290,14 +290,14 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
+		return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(oldName, tblInfo.Name)
 	}
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newCol.Name.L != oldName.L {
 		c := model.FindColumnInfo(tblInfo.Columns, newCol.Name.L)
 		if c != nil {
 			job.State = model.JobStateCancelled
-			return ver, infoschema.ErrColumnExists.GenByArgs(newCol.Name)
+			return ver, infoschema.ErrColumnExists.GenWithStackByArgs(newCol.Name)
 		}
 	}
 
@@ -317,13 +317,13 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 		if oldName.L == pos.RelativeColumn.Name.L {
 			// `alter table tableName modify column b int after b` will return ver,ErrColumnNotExists.
 			job.State = model.JobStateCancelled
-			return ver, infoschema.ErrColumnNotExists.GenByArgs(oldName, tblInfo.Name)
+			return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(oldName, tblInfo.Name)
 		}
 
 		relative := model.FindColumnInfo(tblInfo.Columns, pos.RelativeColumn.Name.L)
 		if relative == nil || relative.State != model.StatePublic {
 			job.State = model.JobStateCancelled
-			return ver, infoschema.ErrColumnNotExists.GenByArgs(pos.RelativeColumn, tblInfo.Name)
+			return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
 
 		if relative.Offset < oldPos {
@@ -387,7 +387,7 @@ func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldCol
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldColName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return ver, infoschema.ErrColumnNotExists.GenByArgs(newCol.Name, tblInfo.Name)
+		return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(newCol.Name, tblInfo.Name)
 	}
 	*oldCol = *newCol
 

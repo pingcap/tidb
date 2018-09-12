@@ -454,7 +454,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinDateFormatSig{base}
 
 	default:
-		e = errFunctionNotExists.GenByArgs("FUNCTION", sigCode)
+		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, errors.Trace(e)
 	}
 	return f, nil

@@ -147,7 +147,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 		}
 	}
 
-	return terror.ErrCritical.GenByArgs(err)
+	return terror.ErrCritical.GenWithStackByArgs(err)
 }
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.

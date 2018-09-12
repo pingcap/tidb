@@ -176,11 +176,11 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	}
 
 	if types.ErrOverflow.Equal(err) {
-		return types.ErrWarnDataOutOfRange.GenByArgs(col.Name.O, rowIdx+1)
+		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(col.Name.O, rowIdx+1)
 	}
 	if types.ErrTruncated.Equal(err) {
 		valStr, _ := val.ToString()
-		return table.ErrTruncatedWrongValueForField.GenByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
+		return table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}
 	return e.filterErr(err)
 }
@@ -283,7 +283,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 				rows = rows[:0]
 				if err := e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
+					return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 				}
 				if !sessVars.LightningMode {
 					sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)

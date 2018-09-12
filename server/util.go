@@ -271,7 +271,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 		case mysql.TypeJSON:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetJSON(i).String()))
 		default:
-			return nil, errInvalidType.Gen("invalid type %v", columns[i].Type)
+			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}
 	}
 	return buffer, nil
@@ -326,7 +326,7 @@ func dumpTextRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, e
 		case mysql.TypeJSON:
 			buffer = dumpLengthEncodedString(buffer, hack.Slice(row.GetJSON(i).String()))
 		default:
-			return nil, errInvalidType.Gen("invalid type %v", columns[i].Type)
+			return nil, errInvalidType.GenWithStack("invalid type %v", columns[i].Type)
 		}
 	}
 	return buffer, nil

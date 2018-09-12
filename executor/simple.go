@@ -87,7 +87,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	dbname := model.NewCIStr(s.DBName)
 	dbinfo, exists := e.is.SchemaByName(dbname)
 	if !exists {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(dbname)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbname)
 	}
 	e.ctx.GetSessionVars().CurrentDB = dbname.O
 	// character_set_database is the character set used by the default database.
@@ -210,7 +210,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		return ErrCannotUser.GenByArgs("ALTER USER", strings.Join(failedUsers, ","))
+		return ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
@@ -269,7 +269,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		}
 	}
 	if len(failedUsers) > 0 {
-		return ErrCannotUser.GenByArgs("DROP USER", strings.Join(failedUsers, ","))
+		return ErrCannotUser.GenWithStackByArgs("DROP USER", strings.Join(failedUsers, ","))
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil

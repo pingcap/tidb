@@ -97,14 +97,14 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
-		return nil, table.ErrTableStateCantNone.Gen("table %s can't be in none state", tblInfo.Name)
+		return nil, table.ErrTableStateCantNone.GenWithStack("table %s can't be in none state", tblInfo.Name)
 	}
 
 	colsLen := len(tblInfo.Columns)
 	columns := make([]*table.Column, 0, colsLen)
 	for i, colInfo := range tblInfo.Columns {
 		if colInfo.State == model.StateNone {
-			return nil, table.ErrColumnStateCantNone.Gen("column %s can't be in none state", colInfo.Name)
+			return nil, table.ErrColumnStateCantNone.GenWithStack("column %s can't be in none state", colInfo.Name)
 		}
 
 		// Print some information when the column's offset isn't equal to i.
@@ -158,7 +158,7 @@ func initTableIndices(t *tableCommon) error {
 	tblInfo := t.meta
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.State == model.StateNone {
-			return table.ErrIndexStateCantNone.Gen("index %s can't be in none state", idxInfo.Name)
+			return table.ErrIndexStateCantNone.GenWithStack("index %s can't be in none state", idxInfo.Name)
 		}
 
 		// Use partition ID for index, because tableCommon may be table or partition.
