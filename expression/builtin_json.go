@@ -37,6 +37,18 @@ var (
 	_ functionClass = &jsonArrayFunctionClass{}
 	_ functionClass = &jsonContainsFunctionClass{}
 	_ functionClass = &jsonContainsPathFunctionClass{}
+	_ functionClass = &jsonValidFunctionClass{}
+	_ functionClass = &jsonArrayAppendFunctionClass{}
+	_ functionClass = &jsonArrayInsertFunctionClass{}
+	_ functionClass = &jsonMergePatchFunctionClass{}
+	_ functionClass = &jsonMergePreserveFunctionClass{}
+	_ functionClass = &jsonPrettyFunctionClass{}
+	_ functionClass = &jsonQuoteFunctionClass{}
+	_ functionClass = &jsonSearchFunctionClass{}
+	_ functionClass = &jsonStorageSizeFunctionClass{}
+	_ functionClass = &jsonDepthFunctionClass{}
+	_ functionClass = &jsonKeysFunctionClass{}
+	_ functionClass = &jsonLengthFunctionClass{}
 
 	// Type of JSON value.
 	_ builtinFunc = &builtinJSONTypeSig{}
@@ -677,4 +689,100 @@ func (b *builtinJSONContainsSig) evalInt(row chunk.Row) (res int64, isNull bool,
 		return 1, false, nil
 	}
 	return 0, false, nil
+}
+
+type jsonValidFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_VALID")
+}
+
+type jsonArrayAppendFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonArrayAppendFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_ARRAY_APPEND")
+}
+
+type jsonArrayInsertFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonArrayInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_ARRAY_INSERT")
+}
+
+type jsonMergePatchFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonMergePatchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_MERGE_PATCH")
+}
+
+type jsonMergePreserveFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonMergePreserveFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_MERGE_PRESERVE")
+}
+
+type jsonPrettyFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonPrettyFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_PRETTY")
+}
+
+type jsonQuoteFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_QUOTE")
+}
+
+type jsonSearchFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonSearchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_SEARCH")
+}
+
+type jsonStorageSizeFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonStorageSizeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_STORAGE_SIZE")
+}
+
+type jsonDepthFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonDepthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_DEPTH")
+}
+
+type jsonKeysFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonKeysFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_KEYS")
+}
+
+type jsonLengthFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *jsonLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_LENGTH")
 }

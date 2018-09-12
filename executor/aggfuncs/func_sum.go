@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/set"
 )
 
 type partialResult4SumFloat64 struct {
@@ -32,12 +33,12 @@ type partialResult4SumDecimal struct {
 
 type partialResult4SumDistinctFloat64 struct {
 	partialResult4SumFloat64
-	valSet float64Set
+	valSet set.Float64Set
 }
 
 type partialResult4SumDistinctDecimal struct {
 	partialResult4SumDecimal
-	valSet decimalSet
+	valSet set.DecimalSet
 }
 
 type baseSumAggFunc struct {
@@ -173,14 +174,14 @@ type sum4DistinctFloat64 struct {
 func (e *sum4DistinctFloat64) AllocPartialResult() PartialResult {
 	p := new(partialResult4SumDistinctFloat64)
 	p.isNull = true
-	p.valSet = newFloat64Set()
+	p.valSet = set.NewFloat64Set()
 	return PartialResult(p)
 }
 
 func (e *sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctFloat64)(pr)
 	p.isNull = true
-	p.valSet = newFloat64Set()
+	p.valSet = set.NewFloat64Set()
 }
 
 func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
@@ -190,10 +191,10 @@ func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isNull || p.valSet.exist(input) {
+		if isNull || p.valSet.Exist(input) {
 			continue
 		}
-		p.valSet.insert(input)
+		p.valSet.Insert(input)
 		if p.isNull {
 			p.val = input
 			p.isNull = false
@@ -221,14 +222,14 @@ type sum4DistinctDecimal struct {
 func (e *sum4DistinctDecimal) AllocPartialResult() PartialResult {
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
-	p.valSet = newDecimalSet()
+	p.valSet = set.NewDecimalSet()
 	return PartialResult(p)
 }
 
 func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	p.isNull = true
-	p.valSet = newDecimalSet()
+	p.valSet = set.NewDecimalSet()
 }
 
 func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
@@ -238,10 +239,10 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isNull || p.valSet.exist(input) {
+		if isNull || p.valSet.Exist(input) {
 			continue
 		}
-		p.valSet.insert(input)
+		p.valSet.Insert(input)
 		if p.isNull {
 			p.val = *input
 			p.isNull = false

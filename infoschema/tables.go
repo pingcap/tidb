@@ -530,37 +530,56 @@ var tableProcesslistCols = []columnInfo{
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums("ascii", "ascii_general_ci", "US ASCII", 1),
-		types.MakeDatums("binary", "binary", "Binary pseudo charset", 1),
-		types.MakeDatums("latin1", "latin1_swedish_ci", "cp1252 West European", 1),
-		types.MakeDatums("utf8", "utf8_general_ci", "UTF-8 Unicode", 3),
-		types.MakeDatums("utf8mb4", "utf8mb4_general_ci", "UTF-8 Unicode", 4),
-	)
+
+	charsets := charset.GetAllCharsets()
+
+	for _, charset := range charsets {
+
+		records = append(records,
+			types.MakeDatums(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen),
+		)
+
+	}
+
 	return records
+
 }
 
-func dataForColltions() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums("ascii_general_ci", "ascii", 1, "Yes", "Yes", 1),
-		types.MakeDatums("binary", "binary", 2, "Yes", "Yes", 1),
-		types.MakeDatums("latin1_swedish_ci", "latin1", 3, "Yes", "Yes", 1),
-		types.MakeDatums("utf8_general_ci", "utf8", 4, "Yes", "Yes", 1),
-		types.MakeDatums("utf8mb4_general_ci", "utf8mb4", 5, "Yes", "Yes", 1),
-	)
+func dataForCollations() (records [][]types.Datum) {
+
+	collations := charset.GetCollations()
+
+	for _, collation := range collations {
+
+		isDefault := ""
+		if collation.IsDefault {
+			isDefault = "Yes"
+		}
+
+		records = append(records,
+			types.MakeDatums(collation.Name, collation.CharsetName, collation.ID, isDefault, "Yes", 1),
+		)
+
+	}
+
 	return records
+
 }
 
 func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums("ascii_general_ci", "ascii"),
-		types.MakeDatums("binary", "binary"),
-		types.MakeDatums("latin1_swedish_ci", "latin1"),
-		types.MakeDatums("utf8_general_ci", "utf8"),
-		types.MakeDatums("utf8_bin", "utf8"),
-		types.MakeDatums("utf8mb4_general_ci", "utf8mb4"),
-	)
+
+	collations := charset.GetCollations()
+
+	for _, collation := range collations {
+
+		records = append(records,
+			types.MakeDatums(collation.Name, collation.CharsetName),
+		)
+
+	}
+
 	return records
+
 }
 
 func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -833,7 +852,11 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			datetimePrecision = decimal
 		} else if types.IsTypeNumeric(col.Tp) {
 			numericPrecision = colLen
-			numericScale = decimal
+			if col.Tp != mysql.TypeFloat && col.Tp != mysql.TypeDouble {
+				numericScale = decimal
+			} else if decimal != -1 {
+				numericScale = decimal
+			}
 		}
 		columnType := col.FieldType.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
@@ -1208,7 +1231,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableCharacterSets:
 		fullRows = dataForCharacterSets()
 	case tableCollations:
-		fullRows = dataForColltions()
+		fullRows = dataForCollations()
 	case tableSessionVar:
 		fullRows, err = dataForSessionVar(ctx)
 	case tableConstraints:
