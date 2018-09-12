@@ -22,8 +22,8 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 // Type returns type of BinaryJSON as string.
@@ -170,7 +170,7 @@ func (bj BinaryJSON) extractTo(buf []BinaryJSON, pathExpr PathExpression) []Bina
 	currentLeg, subPathExpr := pathExpr.popOneLeg()
 	if currentLeg.typ == pathLegIndex {
 		if bj.TypeCode != TypeCodeArray {
-			if currentLeg.arrayIndex <= 0 {
+			if currentLeg.arrayIndex <= 0 && currentLeg.arrayIndex != arrayIndexAsterisk {
 				buf = bj.extractTo(buf, subPathExpr)
 			}
 			return buf

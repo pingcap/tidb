@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -65,6 +66,10 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 		if dbName == "" && col.TblName.L != "" {
 			dbName = defaultDB
 		}
+		origColName := col.OrigColName
+		if origColName.L == "" {
+			origColName = col.ColName
+		}
 		rf := &ast.ResultField{
 			ColumnAsName: col.ColName,
 			TableAsName:  col.TblName,
@@ -72,7 +77,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 			Table:        &model.TableInfo{Name: col.OrigTblName},
 			Column: &model.ColumnInfo{
 				FieldType: *col.RetType,
-				Name:      col.ColName,
+				Name:      origColName,
 			},
 		}
 		rfs = append(rfs, rf)
@@ -367,6 +372,24 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		logutil.SlowQueryLogger.Warnf(
 			"[SLOW_QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
 			internal, costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+		var userString string
+		if user != nil {
+			userString = user.String()
+		}
+		domain.GetDomain(a.Ctx).LogTopNSlowQuery(&domain.SlowQueryInfo{
+			SQL:      sql,
+			Start:    a.startTime,
+			Duration: costTime,
+			Detail:   sessVars.StmtCtx.GetExecDetails(),
+			Succ:     succ,
+			ConnID:   connID,
+			TxnTS:    txnTS,
+			User:     userString,
+			DB:       currentDB,
+			TableIDs: tableIDs,
+			IndexIDs: indexIDs,
+			Internal: sessVars.InRestrictedSQL,
+		})
 	}
 }
 

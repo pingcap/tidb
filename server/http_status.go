@@ -20,10 +20,11 @@ import (
 	"net/http/pprof"
 
 	"github.com/gorilla/mux"
-	"github.com/juju/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 )
@@ -52,6 +53,7 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/schema/{db}/{table}", schemaHandler{tikvHandlerTool})
 	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", valueHandler{})
 	router.Handle("/ddl/history", ddlHistoryJobHandler{tikvHandlerTool})
+	router.Handle("/ddl/owner/resign", ddlResignOwnerHandler{tikvHandlerTool.store.(kv.Storage)})
 
 	// HTTP path for get server info.
 	router.Handle("/info", serverInfoHandler{tikvHandlerTool})
@@ -97,7 +99,7 @@ func (s *Server) startHTTPServer() {
 	}
 }
 
-// TiDB status
+// status of TiDB.
 type status struct {
 	Connections int    `json:"connections"`
 	Version     string `json:"version"`

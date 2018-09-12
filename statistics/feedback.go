@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
@@ -880,13 +880,13 @@ func (q *QueryFeedback) logDetailedInfo(h *Handle) {
 	logPrefix := fmt.Sprintf("[stats-feedback] %s,", t.name)
 	if isIndex {
 		idx := t.Indices[q.hist.ID]
-		if idx == nil {
+		if idx == nil || idx.Histogram.Len() == 0 {
 			return
 		}
 		logForIndex(logPrefix, t, idx, ranges, actual, idx.getIncreaseFactor(t.Count))
 	} else {
 		c := t.Columns[q.hist.ID]
-		if c == nil {
+		if c == nil || c.Histogram.Len() == 0 {
 			return
 		}
 		logForPK(logPrefix, c, ranges, actual, c.getIncreaseFactor(t.Count))
