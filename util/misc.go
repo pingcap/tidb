@@ -67,9 +67,6 @@ func WithRecovery(ctx context.Context, fn func(ctx context.Context), handlerOpts
 	}
 	defer func() {
 		r := recover()
-		if r != nil {
-			fmt.Println()
-		}
 		for _, handler := range handlerOpts {
 			handler(r)
 		}
