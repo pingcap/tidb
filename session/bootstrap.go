@@ -419,19 +419,6 @@ func upgrade(s Session) {
 	updateBootstrapVer(s)
 	_, err = s.Execute(context.Background(), "COMMIT")
 
-	callback := func() string {
-		sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
-		rss, errLoad := s.Execute(context.Background(), sql)
-		if errLoad != nil {
-			log.Fatal(errLoad)
-		}
-		chk := rss[0].NewChunk()
-		rss[0].Next(context.Background(), chk)
-		return chk.GetRow(0).GetString(0)
-	}
-
-	timeutil.LoadLocalStrFromTB(callback())
-
 	if err != nil {
 		time.Sleep(1 * time.Second)
 		// Check if TiDB is already upgraded.

@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/timeutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -1086,6 +1087,21 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// get system tz from mysql.tidb
+	callback := func() string {
+		sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
+		rss, errLoad := se.Execute(context.Background(), sql)
+		if errLoad != nil {
+			log.Fatal(errLoad)
+		}
+		chk := rss[0].NewChunk()
+		rss[0].Next(context.Background(), chk)
+		return chk.GetRow(0).GetString(0)
+	}
+
+	timeutil.LoadLocalStrFromTB(callback())
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
