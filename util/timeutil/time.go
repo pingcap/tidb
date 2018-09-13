@@ -109,7 +109,7 @@ func Local() *time.Location {
 	return loc
 }
 
-// SetSystemTZ loads system timezone from mysql.tidb and returns the value.
+// SetSystemTZ sets systemTZ by the value loaded from mysql.tidb.
 func SetSystemTZ(name string) {
 	systemTZ = name
 }
