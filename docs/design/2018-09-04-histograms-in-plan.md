@@ -18,7 +18,7 @@ So we need to maintain the statistics in the plan structure to get sufficient st
 
 The new `statsInfo` of `plan` should be something like the following structure:
 
-```
+```go
 type statsInfo struct {
 	// This two attributes are already used in current statsInfo.
 	count float64
@@ -40,43 +40,58 @@ This struct will be maintained when we call `deriveStats`.
 
 Currently we don't change the histogram itself during planning. Because it will consume a lot of time and memory space. I’ll try to maintain ranges slice or the max/min value to improve the accuracy of row count estimation instead.
 
-Before we maintain `rangesOfXXX` or `max and min values`:
+###Before we maintain range information
 
 We maintain the histogram in `Projection`, `Selection`, `Join`, `Aggregation`, `Sort`, `Limit` and `DataSource` operators.
 
-For `Sort`, we can just copy children's `statsInfo` without doing any change.
+####`Sort`
+We can just copy children's `statsInfo` without doing any change.
 
-For `Limit`, we can just copy children's `statsInfo` or ignore the histogram information. As you know, its execution logic is based on randomization. It's hard to maintain the statistics information after `Limit`. But we may use the information before it to do some estimation in some scenarios.
+####`Limit`
+we can just copy children's `statsInfo` or ignore the histogram information. As you know, its execution logic is based on randomization. It's hard to maintain the statistics information after `Limit`. But we may use the information before it to do some estimation in some scenarios.
 
-For `Projection`, change the reflection of the map we maintained.
+####`Projection`
+Change the reflection of the map we maintained.
 
-For `Aggregation`, use the histogram to estimate the NDV of group-by items. If one index cannot cover the group-by item, we’ll multiply the NDV of each group-by column. If the output of `Aggregation` includes group-by columns, we’ll maintain the histogram of them for future use.
+####`Aggregation`
+Use the histogram to estimate the NDV of group-by items. If one index cannot cover the group-by item, we’ll multiply the NDV of each group-by column. If the output of `Aggregation` includes group-by columns, we’ll maintain the histogram of them for future use.
 
-For `Join`, there’re joins as follows:
+####`Join`
+There're several kinds of joins.
 
-- Inner join: use histograms to do the row count estimation with the join key condition. Since it won’t have one side filter, we only need to consider the composite filters after considering the join key. We can simply multiply `selectionFactor` if there are other composite filters in our first version of implementation. Since `Selectivity` cannot calculate selectivity of an expression containing multiple columns.
+#####Inner join
+Use histograms to do the row count estimation with the join key condition. Since it won’t have one side filter, we only need to consider the composite filters after considering the join key. We can simply multiply `selectionFactor` if there are other composite filters in our first version of implementation. Since `Selectivity` cannot calculate selectivity of an expression containing multiple columns.
 
-- One side outer join: It depends on the join keys’ NDV. And we can just use histograms to estimate it if there’re non-join-key filters.
+#####One side outer join
+It depends on the join keys’ NDV. And we can just use histograms to estimate it if there’re non-join-key filters.
 
-- Semi join: It’s something similar to inner join. But no data expanding occurs. When we maintain the range information, we can get a nearly accurate answer of its row count.
+#####Semi join
+It’s something similar to inner join. But no data expanding occurs. When we maintain the range information, we can get a nearly accurate answer of its row count.
 
-- Anti semi join: Same with semi join.
+#####Anti semi join
+Same with semi join.
 
-For `Selection`, just use it to calculate the selectivity. 
+####`Selection`
+Just use it to calculate the selectivity.
 
-For `DataSource`, if it’s a non-partitioned table, we just maintain the map. If it’s a partitioned table, we now only store the statistics of each partition. So we need to merge them. We need a cache or something else to ensure that we won’t merge them each time we need it, which will consume tooooo much time and memory space.
+####`DataSource`
+If it’s a non-partitioned table, we just maintain the map. If it’s a partitioned table, we now only store the statistics of each partition. So we need to merge them. We need a cache or something else to ensure that we won’t merge them each time we need it, which will consume tooooo much time and memory space.
 
+####Others
 For other plan operators or `DataSource` which do not contain any histogram, we just use the original way to maintain `statsInfo`. We won’t maintain histograms for them. Taking `Union` for an example, if we maintain histograms for it, we need to merge the histograms, which is really an expensive operation. But we can consider maintaining this if a hint is given.
 
-When we maintain `rangesOfXXX` or `max and min values`:
+###After we maintain range information
 
 Most things are the same with above. But there will be something more to do.
 
-For `Selection` and `Join`, we need to cut off the things which are not in ranges when doing estimation, and update the ranges information after the estimation. Also the NDV of column can be estimated more accurately.
+####`Selection` and `Join`
+We need to cut off the things which are not in ranges when doing estimation, and update the ranges information after the estimation. Also the NDV of column can be estimated more accurately.
 
-For `Aggregation`, we only need to cut off the things which are not in ranges when doing estimation. There is no need to update the ranges information.
+####`Aggregation`
+We only need to cut off the things which are not in ranges when doing estimation. There is no need to update the ranges information.
 
-For `TopN`, we now have the ability to maintain histograms of the order-by items.
+####`TopN`
+We now have the ability to maintain histograms of the order-by items.
 
 
 ## Rationale
