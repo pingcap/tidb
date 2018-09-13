@@ -643,7 +643,10 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		})
 	}
 	u.schema = expression.NewSchema(unionCols...)
-	// If the types of some child don't match the types of union, we add a projection with cast function.
+	// Process each child
+	// 1. Check whether the `TypeField` is correct. If not, create a projection.
+	// 2. If we need to create projection, create it.
+	// 3. If we not need, but the child is not projection. We still need a projection. To make its schema the same with the union.
 	for childID, child := range u.children {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
 		needProjection := false
