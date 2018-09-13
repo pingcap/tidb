@@ -626,6 +626,26 @@ type HandleRange struct {
 	End   int64
 }
 
+// ShowLogType defines the type for SlowLog.
+type ShowLogType int
+
+const (
+	// ShowLogTop is a ShowLogType constant.
+	ShowLogTop ShowLogType = iota
+	// ShowLogRecent is a ShowLogType constant.
+	ShowLogRecent
+)
+
+// ShowLog is used for the following command:
+//	admin show log top [user | internal | all] N
+//	admin show log recent N
+type ShowLog struct {
+	Tp    ShowLogType
+	Count uint64
+	// "user" | "internal" | "all", default is user
+	Kind string
+}
+
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode

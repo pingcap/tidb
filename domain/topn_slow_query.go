@@ -15,8 +15,11 @@ package domain
 
 import (
 	"container/heap"
+	"sort"
+	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/execdetails"
 )
 
@@ -40,11 +43,11 @@ func (h *slowQueryHeap) Pop() interface{} {
 	return x
 }
 
-func (h *slowQueryHeap) Refresh(now time.Time, recent time.Duration) {
+func (h *slowQueryHeap) Refresh(now time.Time, period time.Duration) {
 	// Remove outdated slow query element.
 	idx := 0
 	for i := 0; i < len(h.data); i++ {
-		outdateTime := h.data[i].Start.Add(recent)
+		outdateTime := h.data[i].Start.Add(period)
 		if outdateTime.After(now) {
 			h.data[idx] = h.data[i]
 			idx++
@@ -59,28 +62,87 @@ func (h *slowQueryHeap) Refresh(now time.Time, recent time.Duration) {
 	heap.Init(h)
 }
 
+func (h *slowQueryHeap) Query(count int) []*SlowQueryInfo {
+	save := make([]*SlowQueryInfo, len(h.data))
+	copy(save, h.data)
+
+	sort.Sort(h)
+
+	ret := make([]*SlowQueryInfo, 0, count)
+	for i := len(h.data) - 1; i >= 0 && len(ret) <= count; i-- {
+		ret = append(ret, h.data[i])
+	}
+
+	// Sort breaks the data, recover it here.
+	h.data = save
+	return ret
+}
+
+type slowQueryQueue struct {
+	data []*SlowQueryInfo
+	head int
+	tail int
+}
+
+func (q *slowQueryQueue) Enqueue(info *SlowQueryInfo) {
+	q.data[q.tail] = info
+	q.tail = (q.tail + 1) % len(q.data)
+	if q.tail == q.head {
+		q.head = (q.head + 1) % len(q.data)
+	}
+}
+
+func (q *slowQueryQueue) Query(count int) []*SlowQueryInfo {
+	// Queue is empty.
+	if q.tail == q.head {
+		return nil
+	}
+
+	if count > len(q.data) {
+		count = len(q.data)
+	}
+	ret := make([]*SlowQueryInfo, 0, count)
+	tail := (q.tail - 1 + len(q.data)) % len(q.data)
+	for len(ret) < count {
+		ret = append(ret, q.data[tail])
+		if tail == q.head {
+			break
+		}
+		tail = (tail - 1 + len(q.data)) % len(q.data)
+	}
+	return ret
+}
+
 // topNSlowQueries maintains two heaps to store recent slow queries: one for user's and one for internal.
-// N = 30, recent = 7 days by default.
+// N = 30, period = 7 days by default.
+// It also maintains a recent queue, in a FIFO manner.
 type topNSlowQueries struct {
+	recent   slowQueryQueue
 	user     slowQueryHeap
 	internal slowQueryHeap
 	topN     int
-	recent   time.Duration
+	period   time.Duration
 	ch       chan *SlowQueryInfo
+	msgCh    chan *showLogMessage
 }
 
-func newTopNSlowQueries(topN int, recent time.Duration) *topNSlowQueries {
+func newTopNSlowQueries(topN int, period time.Duration, queueSize int) *topNSlowQueries {
 	ret := &topNSlowQueries{
 		topN:   topN,
-		recent: recent,
+		period: period,
 		ch:     make(chan *SlowQueryInfo, 1000),
+		msgCh:  make(chan *showLogMessage, 10),
 	}
 	ret.user.data = make([]*SlowQueryInfo, 0, topN)
 	ret.internal.data = make([]*SlowQueryInfo, 0, topN)
+	ret.recent.data = make([]*SlowQueryInfo, queueSize+1)
 	return ret
 }
 
 func (q *topNSlowQueries) Append(info *SlowQueryInfo) {
+	// Put into the recent queue.
+	q.recent.Enqueue(info)
+
 	var h *slowQueryHeap
 	if info.Internal {
 		h = &q.internal
@@ -102,8 +164,46 @@ func (q *topNSlowQueries) Append(info *SlowQueryInfo) {
 }
 
 func (q *topNSlowQueries) Refresh(now time.Time) {
-	q.user.Refresh(now, q.recent)
-	q.internal.Refresh(now, q.recent)
+	q.user.Refresh(now, q.period)
+	q.internal.Refresh(now, q.period)
+}
+
+type showLogMessage struct {
+	request *ast.ShowLog
+	result  []*SlowQueryInfo
+	sync.WaitGroup
+}
+
+type queryType int
+
+const (
+	queryTypeTop queryType = iota
+	queryTypeRecent
+)
+
+func (q *topNSlowQueries) QueryRecent(count int) []*SlowQueryInfo {
+	return q.recent.Query(count)
+}
+
+func (q *topNSlowQueries) QueryTop(count int, kind string) []*SlowQueryInfo {
+	var ret []*SlowQueryInfo
+	switch kind {
+	case "user", "":
+		ret = q.user.Query(count)
+	case "internal":
+		ret = q.internal.Query(count)
+	case "all":
+		tmp := make([]*SlowQueryInfo, 0, len(q.user.data)+len(q.internal.data))
+		tmp = append(tmp, q.user.data...)
+		tmp = append(tmp, q.internal.data...)
+		tmp1 := slowQueryHeap{tmp}
+		sort.Sort(&tmp1)
+		ret = make([]*SlowQueryInfo, 0, count)
+		for i := len(tmp) - 1; i >= 0 && len(ret) <= count; i-- {
+			ret = append(ret, tmp[i])
+		}
+	}
+	return ret
 }
 
 func (q *topNSlowQueries) Close() {

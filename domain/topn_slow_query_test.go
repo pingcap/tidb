@@ -24,7 +24,7 @@ var _ = Suite(&testTopNSlowQuerySuite{})
 type testTopNSlowQuerySuite struct{}
 
 func (t *testTopNSlowQuerySuite) TestPush(c *C) {
-	slowQuery := newTopNSlowQueries(10, 0)
+	slowQuery := newTopNSlowQueries(10, 0, 10)
 	// Insert data into the heap.
 	slowQuery.Append(&SlowQueryInfo{Duration: 300 * time.Millisecond})
 	slowQuery.Append(&SlowQueryInfo{Duration: 400 * time.Millisecond})
@@ -71,7 +71,7 @@ func (t *testTopNSlowQuerySuite) TestPush(c *C) {
 
 func (t *testTopNSlowQuerySuite) TestRefresh(c *C) {
 	now := time.Now()
-	slowQuery := newTopNSlowQueries(6, 3*time.Second)
+	slowQuery := newTopNSlowQueries(6, 3*time.Second, 10)
 
 	slowQuery.Append(&SlowQueryInfo{Start: now, Duration: 6})
 	slowQuery.Append(&SlowQueryInfo{Start: now.Add(1 * time.Second), Duration: 5})
@@ -107,4 +107,37 @@ func checkHeap(q *slowQueryHeap, c *C) {
 			c.Assert(q.data[i].Duration, LessEqual, q.data[right].Duration)
 		}
 	}
+}
+
+func (t *testTopNSlowQuerySuite) TestQueue(c *C) {
+	q := newTopNSlowQueries(10, time.Minute, 5)
+	q.Append(&SlowQueryInfo{SQL: "aaa"})
+	q.Append(&SlowQueryInfo{SQL: "bbb"})
+	q.Append(&SlowQueryInfo{SQL: "ccc"})
+
+	query := q.recent.Query(1)
+	c.Assert(*query[0], Equals, SlowQueryInfo{SQL: "ccc"})
+	query = q.recent.Query(2)
+	c.Assert(*query[0], Equals, SlowQueryInfo{SQL: "ccc"})
+	c.Assert(*query[1], Equals, SlowQueryInfo{SQL: "bbb"})
+	query = q.recent.Query(6)
+	c.Assert(*query[0], Equals, SlowQueryInfo{SQL: "ccc"})
+	c.Assert(*query[1], Equals, SlowQueryInfo{SQL: "bbb"})
+	c.Assert(*query[2], Equals, SlowQueryInfo{SQL: "aaa"})
+
+	q.Append(&SlowQueryInfo{SQL: "ddd"})
+	q.Append(&SlowQueryInfo{SQL: "eee"})
+	q.Append(&SlowQueryInfo{SQL: "fff"})
+	q.Append(&SlowQueryInfo{SQL: "ggg"})
+
+	query = q.recent.Query(3)
+	c.Assert(*query[0], Equals, SlowQueryInfo{SQL: "ggg"})
+	c.Assert(*query[1], Equals, SlowQueryInfo{SQL: "fff"})
+	c.Assert(*query[2], Equals, SlowQueryInfo{SQL: "eee"})
+	query = q.recent.Query(6)
+	c.Assert(*query[0], Equals, SlowQueryInfo{SQL: "ggg"})
+	c.Assert(*query[1], Equals, SlowQueryInfo{SQL: "fff"})
+	c.Assert(*query[2], Equals, SlowQueryInfo{SQL: "eee"})
+	c.Assert(*query[3], Equals, SlowQueryInfo{SQL: "ddd"})
+	c.Assert(*query[4], Equals, SlowQueryInfo{SQL: "ccc"})
 }
