@@ -544,7 +544,8 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 	insertVal := &InsertValues{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		Table:        tbl,
-		Columns:      v.Columns,
+		LoadDataAssign: v.ColumnOrVars,
+		SetList:      ,
 		GenColumns:   v.GenCols.Columns,
 		GenExprs:     v.GenCols.Exprs,
 	}
@@ -566,10 +567,9 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 			LinesInfo:    v.LinesInfo,
 			IgnoreLines:  v.IgnoreLines,
 			Ctx:          b.ctx,
-			columns:      columns,
+			colOrVar:     v.ColumnOrVars,
 		},
 	}
-
 	return loadDataExec
 }
 

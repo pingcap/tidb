@@ -382,13 +382,14 @@ type Analyze struct {
 type LoadData struct {
 	baseSchemaProducer
 
-	IsLocal     bool
-	Path        string
-	Table       *ast.TableName
-	Columns     []*ast.ColumnName
-	FieldsInfo  *ast.FieldsClause
-	LinesInfo   *ast.LinesClause
-	IgnoreLines uint64
+	IsLocal      bool
+	Path         string
+	Table        *ast.TableName
+	ColumnOrVars []*ast.ColNameOrVar
+	FieldsInfo   *ast.FieldsClause
+	LinesInfo    *ast.LinesClause
+	IgnoreLines  uint64
+	Sets         []*expression.Assignment
 
 	GenCols InsertGeneratedColumns
 }

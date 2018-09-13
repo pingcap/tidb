@@ -434,6 +434,38 @@ func (n *ColumnName) OrigColName() (ret string) {
 	return
 }
 
+type ColNameOrVar struct {
+	node
+	VariableExpr *VariableExpr
+	ColumnName *ColumnName
+}
+
+// Accept implements Node Accept interface.
+func (n *ColNameOrVar) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*ColNameOrVar)
+
+	if n.ColumnName != nil {
+		node, ok := n.ColumnName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ColumnName = node.(*ColumnName)
+	}
+
+	if n.VariableExpr != nil {
+		node, ok := n.VariableExpr.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.VariableExpr = node.(*VariableExpr)
+	}
+	return v.Leave(n)
+}
+
 // ColumnNameExpr represents a column name expression.
 type ColumnNameExpr struct {
 	exprNode

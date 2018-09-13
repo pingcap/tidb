@@ -664,10 +664,11 @@ type LoadDataStmt struct {
 	IsLocal     bool
 	Path        string
 	Table       *TableName
-	Columns     []*ColumnName
+	Columns     []*ColNameOrVar
 	FieldsInfo  *FieldsClause
 	LinesInfo   *LinesClause
 	IgnoreLines uint64
+	Sets 		[]*Assignment
 }
 
 // Accept implements Node Accept interface.
@@ -689,7 +690,7 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		n.Columns[i] = node.(*ColumnName)
+		n.Columns[i] = node.(*ColNameOrVar)
 	}
 	return v.Leave(n)
 }

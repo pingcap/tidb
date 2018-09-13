@@ -1267,15 +1267,57 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 	return nil
 }
 
+func (b *planBuilder) buildSetValuesOfLoadData(ld *ast.LoadDataStmt, ldPlan *LoadData, mockTablePlan *LogicalTableDual) error {
+	colNames := make([]string, 0, len(ld.Sets))
+	exprCols := make([]*expression.Column, 0, len(ld.Sets))
+	for _, assign := range ld.Sets {
+		exprCol, err := ldPlan.tableSchema.FindColumn(assign.Column)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if exprCol == nil {
+			return errors.Errorf("Can't find column %s", assign.Column)
+		}
+		colNames = append(colNames, assign.Column.Name.L)
+		exprCols = append(exprCols, exprCol)
+	}
+	return nil
+}
+
 func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
+
+
+	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
+	if !ok {
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
+	}
+	tn, ok := ts.Source.(*ast.TableName)
+	if !ok {
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
+	}
+	tableInfo := tn.TableInfo
+	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
+	schema := expression.TableInfo2SchemaWithDBName(b.ctx, tn.Schema, tableInfo)
+	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
+	if !ok {
+		return nil, errors.Errorf("Can't get table %s.", tableInfo.Name.O)
+	}
+
+	insertPlan := Insert{
+		Table:       tableInPlan,
+		Columns:     insert.Columns,
+		tableSchema: schema,
+		IsReplace:   insert.IsReplace,
+	}.init(b.ctx)
+
 	p := &LoadData{
-		IsLocal:     ld.IsLocal,
-		Path:        ld.Path,
-		Table:       ld.Table,
-		Columns:     ld.Columns,
-		FieldsInfo:  ld.FieldsInfo,
-		LinesInfo:   ld.LinesInfo,
-		IgnoreLines: ld.IgnoreLines,
+		IsLocal:      ld.IsLocal,
+		Path:         ld.Path,
+		Table:        ld.Table,
+		ColumnOrVars: ld.Columns,
+		FieldsInfo:   ld.FieldsInfo,
+		LinesInfo:    ld.LinesInfo,
+		IgnoreLines:  ld.IgnoreLines,
 	}
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
@@ -1286,6 +1328,8 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 	schema := expression.TableInfo2Schema(b.ctx, tableInfo)
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
+
+	b.buildSetValuesOfLoadData(ld, p, mockTablePlan, )
 
 	var err error
 	p.GenCols, err = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)

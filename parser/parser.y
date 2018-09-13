@@ -593,7 +593,10 @@ import (
 	ColumnNameList			"column name list"
 	ColumnList			"column list"
 	ColumnNameListOpt		"column name list opt"
-	ColumnNameListOptWithBrackets 	"column name list opt with brackets"
+	ColumnOrVarListOptWithBrackets 	"column or variable list opt with brackets"
+	ColumnOrVarList     "column or variable list"
+	ColumnOrVar         "column or variable"
+	LoadDataSetOpt      "load data statement set"
 	ColumnSetValue			"insert statement set value by column name"
 	ColumnSetValueList		"insert statement set value by column name list"
 	CompareOp			"Compare opcode"
@@ -1338,16 +1341,6 @@ ColumnNameListOpt:
 |	ColumnNameList
 	{
 		$$ = $1.([]*ast.ColumnName)
-	}
-
-ColumnNameListOptWithBrackets:
-	/* EMPTY */
-	{
-		$$ = []*ast.ColumnName{}
-	}
-|	'(' ColumnNameListOpt ')'
-	{
-		$$ = $2.([]*ast.ColumnName)
 	}
 
 CommitStmt:
@@ -6895,13 +6888,14 @@ RevokeStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameListOptWithBrackets
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnOrVarListOptWithBrackets LoadDataSetOpt
 	{
 		x := &ast.LoadDataStmt{
 			Path:       $5,
 			Table:      $8.(*ast.TableName),
-			Columns:    $13.([]*ast.ColumnName),
+			Columns:    $13.([]*ast.ColumnAndVar),
 			IgnoreLines:$12.(uint64),
+			Sets:       $14.([]*ast.Assignment),
 		}
 		if $3 != nil {
 			x.IsLocal = true
@@ -6914,6 +6908,47 @@ LoadDataStmt:
 		}
 		$$ = x
 	}
+
+ColumnOrVarListOptWithBrackets:
+	/* EMPTY */
+	{
+		$$ = []*ast.ColumnAndVar{}
+	}
+|	'(' ColumnOrVarList ')'
+	{
+		$$ = $2.([]*ast.ColumnAndVar)
+	}
+
+ColumnOrVarList:
+	ColumnOrVar
+	{
+		$$ = []*ast.ColumnAndVar{$1.(*ast.ColumnAndVar)}
+	}
+|	ColumnOrVarList ',' ColumnOrVar
+	{
+		$$ = append($1.([]*ast.ColumnAndVar), $3.(*ast.ColumnAndVar))
+	}
+
+ColumnOrVar:
+    UserVariable
+    {
+        $$ = &ast.ColumnAndVar{VariableExpr: $1.(*ast.VariableExpr)}
+    }
+|   ColumnName
+    {
+    	$$ = &ast.ColumnAndVar{ColumnName: $1.(*ast.ColumnName)}
+    }
+
+LoadDataSetOpt:
+    /* EMPTY */
+	{
+		$$ = []*ast.Assignment{}
+	}
+|	"SET" AssignmentList
+	{
+		$$ = $2
+	}
+
 
 IgnoreLines:
     {

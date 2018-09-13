@@ -36,18 +36,6 @@ type LoadDataExec struct {
 	loadDataInfo *LoadDataInfo
 }
 
-// NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
-func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
-	return &LoadDataInfo{
-		row:          row,
-		InsertValues: insertVal,
-		Table:        tbl,
-		Ctx:          ctx,
-		columns:      cols,
-	}
-}
-
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
@@ -95,7 +83,7 @@ type LoadDataInfo struct {
 	LinesInfo   *ast.LinesClause
 	IgnoreLines uint64
 	Ctx         sessionctx.Context
-	columns     []*table.Column
+	colOrVar    []*ast.ColNameOrVar
 }
 
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.
@@ -274,13 +262,32 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 			e.row[i].SetString(string(cols[i].str))
 		}
 	}
-	row, err := e.fillRowData(e.columns, e.row)
+	row, err := e.fillRowData(e.colOrVar, e.row)
 	if err != nil {
 		e.handleWarning(err,
 			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
 		return nil
 	}
 	return row
+}
+
+func (e *LoadDataInfo) fillRowData(colOrVars []*ast.ColNameOrVar, fileRow []types.Datum) ([]types.Datum, error) {
+	row := make([]types.Datum, len(e.Table.Cols()))
+	hasValue := make([]bool, len(e.Table.Cols()))
+	for i, v := range fileRow {
+		colOrVar := colOrVars[i]
+		if colOrVar.ColumnName != nil {
+		}
+		casted, err := table.CastValue(e.ctx, v, cols[i].ToInfo())
+		if e.filterErr(err) != nil {
+			return nil, errors.Trace(err)
+		}
+		offset := cols[i].Offset
+		row[offset] = casted
+		hasValue[offset] = true
+	}
+
+	return e.fillGenColData(cols, len(vals), hasValue, row)
 }
 
 func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
