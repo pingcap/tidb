@@ -1069,6 +1069,18 @@ func CreateSession(store kv.Storage) (Session, error) {
 	return s, nil
 }
 
+func loadSystemTZ(se *session) (string, error) {
+	sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
+	rss, errLoad := se.Execute(context.Background(), sql)
+	if errLoad != nil {
+		return "", errLoad
+	}
+	chk := rss[0].NewChunk()
+	rss[0].Next(context.Background(), chk)
+	return chk.GetRow(0).GetString(0), nil
+
+}
+
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersion(store)
@@ -1083,18 +1095,11 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, errors.Trace(err)
 	}
 	// get system tz from mysql.tidb
-	callback := func() string {
-		sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
-		rss, errLoad := se.Execute(context.Background(), sql)
-		if errLoad != nil {
-			log.Fatal(errLoad)
-		}
-		chk := rss[0].NewChunk()
-		rss[0].Next(context.Background(), chk)
-		return chk.GetRow(0).GetString(0)
+	if tz, err := loadSystemTZ(se); err != nil {
+		return nil, errors.Trace(err)
+	} else {
+		timeutil.SetSystemTZ(tz)
 	}
-
-	timeutil.SetSystemTZ(callback())
 
 	dom := domain.GetDomain(se)
 	// after this se is not thread-safe. It could be used by another
