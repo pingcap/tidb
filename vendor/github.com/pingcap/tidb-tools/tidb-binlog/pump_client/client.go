@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,9 +55,6 @@ var (
 
 	// ErrNoAvaliablePump means no avaliable pump to write binlog.
 	ErrNoAvaliablePump = errors.New("no avaliable pump to write binlog")
-
-	// ErrWriteBinlog means write binlog failed, and reach the max retry time.
-	ErrWriteBinlog = errors.New("write binlog failed")
 )
 
 // PumpInfos saves pumps' infomations in pumps client.
@@ -104,7 +102,7 @@ type PumpsClient struct {
 }
 
 // NewPumpsClient returns a PumpsClient.
-func NewPumpsClient(etcdURLs string, securityOpt pd.SecurityOption) (*PumpsClient, error) {
+func NewPumpsClient(etcdURLs string, timeout time.Duration, securityOpt pd.SecurityOption) (*PumpsClient, error) {
 	// TODO: get strategy from etcd, and can update strategy in real-time. now use Range as default.
 	strategy := Range
 	selector := NewSelector(strategy)
@@ -148,7 +146,7 @@ func NewPumpsClient(etcdURLs string, securityOpt pd.SecurityOption) (*PumpsClien
 		Pumps:              pumpInfos,
 		Selector:           selector,
 		RetryTime:          DefaultRetryTime,
-		BinlogWriteTimeout: DefaultBinlogWriteTimeout,
+		BinlogWriteTimeout: timeout,
 		Security:           security,
 	}
 
@@ -194,35 +192,52 @@ func (c *PumpsClient) WriteBinlog(binlog *pb.Binlog) error {
 	}
 	req := &pb.WriteBinlogReq{ClusterID: c.ClusterID, Payload: commitData}
 
-	// Retry many times because we may raise CRITICAL error here.
-	for i := 0; i < c.RetryTime; i++ {
+	retryTime := 0
+	startTime := time.Now()
+	var resp *pb.WriteBinlogResp
+
+	for {
 		if pump == nil {
 			return ErrNoAvaliablePump
 		}
 
-		resp, err := pump.writeBinlog(req, c.BinlogWriteTimeout)
+		resp, err = pump.writeBinlog(req, c.BinlogWriteTimeout)
 		if err == nil && resp.Errmsg != "" {
 			err = errors.New(resp.Errmsg)
 		}
 		if err == nil {
 			return nil
 		}
-
 		Logger.Errorf("[pumps client] write binlog error %v", err)
-		if isCriticalError(err) {
-			return err
+
+		if binlog.Tp == pb.BinlogType_Commit {
+			// only use one pump to write commit binlog, util write success or blocked for ten minutes.
+			if time.Since(startTime) > 10*time.Minute {
+				break
+			}
+		} else {
+			if !isRetryableError(err) {
+				// this kind of error is not retryable, return directly.
+				return err
+			}
+
+			// every pump can retry 5 times, if retry 5 times and still failed, set this pump unavaliable, and choose a new pump.
+			if (retryTime+1)%5 == 0 {
+				c.setPumpAvaliable(pump, false)
+				pump = c.Selector.Next(pump, binlog, retryTime/5+1)
+				Logger.Debugf("[pumps client] avaliable pumps: %v, write binlog choose pump %v", c.Pumps.AvaliablePumps, pump)
+			}
+
+			retryTime++
+			if retryTime > c.RetryTime {
+				break
+			}
 		}
 
-		// every pump can retry 5 times, if retry 5 times and still failed, set this pump unavaliable, and choose a new pump.
-		if (i+1)%5 == 0 {
-			c.setPumpAvaliable(pump, false)
-			pump = c.Selector.Next(pump, binlog, i/5+1)
-			Logger.Debugf("[pumps client] avaliable pumps: %v, write binlog choose pump %v", c.Pumps.AvaliablePumps, pump)
-		}
 		time.Sleep(RetryInterval)
 	}
 
-	return ErrWriteBinlog
+	return err
 }
 
 // setPumpAvaliable set pump's isAvaliable, and modify UnAvaliablePumps or AvaliablePumps.
@@ -402,9 +417,7 @@ func (c *PumpsClient) detect() {
 			}
 
 			for _, pump := range checkPassPumps {
-				c.Pumps.Lock()
 				c.setPumpAvaliable(pump, true)
-				c.Pumps.Unlock()
 			}
 
 			time.Sleep(CheckInterval)
@@ -420,9 +433,16 @@ func (c *PumpsClient) Close() {
 	Logger.Infof("[pumps client] is closed")
 }
 
-func isCriticalError(err error) bool {
-	// TODO: add some critical error.
-	return false
+func isRetryableError(err error) bool {
+	// ResourceExhausted is a error code in grpc.
+	// ResourceExhausted indicates some resource has been exhausted, perhaps
+	// a per-user quota, or perhaps the entire file system is out of space.
+	// https://github.com/grpc/grpc-go/blob/9cc4fdbde2304827ffdbc7896f49db40c5536600/codes/codes.go#L76
+	if strings.Contains(err.Error(), "ResourceExhausted") {
+		return false
+	}
+
+	return true
 }
 
 func copyPumps(pumps map[string]*PumpStatus) []*PumpStatus {

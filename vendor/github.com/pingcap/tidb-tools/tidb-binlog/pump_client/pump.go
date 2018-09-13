@@ -18,6 +18,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/juju/errors"
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	pb "github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
@@ -107,6 +108,10 @@ func (p *PumpStatus) closeGrpcClient() {
 }
 
 func (p *PumpStatus) writeBinlog(req *pb.WriteBinlogReq, timeout time.Duration) (*pb.WriteBinlogResp, error) {
+	if p.Client == nil {
+		return nil, errors.Errorf("pump %s don't have avaliable pump client", p.NodeID)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	resp, err := p.Client.WriteBinlog(ctx, req)
 	cancel()

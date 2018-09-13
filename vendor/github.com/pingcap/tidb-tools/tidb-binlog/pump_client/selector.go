@@ -85,6 +85,12 @@ func (h *HashSelector) Select(binlog *pb.Binlog) *PumpStatus {
 	h.Lock()
 	defer h.Unlock()
 
+	if pump, ok := h.TsMap[binlog.StartTs]; ok {
+		// binlog is commit binlog or rollback binlog, choose the same pump by start ts map.
+		delete(h.TsMap, binlog.StartTs)
+		return pump
+	}
+
 	if len(h.Pumps) == 0 {
 		return nil
 	}
@@ -95,19 +101,11 @@ func (h *HashSelector) Select(binlog *pb.Binlog) *PumpStatus {
 		return pump
 	}
 
-	// binlog is commit binlog or rollback binlog, choose the same pump by start ts map.
-	if pump, ok := h.TsMap[binlog.StartTs]; ok {
-		delete(h.TsMap, binlog.StartTs)
-		if _, ok = h.PumpMap[pump.NodeID]; ok {
-			return pump
-		}
-	}
-
-	// can't find pump in ts map, or the pump is not avaliable, choose a new one.
+	// can't find pump in ts map, or unkow binlog type, choose a new one.
 	return h.Pumps[hashTs(binlog.StartTs)%len(h.Pumps)]
 }
 
-// Next implement PumpSelector.Next.
+// Next implement PumpSelector.Next. Only for Prewrite binlog.
 func (h *HashSelector) Next(pump *PumpStatus, binlog *pb.Binlog, retryTime int) *PumpStatus {
 	h.Lock()
 	defer h.Unlock()
@@ -175,8 +173,18 @@ func (r *RangeSelector) Select(binlog *pb.Binlog) *PumpStatus {
 		r.Unlock()
 	}()
 
+	if pump, ok := r.TsMap[binlog.StartTs]; ok {
+		// binlog is commit binlog or rollback binlog, choose the same pump by start ts map.
+		delete(r.TsMap, binlog.StartTs)
+		return pump
+	}
+
 	if len(r.Pumps) == 0 {
 		return nil
+	}
+
+	if r.Offset >= len(r.Pumps) {
+		r.Offset = 0
 	}
 
 	if binlog.Tp == pb.BinlogType_Prewrite {
@@ -186,19 +194,11 @@ func (r *RangeSelector) Select(binlog *pb.Binlog) *PumpStatus {
 		return pump
 	}
 
-	// binlog is commit binlog or rollback binlog, choose the same pump by start ts map.
-	if pump, ok := r.TsMap[binlog.StartTs]; ok {
-		delete(r.TsMap, binlog.StartTs)
-		if _, ok = r.PumpMap[pump.NodeID]; ok {
-			return pump
-		}
-	}
-
 	// can't find pump in ts map, or the pump is not avaliable, choose a new one.
 	return r.Pumps[r.Offset]
 }
 
-// Next implement PumpSelector.Next.
+// Next implement PumpSelector.Next. Only for Prewrite binlog.
 func (r *RangeSelector) Next(pump *PumpStatus, binlog *pb.Binlog, retryTime int) *PumpStatus {
 	r.Lock()
 	defer func() {
@@ -210,6 +210,10 @@ func (r *RangeSelector) Next(pump *PumpStatus, binlog *pb.Binlog, retryTime int)
 
 	if len(r.Pumps) == 0 {
 		return nil
+	}
+
+	if r.Offset >= len(r.Pumps) {
+		r.Offset = 0
 	}
 
 	nextPump := r.Pumps[r.Offset]
@@ -240,7 +244,7 @@ func (s *ScoreSelector) Select(binlog *pb.Binlog) *PumpStatus {
 	return nil
 }
 
-// Next implement PumpSelector.Next.
+// Next implement PumpSelector.Next. Only for Prewrite binlog.
 func (s *ScoreSelector) Next(pump *PumpStatus, binlog *pb.Binlog, retryTime int) *PumpStatus {
 	// TODO
 	return nil
