@@ -1041,6 +1041,8 @@ func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCou
 	return errors.Trace(h.dumpFeedbackToKV(q))
 }
 
+// setNextValue sets the next value for the given datum. For types like float,
+// we do not set because it is not discrete and does not matter too much when estimating the scalar info.
 func setNextValue(d *types.Datum) {
 	switch d.Kind() {
 	case types.KindBytes, types.KindString:
