@@ -1501,6 +1501,8 @@ func (d *Datum) ToFloat64(sc *stmtctx.StatementContext) (float64, error) {
 // ToString gets the string representation of the datum.
 func (d *Datum) ToString() (string, error) {
 	switch d.Kind() {
+	case KindNull:
+		return "<nil>", nil
 	case KindInt64:
 		return strconv.FormatInt(d.GetInt64(), 10), nil
 	case KindUint64:
@@ -1513,16 +1515,16 @@ func (d *Datum) ToString() (string, error) {
 		return d.GetString(), nil
 	case KindBytes:
 		return d.GetString(), nil
-	case KindMysqlTime:
-		return d.GetMysqlTime().String(), nil
-	case KindMysqlDuration:
-		return d.GetMysqlDuration().String(), nil
 	case KindMysqlDecimal:
 		return d.GetMysqlDecimal().String(), nil
+	case KindMysqlDuration:
+		return d.GetMysqlDuration().String(), nil
 	case KindMysqlEnum:
 		return d.GetMysqlEnum().String(), nil
 	case KindMysqlSet:
 		return d.GetMysqlSet().String(), nil
+	case KindMysqlTime:
+		return d.GetMysqlTime().String(), nil
 	case KindMysqlJSON:
 		return d.GetMysqlJSON().String(), nil
 	case KindBinaryLiteral, KindMysqlBit:
