@@ -100,7 +100,7 @@ func inferTZNameFromFileName(path string) (string, error) {
 	return "", errors.New(fmt.Sprintf("path %s is not supported", path))
 }
 
-// Local returns time.Local's IANA timezone name.
+// Local returns time.Local's IANA timezone name. It is TiDB's global timezone name.
 func Local() *time.Location {
 	loc, err := LoadLocation(systemTZ)
 	if err != nil {
