@@ -628,15 +628,15 @@ const (
 )
 
 // Priority2Str is used to convert the statement priority to string.
-var Priority2Str = map[PriorityEnum]string {
-	NoPriority: "NO_PRIORITY",
-	LowPriority: "LOW_PRIORITY",
-	HighPriority: "HIGH_PRIORITY",
+var Priority2Str = map[PriorityEnum]string{
+	NoPriority:      "NO_PRIORITY",
+	LowPriority:     "LOW_PRIORITY",
+	HighPriority:    "HIGH_PRIORITY",
 	DelayedPriority: "DELAYED",
 }
 
-// Str2Prority is used to convert a string to a priority.
-func Str2Prority(val string) PriorityEnum {
+// Str2Priority is used to convert a string to a priority.
+func Str2Priority(val string) PriorityEnum {
 	val = strings.ToUpper(val)
 	switch val {
 	case "NO_PRIORITY":
@@ -650,14 +650,6 @@ func Str2Prority(val string) PriorityEnum {
 	default:
 		return NoPriority
 	}
-}
-
-// Str2Priority is used to convert string to convert to string.
-var Str2Priority = map[string]PriorityEnum {
-	"NO_PRIORITY":   NoPriority,
-	"LOW_PRIORITY":  LowPriority,
-	"HIGH_PRIORITY": HighPriority,
-	"DELAYED":       DelayedPriority,
 }
 
 // PrimaryKeyName defines primary key name.
