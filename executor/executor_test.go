@@ -2361,7 +2361,6 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 }
 
 func (s *testSuite) TestTimezonePushDown(c *C) {
-	session.BootstrapSession(s.store)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (ts timestamp)")
