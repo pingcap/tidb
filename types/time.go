@@ -2246,7 +2246,6 @@ func secondsNumeric(t *MysqlTime, input string, ctx map[string]int) (string, boo
 	}
 	t.second = uint8(v)
 	return input[2:], true
-	return input[2:], true
 }
 
 func minutesNumeric(t *MysqlTime, input string, ctx map[string]int) (string, bool) {

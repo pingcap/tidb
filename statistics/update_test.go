@@ -1047,13 +1047,10 @@ func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 
 	oriProbability := statistics.FeedbackProbability
-	oriBktSize := executor.GetMaxBucketSizeForTest()
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
-		executor.SetMaxBucketSizeForTest(oriBktSize)
 	}()
 	statistics.FeedbackProbability = 1
-	executor.SetMaxBucketSizeForTest(3)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), index idx_ab(a,b), index idx_ac(a,c), index idx_b(b))")
@@ -1063,7 +1060,7 @@ func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
 	h := s.do.StatsHandle()
 	h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 3 buckets")
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (1, %d, %d)", i, i))
 	}
