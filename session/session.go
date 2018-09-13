@@ -1100,7 +1100,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return chk.GetRow(0).GetString(0)
 	}
 
-	timeutil.LoadLocalStrFromTB(callback())
+	timeutil.SetSystemTZ(callback())
 
 	se1, err := createSession(store)
 	if err != nil {
