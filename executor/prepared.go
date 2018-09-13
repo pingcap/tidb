@@ -269,11 +269,11 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 		Ctx:        ctx,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*plan.Prepared); ok {
+		argInfo := ""
 		if len(argStrs) > 0 {
-			prepared.Stmt.SetText(fmt.Sprintf("%s [arguments: %s]", prepared.Stmt.Text(),
-				strings.Join(argStrs, ",")))
+			argInfo = fmt.Sprintf(" [arguments: %s]", strings.Join(argStrs, ","))
 		}
-		stmt.Text = prepared.Stmt.Text()
+		stmt.Text = prepared.Stmt.Text() + argInfo
 	}
 	return stmt, nil
 }

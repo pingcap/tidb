@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"fmt"
 	"math"
 	"strings"
 
@@ -101,7 +102,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
 		stmt, err := executor.CompileExecutePreparedStmt(tk.Se, stmtId, 1)
 		c.Assert(err, IsNil)
-		c.Assert(stmt.OriginText(), Equals, query)
+		c.Assert(stmt.OriginText(), Equals, fmt.Sprintf("%s [arguments: %d]", query, 1))
 
 		// Check that rebuild plan works.
 		tk.Se.PrepareTxnCtx(ctx)
