@@ -250,11 +250,15 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 	for i, val := range args {
 		expr := ast.NewValueExpr(val)
 		execStmt.UsingVars[i] = expr
-		str, err := expr.ToString()
-		if err != nil {
-			return nil, err
+		if expr.GetDatum().IsNull() {
+			argStrs = append(argStrs, "<nil>")
+		} else {
+			str, err := expr.ToString()
+			if err != nil {
+				return nil, err
+			}
+			argStrs = append(argStrs, str)
 		}
-		argStrs = append(argStrs, str)
 	}
 	is := GetInfoSchema(ctx)
 	execPlan, err := plan.Optimize(ctx, execStmt, is)
