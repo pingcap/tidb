@@ -420,16 +420,20 @@ import (
 	getFormat		"GET_FORMAT"
 	groupConcat		"GROUP_CONCAT"
 	inplace 		"INPLACE"
+	internal		"INTERNAL"
+	log			"LOG"
 	min			"MIN"
 	max			"MAX"
 	maxExecutionTime	"MAX_EXECUTION_TIME"
 	now			"NOW"
 	position		"POSITION"
+	recent			"RECENT"
 	subDate			"SUBDATE"
 	sum			"SUM"
 	substring		"SUBSTRING"
 	timestampAdd		"TIMESTAMPADD"
 	timestampDiff		"TIMESTAMPDIFF"
+	top			"TOP"
 	trim			"TRIM"
 
 	/* The following tokens belong to TiDBKeyword. */
@@ -575,6 +579,7 @@ import (
 	UseStmt				"USE statement"
 
 %type   <item>
+	AdminShowLog			"Admin Show Log statement"
 	AlterTableOptionListOpt		"alter table option list opt"
 	AlterTableSpec			"Alter table specification"
 	AlterTableSpecList		"Alter table specification list"
@@ -2824,8 +2829,8 @@ TiDBKeyword:
 "ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
- "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
-| "INPLACE" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
+ "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "INPLACE" | "INTERNAL" 
+| "LOG" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOP" | "TRIM"
 
 /************************************************************************************
  *
@@ -3605,6 +3610,10 @@ FunctionCallNonKeyword:
 			FnName: model.NewCIStr($1),
 			Args: []ast.ExprNode{ast.NewValueExpr($3), $5},
 		}
+	}
+|	"LOG" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 |	builtinPosition '(' BitExpr "IN" Expression ')'
 	{
@@ -5219,6 +5228,53 @@ AdminStmt:
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminShowDDLJobQueries,
 			JobIDs: $6.([]int64),
+		}
+	}
+|	"ADMIN" "SHOW" "LOG" AdminShowLog
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminShowLog,
+			ShowLog: $4.(*ast.ShowLog),
+		}
+	}
+
+AdminShowLog:
+	"RECENT" NUM
+	{
+		$$ = &ast.ShowLog{
+			Tp: ast.ShowLogRecent,
+			Count: getUint64FromNUM($2),
+		}
+	}
+|	"TOP" NUM
+	{
+		$$ = &ast.ShowLog{
+			Tp: ast.ShowLogTop,
+			Count: getUint64FromNUM($2),
+		}
+	}
+|	"TOP" "USER" NUM
+	{
+		$$ = &ast.ShowLog{
+			Tp: ast.ShowLogTop,
+			Kind: "user",
+			Count: getUint64FromNUM($3),
+		}
+	}
+|	"TOP" "INTERNAL" NUM
+	{
+		$$ = &ast.ShowLog{
+			Tp: ast.ShowLogTop,
+			Kind: "internal",
+			Count: getUint64FromNUM($3),
+		}
+	}
+|	"TOP" "ALL" NUM
+	{
+		$$ = &ast.ShowLog{
+			Tp: ast.ShowLogTop,
+			Kind: "all",
+			Count: getUint64FromNUM($3),
 		}
 	}
 

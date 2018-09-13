@@ -22,10 +22,12 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -469,6 +471,60 @@ func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			break
 		}
 	}
+	return nil
+}
+
+type ShowLogExec struct {
+	baseExecutor
+
+	done    bool
+	ShowLog *ast.ShowLog
+}
+
+// Open implements the Executor Open interface.
+func (e *ShowLogExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (e *ShowLogExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.done {
+		return nil
+	}
+
+	dom := domain.GetDomain(e.ctx)
+	slowQueries := dom.ShowTopNSlowQuery(e.ShowLog)
+	for _, slow := range slowQueries {
+		fmt.Println("--------", slow)
+		chk.AppendString(0, slow.SQL)
+		chk.AppendTime(1, types.Time{
+			Time: types.FromGoTime(slow.Start),
+			Type: mysql.TypeTimestamp,
+			Fsp:  types.MaxFsp,
+		})
+		chk.AppendDuration(2, types.Duration{Duration: slow.Duration, Fsp: types.MaxFsp})
+		chk.AppendString(3, slow.Detail.String())
+		if slow.Succ {
+			chk.AppendInt64(4, 1)
+		} else {
+			chk.AppendInt64(4, 0)
+		}
+		chk.AppendUint64(5, slow.ConnID)
+		chk.AppendUint64(6, slow.TxnTS)
+		chk.AppendString(7, slow.User)
+		chk.AppendString(8, slow.DB)
+		chk.AppendString(9, slow.TableIDs)
+		chk.AppendString(10, slow.IndexIDs)
+		if slow.Internal {
+			chk.AppendInt64(11, 0)
+		} else {
+			chk.AppendInt64(11, 1)
+		}
+	}
+	e.done = true
 	return nil
 }
 

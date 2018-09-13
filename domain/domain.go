@@ -25,6 +25,7 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/juju/errors"
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -338,6 +339,16 @@ func (do *Domain) LogTopNSlowQuery(query *SlowQueryInfo) {
 	}
 }
 
+func (do *Domain) ShowTopNSlowQuery(showLog *ast.ShowLog) []*SlowQueryInfo {
+	msg := &showLogMessage{
+		request: showLog,
+	}
+	msg.Add(1)
+	do.slowQuery.msgCh <- msg
+	msg.Wait()
+	return msg.result
+}
+
 func (do *Domain) topNSlowQueryLoop() {
 	defer recoverInDomain("topNSlowQueryLoop", false)
 	defer do.wg.Done()
@@ -352,6 +363,14 @@ func (do *Domain) topNSlowQueryLoop() {
 				return
 			}
 			do.slowQuery.Append(info)
+		case msg := <-do.slowQuery.msgCh:
+			req := msg.request
+			if req.Tp == ast.ShowLogTop {
+				msg.result = do.slowQuery.QueryTop(int(req.Count), req.Kind)
+			} else if req.Tp == ast.ShowLogRecent {
+				msg.result = do.slowQuery.QueryRecent(int(req.Count))
+			}
+			msg.Done()
 		}
 	}
 }
@@ -499,7 +518,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, resourceIdleTimeout),
 		statsLease:      statsLease,
 		infoHandle:      infoschema.NewHandle(store),
-		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7),
+		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7, 500),
 	}
 }
 

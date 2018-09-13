@@ -618,12 +618,30 @@ const (
 	AdminCheckIndexRange
 	AdminShowDDLJobQueries
 	AdminChecksumTable
+	AdminShowLog
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
 type HandleRange struct {
 	Begin int64
 	End   int64
+}
+
+type ShowLogType int
+
+const (
+	ShowLogTop ShowLogType = iota
+	ShowLogRecent
+)
+
+// ShowLog is used for the following command:
+//	admin show log top [user | internal | all] N
+//	admin show log recent N
+type ShowLog struct {
+	Tp    ShowLogType
+	Count uint64
+	// "user" | "internal" | "all", default is user
+	Kind string
 }
 
 // AdminStmt is the struct for Admin statement.
@@ -637,6 +655,7 @@ type AdminStmt struct {
 	JobNumber int64
 
 	HandleRanges []HandleRange
+	ShowLog      *ShowLog
 }
 
 // Accept implements Node Accept interface.

@@ -501,6 +501,10 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p := &ShowDDLJobQueries{JobIDs: as.JobIDs}
 		p.SetSchema(buildShowDDLJobQueriesFields())
 		ret = p
+	case ast.AdminShowLog:
+		p := &ShowLog{ShowLog: as.ShowLog}
+		p.SetSchema(buildShowLogSchema())
+		ret = p
 	default:
 		return nil, ErrUnsupportedType.Gen("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -743,6 +747,23 @@ func buildShowDDLJobsFields() *expression.Schema {
 func buildShowDDLJobQueriesFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
 	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
+	return schema
+}
+
+func buildShowLogSchema() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11)...)
+	schema.Append(buildColumn("", "SQL", mysql.TypeVarchar, 256))
+	schema.Append(buildColumn("", "START", mysql.TypeTimestamp, 64))
+	schema.Append(buildColumn("", "DURATION", mysql.TypeDuration, 64))
+	schema.Append(buildColumn("", "DETAILS", mysql.TypeVarchar, 256))
+	schema.Append(buildColumn("", "SUCC", mysql.TypeTiny, 2))
+	schema.Append(buildColumn("", "CONN_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "TXNTS", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "USER", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn("", "DB", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "TABLE_IDS", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "INDEX_IDS", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "INTERNAL", mysql.TypeTiny, 2))
 	return schema
 }
 
