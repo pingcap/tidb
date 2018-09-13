@@ -2372,7 +2372,7 @@ func (s *testSuite) TestTimezonePushDown(c *C) {
 	c.Assert(systemTZ.String(), Not(Equals), "System")
 	ctx := context.Background()
 	count := 0
-	ctx1 := context.WithValue(ctx, "CheckTimezonePushDownHook", func(req *kv.Request) {
+	ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
 		count += 1
 		dagReq := new(tipb.DAGRequest)
 		err := proto.Unmarshal(req.Data, dagReq)

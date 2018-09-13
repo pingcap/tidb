@@ -36,10 +36,6 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		hook.(func(*kv.Request))(kvReq)
 	}
 
-	if hook := ctx.Value("CheckTimezonePushDownHook"); hook != nil {
-		hook.(func(*kv.Request))(kvReq)
-	}
-
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false
 	}
