@@ -1095,11 +1095,12 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, errors.Trace(err)
 	}
 	// get system tz from mysql.tidb
-	if tz, err := loadSystemTZ(se); err != nil {
+	tz, err := loadSystemTZ(se)
+	if err != nil {
 		return nil, errors.Trace(err)
-	} else {
-		timeutil.SetSystemTZ(tz)
 	}
+
+	timeutil.SetSystemTZ(tz)
 
 	dom := domain.GetDomain(se)
 	err = dom.LoadPrivilegeLoop(se)
