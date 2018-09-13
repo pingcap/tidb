@@ -1164,20 +1164,24 @@ func (e *InsertExec) updateDupRow(keys []keyWithDupError, k keyWithDupError, val
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.updateDupKeyValues(keys, oldHandle, newHandle, handleChanged, updatedRow)
+	return e.updateDupKeyValues(oldHandle, newHandle, handleChanged, oldRow, updatedRow)
 }
 
 // updateDupKeyValues updates the dupKeyValues for further duplicate key check.
-func (e *InsertExec) updateDupKeyValues(keys []keyWithDupError, oldHandle int64,
-	newHandle int64, handleChanged bool, updatedRow []types.Datum) error {
+func (e *InsertExec) updateDupKeyValues(oldHandle int64, newHandle int64, handleChanged bool,
+	oldRow []types.Datum, updatedRow []types.Datum) error {
+	// Delete key-values belong to the old row.
+	cleanupRows, err := getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{oldRow})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, del := range cleanupRows[0] {
+		delete(e.dupKeyValues, string(del.key))
+	}
 	// There is only one row per update.
 	fillBackKeysInRows, err := getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{updatedRow})
 	if err != nil {
 		return errors.Trace(err)
-	}
-	// Delete key-values belong to the old row.
-	for _, del := range keys {
-		delete(e.dupKeyValues, string(del.key))
 	}
 	// Fill back new key-values of the updated row.
 	if handleChanged {
