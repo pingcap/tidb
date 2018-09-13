@@ -674,7 +674,7 @@ func upgradeToVer23(s Session) {
 //writeSystemTZ writes system timezone info into mysql.tidb
 func writeSystemTZ(s Session) {
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", "%s", "TiDB Global System Timezone.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
-		mysql.SystemDB, mysql.TiDBTable, tidbSystemTZ, timeutil.GetSystemTZ(), timeutil.GetSystemTZ())
+		mysql.SystemDB, mysql.TiDBTable, tidbSystemTZ, timeutil.InferSystemTZ(), timeutil.InferSystemTZ())
 	mustExecute(s, sql)
 }
 
