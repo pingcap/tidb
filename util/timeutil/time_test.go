@@ -43,7 +43,6 @@ func (s *testTimeSuite) TestLocal(c *C) {
 	os.Setenv("TZ", "Asia/Shanghai")
 	LocalStr = GetSystemTZ()
 	loc := Local()
-	fmt.Println(LocalStr)
 	c.Assert(LocalStr, Equals, "Asia/Shanghai")
 	c.Assert(loc.String(), Equals, "Asia/Shanghai")
 
