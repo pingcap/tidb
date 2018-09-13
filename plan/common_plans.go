@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 )
 
 // ShowDDL is for showing DDL information.
@@ -167,7 +167,7 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		// if this time it failed, the real reason for the error is schema changed.
 		err := Preprocess(ctx, prepared.Stmt, is, true)
 		if err != nil {
-			return ErrSchemaChanged.Gen("Schema change caused error: %s", err.Error())
+			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
@@ -373,20 +373,22 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	baseSchemaProducer
 
-	ColTasks []AnalyzeColumnsTask
-	IdxTasks []AnalyzeIndexTask
+	ColTasks      []AnalyzeColumnsTask
+	IdxTasks      []AnalyzeIndexTask
+	MaxNumBuckets uint64
 }
 
 // LoadData represents a loaddata plan.
 type LoadData struct {
 	baseSchemaProducer
 
-	IsLocal    bool
-	Path       string
-	Table      *ast.TableName
-	Columns    []*ast.ColumnName
-	FieldsInfo *ast.FieldsClause
-	LinesInfo  *ast.LinesClause
+	IsLocal     bool
+	Path        string
+	Table       *ast.TableName
+	Columns     []*ast.ColumnName
+	FieldsInfo  *ast.FieldsClause
+	LinesInfo   *ast.LinesClause
+	IgnoreLines uint64
 
 	GenCols InsertGeneratedColumns
 }
@@ -415,8 +417,8 @@ type Explain struct {
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
-func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string, isLastChild bool) {
-	e.prepareOperatorInfo(p, taskType, indent, isLastChild)
+func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, TaskType, indent string, isLastChild bool) {
+	e.prepareOperatorInfo(p, TaskType, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
 	// For every child we create a new sub-tree rooted by it.
@@ -425,7 +427,7 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 		if e.explainedPlans[child.ID()] {
 			continue
 		}
-		e.explainPlanInRowFormat(child.(PhysicalPlan), taskType, childIndent, i == len(p.Children())-1)
+		e.explainPlanInRowFormat(child.(PhysicalPlan), TaskType, childIndent, i == len(p.Children())-1)
 	}
 
 	switch copPlan := p.(type) {
@@ -441,10 +443,10 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string
 
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, task type, operator info, and the estemated row count.
-func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
+func (e *Explain) prepareOperatorInfo(p PhysicalPlan, TaskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
-	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().count, 'f', 2, 64))
-	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
+	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
+	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, TaskType, operatorInfo}
 	e.Rows = append(e.Rows, row)
 }
 

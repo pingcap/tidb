@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 func TestT(t *testing.T) {
@@ -445,6 +445,20 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 			accessConds: "[not(in(test.t.c, 1, 2, 3))]",
 			filterConds: "[]",
 			resultStr:   "[(NULL +inf,1 NULL) (1 +inf,2 NULL) (2 +inf,3 NULL) (3 +inf,+inf +inf]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "c in (1, 2) and c in (1, 3)",
+			accessConds: "[eq(test.t.c, 1)]",
+			filterConds: "[]",
+			resultStr:   "[[1,1]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "c = 1 and c = 2",
+			accessConds: "[]",
+			filterConds: "[]",
+			resultStr:   "[]",
 		},
 		{
 			indexPos:    0,

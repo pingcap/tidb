@@ -16,12 +16,12 @@ package plan
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 // extractCorColumnsBySchema only extracts the correlated columns that match the outer plan's schema.
@@ -182,13 +182,19 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				agg.SetSchema(apply.Schema())
 				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().Keys[0])
 				newAggFuncs := make([]*aggregation.AggFuncDesc, 0, apply.Schema().Len())
-				for _, col := range outerPlan.Schema().Columns {
+
+				outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())
+				for i, col := range outerPlan.Schema().Columns {
 					first := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 					newAggFuncs = append(newAggFuncs, first)
+
+					outerCol, _ := outerPlan.Schema().Columns[i].Clone().(*expression.Column)
+					outerCol.RetType = first.RetTp
+					outerColsInSchema = append(outerColsInSchema, outerCol)
 				}
 				newAggFuncs = append(newAggFuncs, agg.AggFuncs...)
 				agg.AggFuncs = newAggFuncs
-				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
+				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
 				np, err := s.optimize(p)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -229,6 +235,7 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 								newFunc := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
 								agg.AggFuncs = append(agg.AggFuncs, newFunc)
 								agg.schema.Append(clonedCol.(*expression.Column))
+								agg.schema.Columns[agg.schema.Len()-1].RetType = newFunc.RetTp
 							}
 							// If group by cols don't contain the join key, add it into this.
 							if agg.getGbyColIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
