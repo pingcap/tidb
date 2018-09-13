@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/mockstore"
-	//"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -272,9 +272,7 @@ func (s *testBinlogSuite) TestMaxRecvSize(c *C) {
 	}
 	err := info.WriteBinlog(1)
 	c.Assert(err, NotNil)
-	// FIXME: pumpsclient now only return "write binlog failed" error or "no avaliable pump to write binlog" error,
-	// remove comment after pumpsclient support return "binlog data is too large" error.
-	//c.Assert(terror.ErrCritical.Equal(err), IsFalse, Commentf("%v", err))
+	c.Assert(terror.ErrCritical.Equal(err), IsFalse, Commentf("%v", err))
 }
 
 func getLatestBinlogPrewriteValue(c *C, pump *mockBinlogPump) *binlog.PrewriteValue {
