@@ -59,9 +59,9 @@ type locCache struct {
 	locMap map[string]*time.Location
 }
 
-// GetSystemTZ reads system timezone from `TZ`, the path of the soft link of `/etc/localtime`. If both of them are failed, system timezone will be set to `UTC`.
+// InferSystemTZ reads system timezone from `TZ`, the path of the soft link of `/etc/localtime`. If both of them are failed, system timezone will be set to `UTC`.
 // It is exported because we need to use it during bootstap stage. And it should be only used at that stage.
-func GetSystemTZ() string {
+func InferSystemTZ() string {
 	// consult $TZ to find the time zone to use.
 	// no $TZ means use the system default /etc/localtime.
 	// $TZ="" means use UTC.
@@ -71,7 +71,7 @@ func GetSystemTZ() string {
 	case !ok:
 		path, err1 := filepath.EvalSymlinks("/etc/localtime")
 		if err1 == nil {
-			name, err2 := getTZNameFromFileName(path)
+			name, err2 := inferTZNameFromFileName(path)
 			if err2 == nil {
 				return name
 			}
@@ -88,9 +88,9 @@ func GetSystemTZ() string {
 	return "UTC"
 }
 
-// getTZNameFromFileName gets IANA timezone name from zoneinfo path.
-// TODO It will be refined later. This is just a quick fix.
-func getTZNameFromFileName(path string) (string, error) {
+// inferTZNameFromFileName gets IANA timezone name from zoneinfo path.
+// TODO: It will be refined later. This is just a quick fix.
+func inferTZNameFromFileName(path string) (string, error) {
 	// phase1 only support read /etc/localtime which is a softlink to zoneinfo file
 	substr := "zoneinfo"
 	if strings.Contains(path, substr) {
