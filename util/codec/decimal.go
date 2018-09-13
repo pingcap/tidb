@@ -14,8 +14,8 @@
 package codec
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 // EncodeDecimal encodes a decimal into a byte slice which can be sorted lexicographically later.

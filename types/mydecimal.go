@@ -17,9 +17,9 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 )
 
 // RoundMode is the type for round mode.

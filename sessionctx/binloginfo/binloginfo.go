@@ -20,12 +20,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -147,7 +147,7 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) error {
 		}
 	}
 
-	return terror.ErrCritical.GenByArgs(err)
+	return terror.ErrCritical.GenWithStackByArgs(err)
 }
 
 // SetDDLBinlog sets DDL binlog in the kv.Transaction.

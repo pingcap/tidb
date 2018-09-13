@@ -17,7 +17,7 @@ import (
 	"bytes"
 	"crypto/tls"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 var statisticsList []Statistics
