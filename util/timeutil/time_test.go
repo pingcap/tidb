@@ -40,20 +40,20 @@ func (s *testTimeSuite) TestgetTZNameFromFileName(c *C) {
 
 func (s *testTimeSuite) TestLocal(c *C) {
 	os.Setenv("TZ", "Asia/Shanghai")
-	LocalStr = InferSystemTZ()
+	localStr = InferSystemTZ()
 	loc := Local()
-	c.Assert(LocalStr, Equals, "Asia/Shanghai")
+	c.Assert(localStr, Equals, "Asia/Shanghai")
 	c.Assert(loc.String(), Equals, "Asia/Shanghai")
 
 	os.Setenv("TZ", "UTC")
 	// reset localStr
-	LocalStr = InferSystemTZ()
+	localStr = InferSystemTZ()
 	loc = Local()
 	c.Assert(loc.String(), Equals, "UTC")
 
 	os.Setenv("TZ", "")
 	// reset localStr
-	LocalStr = InferSystemTZ()
+	localStr = InferSystemTZ()
 	loc = Local()
 	c.Assert(loc.String(), Equals, "UTC")
 	os.Unsetenv("TZ")
