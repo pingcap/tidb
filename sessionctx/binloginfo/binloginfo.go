@@ -201,7 +201,7 @@ func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
 		Pumps:              pumpInfos,
 		Selector:           pumpcli.NewSelector(pumpcli.Range),
 		RetryTime:          1,
-		BinlogWriteTimeout: 15 * time.Second,
+		BinlogWriteTimeout: binlogWriteTimeout,
 	}
 	pCli.Selector.SetPumps([]*pumpcli.PumpStatus{pump})
 

@@ -171,15 +171,13 @@ func setupBinlogClient() {
 		binloginfo.SetIgnoreError(true)
 	}
 
-	client, err := pumpcli.NewPumpsClient(cfg.Path, pd.SecurityOption{
+	client, err := pumpcli.NewPumpsClient(cfg.Path, parseDuration(cfg.Binlog.WriteTimeout), pd.SecurityOption{
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
 	})
 	terror.MustNil(err)
 
-	// TODO: pumps client use default timeout value, will support set timeout later.
-	binloginfo.SetGRPCTimeout(parseDuration(cfg.Binlog.WriteTimeout))
 	binloginfo.SetPumpsClient(client)
 	log.Infof("create pumps client success, ignore binlog error %v", cfg.Binlog.IgnoreError)
 }
