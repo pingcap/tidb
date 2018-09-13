@@ -16,7 +16,6 @@ package ddl
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

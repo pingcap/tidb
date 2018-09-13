@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -64,6 +64,7 @@ func (s *testSuite) TestSelectNormal(c *C) {
 	result, ok := response.(*selectResult)
 	c.Assert(ok, IsTrue)
 	c.Assert(result.label, Equals, "dag")
+	c.Assert(result.sqlType, Equals, "general")
 	c.Assert(result.rowLen, Equals, len(colTypes))
 
 	response.Fetch(context.TODO())
@@ -143,12 +144,13 @@ func (s *testSuite) TestAnalyze(c *C) {
 		Build()
 	c.Assert(err, IsNil)
 
-	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars)
+	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars, true)
 	c.Assert(err, IsNil)
 
 	result, ok := response.(*selectResult)
 	c.Assert(ok, IsTrue)
 	c.Assert(result.label, Equals, "analyze")
+	c.Assert(result.sqlType, Equals, "internal")
 
 	response.Fetch(context.TODO())
 

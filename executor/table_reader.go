@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/plan"
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

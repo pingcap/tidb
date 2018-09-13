@@ -20,7 +20,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -661,8 +660,18 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		c.Assert(len(feedback), Equals, 0)
 	}
 
-	// Test that the outdated feedback won't cause panic.
+	// Test that after drop stats, the feedback won't cause panic.
 	statistics.FeedbackProbability = 1
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+	}
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	testKit.MustExec("drop stats t")
+	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+
+	// Test that the outdated feedback won't cause panic.
+	testKit.MustExec("analyze table t")
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
 	}
@@ -845,6 +854,10 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 
 	// Test that it won't cause panic after update.
 	testKit.MustQuery("select * from t use index(idx) where b > 0")
+
+	// Test that after drop stats, it won't cause panic.
+	testKit.MustExec("drop stats t")
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 }
 
 type logHook struct {
@@ -870,17 +883,14 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 	oriMinLogCount := statistics.MinLogScanCount
 	oriMinError := statistics.MinLogErrorRate
 	oriLevel := log.GetLevel()
-	oriBucketNum := executor.GetMaxBucketSizeForTest()
 	oriLease := s.do.StatsHandle().Lease
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MinLogScanCount = oriMinLogCount
 		statistics.MinLogErrorRate = oriMinError
-		executor.SetMaxBucketSizeForTest(oriBucketNum)
 		s.do.StatsHandle().Lease = oriLease
 		log.SetLevel(oriLevel)
 	}()
-	executor.SetMaxBucketSizeForTest(4)
 	statistics.FeedbackProbability = 1
 	statistics.MinLogScanCount = 0
 	statistics.MinLogErrorRate = 0
@@ -892,7 +902,7 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 4 buckets")
 	tests := []struct {
 		sql    string
 		result string

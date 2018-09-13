@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 

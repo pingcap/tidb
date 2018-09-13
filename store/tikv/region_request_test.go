@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
@@ -221,6 +221,9 @@ func (s *mockTikvGrpcServer) RawDeleteRange(context.Context, *kvrpcpb.RawDeleteR
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) RawBatchScan(context.Context, *kvrpcpb.RawBatchScanRequest) (*kvrpcpb.RawBatchScanResponse, error) {
+	return nil, errors.New("unreachable")
+}
+func (s *mockTikvGrpcServer) UnsafeDestroyRange(context.Context, *kvrpcpb.UnsafeDestroyRangeRequest) (*kvrpcpb.UnsafeDestroyRangeResponse, error) {
 	return nil, errors.New("unreachable")
 }
 func (s *mockTikvGrpcServer) Coprocessor(context.Context, *coprocessor.Request) (*coprocessor.Response, error) {

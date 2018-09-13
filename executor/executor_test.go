@@ -26,7 +26,6 @@ import (
 	"time"
 
 	gofail "github.com/etcd-io/gofail/runtime"
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
@@ -59,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -292,7 +292,9 @@ type testCase struct {
 
 func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
+	origin := ld.IgnoreLines
 	for _, tt := range tests {
+		ld.IgnoreLines = origin
 		c.Assert(ctx.NewTxn(), IsNil)
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
@@ -988,12 +990,12 @@ func (s *testSuite) TestUnion(c *C) {
 
 	_, err := tk.Exec("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
-	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
 	_, err = tk.Exec("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
 	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
@@ -1281,23 +1283,23 @@ func (s *testSuite) TestJSON(c *C) {
 
 	_, err = tk.Exec(`create table test_bad_json(a json default '{}')`)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a blob default 'hello')`)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a text default 'world')`)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	// check json fields cannot be used as key.
 	_, err = tk.Exec(`create table test_bad_json(id int, a json, key (a))`)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrJSONUsedAsKey))
 
 	// check CAST AS JSON.
@@ -1376,7 +1378,7 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 		_, err := tk.Exec(tt.stmt)
 		if tt.err != 0 {
 			c.Assert(err, NotNil, Commentf("sql is `%v`", tt.stmt))
-			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			terr := errors.Cause(err).(*terror.Error)
 			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err), Commentf("sql is %v", tt.stmt))
 		} else {
 			c.Assert(err, IsNil)
@@ -1511,7 +1513,7 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 		_, err := tk.Exec(tt.stmt)
 		if tt.err != 0 {
 			c.Assert(err, NotNil)
-			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			terr := errors.Cause(err).(*terror.Error)
 			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
 		} else {
 			c.Assert(err, IsNil)
@@ -1766,26 +1768,31 @@ func (s *testSuite) TestColumnName(c *C) {
 	fields := rs.Fields()
 	c.Check(len(fields), Equals, 2)
 	c.Check(fields[0].Column.Name.L, Equals, "1 + c")
+	c.Check(fields[0].ColumnAsName.L, Equals, "1 + c")
 	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
+	c.Check(fields[1].ColumnAsName.L, Equals, "count(*)")
 	rs, err = tk.Exec("select (c) > all (select c from t) from t")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
+	c.Check(fields[0].ColumnAsName.L, Equals, "(c) > all (select c from t)")
 	tk.MustExec("begin")
 	tk.MustExec("insert t values(1,1)")
 	rs, err = tk.Exec("select c d, d c from t")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 2)
-	c.Check(fields[0].Column.Name.L, Equals, "d")
-	c.Check(fields[1].Column.Name.L, Equals, "c")
+	c.Check(fields[0].Column.Name.L, Equals, "c")
+	c.Check(fields[0].ColumnAsName.L, Equals, "d")
+	c.Check(fields[1].Column.Name.L, Equals, "d")
+	c.Check(fields[1].ColumnAsName.L, Equals, "c")
 	// Test case for query a column of a table.
 	// In this case, all attributes have values.
 	rs, err = tk.Exec("select c as a from t as t2")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
-	c.Check(fields[0].Column.Name.L, Equals, "a")
+	c.Check(fields[0].Column.Name.L, Equals, "c")
 	c.Check(fields[0].ColumnAsName.L, Equals, "a")
 	c.Check(fields[0].Table.Name.L, Equals, "t")
 	c.Check(fields[0].TableAsName.L, Equals, "t2")
@@ -2644,7 +2651,7 @@ func (s *testSuite) TestContainDotColumn(c *C) {
 
 	tk.MustExec("drop table if exists t3")
 	_, err := tk.Exec("create table t3(s.a char);")
-	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongTableName))
 }
 

@@ -17,17 +17,19 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/juju/errors"
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 )
 
 type visitInfo struct {
@@ -172,7 +174,7 @@ func (b *planBuilder) build(node ast.Node) (Plan, error) {
 	case ast.DDLNode:
 		return b.buildDDL(x), nil
 	}
-	return nil, ErrUnsupportedType.Gen("Unsupported type %T", node)
+	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
 
 func (b *planBuilder) buildExecute(v *ast.ExecuteStmt) (Plan, error) {
@@ -311,7 +313,7 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 		for _, idxName := range hint.IndexNames {
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
-				return nil, ErrKeyDoesNotExist.GenByArgs(idxName, tblInfo.Name)
+				return nil, ErrKeyDoesNotExist.GenWithStackByArgs(idxName, tblInfo.Name)
 			}
 			if hint.HintType == ast.HintIgnore {
 				// Collect all the ignored index hints.
@@ -428,7 +430,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) (Pl
 		Ranges:           ranger.FullRange(),
 		KeepOrder:        false,
 	}.init(b.ctx)
-	is.stats = &statsInfo{}
+	is.stats = &property.StatsInfo{}
 	cop := &copTask{indexPlan: is}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.init(b.ctx)
@@ -500,7 +502,7 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p.SetSchema(buildShowDDLJobQueriesFields())
 		ret = p
 	default:
-		return nil, ErrUnsupportedType.Gen("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
+		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
 
 	// Admin command can only be executed by administrator.
@@ -518,7 +520,7 @@ func (b *planBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, erro
 		schema := expression.TableInfo2SchemaWithDBName(b.ctx, tbl.Schema, tableInfo)
 		table, ok := b.is.TableByID(tableInfo.ID)
 		if !ok {
-			return nil, infoschema.ErrTableNotExists.GenByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
+			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tbl.DBInfo.Name.O, tableInfo.Name.O)
 		}
 
 		mockTablePlan.SetSchema(schema)
@@ -632,7 +634,7 @@ func getPhysicalIDs(tblInfo *model.TableInfo) []int64 {
 }
 
 func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
-	p := &Analyze{}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
 		physicalIDs := getPhysicalIDs(tbl.TableInfo)
@@ -651,13 +653,13 @@ func (b *planBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 }
 
 func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
-	p := &Analyze{}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs := getPhysicalIDs(tblInfo)
 	for _, idxName := range as.IndexNames {
 		idx := findIndexByName(tblInfo.Indices, idxName)
 		if idx == nil || idx.State != model.StatePublic {
-			return nil, ErrAnalyzeMissIndex.GenByArgs(idxName.O, tblInfo.Name.O)
+			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
 		for _, id := range physicalIDs {
 			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx})
@@ -667,7 +669,7 @@ func (b *planBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 }
 
 func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
-	p := &Analyze{}
+	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs := getPhysicalIDs(tblInfo)
 	for _, idx := range tblInfo.Indices {
@@ -680,7 +682,17 @@ func (b *planBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
 	return p
 }
 
+const (
+	defaultMaxNumBuckets = 256
+	numBucketsLimit      = 1024
+)
+
 func (b *planBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	if as.MaxNumBuckets == 0 {
+		as.MaxNumBuckets = defaultMaxNumBuckets
+	} else {
+		as.MaxNumBuckets = mathutil.MinUint64(as.MaxNumBuckets, numBucketsLimit)
+	}
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
 			return b.buildAnalyzeAllIndex(as), nil
@@ -917,7 +929,7 @@ func (b *planBuilder) findDefaultValue(cols []*table.Column, name *ast.ColumnNam
 			return b.getDefaultValue(col)
 		}
 	}
-	return nil, ErrUnknownColumn.GenByArgs(name.Name.O, "field_list")
+	return nil, ErrUnknownColumn.GenWithStackByArgs(name.Name.O, "field_list")
 }
 
 // resolveGeneratedColumns resolves generated columns with their generation
@@ -960,11 +972,11 @@ func (b *planBuilder) resolveGeneratedColumns(columns []*table.Column, onDups ma
 func (b *planBuilder) buildInsert(insert *ast.InsertStmt) (Plan, error) {
 	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
 	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenByArgs()
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
 	}
 	tn, ok := ts.Source.(*ast.TableName)
 	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenByArgs()
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
 	}
 	tableInfo := tn.TableInfo
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
@@ -1063,13 +1075,13 @@ func (p *Insert) validateOnDup(onDup []*ast.Assignment, colMap map[string]*table
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		} else if col == nil {
-			return nil, nil, ErrUnknownColumn.GenByArgs(assign.Column.OrigColName(), "field list")
+			return nil, nil, ErrUnknownColumn.GenWithStackByArgs(assign.Column.OrigColName(), "field list")
 		}
 
 		// Check whether the column to be updated is the generated column.
 		column := colMap[assign.Column.Name.L]
 		if column.IsGenerated() {
-			return nil, nil, ErrBadGeneratedColumn.GenByArgs(assign.Column.Name.O, tblInfo.Name.O)
+			return nil, nil, ErrBadGeneratedColumn.GenWithStackByArgs(assign.Column.Name.O, tblInfo.Name.O)
 		}
 		onDupColSet[column.Name.L] = struct{}{}
 		dupCols = append(dupCols, col)
@@ -1123,7 +1135,7 @@ func (b *planBuilder) buildSetValuesOfInsert(insert *ast.InsertStmt, insertPlan 
 	}
 	for _, tCol := range tCols {
 		if tCol.IsGenerated() {
-			return ErrBadGeneratedColumn.GenByArgs(tCol.Name.O, tableInfo.Name.O)
+			return ErrBadGeneratedColumn.GenWithStackByArgs(tCol.Name.O, tableInfo.Name.O)
 		}
 	}
 
@@ -1152,12 +1164,12 @@ func (b *planBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 	if len(insert.Columns) > 0 || len(insert.Lists[0]) > 0 {
 		// If value_list or col_list is not empty, the length of value_list should be the same with that of col_list.
 		if len(insert.Lists[0]) != len(affectedValuesCols) {
-			return ErrWrongValueCountOnRow.GenByArgs(1)
+			return ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 		}
 		// No generated column is allowed.
 		for _, col := range affectedValuesCols {
 			if col.IsGenerated() {
-				return ErrBadGeneratedColumn.GenByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+				return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
 			}
 		}
 	}
@@ -1170,7 +1182,7 @@ func (b *planBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 		// "insert into t values (1), ()" is not valid.
 		// "insert into t values (1,2), (1)" is not valid.
 		if i > 0 && len(insert.Lists[i-1]) != len(insert.Lists[i]) {
-			return ErrWrongValueCountOnRow.GenByArgs(i + 1)
+			return ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
 		}
 		exprList := make([]expression.Expression, 0, len(valuesItem))
 		for j, valueItem := range valuesItem {
@@ -1214,7 +1226,7 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 
 	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
 	if selectPlan.Schema().Len() != len(affectedValuesCols) {
-		return ErrWrongValueCountOnRow.GenByArgs(1)
+		return ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 	}
 
 	// Check to guarantee that there's no generated column.
@@ -1226,7 +1238,7 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 	// that there's a generated column in the column list.
 	for _, col := range affectedValuesCols {
 		if col.IsGenerated() {
-			return ErrBadGeneratedColumn.GenByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
+			return ErrBadGeneratedColumn.GenWithStackByArgs(col.Name.O, insertPlan.Table.Meta().Name.O)
 		}
 	}
 
@@ -1257,18 +1269,19 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 
 func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 	p := &LoadData{
-		IsLocal:    ld.IsLocal,
-		Path:       ld.Path,
-		Table:      ld.Table,
-		Columns:    ld.Columns,
-		FieldsInfo: ld.FieldsInfo,
-		LinesInfo:  ld.LinesInfo,
+		IsLocal:     ld.IsLocal,
+		Path:        ld.Path,
+		Table:       ld.Table,
+		Columns:     ld.Columns,
+		FieldsInfo:  ld.FieldsInfo,
+		LinesInfo:   ld.LinesInfo,
+		IgnoreLines: ld.IgnoreLines,
 	}
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
 		db := b.ctx.GetSessionVars().CurrentDB
-		return nil, infoschema.ErrTableNotExists.GenByArgs(db, tableInfo.Name.O)
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
 	}
 	schema := expression.TableInfo2Schema(b.ctx, tableInfo)
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
@@ -1403,7 +1416,7 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 			}
 		}
 		if pp == nil {
-			return nil, ErrUnsupportedType.GenByArgs(targetPlan)
+			return nil, ErrUnsupportedType.GenWithStackByArgs(targetPlan)
 		}
 	}
 	p := &Explain{StmtPlan: pp}
