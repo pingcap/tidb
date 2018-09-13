@@ -93,8 +93,7 @@ func InferSystemTZ() string {
 func inferTZNameFromFileName(path string) (string, error) {
 	// phase1 only support read /etc/localtime which is a softlink to zoneinfo file
 	substr := "zoneinfo"
-	if strings.Contains(path, substr) {
-		idx := strings.Index(path, substr)
+	if idx := strings.Index(path, substr); idx != -1 {
 		return string(path[idx+len(substr)+1:]), nil
 	}
 	return "", errors.New(fmt.Sprintf("path %s is not supported", path))
