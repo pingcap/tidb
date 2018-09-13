@@ -331,7 +331,6 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	time.Sleep(time.Second * 60)
 	// Process all delete range records whose ts < safePoint in table `gc_delete_range`
 	err = w.deleteRanges(ctx, safePoint)
 	if err != nil {
@@ -340,11 +339,11 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	// Check all deleted ranges whose ts is at least `lifetime + 24h` ago.
+	// Check all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.
 	err = w.reDeleteRanges(ctx, safePoint)
 	if err != nil {
 		log.Errorf("[gc worker] %s re-delete range returns an error %v", w.uuid, errors.ErrorStack(err))
-		gcJobFailureCounter.WithLabelValues("re_delete_range").Inc()
+		metrics.GCJobFailureCounter.WithLabelValues("re_delete_range").Inc()
 		w.done <- errors.Trace(err)
 		return
 	}
