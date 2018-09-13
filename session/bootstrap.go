@@ -658,7 +658,7 @@ func upgradeToVer23(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `flag` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
-//writeSystemTZ writes system timezone info into mysql.tidb
+// writeSystemTZ writes system timezone info into mysql.tidb
 func writeSystemTZ(s Session) {
 	sql := fmt.Sprintf(`INSERT HIGH_PRIORITY INTO %s.%s VALUES ("%s", "%s", "TiDB Global System Timezone.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE="%s"`,
 		mysql.SystemDB, mysql.TiDBTable, tidbSystemTZ, timeutil.InferSystemTZ(), timeutil.InferSystemTZ())
