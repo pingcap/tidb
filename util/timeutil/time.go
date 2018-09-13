@@ -122,20 +122,20 @@ func (lm *locCache) getLoc(name string) (*time.Location, error) {
 		return time.Local, nil
 	}
 	lm.RLock()
-	if v, ok := lm.locMap[name]; ok {
-		lm.RUnlock()
+	v, ok := lm.locMap[name]
+	lm.RUnlock()
+	if ok {
 		return v, nil
 	}
 
 	if loc, err := time.LoadLocation(name); err == nil {
-		lm.RUnlock()
+		// assign value back to map
 		lm.Lock()
 		lm.locMap[name] = loc
 		lm.Unlock()
 		return loc, nil
 	}
 
-	lm.RUnlock()
 	return nil, fmt.Errorf("invalid name for timezone %s", name)
 }
 
