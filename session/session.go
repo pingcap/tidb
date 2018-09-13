@@ -1082,12 +1082,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	dom := domain.GetDomain(se)
-	err = dom.LoadPrivilegeLoop(se)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	// get system tz from mysql.tidb
 	callback := func() string {
 		sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
@@ -1101,6 +1095,14 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	timeutil.SetSystemTZ(callback())
+
+	dom := domain.GetDomain(se)
+	// after this se is not thread-safe. It could be used by another
+	// goroutine
+	err = dom.LoadPrivilegeLoop(se)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	se1, err := createSession(store)
 	if err != nil {
