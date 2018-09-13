@@ -120,8 +120,8 @@ var (
 		Type: mysql.TypeTimestamp,
 		Fsp:  DefaultFsp,
 	}
-	// maxTimestamp is the maximum for mysql timestamp type.
-	maxTimestamp = Time{
+	// MaxTimestamp is the maximum for mysql timestamp type.
+	MaxTimestamp = Time{
 		Time: FromDate(2038, 1, 19, 3, 14, 7, 999999),
 		Type: mysql.TypeTimestamp,
 		Fsp:  DefaultFsp,
@@ -1400,7 +1400,7 @@ func checkTimestampType(sc *stmtctx.StatementContext, t MysqlTime) error {
 	} else {
 		checkTime = t
 	}
-	if compareTime(checkTime, maxTimestamp.Time) > 0 || compareTime(checkTime, MinTimestamp.Time) < 0 {
+	if compareTime(checkTime, MaxTimestamp.Time) > 0 || compareTime(checkTime, MinTimestamp.Time) < 0 {
 		return errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(t))
 	}
 
