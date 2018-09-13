@@ -21,7 +21,6 @@ import (
 	"os"
 	"testing"
 
-	"fmt"
 	. "github.com/pingcap/check"
 )
 

@@ -28,22 +28,19 @@ import (
 
 // init initializes `locCache`.
 func init() {
-	// We need set LocalStr when it is in testing process.
-	if LocalStr == "" {
-		LocalStr = "System"
+	// We need set localStr when it is in testing process.
+	if localStr == "" {
+		localStr = "System"
 	}
-	LocCache = &locCache{}
-	LocCache.locMap = make(map[string]*time.Location)
+	locCa = &locCache{}
+	locCa.locMap = make(map[string]*time.Location)
 }
 
-// LocCache is a simple cache policy to improve the performance of 'time.LoadLocation'.
-var LocCache *locCache
-
-// LoadSystemTZ loads system timezone from mysql.tidb and returns the value.
-var LoadSystemTZ func() string
+// locCa is a simple cache policy to improve the performance of 'time.LoadLocation'.
+var locCa *locCache
 
 // LocalStr is current TiDB's system timezone name.
-var LocalStr string
+var localStr string
 var zoneSources = []string{
 	"/usr/share/zoneinfo/",
 	"/usr/share/lib/zoneinfo/",
@@ -105,11 +102,16 @@ func getTZNameFromFileName(path string) (string, error) {
 
 // Local returns time.Local's IANA timezone name.
 func Local() *time.Location {
-	loc, err := LoadLocation(LocalStr)
+	loc, err := LoadLocation(localStr)
 	if err != nil {
 		return time.Local
 	}
 	return loc
+}
+
+// LoadLocalStrFromTB loads system timezone from mysql.tidb and returns the value.
+func LoadLocalStrFromTB(name string) {
+	localStr = name
 }
 
 // getLoc first trying to load location from a cache map. If nothing found in such map, then call
@@ -139,7 +141,7 @@ func (lm *locCache) getLoc(name string) (*time.Location, error) {
 
 // LoadLocation loads time.Location by IANA timezone time.
 func LoadLocation(name string) (*time.Location, error) {
-	return LocCache.getLoc(name)
+	return locCa.getLoc(name)
 }
 
 // Zone returns the current timezone name and timezone offset in seconds.
