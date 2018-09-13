@@ -114,7 +114,7 @@ func SetSystemTZ(name string) {
 }
 
 // getLoc first trying to load location from a cache map. If nothing found in such map, then call
-// `time.LocadLocation` to get a timezone location. After trying both way, an error wil be returned
+// `time.LoadLocation` to get a timezone location. After trying both way, an error wil be returned
 //  if valid Location is not found.
 func (lm *locCache) getLoc(name string) (*time.Location, error) {
 	if name == "System" {
