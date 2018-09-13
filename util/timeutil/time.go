@@ -28,6 +28,9 @@ import (
 
 // init initializes `locCache`.
 func init() {
+	if LocalStr == "" {
+		LocalStr = "System"
+	}
 	LocCache = &locCache{}
 	LocCache.locMap = make(map[string]*time.Location)
 }
