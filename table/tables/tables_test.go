@@ -84,7 +84,7 @@ func (ts *testSuite) TestBasic(c *C) {
 	c.Assert(autoid, Greater, int64(0))
 
 	ctx := ts.se
-	ctx.GetSessionVars().BinlogClient = binloginfo.GetPumpClient()
+	ctx.GetSessionVars().BinlogClient = binloginfo.GetPumpsClient()
 	ctx.GetSessionVars().InRestrictedSQL = false
 	rid, err := tb.AddRecord(ctx, types.MakeDatums(1, "abc"), false)
 	c.Assert(err, IsNil)
