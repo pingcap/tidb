@@ -284,7 +284,7 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		schemaSyncer: syncer,
 		workerVars:   variable.NewSessionVars(),
 	}
-	d.workerVars.BinlogClient = binloginfo.GetPumpClient()
+	d.workerVars.BinlogClient = binloginfo.GetPumpsClient()
 
 	if ctxPool != nil {
 		supportDelRange := store.SupportDeleteRange()

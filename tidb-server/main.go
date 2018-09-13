@@ -16,7 +16,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
 	"runtime"
@@ -27,6 +26,8 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/pd/pd-client"
+	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -43,17 +44,14 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/x-server"
-	binlog "github.com/pingcap/tipb/go-binlog"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
-	"google.golang.org/grpc"
 )
 
 // Flag Names
@@ -65,7 +63,7 @@ const (
 	nmHost            = "host"
 	nmPort            = "P"
 	nmSocket          = "socket"
-	nmBinlogSocket    = "binlog-socket"
+	nmEnableBinlog    = "enable-binlog"
 	nmRunDDL          = "run-ddl"
 	nmLogLevel        = "L"
 	nmLogFile         = "log-file"
@@ -91,7 +89,7 @@ var (
 	host         = flag.String(nmHost, "0.0.0.0", "tidb server host")
 	port         = flag.String(nmPort, "4000", "tidb server port")
 	socket       = flag.String(nmSocket, "", "The socket file to use for connection.")
-	binlogSocket = flag.String(nmBinlogSocket, "", "socket file to write binlog")
+	enableBinlog = flagBoolean(nmEnableBinlog, false, "enable generate binlog")
 	runDDL       = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease     = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 	tokenLimit   = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
@@ -165,20 +163,23 @@ func createStoreAndDomain() {
 }
 
 func setupBinlogClient() {
-	if cfg.Binlog.BinlogSocket == "" {
+	if !cfg.Binlog.Enable {
 		return
 	}
-	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
-		return net.DialTimeout("unix", addr, timeout)
-	})
-	clientConn, err := session.DialPumpClientWithRetry(cfg.Binlog.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
-	terror.MustNil(err)
+
 	if cfg.Binlog.IgnoreError {
 		binloginfo.SetIgnoreError(true)
 	}
-	binloginfo.SetGRPCTimeout(parseDuration(cfg.Binlog.WriteTimeout))
-	binloginfo.SetPumpClient(binlog.NewPumpClient(clientConn))
-	log.Infof("created binlog client at %s, ignore error %v", cfg.Binlog.BinlogSocket, cfg.Binlog.IgnoreError)
+
+	client, err := pumpcli.NewPumpsClient(cfg.Path, parseDuration(cfg.Binlog.WriteTimeout), pd.SecurityOption{
+		CAPath:   cfg.Security.ClusterSSLCA,
+		CertPath: cfg.Security.ClusterSSLCert,
+		KeyPath:  cfg.Security.ClusterSSLKey,
+	})
+	terror.MustNil(err)
+
+	binloginfo.SetPumpsClient(client)
+	log.Infof("create pumps client success, ignore binlog error %v", cfg.Binlog.IgnoreError)
 }
 
 // Prometheus push.
@@ -279,8 +280,8 @@ func overrideConfig() {
 	if actualFlags[nmSocket] {
 		cfg.Socket = *socket
 	}
-	if actualFlags[nmBinlogSocket] {
-		cfg.Binlog.BinlogSocket = *binlogSocket
+	if actualFlags[nmEnableBinlog] {
+		cfg.Binlog.Enable = *enableBinlog
 	}
 	if actualFlags[nmRunDDL] {
 		cfg.RunDDL = *runDDL
