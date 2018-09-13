@@ -28,6 +28,7 @@ import (
 
 // init initializes `locCache`.
 func init() {
+	// We need set LocalStr when it is in testing process.
 	if LocalStr == "" {
 		LocalStr = "System"
 	}
