@@ -51,7 +51,7 @@ func (m *multiEqualSet) findRoot(a int) int {
 }
 
 type basePropConstSolver struct {
-	colMapper map[string]int // colMapper maps column to its index
+	colMapper map[int64]int  // colMapper maps column to its index
 	eqList    []*Constant    // if eqList[i] != nil, it means col_i = eqList[i]
 	unionSet  *multiEqualSet // unionSet stores the relations like col_i = col_j
 	columns   []*Column      // columns stores all columns appearing in the conditions
@@ -59,15 +59,13 @@ type basePropConstSolver struct {
 }
 
 func (s *basePropConstSolver) getColID(col *Column) int {
-	code := col.HashCode(nil)
-	return s.colMapper[string(code)]
+	return s.colMapper[col.UniqueID]
 }
 
 func (s *basePropConstSolver) insertCol(col *Column) {
-	code := col.HashCode(nil)
-	_, ok := s.colMapper[string(code)]
+	_, ok := s.colMapper[col.UniqueID]
 	if !ok {
-		s.colMapper[string(code)] = len(s.colMapper)
+		s.colMapper[col.UniqueID] = len(s.colMapper)
 		s.columns = append(s.columns, col)
 	}
 }
@@ -315,7 +313,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
 	solver := &propConstSolver{}
-	solver.colMapper = make(map[string]int)
+	solver.colMapper = make(map[int64]int)
 	solver.ctx = ctx
 	return solver.solve(conditions)
 }
@@ -577,7 +575,7 @@ func PropConstOverOuterJoin(ctx sessionctx.Context, joinConds, filterConds []Exp
 		outerSchema: outerSchema,
 		innerSchema: innerSchema,
 	}
-	solver.colMapper = make(map[string]int)
+	solver.colMapper = make(map[int64]int)
 	solver.ctx = ctx
 	return solver.solve(joinConds, filterConds)
 }
