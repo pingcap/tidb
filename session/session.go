@@ -1102,8 +1102,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 
 	dom := domain.GetDomain(se)
-	// after this se is not thread-safe. It could be used by another
-	// goroutine
 	err = dom.LoadPrivilegeLoop(se)
 	if err != nil {
 		return nil, errors.Trace(err)
