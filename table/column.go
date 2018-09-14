@@ -21,7 +21,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -92,7 +92,7 @@ func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, error
 			col.ColumnInfo.Offset = len(cols)
 			rcols = append(rcols, col)
 		} else {
-			return nil, errUnknownColumn.Gen("unknown column %s", name)
+			return nil, errUnknownColumn.GenWithStack("unknown column %s", name)
 		}
 	}
 
@@ -275,7 +275,7 @@ func CheckOnce(cols []*Column) error {
 		name := col.Name
 		_, ok := m[name.L]
 		if ok {
-			return errDuplicateColumn.Gen("column specified twice - %s", name)
+			return errDuplicateColumn.GenWithStack("column specified twice - %s", name)
 		}
 
 		m[name.L] = struct{}{}
@@ -287,7 +287,7 @@ func CheckOnce(cols []*Column) error {
 // CheckNotNull checks if nil value set to a column with NotNull flag is set.
 func (c *Column) CheckNotNull(data types.Datum) error {
 	if mysql.HasNotNullFlag(c.Flag) && data.IsNull() {
-		return ErrColumnCantNull.GenByArgs(c.Name)
+		return ErrColumnCantNull.GenWithStackByArgs(c.Name)
 	}
 	return nil
 }
@@ -339,7 +339,7 @@ func getColDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo, defaultVa
 	if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
 		value, err := expression.GetTimeValue(ctx, defaultVal, col.Tp, col.Decimal)
 		if err != nil {
-			return types.Datum{}, errGetDefaultFailed.Gen("Field '%s' get default value fail - %s",
+			return types.Datum{}, errGetDefaultFailed.GenWithStack("Field '%s' get default value fail - %s",
 				col.Name, errors.Trace(err))
 		}
 		return value, nil
@@ -369,10 +369,10 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	if sc.BadNullAsWarning {
-		sc.AppendWarning(ErrColumnCantNull.GenByArgs(col.Name))
+		sc.AppendWarning(ErrColumnCantNull.GenWithStackByArgs(col.Name))
 		return GetZeroValue(col), nil
 	}
-	return types.Datum{}, ErrNoDefaultValue.Gen("Field '%s' doesn't have a default value", col.Name)
+	return types.Datum{}, ErrNoDefaultValue.GenWithStack("Field '%s' doesn't have a default value", col.Name)
 }
 
 // GetZeroValue gets zero value for given column type.

@@ -16,7 +16,6 @@ package executor
 import (
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
@@ -24,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -176,8 +177,9 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 // types.ErrDataTooLong is produced in types.ProduceStrWithSpecifiedTp, there is no column info in there,
 // so we reset the error msg here, and wrap old err with errors.Wrap.
 func resetErrDataTooLong(colName string, rowIdx int, err error) error {
-	newErr := types.ErrDataTooLong.Gen("Data too long for column '%v' at row %v", colName, rowIdx)
-	return errors.Wrap(err, newErr)
+	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
+	log.Error(err)
+	return errors.Trace(newErr)
 }
 
 func getTableOffset(schema *expression.Schema, handleCol *expression.Column) int {

@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -283,7 +283,7 @@ func (t *Table) String() string {
 	return strings.Join(strs, "\n")
 }
 
-func (t *Table) indexStartWithColumnForDebugLog(colName string) *Index {
+func (t *Table) indexStartWithColumn(colName string) *Index {
 	for _, index := range t.Indices {
 		if index.Info.Columns[0].Name.L == colName {
 			return index
@@ -292,7 +292,7 @@ func (t *Table) indexStartWithColumnForDebugLog(colName string) *Index {
 	return nil
 }
 
-func (t *Table) columnByNameForDebugLog(colName string) *Column {
+func (t *Table) columnByName(colName string) *Column {
 	for _, c := range t.Columns {
 		if c.Info.Name.L == colName {
 			return c

@@ -16,7 +16,7 @@ package owner
 import (
 	"sync/atomic"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

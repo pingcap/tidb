@@ -14,13 +14,13 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -112,7 +112,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				e.ctx.StmtCommit()
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
+					return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 				}
 				rowCount = 0
 			}

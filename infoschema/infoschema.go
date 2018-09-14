@@ -173,7 +173,7 @@ func (is *infoSchema) TableByName(schema, table model.CIStr) (t table.Table, err
 			return
 		}
 	}
-	return nil, ErrTableNotExists.GenByArgs(schema, table)
+	return nil, ErrTableNotExists.GenWithStackByArgs(schema, table)
 }
 
 func (is *infoSchema) TableExists(schema, table model.CIStr) bool {

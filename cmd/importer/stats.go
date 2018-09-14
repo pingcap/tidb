@@ -19,13 +19,13 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
 	stats "github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 

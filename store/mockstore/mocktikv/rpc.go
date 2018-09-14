@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

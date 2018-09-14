@@ -21,8 +21,8 @@ import (
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
