@@ -638,7 +638,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 			year = adjustYear(year)
 		case 8: // YYYYMMDD
 			_, err = fmt.Sscanf(seps[0], "%4d%2d%2d", &year, &month, &day)
-		case 6,5:
+		case 6, 5:
 			// YYMMDD && YYMMD
 			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d", &year, &month, &day)
 			year = adjustYear(year)
