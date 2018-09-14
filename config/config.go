@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pkg/errors"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
 

@@ -19,7 +19,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 // Filter the input expressions, append the results to result.
@@ -424,7 +424,7 @@ func GetRowLen(e Expression) int {
 func CheckArgsNotMultiColumnRow(args ...Expression) error {
 	for _, arg := range args {
 		if GetRowLen(arg) != 1 {
-			return ErrOperandColumns.GenByArgs(1)
+			return ErrOperandColumns.GenWithStackByArgs(1)
 		}
 	}
 	return nil

@@ -17,12 +17,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // Plan is the description of an execution flow.

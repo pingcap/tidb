@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -159,7 +159,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, lease time.Dura
 func (w *worker) isReorgRunnable(d *ddlCtx) error {
 	if isChanClosed(w.quitCh) {
 		// Worker is closed. So it can't do the reorganizational job.
-		return errInvalidWorker.Gen("worker is closed")
+		return errInvalidWorker.GenWithStack("worker is closed")
 	}
 
 	if w.reorgCtx.isReorgCanceled() {
@@ -342,7 +342,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		if err != nil {
 			return nil, errors.Trace(err)
 		} else if ver.Ver <= 0 {
-			return nil, errInvalidStoreVer.Gen("invalid storage current version %d", ver.Ver)
+			return nil, errInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
 		}
 		tblInfo := tbl.Meta()
 		pid = tblInfo.ID

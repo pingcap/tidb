@@ -18,9 +18,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 func TestT(t *testing.T) {
@@ -54,7 +54,7 @@ func (s *testTErrorSuite) TestTError(c *C) {
 	optimizerErr := ClassOptimizer.New(ErrCode(2), "abc")
 	c.Assert(ClassOptimizer.EqualClass(errors.New("abc")), IsFalse)
 	c.Assert(ClassOptimizer.EqualClass(nil), IsFalse)
-	c.Assert(optimizerErr.Equal(optimizerErr.Gen("def")), IsTrue)
+	c.Assert(optimizerErr.Equal(optimizerErr.GenWithStack("def")), IsTrue)
 	c.Assert(optimizerErr.Equal(nil), IsFalse)
 	c.Assert(optimizerErr.Equal(errors.New("abc")), IsFalse)
 
@@ -68,11 +68,11 @@ func (s *testTErrorSuite) TestTError(c *C) {
 		1062: uint16(1062),
 	}
 	ErrClassToMySQLCodes[ClassKV] = kvMySQLErrCodes
-	sqlErr := e.ToSQLError()
+	sqlErr := errors.Cause(e).(*Error).ToSQLError()
 	c.Assert(sqlErr.Message, Equals, "Duplicate entry '1' for key 'PRIMARY'")
 	c.Assert(sqlErr.Code, Equals, uint16(1062))
 
-	err := errors.Trace(ErrCritical.GenByArgs("test"))
+	err := errors.Trace(ErrCritical.GenWithStackByArgs("test"))
 	c.Assert(ErrCritical.Equal(err), IsTrue)
 
 	err = errors.Trace(ErrCritical)
@@ -102,7 +102,7 @@ func example() error {
 }
 
 func call() error {
-	return predefinedErr.Gen("error message:%s", "abc")
+	return predefinedErr.GenWithStack("error message:%s", "abc")
 }
 
 func (s *testTErrorSuite) TestTraceAndLocation(c *C) {
@@ -110,10 +110,15 @@ func (s *testTErrorSuite) TestTraceAndLocation(c *C) {
 	err := example()
 	stack := errors.ErrorStack(err)
 	lines := strings.Split(stack, "\n")
-	c.Assert(len(lines), Equals, 2)
+	c.Assert(len(lines), Equals, 23)
+	var containTerr bool
 	for _, v := range lines {
-		c.Assert(strings.Contains(v, "terror_test.go"), IsTrue)
+		if strings.Contains(v, "terror_test.go") {
+			containTerr = true
+			break
+		}
 	}
+	c.Assert(containTerr, IsTrue)
 }
 
 func (s *testTErrorSuite) TestErrorEqual(c *C) {

@@ -16,9 +16,9 @@ package infoschema
 import (
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -711,6 +712,111 @@ func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
 	return rowCountMap, nil
 }
 
+type tableHistID struct {
+	tableID int64
+	histID  int64
+}
+
+func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, error) {
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	colLengthMap := make(map[tableHistID]uint64, len(rows))
+	for _, row := range rows {
+		tableID := row.GetInt64(0)
+		histID := row.GetInt64(1)
+		totalSize := row.GetInt64(2)
+		if totalSize < 0 {
+			totalSize = 0
+		}
+		colLengthMap[tableHistID{tableID: tableID, histID: histID}] = uint64(totalSize)
+	}
+	return colLengthMap, nil
+}
+
+func getDataAndIndexLength(info *model.TableInfo, rowCount uint64, columnLengthMap map[tableHistID]uint64) (uint64, uint64) {
+	columnLength := make(map[string]uint64)
+	for _, col := range info.Columns {
+		if col.State != model.StatePublic {
+			continue
+		}
+		length := col.FieldType.StorageLength()
+		if length != types.VarStorageLen {
+			columnLength[col.Name.L] = rowCount * uint64(length)
+		} else {
+			length := columnLengthMap[tableHistID{tableID: info.ID, histID: col.ID}]
+			columnLength[col.Name.L] = length
+		}
+	}
+	dataLength, indexLength := uint64(0), uint64(0)
+	for _, length := range columnLength {
+		dataLength += length
+	}
+	for _, idx := range info.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		for _, col := range idx.Columns {
+			if col.Length == types.UnspecifiedLength {
+				indexLength += columnLength[col.Name.L]
+			} else {
+				indexLength += rowCount * uint64(col.Length)
+			}
+		}
+	}
+	return dataLength, indexLength
+}
+
+type statsCache struct {
+	mu         sync.Mutex
+	loading    bool
+	modifyTime time.Time
+	tableRows  map[int64]uint64
+	colLength  map[tableHistID]uint64
+}
+
+var tableStatsCache = &statsCache{}
+
+// TableStatsCacheExpiry is the expiry time for table stats cache.
+var TableStatsCacheExpiry = 3 * time.Second
+
+func (c *statsCache) setLoading(loading bool) {
+	c.mu.Lock()
+	c.loading = loading
+	c.mu.Unlock()
+}
+
+func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
+	c.mu.Lock()
+	if time.Now().Sub(c.modifyTime) < TableStatsCacheExpiry || c.loading {
+		tableRows, colLength := c.tableRows, c.colLength
+		c.mu.Unlock()
+		return tableRows, colLength, nil
+	}
+	c.loading = true
+	c.mu.Unlock()
+
+	tableRows, err := getRowCountAllTable(ctx)
+	if err != nil {
+		c.setLoading(false)
+		return nil, nil, errors.Trace(err)
+	}
+	colLength, err := getColLengthAllTables(ctx)
+	if err != nil {
+		c.setLoading(false)
+		return nil, nil, errors.Trace(err)
+	}
+
+	c.mu.Lock()
+	c.loading = false
+	c.tableRows = tableRows
+	c.colLength = colLength
+	c.modifyTime = time.Now()
+	c.mu.Unlock()
+	return tableRows, colLength, nil
+}
+
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
 	hasAutoIncID := false
 	for _, col := range tblInfo.Cols() {
@@ -735,7 +841,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 }
 
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
-	tableRowsMap, err := getRowCountAllTable(ctx)
+	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -763,28 +869,34 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			rowCount := tableRowsMap[table.ID]
+			dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
+			avgRowLength := uint64(0)
+			if rowCount != 0 {
+				avgRowLength = dataLength / rowCount
+			}
 			record := types.MakeDatums(
-				catalogVal,             // TABLE_CATALOG
-				schema.Name.O,          // TABLE_SCHEMA
-				table.Name.O,           // TABLE_NAME
-				"BASE TABLE",           // TABLE_TYPE
-				"InnoDB",               // ENGINE
-				uint64(10),             // VERSION
-				"Compact",              // ROW_FORMAT
-				tableRowsMap[table.ID], // TABLE_ROWS
-				uint64(0),              // AVG_ROW_LENGTH
-				uint64(16384),          // DATA_LENGTH
-				uint64(0),              // MAX_DATA_LENGTH
-				uint64(0),              // INDEX_LENGTH
-				uint64(0),              // DATA_FREE
-				autoIncID,              // AUTO_INCREMENT
-				createTime,             // CREATE_TIME
-				nil,                    // UPDATE_TIME
-				nil,                    // CHECK_TIME
-				collation,              // TABLE_COLLATION
-				nil,                    // CHECKSUM
-				"",                     // CREATE_OPTIONS
-				table.Comment,          // TABLE_COMMENT
+				catalogVal,    // TABLE_CATALOG
+				schema.Name.O, // TABLE_SCHEMA
+				table.Name.O,  // TABLE_NAME
+				"BASE TABLE",  // TABLE_TYPE
+				"InnoDB",      // ENGINE
+				uint64(10),    // VERSION
+				"Compact",     // ROW_FORMAT
+				rowCount,      // TABLE_ROWS
+				avgRowLength,  // AVG_ROW_LENGTH
+				dataLength,    // DATA_LENGTH
+				uint64(0),     // MAX_DATA_LENGTH
+				indexLength,   // INDEX_LENGTH
+				uint64(0),     // DATA_FREE
+				autoIncID,     // AUTO_INCREMENT
+				createTime,    // CREATE_TIME
+				nil,           // UPDATE_TIME
+				nil,           // CHECK_TIME
+				collation,     // TABLE_COLLATION
+				nil,           // CHECKSUM
+				"",            // CREATE_OPTIONS
+				table.Comment, // TABLE_COMMENT
 			)
 			rows = append(rows, record)
 		}

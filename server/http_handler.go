@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -619,7 +619,7 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeData(w, tbsInfo)
 			return
 		}
-		writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
+		writeError(w, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName))
 		return
 	}
 
@@ -631,14 +631,14 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if tid < 0 {
-			writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 			return
 		}
 		if data, ok := schema.TableByID(int64(tid)); ok {
 			writeData(w, data.Meta())
 			return
 		}
-		writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 		return
 	}
 

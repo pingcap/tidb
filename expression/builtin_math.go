@@ -27,12 +27,12 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -199,7 +199,7 @@ func (b *builtinAbsIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return val, false, nil
 	}
 	if val == math.MinInt64 {
-		return 0, false, types.ErrOverflow.GenByArgs("BIGINT", fmt.Sprintf("abs(%d)", val))
+		return 0, false, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("abs(%d)", val))
 	}
 	return -val, false, nil
 }
@@ -1057,7 +1057,7 @@ func (b *builtinPowSig) evalReal(row chunk.Row) (float64, bool, error) {
 	}
 	power := math.Pow(x, y)
 	if math.IsInf(power, -1) || math.IsInf(power, 1) || math.IsNaN(power) {
-		return 0, false, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x, 'f', -1, 64), strconv.FormatFloat(y, 'f', -1, 64)))
+		return 0, false, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("pow(%s, %s)", strconv.FormatFloat(x, 'f', -1, 64), strconv.FormatFloat(y, 'f', -1, 64)))
 	}
 	return power, false, nil
 }
@@ -1140,7 +1140,7 @@ func (b *builtinConvSig) evalString(row chunk.Row) (res string, isNull bool, err
 
 	val, err := strconv.ParseUint(n, int(fromBase), 64)
 	if err != nil {
-		return res, false, types.ErrOverflow.GenByArgs("BIGINT UNSINGED", n)
+		return res, false, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSINGED", n)
 	}
 	if signed {
 		if negative && val > -math.MinInt64 {
@@ -1504,7 +1504,7 @@ func (b *builtinCotSig) evalReal(row chunk.Row) (float64, bool, error) {
 			return cot, false, nil
 		}
 	}
-	return 0, false, types.ErrOverflow.GenByArgs("DOUBLE", fmt.Sprintf("cot(%s)", strconv.FormatFloat(val, 'f', -1, 64)))
+	return 0, false, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("cot(%s)", strconv.FormatFloat(val, 'f', -1, 64)))
 }
 
 type degreesFunctionClass struct {
@@ -1574,7 +1574,7 @@ func (b *builtinExpSig) evalReal(row chunk.Row) (float64, bool, error) {
 	exp := math.Exp(val)
 	if math.IsInf(exp, 0) || math.IsNaN(exp) {
 		s := fmt.Sprintf("exp(%s)", strconv.FormatFloat(val, 'f', -1, 64))
-		return 0, false, types.ErrOverflow.GenByArgs("DOUBLE", s)
+		return 0, false, types.ErrOverflow.GenWithStackByArgs("DOUBLE", s)
 	}
 	return exp, false, nil
 }
