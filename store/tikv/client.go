@@ -66,7 +66,7 @@ const (
 	ReadTimeoutMedium         = 60 * time.Second  // For requests that may need scan region.
 	ReadTimeoutLong           = 150 * time.Second // For requests that may need scan region multiple times.
 	GCTimeout                 = 5 * time.Minute
-	UnsafeDestroyRangeTimeout = 15 * time.Minute
+	UnsafeDestroyRangeTimeout = 5 * time.Minute
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
