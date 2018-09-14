@@ -17,7 +17,6 @@ import (
 	"bytes"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -37,10 +36,10 @@ type baseGroupConcat4String struct {
 func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4GroupConcat)(pr)
 	if p.buffer == nil {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendString(e.ordinal, p.buffer.String())
+	chk.AppendString(e.resultOrdinal, p.buffer.String())
 	return nil
 }
 
@@ -88,14 +87,12 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			preLen = p.buffer.Len()
 			p.buffer.WriteString(e.sep)
 		}
-		for _, arg := range e.args {
-			v, isNull, err = arg.EvalString(sctx, row)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		for _, arg := range e.argsOrdinal {
+			isNull = row.IsNull(arg)
 			if isNull {
 				break
 			}
+			v = row.GetString(arg)
 			if p.buffer == nil {
 				p.buffer = &bytes.Buffer{}
 			}
@@ -156,14 +153,12 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	v, isNull := "", false
 	for _, row := range rowsInGroup {
 		p.valsBuf.Reset()
-		for _, arg := range e.args {
-			v, isNull, err = arg.EvalString(sctx, row)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		for _, ordinal := range e.argsOrdinal {
+			isNull = row.IsNull(ordinal)
 			if isNull {
 				break
 			}
+			v = row.GetString(ordinal)
 			p.valsBuf.WriteString(v)
 		}
 		if isNull {

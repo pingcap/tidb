@@ -48,7 +48,7 @@ func (e *baseAvgDecimal) ResetPartialResult(pr PartialResult) {
 func (e *baseAvgDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4AvgDecimal)(pr)
 	if p.count == 0 {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
 	decimalCount := types.NewDecFromInt(p.count)
@@ -57,7 +57,7 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	if err != nil {
 		return errors.Trace(err)
 	}
-	chk.AppendMyDecimal(e.ordinal, finalResult)
+	chk.AppendMyDecimal(e.resultOrdinal, finalResult)
 	return nil
 }
 
@@ -68,16 +68,13 @@ type avgOriginal4Decimal struct {
 func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgDecimal)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		isNull := row.IsNull(e.argsOrdinal[0])
 		if isNull {
 			continue
 		}
-
+		input := row.GetMyDecimal(e.argsOrdinal[0])
 		newSum := new(types.MyDecimal)
-		err = types.DecimalAdd(&p.sum, input, newSum)
+		err := types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -94,24 +91,16 @@ type avgPartial4Decimal struct {
 func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgDecimal)(pr)
 	for _, row := range rowsInGroup {
-		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		isNull0, isNull1 := row.IsNull(e.argsOrdinal[0]), row.IsNull(e.argsOrdinal[1])
+		if isNull0 || isNull1 {
 			continue
 		}
 
-		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
-			continue
-		}
+		inputCount := row.GetInt64(e.argsOrdinal[0])
+		inputSum := row.GetMyDecimal(e.argsOrdinal[1])
 
 		newSum := new(types.MyDecimal)
-		err = types.DecimalAdd(&p.sum, inputSum, newSum)
+		err := types.DecimalAdd(&p.sum, inputSum, newSum)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -162,16 +151,18 @@ func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
+		isNull := row.IsNull(e.argsOrdinal[0])
+		if isNull {
+			continue
 		}
-		if isNull || p.valSet.exist(input) {
+
+		input := row.GetMyDecimal(e.argsOrdinal[0])
+		if p.valSet.exist(input) {
 			continue
 		}
 
 		newSum := new(types.MyDecimal)
-		err = types.DecimalAdd(&p.sum, input, newSum)
+		err := types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -185,7 +176,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	if p.count == 0 {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
 	decimalCount := types.NewDecFromInt(p.count)
@@ -194,7 +185,7 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	if err != nil {
 		return errors.Trace(err)
 	}
-	chk.AppendMyDecimal(e.ordinal, finalResult)
+	chk.AppendMyDecimal(e.resultOrdinal, finalResult)
 	return nil
 }
 
@@ -226,9 +217,9 @@ func (e *baseAvgFloat64) ResetPartialResult(pr PartialResult) {
 func (e *baseAvgFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4AvgFloat64)(pr)
 	if p.count == 0 {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 	} else {
-		chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
+		chk.AppendFloat64(e.resultOrdinal, p.sum/float64(p.count))
 	}
 	return nil
 }
@@ -240,14 +231,11 @@ type avgOriginal4Float64 struct {
 func (e *avgOriginal4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgFloat64)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		isNull := row.IsNull(e.argsOrdinal[0])
 		if isNull {
 			continue
 		}
-
+		input := row.GetFloat64(e.argsOrdinal[0])
 		p.sum += input
 		p.count++
 	}
@@ -261,21 +249,14 @@ type avgPartial4Float64 struct {
 func (e *avgPartial4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgFloat64)(pr)
 	for _, row := range rowsInGroup {
-		inputSum, isNull, err := e.args[1].EvalReal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		isNull0, isNull1 := row.IsNull(e.argsOrdinal[0]), row.IsNull(e.argsOrdinal[1])
+		if isNull0 || isNull1 {
 			continue
 		}
 
-		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
-			continue
-		}
+		inputCount := row.GetInt64(e.argsOrdinal[0])
+		inputSum := row.GetFloat64(e.argsOrdinal[1])
+
 		p.sum += inputSum
 		p.count += inputCount
 	}
@@ -315,11 +296,12 @@ func (e *avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
+		isNull := row.IsNull(e.argsOrdinal[0])
+		if isNull {
+			continue
 		}
-		if isNull || p.valSet.exist(input) {
+		input := row.GetFloat64(e.argsOrdinal[0])
+		if p.valSet.exist(input) {
 			continue
 		}
 
@@ -333,9 +315,9 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Contex
 func (e *avgOriginal4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	if p.count == 0 {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
+	chk.AppendFloat64(e.resultOrdinal, p.sum/float64(p.count))
 	return nil
 }

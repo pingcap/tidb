@@ -63,16 +63,26 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		return nil // not implemented yet.
 	}
 
+	argsOrdinal := make([]int, 0, len(aggFuncDesc.Args))
+	for _, arg := range aggFuncDesc.Args {
+		argsOrdinal = append(argsOrdinal, arg.(*expression.Column).Index)
+	}
+
 	base := baseAggFunc{
-		args:    aggFuncDesc.Args,
-		ordinal: ordinal,
+		argsOrdinal:   argsOrdinal,
+		resultOrdinal: ordinal,
 	}
 
 	// If HasDistinct and mode is CompleteMode or Partial1Mode, we should
 	// use countOriginalWithDistinct.
 	if aggFuncDesc.HasDistinct &&
 		(aggFuncDesc.Mode == aggregation.CompleteMode || aggFuncDesc.Mode == aggregation.Partial1Mode) {
-		return &countOriginalWithDistinct{baseCount{base}}
+		argsTypes := make([]*types.FieldType, 0, len(aggFuncDesc.Args))
+		for _, arg := range aggFuncDesc.Args {
+			argsTypes = append(argsTypes, arg.GetType())
+		}
+
+		return &countOriginalWithDistinct{baseCount{base}, argsTypes}
 	}
 
 	switch aggFuncDesc.Mode {
@@ -102,10 +112,15 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildSum builds the AggFunc implementation for function "SUM".
 func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	argsOrdinal := make([]int, 0, len(aggFuncDesc.Args))
+	for _, arg := range aggFuncDesc.Args {
+		argsOrdinal = append(argsOrdinal, arg.(*expression.Column).Index)
+	}
+
 	base := baseSumAggFunc{
 		baseAggFunc: baseAggFunc{
-			args:    aggFuncDesc.Args,
-			ordinal: ordinal,
+			argsOrdinal:   argsOrdinal,
+			resultOrdinal: ordinal,
 		},
 	}
 	switch aggFuncDesc.Mode {
@@ -129,9 +144,14 @@ func buildSum(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildAvg builds the AggFunc implementation for function "AVG".
 func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	argsOrdinal := make([]int, 0, len(aggFuncDesc.Args))
+	for _, arg := range aggFuncDesc.Args {
+		argsOrdinal = append(argsOrdinal, arg.(*expression.Column).Index)
+	}
+
 	base := baseAggFunc{
-		args:    aggFuncDesc.Args,
-		ordinal: ordinal,
+		argsOrdinal:   argsOrdinal,
+		resultOrdinal: ordinal,
 	}
 	switch aggFuncDesc.Mode {
 	// Build avg functions which consume the original data and remove the
@@ -170,9 +190,14 @@ func buildAvg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildFirstRow builds the AggFunc implementation for function "FIRST_ROW".
 func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	argsOrdinal := make([]int, 0, len(aggFuncDesc.Args))
+	for _, arg := range aggFuncDesc.Args {
+		argsOrdinal = append(argsOrdinal, arg.(*expression.Column).Index)
+	}
+
 	base := baseAggFunc{
-		args:    aggFuncDesc.Args,
-		ordinal: ordinal,
+		argsOrdinal:   argsOrdinal,
+		resultOrdinal: ordinal,
 	}
 
 	evalType, fieldType := aggFuncDesc.RetTp.EvalType(), aggFuncDesc.RetTp
@@ -197,7 +222,7 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		case types.ETDatetime, types.ETTimestamp:
 			return &firstRow4Time{base}
 		case types.ETDuration:
-			return &firstRow4Duration{base}
+			return &firstRow4Duration{base, fieldType.Decimal}
 		case types.ETString:
 			return &firstRow4String{base}
 		case types.ETJson:
@@ -209,10 +234,15 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildMaxMin builds the AggFunc implementation for function "MAX" and "MIN".
 func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
+	argsOrdinal := make([]int, 0, len(aggFuncDesc.Args))
+	for _, arg := range aggFuncDesc.Args {
+		argsOrdinal = append(argsOrdinal, arg.(*expression.Column).Index)
+	}
+
 	base := baseMaxMinAggFunc{
 		baseAggFunc: baseAggFunc{
-			args:    aggFuncDesc.Args,
-			ordinal: ordinal,
+			argsOrdinal:   argsOrdinal,
+			resultOrdinal: ordinal,
 		},
 		isMax: isMax,
 	}
@@ -244,7 +274,7 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 		case types.ETDatetime, types.ETTimestamp:
 			return &maxMin4Time{base}
 		case types.ETDuration:
-			return &maxMin4Duration{base}
+			return &maxMin4Duration{base, fieldType.Decimal}
 		case types.ETJson:
 			return &maxMin4JSON{base}
 		}
@@ -254,13 +284,18 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 
 // buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
 func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	argsOrdinal := make([]int, 0, len(aggFuncDesc.Args))
+	for i := 0; i < len(aggFuncDesc.Args)-1; i++ {
+		argsOrdinal = append(argsOrdinal, aggFuncDesc.Args[i].(*expression.Column).Index)
+	}
+
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
 	default:
 		base := baseAggFunc{
-			args:    aggFuncDesc.Args[:len(aggFuncDesc.Args)-1],
-			ordinal: ordinal,
+			argsOrdinal:   argsOrdinal,
+			resultOrdinal: ordinal,
 		}
 		// The last arg is promised to be a not-null string constant, so the error can be ignored.
 		c, _ := aggFuncDesc.Args[len(aggFuncDesc.Args)-1].(*expression.Constant)
@@ -288,27 +323,42 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 
 // buildBitOr builds the AggFunc implementation for function "BIT_OR".
 func buildBitOr(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	argsOrdinal := make([]int, 0, len(aggFuncDesc.Args))
+	for _, arg := range aggFuncDesc.Args {
+		argsOrdinal = append(argsOrdinal, arg.(*expression.Column).Index)
+	}
+
 	base := baseAggFunc{
-		args:    aggFuncDesc.Args,
-		ordinal: ordinal,
+		argsOrdinal:   argsOrdinal,
+		resultOrdinal: ordinal,
 	}
 	return &bitOrUint64{baseBitAggFunc{base}}
 }
 
 // buildBitXor builds the AggFunc implementation for function "BIT_XOR".
 func buildBitXor(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	argsOrdinal := make([]int, 0, len(aggFuncDesc.Args))
+	for _, arg := range aggFuncDesc.Args {
+		argsOrdinal = append(argsOrdinal, arg.(*expression.Column).Index)
+	}
+
 	base := baseAggFunc{
-		args:    aggFuncDesc.Args,
-		ordinal: ordinal,
+		argsOrdinal:   argsOrdinal,
+		resultOrdinal: ordinal,
 	}
 	return &bitXorUint64{baseBitAggFunc{base}}
 }
 
 // buildBitAnd builds the AggFunc implementation for function "BIT_AND".
 func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	argsOrdinal := make([]int, 0, len(aggFuncDesc.Args))
+	for _, arg := range aggFuncDesc.Args {
+		argsOrdinal = append(argsOrdinal, arg.(*expression.Column).Index)
+	}
+
 	base := baseAggFunc{
-		args:    aggFuncDesc.Args,
-		ordinal: ordinal,
+		argsOrdinal:   argsOrdinal,
+		resultOrdinal: ordinal,
 	}
 	return &bitAndUint64{baseBitAggFunc{base}}
 }

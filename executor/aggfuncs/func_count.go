@@ -4,8 +4,7 @@ import (
 	"encoding/binary"
 	"unsafe"
 
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -29,7 +28,7 @@ func (e *baseCount) ResetPartialResult(pr PartialResult) {
 
 func (e *baseCount) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4Count)(pr)
-	chk.AppendInt64(e.ordinal, *p)
+	chk.AppendInt64(e.resultOrdinal, *p)
 	return nil
 }
 
@@ -39,16 +38,10 @@ type countOriginal4Int struct {
 
 func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4Count)(pr)
-
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
-
 		*p++
 	}
 
@@ -63,14 +56,9 @@ func (e *countOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalReal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
-
 		*p++
 	}
 
@@ -85,14 +73,9 @@ func (e *countOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, row
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalDecimal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
-
 		*p++
 	}
 
@@ -107,14 +90,9 @@ func (e *countOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalTime(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
-
 		*p++
 	}
 
@@ -129,14 +107,9 @@ func (e *countOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, ro
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalDuration(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
-
 		*p++
 	}
 
@@ -151,14 +124,9 @@ func (e *countOriginal4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalJSON(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
-
 		*p++
 	}
 
@@ -173,14 +141,9 @@ func (e *countOriginal4String) UpdatePartialResult(sctx sessionctx.Context, rows
 	p := (*partialResult4Count)(pr)
 
 	for _, row := range rowsInGroup {
-		_, isNull, err := e.args[0].EvalString(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
-
 		*p++
 	}
 
@@ -194,14 +157,10 @@ type countPartial struct {
 func (e *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4Count)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
-
+		input := row.GetInt64(e.argsOrdinal[0])
 		*p += input
 	}
 	return nil
@@ -215,6 +174,10 @@ func (*countPartial) MergePartialResult(sctx sessionctx.Context, src, dst Partia
 
 type countOriginalWithDistinct struct {
 	baseCount
+
+	// This attribute can be removed after splitting countOriginalWithDistinct
+	// into multiple struct according to the argument field types.
+	argsTypes []*types.FieldType
 }
 
 type partialResult4CountWithDistinct struct {
@@ -238,7 +201,7 @@ func (e *countOriginalWithDistinct) ResetPartialResult(pr PartialResult) {
 
 func (e *countOriginalWithDistinct) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountWithDistinct)(pr)
-	chk.AppendInt64(e.ordinal, p.count)
+	chk.AppendInt64(e.resultOrdinal, p.count)
 	return nil
 }
 
@@ -254,11 +217,8 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 		hasNull, isNull = false, false
 		encodedBytes = encodedBytes[:0]
 
-		for i := 0; i < len(e.args) && !hasNull; i++ {
-			encodedBytes, isNull, err = e.evalAndEncode(sctx, e.args[i], row, buf, encodedBytes)
-			if err != nil {
-				return
-			}
+		for i := 0; i < len(e.argsOrdinal) && !hasNull; i++ {
+			encodedBytes, isNull = e.evalAndEncode(sctx, e.argsOrdinal[i], e.argsTypes[i], row, buf, encodedBytes)
 			if isNull {
 				hasNull = true
 				break
@@ -275,58 +235,38 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 	return nil
 }
 
-// evalAndEncode eval one row with an expression and encode value to bytes.
+// evalAndEncode evaluates one row with an argument ordinal and encodes the
+// result value to bytes.
 func (e *countOriginalWithDistinct) evalAndEncode(
-	sctx sessionctx.Context, arg expression.Expression,
+	sctx sessionctx.Context, argOrdinal int, tp *types.FieldType,
 	row chunk.Row, buf, encodedBytes []byte,
-) ([]byte, bool, error) {
-	switch tp := arg.GetType().EvalType(); tp {
-	case types.ETInt:
-		val, isNull, err := arg.EvalInt(sctx, row)
-		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
-		}
-		encodedBytes = appendInt64(encodedBytes, buf, val)
-	case types.ETReal:
-		val, isNull, err := arg.EvalReal(sctx, row)
-		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
-		}
-		encodedBytes = appendFloat64(encodedBytes, buf, val)
-	case types.ETDecimal:
-		val, isNull, err := arg.EvalDecimal(sctx, row)
-		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
-		}
-		encodedBytes = appendDecimal(encodedBytes, buf, val)
-	case types.ETTimestamp, types.ETDatetime:
-		val, isNull, err := arg.EvalTime(sctx, row)
-		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
-		}
-		encodedBytes = appendTime(encodedBytes, buf, val)
-	case types.ETDuration:
-		val, isNull, err := arg.EvalDuration(sctx, row)
-		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
-		}
-		encodedBytes = appendDuration(encodedBytes, buf, val)
-	case types.ETJson:
-		val, isNull, err := arg.EvalJSON(sctx, row)
-		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
-		}
-		encodedBytes = appendJSON(encodedBytes, buf, val)
-	case types.ETString:
-		val, isNull, err := arg.EvalString(sctx, row)
-		if err != nil || isNull {
-			return encodedBytes, isNull, errors.Trace(err)
-		}
-		encodedBytes = appendString(encodedBytes, buf, val)
-	default:
-		return nil, false, errors.Errorf("unsupported column type for encode %d", tp)
+) ([]byte, bool) {
+	if row.IsNull(argOrdinal) {
+		return encodedBytes, true
 	}
-	return encodedBytes, false, nil
+	switch evalType := tp.EvalType(); evalType {
+	case types.ETInt:
+		encodedBytes = appendInt64(encodedBytes, buf, row.GetInt64(argOrdinal))
+	case types.ETReal:
+		var f float64
+		if tp.Tp == mysql.TypeFloat {
+			f = float64(row.GetFloat32(argOrdinal))
+		} else {
+			f = row.GetFloat64(argOrdinal)
+		}
+		encodedBytes = appendFloat64(encodedBytes, buf, f)
+	case types.ETDecimal:
+		encodedBytes = appendDecimal(encodedBytes, buf, row.GetMyDecimal(argOrdinal))
+	case types.ETTimestamp, types.ETDatetime:
+		encodedBytes = appendTime(encodedBytes, buf, row.GetTime(argOrdinal))
+	case types.ETDuration:
+		encodedBytes = appendDuration(encodedBytes, buf, row.GetDuration(argOrdinal, tp.Decimal))
+	case types.ETJson:
+		encodedBytes = appendJSON(encodedBytes, buf, row.GetJSON(argOrdinal))
+	case types.ETString:
+		encodedBytes = appendString(encodedBytes, buf, row.GetString(argOrdinal))
+	}
+	return encodedBytes, false
 }
 
 func appendInt64(encodedBytes, buf []byte, val int64) []byte {

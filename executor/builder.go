@@ -870,24 +870,30 @@ func (b *executorBuilder) wrapCastForAggArgs(funcs []*aggregation.AggFuncDesc) {
 // If all the args of `aggFuncs`, and all the item of `groupByItems`
 // are columns or constants, we do not need to build the `proj`.
 func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression, src Executor) Executor {
-	hasScalarFunc := false
+	isAllColumn := false
 	// If the mode is FinalMode, we do not need to wrap cast upon the args,
 	// since the types of the args are already the expected.
 	if len(aggFuncs) > 0 && aggFuncs[0].Mode != aggregation.FinalMode {
 		b.wrapCastForAggArgs(aggFuncs)
 	}
-	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
+	for i := 0; isAllColumn && i < len(aggFuncs); i++ {
 		f := aggFuncs[i]
-		for _, arg := range f.Args {
-			_, isScalarFunc := arg.(*expression.ScalarFunction)
-			hasScalarFunc = hasScalarFunc || isScalarFunc
+		for i, arg := range f.Args {
+			_, isColumn := arg.(*expression.Column)
+			// The last arg is promised to be a not-null string constant, so it
+			// can be ignored.
+			if !isColumn && f.Name == ast.AggFuncGroupConcat && i == len(f.Args)-1 {
+				isColumn = true
+			}
+			isAllColumn = isAllColumn || isColumn
 		}
 	}
-	for i, isScalarFunc := 0, false; !hasScalarFunc && i < len(groupByItems); i++ {
-		_, isScalarFunc = groupByItems[i].(*expression.ScalarFunction)
-		hasScalarFunc = hasScalarFunc || isScalarFunc
+	for i, isColumn := 0, false; isAllColumn && i < len(groupByItems); i++ {
+		_, isColumn = groupByItems[i].(*expression.Column)
+		isAllColumn = isAllColumn || isColumn
 	}
-	if !hasScalarFunc {
+	if isAllColumn {
+
 		return src
 	}
 
@@ -900,8 +906,8 @@ func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc,
 	cursor := 0
 	for _, f := range aggFuncs {
 		for i, arg := range f.Args {
-			if _, isCnst := arg.(*expression.Constant); isCnst {
-				continue
+			if f.Name == ast.AggFuncGroupConcat && i == len(f.Args)-1 {
+				break
 			}
 			projExprs = append(projExprs, arg)
 			newArg := &expression.Column{
@@ -914,10 +920,8 @@ func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc,
 			cursor++
 		}
 	}
+
 	for i, item := range groupByItems {
-		if _, isCnst := item.(*expression.Constant); isCnst {
-			continue
-		}
 		projExprs = append(projExprs, item)
 		newArg := &expression.Column{
 			RetType: item.GetType(),
@@ -942,12 +946,16 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 		return nil
 	}
 	src = b.buildProjBelowAgg(v.AggFuncs, v.GroupByItems, src)
+	groupByCols := make([]*expression.Column, len(v.GroupByItems))
+	for i, item := range v.GroupByItems {
+		groupByCols[i] = item.(*expression.Column)
+	}
 	sessionVars := b.ctx.GetSessionVars()
 	e := &HashAggExec{
 		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
 		sc:              sessionVars.StmtCtx,
 		PartialAggFuncs: make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
-		GroupByItems:    v.GroupByItems,
+		groupByItems:    groupByCols,
 	}
 	// We take `create table t(a int, b int);` as example.
 	//
@@ -1016,11 +1024,16 @@ func (b *executorBuilder) buildStreamAgg(v *plan.PhysicalStreamAgg) Executor {
 		return nil
 	}
 	src = b.buildProjBelowAgg(v.AggFuncs, v.GroupByItems, src)
+
+	groupByCols := make([]*expression.Column, len(v.GroupByItems))
+	for i, item := range v.GroupByItems {
+		groupByCols[i] = item.(*expression.Column)
+	}
 	e := &StreamAggExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
 		StmtCtx:      b.ctx.GetSessionVars().StmtCtx,
 		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
-		GroupByItems: v.GroupByItems,
+		groupByItems: groupByCols,
 	}
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil

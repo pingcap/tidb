@@ -16,7 +16,6 @@ package aggfuncs
 import (
 	"unsafe"
 
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -126,13 +125,12 @@ type AggFunc interface {
 }
 
 type baseAggFunc struct {
-	// args stores the input arguments for an aggregate function, we should
-	// call arg.EvalXXX to get the actual input data for this function.
-	args []expression.Expression
+	// argsOrdinal stores the index of input Column arguments in the input raw data for an aggregate function
+	argsOrdinal []int
 
-	// ordinal stores the ordinal of the columns in the output chunk, which is
+	// resultOrdinal stores the resultOrdinal of the columns in the output chunk, which is
 	// used to append the final result of this function.
-	ordinal int
+	resultOrdinal int
 }
 
 func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {

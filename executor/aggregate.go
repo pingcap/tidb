@@ -57,7 +57,7 @@ type HashAggPartialWorker struct {
 	globalOutputCh    chan *AfFinalResult
 	giveBackCh        chan<- *HashAggInput
 	partialResultsMap aggPartialResultMapper
-	groupByItems      []expression.Expression
+	groupByItems      []*expression.Column
 	groupKey          []byte
 	groupValDatums    []types.Datum
 	// chk stores the input data from child,
@@ -139,9 +139,12 @@ type HashAggExec struct {
 	partialResultMap aggPartialResultMapper
 	groupMap         *mvmap.MVMap
 	groupIterator    *mvmap.Iterator
-	GroupByItems     []expression.Expression
-	groupKey         []byte
-	groupVals        [][]byte
+	// Cause evaluation is extracted into a Projection below aggregation when
+	// the group-by item is a ScalarFunction, group-by item will be ensured to
+	// be type Column.
+	groupByItems []*expression.Column
+	groupKey     []byte
+	groupVals    [][]byte
 
 	// After we support parallel execution for aggregation functions with distinct,
 	// we can remove this attribute.
@@ -270,7 +273,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			giveBackCh:        e.inputCh,
 			globalOutputCh:    e.finalOutputCh,
 			partialResultsMap: make(aggPartialResultMapper, 0),
-			groupByItems:      e.GroupByItems,
+			groupByItems:      e.groupByItems,
 			chk:               e.children[0].newChunk(),
 		}
 
@@ -621,7 +624,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if (e.groupMap.Len() == 0) && len(e.GroupByItems) == 0 {
+		if (e.groupMap.Len() == 0) && len(e.groupByItems) == 0 {
 			// If no groupby and no data, we should add an empty group.
 			// For example:
 			// "select count(c) from t;" should return one row [0]
@@ -681,8 +684,8 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 }
 
 func (e *HashAggExec) getGroupKey(row chunk.Row) ([]byte, error) {
-	vals := make([]types.Datum, 0, len(e.GroupByItems))
-	for _, item := range e.GroupByItems {
+	vals := make([]types.Datum, 0, len(e.groupByItems))
+	for _, item := range e.groupByItems {
 		v, err := item.Eval(row)
 		if item.GetType().Tp == mysql.TypeNewDecimal {
 			v.SetLength(0)
@@ -724,15 +727,18 @@ type StreamAggExec struct {
 	isChildReturnEmpty bool
 	defaultVal         *chunk.Chunk
 	StmtCtx            *stmtctx.StatementContext
-	GroupByItems       []expression.Expression
-	curGroupKey        []types.Datum
-	tmpGroupKey        []types.Datum
-	inputIter          *chunk.Iterator4Chunk
-	inputRow           chunk.Row
-	aggFuncs           []aggfuncs.AggFunc
-	partialResults     []aggfuncs.PartialResult
-	groupRows          []chunk.Row
-	childResult        *chunk.Chunk
+	// Cause evaluation is extracted into a Projection below aggregation when
+	// the group-by item is a ScalarFunction, group-by item will be ensured to
+	// be type Column.
+	groupByItems   []*expression.Column
+	curGroupKey    []types.Datum
+	tmpGroupKey    []types.Datum
+	inputIter      *chunk.Iterator4Chunk
+	inputRow       chunk.Row
+	aggFuncs       []aggfuncs.AggFunc
+	partialResults []aggfuncs.PartialResult
+	groupRows      []chunk.Row
+	childResult    *chunk.Chunk
 }
 
 // Open implements the Executor Open interface.
@@ -869,7 +875,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 
 // meetNewGroup returns a value that represents if the new group is different from last group.
 func (e *StreamAggExec) meetNewGroup(row chunk.Row) (bool, error) {
-	if len(e.GroupByItems) == 0 {
+	if len(e.groupByItems) == 0 {
 		return false, nil
 	}
 	e.tmpGroupKey = e.tmpGroupKey[:0]
@@ -877,7 +883,7 @@ func (e *StreamAggExec) meetNewGroup(row chunk.Row) (bool, error) {
 	if len(e.curGroupKey) == 0 {
 		matched, firstGroup = false, true
 	}
-	for i, item := range e.GroupByItems {
+	for i, item := range e.groupByItems {
 		v, err := item.Eval(row)
 		if err != nil {
 			return false, errors.Trace(err)

@@ -14,7 +14,6 @@
 package aggfuncs
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -95,23 +94,20 @@ func (e *maxMin4Int) ResetPartialResult(pr PartialResult) {
 func (e *maxMin4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinInt)(pr)
 	if p.isNull {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendInt64(e.ordinal, p.val)
+	chk.AppendInt64(e.resultOrdinal, p.val)
 	return nil
 }
 
 func (e *maxMin4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinInt)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
+		input := row.GetInt64(e.argsOrdinal[0])
 		if p.isNull {
 			p.val = input
 			p.isNull = false
@@ -158,23 +154,20 @@ func (e *maxMin4Uint) ResetPartialResult(pr PartialResult) {
 func (e *maxMin4Uint) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinUint)(pr)
 	if p.isNull {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendUint64(e.ordinal, p.val)
+	chk.AppendUint64(e.resultOrdinal, p.val)
 	return nil
 }
 
 func (e *maxMin4Uint) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinUint)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
+		input := row.GetInt64(e.argsOrdinal[0])
 		uintVal := uint64(input)
 		if p.isNull {
 			p.val = uintVal
@@ -223,31 +216,27 @@ func (e *maxMin4Float32) ResetPartialResult(pr PartialResult) {
 func (e *maxMin4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinFloat32)(pr)
 	if p.isNull {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendFloat32(e.ordinal, p.val)
+	chk.AppendFloat32(e.resultOrdinal, p.val)
 	return nil
 }
 
 func (e *maxMin4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinFloat32)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
-		f := float32(input)
+		input := row.GetFloat32(e.argsOrdinal[0])
 		if p.isNull {
-			p.val = f
+			p.val = input
 			p.isNull = false
 			continue
 		}
-		if e.isMax && f > p.val || !e.isMax && f < p.val {
-			p.val = f
+		if e.isMax && input > p.val || !e.isMax && input < p.val {
+			p.val = input
 		}
 	}
 	return nil
@@ -287,23 +276,20 @@ func (e *maxMin4Float64) ResetPartialResult(pr PartialResult) {
 func (e *maxMin4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinFloat64)(pr)
 	if p.isNull {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendFloat64(e.ordinal, p.val)
+	chk.AppendFloat64(e.resultOrdinal, p.val)
 	return nil
 }
 
 func (e *maxMin4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinFloat64)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
+		input := row.GetFloat64(e.argsOrdinal[0])
 		if p.isNull {
 			p.val = input
 			p.isNull = false
@@ -349,23 +335,20 @@ func (e *maxMin4Decimal) ResetPartialResult(pr PartialResult) {
 func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinDecimal)(pr)
 	if p.isNull {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendMyDecimal(e.ordinal, &p.val)
+	chk.AppendMyDecimal(e.resultOrdinal, &p.val)
 	return nil
 }
 
 func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinDecimal)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
+		input := row.GetMyDecimal(e.argsOrdinal[0])
 		if p.isNull {
 			p.val = *input
 			p.isNull = false
@@ -413,23 +396,20 @@ func (e *maxMin4String) ResetPartialResult(pr PartialResult) {
 func (e *maxMin4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinString)(pr)
 	if p.isNull {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendString(e.ordinal, p.val)
+	chk.AppendString(e.resultOrdinal, p.val)
 	return nil
 }
 
 func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinString)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalString(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
+		input := row.GetString(e.argsOrdinal[0])
 		if p.isNull {
 			// The string returned by `EvalString` may be referenced to an underlying buffer,
 			// for example ‘Chunk’, which could be reset and reused multiply times.
@@ -481,23 +461,20 @@ func (e *maxMin4Time) ResetPartialResult(pr PartialResult) {
 func (e *maxMin4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4Time)(pr)
 	if p.isNull {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendTime(e.ordinal, p.val)
+	chk.AppendTime(e.resultOrdinal, p.val)
 	return nil
 }
 
 func (e *maxMin4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4Time)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalTime(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
+		input := row.GetTime(e.argsOrdinal[0])
 		if p.isNull {
 			p.val = input
 			p.isNull = false
@@ -529,6 +506,8 @@ func (e *maxMin4Time) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 
 type maxMin4Duration struct {
 	baseMaxMinAggFunc
+
+	fillFsp int
 }
 
 func (e *maxMin4Duration) AllocPartialResult() PartialResult {
@@ -545,23 +524,20 @@ func (e *maxMin4Duration) ResetPartialResult(pr PartialResult) {
 func (e *maxMin4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinDuration)(pr)
 	if p.isNull {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendDuration(e.ordinal, p.val)
+	chk.AppendDuration(e.resultOrdinal, p.val)
 	return nil
 }
 
 func (e *maxMin4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinDuration)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDuration(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
+		input := row.GetDuration(e.argsOrdinal[0], e.fillFsp)
 		if p.isNull {
 			p.val = input
 			p.isNull = false
@@ -609,23 +585,20 @@ func (e *maxMin4JSON) ResetPartialResult(pr PartialResult) {
 func (e *maxMin4JSON) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4MaxMinJSON)(pr)
 	if p.isNull {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendJSON(e.ordinal, p.val)
+	chk.AppendJSON(e.resultOrdinal, p.val)
 	return nil
 }
 
 func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4MaxMinJSON)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalJSON(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
+		input := row.GetJSON(e.argsOrdinal[0])
 		if p.isNull {
 			p.val = input
 			p.isNull = false

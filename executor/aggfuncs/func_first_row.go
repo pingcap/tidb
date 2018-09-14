@@ -14,7 +14,6 @@
 package aggfuncs
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -97,10 +96,8 @@ func (e *firstRow4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		isNull := row.IsNull(e.argsOrdinal[0])
+		input := row.GetInt64(e.argsOrdinal[0])
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 		break
 	}
@@ -118,10 +115,10 @@ func (*firstRow4Int) MergePartialResult(sctx sessionctx.Context, src PartialResu
 func (e *firstRow4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowInt)(pr)
 	if p.isNull || !p.gotFirstRow {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendInt64(e.ordinal, p.val)
+	chk.AppendInt64(e.resultOrdinal, p.val)
 	return nil
 }
 
@@ -144,10 +141,8 @@ func (e *firstRow4Float32) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		isNull := row.IsNull(e.argsOrdinal[0])
+		input := row.GetFloat32(e.argsOrdinal[0])
 		p.gotFirstRow, p.isNull, p.val = true, isNull, float32(input)
 		break
 	}
@@ -164,10 +159,10 @@ func (*firstRow4Float32) MergePartialResult(sctx sessionctx.Context, src Partial
 func (e *firstRow4Float32) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowFloat32)(pr)
 	if p.isNull || !p.gotFirstRow {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendFloat32(e.ordinal, p.val)
+	chk.AppendFloat32(e.resultOrdinal, p.val)
 	return nil
 }
 
@@ -190,10 +185,8 @@ func (e *firstRow4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalReal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		isNull := row.IsNull(e.argsOrdinal[0])
+		input := row.GetFloat64(e.argsOrdinal[0])
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 		break
 	}
@@ -210,10 +203,10 @@ func (*firstRow4Float64) MergePartialResult(sctx sessionctx.Context, src Partial
 func (e *firstRow4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowFloat64)(pr)
 	if p.isNull || !p.gotFirstRow {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendFloat64(e.ordinal, p.val)
+	chk.AppendFloat64(e.resultOrdinal, p.val)
 	return nil
 }
 
@@ -236,10 +229,8 @@ func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalString(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		isNull := row.IsNull(e.argsOrdinal[0])
+		input := row.GetString(e.argsOrdinal[0])
 		p.gotFirstRow, p.isNull, p.val = true, isNull, stringutil.Copy(input)
 		break
 	}
@@ -257,10 +248,10 @@ func (*firstRow4String) MergePartialResult(sctx sessionctx.Context, src PartialR
 func (e *firstRow4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowString)(pr)
 	if p.isNull || !p.gotFirstRow {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendString(e.ordinal, p.val)
+	chk.AppendString(e.resultOrdinal, p.val)
 	return nil
 }
 
@@ -283,10 +274,8 @@ func (e *firstRow4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalTime(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		isNull := row.IsNull(e.argsOrdinal[0])
+		input := row.GetTime(e.argsOrdinal[0])
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 		break
 	}
@@ -304,15 +293,17 @@ func (*firstRow4Time) MergePartialResult(sctx sessionctx.Context, src PartialRes
 func (e *firstRow4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowTime)(pr)
 	if p.isNull || !p.gotFirstRow {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendTime(e.ordinal, p.val)
+	chk.AppendTime(e.resultOrdinal, p.val)
 	return nil
 }
 
 type firstRow4Duration struct {
 	baseAggFunc
+
+	fillFsp int
 }
 
 func (e *firstRow4Duration) AllocPartialResult() PartialResult {
@@ -330,10 +321,8 @@ func (e *firstRow4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDuration(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		isNull := row.IsNull(e.argsOrdinal[0])
+		input := row.GetDuration(e.argsOrdinal[0], e.fillFsp)
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 		break
 	}
@@ -350,10 +339,10 @@ func (*firstRow4Duration) MergePartialResult(sctx sessionctx.Context, src Partia
 func (e *firstRow4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowDuration)(pr)
 	if p.isNull || !p.gotFirstRow {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendDuration(e.ordinal, p.val)
+	chk.AppendDuration(e.resultOrdinal, p.val)
 	return nil
 }
 
@@ -376,10 +365,8 @@ func (e *firstRow4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalJSON(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		isNull := row.IsNull(e.argsOrdinal[0])
+		input := row.GetJSON(e.argsOrdinal[0])
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input
 		break
 	}
@@ -396,10 +383,10 @@ func (*firstRow4JSON) MergePartialResult(sctx sessionctx.Context, src PartialRes
 func (e *firstRow4JSON) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowJSON)(pr)
 	if p.isNull || !p.gotFirstRow {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendJSON(e.ordinal, p.val)
+	chk.AppendJSON(e.resultOrdinal, p.val)
 	return nil
 }
 
@@ -422,10 +409,8 @@ func (e *firstRow4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		return nil
 	}
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		isNull := row.IsNull(e.argsOrdinal[0])
+		input := row.GetMyDecimal(e.argsOrdinal[0])
 		p.gotFirstRow, p.isNull = true, isNull
 		if input != nil {
 			p.val = *input
@@ -438,10 +423,10 @@ func (e *firstRow4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowDecimal)(pr)
 	if p.isNull || !p.gotFirstRow {
-		chk.AppendNull(e.ordinal)
+		chk.AppendNull(e.resultOrdinal)
 		return nil
 	}
-	chk.AppendMyDecimal(e.ordinal, &p.val)
+	chk.AppendMyDecimal(e.resultOrdinal, &p.val)
 	return nil
 }
 

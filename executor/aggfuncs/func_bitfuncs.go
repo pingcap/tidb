@@ -16,7 +16,6 @@ package aggfuncs
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -38,7 +37,7 @@ func (e *baseBitAggFunc) ResetPartialResult(pr PartialResult) {
 
 func (e *baseBitAggFunc) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4BitFunc)(pr)
-	chk.AppendUint64(e.ordinal, *p)
+	chk.AppendUint64(e.resultOrdinal, *p)
 	return nil
 }
 
@@ -49,13 +48,10 @@ type bitOrUint64 struct {
 func (e *bitOrUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
-		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
+		inputValue := row.GetInt64(e.argsOrdinal[0])
 		*p |= uint64(inputValue)
 	}
 	return nil
@@ -74,13 +70,10 @@ type bitXorUint64 struct {
 func (e *bitXorUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
-		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
+		inputValue := row.GetInt64(e.argsOrdinal[0])
 		*p ^= uint64(inputValue)
 	}
 	return nil
@@ -110,13 +103,10 @@ func (e *bitAndUint64) ResetPartialResult(pr PartialResult) {
 func (e *bitAndUint64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
 	p := (*partialResult4BitFunc)(pr)
 	for _, row := range rowsInGroup {
-		inputValue, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isNull {
+		if row.IsNull(e.argsOrdinal[0]) {
 			continue
 		}
+		inputValue := row.GetInt64(e.argsOrdinal[0])
 		*p &= uint64(inputValue)
 	}
 	return nil
