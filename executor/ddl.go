@@ -39,10 +39,9 @@ import (
 type DDLExec struct {
 	baseExecutor
 
-	stmt       ast.StmtNode
-	is         infoschema.InfoSchema
-	done       bool
-	retryCount int
+	stmt ast.StmtNode
+	is   infoschema.InfoSchema
+	done bool
 }
 
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
@@ -94,12 +93,9 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	}
 	if err != nil {
 		err1 := e.toErr(err)
-		if terror.ErrorEqual(err1, domain.ErrInfoSchemaChanged) && e.retryCount < 1000 {
+		if !terror.ErrorEqual(err1, err) {
 			query, _ := e.ctx.Value(sessionctx.QueryString).(string)
-			e.retryCount++
-			log.Errorf("run query %s , error: %v\nInfo schema changed, retry[%d].", query, errors.Trace(err), e.retryCount)
-			e.is = domain.GetDomain(e.ctx).InfoSchema()
-			return e.Next(ctx, chk)
+			log.Errorf("run query %s , error: %v\nInfo schema changed.", query, errors.Trace(err))
 		}
 		return errors.Trace(err1)
 	}
