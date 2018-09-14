@@ -16,7 +16,6 @@ package distsql
 import (
 	"time"
 
-<<<<<<< HEAD
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/kv"
