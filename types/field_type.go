@@ -1414,3 +1414,23 @@ func SetBinChsClnFlag(ft *FieldType) {
 	ft.Collate = charset.CollationBin
 	ft.Flag |= mysql.BinaryFlag
 }
+
+// VarStorageLen indicates this column is a variable length column.
+const VarStorageLen = -1
+
+// StorageLength is the length of stored value for the type.
+func (ft *FieldType) StorageLength() int {
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
+		mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeYear, mysql.TypeDuration,
+		mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeEnum, mysql.TypeSet,
+		mysql.TypeBit:
+		// This may not be the accurate length, because we may encode them as varint.
+		return 8
+	case mysql.TypeNewDecimal:
+		precision, frac := ft.Flen-ft.Decimal, ft.Decimal
+		return precision/digitsPerWord*wordSize + dig2bytes[precision%digitsPerWord] + frac/digitsPerWord*wordSize + dig2bytes[frac%digitsPerWord]
+	default:
+		return VarStorageLen
+	}
+}
