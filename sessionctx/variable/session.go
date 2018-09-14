@@ -15,6 +15,7 @@ package variable
 
 import (
 	"crypto/tls"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -441,6 +442,25 @@ func (s *SessionVars) ResetPrevAffectedRows() {
 			s.PrevAffectedRows = -1
 		}
 	}
+}
+
+func (s *SessionVars) GetExecuteArgumentsInfo() string {
+	if len(s.PreparedParams) == 0 {
+		return ""
+	}
+	args := make([]string, 0, len(s.PreparedParams))
+	for _, v := range s.PreparedParams {
+		if v.IsNull() {
+			args = append(args, "<nil>")
+		} else {
+			str, err := v.ToString()
+			if err != nil {
+				terror.Log(err)
+			}
+			args = append(args, str)
+		}
+	}
+	return fmt.Sprintf("[arguments: %s]", strings.Join(args, ", "))
 }
 
 // GetSystemVar gets the string value of a system variable.

@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
@@ -246,19 +245,8 @@ func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...interface{}) (ast.Statement, error) {
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
 	execStmt.UsingVars = make([]ast.ExprNode, len(args))
-	argStrs := make([]string, 0, len(args))
 	for i, val := range args {
-		expr := ast.NewValueExpr(val)
-		execStmt.UsingVars[i] = expr
-		if expr.GetDatum().IsNull() {
-			argStrs = append(argStrs, "<nil>")
-		} else {
-			str, err := expr.ToString()
-			if err != nil {
-				return nil, err
-			}
-			argStrs = append(argStrs, str)
-		}
+		execStmt.UsingVars[i] = ast.NewValueExpr(val)
 	}
 	is := GetInfoSchema(ctx)
 	execPlan, err := plan.Optimize(ctx, execStmt, is)
@@ -273,11 +261,7 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 		Ctx:        ctx,
 	}
 	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*plan.Prepared); ok {
-		argInfo := ""
-		if len(argStrs) > 0 {
-			argInfo = fmt.Sprintf(" [arguments: %s]", strings.Join(argStrs, ","))
-		}
-		stmt.Text = prepared.Stmt.Text() + argInfo
+		stmt.Text = prepared.Stmt.Text()
 	}
 	return stmt, nil
 }
