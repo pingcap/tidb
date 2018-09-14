@@ -168,7 +168,7 @@ type SessionVars struct {
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
 	// params for prepared statements
-	PreparedParams []interface{}
+	PreparedParams []types.Datum
 
 	// retry information
 	RetryInfo *RetryInfo
@@ -302,7 +302,7 @@ func NewSessionVars() *SessionVars {
 		systems:                   make(map[string]string),
 		PreparedStmts:             make(map[uint32]interface{}),
 		PreparedStmtNameToID:      make(map[string]uint32),
-		PreparedParams:            make([]interface{}, 10),
+		PreparedParams:            make([]types.Datum, 10),
 		TxnCtx:                    &TransactionContext{},
 		KVVars:                    kv.NewVariables(),
 		RetryInfo:                 &RetryInfo{},

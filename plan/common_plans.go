@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -152,7 +153,7 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	}
 
 	if cap(vars.PreparedParams) < len(e.UsingVars) {
-		vars.PreparedParams = make([]interface{}, len(e.UsingVars))
+		vars.PreparedParams = make([]types.Datum, len(e.UsingVars))
 	}
 	for i, usingVar := range e.UsingVars {
 		val, err := usingVar.Eval(chunk.Row{})
