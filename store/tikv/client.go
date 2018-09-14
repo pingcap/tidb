@@ -88,39 +88,38 @@ type connArray struct {
 
 	// For super batch requests.
 	superBatchCh      chan *superBatchEntry
-	superBatchClients []superBatchClient
+	superBatchClients []*superBatchClient
 }
 
 type superBatchClient struct {
 	client  tikvpb.Tikv_SuperBatchClient
-	batched map[uint64]*superBatchEntry
+	batched sync.Map
 	idAlloc uint64
 }
 
-func (c *superBatchClient) recvLoop() {
+func (c *superBatchClient) batchRecvLoop() {
 	for {
 		resp, err := c.client.Recv()
 		if err != nil {
-			c.onError(err)
+			c.batched.Range(func(key, value interface{}) bool {
+				id, _ := key.(uint64)
+				entry, _ := value.(*superBatchEntry)
+				entry.err = err
+				close(entry.res)
+				c.batched.Delete(id)
+				return true
+			})
 			continue
 		}
+
 		responses := resp.GetResponses()
 		for i, requestId := range resp.GetRequestIds() {
-			c.batched[requestId].res <- responses[i]
+			value, _ := c.batched.Load(requestId)
+			entry, _ := value.(*superBatchEntry)
+			entry.res <- responses[i]
+			c.batched.Delete(requestId)
 		}
-
-		// req *tikvpb.SuperBatchRequest_Request
-		// res chan *tikvpb.SuperBatchResponse_Response
-		// err error
 	}
-}
-
-func (c *superBatchClient) onError(err error) {
-	for entry := range c.batched {
-		entry.res = err
-		close(entry.res)
-	}
-	c.batched = make(map[uint64]*superBatchEntry)
 }
 
 func newConnArray(maxSize uint, addr string, security config.Security) (*connArray, error) {
@@ -130,7 +129,7 @@ func newConnArray(maxSize uint, addr string, security config.Security) (*connArr
 		streamTimeout: make(chan *tikvrpc.Lease, 1024),
 
 		superBatchCh:      make(chan *superBatchEntry, 1024),
-		superBatchClients: make(superBatchClients, 0, maxSize),
+		superBatchClients: make([]*superBatchClient, 0, maxSize),
 	}
 	if err := a.Init(addr, security); err != nil {
 		return nil, err
@@ -190,21 +189,21 @@ func (a *connArray) Init(addr string, security config.Security) error {
 		a.v[i] = conn
 
 		// Initialize super batch streaming clients.
-		for conn := range a.v {
-			streamClient, err := conn.SuperBatch(context.TODO())
-			if err != nil {
-				a.Close()
-				return errors.Trace(err)
-			}
-			a.superBatchClients = append(a.superBatchClients, superBatchClient{
-				client:  streamClient,
-				batched: make(map[uint64]*superBatchEntry),
-				idAlloc: 0,
-			})
+		tikvClient := tikvpb.NewTikvClient(conn)
+		streamClient, err := tikvClient.SuperBatch(context.TODO())
+		if err != nil {
+			a.Close()
+			return errors.Trace(err)
 		}
+		batchClient := &superBatchClient{
+			client:  streamClient,
+			idAlloc: 0,
+		}
+		a.superBatchClients = append(a.superBatchClients, batchClient)
+		go batchClient.batchRecvLoop()
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
-	go a.superBatchLoop()
+	go a.batchSendLoop()
 
 	return nil
 }
@@ -232,64 +231,48 @@ type superBatchEntry struct {
 	err error
 }
 
-func (a *connArray) superBatchLoop() {
-	for client := range a.superBatchClients {
-
-	}
-	for i, conn := range a.v {
-		client := tikvpb.NewTikvClient(a.Get())
-		streamClient, err := client.SuperBatch(context.TODO())
-		if err != nil {
-			panic("initialize super batch streaming client fail: %v", err)
-		}
-		go func(client tikvpb.Tikv_SuperBatchClient) {
-		}()
-	}
-
+func (a *connArray) batchSendLoop() {
 	for {
-		if _, ok := <-a.superBatchTokens; !ok {
-			// The connArray is closed.
-			return
-		}
-		// TODO: wait 2ms to avoid short batch.
 		length := len(a.superBatchCh)
 		if length > 1000 {
 			length = 1000
-		} else if length == 0 {
+		} else {
+			// Sleep 2ms to avoid short batch.
+			time.Sleep(2 * 1000000)
+			length = len(a.superBatchCh)
+		}
+
+		if length == 0 {
 			length = 1
 		}
+
+		// Choose a connection by round-robbin.
+		next := atomic.AddUint32(&a.index, 1) % uint32(len(a.v))
+		superBatchClient := a.superBatchClients[next]
 
 		entries := make([]*superBatchEntry, 0, length)
 		requests := make([]*tikvpb.SuperBatchRequest_Request, 0, length)
 		requestIds := make([]uint64, 0, length)
-		maxBatchId := atomic.AddUint64(&a.batchIdAlloc, uint64(length))
+		maxBatchId := atomic.AddUint64(&superBatchClient.idAlloc, uint64(length))
 		for i := 0; i < length; i++ {
 			entry := <-a.superBatchCh
 			entries = append(entries, entry)
-			requests = append(requests, entry.req)
 
 			requestId := uint64(i) + maxBatchId - uint64(length)
+			superBatchClient.batched.Store(requestId, entry)
+
+			requests = append(requests, entry.req)
 			requestIds = append(requestIds, requestId)
-			a.batchedRequests.Store(i, entry)
 		}
 
-		go func(entries []*superBatchEntry, requests []*tikvpb.SuperBatchRequest_Request) {
-			client := tikvpb.NewTikvClient(a.Get())
-			streamClient, err := client.SuperBatch(context.TODO())
-			if err != nil {
-				// TODO: fallback if err is not implemented.
-				return
-			}
-			// TODO use it.
-			request := &tikvpb.SuperBatchRequest{
-				Requests:   requests,
-				RequestIds: requestIds,
-			}
-			if err = streamClient.Send(request); err != nil {
-				// Deal with error.
-			}
-			a.superBatchTokens <- struct{}{}
-		}(entries, requests)
+		request := &tikvpb.SuperBatchRequest{
+			Requests:   requests,
+			RequestIds: requestIds,
+		}
+		if err := superBatchClient.client.Send(request); err != nil {
+			log.Errorf("super batch send error: %v", err)
+			return
+		}
 	}
 }
 
@@ -374,15 +357,17 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	if superBatchReq := req.ToSuperBatchRequest(); superBatchReq != nil {
 		entry := &superBatchEntry{
-			req:  superBatchReq,
-			done: make(chan struct{}),
+			req: superBatchReq,
+			res: make(chan *tikvpb.SuperBatchResponse_Response),
+			err: nil,
 		}
 		connArray.superBatchCh <- entry
-		<-entry.done
-		if entry.err != nil {
+
+		res, ok := <-entry.res
+		if !ok {
 			return nil, errors.Trace(entry.err)
 		}
-		return tikvrpc.FromSuperBatchResponse(entry.res), nil
+		return tikvrpc.FromSuperBatchResponse(res), nil
 	}
 
 	client := tikvpb.NewTikvClient(connArray.Get())
