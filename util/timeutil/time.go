@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ func init() {
 // locCa is a simple cache policy to improve the performance of 'time.LoadLocation'.
 var locCa *locCache
 
-// LocalStr is current TiDB's system timezone name.
+// systemTZ is current TiDB's system timezone name.
 var systemTZ string
 var zoneSources = []string{
 	"/usr/share/zoneinfo/",
@@ -145,8 +145,6 @@ func LoadLocation(name string) (*time.Location, error) {
 
 // Zone returns the current timezone name and timezone offset in seconds.
 // In compatible with MySQL, we change `Local` to `System`.
-// TODO: Golang team plan to return system timezone name intead of
-// returning `Local` when `loc` is `time.Local`. We need keep an eye on this.
 func Zone(loc *time.Location) (string, int64) {
 	_, offset := time.Now().In(loc).Zone()
 	var name string

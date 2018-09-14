@@ -1072,13 +1072,14 @@ func CreateSession(store kv.Storage) (Session, error) {
 func loadSystemTZ(se *session) (string, error) {
 	sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
 	rss, errLoad := se.Execute(context.Background(), sql)
+	defer rss.Close()
 	if errLoad != nil {
 		return "", errLoad
 	}
 	chk := rss[0].NewChunk()
+	defer chk.Close()
 	rss[0].Next(context.Background(), chk)
 	return chk.GetRow(0).GetString(0), nil
-
 }
 
 // BootstrapSession runs the first time when the TiDB server start.
