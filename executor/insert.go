@@ -223,12 +223,9 @@ func (e *InsertExec) updateDupKeyValues(oldHandle int64, newHandle int64,
 		return errors.Trace(err)
 	}
 	// Delete old keys and fill back new key-values of the updated row.
-	cleanupRows, err := e.getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{oldRow})
+	err = e.deleteDupKeys(e.ctx, e.Table, [][]types.Datum{oldRow})
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if len(cleanupRows) > 0 {
-		e.deleteDupKeys(cleanupRows[0])
 	}
 
 	if handleChanged {
