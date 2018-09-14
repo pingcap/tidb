@@ -668,7 +668,7 @@ type LoadDataStmt struct {
 	FieldsInfo  *FieldsClause
 	LinesInfo   *LinesClause
 	IgnoreLines uint64
-	Sets        []*Assignment
+	SetList     []*Assignment
 }
 
 // Accept implements Node Accept interface.

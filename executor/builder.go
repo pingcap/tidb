@@ -535,7 +535,7 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	return insert
 }
 
-func getColumnInfo(e *InsertValues, tableCols []*table.Column) ([]*table.Column, int, error) {
+func getColumnInfo4LoadData(e *InsertValues, tableCols []*table.Column) ([]*table.Column, int, error) {
 	colNameOrVarLen := len(e.colDefaultVals)
 	if colNameOrVarLen == 0 {
 		colNameOrVarLen = len(tableCols)
@@ -600,12 +600,12 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		baseExecutor:  newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		Table:         tbl,
 		ColNameOrVars: v.ColumnOrVars,
-		SetList:       v.Sets,
+		SetList:       v.SetList,
 		GenColumns:    v.GenCols.Columns,
 		GenExprs:      v.GenCols.Exprs,
 	}
 	tableCols := tbl.Cols()
-	columns, pivot, err := getColumnInfo(insertVal, tableCols)
+	columns, pivot, err := getColumnInfo4LoadData(insertVal, tableCols)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil

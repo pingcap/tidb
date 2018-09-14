@@ -264,7 +264,7 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 			e.row[i].SetString(string(cols[i].str))
 		}
 	}
-	row, err := e.fillRowData2(e.row)
+	row, err := e.fillRowData4LoadData(e.row)
 	if err != nil {
 		e.handleWarning(err,
 			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
@@ -273,7 +273,7 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 	return row
 }
 
-func (e *LoadDataInfo) fillRowData2(vals []types.Datum) ([]types.Datum, error) {
+func (e *LoadDataInfo) fillRowData4LoadData(vals []types.Datum) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	i := 0

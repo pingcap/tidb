@@ -389,7 +389,7 @@ type LoadData struct {
 	FieldsInfo   *ast.FieldsClause
 	LinesInfo    *ast.LinesClause
 	IgnoreLines  uint64
-	Sets         []*expression.Assignment
+	SetList      []*expression.Assignment
 	tableSchema  *expression.Schema
 
 	GenCols InsertGeneratedColumns

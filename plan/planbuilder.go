@@ -1268,9 +1268,9 @@ func (b *planBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 }
 
 func (b *planBuilder) buildSetValuesOfLoadData(ld *ast.LoadDataStmt, ldPlan *LoadData, mockTablePlan *LogicalTableDual) error {
-	colNames := make([]string, 0, len(ld.Sets))
-	exprCols := make([]*expression.Column, 0, len(ld.Sets))
-	for _, assign := range ld.Sets {
+	colNames := make([]string, 0, len(ld.SetList))
+	exprCols := make([]*expression.Column, 0, len(ld.SetList))
+	for _, assign := range ld.SetList {
 		exprCol, err := ldPlan.tableSchema.FindColumn(assign.Column)
 		if err != nil {
 			return errors.Trace(err)
@@ -1282,12 +1282,12 @@ func (b *planBuilder) buildSetValuesOfLoadData(ld *ast.LoadDataStmt, ldPlan *Loa
 		exprCols = append(exprCols, exprCol)
 	}
 
-	for i, assign := range ld.Sets {
+	for i, assign := range ld.SetList {
 		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, true, func(node ast.Node) ast.Node { return node })
 		if err != nil {
 			return errors.Trace(err)
 		}
-		ldPlan.Sets = append(ldPlan.Sets, &expression.Assignment{
+		ldPlan.SetList = append(ldPlan.SetList, &expression.Assignment{
 			Col:  exprCols[i],
 			Expr: expr,
 		})

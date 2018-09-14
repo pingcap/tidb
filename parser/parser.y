@@ -6895,7 +6895,7 @@ LoadDataStmt:
 			Table:      $8.(*ast.TableName),
 			Columns:    $13.([]*ast.ColNameOrVar),
 			IgnoreLines:$12.(uint64),
-			Sets:       $14.([]*ast.Assignment),
+			SetList:    $14.([]*ast.Assignment),
 		}
 		if $3 != nil {
 			x.IsLocal = true

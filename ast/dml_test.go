@@ -36,7 +36,7 @@ func (ts *testDMLSuite) TestDMLVisitorCover(c *C) {
 		{&DeleteStmt{TableRefs: tableRefsClause, Tables: &DeleteTableList{}, Where: ce,
 			Order: &OrderByClause{}, Limit: &Limit{Count: ce, Offset: ce}}, 4, 4},
 		{&ShowStmt{Table: &TableName{}, Column: &ColumnName{}, Pattern: &PatternLikeExpr{Expr: ce, Pattern: ce}, Where: ce}, 3, 3},
-		{&LoadDataStmt{Table: &TableName{}, Columns: []*ColNameOrVar{{}}, Sets: []*Assignment{{}}, FieldsInfo: &FieldsClause{}, LinesInfo: &LinesClause{}}, 0, 0},
+		{&LoadDataStmt{Table: &TableName{}, Columns: []*ColNameOrVar{{}}, SetList: []*Assignment{{}}, FieldsInfo: &FieldsClause{}, LinesInfo: &LinesClause{}}, 0, 0},
 		{&Assignment{Column: &ColumnName{}, Expr: ce}, 1, 1},
 		{&ByItem{Expr: ce}, 1, 1},
 		{&GroupByClause{Items: []*ByItem{{Expr: ce}, {Expr: ce}}}, 2, 2},
