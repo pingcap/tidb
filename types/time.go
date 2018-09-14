@@ -657,29 +657,24 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 				switch len(fracStr) {
 				case 0:
 				case 1, 2:
-					_, err = fmt.Sscanf(fracStr, "%2d", &hour)
-					// `fmt.Sscanf` parses '1a' into int 1 using format "%d" without raising any error,
-					// so we should detect this manually.
-					truncatedOrIncorrect = err != nil || (len(fracStr) == 2 && !isDigit(fracStr[1]))
+					_, err = fmt.Sscanf(fracStr, "%2d ", &hour)
 				case 3, 4:
-					_, err = fmt.Sscanf(fracStr, "%2d%2d", &hour, &minute)
-					truncatedOrIncorrect = err != nil || (len(fracStr) == 4 && !isDigit(fracStr[3]))
+					_, err = fmt.Sscanf(fracStr, "%2d%2d ", &hour, &minute)
 				default:
-					_, err = fmt.Sscanf(fracStr, "%2d%2d%2d", &hour, &minute, &second)
-					truncatedOrIncorrect = err != nil || len(fracStr) > 6 || (len(fracStr) == 6 && !isDigit(fracStr[5]))
-					err = nil
+					_, err = fmt.Sscanf(fracStr, "%2d%2d%2d ", &hour, &minute, &second)
 				}
+				truncatedOrIncorrect = err != nil
 			}
 		}
 		if l == 9 || l == 10 {
-			truncatedOrIncorrect = len(fracStr) > 2 || (len(fracStr) == 2 && !isDigit(fracStr[1]))
 			if len(fracStr) == 0 {
 				second = 0
 			} else {
-				_, err = fmt.Sscanf(fracStr, "%2d", &second)
+				_, err = fmt.Sscanf(fracStr, "%2d ", &second)
 			}
+			truncatedOrIncorrect = err != nil || len(fracStr) > 2
 		}
-		if truncatedOrIncorrect || err != nil {
+		if truncatedOrIncorrect {
 			sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", str))
 			err = nil
 		}

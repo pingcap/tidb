@@ -1958,6 +1958,15 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery(`select cast("1101010101.111" as datetime);`)
 	result.Check(testkit.Rows("2011-01-01 01:01:11"))
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.111'"))
+	result = tk.MustQuery(`select cast("970101.111" as datetime);`)
+	result.Check(testkit.Rows("1997-01-01 11:01:00"))
+	tk.MustQuery("select @@warning_count;").Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select cast("970101.11111" as datetime);`)
+	result.Check(testkit.Rows("1997-01-01 11:11:01"))
+	tk.MustQuery("select @@warning_count;").Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select cast("970101.111a1" as datetime);`)
+	result.Check(testkit.Rows("1997-01-01 11:01:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '970101.111a1'"))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
