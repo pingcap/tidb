@@ -280,11 +280,13 @@ func (e *LoadDataInfo) fillRowData2(vals []types.Datum) ([]types.Datum, error) {
 	for _, v := range vals {
 		colInfo := e.colInfo[i]
 		if colInfo == nil {
-			vs, err := v.ToString()
-			if err != nil {
-				return nil, err
+			if !v.IsNull() {
+				vs, err := v.ToString()
+				if err != nil {
+					return nil, err
+				}
+				e.ctx.GetSessionVars().Users[e.colOrVar[i].VariableExpr.Name] = vs
 			}
-			e.ctx.GetSessionVars().Users[e.colOrVar[i].VariableExpr.Name] = vs
 			i++
 			if i == e.colPivot {
 				break

@@ -118,6 +118,11 @@ func (ts *TidbTestSuite) TestLoadData(c *C) {
 	runTestLoadData(c, suite.server)
 }
 
+func (ts *TidbTestSuite) TestLoadDataWithSet(c *C) {
+	c.Parallel()
+	runTestLoadDataWithSet(c, suite.server)
+}
+
 func (ts *TidbTestSuite) TestConcurrentUpdate(c *C) {
 	c.Parallel()
 	runTestConcurrentUpdate(c)
