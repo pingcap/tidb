@@ -102,11 +102,11 @@ const (
 	gcLeaderDescKey      = "tikv_gc_leader_desc"
 	gcLeaderLeaseKey     = "tikv_gc_leader_lease"
 
-	gcLastRunTimeKey     = "tikv_gc_last_run_time"
-	gcRunIntervalKey     = "tikv_gc_run_interval"
-	gcDefaultRunInterval = time.Minute * 10
-	gcWaitTime           = time.Minute * 1
-	gcReDeleteRangeDelay = 24 * time.Hour
+	gcLastRunTimeKey       = "tikv_gc_last_run_time"
+	gcRunIntervalKey       = "tikv_gc_run_interval"
+	gcDefaultRunInterval   = time.Minute * 10
+	gcWaitTime             = time.Minute * 1
+	gcRedoDeleteRangeDelay = 24 * time.Hour
 
 	gcLifeTimeKey        = "tikv_gc_life_time"
 	gcDefaultLifeTime    = time.Minute * 10
@@ -331,7 +331,6 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	// Process all delete range records whose ts < safePoint in table `gc_delete_range`
 	err = w.deleteRanges(ctx, safePoint)
 	if err != nil {
 		log.Errorf("[gc worker] %s delete range returns an error %v", w.uuid, errors.ErrorStack(err))
@@ -339,11 +338,10 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
-	// Check all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.
-	err = w.reDeleteRanges(ctx, safePoint)
+	err = w.redoDeleteRanges(ctx, safePoint)
 	if err != nil {
-		log.Errorf("[gc worker] %s re-delete range returns an error %v", w.uuid, errors.ErrorStack(err))
-		metrics.GCJobFailureCounter.WithLabelValues("re_delete_range").Inc()
+		log.Errorf("[gc worker] %s redo-delete range returns an error %v", w.uuid, errors.ErrorStack(err))
+		metrics.GCJobFailureCounter.WithLabelValues("redo_delete_range").Inc()
 		w.done <- errors.Trace(err)
 		return
 	}
@@ -358,6 +356,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 	w.done <- nil
 }
 
+// `deleteRanges` processes all delete range records whose ts < safePoint in table `gc_delete_range`
 func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	metrics.GCWorkerCounter.WithLabelValues("delete_range").Inc()
 
@@ -390,22 +389,21 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	return nil
 }
 
-// TODO: Is there any better name for this?
-func (w *GCWorker) reDeleteRanges(ctx context.Context, safePoint uint64) error {
-	metrics.GCWorkerCounter.WithLabelValues("re_delete_range").Inc()
+// `redoDeleteRanges` checks all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.
+func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error {
+	metrics.GCWorkerCounter.WithLabelValues("redo_delete_range").Inc()
 
 	// We check delete range records that are deleted about 24 hours ago.
-	safePointTime := oracle.PhysicalToTime(oracle.ExtractPhysical(safePoint))
-	reDeleteTs := oracle.ComposeTS(oracle.GetPhysical(safePointTime.Add(-gcReDeleteRangeDelay)), 0)
+	redoDeleteRangesTs := safePoint - oracle.ComposeTS(int64(gcRedoDeleteRangeDelay.Seconds())*1000, 0)
 
 	se := createSession(w.store)
-	ranges, err := util.LoadDoneDeleteRanges(se, reDeleteTs)
+	ranges, err := util.LoadDoneDeleteRanges(se, redoDeleteRangesTs)
 	se.Close()
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	log.Infof("[gc worker] %s start re-delete %v ranges", w.uuid, len(ranges))
+	log.Infof("[gc worker] %s start redo-delete %v ranges", w.uuid, len(ranges))
 	startTime := time.Now()
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
@@ -422,8 +420,8 @@ func (w *GCWorker) reDeleteRanges(ctx context.Context, safePoint uint64) error {
 			return errors.Trace(err)
 		}
 	}
-	log.Infof("[gc worker] %s finish re-delete %v ranges, cost time: %s", w.uuid, len(ranges), time.Since(startTime))
-	metrics.GCHistogram.WithLabelValues("re_delete_ranges").Observe(time.Since(startTime).Seconds())
+	log.Infof("[gc worker] %s finish redo-delete %v ranges, cost time: %s", w.uuid, len(ranges), time.Since(startTime))
+	metrics.GCHistogram.WithLabelValues("redo_delete_ranges").Observe(time.Since(startTime).Seconds())
 	return nil
 }
 

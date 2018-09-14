@@ -44,12 +44,6 @@ func ExtractPhysical(ts uint64) int64 {
 	return int64(ts >> physicalShiftBits)
 }
 
-// PhysicalToTime converts physical part of a ts to time.Time
-func PhysicalToTime(physical int64) time.Time {
-	physical *= int64(time.Millisecond)
-	return time.Unix(physical/int64(time.Second), physical%int64(time.Second))
-}
-
 // GetPhysical returns physical from an instant time with millisecond precision.
 func GetPhysical(t time.Time) int64 {
 	return t.UnixNano() / int64(time.Millisecond)
