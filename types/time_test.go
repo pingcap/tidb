@@ -138,6 +138,8 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 }
 
 func (s *testTimeSuite) TestDate(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
@@ -153,7 +155,7 @@ func (s *testTimeSuite) TestDate(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDate(nil, test.Input)
+		t, err := types.ParseDate(sc, test.Input)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -163,7 +165,7 @@ func (s *testTimeSuite) TestDate(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseDate(nil, test)
+		_, err := types.ParseDate(sc, test)
 		c.Assert(err, NotNil)
 	}
 }
