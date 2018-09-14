@@ -655,6 +655,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 			} else {
 				// '20170118.123423' => 2017-01-18 12:34:23.234
 				switch len(fracStr) {
+				case 0:
 				case 1, 2:
 					_, err = fmt.Sscanf(fracStr, "%2d", &hour)
 					// `fmt.Sscanf` parses '1a' into int 1 using format "%d" without raising any error,
@@ -940,7 +941,7 @@ func (d Duration) Compare(o Duration) int {
 // but parses str to Duration then compares.
 func (d Duration) CompareString(sc *stmtctx.StatementContext, str string) (int, error) {
 	// use MaxFsp to parse the string
-	o, err := ParseDuration(str, MaxFsp)
+	o, err := ParseDuration(sc, str, MaxFsp)
 	if err != nil {
 		return 0, err
 	}
@@ -979,7 +980,7 @@ func (d Duration) MicroSecond() int {
 // ParseDuration parses the time form a formatted string with a fractional seconds part,
 // returns the duration type Time value.
 // See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
-func ParseDuration(str string, fsp int) (Duration, error) {
+func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration, error) {
 	var (
 		day, hour, minute, second int
 		err                       error
@@ -1048,7 +1049,7 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			case 1: // 0S
 				_, err = fmt.Sscanf(integeralPart, "%1d", &second)
 			default: // Maybe contains date.
-				t, err1 := ParseDatetime(nil, str)
+				t, err1 := ParseDatetime(sc, str)
 				if err1 != nil {
 					return ZeroDuration, ErrTruncatedWrongVal.GenWithStackByArgs("time", origStr)
 				}

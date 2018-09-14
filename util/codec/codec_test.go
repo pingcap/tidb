@@ -513,7 +513,7 @@ func parseTime(c *C, s string) types.Time {
 }
 
 func parseDuration(c *C, s string) types.Duration {
-	m, err := types.ParseDuration(s, types.DefaultFsp)
+	m, err := types.ParseDuration(nil, s, types.DefaultFsp)
 	c.Assert(err, IsNil)
 	return m
 }
