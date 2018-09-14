@@ -37,9 +37,9 @@ All notable changes to this project will be documented in this file. See also [R
 * Set the internal SQL to high priority while TiDB is started [#7616](https://github.com/pingcap/tidb/pull/7616)
 * Use different labels to filter internal SQL and user SQL in monitoring metrics [#7631](https://github.com/pingcap/tidb/pull/7631)
 * Store the top 30 slow queries in the last week to the TiDB server [#7646](https://github.com/pingcap/tidb/pull/7646)
-* Put forward a proposal of setting the time zone for the TiDB cluster [#7656](https://github.com/pingcap/tidb/pull/7656)
+* Put forward a proposal of setting the global system time zone for the TiDB cluster [#7656](https://github.com/pingcap/tidb/pull/7656)
 * Enrich the error message of “GC life time is shorter than transaction duration” [#7658](https://github.com/pingcap/tidb/pull/7658)
-* Set the time zone when starting the TiDB cluster [#7638](https://github.com/pingcap/tidb/pull/7638)
+* Set the global system time zone when starting the TiDB cluster [#7638](https://github.com/pingcap/tidb/pull/7638)
 ### Compatibility
 * Add the unsigned flag for the `Year` type [#7542](https://github.com/pingcap/tidb/pull/7542)
 * Fix the issue of configuring the result length of the `Year` type in the `Prepare`/`Execute` mode [#7525](https://github.com/pingcap/tidb/pull/7525)
