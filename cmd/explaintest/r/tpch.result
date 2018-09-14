@@ -1287,15 +1287,15 @@ cntrycode
 order by
 cntrycode;
 id	count	task	operator info
-Sort_32	1.00	root	custsale.cntrycode:asc
-└─Projection_34	1.00	root	custsale.cntrycode, 28_col_0, 28_col_1
-  └─HashAgg_37	1.00	root	group by:custsale.cntrycode, funcs:count(1), sum(custsale.c_acctbal), firstrow(custsale.cntrycode)
-    └─Projection_38	0.00	root	substring(tpch.customer.c_phone, 1, 2), tpch.customer.c_acctbal
-      └─Selection_39	0.00	root	not(26_aux_0)
-        └─HashLeftJoin_40	0.00	root	left outer semi join, inner:TableReader_46, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
-          ├─Selection_41	0.00	root	in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
-          │ └─TableReader_44	0.00	root	data:Selection_43
-          │   └─Selection_43	0.00	cop	gt(tpch.customer.c_acctbal, NULL)
-          │     └─TableScan_42	7500000.00	cop	table:customer, range:[-inf,+inf], keep order:false
-          └─TableReader_46	75000000.00	root	data:TableScan_45
-            └─TableScan_45	75000000.00	cop	table:orders, range:[-inf,+inf], keep order:false
+Sort_33	1.00	root	custsale.cntrycode:asc
+└─Projection_35	1.00	root	custsale.cntrycode, 29_col_0, 29_col_1
+  └─HashAgg_38	1.00	root	group by:custsale.cntrycode, funcs:count(1), sum(custsale.c_acctbal), firstrow(custsale.cntrycode)
+    └─Projection_39	0.00	root	substring(tpch.customer.c_phone, 1, 2), tpch.customer.c_acctbal
+      └─Selection_40	0.00	root	not(27_aux_0)
+        └─HashLeftJoin_41	0.00	root	left outer semi join, inner:TableReader_47, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
+          ├─Selection_42	0.00	root	in(substring(tpch.customer.c_phone, 1, 2), "20", "40", "22", "30", "39", "42", "21")
+          │ └─TableReader_45	0.00	root	data:Selection_44
+          │   └─Selection_44	0.00	cop	gt(tpch.customer.c_acctbal, NULL)
+          │     └─TableScan_43	7500000.00	cop	table:customer, range:[-inf,+inf], keep order:false
+          └─TableReader_47	75000000.00	root	data:TableScan_46
+            └─TableScan_46	75000000.00	cop	table:orders, range:[-inf,+inf], keep order:false
