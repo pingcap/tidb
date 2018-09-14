@@ -535,6 +535,61 @@ func (b *executorBuilder) buildInsert(v *plan.Insert) Executor {
 	return insert
 }
 
+func getColumnInfo(e *InsertValues, tableCols []*table.Column) ([]*table.Column, int, error) {
+	colNameOrVarLen := len(e.colDefaultVals)
+	if colNameOrVarLen == 0 {
+		colNameOrVarLen = len(tableCols)
+	}
+	cols := make([]*table.Column, 0, colNameOrVarLen+len(e.SetList))
+	if len(e.ColNameOrVars) == 0 {
+		cols = append(cols, tableCols...)
+	} else {
+		columns := make([]string, 0, len(e.ColNameOrVars))
+		for _, colOrVar := range e.ColNameOrVars {
+			if colOrVar.ColumnName != nil {
+				columns = append(columns, colOrVar.ColumnName.Name.O)
+			} else {
+				columns = append(columns, "")
+			}
+		}
+		colsBind, err := table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if err != nil {
+			return nil, 0, errors.Errorf("LOAD DATA SET %s: %s", e.Table.Meta().Name.O, err)
+		}
+		cols = append(cols, colsBind...)
+	}
+
+	pivot := len(cols)
+	if len(e.SetList) > 0 {
+		columns := make([]string, 0, len(e.SetList))
+		for _, v := range e.SetList {
+			columns = append(columns, v.Col.ColName.O)
+		}
+		colSet, err := table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if err != nil {
+			return nil, 0, errors.Errorf("LOAD DATA SET %s: %s", e.Table.Meta().Name.O, err)
+		}
+		cols = append(cols, colSet...)
+	}
+
+	for _, col := range cols {
+		if col == nil {
+			continue
+		}
+		if col.Name.L == model.ExtraHandleName.L {
+			e.hasExtraHandle = true
+			break
+		}
+	}
+
+	//err = table.CheckOnce(cols)
+	//if err != nil {
+	//	return nil, errors.Trace(err)
+	//}  TODO
+
+	return cols, pivot, nil
+}
+
 func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 	tbl, ok := b.is.TableByID(v.Table.TableInfo.ID)
 	if !ok {
@@ -542,15 +597,15 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		return nil
 	}
 	insertVal := &InsertValues{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
-		Table:        tbl,
-		LoadDataAssign: v.ColumnOrVars,
-		SetList:      ,
-		GenColumns:   v.GenCols.Columns,
-		GenExprs:     v.GenCols.Exprs,
+		baseExecutor:  newBaseExecutor(b.ctx, nil, v.ExplainID()),
+		Table:         tbl,
+		ColNameOrVars: v.ColumnOrVars,
+		SetList:       v.Sets,
+		GenColumns:    v.GenCols.Columns,
+		GenExprs:      v.GenCols.Exprs,
 	}
 	tableCols := tbl.Cols()
-	columns, err := insertVal.getColumns(tableCols)
+	columns, pivot, err := getColumnInfo(insertVal, tableCols)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -559,7 +614,7 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		IsLocal:      v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
-			row:          make([]types.Datum, len(columns)),
+			row:          make([]types.Datum, len(columns)), // FIXME this length is wrong!!!
 			InsertValues: insertVal,
 			Path:         v.Path,
 			Table:        tbl,
@@ -568,6 +623,8 @@ func (b *executorBuilder) buildLoadData(v *plan.LoadData) Executor {
 			IgnoreLines:  v.IgnoreLines,
 			Ctx:          b.ctx,
 			colOrVar:     v.ColumnOrVars,
+			colInfo:      columns,
+			colPivot:     pivot,
 		},
 	}
 	return loadDataExec

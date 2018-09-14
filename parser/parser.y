@@ -594,9 +594,9 @@ import (
 	ColumnList			"column list"
 	ColumnNameListOpt		"column name list opt"
 	ColumnOrVarListOptWithBrackets 	"column or variable list opt with brackets"
-	ColumnOrVarList     "column or variable list"
-	ColumnOrVar         "column or variable"
-	LoadDataSetOpt      "load data statement set"
+	ColumnOrVarList         "column or variable list"
+	ColumnOrVar             "column or variable"
+	LoadDataSetOpt          "load data statement set"
 	ColumnSetValue			"insert statement set value by column name"
 	ColumnSetValueList		"insert statement set value by column name list"
 	CompareOp			"Compare opcode"
@@ -6893,7 +6893,7 @@ LoadDataStmt:
 		x := &ast.LoadDataStmt{
 			Path:       $5,
 			Table:      $8.(*ast.TableName),
-			Columns:    $13.([]*ast.ColumnAndVar),
+			Columns:    $13.([]*ast.ColNameOrVar),
 			IgnoreLines:$12.(uint64),
 			Sets:       $14.([]*ast.Assignment),
 		}
@@ -6912,31 +6912,31 @@ LoadDataStmt:
 ColumnOrVarListOptWithBrackets:
 	/* EMPTY */
 	{
-		$$ = []*ast.ColumnAndVar{}
+		$$ = []*ast.ColNameOrVar{}
 	}
 |	'(' ColumnOrVarList ')'
 	{
-		$$ = $2.([]*ast.ColumnAndVar)
+		$$ = $2.([]*ast.ColNameOrVar)
 	}
 
 ColumnOrVarList:
 	ColumnOrVar
 	{
-		$$ = []*ast.ColumnAndVar{$1.(*ast.ColumnAndVar)}
+		$$ = []*ast.ColNameOrVar{$1.(*ast.ColNameOrVar)}
 	}
 |	ColumnOrVarList ',' ColumnOrVar
 	{
-		$$ = append($1.([]*ast.ColumnAndVar), $3.(*ast.ColumnAndVar))
+		$$ = append($1.([]*ast.ColNameOrVar), $3.(*ast.ColNameOrVar))
 	}
 
 ColumnOrVar:
     UserVariable
     {
-        $$ = &ast.ColumnAndVar{VariableExpr: $1.(*ast.VariableExpr)}
+        $$ = &ast.ColNameOrVar{VariableExpr: $1.(*ast.VariableExpr)}
     }
 |   ColumnName
     {
-    	$$ = &ast.ColumnAndVar{ColumnName: $1.(*ast.ColumnName)}
+    	$$ = &ast.ColNameOrVar{ColumnName: $1.(*ast.ColumnName)}
     }
 
 LoadDataSetOpt:

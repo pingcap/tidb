@@ -434,10 +434,11 @@ func (n *ColumnName) OrigColName() (ret string) {
 	return
 }
 
+// ColNameOrVar represents column name or user-variable item.
 type ColNameOrVar struct {
 	node
 	VariableExpr *VariableExpr
-	ColumnName *ColumnName
+	ColumnName   *ColumnName
 }
 
 // Accept implements Node Accept interface.

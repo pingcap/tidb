@@ -1281,35 +1281,21 @@ func (b *planBuilder) buildSetValuesOfLoadData(ld *ast.LoadDataStmt, ldPlan *Loa
 		colNames = append(colNames, assign.Column.Name.L)
 		exprCols = append(exprCols, exprCol)
 	}
+
+	for i, assign := range ld.Sets {
+		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, true, func(node ast.Node) ast.Node { return node })
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ldPlan.Sets = append(ldPlan.Sets, &expression.Assignment{
+			Col:  exprCols[i],
+			Expr: expr,
+		})
+	}
 	return nil
 }
 
 func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
-
-
-	ts, ok := insert.Table.TableRefs.Left.(*ast.TableSource)
-	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
-	}
-	tn, ok := ts.Source.(*ast.TableName)
-	if !ok {
-		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs()
-	}
-	tableInfo := tn.TableInfo
-	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
-	schema := expression.TableInfo2SchemaWithDBName(b.ctx, tn.Schema, tableInfo)
-	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
-	if !ok {
-		return nil, errors.Errorf("Can't get table %s.", tableInfo.Name.O)
-	}
-
-	insertPlan := Insert{
-		Table:       tableInPlan,
-		Columns:     insert.Columns,
-		tableSchema: schema,
-		IsReplace:   insert.IsReplace,
-	}.init(b.ctx)
-
 	p := &LoadData{
 		IsLocal:      ld.IsLocal,
 		Path:         ld.Path,
@@ -1325,13 +1311,18 @@ func (b *planBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
 	}
+
 	schema := expression.TableInfo2Schema(b.ctx, tableInfo)
+
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
+	p.tableSchema = schema
 
-	b.buildSetValuesOfLoadData(ld, p, mockTablePlan, )
+	err := b.buildSetValuesOfLoadData(ld, p, mockTablePlan)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
-	var err error
 	p.GenCols, err = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
 	if err != nil {
 		return nil, errors.Trace(err)

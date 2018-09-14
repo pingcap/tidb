@@ -106,7 +106,8 @@ func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 func (s *Schema) FindColumnAndIndex(astCol *ast.ColumnName) (*Column, int, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
-	for i, col := range s.Columns {
+	x := s.Columns
+	for i, col := range x {
 		if (dbName.L == "" || dbName.L == col.DBName.L) &&
 			(tblName.L == "" || tblName.L == col.TblName.L) &&
 			(colName.L == col.ColName.L) {

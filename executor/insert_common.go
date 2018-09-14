@@ -42,11 +42,11 @@ type InsertValues struct {
 
 	SelectExec Executor
 
-	Table   table.Table
-	Columns []*ast.ColumnName
-	Lists   [][]expression.Expression
-	SetList []*expression.Assignment
-	LoadDataAssign []*ast.ColNameOrVar
+	Table         table.Table
+	Columns       []*ast.ColumnName
+	Lists         [][]expression.Expression
+	SetList       []*expression.Assignment
+	ColNameOrVars []*ast.ColNameOrVar
 
 	GenColumns []*ast.ColumnName
 	GenExprs   []expression.Expression
@@ -101,9 +101,6 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		if err != nil {
 			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
-	} else if len(e.LoadDataAssign) > 0 {
-		columns := make([]string, 0, len(e.LoadDataAssign))
-
 	} else {
 		// If e.Columns are empty, use all columns instead.
 		cols = tableCols
