@@ -1069,12 +1069,14 @@ func CreateSession(store kv.Storage) (Session, error) {
 	return s, nil
 }
 
+// loadSystemTZ loads systemTZ from mysql.tidb
 func loadSystemTZ(se *session) (string, error) {
 	sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
 	rss, errLoad := se.Execute(context.Background(), sql)
 	if errLoad != nil {
 		return "", errLoad
 	}
+	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
 	defer rss[0].Close()
 	chk := rss[0].NewChunk()
 	defer chk.Reset()
