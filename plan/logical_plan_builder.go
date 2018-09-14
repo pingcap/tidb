@@ -643,30 +643,24 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		})
 	}
 	u.schema = expression.NewSchema(unionCols...)
-	// Process each child
-	// 1. Check whether the `TypeField` is correct. If not, create a projection.
-	// 2. If we need to create projection, create it.
-	// 3. If we not need, but the child is not projection. We still need a projection. To make its schema the same with the union.
+	// Process each child and add a projection above original child.
+	// So the schema of `UnionAll` can be the same with its children's.
 	for childID, child := range u.children {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
-		needProjection := false
 		for i, srcCol := range child.Schema().Columns {
 			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
 				exprs[i] = expression.BuildCastFunction4Union(b.ctx, srcCol, dstType)
-				needProjection = true
 			} else {
 				exprs[i] = srcCol
 			}
 		}
-		if _, isProj := child.(*LogicalProjection); needProjection || !isProj {
-			b.optFlag |= flagEliminateProjection
-			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
-			proj.SetChildren(child)
-			u.children[childID] = proj
-		}
-		u.children[childID].(*LogicalProjection).SetSchema(expression.NewSchema(unionCols...))
+		b.optFlag |= flagEliminateProjection
+		proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
+		proj.SetSchema(expression.NewSchema(unionCols...))
+		proj.SetChildren(child)
+		u.children[childID] = proj
 	}
 }
 
