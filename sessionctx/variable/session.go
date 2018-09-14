@@ -303,7 +303,7 @@ func NewSessionVars() *SessionVars {
 		systems:                   make(map[string]string),
 		PreparedStmts:             make(map[uint32]interface{}),
 		PreparedStmtNameToID:      make(map[string]uint32),
-		PreparedParams:            make([]types.Datum, 10),
+		PreparedParams:            make([]types.Datum, 0, 10),
 		TxnCtx:                    &TransactionContext{},
 		KVVars:                    kv.NewVariables(),
 		RetryInfo:                 &RetryInfo{},
@@ -461,7 +461,7 @@ func (s *SessionVars) GetExecuteArgumentsInfo() string {
 			args = append(args, str)
 		}
 	}
-	return fmt.Sprintf("[arguments: %s]", strings.Join(args, ", "))
+	return fmt.Sprintf(" [arguments: %s]", strings.Join(args, ", "))
 }
 
 // GetSystemVar gets the string value of a system variable.

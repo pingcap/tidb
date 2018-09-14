@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -152,16 +151,13 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		return errors.Trace(ErrWrongParamCount)
 	}
 
-	if cap(vars.PreparedParams) < len(e.UsingVars) {
-		vars.PreparedParams = make([]types.Datum, len(e.UsingVars))
-	}
 	for i, usingVar := range e.UsingVars {
 		val, err := usingVar.Eval(chunk.Row{})
 		if err != nil {
 			return errors.Trace(err)
 		}
 		prepared.Params[i].SetDatum(val)
-		vars.PreparedParams[i] = val
+		vars.PreparedParams = append(vars.PreparedParams, val)
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// If the schema version has changed we need to preprocess it again,

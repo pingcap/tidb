@@ -53,7 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -785,7 +785,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 		startTS = time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
-		if err := executor.ResetStmtCtx(s, stmtNode); err != nil {
+		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 			return nil, errors.Trace(err)
 		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
