@@ -1072,10 +1072,10 @@ func CreateSession(store kv.Storage) (Session, error) {
 func loadSystemTZ(se *session) (string, error) {
 	sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
 	rss, errLoad := se.Execute(context.Background(), sql)
-	defer rss[0].Close()
 	if errLoad != nil {
 		return "", errLoad
 	}
+	defer rss[0].Close()
 	chk := rss[0].NewChunk()
 	defer chk.Reset()
 	rss[0].Next(context.Background(), chk)
