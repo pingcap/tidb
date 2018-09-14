@@ -2578,7 +2578,7 @@ PredicateExpr:
 		escape := $4.(string)
 		if len(escape) > 1 {
 			yylex.Errorf("Incorrect arguments %s to ESCAPE", escape)
-			return 1
+			return
 		} else if len(escape) == 0 {
 			escape = "\\"
 		}
@@ -3045,7 +3045,7 @@ Literal:
 		co, err := charset.GetDefaultCollation($1)
 		if err != nil {
 			yylex.Errorf("Get collation error for charset: %s", $1)
-			return 1
+			return
 		}
 		expr := ast.NewValueExpr($2)
 		tp := expr.GetType()
@@ -6384,7 +6384,7 @@ DateAndTimeType:
 		x.Flen = $2.(int)
 		if x.Flen != types.UnspecifiedLength && x.Flen != 4 {
 			yylex.Errorf("Supports only YEAR or YEAR(4) column.")
-			return -1
+			return
 		}
 		$$ = x
 	}
@@ -6995,13 +6995,13 @@ Fields:
 		escape := $4.(string)
 		if escape != "\\" && len(escape) > 1 {
 			yylex.Errorf("Incorrect arguments %s to ESCAPE", escape)
-			return 1
+			return
 		}
 		var enclosed byte
 		str := $3.(string)
 		if len(str) > 1 {
 			yylex.Errorf("Incorrect arguments %s to ENCLOSED", escape)
-			return 1
+			return
 		}else if len(str) != 0 {
 			enclosed = str[0]
 		}

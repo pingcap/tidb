@@ -359,6 +359,34 @@ func main1(in string) (err error) {
 	mustFormat(f, "// CAUTION: Generated file - DO NOT EDIT.\n\n")
 	mustFormat(f, "%s", injectImport(p.Prologue))
 	mustFormat(f, `
+func init() {`)
+	for r, rule := range p.Rules {
+		if rule.Action == nil {
+			continue
+		}
+
+		action := rule.Action.Values
+		if len(action) == 0 {
+			continue
+		}
+
+		if len(action) == 1 {
+			part := action[0]
+			if part.Type == parser.ActionValueGo {
+				src := part.Src
+				src = src[1 : len(src)-1] // Remove lead '{' and trail '}'
+				if strings.TrimSpace(src) == "" {
+					continue
+				}
+			}
+		}
+		mustFormat(f, `
+                funcsSet[%d] = %s
+`, r, fmt.Sprintf("fnR%d", r))
+	}
+	mustFormat(f, `
+}
+var funcsSet []func(yyLexer, *Parser, int, []%[1]sSymType) = make([]func(yyLexer, *Parser, int, []%[1]sSymType), 2048)
 type %[1]sSymType %i%s%u
 
 type %[1]sXError struct {
@@ -539,7 +567,6 @@ func %[1]slex1(yylex %[1]sLexer, lval *%[1]sSymType) (n int) {
 
 func %[1]sParse(yylex %[1]sLexer, parser *Parser) int {
 	const yyError = %[2]d
-
 	yyEx, _ := yylex.(%[1]sLexerEx)
 	var yyn int
 	parser.yylval = %[1]sSymType{}
@@ -713,9 +740,27 @@ yynewstate:
 		__yyfmt__.Printf("reduce using rule %%v (%%s), and goto state %%d\n", r, %[1]sSymNames[x], yystate)
 	}
 
-	switch r {%i
 `,
 		*oPref, errSym, *oDlvalf, *oDlval)
+
+	mustFormat(f, `%u
+        fn := funcsSet[r]
+        if fn != nil {
+             fn(yylex, parser, yypt, parser.cache)
+        }
+
+        if len(yylex.Errors()) > 0 {
+                return -1
+        }
+
+	if yyEx != nil && yyEx.Reduced(r, exState, &parser.yyVAL) {
+		return -1
+	}
+	goto yystack /* stack new state and value */
+}
+
+%[2]s
+`, *oPref, p.Tail)
 	for r, rule := range p.Rules {
 		if rule.Action == nil {
 			continue
@@ -744,7 +789,8 @@ yynewstate:
 			max = rule.MaxParentDlr
 			components = p1.Components
 		}
-		mustFormat(f, "case %d: ", r)
+		mustFormat(f, `
+func %s(yylex yyLexer, parser *Parser, yypt int, yyS []%[2]sSymType)`, fmt.Sprintf("fnR%d", r), *oPref)
 		for _, part := range action {
 			num := part.Num
 			switch part.Type {
@@ -769,17 +815,6 @@ yynewstate:
 		}
 		mustFormat(f, "\n")
 	}
-	mustFormat(f, `%u
-	}
-
-	if yyEx != nil && yyEx.Reduced(r, exState, &parser.yyVAL) {
-		return -1
-	}
-	goto yystack /* stack new state and value */
-}
-
-%[2]s
-`, *oPref, p.Tail)
 	_ = oNoLines //TODO Ignored for now
 	return nil
 }
