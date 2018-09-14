@@ -444,6 +444,7 @@ func (s *SessionVars) ResetPrevAffectedRows() {
 	}
 }
 
+// GetExecuteArgumentsInfo gets the argument list as a string of execute statement.
 func (s *SessionVars) GetExecuteArgumentsInfo() string {
 	if len(s.PreparedParams) == 0 {
 		return ""
