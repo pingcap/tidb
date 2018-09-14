@@ -1079,7 +1079,6 @@ func loadSystemTZ(se *session) (string, error) {
 	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
 	defer rss[0].Close()
 	chk := rss[0].NewChunk()
-	defer chk.Reset()
 	rss[0].Next(context.Background(), chk)
 	return chk.GetRow(0).GetString(0), nil
 }
