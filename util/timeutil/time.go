@@ -99,8 +99,8 @@ func inferTZNameFromFileName(path string) (string, error) {
 	return "", errors.New(fmt.Sprintf("path %s is not supported", path))
 }
 
-// Local returns time.Local's IANA timezone name. It is TiDB's global timezone name.
-func Local() *time.Location {
+// SystemLocation returns time.SystemLocation's IANA timezone location. It is TiDB's global timezone location.
+func SystemLocation() *time.Location {
 	loc, err := LoadLocation(systemTZ)
 	if err != nil {
 		return time.Local
@@ -144,12 +144,12 @@ func LoadLocation(name string) (*time.Location, error) {
 }
 
 // Zone returns the current timezone name and timezone offset in seconds.
-// In compatible with MySQL, we change `Local` to `System`.
+// In compatible with MySQL, we change `SystemLocation` to `System`.
 func Zone(loc *time.Location) (string, int64) {
 	_, offset := time.Now().In(loc).Zone()
 	var name string
 	name = loc.String()
-	// when we found name is "Local", we have no chice but push down
+	// when we found name is "SystemLocation", we have no chice but push down
 	// "System" to tikv side.
 	if name == "Local" {
 		name = "System"
