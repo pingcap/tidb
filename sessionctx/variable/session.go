@@ -427,7 +427,7 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 func (s *SessionVars) Location() *time.Location {
 	loc := s.TimeZone
 	if loc == nil {
-		loc = timeutil.Local()
+		loc = timeutil.SystemLocation()
 	}
 	return loc
 }

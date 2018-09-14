@@ -351,7 +351,7 @@ func tidbOptInt64(opt string, defaultVal int64) int64 {
 
 func parseTimeZone(s string) (*time.Location, error) {
 	if strings.EqualFold(s, "SYSTEM") {
-		return timeutil.Local(), nil
+		return timeutil.SystemLocation(), nil
 	}
 
 	loc, err := time.LoadLocation(s)

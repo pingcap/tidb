@@ -2367,7 +2367,7 @@ func (s *testSuite) TestTimezonePushDown(c *C) {
 	defer tk.MustExec("drop table t")
 	tk.MustExec(`insert into t values ("2018-09-13 10:02:06")`)
 
-	systemTZ := timeutil.Local()
+	systemTZ := timeutil.SystemLocation()
 	c.Assert(systemTZ.String(), Not(Equals), "System")
 	ctx := context.Background()
 	count := 0
