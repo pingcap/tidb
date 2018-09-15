@@ -429,7 +429,7 @@ type ifFunctionClass struct {
 	baseFunctionClass
 }
 
-// getFunction please refer https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
+// getFunction see https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
 func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
