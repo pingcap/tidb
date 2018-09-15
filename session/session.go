@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -1068,6 +1069,20 @@ func CreateSession(store kv.Storage) (Session, error) {
 	return s, nil
 }
 
+// loadSystemTZ loads systemTZ from mysql.tidb
+func loadSystemTZ(se *session) (string, error) {
+	sql := `select variable_value from mysql.tidb where variable_name = "system_tz"`
+	rss, errLoad := se.Execute(context.Background(), sql)
+	if errLoad != nil {
+		return "", errLoad
+	}
+	// the record of mysql.tidb under where condition: variable_name = "system_tz" should shall only be one.
+	defer rss[0].Close()
+	chk := rss[0].NewChunk()
+	rss[0].Next(context.Background(), chk)
+	return chk.GetRow(0).GetString(0), nil
+}
+
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersion(store)
@@ -1081,11 +1096,20 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// get system tz from mysql.tidb
+	tz, err := loadSystemTZ(se)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	timeutil.SetSystemTZ(tz)
+
 	dom := domain.GetDomain(se)
 	err = dom.LoadPrivilegeLoop(se)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
 	se1, err := createSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1180,7 +1204,7 @@ func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = 23
+	currentBootstrapVersion = 24
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
