@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -262,3 +263,19 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 	return stmt, nil
 }
 
+func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
+	execID := stmt.ExecID
+	ok := false
+	if stmt.Name != "" {
+		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
+			return nil, plan.ErrStmtNotFound
+		}
+	}
+	if v, ok := vars.PreparedStmts[execID]; ok {
+		if prepared, ok := v.(*plan.Prepared); ok {
+			return prepared.Stmt, nil
+		}
+		return nil, plan.ErrStmtNotFound
+	}
+	return nil, plan.ErrStmtNotFound
+}

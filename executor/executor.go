@@ -1067,10 +1067,10 @@ func (e *UnionExec) Close() error {
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
-	sessVars := ctx.GetSessionVars()
+	vars := ctx.GetSessionVars()
 	sc := new(stmtctx.StatementContext)
-	sc.TimeZone = sessVars.Location()
-	sc.MemTracker = memory.NewTracker(s.Text(), sessVars.MemQuotaQuery)
+	sc.TimeZone = vars.Location()
+	sc.MemTracker = memory.NewTracker(s.Text(), vars.MemQuotaQuery)
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
 		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
@@ -1080,6 +1080,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
 	}
 
+	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
+		s, err = getPreparedStmt(execStmt, vars)
+	}
 	// TODO: Many same bool variables here.
 	// We should set only two variables (
 	// IgnoreErr and StrictSQLMode) to avoid setting the same bool variables and
@@ -1088,33 +1091,33 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.UpdateStmt:
 		sc.InUpdateOrDeleteStmt = true
 		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.DividedByZeroAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority
 	case *ast.DeleteStmt:
 		sc.InUpdateOrDeleteStmt = true
 		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.DividedByZeroAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
 		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.DividedByZeroAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr
-		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		// Make sure the sql_mode is strict when checking column default value.
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true
 		sc.BadNullAsWarning = true
-		sc.TruncateAsWarning = !sessVars.StrictSQLMode
+		sc.TruncateAsWarning = !vars.StrictSQLMode
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 
@@ -1137,27 +1140,27 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = true
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors {
 			sc.InShowWarning = true
-			sc.SetWarnings(sessVars.StmtCtx.GetWarnings())
+			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
 	default:
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 	}
-	sessVars.PreparedParams = sessVars.PreparedParams[:0]
-	if sessVars.LastInsertID > 0 {
-		sessVars.PrevLastInsertID = sessVars.LastInsertID
-		sessVars.LastInsertID = 0
+	vars.PreparedParams = vars.PreparedParams[:0]
+	if vars.LastInsertID > 0 {
+		vars.PrevLastInsertID = vars.LastInsertID
+		vars.LastInsertID = 0
 	}
-	sessVars.ResetPrevAffectedRows()
-	err = sessVars.SetSystemVar("warning_count", fmt.Sprintf("%d", sessVars.StmtCtx.NumWarnings(false)))
+	vars.ResetPrevAffectedRows()
+	err = vars.SetSystemVar("warning_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(false)))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = sessVars.SetSystemVar("error_count", fmt.Sprintf("%d", sessVars.StmtCtx.NumWarnings(true)))
+	err = vars.SetSystemVar("error_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(true)))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sessVars.InsertID = 0
-	sessVars.StmtCtx = sc
+	vars.InsertID = 0
+	vars.StmtCtx = sc
 	return
 }
