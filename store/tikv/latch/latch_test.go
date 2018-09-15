@@ -48,7 +48,7 @@ func getTso() uint64 {
 
 func (s *testLatchSuite) TestWakeUp(c *C) {
 	keysA := [][]byte{
-		[]byte("a"), []byte("b"), []byte("c"), []byte("c")}
+		[]byte("a"), []byte("b"), []byte("c")}
 	_, lockA := s.newLock(keysA)
 
 	keysB := [][]byte{[]byte("d"), []byte("e"), []byte("a"), []byte("c")}
@@ -65,7 +65,8 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	// A release lock, and get wakeup list.
 	commitTSA := getTso()
 	wakeupList := make([]*Lock, 0)
-	wakeupList = s.latches.release(lockA, commitTSA, wakeupList)
+	lockA.SetCommitTS(commitTSA)
+	wakeupList = s.latches.release(lockA, wakeupList)
 	c.Assert(wakeupList[0].startTS, Equals, startTSB)
 
 	// B acquire failed since startTSB has stale for some keys.
@@ -73,7 +74,7 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 	c.Assert(result, Equals, acquireStale)
 
 	// B release lock since it received a stale.
-	wakeupList = s.latches.release(lockB, 0, wakeupList)
+	wakeupList = s.latches.release(lockB, wakeupList)
 	c.Assert(wakeupList, HasLen, 0)
 
 	// B restart:get a new startTS.
@@ -85,7 +86,7 @@ func (s *testLatchSuite) TestWakeUp(c *C) {
 
 func (s *testLatchSuite) TestFirstAcquireFailedWithStale(c *C) {
 	keys := [][]byte{
-		[]byte("a"), []byte("b"), []byte("c"), []byte("c")}
+		[]byte("a"), []byte("b"), []byte("c")}
 	_, lockA := s.newLock(keys)
 	startTSB, lockB := s.newLock(keys)
 	// acquire lockA success
@@ -94,11 +95,12 @@ func (s *testLatchSuite) TestFirstAcquireFailedWithStale(c *C) {
 	// release lockA
 	commitTSA := getTso()
 	wakeupList := make([]*Lock, 0)
-	s.latches.release(lockA, commitTSA, wakeupList)
+	lockA.SetCommitTS(commitTSA)
+	s.latches.release(lockA, wakeupList)
 
 	c.Assert(commitTSA, Greater, startTSB)
 	// acquire lockB first time, should be failed with stale since commitTSA > startTSB
 	result = s.latches.acquire(lockB)
 	c.Assert(result, Equals, acquireStale)
-	s.latches.release(lockB, 0, wakeupList)
+	s.latches.release(lockB, wakeupList)
 }

@@ -1808,8 +1808,7 @@ func (s *testBypassSuite) TestBypassLatch(c *C) {
 
 	// txn1 and txn2 data range do not overlap, but using latches result in txn conflict.
 	fn()
-	_, err = tk1.Exec("commit")
-	c.Assert(err, NotNil)
+	tk1.MustExec("commit")
 
 	tk1.MustExec("truncate table t")
 	fn()

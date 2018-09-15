@@ -43,7 +43,7 @@ func NewScheduler(size uint) *LatchesScheduler {
 func (scheduler *LatchesScheduler) run() {
 	wakeupList := make([]*Lock, 0)
 	for lock := range scheduler.unlockCh {
-		wakeupList = scheduler.latches.release(lock, lock.commitTS, wakeupList)
+		wakeupList = scheduler.latches.release(lock, wakeupList)
 		if len(wakeupList) > 0 {
 			scheduler.wakeup(wakeupList)
 		}
@@ -90,10 +90,4 @@ func (scheduler *LatchesScheduler) UnLock(lock *Lock) {
 	if !scheduler.closed {
 		scheduler.unlockCh <- lock
 	}
-}
-
-// RefreshCommitTS refreshes commitTS for keys. It could be used for the transaction not retryable,
-// which would do 2PC directly and wouldn't get a lock.
-func (scheduler *LatchesScheduler) RefreshCommitTS(keys [][]byte, commitTS uint64) {
-	scheduler.latches.refreshCommitTS(keys, commitTS)
 }
