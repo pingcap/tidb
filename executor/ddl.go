@@ -95,7 +95,7 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		err1 := e.toErr(err)
 		if !terror.ErrorEqual(err1, err) {
 			query, _ := e.ctx.Value(sessionctx.QueryString).(string)
-			log.Errorf("run query %s , error: %v\nInfo schema changed.", query, errors.Trace(err))
+			log.Errorf("run query %s , error: %v\nInfo schema changed.", query, errors.ErrorStack(err))
 		}
 		return errors.Trace(err1)
 	}
