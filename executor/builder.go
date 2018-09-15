@@ -996,6 +996,12 @@ func (b *executorBuilder) buildHashAgg(v *plan.PhysicalHashAgg) Executor {
 				ordinal = append(ordinal, partialOrdinal+1)
 				partialOrdinal++
 			}
+			if aggDesc.Name == ast.AggFuncVarPop {
+				ordinal = append(ordinal, partialOrdinal+1)
+				partialOrdinal++
+				ordinal = append(ordinal, partialOrdinal+2)
+				partialOrdinal++
+			}
 			finalDesc := aggDesc.Split(ordinal)
 			e.PartialAggFuncs = append(e.PartialAggFuncs, aggfuncs.Build(b.ctx, aggDesc, i))
 			e.FinalAggFuncs = append(e.FinalAggFuncs, aggfuncs.Build(b.ctx, finalDesc, i))

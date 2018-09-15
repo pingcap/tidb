@@ -1291,6 +1291,9 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{`select group_concat(distinct c2,c1) from t group by c1;`, true},
 		{`select group_concat(distinctrow c2,c1) from t group by c1;`, true},
 		{`SELECT student_name, GROUP_CONCAT(DISTINCT test_score ORDER BY test_score DESC SEPARATOR ' ') FROM student GROUP BY student_name;`, true},
+		{`select var_pop(c1), variance(c1) from t`, true},
+		{`select var_pop(c1, c2), variance(c1, c2) from t`, false},
+		{`select var_pop(all c1), variance(all c1) from t`, true},
 
 		// for encryption and compression functions
 		{`select AES_ENCRYPT('text',UNHEX('F3229A0B371ED2D9441B830D21A390C3'))`, true},

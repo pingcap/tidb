@@ -88,6 +88,8 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 		return &bitXorFunction{aggFunction: newAggFunc(ast.AggFuncBitXor, args, false)}, nil
 	case tipb.ExprType_Agg_BitAnd:
 		return &bitAndFunction{aggFunction: newAggFunc(ast.AggFuncBitAnd, args, false)}, nil
+	case tipb.ExprType_VarPop:
+		return &varPopFunction{aggFunction: newAggFunc(ast.AggFuncVarPop, args, false)}, nil
 	}
 	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
 }
@@ -97,6 +99,7 @@ type AggEvaluateContext struct {
 	DistinctChecker *distinctChecker
 	Count           int64
 	Value           types.Datum
+	Extra           types.Datum
 	Buffer          *bytes.Buffer // Buffer is used for group_concat.
 	GotFirstRow     bool          // It will check if the agg has met the first row key.
 }
@@ -227,14 +230,15 @@ func (af *aggFunction) Clone(ctx sessionctx.Context) Aggregation {
 
 // NeedCount indicates whether the aggregate function should record count.
 func NeedCount(name string) bool {
-	return name == ast.AggFuncCount || name == ast.AggFuncAvg
+	return name == ast.AggFuncCount || name == ast.AggFuncAvg || name == ast.AggFuncVarPop
 }
 
 // NeedValue indicates whether the aggregate function should record value.
 func NeedValue(name string) bool {
 	switch name {
 	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,
-		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor:
+		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor,
+		ast.AggFuncVarPop:
 		return true
 	default:
 		return false

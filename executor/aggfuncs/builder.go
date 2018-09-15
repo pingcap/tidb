@@ -52,6 +52,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitXor(aggFuncDesc, ordinal)
 	case ast.AggFuncBitAnd:
 		return buildBitAnd(aggFuncDesc, ordinal)
+	case ast.AggFuncVarPop:
+		return buildVarPop(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -311,4 +313,27 @@ func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		ordinal: ordinal,
 	}
 	return &bitAndUint64{baseBitAggFunc{base}}
+}
+
+// buildVarPop builds the AggFunc implementation for function "VAR_POP".
+func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	// Build var_pop functions which consume the original data and remove the
+	// duplicated input of the same group.
+	case aggregation.DedupMode:
+		return nil // not implemented yet.
+	// Build var_pop functions which consume the original data and update their
+	// partial results.
+	case aggregation.CompleteMode, aggregation.Partial1Mode:
+		return &varPopOriginal4Float64{baseVarPopFloat64{base}}
+	// Build var_pop functions which consume the partial result of other avg
+	// functions and update their partial results.
+	case aggregation.Partial2Mode, aggregation.FinalMode:
+		return &varPopPartial4Float64{baseVarPopFloat64{base}}
+	}
+	return nil
 }

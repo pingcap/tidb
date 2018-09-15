@@ -81,6 +81,10 @@ var (
 
 	// All the AggFunc implementations for "BIT_AND" are listed here.
 	_ AggFunc = (*bitAndUint64)(nil)
+
+	// All the AggFunc implementations for "VAR_POP" are listed here.
+	_ AggFunc = (*varPopOriginal4Float64)(nil)
+	_ AggFunc = (*varPopPartial4Float64)(nil)
 )
 
 // PartialResult represents data structure to store the partial result for the
