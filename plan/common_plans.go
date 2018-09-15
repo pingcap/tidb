@@ -117,14 +117,6 @@ type Prepare struct {
 	SQLText string
 }
 
-// Prepared represents a prepared statement.
-type Prepared struct {
-	Stmt          ast.StmtNode
-	Params        []*ast.ParamMarkerExpr
-	SchemaVersion int64
-	UseCache      bool
-}
-
 // Execute represents prepare plan.
 type Execute struct {
 	baseSchemaProducer
@@ -141,11 +133,10 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
 	}
-	v := vars.PreparedStmts[e.ExecID]
-	if v == nil {
+	prepared, ok := vars.PreparedStmts[e.ExecID]
+	if !ok {
 		return errors.Trace(ErrStmtNotFound)
 	}
-	prepared := v.(*Prepared)
 
 	if len(prepared.Params) != len(e.UsingVars) {
 		return errors.Trace(ErrWrongParamCount)
@@ -177,7 +168,7 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	return nil
 }
 
-func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema, prepared *Prepared) (Plan, error) {
+func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) (Plan, error) {
 	var cacheKey kvcache.Key
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.StmtCtx.UseCache = prepared.UseCache

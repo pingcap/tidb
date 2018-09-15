@@ -183,6 +183,14 @@ func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// Prepared represents a prepared statement.
+type Prepared struct {
+	Stmt          StmtNode
+	Params        []*ParamMarkerExpr
+	SchemaVersion int64
+	UseCache      bool
+}
+
 // ExecuteStmt is a statement to execute PreparedStmt.
 // See https://dev.mysql.com/doc/refman/5.7/en/execute.html
 type ExecuteStmt struct {

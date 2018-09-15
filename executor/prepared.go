@@ -144,7 +144,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	for i := 0; i < e.ParamCount; i++ {
 		sorter.markers[i].Order = i
 	}
-	prepared := &plan.Prepared{
+	prepared := &ast.Prepared{
 		Stmt:          stmt,
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
@@ -257,7 +257,7 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 		StmtNode:   execStmt,
 		Ctx:        ctx,
 	}
-	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID].(*plan.Prepared); ok {
+	if prepared, ok := ctx.GetSessionVars().PreparedStmts[ID]; ok {
 		stmt.Text = prepared.Stmt.Text()
 	}
 	return stmt, nil
@@ -271,11 +271,8 @@ func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.Stm
 			return nil, plan.ErrStmtNotFound
 		}
 	}
-	if v, ok := vars.PreparedStmts[execID]; ok {
-		if prepared, ok := v.(*plan.Prepared); ok {
-			return prepared.Stmt, nil
-		}
-		return nil, plan.ErrStmtNotFound
+	if prepared, ok := vars.PreparedStmts[execID]; ok {
+		return prepared.Stmt, nil
 	}
 	return nil, plan.ErrStmtNotFound
 }
