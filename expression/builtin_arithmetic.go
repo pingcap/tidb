@@ -89,7 +89,7 @@ func setFlenDecimal4Int(retTp, a, b *types.FieldType) {
 	retTp.Flen = mysql.MaxIntWidth
 }
 
-// setFlenDecimal4Real is called to set proper `Flen` and `Decimal` of return
+// setFlenDecimal4RealOrDecimal is called to set proper `Flen` and `Decimal` of return
 // type according to the two input parameter's types.
 func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool) {
 	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {

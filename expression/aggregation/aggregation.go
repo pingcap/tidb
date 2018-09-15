@@ -41,10 +41,10 @@ type Aggregation interface {
 	// GetResult will be called when all data have been processed.
 	GetResult(evalCtx *AggEvaluateContext) types.Datum
 
-	// Create a new AggEvaluateContext for the aggregation function.
+	// CreateContext create a new AggEvaluateContext for the aggregation function.
 	CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext
 
-	// Reset the content of the evaluate context.
+	// ResetContext reset the content of the evaluate context.
 	ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext)
 
 	// GetFinalAggFunc constructs the final agg functions, only used in parallel execution.
