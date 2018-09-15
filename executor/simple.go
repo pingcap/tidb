@@ -325,7 +325,7 @@ func (e *SimpleExec) executeKillStmt(s *ast.KillStmt) error {
 func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 	switch s.Tp {
 	case ast.FlushTables:
-		// TODO: A dummy implement
+		return errors.New("FLUSH TABLES is not supported.  Please use @@tidb_snapshot instead")
 	case ast.FlushPrivileges:
 		dom := domain.GetDomain(e.ctx)
 		sysSessionPool := dom.SysSessionPool()
