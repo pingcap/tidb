@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 )
 
@@ -350,8 +351,7 @@ func tidbOptInt64(opt string, defaultVal int64) int64 {
 
 func parseTimeZone(s string) (*time.Location, error) {
 	if strings.EqualFold(s, "SYSTEM") {
-		// TODO: Support global time_zone variable, it should be set to global time_zone value.
-		return time.Local, nil
+		return timeutil.SystemLocation(), nil
 	}
 
 	loc, err := time.LoadLocation(s)
