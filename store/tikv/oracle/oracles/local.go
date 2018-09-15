@@ -15,9 +15,9 @@ package oracles
 
 import (
 	"sync"
-	"time"
 
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/timeutil"
 	"golang.org/x/net/context"
 )
 
@@ -35,13 +35,13 @@ func NewLocalOracle() oracle.Oracle {
 }
 
 func (l *localOracle) IsExpired(lockTS uint64, TTL uint64) bool {
-	return oracle.GetPhysical(time.Now()) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
+	return oracle.GetPhysical(timeutil.Now()) >= oracle.ExtractPhysical(lockTS)+int64(TTL)
 }
 
 func (l *localOracle) GetTimestamp(context.Context) (uint64, error) {
 	l.Lock()
 	defer l.Unlock()
-	physical := oracle.GetPhysical(time.Now())
+	physical := oracle.GetPhysical(timeutil.Now())
 	ts := oracle.ComposeTS(physical, 0)
 	if l.lastTimeStampTS == ts {
 		l.n++

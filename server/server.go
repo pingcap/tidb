@@ -36,6 +36,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+
 	// For pprof
 	_ "net/http/pprof"
 	"sync"
@@ -49,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -102,7 +104,7 @@ func (s *Server) ConnectionCount() int {
 }
 
 func (s *Server) getToken() *Token {
-	start := time.Now()
+	start := timeutil.Now()
 	tok := s.concurrentLimiter.Get()
 	// Note that data smaller than one microsecond is ignored, because that case can be viewed as non-block.
 	metrics.GetTokenDurationHistogram.Observe(float64(time.Since(start).Nanoseconds() / 1e3))
@@ -178,7 +180,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	}
 
 	// Init rand seed for randomBuf()
-	rand.Seed(time.Now().UTC().UnixNano())
+	rand.Seed(timeutil.Now().UTC().UnixNano())
 	return s, nil
 }
 

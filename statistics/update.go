@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -283,7 +284,7 @@ func (h *Handle) DumpStatsDeltaToKV(dumpMode bool) error {
 		h.merge(collector)
 	}
 	h.listHead.Unlock()
-	currentTime := time.Now()
+	currentTime := timeutil.Now()
 	for id, item := range h.globalMap {
 		if dumpMode == DumpDelta && !needDumpStatsDelta(h, id, item, currentTime) {
 			continue
@@ -712,7 +713,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 				continue
 			}
 			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
-			if NeedAnalyzeTable(statsTbl, 20*h.Lease, autoAnalyzeRatio, start, end, time.Now()) {
+			if NeedAnalyzeTable(statsTbl, 20*h.Lease, autoAnalyzeRatio, start, end, timeutil.Now()) {
 				sql := fmt.Sprintf("analyze table %s", tblName)
 				log.Infof("[stats] auto analyze table %s now", tblName)
 				return errors.Trace(h.execAutoAnalyze(sql))
@@ -733,7 +734,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 }
 
 func (h *Handle) execAutoAnalyze(sql string) error {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	_, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	metrics.AutoAnalyzeHistogram.Observe(time.Since(startTime).Seconds())
 	if err != nil {

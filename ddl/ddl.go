@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
@@ -393,7 +394,7 @@ func (d *ddl) close() {
 		return
 	}
 
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	close(d.quitCh)
 	d.ownerManager.Cancel()
 	err := d.schemaSyncer.RemoveSelfVersionPath()
@@ -498,7 +499,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
 	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, checkJobMaxInterval(job)))
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()
 	defer func() {
 		ticker.Stop()

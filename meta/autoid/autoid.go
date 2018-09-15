@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -83,7 +84,7 @@ func (alloc *allocator) End() int64 {
 // NextGlobalAutoID implements autoid.Allocator NextGlobalAutoID interface.
 func (alloc *allocator) NextGlobalAutoID(tableID int64) (int64, error) {
 	var autoID int64
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		var err1 error
 		m := meta.NewMeta(txn)
@@ -114,7 +115,7 @@ func (alloc *allocator) Rebase(tableID, requiredBase int64, allocIDs bool) error
 		return nil
 	}
 	var newBase, newEnd int64
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		currentEnd, err1 := m.GetAutoTableID(alloc.dbID, tableID)
@@ -157,7 +158,7 @@ func (alloc *allocator) Alloc(tableID int64) (int64, error) {
 	defer alloc.mu.Unlock()
 	if alloc.base == alloc.end { // step
 		var newBase, newEnd int64
-		startTime := time.Now()
+		startTime := timeutil.Now()
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error

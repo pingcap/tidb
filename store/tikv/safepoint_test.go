@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -35,7 +36,7 @@ var _ = Suite(&testSafePointSuite{})
 func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	s.store = NewTestStore(c).(*tikvStore)
-	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
+	s.prefix = fmt.Sprintf("seek_%d", timeutil.Now().Unix())
 }
 
 func (s *testSafePointSuite) TearDownSuite(c *C) {
@@ -62,7 +63,7 @@ func mymakeKeys(rowNum int, prefix string) []kv.Key {
 func (s *testSafePointSuite) waitUntilErrorPlugIn(t uint64) {
 	for {
 		saveSafePoint(s.store.GetSafePointKV(), GcSavedSafePoint, t+10)
-		cachedTime := time.Now()
+		cachedTime := timeutil.Now()
 		newSafePoint, err := loadSafePoint(s.store.GetSafePointKV(), GcSavedSafePoint)
 		if err == nil {
 			s.store.UpdateSPCache(newSafePoint, cachedTime)

@@ -543,7 +543,7 @@ func (s *session) ExecRestrictedSQL(sctx sessionctx.Context, sql string) ([]chun
 	defer s.sysSessionPool().Put(tmp)
 	metrics.SessionRestrictedSQLCounter.Inc()
 
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	recordSets, err := se.Execute(ctx, sql)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -708,7 +708,7 @@ func (s *session) SetProcessInfo(sql string) {
 		ID:      s.sessionVars.ConnectionID,
 		DB:      s.sessionVars.CurrentDB,
 		Command: "Query",
-		Time:    time.Now(),
+		Time:    timeutil.Now(),
 		State:   s.Status(),
 		Info:    sql,
 	}
@@ -727,7 +727,7 @@ func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode 
 		s.ClearValue(sessionctx.LastExecuteDDL)
 	}
 	logStmt(stmtNode, s.sessionVars)
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -767,7 +767,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
-	startTS := time.Now()
+	startTS := timeutil.Now()
 	stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
 	if err != nil {
 		s.rollbackOnError(ctx)
@@ -785,7 +785,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		s.PrepareTxnCtx(ctx)
 
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
-		startTS = time.Now()
+		startTS = timeutil.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
 		if err := executor.ResetStmtCtx(s, stmtNode); err != nil {
 			return nil, errors.Trace(err)
@@ -954,7 +954,7 @@ func (s *session) NewTxn() error {
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
-		CreateTime:    time.Now(),
+		CreateTime:    timeutil.Now(),
 		StartTS:       txn.StartTS(),
 	}
 	return nil
@@ -1084,6 +1084,8 @@ func loadSystemTZ(se *session) (string, error) {
 	return chk.GetRow(0).GetString(0), nil
 }
 
+var mu sync.Mutex
+
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersion(store)
@@ -1103,7 +1105,9 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, errors.Trace(err)
 	}
 
+	mu.Lock()
 	timeutil.SetSystemTZ(tz)
+	mu.Unlock()
 
 	dom := domain.GetDomain(se)
 	err = dom.LoadPrivilegeLoop(se)
@@ -1334,7 +1338,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 	s.sessionVars.TxnCtx = &variable.TransactionContext{
 		InfoSchema:    is,
 		SchemaVersion: is.SchemaMetaVersion(),
-		CreateTime:    time.Now(),
+		CreateTime:    timeutil.Now(),
 	}
 	if !s.sessionVars.IsAutocommit() {
 		s.sessionVars.SetStatusFlag(mysql.ServerStatusInTrans, true)

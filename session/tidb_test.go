@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -80,7 +81,7 @@ func (s *testMainSuite) TearDownSuite(c *C) {
 func (s *testMainSuite) TestCheckArgs(c *C) {
 	checkArgs(nil, true, false, int8(1), int16(1), int32(1), int64(1), 1,
 		uint8(1), uint16(1), uint32(1), uint64(1), uint(1), float32(1), float64(1),
-		"abc", []byte("abc"), time.Now(), time.Hour, time.Local)
+		"abc", []byte("abc"), timeutil.Now(), time.Hour, time.Local)
 }
 
 func (s *testMainSuite) TestIsQuery(c *C) {
@@ -114,7 +115,7 @@ func (s *testMainSuite) TestTrimSQL(c *C) {
 }
 
 func (s *testMainSuite) TestRetryOpenStore(c *C) {
-	begin := time.Now()
+	begin := timeutil.Now()
 	RegisterStore("dummy", &brokenStore{})
 	store, err := newStoreWithRetry("dummy://dummy-store", 3)
 	if store != nil {
@@ -132,7 +133,7 @@ func (s *testMainSuite) TestRetryDialPumpClient(c *C) {
 			return true, errors.New("must fail")
 		})
 	}
-	begin := time.Now()
+	begin := timeutil.Now()
 	err := retryDialPumpClientMustFail("", nil, 3, nil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "must fail")

@@ -614,14 +614,14 @@ func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) 
 func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*indexRecord, int64, bool, error) {
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
-	startTime := time.Now()
+	startTime := timeutil.Now()
 
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle,
 		func(handle int64, recordKey kv.Key, rawRow []byte) (bool, error) {
-			oprEndTime := time.Now()
+			oprEndTime := timeutil.Now()
 			w.logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in fetchRowColVals", 0)
 			oprStartTime = oprEndTime
 
@@ -737,7 +737,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
 func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx addIndexTaskContext, errInTxn error) {
-	oprStartTime := time.Now()
+	oprStartTime := timeutil.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -795,7 +795,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	handleRange := *task
 	result := &addIndexResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
 	lastLogCount := 0
-	startTime := time.Now()
+	startTime := timeutil.Now()
 
 	for {
 		taskCtx, err := w.backfillIndexInTxn(handleRange)
@@ -961,7 +961,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 
 	startHandle := batchTasks[0].startHandle
 	taskCnt := len(batchTasks)
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	nextHandle, taskAddedCount, err := w.waitTaskResults(workers, taskCnt, totalAddedCount, startHandle)
 	elapsedTime := time.Since(startTime).Seconds()
 	if err == nil {

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 )
 
@@ -466,7 +467,7 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 		handle: handle,
 	}
 
-	origin := time.Now()
+	origin := timeutil.Now()
 	// assign input row to some worker in a round-robin way
 	for {
 		for i := 0; i < fs.nWorkers; i++ {

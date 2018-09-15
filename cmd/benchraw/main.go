@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -79,7 +80,7 @@ func main() {
 	}()
 
 	value := make([]byte, *valueSize)
-	t := time.Now()
+	t := timeutil.Now()
 	batchRawPut(value)
 
 	fmt.Printf("\nelapse:%v, total %v\n", time.Since(t), *dataCnt)

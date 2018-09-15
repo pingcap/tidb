@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/ast"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 )
 
@@ -1272,7 +1272,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 
 	if col.OriginDefaultValue == strings.ToUpper(ast.CurrentTimestamp) &&
 		(col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime) {
-		col.OriginDefaultValue = time.Now().Format(types.TimeFormat)
+		col.OriginDefaultValue = timeutil.Now().Format(types.TimeFormat)
 	}
 
 	job := &model.Job{

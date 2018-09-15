@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -227,7 +228,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 
 	log.Debugf("%v, retry later(totalsleep %dms, maxsleep %dms)", err, b.totalSleep, b.maxSleep)
 
-	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
+	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), timeutil.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
 		errMsg := fmt.Sprintf("backoffer.maxSleep %dms is exceeded, errors:", b.maxSleep)
 		for i, err := range b.errors {

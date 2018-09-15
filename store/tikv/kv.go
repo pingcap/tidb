@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -187,7 +188,7 @@ func newTikvStore(uuid string, pdClient pd.Client, spkv SafePointKV, client Clie
 		regionCache: NewRegionCache(pdClient),
 		kv:          spkv,
 		safePoint:   0,
-		spTime:      time.Now(),
+		spTime:      timeutil.Now(),
 		closed:      make(chan struct{}),
 	}
 	store.lockResolver = newLockResolver(store)
@@ -404,5 +405,5 @@ func parsePath(path string) (etcdAddrs []string, disableGC bool, err error) {
 
 func init() {
 	mc.cache = make(map[string]*tikvStore)
-	rand.Seed(time.Now().UnixNano())
+	rand.Seed(timeutil.Now().UnixNano())
 }

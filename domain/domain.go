@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -96,7 +97,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		}
 	}()
 
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	ok, tblIDs, err := do.tryLoadSchemaDiffs(m, usedSchemaVersion, latestSchemaVersion)
 	if err != nil {
 		// We can fall back to full load, don't need to return the error.
@@ -286,7 +287,7 @@ func (do *Domain) Reload() error {
 	do.m.Lock()
 	defer do.m.Unlock()
 
-	startTime := time.Now()
+	startTime := timeutil.Now()
 
 	var err error
 	var latestSchemaVersion int64
@@ -712,12 +713,12 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
 	defer loadFeedbackTicker.Stop()
 	statsHandle := do.StatsHandle()
-	t := time.Now()
+	t := timeutil.Now()
 	err := statsHandle.InitStats(do.InfoSchema())
 	if err != nil {
 		log.Debug("[stats] init stats info failed: ", errors.ErrorStack(err))
 	} else {
-		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
+		log.Info("[stats] init stats info takes ", timeutil.Now().Sub(t))
 	}
 	defer func() {
 		recoverInDomain("updateStatsWorker", false)

@@ -1847,7 +1847,7 @@ func (s *testSuite) TestHistoryRead(c *C) {
 
 	curVer1, _ := s.store.CurrentVersion()
 	time.Sleep(time.Millisecond)
-	snapshotTime := time.Now()
+	snapshotTime := timeutil.Now()
 	time.Sleep(time.Millisecond)
 	curVer2, _ := s.store.CurrentVersion()
 	tk.MustExec("insert history_read values (2)")
@@ -1871,7 +1871,7 @@ func (s *testSuite) TestHistoryRead(c *C) {
 	tk.MustExec("delete from history_read where a = 1")
 
 	time.Sleep(time.Millisecond)
-	snapshotTime = time.Now()
+	snapshotTime = timeutil.Now()
 	time.Sleep(time.Millisecond)
 	tk.MustExec("alter table history_read add column b int")
 	tk.MustExec("insert history_read values (8, 8), (9, 9)")

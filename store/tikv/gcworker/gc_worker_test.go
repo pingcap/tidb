@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/util/timeutil"
 	"golang.org/x/net/context"
 )
 
@@ -72,7 +73,7 @@ func (s *testGCWorkerSuite) timeEqual(c *C, t1, t2 time.Time, epsilon time.Durat
 func (s *testGCWorkerSuite) TestGetOracleTime(c *C) {
 	t1, err := s.gcWorker.getOracleTime()
 	c.Assert(err, IsNil)
-	s.timeEqual(c, time.Now(), t1, time.Millisecond*10)
+	s.timeEqual(c, timeutil.Now(), t1, time.Millisecond*10)
 
 	s.oracle.AddOffset(time.Second * 10)
 	t2, err := s.gcWorker.getOracleTime()

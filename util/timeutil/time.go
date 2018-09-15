@@ -155,7 +155,7 @@ func LoadLocation(name string) (*time.Location, error) {
 // Zone returns the current timezone name and timezone offset in seconds.
 // In compatible with MySQL, we change `SystemLocation` to `System`.
 func Zone(loc *time.Location) (string, int64) {
-	_, offset := time.Now().In(loc).Zone()
+	_, offset := Now().In(loc).Zone()
 	var name string
 	name = loc.String()
 	// when we found name is "System", we have no chice but push down
@@ -165,4 +165,9 @@ func Zone(loc *time.Location) (string, int64) {
 	}
 
 	return name, int64(offset)
+}
+
+// Now returns current time of TiDB's global timezone.
+func Now() time.Time {
+	return time.Now().In(SystemLocation())
 }

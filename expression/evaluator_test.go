@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 var _ = Suite(&testEvaluatorSuite{})
@@ -164,7 +165,7 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 
 	// strict model
 	d[0].SetFloat64(0.5)
-	start := time.Now()
+	start := timeutil.Now()
 	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
 	ret, isNull, err = f.evalInt(chunk.Row{})
@@ -179,7 +180,7 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	// d[0].SetFloat64(2)
 	// f, err = fc.getFunction(ctx, s.datumsToConstants(d))
 	// c.Assert(err, IsNil)
-	// start = time.Now()
+	// start = timeutil.Now()
 	// go func() {
 	// 	time.Sleep(1 * time.Second)
 	// 	ctx.Cancel()
@@ -385,8 +386,8 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		{uint64(1), ast.Mul, uint64(1), 1},
 		{types.Time{Time: types.FromDate(0, 0, 0, 0, 0, 0, 0)}, ast.Mul, 0, 0},
 		{types.ZeroDuration, ast.Mul, 0, 0},
-		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}, ast.Mul, 0, 0},
-		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, ast.Mul, 0, 0},
+		{types.Time{Time: types.FromGoTime(timeutil.Now()), Fsp: 0, Type: mysql.TypeDatetime}, ast.Mul, 0, 0},
+		{types.Time{Time: types.FromGoTime(timeutil.Now()), Fsp: 6, Type: mysql.TypeDatetime}, ast.Mul, 0, 0},
 		{types.Duration{Duration: 100000000, Fsp: 6}, ast.Mul, 0, 0},
 
 		// div

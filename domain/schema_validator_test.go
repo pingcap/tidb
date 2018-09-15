@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 type leaseGrantItem struct {
@@ -90,7 +91,7 @@ func (*testSuite) TestSchemaValidator(c *C) {
 	c.Assert(isTablesChanged, IsTrue)
 
 	// All schema versions is expired.
-	ts = uint64(time.Now().Add(lease).UnixNano())
+	ts = uint64(timeutil.Now().Add(lease).UnixNano())
 	valid = validator.Check(ts, newItem.schemaVer, nil)
 	c.Assert(valid, Equals, ResultUnknown)
 
@@ -109,7 +110,7 @@ func reload(validator SchemaValidator, leaseGrantCh chan leaseGrantItem, ids ...
 // Caller should communicate with it through channel to mock network.
 func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh chan uint64, exit chan struct{}) {
 	var version int64
-	leaseTS := uint64(time.Now().UnixNano())
+	leaseTS := uint64(timeutil.Now().UnixNano())
 	ticker := time.NewTicker(lease)
 	for {
 		select {
@@ -121,7 +122,7 @@ func serverFunc(lease time.Duration, requireLease chan leaseGrantItem, oracleCh 
 			oldVer:       version - 1,
 			schemaVer:    version,
 		}:
-		case oracleCh <- uint64(time.Now().UnixNano()):
+		case oracleCh <- uint64(timeutil.Now().UnixNano()):
 		case <-exit:
 			return
 		}

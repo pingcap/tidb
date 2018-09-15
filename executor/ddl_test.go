@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/timeutil"
 	"golang.org/x/net/context"
 )
 
@@ -161,7 +162,7 @@ func (s *testSuite) TestAlterTableAddColumn(c *C) {
 	tk.MustExec("insert into alter_test values(1)")
 	tk.MustExec("alter table alter_test add column c2 timestamp default current_timestamp")
 	time.Sleep(1 * time.Second)
-	now := time.Now().Add(-time.Duration(1 * time.Second)).Format(types.TimeFormat)
+	now := timeutil.Now().Add(-time.Duration(1 * time.Second)).Format(types.TimeFormat)
 	r, err := tk.Exec("select c2 from alter_test")
 	c.Assert(err, IsNil)
 	chk := r.NewChunk()

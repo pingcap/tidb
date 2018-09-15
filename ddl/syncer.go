@@ -24,6 +24,7 @@ import (
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -129,7 +130,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 
 // Init implements SchemaSyncer.Init interface.
 func (s *schemaVersionSyncer) Init(ctx context.Context) error {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	var err error
 	defer func() {
 		metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerInit, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -164,7 +165,7 @@ func (s *schemaVersionSyncer) Done() <-chan struct{} {
 
 // Restart implements SchemaSyncer.Restart interface.
 func (s *schemaVersionSyncer) Restart(ctx context.Context) error {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	var err error
 	defer func() {
 		metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerRestart, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -195,7 +196,7 @@ func (s *schemaVersionSyncer) GlobalVersionCh() clientv3.WatchChan {
 
 // WatchGlobalSchemaVer implements SchemaSyncer.WatchGlobalSchemaVer interface.
 func (s *schemaVersionSyncer) WatchGlobalSchemaVer(ctx context.Context) {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	// Make sure the globalVerCh doesn't receive the information of 'close' before we finish the rewatch.
 	s.mu.Lock()
 	s.mu.globalVerCh = nil
@@ -216,7 +217,7 @@ func (s *schemaVersionSyncer) WatchGlobalSchemaVer(ctx context.Context) {
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
 func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, version int64) error {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	ver := strconv.FormatInt(version, 10)
 	err := PutKVToEtcd(ctx, s.etcdCli, putKeyNoRetry, s.selfSchemaVerPath, ver,
 		clientv3.WithLease(s.session.Lease()))
@@ -227,7 +228,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, version int
 
 // OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.
 func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version int64) error {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	ver := strconv.FormatInt(version, 10)
 	// TODO: If the version is larger than the original global version, we need set the version.
 	// Otherwise, we'd better set the original global version.
@@ -238,7 +239,7 @@ func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx context.Context, vers
 
 // RemoveSelfVersionPath implements SchemaSyncer.RemoveSelfVersionPath interface.
 func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	var err error
 	defer func() {
 		metrics.DeploySyncerHistogram.WithLabelValues(metrics.SyncerClear, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -266,7 +267,7 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 
 // MustGetGlobalVersion implements SchemaSyncer.MustGetGlobalVersion interface.
 func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx context.Context) (int64, error) {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	var (
 		err  error
 		ver  int
@@ -316,7 +317,7 @@ func isContextDone(ctx context.Context) bool {
 
 // OwnerCheckAllVersions implements SchemaSyncer.OwnerCheckAllVersions interface.
 func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer int64) error {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	time.Sleep(CheckVersFirstWaitTime)
 	notMatchVerCnt := 0
 	intervalCnt := int(time.Second / checkVersInterval)

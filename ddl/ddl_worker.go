@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -186,7 +187,7 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 
 // addDDLJob gets a global job ID and puts the DDL job in the DDL queue.
 func (d *ddl) addDDLJob(ctx sessionctx.Context, job *model.Job) error {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	job.Version = currentVersion
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
@@ -271,7 +272,7 @@ func (w *worker) deleteRange(job *model.Job) error {
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
@@ -441,7 +442,7 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	log.Infof("[ddl-%s] run DDL job %s", w, job)
-	timeStart := time.Now()
+	timeStart := timeutil.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
@@ -549,7 +550,7 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 		return
 	}
 
-	timeStart := time.Now()
+	timeStart := timeutil.Now()
 	var err error
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerWaitSchemaChanged, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
@@ -605,7 +606,7 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 	ctx, cancelFunc := context.WithTimeout(context.Background(), waitTime)
 	defer cancelFunc()
 
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	latestSchemaVersion, err := d.schemaSyncer.MustGetGlobalVersion(ctx)
 	if err != nil {
 		log.Warnf("[ddl-%s] handle exception take time %v", w, time.Since(startTime))

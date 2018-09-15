@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 var _ = Suite(&testTimeSuite{})
@@ -428,7 +429,7 @@ func (s *testTimeSuite) TestCodec(c *C) {
 
 	var t1 types.Time
 	t1.Type = mysql.TypeTimestamp
-	t1.Time = types.FromGoTime(time.Now())
+	t1.Time = types.FromGoTime(timeutil.Now())
 	packed, err = t1.ToPackedUint()
 	c.Assert(err, IsNil)
 
@@ -751,7 +752,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 	for _, t := range tblDuration {
 		v, err := types.ParseDuration(t.Input, t.Fsp)
 		c.Assert(err, IsNil)
-		year, month, day := time.Now().In(time.UTC).Date()
+		year, month, day := timeutil.Now().In(time.UTC).Date()
 		n := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
 		t, err := v.ConvertToTime(sc, mysql.TypeDatetime)
 		c.Assert(err, IsNil)

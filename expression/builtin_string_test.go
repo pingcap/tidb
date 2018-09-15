@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 )
 
@@ -46,7 +47,7 @@ func (s *testEvaluatorSuite) TestLength(c *C) {
 		{1, 1, false, false},
 		{3.14, 4, false, false},
 		{types.NewDecFromFloatForTest(123.123), 7, false, false},
-		{types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}, 26, false, false},
+		{types.Time{Time: types.FromGoTime(timeutil.Now()), Fsp: 6, Type: mysql.TypeDatetime}, 26, false, false},
 		{types.NewBinaryLiteralFromUint(0x01, -1), 1, false, false},
 		{types.Set{Value: 1, Name: "abc"}, 3, false, false},
 		{types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second), Fsp: types.DefaultFsp}, 8, false, false},

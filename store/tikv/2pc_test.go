@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -406,7 +407,7 @@ func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
 		c.Assert(err, NotNil)
 		commiter1.cleanWg.Wait()
 		txn3 := s.begin(c)
-		start := time.Now()
+		start := timeutil.Now()
 		txn3.Get([]byte("y1"))
 		totalTime += time.Since(start)
 		txn3.Commit(context.Background())

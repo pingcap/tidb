@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -780,7 +781,7 @@ LOOP:
 }
 
 func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	f := func() map[int64]struct{} {
 		handles := make(map[int64]struct{})
 
@@ -3254,7 +3255,7 @@ LOOP:
 			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
 		case <-ticker.C:
 			step := 10
-			rand.Seed(time.Now().Unix())
+			rand.Seed(timeutil.Now().Unix())
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
 				s.mustExec(c, "update partition_drop_idx set c2 = 1 where c1 = ?", n)
@@ -3331,7 +3332,7 @@ LOOP:
 				break
 			}
 			step := 10
-			rand.Seed(time.Now().Unix())
+			rand.Seed(timeutil.Now().Unix())
 			// delete some rows, and add some data
 			for i := count; i < count+step; i++ {
 				n := rand.Intn(count)

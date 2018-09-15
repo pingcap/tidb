@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -211,7 +212,7 @@ func constructLimitPB(count uint64) *tipb.Executor {
 func buildDescTableScanDAG(startTS uint64, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	dagReq.StartTs = startTS
-	_, timeZoneOffset := time.Now().In(time.UTC).Zone()
+	_, timeZoneOffset := timeutil.Now().In(time.UTC).Zone()
 	dagReq.TimeZoneOffset = int64(timeZoneOffset)
 	for i := range columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))

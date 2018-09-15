@@ -17,12 +17,12 @@ import (
 	"flag"
 	"fmt"
 	"sync"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -87,7 +87,7 @@ var _ = Suite(&testTiclientSuite{})
 func (s *testTiclientSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	s.store = NewTestStore(c).(*tikvStore)
-	s.prefix = fmt.Sprintf("ticlient_%d", time.Now().Unix())
+	s.prefix = fmt.Sprintf("ticlient_%d", timeutil.Now().Unix())
 }
 
 func (s *testTiclientSuite) TearDownSuite(c *C) {

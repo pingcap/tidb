@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
@@ -97,7 +98,7 @@ func batchRW(value []byte) {
 			defer wg.Done()
 			for j := 0; j < base; j++ {
 				txnCounter.WithLabelValues("txn").Inc()
-				start := time.Now()
+				start := timeutil.Now()
 				k := base*i + j
 				txn, err := store.Begin()
 				if err != nil {
@@ -125,7 +126,7 @@ func main() {
 	Init()
 
 	value := make([]byte, *valueSize)
-	t := time.Now()
+	t := timeutil.Now()
 	batchRW(value)
 	resp, err := http.Get("http://localhost:9191/metrics")
 	terror.MustNil(err)

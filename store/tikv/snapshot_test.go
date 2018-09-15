@@ -15,11 +15,11 @@ package tikv
 
 import (
 	"fmt"
-	"time"
 
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -36,7 +36,7 @@ var _ = Suite(&testSnapshotSuite{})
 func (s *testSnapshotSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	s.store = NewTestStore(c).(*tikvStore)
-	s.prefix = fmt.Sprintf("snapshot_%d", time.Now().Unix())
+	s.prefix = fmt.Sprintf("snapshot_%d", timeutil.Now().Unix())
 	s.rowNums = append(s.rowNums, 1, 100, 191)
 }
 

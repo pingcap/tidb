@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -197,7 +198,7 @@ func (ut *benchDB) runCountTimes(name string, count int, f func()) {
 	)
 	cLogf("%s started", name)
 	for i := 0; i < count; i++ {
-		before := time.Now()
+		before := timeutil.Now()
 		f()
 		dur := time.Since(before)
 		if first == 0 {

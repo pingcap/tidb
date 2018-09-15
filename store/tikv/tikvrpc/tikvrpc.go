@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -501,12 +502,12 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 // Lease is used to implement grpc stream timeout.
 type Lease struct {
 	Cancel   context.CancelFunc
-	deadline int64 // A time.UnixNano value, if time.Now().UnixNano() > deadline, cancel() would be called.
+	deadline int64 // A time.UnixNano value, if timeutil.Now().UnixNano() > deadline, cancel() would be called.
 }
 
 // Recv overrides the stream client Recv() function.
 func (resp *CopStreamResponse) Recv() (*coprocessor.Response, error) {
-	deadline := time.Now().Add(resp.Timeout).UnixNano()
+	deadline := timeutil.Now().Add(resp.Timeout).UnixNano()
 	atomic.StoreInt64(&resp.Lease.deadline, deadline)
 
 	ret, err := resp.Tikv_CoprocessorStreamClient.Recv()

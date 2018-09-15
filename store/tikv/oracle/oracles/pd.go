@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -81,7 +82,7 @@ type tsFuture struct {
 
 // Wait implements the oracle.Future interface.
 func (f *tsFuture) Wait() (uint64, error) {
-	now := time.Now()
+	now := timeutil.Now()
 	physical, logical, err := f.TSFuture.Wait()
 	metrics.TSFutureWaitDuration.Observe(time.Since(now).Seconds())
 	if err != nil {
@@ -98,7 +99,7 @@ func (o *pdOracle) GetTimestampAsync(ctx context.Context) oracle.Future {
 }
 
 func (o *pdOracle) getTimestamp(ctx context.Context) (uint64, error) {
-	now := time.Now()
+	now := timeutil.Now()
 	physical, logical, err := o.c.GetTS(ctx)
 	if err != nil {
 		return 0, errors.Trace(err)

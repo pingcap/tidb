@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 )
 
@@ -121,7 +122,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 }
 
 func getSystemTimestamp(ctx sessionctx.Context) (time.Time, error) {
-	now := time.Now()
+	now := timeutil.Now()
 
 	if ctx == nil {
 		return now, nil

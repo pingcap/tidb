@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -78,7 +79,7 @@ func doWait(doneChan chan struct{}, start time.Time, jobCount int, workerCount i
 
 	close(doneChan)
 
-	now := time.Now()
+	now := timeutil.Now()
 	seconds := now.Unix() - start.Unix()
 
 	tps := int64(-1)
@@ -93,7 +94,7 @@ func doProcess(table *table, dbs []*sql.DB, jobCount int, workerCount int, batch
 	jobChan := make(chan struct{}, 16*workerCount)
 	doneChan := make(chan struct{}, workerCount)
 
-	start := time.Now()
+	start := timeutil.Now()
 	go addJobs(jobCount, jobChan)
 
 	for i := 0; i < workerCount; i++ {

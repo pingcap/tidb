@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
@@ -230,7 +231,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 }
 
 var (
-	year, month, day     = time.Now().In(time.UTC).Date()
+	year, month, day     = timeutil.Now().In(time.UTC).Date()
 	curDateInt           = int64(year*10000 + int(month)*100 + day)
 	curTimeInt           = int64(curDateInt*1000000 + 125959)
 	curTimeWithFspReal   = float64(curTimeInt) + 0.555

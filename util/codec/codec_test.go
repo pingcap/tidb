@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 func TestT(t *testing.T) {
@@ -916,7 +917,7 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		{types.CurrentTime(mysql.TypeDatetime), types.NewFieldType(mysql.TypeDatetime)},
 		{types.CurrentTime(mysql.TypeDate), types.NewFieldType(mysql.TypeDate)},
 		{types.Time{
-			Time: types.FromGoTime(time.Now()),
+			Time: types.FromGoTime(timeutil.Now()),
 			Type: mysql.TypeTimestamp,
 		}, types.NewFieldType(mysql.TypeTimestamp)},
 		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
