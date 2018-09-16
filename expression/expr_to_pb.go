@@ -66,7 +66,7 @@ func ExpressionsToPB(sc *stmtctx.StatementContext, exprs []Expression, client kv
 	return
 }
 
-// ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
+// ExpressionsToPBList converts expressions to tipb.Expr list for new planner.
 func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr) {
 	pc := PbConverter{client: client, sc: sc}
 	for _, expr := range exprs {

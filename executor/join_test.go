@@ -17,7 +17,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
@@ -118,14 +118,14 @@ func (s *testSuite) TestJoin(c *C) {
 	result = tk.MustQuery("select a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;")
 	result.Check(testkit.Rows("1", "2", "3"))
 
-	plan.AllowCartesianProduct = false
+	planner.AllowCartesianProduct = false
 	_, err := tk.Exec("select * from t, t1")
-	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	c.Check(planner.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	_, err = tk.Exec("select * from t left join t1 on 1")
-	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	c.Check(planner.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	_, err = tk.Exec("select * from t right join t1 on 1")
-	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	plan.AllowCartesianProduct = true
+	c.Check(planner.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	planner.AllowCartesianProduct = true
 	tk.MustExec("drop table if exists t,t2,t1")
 	tk.MustExec("create table t(c1 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")

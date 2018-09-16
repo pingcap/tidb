@@ -20,7 +20,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -55,7 +55,7 @@ type HashJoinExec struct {
 	workerWaitGroup sync.WaitGroup // workerWaitGroup is for sync multiple join workers.
 	finished        atomic.Value
 	closeCh         chan struct{} // closeCh add a lock for closing executor.
-	joinType        plan.JoinType
+	joinType        planner.JoinType
 	innerIdx        int
 
 	// We build individual joiner for each join worker when use chunk-based execution,
@@ -255,7 +255,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 			return false, errors.Trace(err)
 		}
 	}
-	if e.hashTable.Len() == 0 && e.joinType == plan.InnerJoin {
+	if e.hashTable.Len() == 0 && e.joinType == planner.InnerJoin {
 		return true, nil
 	}
 	return false, nil

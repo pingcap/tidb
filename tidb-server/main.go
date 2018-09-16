@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
@@ -385,12 +385,12 @@ func setGlobalVars() {
 	statistics.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
-	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
+	planner.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
-	plan.SetPreparedPlanCache(cfg.PreparedPlanCache.Enabled)
-	if plan.PreparedPlanCacheEnabled() {
-		plan.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
+	planner.SetPreparedPlanCache(cfg.PreparedPlanCache.Enabled)
+	if planner.PreparedPlanCacheEnabled() {
+		planner.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
 	}
 
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {

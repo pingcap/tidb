@@ -15,7 +15,7 @@ package executor
 
 import (
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -79,7 +79,7 @@ type joiner interface {
 	onMissMatch(outer chunk.Row, chk *chunk.Chunk)
 }
 
-func newJoiner(ctx sessionctx.Context, joinType plan.JoinType,
+func newJoiner(ctx sessionctx.Context, joinType planner.JoinType,
 	outerIsRight bool, defaultInner []types.Datum, filter []expression.Expression,
 	lhsColTypes, rhsColTypes []*types.FieldType) joiner {
 	base := baseJoiner{
@@ -92,7 +92,7 @@ func newJoiner(ctx sessionctx.Context, joinType plan.JoinType,
 	colTypes = append(colTypes, lhsColTypes...)
 	colTypes = append(colTypes, rhsColTypes...)
 	base.selected = make([]bool, 0, chunk.InitialCapacity)
-	if joinType == plan.LeftOuterJoin || joinType == plan.RightOuterJoin {
+	if joinType == planner.LeftOuterJoin || joinType == planner.RightOuterJoin {
 		innerColTypes := lhsColTypes
 		if !outerIsRight {
 			innerColTypes = rhsColTypes
@@ -100,25 +100,25 @@ func newJoiner(ctx sessionctx.Context, joinType plan.JoinType,
 		base.initDefaultInner(innerColTypes, defaultInner)
 	}
 	switch joinType {
-	case plan.SemiJoin:
+	case planner.SemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(colTypes)
 		return &semiJoiner{base}
-	case plan.AntiSemiJoin:
+	case planner.AntiSemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(colTypes)
 		return &antiSemiJoiner{base}
-	case plan.LeftOuterSemiJoin:
+	case planner.LeftOuterSemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(colTypes)
 		return &leftOuterSemiJoiner{base}
-	case plan.AntiLeftOuterSemiJoin:
+	case planner.AntiLeftOuterSemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(colTypes)
 		return &antiLeftOuterSemiJoiner{base}
-	case plan.LeftOuterJoin:
+	case planner.LeftOuterJoin:
 		base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
 		return &leftOuterJoiner{base}
-	case plan.RightOuterJoin:
+	case planner.RightOuterJoin:
 		base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
 		return &rightOuterJoiner{base}
-	case plan.InnerJoin:
+	case planner.InnerJoin:
 		base.chk = chunk.NewChunkWithCapacity(colTypes, ctx.GetSessionVars().MaxChunkSize)
 		return &innerJoiner{base}
 	}

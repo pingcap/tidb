@@ -205,10 +205,10 @@ type SessionVars struct {
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
-	// PlanID is the unique id of logical and physical plan.
+	// PlanID is the unique id of logical and physical planner.
 	PlanID int
 
-	// PlanColumnID is the unique id for column when building plan.
+	// PlanColumnID is the unique id for column when building planner.
 	PlanColumnID int64
 
 	// User is the user identity with which the session login.
