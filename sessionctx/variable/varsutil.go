@@ -236,6 +236,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 4, math.MaxUint64, vars)
 	case InteractiveTimeout:
 		return checkUInt64SystemVar(name, value, 1, secondsPerYear, vars)
+	case InnodbCommitConcurrency:
+		return checkUInt64SystemVar(name, value, 0, 1000, vars)
+	case InnodbFastShutdown:
+		return checkUInt64SystemVar(name, value, 0, 2, vars)
+	case InnodbLockWaitTimeout:
+		return checkUInt64SystemVar(name, value, 1, 1073741824, vars)
 	case MaxConnections:
 		return checkUInt64SystemVar(name, value, 1, 100000, vars)
 	case MaxConnectErrors:
@@ -259,6 +265,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case SQLSelectLimit:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case SyncBinlog:
+		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
 	case TableDefinitionCache:
 		return checkUInt64SystemVar(name, value, 400, 524288, vars)
 	case TmpTableSize:
