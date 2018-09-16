@@ -50,27 +50,16 @@ var (
 	_ functionClass = &jsonKeysFunctionClass{}
 	_ functionClass = &jsonLengthFunctionClass{}
 
-	// _ Type of JSON value.
 	_ builtinFunc = &builtinJSONTypeSig{}
-	// _ Unquote JSON value.
 	_ builtinFunc = &builtinJSONUnquoteSig{}
-	// _ Create JSON array.
 	_ builtinFunc = &builtinJSONArraySig{}
-	// _ Create JSON object.
 	_ builtinFunc = &builtinJSONObjectSig{}
-	// _ Return data from JSON document.
 	_ builtinFunc = &builtinJSONExtractSig{}
-	// _ Insert data into JSON document.
 	_ builtinFunc = &builtinJSONSetSig{}
-	// _ Insert data into JSON document.
 	_ builtinFunc = &builtinJSONInsertSig{}
-	// _ Replace values in JSON document.
 	_ builtinFunc = &builtinJSONReplaceSig{}
-	// _ Remove data from JSON document.
 	_ builtinFunc = &builtinJSONRemoveSig{}
-	// _ Merge JSON documents, preserving duplicate keys.
 	_ builtinFunc = &builtinJSONMergeSig{}
-	// _ Check JSON document contains specific target.
 	_ builtinFunc = &builtinJSONContainsSig{}
 )
 
