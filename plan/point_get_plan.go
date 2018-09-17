@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 // PointGetPlan is a fast plan for simple point get.
@@ -146,6 +147,13 @@ func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetPlan {
 	if selStmt.Having != nil || selStmt.LockTp != ast.SelectLockNone {
 		return nil
+	} else if selStmt.Limit != nil {
+		sc := ctx.GetSessionVars().StmtCtx
+		count, offset, err := extractLimitCountOffset(sc, selStmt.Limit)
+		logrus.Infof("YUSP count %d, offset %d", count, offset)
+		if err != nil || count == 0 || offset > 0 {
+			return nil
+		}
 	}
 	tblName := getSingleTableName(selStmt.From)
 	if tblName == nil {
