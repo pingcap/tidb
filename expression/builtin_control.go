@@ -54,7 +54,7 @@ var (
 	_ builtinFunc = &builtinIfJSONSig{}
 )
 
-// Infer result type for builtin IF, IFNULL && NULLIF.
+// inferType4ControlFuncs infer result type for builtin IF, IFNULL && NULLIF.
 func inferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 	resultFieldType := &types.FieldType{}
 	if lhs.Tp == mysql.TypeNull {
@@ -429,7 +429,7 @@ type ifFunctionClass struct {
 	baseFunctionClass
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
+// getFunction see https://dev.mysql.com/doc/refman/5.7/en/control-flow-functions.html#function_if
 func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
