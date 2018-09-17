@@ -624,3 +624,30 @@ func (s *testEvaluatorSuite) TestJSONDepth(c *C) {
 		}
 	}
 }
+
+func (s *testEvaluatorSuite) TestJSONValid(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONValid]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+	}{
+		{[]interface{}{nil}, nil},
+		{[]interface{}{`hello`}, 0},
+		{[]interface{}{`"hello"`}, 1},
+		{[]interface{}{`{"a": 1}`}, 1},
+		{[]interface{}{`{"a": 1`}, 0},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		if t.expected == nil {
+			c.Assert(d.IsNull(), IsTrue)
+		} else {
+			c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
+		}
+	}
+}
