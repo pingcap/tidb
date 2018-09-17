@@ -78,7 +78,25 @@ type KeyRange struct {
 
 // IsPoint checks if the key range represents a point.
 func (r *KeyRange) IsPoint() bool {
-	return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
+	if len(r.StartKey) != len(r.EndKey) {
+		startLen := len(r.StartKey)
+		return startLen+1 == len(r.EndKey) &&
+			r.EndKey[startLen] == 0 &&
+			bytes.Equal(r.StartKey, r.EndKey[:startLen])
+	}
+	all255SuffixIdx := len(r.StartKey)
+	for i := len(r.StartKey) - 1; i >= 0; i-- {
+		if r.StartKey[i] != 255 {
+			break
+		}
+		if r.EndKey[i] != 0 {
+			return false
+		}
+		all255SuffixIdx = i
+	}
+	diffIdx := all255SuffixIdx - 1
+	return r.StartKey[diffIdx]+1 == r.EndKey[diffIdx] &&
+		bytes.Equal(r.StartKey[:diffIdx], r.EndKey[:diffIdx])
 }
 
 // EncodedKey represents encoded key in low-level storage engine.
