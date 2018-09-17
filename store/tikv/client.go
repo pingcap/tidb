@@ -236,13 +236,7 @@ func (a *connArray) batchSendLoop() {
 		length := len(a.superBatchCh)
 		if length > 1000 {
 			length = 1000
-		} else {
-			// Sleep 2ms to avoid short batch.
-			time.Sleep(2 * 1000000)
-			length = len(a.superBatchCh)
-		}
-
-		if length == 0 {
+		} else if length == 0 {
 			length = 1
 		}
 
