@@ -231,20 +231,12 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 		innerTable, outerTable = outerTable, innerTable
 	}
 
-	var fullConditions []expression.Expression
-
 	// first simplify embedded outer join.
-	// When trying to simplify an embedded outer join operation in a query,
-	// we must take into account the join condition for the embedding outer join together with the WHERE condition.
 	if innerPlan, ok := innerTable.(*LogicalJoin); ok {
-		fullConditions = concatOnAndWhereConds(p, predicates)
-		simplifyOuterJoin(innerPlan, fullConditions)
+		simplifyOuterJoin(innerPlan, predicates)
 	}
 	if outerPlan, ok := outerTable.(*LogicalJoin); ok {
-		if fullConditions != nil {
-			fullConditions = concatOnAndWhereConds(p, predicates)
-		}
-		simplifyOuterJoin(outerPlan, fullConditions)
+		simplifyOuterJoin(outerPlan, predicates)
 	}
 
 	if p.JoinType == InnerJoin {
@@ -282,20 +274,6 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 		return true
 	}
 	return false
-}
-
-// concatOnAndWhereConds concatenate ON conditions with WHERE conditions.
-func concatOnAndWhereConds(join *LogicalJoin, predicates []expression.Expression) []expression.Expression {
-	numAllFilters := len(join.EqualConditions) + len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions) + len(predicates)
-	allFilters := make([]expression.Expression, 0, numAllFilters)
-	for _, equalCond := range join.EqualConditions {
-		allFilters = append(allFilters, equalCond)
-	}
-	allFilters = append(allFilters, join.LeftConditions...)
-	allFilters = append(allFilters, join.RightConditions...)
-	allFilters = append(allFilters, join.OtherConditions...)
-	allFilters = append(allFilters, predicates...)
-	return allFilters
 }
 
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
