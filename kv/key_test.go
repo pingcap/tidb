@@ -106,14 +106,3 @@ func BenchmarkIsPoint(b *testing.B) {
 		kr.IsPoint()
 	}
 }
-
-func BenchmarkIsPointByPrefixNext(b *testing.B) {
-	b.ReportAllocs()
-	kr := KeyRange{
-		StartKey: []byte("rowkey1"),
-		EndKey:   []byte("rowkey2"),
-	}
-	for i := 0; i < b.N; i++ {
-		bytes.Equal(kr.StartKey.PrefixNext(), kr.EndKey)
-	}
-}
