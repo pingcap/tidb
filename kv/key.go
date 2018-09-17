@@ -79,12 +79,17 @@ type KeyRange struct {
 // IsPoint checks if the key range represents a point.
 func (r *KeyRange) IsPoint() bool {
 	if len(r.StartKey) != len(r.EndKey) {
-		// StartKey.Next() == EndKey
+		// Works like
+		//   return bytes.Equal(r.StartKey.Next(), r.EndKey)
+
 		startLen := len(r.StartKey)
 		return startLen+1 == len(r.EndKey) &&
 			r.EndKey[startLen] == 0 &&
 			bytes.Equal(r.StartKey, r.EndKey[:startLen])
 	}
+	// Works like
+	//   return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
+
 	// all255SuffixIdx is the index after which all bytes in StartKey are 255 and all bytes in EndKey are 0.
 	all255SuffixIdx := len(r.StartKey)
 	for i := len(r.StartKey) - 1; i >= 0; i-- {
