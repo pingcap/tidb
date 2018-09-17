@@ -602,3 +602,14 @@ func (s *testSuite) TestBuildProjBelowAgg(c *C) {
 		"3 3 15 6,6,6 7",
 		"4 3 18 7,7,7 8"))
 }
+
+func (s *testSuite) TestFirstRowEnum(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a enum('a', 'b'));`)
+	tk.MustExec(`insert into t values('a');`)
+	tk.MustQuery(`select a from t group by a;`).Check(testkit.Rows(
+		`a`,
+	))
+}
