@@ -704,7 +704,7 @@ func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, errors.Trace(err)
 	}
 
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, []types.EvalType{types.ETJson}...)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETJson)
 	sig := &builtinJSONValidSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonValidSig)
 	return sig, nil
