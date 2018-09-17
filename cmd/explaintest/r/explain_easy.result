@@ -352,3 +352,16 @@ create table t(a bigint primary key);
 explain select * from t where a = 1 and a = 2;
 id	count	task	operator info
 TableDual_5	0.00	root	rows:0
+drop table if exists ta, tb;
+create table ta (a varchar(20));
+create table tb (a varchar(20));
+begin;
+insert tb values ('1');
+explain select * from ta where a = 1;
+id	count	task	operator info
+Projection_5	8000.00	root	test.ta.a
+└─Selection_6	8000.00	root	eq(cast(test.ta.a), 1)
+  └─UnionScan_7	10000.00	root	eq(cast(test.ta.a), 1)
+    └─TableReader_9	10000.00	root	data:TableScan_8
+      └─TableScan_8	10000.00	cop	table:ta, range:[-inf,+inf], keep order:false, stats:pseudo
+rollback;

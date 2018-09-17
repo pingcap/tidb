@@ -70,3 +70,11 @@ explain select * from t where b = 1 and b = 2;
 drop table if exists t;
 create table t(a bigint primary key);
 explain select * from t where a = 1 and a = 2;
+
+drop table if exists ta, tb;
+create table ta (a varchar(20));
+create table tb (a varchar(20));
+begin;
+insert tb values ('1');
+explain select * from ta where a = 1;
+rollback;
