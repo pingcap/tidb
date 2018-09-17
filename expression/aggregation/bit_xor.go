@@ -14,9 +14,10 @@
 package aggregation
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 type bitXorFunction struct {
@@ -34,14 +35,22 @@ func (bf *bitXorFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *Ag
 }
 
 // Update implements Aggregation interface.
-func (bf *bitXorFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (bf *bitXorFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	a := bf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if !value.IsNull() {
-		evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() ^ value.GetUint64())
+		if value.Kind() == types.KindUint64 {
+			evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() ^ value.GetUint64())
+		} else {
+			int64Value, err := value.ToInt64(sc)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			evalCtx.Value.SetUint64(evalCtx.Value.GetUint64() ^ uint64(int64Value))
+		}
 	}
 	return nil
 }

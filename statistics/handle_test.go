@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -26,9 +25,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testStatsCacheSuite{})
@@ -59,10 +60,10 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
-	do.StatsHandle().Clear()
 	tk.MustExec("truncate table mysql.stats_meta")
 	tk.MustExec("truncate table mysql.stats_histograms")
 	tk.MustExec("truncate table mysql.stats_buckets")
+	do.StatsHandle().Clear()
 }
 
 func (s *testStatsCacheSuite) TestStatsCache(c *C) {
@@ -248,12 +249,11 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	tableInfo1 := tbl1.Meta()
-	h := statistics.NewHandle(testKit.Se, 0)
+	h := statistics.NewHandle(testKit.Se, 1)
 	testKit.MustExec("update mysql.stats_meta set version = 2 where table_id = ?", tableInfo1.ID)
 
 	h.Update(is)
-	c.Assert(h.LastVersion, Equals, uint64(2))
-	c.Assert(h.PrevLastVersion, Equals, uint64(0))
+	c.Assert(h.LastUpdateVersion(), Equals, uint64(2))
 	statsTbl1 := h.GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Pseudo, IsFalse)
 
@@ -266,37 +266,34 @@ func (s *testStatsCacheSuite) TestVersion(c *C) {
 	// A smaller version write, and we can still read it.
 	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
 	h.Update(is)
-	c.Assert(h.LastVersion, Equals, uint64(2))
-	c.Assert(h.PrevLastVersion, Equals, uint64(2))
+	c.Assert(h.LastUpdateVersion(), Equals, uint64(2))
 	statsTbl2 := h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
 
 	testKit.MustExec("insert t1 values(1,2)")
 	testKit.MustExec("analyze table t1")
-	testKit.MustExec("update mysql.stats_meta set version = 4 where table_id = ?", tableInfo1.ID)
+	offset := oracle.ComposeTS(3*int64(h.Lease), 0)
+	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+4, tableInfo1.ID)
 	h.Update(is)
-	c.Assert(h.LastVersion, Equals, uint64(4))
-	c.Assert(h.PrevLastVersion, Equals, uint64(2))
+	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	c.Assert(statsTbl1.Count, Equals, int64(1))
 
 	testKit.MustExec("insert t2 values(1,2)")
 	testKit.MustExec("analyze table t2")
 	// A smaller version write, and we can still read it.
-	testKit.MustExec("update mysql.stats_meta set version = 3 where table_id = ?", tableInfo2.ID)
+	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+3, tableInfo2.ID)
 	h.Update(is)
-	c.Assert(h.LastVersion, Equals, uint64(4))
-	c.Assert(h.PrevLastVersion, Equals, uint64(4))
+	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Count, Equals, int64(1))
 
 	testKit.MustExec("insert t2 values(1,2)")
 	testKit.MustExec("analyze table t2")
-	// A smaller version write, and we cannot read it. Because at this time, lastTwo Version is 4.
-	testKit.MustExec("update mysql.stats_meta set version = 3 where table_id = ?", tableInfo2.ID)
+	// A smaller version write, and we cannot read it. Because at this time, lastThree Version is 4.
+	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
 	h.Update(is)
-	c.Assert(h.LastVersion, Equals, uint64(4))
-	c.Assert(h.PrevLastVersion, Equals, uint64(4))
+	c.Assert(h.LastUpdateVersion(), Equals, offset+uint64(4))
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	c.Assert(statsTbl2.Count, Equals, int64(1))
 
@@ -339,7 +336,7 @@ func (s *testStatsCacheSuite) TestLoadHist(c *C) {
 	for i := 0; i < rowCount; i++ {
 		testKit.MustExec("insert into t values('bb','sdfga')")
 	}
-	h.DumpStatsDeltaToKV()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
 	h.Update(do.InfoSchema())
 	newStatsTbl := h.GetTableStats(tableInfo)
 	// The stats table is updated.
@@ -401,6 +398,7 @@ func (s *testStatsCacheSuite) TestInitStats(c *C) {
 }
 
 func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
 	store, do, err := newStoreWithBootstrap(10 * time.Millisecond)
 	c.Assert(err, IsNil)
 	defer store.Close()

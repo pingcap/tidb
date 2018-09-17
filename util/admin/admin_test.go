@@ -80,11 +80,27 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 		Type:     model.ActionCreateSchema,
 		RowCount: 0,
 	}
+	job1 := &model.Job{
+		SchemaID: dbInfo2.ID,
+		Type:     model.ActionAddIndex,
+		RowCount: 0,
+	}
 	err = t.EnQueueDDLJob(job)
 	c.Assert(err, IsNil)
 	info, err := GetDDLInfo(txn)
 	c.Assert(err, IsNil)
-	c.Assert(info.Job, DeepEquals, job)
+	c.Assert(info.Jobs, HasLen, 1)
+	c.Assert(info.Jobs[0], DeepEquals, job)
+	c.Assert(info.ReorgHandle, Equals, int64(0))
+	// Two jobs.
+	t = meta.NewMeta(txn, meta.AddIndexJobListKey)
+	err = t.EnQueueDDLJob(job1)
+	c.Assert(err, IsNil)
+	info, err = GetDDLInfo(txn)
+	c.Assert(err, IsNil)
+	c.Assert(info.Jobs, HasLen, 2)
+	c.Assert(info.Jobs[0], DeepEquals, job)
+	c.Assert(info.Jobs[1], DeepEquals, job1)
 	c.Assert(info.ReorgHandle, Equals, int64(0))
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
@@ -116,6 +132,56 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 		c.Assert(job.SchemaID, Equals, int64(1))
 		c.Assert(job.Type, Equals, model.ActionCreateTable)
 	}
+
+	err = txn.Rollback()
+	c.Assert(err, IsNil)
+}
+
+func isJobsSorted(jobs []*model.Job) bool {
+	if len(jobs) <= 1 {
+		return true
+	}
+	for i := 1; i < len(jobs); i++ {
+		if jobs[i].ID <= jobs[i-1].ID {
+			return false
+		}
+	}
+	return true
+}
+
+func enQueueDDLJobs(c *C, t *meta.Meta, jobType model.ActionType, start, end int) {
+	for i := start; i < end; i++ {
+		job := &model.Job{
+			ID:       int64(i),
+			SchemaID: 1,
+			Type:     jobType,
+		}
+		err := t.EnQueueDDLJob(job)
+		c.Assert(err, IsNil)
+	}
+}
+
+func (s *testSuite) TestGetDDLJobsIsSort(c *C) {
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+
+	// insert 5 drop table jobs to DefaultJobListKey queue
+	t := meta.NewMeta(txn)
+	enQueueDDLJobs(c, t, model.ActionDropTable, 10, 15)
+
+	// insert 5 create table jobs to DefaultJobListKey queue
+	enQueueDDLJobs(c, t, model.ActionCreateTable, 0, 5)
+
+	// insert add index jobs to AddIndexJobListKey queue
+	t = meta.NewMeta(txn, meta.AddIndexJobListKey)
+	enQueueDDLJobs(c, t, model.ActionAddIndex, 5, 10)
+
+	currJobs, err := GetDDLJobs(txn)
+	c.Assert(err, IsNil)
+	c.Assert(currJobs, HasLen, 15)
+
+	isSort := isJobsSorted(currJobs)
+	c.Assert(isSort, Equals, true)
 
 	err = txn.Rollback()
 	c.Assert(err, IsNil)
@@ -172,7 +238,7 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 		}
 		err = t.AddHistoryDDLJob(jobs[i])
 		c.Assert(err, IsNil)
-		historyJobs, err1 := GetHistoryDDLJobs(txn)
+		historyJobs, err1 := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
 		c.Assert(err1, IsNil)
 		if i+1 > MaxHistoryJobs {
 			c.Assert(historyJobs, HasLen, MaxHistoryJobs)
@@ -182,7 +248,7 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 	}
 
 	delta := cnt - MaxHistoryJobs
-	historyJobs, err := GetHistoryDDLJobs(txn)
+	historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
 	c.Assert(err, IsNil)
 	c.Assert(historyJobs, HasLen, MaxHistoryJobs)
 	l := len(historyJobs) - 1
@@ -259,7 +325,7 @@ func (s *testSuite) TestScan(c *C) {
 
 	idxRow1 := &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(10))}
 	idxRow2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(20))}
-	kvIndex := tables.NewIndex(tb.Meta(), indices[0].Meta())
+	kvIndex := tables.NewIndex(tb.Meta().ID, tb.Meta(), indices[0].Meta())
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	idxRows, nextVals, err := ScanIndexData(sc, txn, kvIndex, idxRow1.Values, 2)
 	c.Assert(err, IsNil)
@@ -348,7 +414,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	err = CompareIndexData(ctx, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx, nil)
 	c.Assert(err, IsNil)
 
 	idxNames := []string{idx.Meta().Name.L}
@@ -368,7 +434,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(ctx, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx, nil)
 	c.Assert(err, NotNil)
 	record1 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(30))}
 	diffMsg := newDiffRetError("index", record1, nil)
@@ -389,7 +455,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(ctx, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx, nil)
 	c.Assert(err, NotNil)
 	record2 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(31))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -407,7 +473,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CheckRecordAndIndex(ctx, txn, tb, idx)
+	err = CheckRecordAndIndex(ctx, txn, tb, idx, nil)
 	c.Assert(err, NotNil)
 	record2 = &RecordData{Handle: int64(5), Values: types.MakeDatums(int64(30))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -427,7 +493,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(ctx, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx, nil)
 	c.Assert(err, NotNil)
 	record1 = &RecordData{Handle: int64(4), Values: types.MakeDatums(int64(40))}
 	diffMsg = newDiffRetError("index", record1, nil)
@@ -448,7 +514,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(ctx, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx, nil)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("index", nil, record1)
 	c.Assert(err.Error(), DeepEquals, diffMsg)

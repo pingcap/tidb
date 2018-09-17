@@ -77,6 +77,10 @@ func (c *pdClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *
 	return region, peer, nil
 }
 
+func (c *pdClient) GetPrevRegion(context.Context, []byte) (*metapb.Region, *metapb.Peer, error) {
+	panic("unimplemented")
+}
+
 func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
 	region, peer := c.cluster.GetRegionByID(regionID)
 	return region, peer, nil
@@ -90,6 +94,14 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 	}
 	store := c.cluster.GetStore(storeID)
 	return store, nil
+}
+
+func (c *pdClient) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
+	panic("unimplemented")
+}
+
+func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	panic("unimplemented")
 }
 
 func (c *pdClient) Close() {

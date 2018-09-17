@@ -14,12 +14,16 @@
 package model
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // SchemaState is the state for schema elements.
@@ -66,6 +70,7 @@ type ColumnInfo struct {
 	Offset              int                 `json:"offset"`
 	OriginDefaultValue  interface{}         `json:"origin_default"`
 	DefaultValue        interface{}         `json:"default"`
+	DefaultValueBit     []byte              `json:"default_bit"`
 	GeneratedExprString string              `json:"generated_expr_string"`
 	GeneratedStored     bool                `json:"generated_stored"`
 	Dependences         map[string]struct{} `json:"dependences"`
@@ -83,6 +88,35 @@ func (c *ColumnInfo) Clone() *ColumnInfo {
 // IsGenerated returns true if the column is generated column.
 func (c *ColumnInfo) IsGenerated() bool {
 	return len(c.GeneratedExprString) != 0
+}
+
+// SetDefaultValue sets the default value.
+func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
+	c.DefaultValue = value
+	if c.Tp == mysql.TypeBit {
+		// For mysql.TypeBit type, the default value storage format must be a string.
+		// Other value such as int must convert to string format first.
+		// The mysql.TypeBit type supports the null default value.
+		if value == nil {
+			return nil
+		}
+		if v, ok := value.(string); ok {
+			c.DefaultValueBit = []byte(v)
+			return nil
+		}
+		return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
+	}
+	return nil
+}
+
+// GetDefaultValue gets the default value of the column.
+// Default value use to stored in DefaultValue field, but now,
+// bit type default value will store in DefaultValueBit for fix bit default value decode/encode bug.
+func (c *ColumnInfo) GetDefaultValue() interface{} {
+	if c.Tp == mysql.TypeBit && c.DefaultValueBit != nil {
+		return hack.String(c.DefaultValueBit)
+	}
+	return c.DefaultValue
 }
 
 // FindColumnInfo finds ColumnInfo in cols by name.
@@ -135,6 +169,14 @@ type TableInfo struct {
 	ShardRowIDBits uint64
 
 	Partition *PartitionInfo `json:"partition"`
+}
+
+// GetPartitionInfo returns the partition information.
+func (t *TableInfo) GetPartitionInfo() *PartitionInfo {
+	if t.Partition != nil && t.Partition.Enable {
+		return t.Partition
+	}
+	return nil
 }
 
 // GetUpdateTime gets the table's updating time.
@@ -277,7 +319,7 @@ type PartitionInfo struct {
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
 	ID       int64    `json:"id"`
-	Name     string   `json:"name"`
+	Name     CIStr    `json:"name"`
 	LessThan []string `json:"less_than"`
 	Comment  string   `json:"comment,omitempty"`
 }
@@ -399,6 +441,14 @@ func (db *DBInfo) Clone() *DBInfo {
 	return &newInfo
 }
 
+// Copy shallow copies DBInfo.
+func (db *DBInfo) Copy() *DBInfo {
+	newInfo := *db
+	newInfo.Tables = make([]*TableInfo, len(db.Tables))
+	copy(newInfo.Tables, db.Tables)
+	return &newInfo
+}
+
 // CIStr is case insensitive string.
 type CIStr struct {
 	O string `json:"O"` // Original string.
@@ -415,6 +465,25 @@ func NewCIStr(s string) (cs CIStr) {
 	cs.O = s
 	cs.L = strings.ToLower(s)
 	return
+}
+
+// UnmarshalJSON implements the user defined unmarshal method.
+// CIStr can be unmarshaled from a single string, so PartitionDefinition.Name
+// in this change https://github.com/pingcap/tidb/pull/6460/files would be
+// compatible during TiDB upgrading.
+func (cis *CIStr) UnmarshalJSON(b []byte) error {
+	type T CIStr
+	if err := json.Unmarshal(b, (*T)(cis)); err == nil {
+		return nil
+	}
+
+	// Unmarshal CIStr from a single string.
+	err := json.Unmarshal(b, &cis.O)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cis.L = strings.ToLower(cis.O)
+	return nil
 }
 
 // ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
@@ -484,4 +553,9 @@ func collationToProto(c string) int32 {
 	// Setting other collations to utf8_bin for old data compatibility.
 	// For the data created when we didn't enforce utf8_bin collation in create table.
 	return int32(mysql.DefaultCollationID)
+}
+
+// GetTableColumnID gets a ID of a column with table ID
+func GetTableColumnID(tableInfo *TableInfo, col *ColumnInfo) string {
+	return fmt.Sprintf("%d_%d", tableInfo.ID, col.ID)
 }

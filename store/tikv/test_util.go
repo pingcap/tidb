@@ -14,14 +14,14 @@
 package tikv
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pkg/errors"
 	"github.com/twinj/uuid"
 )
 
 // NewTestTiKVStore creates a test store with Option
-func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Client) Client, pdClientHijack func(pd.Client) pd.Client, disableTxnLocalLatches bool) (kv.Storage, error) {
+func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Client) Client, pdClientHijack func(pd.Client) pd.Client, txnLocalLatches uint) (kv.Storage, error) {
 	if clientHijack != nil {
 		client = clientHijack(client)
 	}
@@ -36,8 +36,8 @@ func NewTestTiKVStore(client Client, pdClient pd.Client, clientHijack func(Clien
 	spkv := NewMockSafePointKV()
 	tikvStore, err := newTikvStore(uid, pdCli, spkv, client, false)
 
-	if !disableTxnLocalLatches {
-		tikvStore.EnableTxnLocalLatches(1024000)
+	if txnLocalLatches > 0 {
+		tikvStore.EnableTxnLocalLatches(txnLocalLatches)
 	}
 
 	tikvStore.mock = true

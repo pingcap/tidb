@@ -18,12 +18,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -37,7 +37,7 @@ type LoadDataExec struct {
 }
 
 // NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
-func NewLoadDataInfo(ctx sessionctx.Context, row types.DatumRow, tbl table.Table, cols []*table.Column) *LoadDataInfo {
+func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
 	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
 	return &LoadDataInfo{
 		row:          row,
@@ -88,14 +88,14 @@ func (e *LoadDataExec) Open(ctx context.Context) error {
 type LoadDataInfo struct {
 	*InsertValues
 
-	row types.DatumRow
-
-	Path       string
-	Table      table.Table
-	FieldsInfo *ast.FieldsClause
-	LinesInfo  *ast.LinesClause
-	Ctx        sessionctx.Context
-	columns    []*table.Column
+	row         []types.Datum
+	Path        string
+	Table       table.Table
+	FieldsInfo  *ast.FieldsClause
+	LinesInfo   *ast.LinesClause
+	IgnoreLines uint64
+	Ctx         sessionctx.Context
+	columns     []*table.Column
 }
 
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.
@@ -204,7 +204,6 @@ func (e *LoadDataInfo) getLine(prevData, curData []byte) ([]byte, []byte, bool) 
 // If the number of inserted rows reaches the batchRows, then the second return value is true.
 // If prevData isn't nil and curData is nil, there are no other data to deal with and the isEOF is true.
 func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error) {
-	// TODO: support enclosed and escape.
 	if len(prevData) == 0 && len(curData) == 0 {
 		return nil, false, nil
 	}
@@ -215,7 +214,7 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 		isEOF = true
 		prevData, curData = curData, prevData
 	}
-	rows := make([]types.DatumRow, 0, e.maxRowsInBatch)
+	rows := make([][]types.Datum, 0, e.maxRowsInBatch)
 	for len(curData) > 0 {
 		line, curData, hasStarting = e.getLine(prevData, curData)
 		prevData = nil
@@ -237,7 +236,11 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			curData = nil
 		}
 
-		cols, err := e.GetFieldsFromLine(line)
+		if e.IgnoreLines > 0 {
+			e.IgnoreLines--
+			continue
+		}
+		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
@@ -250,50 +253,55 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			break
 		}
 	}
-	rows, err := e.batchMarkDupRows(rows)
+	err := e.batchCheckAndInsert(rows, e.addRecordLD)
 	if err != nil {
 		return nil, reachLimit, errors.Trace(err)
 	}
-	for _, row := range rows {
-		e.insertData(row)
-	}
-	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
-	}
-
 	return curData, reachLimit, nil
 }
 
-func (e *LoadDataInfo) colsToRow(cols []string) types.DatumRow {
+func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 	for i := 0; i < len(e.row); i++ {
 		if i >= len(cols) {
-			e.row[i].SetString("")
+			e.row[i].SetNull()
 			continue
 		}
-		e.row[i].SetString(cols[i])
+		// The field with only "\N" in it is handled as NULL in the csv file.
+		// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
+		if cols[i].maybeNull && string(cols[i].str) == "N" {
+			e.row[i].SetNull()
+		} else {
+			e.row[i].SetString(string(cols[i].str))
+		}
 	}
 	row, err := e.fillRowData(e.columns, e.row)
 	if err != nil {
-		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err))
-		e.handleLoadDataWarnings(err, warnLog)
+		e.handleWarning(err,
+			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
 		return nil
 	}
 	return row
 }
 
-func (e *LoadDataInfo) insertData(row types.DatumRow) {
+func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
 	if row == nil {
-		return
+		return 0, nil
 	}
-	_, err := e.Table.AddRecord(e.ctx, row, false)
+	h, err := e.addRecord(row)
 	if err != nil {
-		warnLog := fmt.Sprintf("Load Data: insert data:%v failed:%v", row, errors.ErrorStack(err))
-		e.handleLoadDataWarnings(err, warnLog)
+		e.handleWarning(err,
+			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
 	}
+	return h, nil
 }
 
-// GetFieldsFromLine splits line according to fieldsInfo, this function is exported for testing.
-func (e *LoadDataInfo) GetFieldsFromLine(line []byte) ([]string, error) {
+type field struct {
+	str       []byte
+	maybeNull bool
+}
+
+// getFieldsFromLine splits line according to fieldsInfo.
+func (e *LoadDataInfo) getFieldsFromLine(line []byte) ([]field, error) {
 	var sep []byte
 	if e.FieldsInfo.Enclosed != 0 {
 		if line[0] != e.FieldsInfo.Enclosed || line[len(line)-1] != e.FieldsInfo.Enclosed {
@@ -308,39 +316,33 @@ func (e *LoadDataInfo) GetFieldsFromLine(line []byte) ([]string, error) {
 		sep = []byte(e.FieldsInfo.Terminated)
 	}
 	rawCols := bytes.Split(line, sep)
-	cols := escapeCols(rawCols)
-	return cols, nil
-}
-
-func escapeCols(strs [][]byte) []string {
-	ret := make([]string, len(strs))
-	for i, v := range strs {
-		output := escape(v)
-		ret[i] = string(output)
+	fields := make([]field, 0, len(rawCols))
+	for _, v := range rawCols {
+		f := field{v, false}
+		fields = append(fields, f.escape())
 	}
-	return ret
+	return fields, nil
 }
 
 // escape handles escape characters when running load data statement.
-// TODO: escape need to be improved, it should support ESCAPED BY to specify
-// the escape character and handle \N escape.
 // See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
-func escape(str []byte) []byte {
+// TODO: escape only support '\' as the `ESCAPED BY` character, it should support specify characters.
+func (f *field) escape() field {
 	pos := 0
-	for i := 0; i < len(str); i++ {
-		c := str[i]
-		if c == '\\' && i+1 < len(str) {
-			c = escapeChar(str[i+1])
+	for i := 0; i < len(f.str); i++ {
+		c := f.str[i]
+		if i+1 < len(f.str) && f.str[i] == '\\' {
+			c = f.escapeChar(f.str[i+1])
 			i++
 		}
 
-		str[pos] = c
+		f.str[pos] = c
 		pos++
 	}
-	return str[:pos]
+	return field{f.str[:pos], f.maybeNull}
 }
 
-func escapeChar(c byte) byte {
+func (f *field) escapeChar(c byte) byte {
 	switch c {
 	case '0':
 		return 0
@@ -354,10 +356,14 @@ func escapeChar(c byte) byte {
 		return '\t'
 	case 'Z':
 		return 26
+	case 'N':
+		f.maybeNull = true
+		return c
 	case '\\':
-		return '\\'
+		return c
+	default:
+		return c
 	}
-	return c
 }
 
 // loadDataVarKeyType is a dummy type to avoid naming collision in context.

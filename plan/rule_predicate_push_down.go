@@ -65,7 +65,7 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression)
 	p.children[0].PredicatePushDown(predicates)
 	p.conditions = make([]expression.Expression, 0, len(predicates))
 	for _, cond := range predicates {
-		p.conditions = append(p.conditions, cond.Clone())
+		p.conditions = append(p.conditions, cond)
 	}
 	return nil, p
 }
@@ -133,14 +133,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	case InnerJoin:
 		p.LeftConditions = nil
 		p.RightConditions = nil
-		p.EqualConditions = make([]*expression.ScalarFunction, 0, len(equalCond))
-		for _, cond := range equalCond {
-			p.EqualConditions = append(p.EqualConditions, cond.Clone().(*expression.ScalarFunction))
-		}
-		p.OtherConditions = make([]expression.Expression, 0, len(otherCond))
-		for _, cond := range otherCond {
-			p.OtherConditions = append(p.OtherConditions, cond.Clone())
-		}
+		p.EqualConditions = equalCond
+		p.OtherConditions = otherCond
 		leftCond = leftPushCond
 		rightCond = rightPushCond
 	}
@@ -199,15 +193,13 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 	expr = expression.ColumnSubstitute(expr, p.schema, p.Exprs)
 	p.Exprs = append(p.Exprs, expr)
 
-	newPosition := p.schema.Columns[p.schema.Len()-1].Position + 1
 	col := &expression.Column{
-		FromID:   p.id,
-		Position: newPosition,
+		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
 		ColName:  model.NewCIStr(expr.String()),
 		RetType:  expr.GetType(),
 	}
 	p.schema.Append(col)
-	return col.Clone().(*expression.Column)
+	return col
 }
 
 func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
@@ -218,7 +210,7 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 	}
 	proj = LogicalProjection{Exprs: make([]expression.Expression, 0, child.Schema().Len())}.init(p.ctx)
 	for _, col := range child.Schema().Columns {
-		proj.Exprs = append(proj.Exprs, col.Clone())
+		proj.Exprs = append(proj.Exprs, col)
 	}
 	proj.SetSchema(child.Schema().Clone())
 	proj.SetChildren(child)
@@ -319,7 +311,7 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression) 
 	for i, proj := range p.children {
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		for _, cond := range predicates {
-			newExprs = append(newExprs, cond.Clone())
+			newExprs = append(newExprs, cond)
 		}
 		retCond, newChild := proj.PredicatePushDown(newExprs)
 		addSelection(p, newChild, retCond, i)
@@ -357,7 +349,7 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 				}
 			}
 			if ok {
-				newFunc := expression.ColumnSubstitute(cond.Clone(), la.Schema(), exprsOriginal)
+				newFunc := expression.ColumnSubstitute(cond, la.Schema(), exprsOriginal)
 				condsToPush = append(condsToPush, newFunc)
 			} else {
 				ret = append(ret, cond)

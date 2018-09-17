@@ -16,12 +16,13 @@ package plan
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/plan/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pkg/errors"
 )
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
@@ -34,6 +35,7 @@ const (
 	flagDecorrelate
 	flagMaxMinEliminate
 	flagPredicatePushDown
+	flagPartitionProcessor
 	flagAggregationOptimize
 	flagPushDownTopN
 )
@@ -45,6 +47,7 @@ var optRuleList = []logicalOptRule{
 	&decorrelateSolver{},
 	&maxMinEliminator{},
 	&ppdSolver{},
+	&partitionProcessor{},
 	&aggregationOptimizer{},
 	&pushDownTopNOptimizer{},
 }
@@ -57,15 +60,20 @@ type logicalOptRule interface {
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
+	fp := tryFastPlan(ctx, node)
+	if fp != nil {
+		return fp, nil
+	}
 	ctx.GetSessionVars().PlanID = 0
+	ctx.GetSessionVars().PlanColumnID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 	}
-	p := builder.build(node)
-	if builder.err != nil {
-		return nil, errors.Trace(builder.err)
+	p, err := builder.build(node)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	// Maybe it's better to move this to Preprocess, but check privilege need table
@@ -89,14 +97,15 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 // BuildLogicalPlan used to build logical plan from ast.Node.
 func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
+	ctx.GetSessionVars().PlanColumnID = 0
 	builder := &planBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 	}
-	p := builder.build(node)
-	if builder.err != nil {
-		return nil, errors.Trace(builder.err)
+	p, err := builder.build(node)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	return p, nil
 }
@@ -144,15 +153,15 @@ func logicalOptimize(flag uint64, logic LogicalPlan) (LogicalPlan, error) {
 }
 
 func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
-	logic.preparePossibleProperties()
-
 	if _, err := logic.deriveStats(); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	prop := &requiredProp{
-		taskTp:      rootTaskType,
-		expectedCnt: math.MaxFloat64,
+	logic.preparePossibleProperties()
+
+	prop := &property.PhysicalProperty{
+		TaskTp:      property.RootTaskType,
+		ExpectedCnt: math.MaxFloat64,
 	}
 
 	t, err := logic.findBestTask(prop)
@@ -160,7 +169,7 @@ func physicalOptimize(logic LogicalPlan) (PhysicalPlan, error) {
 		return nil, errors.Trace(err)
 	}
 	if t.invalid() {
-		return nil, ErrInternal.GenByArgs("Can't find a proper physical plan for this query")
+		return nil, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query")
 	}
 
 	t.plan().ResolveIndices()

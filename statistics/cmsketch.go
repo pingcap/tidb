@@ -18,11 +18,11 @@ import (
 	"sort"
 
 	"github.com/cznic/sortutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"github.com/spaolacci/murmur3"
 )
 
@@ -71,10 +71,11 @@ func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (ui
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return c.queryBytes(bytes), nil
+	return c.QueryBytes(bytes), nil
 }
 
-func (c *CMSketch) queryBytes(bytes []byte) uint32 {
+// QueryBytes is used to query the count of specified bytes.
+func (c *CMSketch) QueryBytes(bytes []byte) uint32 {
 	h1, h2 := murmur3.Sum128(bytes)
 	return c.queryHashValue(h1, h2)
 }

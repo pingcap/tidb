@@ -17,9 +17,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -87,7 +87,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	dbname := model.NewCIStr(s.DBName)
 	dbinfo, exists := e.is.SchemaByName(dbname)
 	if !exists {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(dbname)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbname)
 	}
 	e.ctx.GetSessionVars().CurrentDB = dbname.O
 	// character_set_database is the character set used by the default database.
@@ -122,7 +122,7 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
-	log.Debugf("[con:%d] execute rollback statement", sessVars.ConnectionID)
+	log.Debugf("con:%d execute rollback statement", sessVars.ConnectionID)
 	sessVars.SetStatusFlag(mysql.ServerStatusInTrans, false)
 	if e.ctx.Txn().Valid() {
 		e.ctx.GetSessionVars().TxnCtx.ClearDelta()
@@ -210,7 +210,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-		return ErrCannotUser.GenByArgs("ALTER USER", strings.Join(failedUsers, ","))
+		return ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
@@ -269,7 +269,7 @@ func (e *SimpleExec) executeDropUser(s *ast.DropUserStmt) error {
 		}
 	}
 	if len(failedUsers) > 0 {
-		return ErrCannotUser.GenByArgs("DROP USER", strings.Join(failedUsers, ","))
+		return ErrCannotUser.GenWithStackByArgs("DROP USER", strings.Join(failedUsers, ","))
 	}
 	domain.GetDomain(e.ctx).NotifyUpdatePrivilege(e.ctx)
 	return nil
@@ -308,7 +308,8 @@ func (e *SimpleExec) executeSetPwd(s *ast.SetPwdStmt) error {
 }
 
 func (e *SimpleExec) executeKillStmt(s *ast.KillStmt) error {
-	if s.TiDBExtension {
+	conf := config.GetGlobalConfig()
+	if s.TiDBExtension || conf.CompatibleKillQuery {
 		sm := e.ctx.GetSessionManager()
 		if sm == nil {
 			return nil
@@ -341,13 +342,9 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 
 func (e *SimpleExec) executeDropStats(s *ast.DropStatsStmt) error {
 	h := domain.GetDomain(e.ctx).StatsHandle()
-	if h.Lease <= 0 {
-		err := h.DeleteTableStatsFromKV(s.Table.TableInfo.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Trace(h.Update(GetInfoSchema(e.ctx)))
+	err := h.DeleteTableStatsFromKV(s.Table.TableInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	h.DDLEventCh() <- &util.Event{Tp: model.ActionDropTable, TableInfo: s.Table.TableInfo}
-	return nil
+	return errors.Trace(h.Update(GetInfoSchema(e.ctx)))
 }

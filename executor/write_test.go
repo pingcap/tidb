@@ -19,16 +19,23 @@ import (
 	"sync/atomic"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"golang.org/x/net/context"
 )
+
+type testBypassSuite struct{}
+
+func (s *testBypassSuite) SetUpSuite(c *C) {
+}
 
 func (s *testSuite) TestInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -88,6 +95,12 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec(insertSelectSQL)
 
 	errInsertSelectSQL = `insert insert_test_1 select c1 from insert_test;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errInsertSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errInsertSelectSQL = `insert insert_test_1 values(default, default, default, default, default)`
 	tk.MustExec("begin")
 	_, err = tk.Exec(errInsertSelectSQL)
 	c.Assert(err, NotNil)
@@ -223,7 +236,31 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
 	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
-	c.Assert(err.Error(), Equals, "[types:1292]Incorrect time value '-20070219173709.055870'")
+	c.Assert(err.Error(), Equals, "[types:1292]Incorrect time value: '-20070219173709.055870'")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("create table t(a float unsigned, b double unsigned)")
+	tk.MustExec("insert into t value(-1.1, -1.1), (-2.1, -2.1), (0, 0), (1.1, 1.1)")
+	tk.MustQuery("show warnings").
+		Check(testkit.Rows("Warning 1690 constant -1.1 overflows float", "Warning 1690 constant -1.1 overflows double",
+			"Warning 1690 constant -2.1 overflows float", "Warning 1690 constant -2.1 overflows double"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("0 0", "0 0", "0 0", "1.1 1.1"))
+
+	// issue 7061
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default 1, b int default 2)")
+	tk.MustExec("insert into t values(default, default)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values(default(b), default(a))")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1"))
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t (b) values(default)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t (b) values(default(a))")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestInsertAutoInc(c *C) {
@@ -454,6 +491,14 @@ commit;`
 	testSQL = `select * from test order by i;`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1 3", "2 2"))
+
+	testSQL = `create table badnull (i int not null)`
+	tk.MustExec(testSQL)
+	testSQL = `insert ignore into badnull values (null)`
+	tk.MustExec(testSQL)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'i' cannot be null"))
+	testSQL = `select * from badnull`
+	tk.MustQuery(testSQL).Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestInsertOnDup(c *C) {
@@ -541,6 +586,7 @@ commit;`
 	create table m (id int primary key auto_increment, code int unique);
 	insert tmp (code) values (1);
 	insert tmp (code) values (1);
+	set tidb_max_chunk_size=1;
 	insert m (code) select code from tmp on duplicate key update code = values(code);`
 	tk.MustExec(testSQL)
 	testSQL = `select * from m;`
@@ -576,12 +622,24 @@ commit;`
 	testSQL = `SELECT LAST_INSERT_ID();`
 	r = tk.MustQuery(testSQL)
 	r.Check(testkit.Rows("1"))
+	testSQL = `INSERT t1 (f2) VALUES ('test') ON DUPLICATE KEY UPDATE f1 = 2;`
+	tk.MustExec(testSQL)
+	testSQL = `SELECT LAST_INSERT_ID();`
+	r = tk.MustQuery(testSQL)
+	r.Check(testkit.Rows("1"))
 
 	testSQL = `DROP TABLE IF EXISTS t1;
 	CREATE TABLE t1 (f1 INT);
 	INSERT t1 VALUES (1) ON DUPLICATE KEY UPDATE f1 = 1;`
 	tk.MustExec(testSQL)
 	tk.MustQuery(`SELECT * FROM t1;`).Check(testkit.Rows("1"))
+
+	testSQL = `DROP TABLE IF EXISTS t1;
+	CREATE TABLE t1 (f1 INT PRIMARY KEY, f2 INT UNIQUE);
+	INSERT t1 VALUES (1, 1);`
+	tk.MustExec(testSQL)
+	tk.MustExec(`INSERT t1 VALUES (1, 1), (1, 1) ON DUPLICATE KEY UPDATE f1 = 2, f2 = 2;`)
+	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 1", "2 2"))
 }
 
 func (s *testSuite) TestInsertIgnoreOnDup(c *C) {
@@ -725,6 +783,139 @@ func (s *testSuite) TestReplace(c *C) {
 	r.Check(testkit.Rows("1 1"))
 }
 
+func (s *testSuite) TestPartitionedTableReplace(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	testSQL := `drop table if exists replace_test;
+		    create table replace_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 int, c3 int default 1)
+			partition by range (id) (
+			PARTITION p0 VALUES LESS THAN (3),
+			PARTITION p1 VALUES LESS THAN (5),
+			PARTITION p2 VALUES LESS THAN (7),
+			PARTITION p3 VALUES LESS THAN (9));`
+	tk.MustExec(testSQL)
+	testSQL = `replace replace_test (c1) values (1),(2),(NULL);`
+	tk.MustExec(testSQL)
+
+	errReplaceSQL := `replace replace_test (c1) values ();`
+	tk.MustExec("begin")
+	_, err := tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSQL = `replace replace_test (c1, c2) values (1,2),(1);`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSQL = `replace replace_test (xxx) values (3);`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSQL = `replace replace_test_xxx (c1) values ();`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	replaceSetSQL := `replace replace_test set c1 = 3;`
+	tk.MustExec(replaceSetSQL)
+
+	errReplaceSetSQL := `replace replace_test set c1 = 4, c1 = 5;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSetSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	errReplaceSetSQL = `replace replace_test set xxx = 6;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSetSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	tk.MustExec(`drop table if exists replace_test_1`)
+	tk.MustExec(`create table replace_test_1 (id int, c1 int) partition by range (id) (
+			PARTITION p0 VALUES LESS THAN (4),
+			PARTITION p1 VALUES LESS THAN (6),
+			PARTITION p2 VALUES LESS THAN (8),
+			PARTITION p3 VALUES LESS THAN (10),
+			PARTITION p4 VALUES LESS THAN (100))`)
+	tk.MustExec(`replace replace_test_1 select id, c1 from replace_test;`)
+
+	tk.MustExec(`drop table if exists replace_test_2`)
+	tk.MustExec(`create table replace_test_2 (id int, c1 int) partition by range (id) (
+			PARTITION p0 VALUES LESS THAN (10),
+			PARTITION p1 VALUES LESS THAN (50),
+			PARTITION p2 VALUES LESS THAN (100),
+			PARTITION p3 VALUES LESS THAN (300))`)
+	tk.MustExec(`replace replace_test_1 select id, c1 from replace_test union select id * 10, c1 * 10 from replace_test;`)
+
+	errReplaceSelectSQL := `replace replace_test_1 select c1 from replace_test;`
+	tk.MustExec("begin")
+	_, err = tk.Exec(errReplaceSelectSQL)
+	c.Assert(err, NotNil)
+	tk.MustExec("rollback")
+
+	tk.MustExec(`drop table if exists replace_test_3`)
+	replaceUniqueIndexSQL := `create table replace_test_3 (c1 int, c2 int, UNIQUE INDEX (c2)) partition by range (c2) (
+				    PARTITION p0 VALUES LESS THAN (4),
+				    PARTITION p1 VALUES LESS THAN (7),
+				    PARTITION p2 VALUES LESS THAN (11))`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=8;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=8;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c1=8, c2=8;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(2))
+
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_3 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	replaceUniqueIndexSQL = `create table replace_test_4 (c1 int, c2 int, c3 int, UNIQUE INDEX (c1, c2)) partition by range (c1) (
+				    PARTITION p0 VALUES LESS THAN (4),
+				    PARTITION p1 VALUES LESS THAN (7),
+				    PARTITION p2 VALUES LESS THAN (11));`
+	tk.MustExec(`drop table if exists replace_test_4`)
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	replaceUniqueIndexSQL = `replace into replace_test_4 set c2=NULL;`
+	tk.MustExec(replaceUniqueIndexSQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	replacePrimaryKeySQL := `create table replace_test_5 (c1 int, c2 int, c3 int, PRIMARY KEY (c1, c2)) partition by range (c2) (
+				    PARTITION p0 VALUES LESS THAN (4),
+				    PARTITION p1 VALUES LESS THAN (7),
+				    PARTITION p2 VALUES LESS THAN (11));`
+	tk.MustExec(replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
+	tk.MustExec(replacePrimaryKeySQL)
+	replacePrimaryKeySQL = `replace into replace_test_5 set c1=1, c2=2;`
+	tk.MustExec(replacePrimaryKeySQL)
+	c.Assert(int64(tk.Se.AffectedRows()), Equals, int64(1))
+
+	issue989SQL := `CREATE TABLE tIssue989 (a int, b int, KEY(a), UNIQUE KEY(b)) partition by range (b) (
+			    PARTITION p1 VALUES LESS THAN (100),
+			    PARTITION p2 VALUES LESS THAN (200))`
+	tk.MustExec(issue989SQL)
+	issue989SQL = `insert into tIssue989 (a, b) values (1, 2);`
+	tk.MustExec(issue989SQL)
+	issue989SQL = `replace into tIssue989(a, b) values (111, 2);`
+	tk.MustExec(issue989SQL)
+	r := tk.MustQuery("select * from tIssue989;")
+	r.Check(testkit.Rows("111 2"))
+}
+
 func (s *testSuite) TestUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -766,7 +957,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustExec("insert into update_test(name) values ('aa')")
 	_, err := tk.Exec("update update_test set id = null where name = 'aa'")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), DeepEquals, "Column 'id' cannot be null")
+	c.Assert(err.Error(), DeepEquals, "[table:1048]Column 'id' cannot be null")
 
 	tk.MustExec("drop table update_test")
 	tk.MustExec("create table update_test(id int)")
@@ -811,7 +1002,7 @@ func (s *testSuite) TestUpdate(c *C) {
 	_, err = tk.Exec("update ignore t set a = 1 where a = 2;")
 	c.Assert(err, IsNil)
 	r = tk.MustQuery("SHOW WARNINGS;")
-	r.Check(testkit.Rows("Warning 1062 key already exist"))
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '1' for key 'I_uniq'"))
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 
 	tk.MustExec("drop table if exists t")
@@ -857,6 +1048,115 @@ func (s *testSuite) TestUpdate(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1265 Data Truncated"))
 	r = tk.MustQuery("select * from decimals")
 	r.Check(testkit.Rows("202"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE `t` (	`c1` year DEFAULT NULL, `c2` year DEFAULT NULL, `c3` date DEFAULT NULL, `c4` datetime DEFAULT NULL,	KEY `idx` (`c1`,`c2`))")
+	_, err = tk.Exec("UPDATE t SET c2=16777215 WHERE c1>= -8388608 AND c1 < -9 ORDER BY c1 LIMIT 2")
+	c.Assert(err.Error(), Equals, "cannot convert datum from bigint to type year.")
+
+	tk.MustExec("update (select * from t) t set c1 = 1111111")
+}
+
+func (s *testSuite) TestPartitionedTableUpdate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int not null default 1, name varchar(255))
+			PARTITION BY RANGE ( id ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21))`)
+
+	tk.MustExec(`insert INTO t VALUES (1, "hello");`)
+	tk.CheckExecResult(1, 0)
+	tk.MustExec(`insert INTO t VALUES (7, "hello");`)
+	tk.CheckExecResult(1, 0)
+
+	// update non partition column
+	tk.MustExec(`UPDATE t SET name = "abc" where id > 0;`)
+	tk.CheckExecResult(2, 0)
+	r := tk.MustQuery(`SELECT * from t order by id limit 2;`)
+	r.Check(testkit.Rows("1 abc", "7 abc"))
+
+	// update partition column
+	tk.MustExec(`update t set id = id + 1`)
+	tk.CheckExecResult(2, 0)
+	r = tk.MustQuery(`SELECT * from t order by id limit 2;`)
+	r.Check(testkit.Rows("2 abc", "8 abc"))
+
+	// update partition column, old and new record locates on different partitions
+	tk.MustExec(`update t set id = 20 where id = 8`)
+	tk.CheckExecResult(2, 0)
+	r = tk.MustQuery(`SELECT * from t order by id limit 2;`)
+	r.Check(testkit.Rows("2 abc", "20 abc"))
+
+	// table option is auto-increment
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (id int not null auto_increment, name varchar(255), primary key(id))
+			PARTITION BY RANGE ( id ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21))`)
+
+	tk.MustExec("insert into t(name) values ('aa')")
+	tk.MustExec("update t set id = 8 where name = 'aa'")
+	tk.MustExec("insert into t(name) values ('bb')")
+	r = tk.MustQuery("select * from t;")
+	r.Check(testkit.Rows("8 aa", "9 bb"))
+
+	_, err := tk.Exec("update t set id = null where name = 'aa'")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), DeepEquals, "[table:1048]Column 'id' cannot be null")
+
+	// Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (id int, name int unique)
+			PARTITION BY RANGE ( name ) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11),
+			PARTITION p2 VALUES LESS THAN (16),
+			PARTITION p3 VALUES LESS THAN (21))`)
+	tk.MustExec("insert t values (1, 1), (2, 2);")
+	_, err = tk.Exec("update t set name = 1 where id = 2")
+	c.Assert(err, NotNil)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
+
+	// test update ignore for pimary key
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(a bigint, primary key (a))
+			PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11))`)
+	tk.MustExec("insert into t values (5)")
+	tk.MustExec("insert into t values (7)")
+	_, err = tk.Exec("update ignore t set a = 5 where a = 7;")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 'PRIMARY'"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("5", "7"))
+
+	// test update ignore for truncate as warning
+	_, err = tk.Exec("update ignore t set a = 1 where a = (select '2a')")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
+
+	// test update ignore for unique key
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t(a bigint, unique key I_uniq (a))
+			PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (6),
+			PARTITION p1 VALUES LESS THAN (11))`)
+	tk.MustExec("insert into t values (5)")
+	tk.MustExec("insert into t values (7)")
+	_, err = tk.Exec("update ignore t set a = 5 where a = 7;")
+	c.Assert(err, IsNil)
+	r = tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 'I_uniq'"))
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("5", "7"))
 }
 
 // TestUpdateCastOnlyModifiedValues for issue #4514.
@@ -888,7 +1188,7 @@ func (s *testSuite) TestUpdateCastOnlyModifiedValues(c *C) {
 	r.Check(testkit.Rows("300"))
 	tk.MustExec(`UPDATE update_with_diff_type SET b = '{"a":   "\\u6d4b\\u8bd5"}'`)
 	r = tk.MustQuery("SELECT b FROM update_with_diff_type")
-	r.Check(testkit.Rows(`{"a":"测试"}`))
+	r.Check(testkit.Rows(`{"a": "测试"}`))
 }
 
 func (s *testSuite) fillMultiTableForUpdate(tk *testkit.TestKit) {
@@ -997,6 +1297,60 @@ func (s *testSuite) TestDelete(c *C) {
 	tk.CheckExecResult(1, 0)
 }
 
+func (s *testSuite) TestPartitionedTableDelete(c *C) {
+	createTable := `CREATE TABLE test.t (id int not null default 1, name varchar(255), index(id))
+			  PARTITION BY RANGE ( id ) (
+			  PARTITION p0 VALUES LESS THAN (6),
+			  PARTITION p1 VALUES LESS THAN (11),
+			  PARTITION p2 VALUES LESS THAN (16),
+			  PARTITION p3 VALUES LESS THAN (21))`
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(createTable)
+	for i := 1; i < 21; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d, "hello")`, i))
+	}
+
+	tk.MustExec(`delete from t where id = 2 limit 1;`)
+	tk.CheckExecResult(1, 0)
+
+	// Test delete with false condition
+	tk.MustExec(`delete from t where 0;`)
+	tk.CheckExecResult(0, 0)
+
+	tk.MustExec("insert into t values (2, 'abc')")
+	tk.MustExec(`delete from t where t.id = 2 limit 1`)
+	tk.CheckExecResult(1, 0)
+
+	// Test delete ignore
+	tk.MustExec("insert into t values (2, 'abc')")
+	_, err := tk.Exec("delete from t where id = (select '2a')")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec("delete ignore from t where id = (select '2a')")
+	c.Assert(err, IsNil)
+	tk.CheckExecResult(1, 0)
+	r := tk.MustQuery("SHOW WARNINGS;")
+	r.Check(testkit.Rows("Warning 1265 Data Truncated", "Warning 1265 Data Truncated"))
+
+	// Test delete without using index, involve multiple partitions.
+	tk.MustExec("delete from t ignore index(id) where id >= 13 and id <= 17")
+	tk.CheckExecResult(5, 0)
+
+	tk.MustExec("admin check table t")
+	tk.MustExec(`delete from t;`)
+	tk.CheckExecResult(14, 0)
+
+	// Fix that partitioned table should not use PointGetPlan.
+	tk.MustExec(`create table t1 (c1 bigint, c2 bigint, c3 bigint, primary key(c1)) partition by range (c1) (partition p0 values less than (3440))`)
+	tk.MustExec("insert into t1 values (379, 379, 379)")
+	tk.MustExec("delete from t1 where c1 = 379")
+	tk.CheckExecResult(1, 0)
+	tk.MustExec(`drop table t1;`)
+}
+
 func (s *testSuite) fillDataMultiTable(tk *testkit.TestKit) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2, t3")
@@ -1074,14 +1428,17 @@ func (s *testSuite) TestLoadData(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	ctx := tk.Se.(sessionctx.Context)
-	ld := makeLoadDataInfo(4, nil, ctx, c)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	// data1 = nil, data2 = nil, fields and lines is default
-	ctx.GetSessionVars().StmtCtx.IgnoreErr = true
+	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 	_, reachLimit, err := ld.InsertData(nil, nil)
-	ctx.GetSessionVars().StmtCtx.IgnoreErr = false
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
 	r := tk.MustQuery(selectSQL)
@@ -1096,13 +1453,13 @@ func (s *testSuite) TestLoadData(c *C) {
 	// fields and lines are default, InsertData returns data is nil
 	tests := []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("\n"), []string{"1|0||0"}, nil},
-		{nil, []byte("\t\n"), []string{"2|0||0"}, nil},
+		{nil, []byte("\n"), []string{"1|<nil>|<nil>|<nil>"}, nil},
+		{nil, []byte("\t\n"), []string{"2|0|<nil>|<nil>"}, nil},
 		{nil, []byte("3\t2\t3\t4\n"), []string{"3|2|3|4"}, nil},
 		{nil, []byte("3*1\t2\t3\t4\n"), []string{"3|2|3|4"}, nil},
 		{nil, []byte("4\t2\t\t3\t4\n"), []string{"4|2||3"}, nil},
 		{nil, []byte("\t1\t2\t3\t4\n"), []string{"5|1|2|3"}, nil},
-		{nil, []byte("6\t2\t3\n"), []string{"6|2|3|0"}, nil},
+		{nil, []byte("6\t2\t3\n"), []string{"6|2|3|<nil>"}, nil},
 		{nil, []byte("\t2\t3\t4\n\t22\t33\t44\n"), []string{"7|2|3|4", "8|22|33|44"}, nil},
 		{nil, []byte("7\t2\t3\t4\n7\t22\t33\t44\n"), []string{"7|2|3|4"}, nil},
 
@@ -1117,7 +1474,7 @@ func (s *testSuite) TestLoadData(c *C) {
 		{[]byte("\t2\t3"), []byte("\t4\t5"), nil, []byte("\t2\t3\t4\t5")},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
-	c.Assert(sc.WarningCount(), Equals, uint16(3))
+	c.Assert(sc.WarningCount(), Equals, uint16(1))
 
 	// lines starting symbol is "" and terminated symbol length is 2, InsertData returns data is nil
 	ld.LinesInfo.Terminated = "||"
@@ -1128,9 +1485,9 @@ func (s *testSuite) TestLoadData(c *C) {
 		{[]byte("2\t2\t3\t4\t5|"), []byte("|3\t22\t33\t44\t55||"),
 			[]string{"2|2|3|4", "3|22|33|44"}, nil},
 		{[]byte("3\t2\t3\t4\t5|"), []byte("|4\t22\t33||"), []string{
-			"3|2|3|4", "4|22|33|0"}, nil},
+			"3|2|3|4", "4|22|33|<nil>"}, nil},
 		{[]byte("4\t2\t3\t4\t5|"), []byte("|5\t22\t33||6\t222||"),
-			[]string{"4|2|3|4", "5|22|33|0", "6|222||0"}, nil},
+			[]string{"4|2|3|4", "5|22|33|<nil>", "6|222|<nil>|<nil>"}, nil},
 		{[]byte("6\t2\t3"), []byte("4\t5||"), []string{"6|2|34|5"}, nil},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
@@ -1141,12 +1498,12 @@ func (s *testSuite) TestLoadData(c *C) {
 	ld.LinesInfo.Terminated = "|!#^"
 	tests = []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("xxx|!#^"), []string{"13|0||0"}, nil},
-		{nil, []byte("xxx\\|!#^"), []string{"14|0||0"}, nil},
+		{nil, []byte("xxx|!#^"), []string{"13|<nil>|<nil>|<nil>"}, nil},
+		{nil, []byte("xxx\\|!#^"), []string{"14|0|<nil>|<nil>"}, nil},
 		{nil, []byte("xxx3\\2\\3\\4|!#^"), []string{"3|2|3|4"}, nil},
 		{nil, []byte("xxx4\\2\\\\3\\4|!#^"), []string{"4|2||3"}, nil},
 		{nil, []byte("xxx\\1\\2\\3\\4|!#^"), []string{"15|1|2|3"}, nil},
-		{nil, []byte("xxx6\\2\\3|!#^"), []string{"6|2|3|0"}, nil},
+		{nil, []byte("xxx6\\2\\3|!#^"), []string{"6|2|3|<nil>"}, nil},
 		{nil, []byte("xxx\\2\\3\\4|!#^xxx\\22\\33\\44|!#^"), []string{
 			"16|2|3|4",
 			"17|22|33|44"}, nil},
@@ -1163,17 +1520,17 @@ func (s *testSuite) TestLoadData(c *C) {
 		{[]byte("xxx10\\2\\3"), []byte("\\4|!#^"),
 			[]string{"10|2|3|4"}, nil},
 		{[]byte("10\\2\\3xx"), []byte("x11\\4\\5|!#^"),
-			[]string{"11|4|5|0"}, nil},
+			[]string{"11|4|5|<nil>"}, nil},
 		{[]byte("xxx21\\2\\3\\4\\5|!"), []byte("#^"),
 			[]string{"21|2|3|4"}, nil},
 		{[]byte("xxx22\\2\\3\\4\\5|!"), []byte("#^xxx23\\22\\33\\44\\55|!#^"),
 			[]string{"22|2|3|4", "23|22|33|44"}, nil},
 		{[]byte("xxx23\\2\\3\\4\\5|!"), []byte("#^xxx24\\22\\33|!#^"),
-			[]string{"23|2|3|4", "24|22|33|0"}, nil},
+			[]string{"23|2|3|4", "24|22|33|<nil>"}, nil},
 		{[]byte("xxx24\\2\\3\\4\\5|!"), []byte("#^xxx25\\22\\33|!#^xxx26\\222|!#^"),
-			[]string{"24|2|3|4", "25|22|33|0", "26|222||0"}, nil},
+			[]string{"24|2|3|4", "25|22|33|<nil>", "26|222|<nil>|<nil>"}, nil},
 		{[]byte("xxx25\\2\\3\\4\\5|!"), []byte("#^26\\22\\33|!#^xxx27\\222|!#^"),
-			[]string{"25|2|3|4", "27|222||0"}, nil},
+			[]string{"25|2|3|4", "27|222|<nil>|<nil>"}, nil},
 		{[]byte("xxx\\2\\3"), []byte("4\\5|!#^"), []string{"28|2|34|5"}, nil},
 
 		// InsertData returns data isn't nil
@@ -1181,9 +1538,9 @@ func (s *testSuite) TestLoadData(c *C) {
 		{nil, []byte("\\4\\5"), nil, []byte("\\5")},
 		{[]byte("\\2\\3"), []byte("\\4\\5"), nil, []byte("\\5")},
 		{[]byte("xxx1\\2\\3|"), []byte("!#^\\4\\5|!#"),
-			[]string{"1|2|3|0"}, []byte("!#")},
+			[]string{"1|2|3|<nil>"}, []byte("!#")},
 		{[]byte("xxx1\\2\\3\\4\\5|!"), []byte("#^xxx2\\22\\33|!#^3\\222|!#^"),
-			[]string{"1|2|3|4", "2|22|33|0"}, []byte("#^")},
+			[]string{"1|2|3|4", "2|22|33|<nil>"}, []byte("#^")},
 		{[]byte("xx1\\2\\3"), []byte("\\4\\5|!#^"), nil, []byte("#^")},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
@@ -1192,7 +1549,7 @@ func (s *testSuite) TestLoadData(c *C) {
 	ld.LinesInfo.Terminated = "xxx"
 	tests = []testCase{
 		// data1 = nil, data2 != nil
-		{nil, []byte("xxxxxx"), []string{"29|0||0"}, nil},
+		{nil, []byte("xxxxxx"), []string{"29|<nil>|<nil>|<nil>"}, nil},
 		{nil, []byte("xxx3\\2\\3\\4xxx"), []string{"3|2|3|4"}, nil},
 		{nil, []byte("xxx\\2\\3\\4xxxxxx\\22\\33\\44xxx"),
 			[]string{"30|2|3|4", "31|22|33|44"}, nil},
@@ -1207,19 +1564,19 @@ func (s *testSuite) TestLoadData(c *C) {
 		{[]byte("xxx32\\2\\3\\4\\5x"), []byte("xxxxx33\\22\\33\\44\\55xxx"),
 			[]string{"32|2|3|4", "33|22|33|44"}, nil},
 		{[]byte("xxx33\\2\\3\\4\\5xxx"), []byte("xxx34\\22\\33xxx"),
-			[]string{"33|2|3|4", "34|22|33|0"}, nil},
+			[]string{"33|2|3|4", "34|22|33|<nil>"}, nil},
 		{[]byte("xxx34\\2\\3\\4\\5xx"), []byte("xxxx35\\22\\33xxxxxx36\\222xxx"),
-			[]string{"34|2|3|4", "35|22|33|0", "36|222||0"}, nil},
+			[]string{"34|2|3|4", "35|22|33|<nil>", "36|222|<nil>|<nil>"}, nil},
 
 		// InsertData returns data isn't nil
 		{nil, []byte("\\2\\3\\4xxxx"), nil, []byte("xxxx")},
-		{[]byte("\\2\\3\\4xxx"), nil, []string{"37|0||0"}, nil},
+		{[]byte("\\2\\3\\4xxx"), nil, []string{"37|<nil>|<nil>|<nil>"}, nil},
 		{[]byte("\\2\\3\\4xxxxxx11\\22\\33\\44xxx"), nil,
-			[]string{"38|0||0", "39|0||0"}, nil},
+			[]string{"38|<nil>|<nil>|<nil>", "39|<nil>|<nil>|<nil>"}, nil},
 		{[]byte("xx10\\2\\3"), []byte("\\4\\5xxx"), nil, []byte("xxx")},
 		{[]byte("xxx10\\2\\3"), []byte("\\4xxxx"), []string{"10|2|3|4"}, []byte("x")},
 		{[]byte("xxx10\\2\\3\\4\\5x"), []byte("xx11\\22\\33xxxxxx12\\222xxx"),
-			[]string{"10|2|3|4", "40|0||0"}, []byte("xxx")},
+			[]string{"10|2|3|4", "40|<nil>|<nil>|<nil>"}, []byte("xxx")},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
@@ -1230,7 +1587,10 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test")
 	ctx := tk.Se.(sessionctx.Context)
-	ld := makeLoadDataInfo(2, nil, ctx, c)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
 	// test escape
 	tests := []testCase{
 		// data1 = nil, data2 != nil
@@ -1240,20 +1600,25 @@ func (s *testSuite) TestLoadDataEscape(c *C) {
 		{nil, []byte("4\tboth \\t\\n\n"), []string{"4|both \t\n"}, nil},
 		{nil, []byte("5\tstr \\\\\n"), []string{"5|str \\"}, nil},
 		{nil, []byte("6\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'})}, nil},
+		{nil, []byte("7\trtn0ZbN\n"), []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil},
+		{nil, []byte("8\trtn0Zb\\N\n"), []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-// TestLoadDataSpecifiedCoumns reuse TestLoadDataEscape's test case :-)
-func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
+// TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
+func (s *testSuite) TestLoadDataSpecifiedColumns(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
 	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)")
 	ctx := tk.Se.(sessionctx.Context)
-	ld := makeLoadDataInfo(2, []string{"c1", "c2"}, ctx, c)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
 	// test
 	tests := []testCase{
 		// data1 = nil, data2 != nil
@@ -1263,31 +1628,30 @@ func (s *testSuite) TestLoadDataSpecifiedCoumns(c *C) {
 		{nil, []byte("10\tboth \\t\\n\n"), []string{"4|10|both \t\n|0"}, nil},
 		{nil, []byte("11\tstr \\\\\n"), []string{"5|11|str \\|0"}, nil},
 		{nil, []byte("12\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|12|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'}) + "|0"}, nil},
+		{nil, []byte("\\N\ta string\n"), []string{"7|<nil>|a string|0"}, nil},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
-func makeLoadDataInfo(column int, specifiedColumns []string, ctx sessionctx.Context, c *C) (ld *executor.LoadDataInfo) {
-	dom := domain.GetDomain(ctx)
-	is := dom.InfoSchema()
-	c.Assert(is, NotNil)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("load_data_test"))
-	c.Assert(err, IsNil)
-	columns := tbl.Cols()
-	// filter specified columns
-	if len(specifiedColumns) > 0 {
-		columns, err = table.FindCols(columns, specifiedColumns, true)
-		c.Assert(err, IsNil)
+func (s *testSuite) TestLoadDataIgnoreLines(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test; drop table if exists load_data_test;")
+	tk.MustExec("CREATE TABLE load_data_test (id INT NOT NULL PRIMARY KEY, value TEXT NOT NULL) CHARACTER SET utf8")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' into table load_data_test ignore 1 lines")
+	ctx := tk.Se.(sessionctx.Context)
+	ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataInfo)
+	c.Assert(ok, IsTrue)
+	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	c.Assert(ld, NotNil)
+	tests := []testCase{
+		{nil, []byte("1\tline1\n2\tline2\n"), []string{"2|line2"}, nil},
+		{nil, []byte("1\tline1\n2\tline2\n3\tline3\n"), []string{"2|line2", "3|line3"}, nil},
 	}
-	fields := &ast.FieldsClause{Terminated: "\t"}
-	lines := &ast.LinesClause{Starting: "", Terminated: "\n"}
-	ld = executor.NewLoadDataInfo(ctx, make([]types.Datum, column), tbl, columns)
-	ld.SetMaxRowsInBatch(0)
-	ld.FieldsInfo = fields
-	ld.LinesInfo = lines
-	return
+	deleteSQL := "delete from load_data_test"
+	selectSQL := "select * from load_data_test;"
+	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 }
 
 func (s *testSuite) TestBatchInsertDelete(c *C) {
@@ -1408,56 +1772,51 @@ func (s *testSuite) TestNullDefault(c *C) {
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
 }
 
-func (s *testSuite) TestGetFieldsFromLine(c *C) {
-	tests := []struct {
-		input    string
-		expected []string
-	}{
-		{
-			`"1","a string","100.20"`,
-			[]string{"1", "a string", "100.20"},
-		},
-		{
-			`"2","a string containing a , comma","102.20"`,
-			[]string{"2", "a string containing a , comma", "102.20"},
-		},
-		{
-			`"3","a string containing a \" quote","102.20"`,
-			[]string{"3", "a string containing a \" quote", "102.20"},
-		},
-		{
-			`"4","a string containing a \", quote and comma","102.20"`,
-			[]string{"4", "a string containing a \", quote and comma", "102.20"},
-		},
-		// Test some escape char.
-		{
-			`"\0\b\n\r\t\Z\\\  \c\'\""`,
-			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
-		},
+func (s *testBypassSuite) TestBypassLatch(c *C) {
+	store, err := mockstore.NewMockTikvStore(
+		// Small latch slot size to make conflicts.
+		mockstore.WithTxnLocalLatches(64),
+	)
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	dom, err1 := session.BootstrapSession(store)
+	c.Assert(err1, IsNil)
+	defer dom.Close()
+
+	tk1 := testkit.NewTestKit(c, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t (id int)")
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = true")
+
+	tk2 := testkit.NewTestKit(c, store)
+	tk2.MustExec("use test")
+	tk1.MustExec("set @@tidb_disable_txn_auto_retry = true")
+
+	fn := func() {
+		tk1.MustExec("begin")
+		for i := 0; i < 100; i++ {
+			tk1.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		}
+		tk2.MustExec("begin")
+		for i := 100; i < 200; i++ {
+			tk1.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		}
+		tk2.MustExec("commit")
 	}
 
-	ldInfo := executor.LoadDataInfo{
-		FieldsInfo: &ast.FieldsClause{
-			Enclosed:   '"',
-			Terminated: ",",
-		},
-	}
-
-	for _, test := range tests {
-		got, err := ldInfo.GetFieldsFromLine([]byte(test.input))
-		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
-		assertEqualStrings(c, got, test.expected)
-	}
-
-	_, err := ldInfo.GetFieldsFromLine([]byte(`1,a string,100.20`))
+	// txn1 and txn2 data range do not overlap, but using latches result in txn conflict.
+	fn()
+	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
-}
 
-func assertEqualStrings(c *C, got []string, expect []string) {
-	c.Assert(len(got), Equals, len(expect))
-	for i := 0; i < len(got); i++ {
-		c.Assert(got[i], Equals, expect[i])
-	}
+	tk1.MustExec("truncate table t")
+	fn()
+	txn := tk1.Se.Txn()
+	txn.SetOption(kv.BypassLatch, true)
+	// Bypass latch, there will be no conflicts.
+	tk1.MustExec("commit")
 }
 
 // TestIssue4067 Test issue https://github.com/pingcap/tidb/issues/4067
@@ -1568,13 +1927,13 @@ func (s *testSuite) TestInsertCalculatedValue(c *C) {
 	tk.MustExec("insert into t (b) value (a->'$.a'+1)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("<nil> <nil> <nil>", "<nil> <nil> <nil>"))
 	tk.MustExec(`insert into t (a, b) value ('{"a": 1}', a->'$.a'+1)`)
-	tk.MustQuery("select * from t where c = 1").Check(testkit.Rows(`{"a":1} 2 1`))
+	tk.MustQuery("select * from t where c = 1").Check(testkit.Rows(`{"a": 1} 2 1`))
 	tk.MustExec("truncate table t")
 	tk.MustExec("insert t set b = c + 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("<nil> <nil> <nil>"))
 	tk.MustExec("truncate table t")
 	tk.MustExec(`insert t set a = '{"a": 1}', b = c`)
-	tk.MustQuery("select * from t").Check(testkit.Rows(`{"a":1} <nil> 1`))
+	tk.MustQuery("select * from t").Check(testkit.Rows(`{"a": 1} <nil> 1`))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int auto_increment key, b int)")
@@ -1615,6 +1974,24 @@ func (s *testSuite) TestUpdateSelect(c *C) {
 	tk.MustExec("admin check table msg")
 }
 
+func (s *testSuite) TestUpdateDelete(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE ttt (id bigint(20) NOT NULL, host varchar(30) NOT NULL, PRIMARY KEY (id), UNIQUE KEY i_host (host));")
+	tk.MustExec("insert into ttt values (8,8),(9,9);")
+
+	tk.MustExec("begin")
+	tk.MustExec("update ttt set id = 0, host='9' where id = 9 limit 1;")
+	tk.MustExec("delete from ttt where id = 0 limit 1;")
+	tk.MustQuery("select * from ttt use index (i_host) order by host;").Check(testkit.Rows("8 8"))
+	tk.MustExec("update ttt set id = 0, host='8' where id = 8 limit 1;")
+	tk.MustExec("delete from ttt where id = 0 limit 1;")
+	tk.MustQuery("select * from ttt use index (i_host) order by host;").Check(testkit.Rows())
+	tk.MustExec("commit")
+	tk.MustExec("admin check table ttt;")
+	tk.MustExec("drop table ttt")
+}
+
 func (s *testSuite) TestUpdateAffectRowCnt(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1630,4 +2007,69 @@ func (s *testSuite) TestUpdateAffectRowCnt(c *C) {
 	tk.MustExec("update a set a = a*10 where b = 1001")
 	ctx = tk.Se.(sessionctx.Context)
 	c.Assert(ctx.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(2))
+}
+
+func (s *testSuite) TestReplaceLog(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table testLog (a int not null primary key, b int unique key);`)
+
+	// Make some dangling index.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	dbName := model.NewCIStr("test")
+	tblName := model.NewCIStr("testLog")
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	idxInfo := findIndexByName("b", tblInfo.Indices)
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), 1)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	_, err = tk.Exec(`replace into testLog values (0, 0), (1, 1);`)
+	c.Assert(err, NotNil)
+	expErr := errors.New(`can not be duplicated row, due to old row not found. handle 1 not found`)
+	c.Assert(expErr.Error() == err.Error(), IsTrue, Commentf("obtained error: (%s)\nexpected error: (%s)", err.Error(), expErr.Error()))
+
+	tk.MustQuery(`admin cleanup index testLog b;`).Check(testkit.Rows("1"))
+}
+
+// For issue 7422.
+// There is no need to do the rebase when updating a record if the auto-increment ID not changed.
+// This could make the auto ID increasing speed slower.
+func (s *testSuite) TestRebaseIfNeeded(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int not null primary key auto_increment, b int unique key);`)
+	tk.MustExec(`insert into t (b) values (1);`)
+
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	tbl, err := s.domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(s.ctx.NewTxn(), IsNil)
+	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
+	// which could simulate another TiDB adds a large auto ID.
+	_, err = tbl.AddRecord(s.ctx, types.MakeDatums(30001, 2), false)
+	c.Assert(err, IsNil)
+	c.Assert(s.ctx.Txn().Commit(context.Background()), IsNil)
+
+	tk.MustExec(`update t set b = 3 where a = 30001;`)
+	tk.MustExec(`insert into t (b) values (4);`)
+	tk.MustQuery(`select a from t where b = 4;`).Check(testkit.Rows("2"))
+
+	tk.MustExec(`insert into t set b = 3 on duplicate key update a = a;`)
+	tk.MustExec(`insert into t (b) values (5);`)
+	tk.MustQuery(`select a from t where b = 5;`).Check(testkit.Rows("4"))
+
+	tk.MustExec(`insert into t set b = 3 on duplicate key update a = a + 1;`)
+	tk.MustExec(`insert into t (b) values (6);`)
+	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
 }

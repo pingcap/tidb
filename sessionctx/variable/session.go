@@ -15,11 +15,11 @@ package variable
 
 import (
 	"crypto/tls"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -28,6 +28,9 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -106,7 +109,7 @@ func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, co
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
 	item := tc.TableDeltaMap[tableID]
-	if item.ColSize == nil {
+	if item.ColSize == nil && colSize != nil {
 		item.ColSize = make(map[int64]int64)
 	}
 	item.Delta += delta
@@ -152,7 +155,8 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
-	RetryLimit int64
+	RetryLimit          int64
+	DisableTxnAutoRetry bool
 	// UsersLock is a lock for user defined variables.
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
@@ -205,8 +209,8 @@ type SessionVars struct {
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
 
-	// PlanCacheEnabled stores the global config "plan-cache-enabled", and it will be only updated in tests.
-	PlanCacheEnabled bool
+	// PlanColumnID is the unique id for column when building plan.
+	PlanColumnID int64
 
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
@@ -250,7 +254,7 @@ type SessionVars struct {
 
 	// CurrInsertValues is used to record current ValuesExpr's values.
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-	CurrInsertValues interface{}
+	CurrInsertValues chunk.Row
 
 	// Per-connection time zones. Each client that connects has its own time zone setting, given by the session time_zone variable.
 	// See https://dev.mysql.com/doc/refman/5.7/en/time-zone-support.html
@@ -260,8 +264,8 @@ type SessionVars struct {
 
 	/* TiDB system variables */
 
-	// ImportingData is true when importing data.
-	ImportingData bool
+	// LightningMode is true when the lightning use the kvencoder to transfer sql to raw kv.
+	LightningMode bool
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
@@ -278,6 +282,12 @@ type SessionVars struct {
 
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in planner.
 	OptimizerSelectivityLevel int
+
+	// EnableTablePartition enables table partition feature.
+	EnableTablePartition bool
+
+	// DDLReorgPriority is the operation priority of adding indices.
+	DDLReorgPriority int
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
@@ -303,16 +313,21 @@ func NewSessionVars() *SessionVars {
 		AllowAggPushDown:          false,
 		OptimizerSelectivityLevel: DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                DefTiDBRetryLimit,
+		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
+		DDLReorgPriority:          kv.PriorityLow,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
 		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
 		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
+		ProjectionConcurrency:      DefTiDBProjectionConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
+		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
+		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
 	}
 	vars.MemQuota = MemQuota{
-		MemQuotaQuery:             DefTiDBMemQuotaQuery,
+		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
 		MemQuotaHashJoin:          DefTiDBMemQuotaHashJoin,
 		MemQuotaMergeJoin:         DefTiDBMemQuotaMergeJoin,
 		MemQuotaSort:              DefTiDBMemQuotaSort,
@@ -333,7 +348,6 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableStreaming = "0"
 	}
-	vars.PlanCacheEnabled = config.GetGlobalConfig().PlanCache.Enabled
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 	return vars
 }
@@ -345,9 +359,15 @@ func (s *SessionVars) GetWriteStmtBufs() *WriteStmtBufs {
 
 // CleanBuffers cleans the temporary bufs
 func (s *SessionVars) CleanBuffers() {
-	if !s.ImportingData {
+	if !s.LightningMode {
 		s.GetWriteStmtBufs().clean()
 	}
+}
+
+// AllocPlanColumnID allocates column id for planner.
+func (s *SessionVars) AllocPlanColumnID() int64 {
+	s.PlanColumnID++
+	return s.PlanColumnID
 }
 
 // GetCharsetInfo gets charset and collation for current context.
@@ -403,11 +423,11 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 	return s.preparedStmtID
 }
 
-// GetTimeZone returns the value of time_zone session variable.
-func (s *SessionVars) GetTimeZone() *time.Location {
+// Location returns the value of time_zone session variable. If it is nil, then return time.Local.
+func (s *SessionVars) Location() *time.Location {
 	loc := s.TimeZone
 	if loc == nil {
-		loc = time.Local
+		loc = timeutil.SystemLocation()
 	}
 	return loc
 }
@@ -437,6 +457,20 @@ func (s *SessionVars) deleteSystemVar(name string) error {
 	}
 	delete(s.systems, name)
 	return nil
+}
+
+func (s *SessionVars) setDDLReorgPriority(val string) {
+	val = strings.ToLower(val)
+	switch val {
+	case "priority_low":
+		s.DDLReorgPriority = kv.PriorityLow
+	case "priority_normal":
+		s.DDLReorgPriority = kv.PriorityNormal
+	case "priority_high":
+		s.DDLReorgPriority = kv.PriorityHigh
+	default:
+		s.DDLReorgPriority = kv.PriorityLow
+	}
 }
 
 // SetSystemVar sets the value of a system variable.
@@ -472,8 +506,6 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		if isAutocommit {
 			s.SetStatusFlag(mysql.ServerStatusInTrans, false)
 		}
-	case TiDBImportingData:
-		s.ImportingData = TiDBOptOn(val)
 	case TiDBSkipUTF8Check:
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
@@ -490,6 +522,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:
 		s.HashJoinConcurrency = tidbOptPositiveInt32(val, DefTiDBHashJoinConcurrency)
+	case TiDBProjectionConcurrency:
+		s.ProjectionConcurrency = tidbOptInt64(val, DefTiDBProjectionConcurrency)
+	case TiDBHashAggPartialConcurrency:
+		s.HashAggPartialConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggPartialConcurrency)
+	case TiDBHashAggFinalConcurrency:
+		s.HashAggFinalConcurrency = tidbOptPositiveInt32(val, DefTiDBHashAggFinalConcurrency)
 	case TiDBDistSQLScanConcurrency:
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
@@ -507,7 +545,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
 	case TIDBMemQuotaQuery:
-		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
+		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
 	case TIDBMemQuotaMergeJoin:
@@ -526,10 +564,18 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBRetryLimit:
 		s.RetryLimit = tidbOptInt64(val, DefTiDBRetryLimit)
+	case TiDBDisableTxnAutoRetry:
+		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
+	case TiDBEnableTablePartition:
+		s.EnableTablePartition = TiDBOptOn(val)
+	case TiDBDDLReorgWorkerCount:
+		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
+	case TiDBDDLReorgPriority:
+		s.setDDLReorgPriority(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -548,9 +594,10 @@ const (
 
 // TableDelta stands for the changed count for one table.
 type TableDelta struct {
-	Delta   int64
-	Count   int64
-	ColSize map[int64]int64
+	Delta    int64
+	Count    int64
+	ColSize  map[int64]int64
+	InitTime time.Time // InitTime is the time that this delta is generated.
 }
 
 // Concurrency defines concurrency values.
@@ -566,6 +613,15 @@ type Concurrency struct {
 
 	// HashJoinConcurrency is the number of concurrent hash join outer worker.
 	HashJoinConcurrency int
+
+	// ProjectionConcurrency is the number of concurrent projection worker.
+	ProjectionConcurrency int64
+
+	// HashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
+	HashAggPartialConcurrency int
+
+	// HashAggPartialConcurrency is the number of concurrent hash aggregation final worker.
+	HashAggFinalConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int

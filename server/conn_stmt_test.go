@@ -17,6 +17,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/types"
 )
 
 func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
@@ -32,6 +33,40 @@ func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
 		err    error
 		expect interface{}
 	}{
+		// Tests for int overflow
+		{
+			args{
+				make([]interface{}, 1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{1, 0},
+				[]byte{0xff},
+			},
+			nil,
+			int8(-1),
+		},
+		{
+			args{
+				make([]interface{}, 1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{2, 0},
+				[]byte{0xff, 0xff},
+			},
+			nil,
+			int16(-1),
+		},
+		{
+			args{
+				make([]interface{}, 1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{3, 0},
+				[]byte{0xff, 0xff, 0xff, 0xff},
+			},
+			nil,
+			int32(-1),
+		},
 		// Tests for date/datetime/timestamp
 		{
 			args{
@@ -86,7 +121,7 @@ func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
 				[]byte{0x00},
 			},
 			nil,
-			"0",
+			types.ZeroDatetimeStr,
 		},
 		// Tests for time
 		{
@@ -159,7 +194,30 @@ func (ts ConnTestSuite) TestParseStmtArgs(c *C) {
 	}
 	for _, tt := range tests {
 		err := parseStmtArgs(tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues)
-		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue)
+		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("err %v", err))
 		c.Assert(tt.args.args[0], Equals, tt.expect)
+	}
+}
+
+func (ts ConnTestSuite) TestParseStmtFetchCmd(c *C) {
+	tests := []struct {
+		arg       []byte
+		stmtID    uint32
+		fetchSize uint32
+		err       error
+	}{
+		{[]byte{3, 0, 0, 0, 50, 0, 0, 0}, 3, 50, nil},
+		{[]byte{5, 0, 0, 0, 232, 3, 0, 0}, 5, 1000, nil},
+		{[]byte{5, 0, 0, 0, 0, 8, 0, 0}, 5, maxFetchSize, nil},
+		{[]byte{5, 0, 0}, 0, 0, mysql.ErrMalformPacket},
+		{[]byte{1, 0, 0, 0, 3, 2, 0, 0, 3, 5, 6}, 0, 0, mysql.ErrMalformPacket},
+		{[]byte{}, 0, 0, mysql.ErrMalformPacket},
+	}
+
+	for _, t := range tests {
+		stmtID, fetchSize, err := parseStmtFetchCmd([]byte(t.arg))
+		c.Assert(stmtID, Equals, t.stmtID)
+		c.Assert(fetchSize, Equals, t.fetchSize)
+		c.Assert(err, Equals, t.err)
 	}
 }

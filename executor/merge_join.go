@@ -14,11 +14,11 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -32,9 +32,9 @@ import (
 type MergeJoinExec struct {
 	baseExecutor
 
-	stmtCtx         *stmtctx.StatementContext
-	compareFuncs    []chunk.CompareFunc
-	resultGenerator joinResultGenerator
+	stmtCtx      *stmtctx.StatementContext
+	compareFuncs []chunk.CompareFunc
+	joiner       joiner
 
 	prepared bool
 	outerIdx int
@@ -44,6 +44,8 @@ type MergeJoinExec struct {
 
 	innerRows     []chunk.Row
 	innerIter4Row chunk.Iterator
+
+	childrenResults []*chunk.Chunk
 
 	memTracker *memory.Tracker
 }
@@ -56,8 +58,9 @@ type mergeJoinOuterTable struct {
 	chk      *chunk.Chunk
 	selected []bool
 
-	iter *chunk.Iterator4Chunk
-	row  chunk.Row
+	iter     *chunk.Iterator4Chunk
+	row      chunk.Row
+	hasMatch bool
 }
 
 // mergeJoinInnerTable represents the inner table of merge join.
@@ -129,23 +132,39 @@ func (t *mergeJoinInnerTable) rowsWithSameKey() ([]chunk.Row, error) {
 }
 
 func (t *mergeJoinInnerTable) nextRow() (chunk.Row, error) {
-	if t.curRow == t.curIter.End() {
-		t.reallocReaderResult()
-		oldMemUsage := t.curResult.MemoryUsage()
-		err := t.reader.Next(t.ctx, t.curResult)
-		// error happens or no more data.
-		if err != nil || t.curResult.NumRows() == 0 {
-			t.curRow = t.curIter.End()
-			return t.curRow, errors.Trace(err)
+	for {
+		if t.curRow == t.curIter.End() {
+			t.reallocReaderResult()
+			oldMemUsage := t.curResult.MemoryUsage()
+			err := t.reader.Next(t.ctx, t.curResult)
+			// error happens or no more data.
+			if err != nil || t.curResult.NumRows() == 0 {
+				t.curRow = t.curIter.End()
+				return t.curRow, errors.Trace(err)
+			}
+			newMemUsage := t.curResult.MemoryUsage()
+			t.memTracker.Consume(newMemUsage - oldMemUsage)
+			t.curRow = t.curIter.Begin()
 		}
-		newMemUsage := t.curResult.MemoryUsage()
-		t.memTracker.Consume(newMemUsage - oldMemUsage)
-		t.curRow = t.curIter.Begin()
+
+		result := t.curRow
+		t.curResultInUse = true
+		t.curRow = t.curIter.Next()
+
+		if !t.hasNullInJoinKey(result) {
+			return result, nil
+		}
 	}
-	result := t.curRow
-	t.curResultInUse = true
-	t.curRow = t.curIter.Next()
-	return result, nil
+}
+
+func (t *mergeJoinInnerTable) hasNullInJoinKey(row chunk.Row) bool {
+	for _, col := range t.joinKeys {
+		ordinal := col.Index
+		if row.IsNull(ordinal) {
+			return true
+		}
+	}
+	return false
 }
 
 // reallocReaderResult resets "t.curResult" to an empty Chunk to buffer the result of "t.reader".
@@ -177,6 +196,7 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
 	e.memTracker.Detach()
+	e.childrenResults = nil
 	e.memTracker = nil
 
 	return errors.Trace(e.baseExecutor.Close())
@@ -191,6 +211,11 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 	e.prepared = false
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaMergeJoin)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+
+	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
+	for _, child := range e.children {
+		e.childrenResults = append(e.childrenResults, child.newChunk())
+	}
 
 	e.innerTable.memTracker = memory.NewTracker("innerTable", -1)
 	e.innerTable.memTracker.AttachTo(e.memTracker)
@@ -274,12 +299,13 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 		}
 
 		if cmpResult < 0 {
-			err = e.resultGenerator.emit(e.outerTable.row, nil, chk)
+			e.joiner.onMissMatch(e.outerTable.row, chk)
 			if err != nil {
 				return false, errors.Trace(err)
 			}
 
 			e.outerTable.row = e.outerTable.iter.Next()
+			e.outerTable.hasMatch = false
 
 			if chk.NumRows() == e.maxChunkSize {
 				return true, nil
@@ -287,12 +313,16 @@ func (e *MergeJoinExec) joinToChunk(ctx context.Context, chk *chunk.Chunk) (hasM
 			continue
 		}
 
-		err = e.resultGenerator.emit(e.outerTable.row, e.innerIter4Row, chk)
+		matched, err := e.joiner.tryToMatch(e.outerTable.row, e.innerIter4Row, chk)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
+		e.outerTable.hasMatch = e.outerTable.hasMatch || matched
 
 		if e.innerIter4Row.Current() == e.innerIter4Row.End() {
+			if !e.outerTable.hasMatch {
+				e.joiner.onMissMatch(e.outerTable.row, chk)
+			}
 			e.outerTable.row = e.outerTable.iter.Next()
 			e.innerIter4Row.Begin()
 		}

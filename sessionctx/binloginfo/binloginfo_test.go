@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
@@ -77,6 +77,7 @@ var _ = Suite(&testBinlogSuite{})
 
 type testBinlogSuite struct {
 	store    kv.Storage
+	domain   *domain.Domain
 	unixFile string
 	serv     *grpc.Server
 	pump     *mockBinlogPump
@@ -105,14 +106,14 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(clientCon, NotNil)
 	tk := testkit.NewTestKit(c, s.store)
-	_, err = session.BootstrapSession(store)
+	s.domain, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tk.MustExec("use test")
 	sessionDomain := domain.GetDomain(tk.Se.(sessionctx.Context))
 	s.ddl = sessionDomain.DDL()
 
 	s.client = binlog.NewPumpClient(clientCon)
-	s.ddl.WorkerVars().BinlogClient = s.client
+	s.ddl.SetBinlogClient(s.client)
 }
 
 func (s *testBinlogSuite) TearDownSuite(c *C) {
@@ -120,6 +121,7 @@ func (s *testBinlogSuite) TearDownSuite(c *C) {
 	s.serv.Stop()
 	os.Remove(s.unixFile)
 	s.store.Close()
+	s.domain.Close()
 }
 
 func (s *testBinlogSuite) TestBinlog(c *C) {
@@ -375,7 +377,7 @@ func (s *testBinlogSuite) TestZIgnoreError(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.Se.GetSessionVars().BinlogClient = s.client
-	tk.MustExec("drop table if exists ignore_error")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 
 	binloginfo.SetIgnoreError(true)
@@ -392,4 +394,28 @@ func (s *testBinlogSuite) TestZIgnoreError(c *C) {
 	s.pump.mu.Unlock()
 	binloginfo.DisableSkipBinlogFlag()
 	binloginfo.SetIgnoreError(false)
+}
+
+func (s *testBinlogSuite) TestPartitionedTable(c *C) {
+	// This test checks partitioned table write binlog with table ID, rather than partition ID.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.Se.GetSessionVars().BinlogClient = s.client
+	tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int) partition by range (id) (
+			partition p0 values less than (1),
+			partition p1 values less than (4),
+			partition p2 values less than (7),
+			partition p3 values less than (10))`)
+	tids := make([]int64, 0, 10)
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t values (?)", i)
+		prewriteVal := getLatestBinlogPrewriteValue(c, s.pump)
+		tids = append(tids, prewriteVal.Mutations[0].TableId)
+	}
+	c.Assert(len(tids), Equals, 10)
+	for i := 1; i < 10; i++ {
+		c.Assert(tids[i], Equals, tids[0])
+	}
 }

@@ -41,17 +41,17 @@ func (a *LogOnExceed) Action(t *Tracker) {
 	defer a.mutex.Unlock()
 	if !a.acted {
 		a.acted = true
-		log.Warnf(errMemExceedThreshold.GenByArgs(t.label, t.BytesConsumed(), t.bytesLimit, t.String()).Error())
+		log.Warnf(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.bytesLimit, t.String()).Error())
 	}
 }
 
-// PanicOnExceed panics when when memory usage exceeds memory quota.
+// PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
 	mutex sync.Mutex // For synchronization.
 	acted bool
 }
 
-// Action panics when when memory usage exceeds memory quota.
+// Action panics when memory usage exceeds memory quota.
 func (a *PanicOnExceed) Action(t *Tracker) {
 	a.mutex.Lock()
 	if a.acted {

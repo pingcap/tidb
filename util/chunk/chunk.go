@@ -17,13 +17,10 @@ import (
 	"encoding/binary"
 	"unsafe"
 
-	"github.com/pingcap/tidb/mysql"
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/hack"
 )
-
-var _ types.Row = Row{}
 
 // Chunk stores multiple rows of data in Apache Arrow format.
 // See https://arrow.apache.org/docs/memory_layout.html
@@ -34,6 +31,8 @@ type Chunk struct {
 	// numVirtualRows indicates the number of virtual rows, which have zero column.
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int
+	// capacity indicates the max number of rows this chunk can hold.
+	capacity int
 }
 
 // Capacity constants.
@@ -43,13 +42,54 @@ const (
 
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
 func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
+	return New(fields, cap, cap) //FIXME: in following PR.
+}
+
+// New creates a new chunk.
+//  cap: the limit for the max number of rows.
+//  maxChunkSize: the max limit for the number of rows.
+func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	chk := new(Chunk)
 	chk.columns = make([]*column, 0, len(fields))
-	chk.numVirtualRows = 0
+	chk.capacity = mathutil.Min(cap, maxChunkSize)
 	for _, f := range fields {
-		chk.addColumnByFieldType(f, cap)
+		elemLen := getFixedLen(f)
+		if elemLen == varElemLen {
+			chk.columns = append(chk.columns, newVarLenColumn(chk.capacity, nil))
+		} else {
+			chk.columns = append(chk.columns, newFixedLenColumn(elemLen, chk.capacity))
+		}
 	}
+	chk.numVirtualRows = 0
 	return chk
+}
+
+// Renew creates a new Chunk based on an existing Chunk. The newly created Chunk
+// has the same data schema with the old Chunk. The capacity of the new Chunk
+// might be doubled based on the capacity of the old Chunk and the maxChunkSize.
+//  chk: old chunk(often used in previous call).
+//  maxChunkSize: the limit for the max number of rows.
+func Renew(chk *Chunk, maxChunkSize int) *Chunk {
+	newCap := reCalcCapacity(chk, maxChunkSize)
+	newChk := new(Chunk)
+	newChk.columns = renewColumns(chk.columns, newCap)
+	newChk.numVirtualRows = 0
+	newChk.capacity = newCap
+	return newChk
+}
+
+// renewColumns creates the columns of a Chunk. The capacity of the newly
+// created columns is equal to cap.
+func renewColumns(oldCol []*column, cap int) []*column {
+	columns := make([]*column, 0, len(oldCol))
+	for _, col := range oldCol {
+		if col.isFixed() {
+			columns = append(columns, newFixedLenColumn(len(col.elemBuf), cap))
+		} else {
+			columns = append(columns, newVarLenColumn(cap, col))
+		}
+	}
+	return columns
 }
 
 // MemoryUsage returns the total memory usage of a Chunk in B.
@@ -63,40 +103,28 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 	return
 }
 
-// addFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
-func (c *Chunk) addFixedLenColumn(elemLen, initCap int) {
-	c.columns = append(c.columns, &column{
+// newFixedLenColumn creates a fixed length column with elemLen and initial data capacity.
+func newFixedLenColumn(elemLen, cap int) *column {
+	return &column{
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, initCap*elemLen),
-		nullBitmap: make([]byte, 0, initCap>>3),
-	})
+		data:       make([]byte, 0, cap*elemLen),
+		nullBitmap: make([]byte, 0, cap>>3),
+	}
 }
 
-// addVarLenColumn adds a variable length column with initial data capacity.
-func (c *Chunk) addVarLenColumn(initCap int) {
-	c.columns = append(c.columns, &column{
-		offsets:    make([]int32, 1, initCap+1),
-		data:       make([]byte, 0, initCap*4),
-		nullBitmap: make([]byte, 0, initCap>>3),
-	})
-}
-
-// addColumnByFieldType adds a column by field type.
-func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
-	switch fieldTp.Tp {
-	case mysql.TypeFloat:
-		c.addFixedLenColumn(4, initCap)
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeDouble, mysql.TypeYear:
-		c.addFixedLenColumn(8, initCap)
-	case mysql.TypeDuration:
-		c.addFixedLenColumn(16, initCap)
-	case mysql.TypeNewDecimal:
-		c.addFixedLenColumn(types.MyDecimalStructSize, initCap)
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		c.addFixedLenColumn(16, initCap)
-	default:
-		c.addVarLenColumn(initCap)
+// newVarLenColumn creates a variable length column with initial data capacity.
+func newVarLenColumn(cap int, old *column) *column {
+	estimatedElemLen := 8
+	// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
+	// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
+	// but in the following Next call we estimate the length as AVG x 1.125 elemLen of the previous call.
+	if old != nil && old.length != 0 {
+		estimatedElemLen = (len(old.data) + len(old.data)/8) / old.length
+	}
+	return &column{
+		offsets:    make([]int32, 1, cap+1),
+		data:       make([]byte, 0, cap*estimatedElemLen),
+		nullBitmap: make([]byte, 0, cap>>3),
 	}
 }
 
@@ -125,10 +153,41 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
-	for _, c := range c.columns {
-		c.reset()
+	for _, col := range c.columns {
+		col.reset()
 	}
 	c.numVirtualRows = 0
+}
+
+// GrowAndReset resets the Chunk and doubles the capacity of the Chunk.
+// The doubled capacity should not be larger than maxChunkSize.
+// TODO: this method will be used in following PR.
+func (c *Chunk) GrowAndReset(maxChunkSize int) {
+	if c.columns == nil {
+		return
+	}
+	newCap := reCalcCapacity(c, maxChunkSize)
+	if newCap <= c.capacity {
+		c.Reset()
+		return
+	}
+	c.capacity = newCap
+	c.columns = renewColumns(c.columns, newCap)
+	c.numVirtualRows = 0
+}
+
+// reCalcCapacity calculates the capacity for another Chunk based on the current
+// Chunk. The new capacity is doubled only when the current Chunk is full.
+func reCalcCapacity(c *Chunk, maxChunkSize int) int {
+	if c.NumRows() < c.capacity {
+		return c.capacity
+	}
+	return mathutil.Min(c.capacity*2, maxChunkSize)
+}
+
+// Capacity returns the capacity of the Chunk.
+func (c *Chunk) Capacity() int {
+	return c.capacity
 }
 
 // NumCols returns the number of columns in the chunk.
@@ -211,7 +270,17 @@ func (c *Chunk) TruncateTo(numRows int) {
 			}
 		}
 		col.length = numRows
-		col.nullBitmap = col.nullBitmap[:(col.length>>3)+1]
+		bitmapLen := (col.length + 7) / 8
+		col.nullBitmap = col.nullBitmap[:bitmapLen]
+		if col.length%8 != 0 {
+			// When we append null, we simply increment the nullCount,
+			// so we need to clear the unused bits in the last bitmap byte.
+			lastByte := col.nullBitmap[bitmapLen-1]
+			unusedBitsLen := 8 - uint(col.length%8)
+			lastByte <<= unusedBitsLen
+			lastByte >>= unusedBitsLen
+			col.nullBitmap[bitmapLen-1] = lastByte
+		}
 	}
 	c.numVirtualRows = numRows
 }
@@ -312,105 +381,6 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 	}
 }
 
-type column struct {
-	length     int
-	nullCount  int
-	nullBitmap []byte
-	offsets    []int32
-	data       []byte
-	elemBuf    []byte
-}
-
-func (c *column) isFixed() bool {
-	return c.elemBuf != nil
-}
-
-func (c *column) reset() {
-	c.length = 0
-	c.nullCount = 0
-	c.nullBitmap = c.nullBitmap[:0]
-	if len(c.offsets) > 0 {
-		// The first offset is always 0, it makes slicing the data easier, we need to keep it.
-		c.offsets = c.offsets[:1]
-	}
-	c.data = c.data[:0]
-}
-
-func (c *column) isNull(rowIdx int) bool {
-	nullByte := c.nullBitmap[rowIdx/8]
-	return nullByte&(1<<(uint(rowIdx)&7)) == 0
-}
-
-func (c *column) appendNullBitmap(on bool) {
-	idx := c.length >> 3
-	if idx >= len(c.nullBitmap) {
-		c.nullBitmap = append(c.nullBitmap, 0)
-	}
-	if on {
-		pos := uint(c.length) & 7
-		c.nullBitmap[idx] |= byte(1 << pos)
-	} else {
-		c.nullCount++
-	}
-}
-
-func (c *column) appendNull() {
-	c.appendNullBitmap(false)
-	if c.isFixed() {
-		c.data = append(c.data, c.elemBuf...)
-	} else {
-		c.offsets = append(c.offsets, c.offsets[c.length])
-	}
-	c.length++
-}
-
-func (c *column) finishAppendFixed() {
-	c.data = append(c.data, c.elemBuf...)
-	c.appendNullBitmap(true)
-	c.length++
-}
-
-func (c *column) appendInt64(i int64) {
-	*(*int64)(unsafe.Pointer(&c.elemBuf[0])) = i
-	c.finishAppendFixed()
-}
-
-func (c *column) appendUint64(u uint64) {
-	*(*uint64)(unsafe.Pointer(&c.elemBuf[0])) = u
-	c.finishAppendFixed()
-}
-
-func (c *column) appendFloat32(f float32) {
-	*(*float32)(unsafe.Pointer(&c.elemBuf[0])) = f
-	c.finishAppendFixed()
-}
-
-func (c *column) appendFloat64(f float64) {
-	*(*float64)(unsafe.Pointer(&c.elemBuf[0])) = f
-	c.finishAppendFixed()
-}
-
-func (c *column) finishAppendVar() {
-	c.appendNullBitmap(true)
-	c.offsets = append(c.offsets, int32(len(c.data)))
-	c.length++
-}
-
-func (c *column) appendString(str string) {
-	c.data = append(c.data, str...)
-	c.finishAppendVar()
-}
-
-func (c *column) appendBytes(b []byte) {
-	c.data = append(c.data, b...)
-	c.finishAppendVar()
-}
-
-func (c *column) appendTime(t types.Time) {
-	writeTime(c.elemBuf, t)
-	c.finishAppendFixed()
-}
-
 func writeTime(buf []byte, t types.Time) {
 	binary.BigEndian.PutUint16(buf, uint16(t.Time.Year()))
 	buf[2] = uint8(t.Time.Month())
@@ -421,91 +391,6 @@ func writeTime(buf []byte, t types.Time) {
 	binary.BigEndian.PutUint32(buf[8:], uint32(t.Time.Microsecond()))
 	buf[12] = t.Type
 	buf[13] = uint8(t.Fsp)
-}
-
-func (c *column) appendDuration(dur types.Duration) {
-	*(*types.Duration)(unsafe.Pointer(&c.elemBuf[0])) = dur
-	c.finishAppendFixed()
-}
-
-func (c *column) appendMyDecimal(dec *types.MyDecimal) {
-	*(*types.MyDecimal)(unsafe.Pointer(&c.elemBuf[0])) = *dec
-	c.finishAppendFixed()
-}
-
-func (c *column) appendNameValue(name string, val uint64) {
-	var buf [8]byte
-	*(*uint64)(unsafe.Pointer(&buf[0])) = val
-	c.data = append(c.data, buf[:]...)
-	c.data = append(c.data, name...)
-	c.finishAppendVar()
-}
-
-func (c *column) appendJSON(j json.BinaryJSON) {
-	c.data = append(c.data, j.TypeCode)
-	c.data = append(c.data, j.Value...)
-	c.finishAppendVar()
-}
-
-// Row represents a row of data, can be used to assess values.
-type Row struct {
-	c   *Chunk
-	idx int
-}
-
-// Idx returns the row index of Chunk.
-func (r Row) Idx() int {
-	return r.idx
-}
-
-// Len returns the number of values in the row.
-func (r Row) Len() int {
-	return r.c.NumCols()
-}
-
-// GetInt64 returns the int64 value with the colIdx.
-func (r Row) GetInt64(colIdx int) int64 {
-	col := r.c.columns[colIdx]
-	return *(*int64)(unsafe.Pointer(&col.data[r.idx*8]))
-}
-
-// GetUint64 returns the uint64 value with the colIdx.
-func (r Row) GetUint64(colIdx int) uint64 {
-	col := r.c.columns[colIdx]
-	return *(*uint64)(unsafe.Pointer(&col.data[r.idx*8]))
-}
-
-// GetFloat32 returns the float32 value with the colIdx.
-func (r Row) GetFloat32(colIdx int) float32 {
-	col := r.c.columns[colIdx]
-	return *(*float32)(unsafe.Pointer(&col.data[r.idx*4]))
-}
-
-// GetFloat64 returns the float64 value with the colIdx.
-func (r Row) GetFloat64(colIdx int) float64 {
-	col := r.c.columns[colIdx]
-	return *(*float64)(unsafe.Pointer(&col.data[r.idx*8]))
-}
-
-// GetString returns the string value with the colIdx.
-func (r Row) GetString(colIdx int) string {
-	col := r.c.columns[colIdx]
-	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	return hack.String(col.data[start:end])
-}
-
-// GetBytes returns the bytes value with the colIdx.
-func (r Row) GetBytes(colIdx int) []byte {
-	col := r.c.columns[colIdx]
-	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	return col.data[start:end]
-}
-
-// GetTime returns the Time value with the colIdx.
-// TODO: use Time structure directly.
-func (r Row) GetTime(colIdx int) types.Time {
-	col := r.c.columns[colIdx]
-	return readTime(col.data[r.idx*16:])
 }
 
 func readTime(buf []byte) types.Time {
@@ -523,127 +408,4 @@ func readTime(buf []byte) types.Time {
 		Type: tp,
 		Fsp:  fsp,
 	}
-}
-
-// GetDuration returns the Duration value with the colIdx.
-func (r Row) GetDuration(colIdx int) types.Duration {
-	col := r.c.columns[colIdx]
-	return *(*types.Duration)(unsafe.Pointer(&col.data[r.idx*16]))
-}
-
-func (r Row) getNameValue(colIdx int) (string, uint64) {
-	col := r.c.columns[colIdx]
-	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	if start == end {
-		return "", 0
-	}
-	val := *(*uint64)(unsafe.Pointer(&col.data[start]))
-	name := hack.String(col.data[start+8 : end])
-	return name, val
-}
-
-// GetEnum returns the Enum value with the colIdx.
-func (r Row) GetEnum(colIdx int) types.Enum {
-	name, val := r.getNameValue(colIdx)
-	return types.Enum{Name: name, Value: val}
-}
-
-// GetSet returns the Set value with the colIdx.
-func (r Row) GetSet(colIdx int) types.Set {
-	name, val := r.getNameValue(colIdx)
-	return types.Set{Name: name, Value: val}
-}
-
-// GetMyDecimal returns the MyDecimal value with the colIdx.
-func (r Row) GetMyDecimal(colIdx int) *types.MyDecimal {
-	col := r.c.columns[colIdx]
-	return (*types.MyDecimal)(unsafe.Pointer(&col.data[r.idx*types.MyDecimalStructSize]))
-}
-
-// GetJSON returns the JSON value with the colIdx.
-func (r Row) GetJSON(colIdx int) json.BinaryJSON {
-	col := r.c.columns[colIdx]
-	start, end := col.offsets[r.idx], col.offsets[r.idx+1]
-	return json.BinaryJSON{TypeCode: col.data[start], Value: col.data[start+1 : end]}
-}
-
-// GetDatumRow converts chunk.Row to types.DatumRow.
-// Keep in mind that GetDatumRow has a reference to r.c, which is a chunk,
-// this function works only if the underlying chunk is valid or unchanged.
-func (r Row) GetDatumRow(fields []*types.FieldType) types.DatumRow {
-	datumRow := make(types.DatumRow, 0, r.c.NumCols())
-	for colIdx := 0; colIdx < r.c.NumCols(); colIdx++ {
-		datum := r.GetDatum(colIdx, fields[colIdx])
-		datumRow = append(datumRow, datum)
-	}
-	return datumRow
-}
-
-// GetDatum implements the types.Row interface.
-func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
-	var d types.Datum
-	switch tp.Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		if !r.IsNull(colIdx) {
-			if mysql.HasUnsignedFlag(tp.Flag) {
-				d.SetUint64(r.GetUint64(colIdx))
-			} else {
-				d.SetInt64(r.GetInt64(colIdx))
-			}
-		}
-	case mysql.TypeYear:
-		// FIXBUG: because insert type of TypeYear is definite int64, so we regardless of the unsigned flag.
-		if !r.IsNull(colIdx) {
-			d.SetInt64(r.GetInt64(colIdx))
-		}
-	case mysql.TypeFloat:
-		if !r.IsNull(colIdx) {
-			d.SetFloat32(r.GetFloat32(colIdx))
-		}
-	case mysql.TypeDouble:
-		if !r.IsNull(colIdx) {
-			d.SetFloat64(r.GetFloat64(colIdx))
-		}
-	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
-		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		if !r.IsNull(colIdx) {
-			d.SetBytes(r.GetBytes(colIdx))
-		}
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		if !r.IsNull(colIdx) {
-			d.SetMysqlTime(r.GetTime(colIdx))
-		}
-	case mysql.TypeDuration:
-		if !r.IsNull(colIdx) {
-			d.SetMysqlDuration(r.GetDuration(colIdx))
-		}
-	case mysql.TypeNewDecimal:
-		if !r.IsNull(colIdx) {
-			d.SetMysqlDecimal(r.GetMyDecimal(colIdx))
-			d.SetLength(tp.Flen)
-			d.SetFrac(tp.Decimal)
-		}
-	case mysql.TypeEnum:
-		if !r.IsNull(colIdx) {
-			d.SetMysqlEnum(r.GetEnum(colIdx))
-		}
-	case mysql.TypeSet:
-		if !r.IsNull(colIdx) {
-			d.SetMysqlSet(r.GetSet(colIdx))
-		}
-	case mysql.TypeBit:
-		if !r.IsNull(colIdx) {
-			d.SetMysqlBit(r.GetBytes(colIdx))
-		}
-	case mysql.TypeJSON:
-		if !r.IsNull(colIdx) {
-			d.SetMysqlJSON(r.GetJSON(colIdx))
-		}
-	}
-	return d
-}
-
-// IsNull implements the types.Row interface.
-func (r Row) IsNull(colIdx int) bool {
-	return r.c.columns[colIdx].isNull(r.idx)
 }

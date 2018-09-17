@@ -16,6 +16,7 @@ package tikv
 import (
 	"errors"
 	"fmt"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -124,7 +125,6 @@ func (s *testRegionCacheSuite) TestUpdateLeader(c *C) {
 	r := s.getRegion(c, []byte("a"))
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
-	c.Assert(r.unreachableStores, HasLen, 0)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store2))
 }
 
@@ -143,7 +143,6 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	r := s.getRegion(c, []byte("a"))
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
-	c.Assert(r.unreachableStores, HasLen, 0)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(s.store1))
 
 	// tikv-server notifies new leader to pd-server.
@@ -153,7 +152,6 @@ func (s *testRegionCacheSuite) TestUpdateLeader2(c *C) {
 	r = s.getRegion(c, []byte("a"))
 	c.Assert(r, NotNil)
 	c.Assert(r.GetID(), Equals, s.region1)
-	c.Assert(r.unreachableStores, HasLen, 0)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(store3))
 }
 
@@ -182,7 +180,6 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	c.Assert(addr, Equals, "")
 	r = s.getRegion(c, []byte("a"))
 	// pd-server should return the new leader.
-	c.Assert(r.unreachableStores, HasLen, 0)
 	c.Assert(s.getAddr(c, []byte("a")), Equals, s.storeAddr(store3))
 }
 
@@ -245,18 +242,17 @@ func (s *testRegionCacheSuite) TestReconnect(c *C) {
 
 func (s *testRegionCacheSuite) TestRequestFail(c *C) {
 	region := s.getRegion(c, []byte("a"))
-	c.Assert(region.unreachableStores, HasLen, 0)
 
 	ctx, _ := s.cache.GetRPCContext(s.bo, region.VerID())
-	s.cache.OnRequestFail(ctx, errors.New("test error"))
+	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
+	c.Assert(s.cache.mu.regions, HasLen, 0)
 	region = s.getRegion(c, []byte("a"))
-	c.Assert(region.unreachableStores, DeepEquals, []uint64{s.store1})
-
+	c.Assert(s.cache.mu.regions, HasLen, 1)
 	ctx, _ = s.cache.GetRPCContext(s.bo, region.VerID())
-	s.cache.OnRequestFail(ctx, errors.New("test error"))
+	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
+	c.Assert(len(s.cache.mu.regions), Equals, 0)
 	region = s.getRegion(c, []byte("a"))
-	// Out of range of Peers, so get Region again and pick Stores[0] as leader.
-	c.Assert(region.unreachableStores, HasLen, 0)
+	c.Assert(s.cache.mu.regions, HasLen, 1)
 }
 
 func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
@@ -277,11 +273,58 @@ func (s *testRegionCacheSuite) TestRequestFail2(c *C) {
 	ctx, _ := s.cache.GetRPCContext(s.bo, loc1.Region)
 	c.Assert(s.cache.storeMu.stores, HasLen, 1)
 	s.checkCache(c, 2)
-	s.cache.OnRequestFail(ctx, errors.New("test error"))
+	s.cache.DropStoreOnSendRequestFail(ctx, errors.New("test error"))
 	// Both region2 and store should be dropped from cache.
 	c.Assert(s.cache.storeMu.stores, HasLen, 0)
 	c.Assert(s.cache.searchCachedRegion([]byte("x")), IsNil)
-	s.checkCache(c, 1)
+	s.checkCache(c, 0)
+}
+
+func (s *testRegionCacheSuite) TestDropStoreOnSendRequestFail(c *C) {
+	regionCnt := 999
+	cluster := createClusterWithStoresAndRegions(regionCnt)
+
+	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
+	loadRegionsToCache(cache, regionCnt)
+	c.Assert(len(cache.mu.regions), Equals, regionCnt)
+
+	bo := NewBackoffer(context.Background(), 1)
+	loc, err := cache.LocateKey(bo, []byte{})
+	c.Assert(err, IsNil)
+
+	// Drop the regions on one store, should drop only 1/3 of the regions.
+	rpcCtx, err := cache.GetRPCContext(bo, loc.Region)
+	c.Assert(err, IsNil)
+	cache.DropStoreOnSendRequestFail(rpcCtx, errors.New("test error"))
+	c.Assert(len(cache.mu.regions), Equals, regionCnt*2/3)
+
+	loadRegionsToCache(cache, regionCnt)
+	c.Assert(len(cache.mu.regions), Equals, regionCnt)
+}
+
+const regionSplitKeyFormat = "t%08d"
+
+func createClusterWithStoresAndRegions(regionCnt int) *mocktikv.Cluster {
+	cluster := mocktikv.NewCluster()
+	_, _, regionID, _ := mocktikv.BootstrapWithMultiStores(cluster, 3)
+	for i := 0; i < regionCnt; i++ {
+		rawKey := []byte(fmt.Sprintf(regionSplitKeyFormat, i))
+		ids := cluster.AllocIDs(4)
+		// Make leaders equally distributed on the 3 stores.
+		storeID := ids[0]
+		peerIDs := ids[1:]
+		leaderPeerID := peerIDs[i%3]
+		cluster.SplitRaw(regionID, storeID, rawKey, peerIDs, leaderPeerID)
+		regionID = ids[0]
+	}
+	return cluster
+}
+
+func loadRegionsToCache(cache *RegionCache, regionCnt int) {
+	for i := 0; i < regionCnt; i++ {
+		rawKey := []byte(fmt.Sprintf(regionSplitKeyFormat, i))
+		cache.LocateKey(NewBackoffer(context.Background(), 1), rawKey)
+	}
 }
 
 func (s *testRegionCacheSuite) TestUpdateStoreAddr(c *C) {
@@ -324,4 +367,36 @@ func (s *testRegionCacheSuite) TestListRegionIDsInCache(c *C) {
 	regionIDs, err = s.cache.ListRegionIDsInKeyRange(s.bo, []byte("a"), []byte("m"))
 	c.Assert(err, IsNil)
 	c.Assert(regionIDs, DeepEquals, []uint64{s.region1, region2})
+}
+
+func BenchmarkOnRequestFail(b *testing.B) {
+	/*
+			This benchmark simulate many concurrent requests call DropStoreOnSendRequestFail method
+			after failed on a store, validate that on this scene, requests don't get blocked on the
+		    RegionCache lock.
+	*/
+	regionCnt := 999
+	cluster := createClusterWithStoresAndRegions(regionCnt)
+	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
+	loadRegionsToCache(cache, regionCnt)
+	bo := NewBackoffer(context.Background(), 1)
+	loc, err := cache.LocateKey(bo, []byte{})
+	if err != nil {
+		b.Fatal(err)
+	}
+	region := cache.getRegionByIDFromCache(loc.Region.id)
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			rpcCtx := &RPCContext{
+				Region: loc.Region,
+				Meta:   region.meta,
+				Peer:   region.peer,
+			}
+			cache.DropStoreOnSendRequestFail(rpcCtx, nil)
+		}
+	})
+	if len(cache.mu.regions) != regionCnt*2/3 {
+		b.Fatal(len(cache.mu.regions))
+	}
 }

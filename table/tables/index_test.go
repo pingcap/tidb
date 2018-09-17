@@ -18,8 +18,10 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
@@ -33,7 +35,8 @@ import (
 var _ = Suite(&testIndexSuite{})
 
 type testIndexSuite struct {
-	s kv.Storage
+	s   kv.Storage
+	dom *domain.Domain
 }
 
 func (s *testIndexSuite) SetUpSuite(c *C) {
@@ -41,9 +44,12 @@ func (s *testIndexSuite) SetUpSuite(c *C) {
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
+	s.dom, err = session.BootstrapSession(store)
+	c.Assert(err, IsNil)
 }
 
 func (s *testIndexSuite) TearDownSuite(c *C) {
+	s.dom.Close()
 	err := s.s.Close()
 	c.Assert(err, IsNil)
 	testleak.AfterTest(c)()
@@ -63,7 +69,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 			},
 		},
 	}
-	index := tables.NewIndex(tblInfo, tblInfo.Indices[0])
+	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	// Test ununiq index.
 	txn, err := s.s.Begin()
@@ -100,7 +106,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(err, IsNil)
 
 	_, _, err = it.Next()
-	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
+	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
 	it.Close()
 
 	_, err = index.Create(mockCtx, txn, values, 0)
@@ -121,14 +127,14 @@ func (s *testIndexSuite) TestIndex(c *C) {
 	c.Assert(hit, IsFalse)
 
 	_, _, err = it.Next()
-	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
+	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
 	it.Close()
 
 	it, err = index.SeekFirst(txn)
 	c.Assert(err, IsNil)
 
 	_, _, err = it.Next()
-	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue)
+	c.Assert(terror.ErrorEqual(err, io.EOF), IsTrue, Commentf("err %v", err))
 	it.Close()
 
 	err = txn.Commit(context.Background())
@@ -148,7 +154,7 @@ func (s *testIndexSuite) TestIndex(c *C) {
 			},
 		},
 	}
-	index = tables.NewIndex(tblInfo, tblInfo.Indices[0])
+	index = tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	// Test uniq index.
 	txn, err = s.s.Begin()
@@ -210,13 +216,18 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 				ID:   2,
 				Name: model.NewCIStr("test"),
 				Columns: []*model.IndexColumn{
-					{},
-					{},
+					{Offset: 1},
+					{Offset: 2},
 				},
 			},
 		},
+		Columns: []*model.ColumnInfo{
+			{Offset: 0},
+			{Offset: 1},
+			{Offset: 2},
+		},
 	}
-	index := tables.NewIndex(tblInfo, tblInfo.Indices[0])
+	index := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
@@ -226,7 +237,7 @@ func (s *testIndexSuite) TestCombineIndexSeek(c *C) {
 	_, err = index.Create(mockCtx, txn, values, 1)
 	c.Assert(err, IsNil)
 
-	index2 := tables.NewIndex(tblInfo, tblInfo.Indices[0])
+	index2 := tables.NewIndex(tblInfo.ID, tblInfo, tblInfo.Indices[0])
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	iter, hit, err := index2.Seek(sc, txn, types.MakeDatums("abc", nil))
 	c.Assert(err, IsNil)

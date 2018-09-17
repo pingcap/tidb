@@ -18,13 +18,14 @@ import (
 	"math"
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 // Error instances.
@@ -158,7 +159,7 @@ func (r *builder) build(expr expression.Expression) []point {
 }
 
 func (r *builder) buildFromConstant(expr *expression.Constant) []point {
-	dt, err := expr.Eval(nil)
+	dt, err := expr.Eval(chunk.Row{})
 	if err != nil {
 		r.err = err
 		return nil
@@ -193,11 +194,16 @@ func (r *builder) buildFromColumn(expr *expression.Column) []point {
 func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
-	var value types.Datum
-	var op string
-	var err error
-	if v, ok := expr.GetArgs()[0].(*expression.Constant); ok {
-		value, err = v.Eval(nil)
+	var (
+		op    string
+		value types.Datum
+		err   error
+	)
+	if _, ok := expr.GetArgs()[0].(*expression.Column); ok {
+		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
+		op = expr.FuncName.L
+	} else {
+		value, err = expr.GetArgs()[0].Eval(chunk.Row{})
 		switch expr.FuncName.L {
 		case ast.GE:
 			op = ast.LE
@@ -210,9 +216,6 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		default:
 			op = expr.FuncName.L
 		}
-	} else {
-		value, err = expr.GetArgs()[1].(*expression.Constant).Eval(nil)
-		op = expr.FuncName.L
 	}
 	if err != nil {
 		return nil
@@ -299,12 +302,12 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
-			r.err = ErrUnsupportedType.Gen("expr:%v is not constant", e)
+			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
 			return fullRange, hasNull
 		}
-		dt, err := v.Eval(nil)
+		dt, err := v.Eval(chunk.Row{})
 		if err != nil {
-			r.err = ErrUnsupportedType.Gen("expr:%v is not evaluated", e)
+			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
 			return fullRange, hasNull
 		}
 		if dt.IsNull() {
@@ -338,7 +341,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
-	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(nil)
+	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(chunk.Row{})
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange
@@ -354,7 +357,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		return []point{startPoint, endPoint}
 	}
 	lowValue := make([]byte, 0, len(pattern))
-	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(nil)
+	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(chunk.Row{})
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange
@@ -455,7 +458,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 		return retRangePoints
 	case ast.Like:
 		// Pattern not like is not supported.
-		r.err = ErrUnsupportedType.Gen("NOT LIKE is not supported.")
+		r.err = ErrUnsupportedType.GenWithStack("NOT LIKE is not supported.")
 		return fullRange
 	case ast.IsNull:
 		startPoint := point{value: types.MinNotNullDatum(), start: true}

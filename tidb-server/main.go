@@ -25,7 +25,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -44,12 +43,12 @@ import (
 	"github.com/pingcap/tidb/store/tikv/gcworker"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/x-server"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
@@ -58,24 +57,25 @@ import (
 
 // Flag Names
 const (
-	nmVersion         = "V"
-	nmConfig          = "config"
-	nmStore           = "store"
-	nmStorePath       = "path"
-	nmHost            = "host"
-	nmPort            = "P"
-	nmSocket          = "socket"
-	nmBinlogSocket    = "binlog-socket"
-	nmRunDDL          = "run-ddl"
-	nmLogLevel        = "L"
-	nmLogFile         = "log-file"
-	nmLogSlowQuery    = "log-slow-query"
-	nmReportStatus    = "report-status"
-	nmStatusPort      = "status"
-	nmMetricsAddr     = "metrics-addr"
-	nmMetricsInterval = "metrics-interval"
-	nmDdlLease        = "lease"
-	nmTokenLimit      = "token-limit"
+	nmVersion          = "V"
+	nmConfig           = "config"
+	nmStore            = "store"
+	nmStorePath        = "path"
+	nmHost             = "host"
+	nmAdvertiseAddress = "advertise-address"
+	nmPort             = "P"
+	nmSocket           = "socket"
+	nmBinlogSocket     = "binlog-socket"
+	nmRunDDL           = "run-ddl"
+	nmLogLevel         = "L"
+	nmLogFile          = "log-file"
+	nmLogSlowQuery     = "log-slow-query"
+	nmReportStatus     = "report-status"
+	nmStatusPort       = "status"
+	nmMetricsAddr      = "metrics-addr"
+	nmMetricsInterval  = "metrics-interval"
+	nmDdlLease         = "lease"
+	nmTokenLimit       = "token-limit"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -86,15 +86,16 @@ var (
 	configPath = flag.String(nmConfig, "", "config file path")
 
 	// Base
-	store        = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
-	storePath    = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
-	host         = flag.String(nmHost, "0.0.0.0", "tidb server host")
-	port         = flag.String(nmPort, "4000", "tidb server port")
-	socket       = flag.String(nmSocket, "", "The socket file to use for connection.")
-	binlogSocket = flag.String(nmBinlogSocket, "", "socket file to write binlog")
-	runDDL       = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
-	ddlLease     = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
-	tokenLimit   = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
+	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
+	storePath        = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
+	host             = flag.String(nmHost, "0.0.0.0", "tidb server host")
+	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
+	port             = flag.String(nmPort, "4000", "tidb server port")
+	socket           = flag.String(nmSocket, "", "The socket file to use for connection.")
+	binlogSocket     = flag.String(nmBinlogSocket, "", "socket file to write binlog")
+	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
+	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
+	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -127,8 +128,8 @@ func main() {
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
-
 	registerStores()
+	registerMetrics()
 	loadConfig()
 	overrideConfig()
 	validateConfig()
@@ -137,10 +138,10 @@ func main() {
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
+	setupMetrics()
 	createStoreAndDomain()
 	createServer()
 	setupSignalHandler()
-	setupMetrics()
 	runServer()
 	cleanup()
 	os.Exit(0)
@@ -152,6 +153,10 @@ func registerStores() {
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
 	err = session.RegisterStore("mocktikv", mockstore.MockDriver{})
 	terror.MustNil(err)
+}
+
+func registerMetrics() {
+	metrics.RegisterMetrics()
 }
 
 func createStoreAndDomain() {
@@ -184,7 +189,7 @@ func setupBinlogClient() {
 // Prometheus push.
 const zeroDuration = time.Duration(0)
 
-// pushMetric pushs metircs in background.
+// pushMetric pushes metrics in background.
 func pushMetric(addr string, interval time.Duration) {
 	if interval == zeroDuration || len(addr) == 0 {
 		log.Info("disable Prometheus push client")
@@ -194,7 +199,7 @@ func pushMetric(addr string, interval time.Duration) {
 	go prometheusPushClient(addr, interval)
 }
 
-// prometheusPushClient pushs metrics to Prometheus Pushgateway.
+// prometheusPushClient pushes metrics to Prometheus Pushgateway.
 func prometheusPushClient(addr string, interval time.Duration) {
 	// TODO: TiDB do not have uniq name, so we use host+port to compose a name.
 	job := "tidb"
@@ -262,6 +267,9 @@ func overrideConfig() {
 	// Base
 	if actualFlags[nmHost] {
 		cfg.Host = *host
+	}
+	if actualFlags[nmAdvertiseAddress] {
+		cfg.AdvertiseAddress = *advertiseAddress
 	}
 	var err error
 	if actualFlags[nmPort] {
@@ -344,6 +352,10 @@ func validateConfig() {
 		log.Errorf("\"store\" should be in [%s] only", strings.Join(nameList, ", "))
 		os.Exit(-1)
 	}
+	if cfg.Store == "mocktikv" && cfg.RunDDL == false {
+		log.Errorf("can't disable DDL on mocktikv")
+		os.Exit(-1)
+	}
 	if cfg.Log.File.MaxSize > config.MaxLogFileSize {
 		log.Errorf("log max-size should not be larger than %d MB", config.MaxLogFileSize)
 		os.Exit(-1)
@@ -370,24 +382,22 @@ func setGlobalVars() {
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability = cfg.Performance.FeedbackProbability
 	statistics.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
-	plan.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
+	statistics.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
-	if cfg.PlanCache.Enabled {
-		plan.GlobalPlanCache = kvcache.NewShardedLRUCache(cfg.PlanCache.Capacity, cfg.PlanCache.Shards)
-	}
-
-	plan.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled
-	if plan.PreparedPlanCacheEnabled {
+	plan.SetPreparedPlanCache(cfg.PreparedPlanCache.Enabled)
+	if plan.PreparedPlanCacheEnabled() {
 		plan.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
 	}
 
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
 		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
 	}
+	tikv.GrpcKeepAliveTime = time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
+	tikv.GrpcKeepAliveTimeout = time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second
 
 	// set lower_case_table_names
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
@@ -413,7 +423,8 @@ func createServer() {
 	driver = server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)
-	terror.MustNil(err)
+	// Both domain and storage have started, so we have to clean them before exiting.
+	terror.MustNil(err, closeDomainAndStorage)
 	if cfg.XProtocol.XServer {
 		xcfg := &xserver.Config{
 			Addr:       fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
@@ -421,25 +432,36 @@ func createServer() {
 			TokenLimit: cfg.TokenLimit,
 		}
 		xsvr, err = xserver.NewServer(xcfg)
-		terror.MustNil(err)
+		terror.MustNil(err, closeDomainAndStorage)
 	}
 }
 
 func setupSignalHandler() {
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc,
+	usrDefSignalChan := make(chan os.Signal, 1)
+	signal.Notify(usrDefSignalChan, syscall.SIGUSR1)
+	go func() {
+		buf := make([]byte, 1<<16)
+		for {
+			sig := <-usrDefSignalChan
+			if sig == syscall.SIGUSR1 {
+				stackLen := runtime.Stack(buf, true)
+				log.Printf("\n=== Got signal [%s] to dump goroutine stack. ===\n%s\n=== Finished dumping goroutine stack. ===\n", sig, buf[:stackLen])
+			}
+		}
+	}()
+
+	closeSignalChan := make(chan os.Signal, 1)
+	signal.Notify(closeSignalChan,
 		syscall.SIGHUP,
 		syscall.SIGINT,
 		syscall.SIGTERM,
 		syscall.SIGQUIT)
-
 	go func() {
-		sig := <-sc
+		sig := <-closeSignalChan
 		log.Infof("Got signal [%s] to exit.", sig)
 		if sig == syscall.SIGQUIT {
 			graceful = true
 		}
-
 		if xsvr != nil {
 			xsvr.Close() // Should close xserver before server.
 		}
@@ -448,6 +470,8 @@ func setupSignalHandler() {
 }
 
 func setupMetrics() {
+	// Enable the mutex profile, 1/10 of mutex blocking event sampling.
+	runtime.SetMutexProfileFraction(10)
 	systimeErrHandler := func() {
 		metrics.TimeJumpBackCounter.Inc()
 	}
@@ -483,11 +507,15 @@ func runServer() {
 	}
 }
 
+func closeDomainAndStorage() {
+	dom.Close()
+	err := storage.Close()
+	terror.Log(errors.Trace(err))
+}
+
 func cleanup() {
 	if graceful {
 		svr.GracefulDown()
 	}
-	dom.Close()
-	err := storage.Close()
-	terror.Log(errors.Trace(err))
+	closeDomainAndStorage()
 }

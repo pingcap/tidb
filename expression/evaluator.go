@@ -14,9 +14,9 @@
 package expression
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 type columnEvaluator struct {
@@ -100,6 +100,11 @@ func NewEvaluatorSuit(exprs []Expression) *EvaluatorSuit {
 		e.defaultEvaluator.vectorizable = Vectorizable(e.defaultEvaluator.exprs)
 	}
 	return e
+}
+
+// Vectorizable checks whether this EvaluatorSuit can use vectorizd execution mode.
+func (e *EvaluatorSuit) Vectorizable() bool {
+	return e.defaultEvaluator == nil || e.defaultEvaluator.vectorizable
 }
 
 // Run evaluates all the expressions hold by this EvaluatorSuit.

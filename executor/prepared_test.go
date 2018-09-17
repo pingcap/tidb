@@ -14,26 +14,29 @@
 package executor_test
 
 import (
-	"github.com/juju/errors"
+	"math"
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
 func (s *testSuite) TestPrepared(c *C) {
-	orgEnable := plan.PreparedPlanCacheEnabled
+	orgEnable := plan.PreparedPlanCacheEnabled()
 	orgCapacity := plan.PreparedPlanCacheCapacity
 	defer func() {
-		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.SetPreparedPlanCache(orgEnable)
 		plan.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		plan.PreparedPlanCacheEnabled = flag
+		plan.SetPreparedPlanCache(flag)
 		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -58,7 +61,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// incorrect SQLs in prepare. issue #3738, SQL in prepare stmt is parsed in DoPrepare.
 		_, err = tk.Exec(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`)
-		c.Assert(terror.ErrorEqual(err, errors.New(`[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '/*' and b = 'p'' at line 1`)), IsTrue)
+		c.Assert(terror.ErrorEqual(err, errors.New(`[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '/*' and b = 'p'' at line 1`)), IsTrue, Commentf("err %v", err))
 
 		// The `stmt_test5` should not be found.
 		_, err = tk.Exec(`set @a = 1; execute stmt_test_5 using @a;`)
@@ -184,16 +187,16 @@ func (s *testSuite) TestPrepared(c *C) {
 }
 
 func (s *testSuite) TestPreparedLimitOffset(c *C) {
-	orgEnable := plan.PreparedPlanCacheEnabled
+	orgEnable := plan.PreparedPlanCacheEnabled()
 	orgCapacity := plan.PreparedPlanCacheCapacity
 	defer func() {
-		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.SetPreparedPlanCache(orgEnable)
 		plan.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		plan.PreparedPlanCacheEnabled = flag
+		plan.SetPreparedPlanCache(flag)
 		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -220,15 +223,15 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 }
 
 func (s *testSuite) TestPreparedNullParam(c *C) {
-	orgEnable := plan.PreparedPlanCacheEnabled
+	orgEnable := plan.PreparedPlanCacheEnabled()
 	orgCapacity := plan.PreparedPlanCacheCapacity
 	defer func() {
-		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.SetPreparedPlanCache(orgEnable)
 		plan.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		plan.PreparedPlanCacheEnabled = flag
+		plan.SetPreparedPlanCache(flag)
 		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
@@ -263,4 +266,59 @@ func (s *testSuite) TestPreparedNameResolver(c *C) {
 	tk.MustExec("prepare stmt from 'select * from t limit ? offset ?'")
 	_, err := tk.Exec("prepare stmt from 'select b from t'")
 	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'field list'")
+
+	_, err = tk.Exec("prepare stmt from '(select * FROM t) union all (select * FROM t) order by a limit ?'")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'order clause'")
+}
+
+func (s *testSuite) TestPrepareMaxParamCountCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v int)")
+	normalSQL, normalParams := generateBatchSQL(math.MaxUint16)
+	_, err := tk.Exec(normalSQL, normalParams...)
+	c.Assert(err, IsNil)
+
+	bigSQL, bigParams := generateBatchSQL(math.MaxUint16 + 2)
+	_, err = tk.Exec(bigSQL, bigParams...)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1390]Prepared statement contains too many placeholders")
+}
+
+func (s *testSuite) TestPrepareWithAggregation(c *C) {
+	orgEnable := plan.PreparedPlanCacheEnabled()
+	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.SetPreparedPlanCache(orgEnable)
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		plan.SetPreparedPlanCache(flag)
+		plan.PreparedPlanCacheCapacity = 100
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int primary key)")
+		tk.MustExec("insert into t values (1), (2), (3)")
+		tk.MustExec(`prepare stmt from 'select sum(id) from t where id = ?'`)
+
+		tk.MustExec(`set @id="1"`)
+		r := tk.MustQuery(`execute stmt using @id;`)
+		r.Check(testkit.Rows("1"))
+
+		r = tk.MustQuery(`execute stmt using @id;`)
+		r.Check(testkit.Rows("1"))
+	}
+}
+
+func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
+	params := make([]interface{}, 0, paramCount)
+	placeholders := make([]string, 0, paramCount)
+	for i := 0; i < paramCount; i++ {
+		params = append(params, i)
+		placeholders = append(placeholders, "(?)")
+	}
+	return "insert into t values " + strings.Join(placeholders, ","), params
 }

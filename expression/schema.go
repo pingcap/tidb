@@ -16,8 +16,8 @@ package expression
 import (
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pkg/errors"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -153,11 +153,21 @@ func (s *Schema) IsUniqueKey(col *Column) bool {
 // ColumnIndex finds the index for a column.
 func (s *Schema) ColumnIndex(col *Column) int {
 	for i, c := range s.Columns {
-		if c.FromID == col.FromID && c.Position == col.Position {
+		if c.UniqueID == col.UniqueID {
 			return i
 		}
 	}
 	return -1
+}
+
+// FindColumnByName finds a column by its name.
+func (s *Schema) FindColumnByName(name string) *Column {
+	for _, col := range s.Columns {
+		if col.ColName.L == name {
+			return col
+		}
+	}
+	return nil
 }
 
 // Contains checks if the schema contains the column.

@@ -14,8 +14,8 @@
 package codec
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 // EncodeDecimal encodes a decimal into a byte slice which can be sorted lexicographically later.
@@ -30,9 +30,14 @@ func EncodeDecimal(b []byte, dec *types.MyDecimal, precision, frac int) ([]byte,
 }
 
 // DecodeDecimal decodes bytes to decimal.
-func DecodeDecimal(b []byte) ([]byte, *types.MyDecimal, error) {
+func DecodeDecimal(b []byte) ([]byte, *types.MyDecimal, int, int, error) {
+	// gofail: var errorInDecodeDecimal bool
+	// if errorInDecodeDecimal {
+	//	 return b, nil, 0, 0, errors.New("gofail error")
+	// }
+
 	if len(b) < 3 {
-		return b, nil, errors.New("insufficient bytes to decode value")
+		return b, nil, 0, 0, errors.New("insufficient bytes to decode value")
 	}
 	precision := int(b[0])
 	frac := int(b[1])
@@ -41,7 +46,7 @@ func DecodeDecimal(b []byte) ([]byte, *types.MyDecimal, error) {
 	binSize, err := dec.FromBin(b, precision, frac)
 	b = b[binSize:]
 	if err != nil {
-		return b, nil, errors.Trace(err)
+		return b, nil, precision, frac, errors.Trace(err)
 	}
-	return b, dec, nil
+	return b, dec, precision, frac, nil
 }

@@ -28,7 +28,6 @@ var (
 	_ PhysicalPlan = &PhysicalSelection{}
 	_ PhysicalPlan = &PhysicalProjection{}
 	_ PhysicalPlan = &PhysicalTopN{}
-	_ PhysicalPlan = &PhysicalExists{}
 	_ PhysicalPlan = &PhysicalMaxOneRow{}
 	_ PhysicalPlan = &PhysicalTableDual{}
 	_ PhysicalPlan = &PhysicalUnionAll{}
@@ -91,13 +90,15 @@ type PhysicalIndexScan struct {
 	AccessCondition []expression.Expression
 	filterCondition []expression.Expression
 
-	Table     *model.TableInfo
-	Index     *model.IndexInfo
-	Ranges    []*ranger.Range
-	Columns   []*model.ColumnInfo
-	DBName    model.CIStr
-	Desc      bool
-	KeepOrder bool
+	Table      *model.TableInfo
+	Index      *model.IndexInfo
+	IdxCols    []*expression.Column
+	IdxColLens []int
+	Ranges     []*ranger.Range
+	Columns    []*model.ColumnInfo
+	DBName     model.CIStr
+	Desc       bool
+	KeepOrder  bool
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
@@ -111,6 +112,12 @@ type PhysicalIndexScan struct {
 	// Hist is the histogram when the query was issued.
 	// It is used for query feedback.
 	Hist *statistics.Histogram
+
+	rangeDecidedBy []*expression.Column
+
+	// The index scan may be on a partition.
+	isPartition     bool
+	physicalTableID int64
 }
 
 // PhysicalMemTable reads memory table.
@@ -121,16 +128,6 @@ type PhysicalMemTable struct {
 	Table       *model.TableInfo
 	Columns     []*model.ColumnInfo
 	TableAsName *model.CIStr
-}
-
-func needCount(af *aggregation.AggFuncDesc) bool {
-	return af.Name == ast.AggFuncCount || af.Name == ast.AggFuncAvg
-}
-
-func needValue(af *aggregation.AggFuncDesc) bool {
-	return af.Name == ast.AggFuncSum || af.Name == ast.AggFuncAvg || af.Name == ast.AggFuncFirstRow ||
-		af.Name == ast.AggFuncMax || af.Name == ast.AggFuncMin || af.Name == ast.AggFuncGroupConcat ||
-		af.Name == ast.AggFuncBitOr || af.Name == ast.AggFuncBitAnd || af.Name == ast.AggFuncBitXor
 }
 
 // PhysicalTableScan represents a table scan plan.
@@ -156,6 +153,17 @@ type PhysicalTableScan struct {
 	// Hist is the histogram when the query was issued.
 	// It is used for query feedback.
 	Hist *statistics.Histogram
+
+	// The table scan may be a partition, rather than a real table.
+	isPartition     bool
+	physicalTableID int64
+
+	rangeDecidedBy []*expression.Column
+}
+
+// IsPartition returns true and partition ID if it's actually a partition.
+func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
+	return ts.isPartition, ts.physicalTableID
 }
 
 // PhysicalProjection is the physical operator of projection.
@@ -333,6 +341,11 @@ type PhysicalUnionScan struct {
 	Conditions []expression.Expression
 }
 
+// IsPartition returns true and partition ID if it works on a partition.
+func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
+	return p.isPartition, p.physicalTableID
+}
+
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
 func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *stmtctx.StatementContext) bool {
 	return len(p.Ranges) == 1 &&
@@ -346,11 +359,6 @@ type PhysicalSelection struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
-}
-
-// PhysicalExists is the physical operator of Exists.
-type PhysicalExists struct {
-	physicalSchemaProducer
 }
 
 // PhysicalMaxOneRow is the physical operator of maxOneRow.

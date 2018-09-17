@@ -14,8 +14,8 @@
 package plan_test
 
 import (
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -113,6 +114,8 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("[types:1074]Column length too big for column 'c' (max = 16383); use BLOB or TEXT instead")},
 		{"alter table t add column c varchar(4294967295) CHARACTER SET ascii", true,
 			errors.New("[types:1074]Column length too big for column 'c' (max = 65535); use BLOB or TEXT instead")},
+		{"create table t", false, ddl.ErrTableMustHaveColumns},
+		{"create table t (unique(c))", false, ddl.ErrTableMustHaveColumns},
 
 		{"create table `t ` (a int)", true, errors.New("[ddl:1103]Incorrect table name 't '")},
 		{"create table `` (a int)", true, errors.New("[ddl:1103]Incorrect table name ''")},
@@ -156,7 +159,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE `t` (`a` varchar(10) DEFAULT now());", false, types.ErrInvalidDefault},
 		{"CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );", false, nil},
 
-		{`explain format = "xx" select 100;`, false, plan.ErrUnknownExplainFormat.GenByArgs("xx")},
+		{`explain format = "xx" select 100;`, false, plan.ErrUnknownExplainFormat.GenWithStackByArgs("xx")},
 
 		// issue 4472
 		{`select sum(distinct(if('a', (select adddate(elt(999, count(*)), interval 1 day)), .1))) as foo;`, true, nil},
@@ -177,6 +180,13 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE t (a float(255, 31))", false, types.ErrTooBigScale},
 		{"CREATE TABLE t (a double(256, 30))", false, types.ErrTooBigPrecision},
 		{"CREATE TABLE t (a double(255, 31))", false, types.ErrTooBigScale},
+
+		// FIXME: temporary 'not implemented yet' test for 'CREATE TABLE ... SELECT' (issue 4754)
+		{"CREATE TABLE t SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"CREATE TABLE t (m int) SELECT * FROM u", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"CREATE TABLE t IGNORE SELECT * FROM u UNION SELECT * from v", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"CREATE TABLE t (m int) REPLACE AS (SELECT * FROM u) UNION (SELECT * FROM v)", false, errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+
 		{"select * from ( select 1 ) a, (select 2) a;", false, plan.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) a;", false, plan.ErrNonUniqTable},
 		{"select * from ( select 1 ) a, (select 2) b, (select 3) A;", false, plan.ErrNonUniqTable},

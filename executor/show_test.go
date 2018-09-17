@@ -18,17 +18,20 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -102,6 +105,37 @@ func (s *testSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
+	// Issue #7665
+	tk.MustExec("drop table if exists `decimalschema`")
+	testSQL = "create table `decimalschema` (`c1` decimal);"
+	tk.MustExec(testSQL)
+	testSQL = "show create table decimalschema"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
+			"  `c1` decimal(11,0) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	tk.MustExec("drop table if exists `decimalschema`")
+	testSQL = "create table `decimalschema` (`c1` decimal(15));"
+	tk.MustExec(testSQL)
+	testSQL = "show create table decimalschema"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
+			"  `c1` decimal(15,0) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
@@ -148,6 +182,18 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROFILES").Check(testkit.Rows())
+
+	// +-------------+--------------------+--------------+------------------+-------------------+
+	// | File        | Position           | Binlog_Do_DB | Binlog_Ignore_DB | Executed_Gtid_Set |
+	// +-------------+--------------------+--------------+------------------+-------------------+
+	// | tidb-binlog | 400668057259474944 |              |                  |                   |
+	// +-------------+--------------------+--------------+------------------+-------------------+
+	result = tk.MustQuery("SHOW MASTER STATUS")
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	c.Check(row, HasLen, 5)
+
+	tk.MustQuery("SHOW PRIVILEGES")
 
 	// Test show create database
 	testSQL = `create database show_test_DB`
@@ -347,12 +393,22 @@ func (s *testSuite) TestShow(c *C) {
 
 	// Test show create table year type
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t(y year, x int, primary key(y));`)
+	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y));`)
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `y` year NOT NULL,\n"+
 			"  `x` int(11) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`y`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
+
+	// Test show create table with zerofill flag
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(id int primary key, val tinyint(10) zerofill);`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `id` int(11) NOT NULL,\n"+
+			"  `val` tinyint(10) UNSIGNED ZEROFILL DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 }
 
@@ -405,8 +461,9 @@ type mockSessionManager struct {
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager) ShowProcessList() []util.ProcessInfo {
-	return []util.ProcessInfo{msm.ShowProcess()}
+func (msm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
+	ps := msm.ShowProcess()
+	return map[uint64]util.ProcessInfo{ps.ID: ps}
 }
 
 // Kill implements the SessionManager.Kill interface.
@@ -457,6 +514,34 @@ func (s *testSuite) TestShowWarnings(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1265|Data Truncated"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+
+	// Test Warning level 'Error'
+	testSQL = `create table show_warnings (a int)`
+	tk.Exec(testSQL)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_warnings' already exists"))
+	tk.MustQuery("select @@error_count").Check(testutil.RowsWithSep("|", "1"))
+
+	// Test Warning level 'Note'
+	testSQL = `create table show_warnings_2 (a int)`
+	tk.MustExec(testSQL)
+	testSQL = `create table if not exists show_warnings_2 like show_warnings`
+	tk.Exec(testSQL)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1050|Table 'test.show_warnings_2' already exists"))
+	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "1"))
+	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "0"))
+}
+
+func (s *testSuite) TestShowErrors(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	testSQL := `create table if not exists show_errors (a int)`
+	tk.MustExec(testSQL)
+	testSQL = `create table show_errors (a int)`
+	tk.Exec(testSQL)
+
+	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
 }
 
 func (s *testSuite) TestIssue3641(c *C) {
@@ -483,15 +568,18 @@ func (s *testSuite) TestShow2(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
 	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-
 	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,,Yes,1"))
 
 	tk.MustQuery("show tables").Check(testkit.Rows("t"))
 	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE"))
-
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	create_time := model.TSConvert2Time(tblInfo.Meta().UpdateTS).String()
 	r := tk.MustQuery("show table status from test like 't'")
 	timeStr := time.Now().Format("2006-01-02 15:04:05")
-	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", timeStr, timeStr, timeStr)))
+	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", create_time, timeStr, timeStr)))
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
 
@@ -523,6 +611,7 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint);`)
 
@@ -543,4 +632,16 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 		c.Assert(row.GetInt64(2), Equals, int64(10))
 		c.Assert(row.GetString(3), Equals, "Compact")
 	}
+	tk.MustExec(`drop table if exists tp;`)
+	tk.MustExec(`create table tp (a int)
+ 		partition by range(a)
+ 		( partition p0 values less than (10),
+		  partition p1 values less than (20),
+    	  partition p2 values less than (maxvalue)
+  		);`)
+	rs, err = tk.Exec("show table status from test like 'tp';")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rows[0].GetString(16), Equals, "partitioned")
 }

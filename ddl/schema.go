@@ -14,13 +14,13 @@
 package ddl
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pkg/errors"
 )
 
-func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	dbInfo := &model.DBInfo{}
 	if err := job.DecodeArgs(dbInfo); err != nil {
@@ -42,7 +42,7 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			if db.ID != schemaID {
 				// The database already exists, can't create it, we should cancel this job now.
 				job.State = model.JobStateCancelled
-				return ver, infoschema.ErrDatabaseExists.GenByArgs(db.Name)
+				return ver, infoschema.ErrDatabaseExists.GenWithStackByArgs(db.Name)
 			}
 			dbInfo = db
 		}
@@ -70,14 +70,14 @@ func (d *ddl) onCreateSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) 
 	}
 }
 
-func (d *ddl) onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropSchema(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	if dbInfo == nil {
 		job.State = model.JobStateCancelled
-		return ver, infoschema.ErrDatabaseDropExists.GenByArgs("")
+		return ver, infoschema.ErrDatabaseDropExists.GenWithStackByArgs("")
 	}
 
 	ver, err = updateSchemaVersion(t, job)

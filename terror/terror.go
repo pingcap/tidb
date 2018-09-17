@@ -16,11 +16,10 @@ package terror
 import (
 	"encoding/json"
 	"fmt"
-	"runtime"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -217,26 +216,24 @@ func (e *Error) getMsg() string {
 	return e.message
 }
 
-// Gen generates a new *Error with the same class and code, and a new formatted message.
-func (e *Error) Gen(format string, args ...interface{}) *Error {
+// GenWithStack generates a new *Error with the same class and code, and a new formatted message.
+func (e *Error) GenWithStack(format string, args ...interface{}) error {
 	err := *e
 	err.message = format
 	err.args = args
-	_, err.file, err.line, _ = runtime.Caller(1)
-	return &err
+	return errors.AddStack(&err)
 }
 
-// GenByArgs generates a new *Error with the same class and code, and new arguments.
-func (e *Error) GenByArgs(args ...interface{}) *Error {
+// GenWithStackByArgs generates a new *Error with the same class and code, and new arguments.
+func (e *Error) GenWithStackByArgs(args ...interface{}) error {
 	err := *e
 	err.args = args
-	_, err.file, err.line, _ = runtime.Caller(1)
-	return &err
+	return errors.AddStack(&err)
 }
 
 // FastGen generates a new *Error with the same class and code, and a new formatted message.
 // This will not call runtime.Caller to get file and line.
-func (e *Error) FastGen(format string, args ...interface{}) *Error {
+func (e *Error) FastGen(format string, args ...interface{}) error {
 	err := *e
 	err.message = format
 	err.args = args
@@ -321,9 +318,12 @@ func ErrorNotEqual(err1, err2 error) bool {
 	return !ErrorEqual(err1, err2)
 }
 
-// MustNil fatals if err is not nil.
-func MustNil(err error) {
+// MustNil cleans up and fatals if err is not nil.
+func MustNil(err error, closeFuns ...func()) {
 	if err != nil {
+		for _, f := range closeFuns {
+			f()
+		}
 		log.Fatalf(errors.ErrorStack(err))
 	}
 }

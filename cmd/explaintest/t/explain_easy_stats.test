@@ -6,6 +6,8 @@ create table t2 (c1 int unique, c2 int);
 load stats 's/explain_easy_stats_t2.json';
 create table t3 (a bigint, b bigint, c bigint, d bigint);
 load stats 's/explain_easy_stats_t3.json';
+create table index_prune(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c tinyint(4) NOT NULL, primary key(a, b), index idx_b_c_a(b, c, a));
+load stats 's/explain_easy_stats_index_prune.json';
 set @@session.tidb_opt_insubquery_unfold = 1;
 set @@session.tidb_opt_agg_push_down = 1;
 
@@ -45,4 +47,6 @@ explain select 1 in (select c2 from t2) from t1;
 # explain format="dot" select sum(t1.c1 in (select c1 from t2)) from t1;
 explain format="dot" select 1 in (select c2 from t2) from t1;
 
-drop table if exists t1, t2, t3;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
+
+drop table if exists t1, t2, t3, index_prune;

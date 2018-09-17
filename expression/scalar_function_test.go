@@ -29,8 +29,7 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 	defer testleak.AfterTest(c)()
 
 	a := &Column{
-		FromID:   0,
-		Position: 1,
+		UniqueID: 1,
 		TblName:  model.NewCIStr("fei"),
 		ColName:  model.NewCIStr("han"),
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -42,7 +41,7 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 	c.Assert(res, DeepEquals, []byte{0x22, 0x6c, 0x74, 0x28, 0x66, 0x65, 0x69, 0x2e, 0x68, 0x61, 0x6e, 0x2c, 0x20, 0x31, 0x29, 0x22})
 	c.Assert(sf.IsCorrelated(), IsFalse)
 	c.Assert(sf.Decorrelate(nil).Equal(s.ctx, sf), IsTrue)
-	c.Assert(sf.HashCode(sc), DeepEquals, []byte{0x3, 0x4, 0x6c, 0x74, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0})
+	c.Assert(sf.HashCode(sc), DeepEquals, []byte{0x3, 0x4, 0x6c, 0x74, 0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x5, 0xbf, 0xf0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0})
 
 	sf = NewValuesFunc(s.ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	newSf, ok := sf.Clone().(*ScalarFunction)
@@ -56,12 +55,11 @@ func (s *testEvaluatorSuite) TestScalarFunction(c *C) {
 func (s *testEvaluatorSuite) TestScalarFuncs2Exprs(c *C) {
 	defer testleak.AfterTest(c)()
 	a := &Column{
-		FromID:   0,
-		Position: 1,
+		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
-	sf0, _ := newFunction(ast.LT, a.Clone(), Zero).(*ScalarFunction)
-	sf1, _ := newFunction(ast.LT, a.Clone(), One).(*ScalarFunction)
+	sf0, _ := newFunction(ast.LT, a, Zero).(*ScalarFunction)
+	sf1, _ := newFunction(ast.LT, a, One).(*ScalarFunction)
 
 	funcs := []*ScalarFunction{sf0, sf1}
 	exprs := ScalarFuncs2Exprs(funcs)

@@ -31,7 +31,6 @@ const (
 	codeUnknownColumn                = mysql.ErrBadField
 	codeUnknownTable                 = mysql.ErrUnknownTable
 	codeWrongArguments               = mysql.ErrWrongArguments
-	codeWrongNumberOfColumnsInSelect = mysql.ErrWrongNumberOfColumnsInSelect
 	codeBadGeneratedColumn           = mysql.ErrBadGeneratedColumn
 	codeFieldNotInGroupBy            = mysql.ErrFieldNotInGroupBy
 	codeBadTable                     = mysql.ErrBadTable
@@ -46,7 +45,10 @@ const (
 	codeDupFieldName                 = mysql.ErrDupFieldName
 	codeNonUpdatableTable            = mysql.ErrNonUpdatableTable
 	codeInternal                     = mysql.ErrInternal
+	codeMixOfGroupFuncAndFields      = mysql.ErrMixOfGroupFuncAndFields
 	codeNonUniqTable                 = mysql.ErrNonuniqTable
+	codeWrongNumberOfColumnsInSelect = mysql.ErrWrongNumberOfColumnsInSelect
+	codeWrongValueCountOnRow         = mysql.ErrWrongValueCountOnRow
 )
 
 // error definitions.
@@ -78,7 +80,9 @@ var (
 	ErrDupFieldName                 = terror.ClassOptimizer.New(codeDupFieldName, mysql.MySQLErrName[mysql.ErrDupFieldName])
 	ErrNonUpdatableTable            = terror.ClassOptimizer.New(codeNonUpdatableTable, mysql.MySQLErrName[mysql.ErrNonUpdatableTable])
 	ErrInternal                     = terror.ClassOptimizer.New(codeInternal, mysql.MySQLErrName[mysql.ErrInternal])
+	ErrMixOfGroupFuncAndFields      = terror.ClassOptimizer.New(codeMixOfGroupFuncAndFields, "In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by")
 	ErrNonUniqTable                 = terror.ClassOptimizer.New(codeNonUniqTable, mysql.MySQLErrName[mysql.ErrNonuniqTable])
+	ErrWrongValueCountOnRow         = terror.ClassOptimizer.New(mysql.ErrWrongValueCountOnRow, mysql.MySQLErrName[mysql.ErrWrongValueCountOnRow])
 )
 
 func init() {
@@ -88,7 +92,6 @@ func init() {
 		codeUnknownColumn:                mysql.ErrBadField,
 		codeUnknownTable:                 mysql.ErrBadTable,
 		codeWrongArguments:               mysql.ErrWrongArguments,
-		codeWrongNumberOfColumnsInSelect: mysql.ErrWrongNumberOfColumnsInSelect,
 		codeBadGeneratedColumn:           mysql.ErrBadGeneratedColumn,
 		codeFieldNotInGroupBy:            mysql.ErrFieldNotInGroupBy,
 		codeBadTable:                     mysql.ErrBadTable,
@@ -103,7 +106,10 @@ func init() {
 		codeDupFieldName:                 mysql.ErrDupFieldName,
 		codeNonUpdatableTable:            mysql.ErrUnknownTable,
 		codeInternal:                     mysql.ErrInternal,
+		codeMixOfGroupFuncAndFields:      mysql.ErrMixOfGroupFuncAndFields,
 		codeNonUniqTable:                 mysql.ErrNonuniqTable,
+		codeWrongNumberOfColumnsInSelect: mysql.ErrWrongNumberOfColumnsInSelect,
+		codeWrongValueCountOnRow:         mysql.ErrWrongValueCountOnRow,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassOptimizer] = mysqlErrCodeMap
 }

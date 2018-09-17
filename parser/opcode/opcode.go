@@ -121,7 +121,7 @@ var opsLiteral = map[Op]string{
 	Mul:        "*",
 	Not:        "!",
 	BitNeg:     "~",
-	IntDiv:     "//",
+	IntDiv:     "DIV",
 	NullEQ:     "<=>",
 	In:         "IN",
 	Like:       "LIKE",
@@ -134,5 +134,5 @@ var opsLiteral = map[Op]string{
 
 // Format the ExprNode into a Writer.
 func (o Op) Format(w io.Writer) {
-	fmt.Fprintf(w, opsLiteral[o])
+	fmt.Fprintf(w, "%s", opsLiteral[o])
 }

@@ -16,20 +16,21 @@ package plan
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/plan/property"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 const (
 	netWorkFactor      = 1.5
 	netWorkStartFactor = 20.0
 	scanFactor         = 2.0
-	descScanFactor     = 5 * scanFactor
+	descScanFactor     = 2 * scanFactor
 	memoryFactor       = 5.0
 	// 0.5 is the looking up agg context factor.
 	hashAggFactor      = 1.2 + 0.5
@@ -42,13 +43,13 @@ const (
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
 // these tasks one by one.
-var wholeTaskTypes = [...]taskType{copSingleReadTaskType, copDoubleReadTaskType, rootTaskType}
+var wholeTaskTypes = [...]property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType, property.RootTaskType}
 
 var invalidTask = &rootTask{cst: math.MaxFloat64}
 
 // getPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns and all of them are asc or desc.
-func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
+func getPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) {
 	desc := false
 	cols := make([]*expression.Column, 0, len(items))
 	for i, item := range items {
@@ -62,11 +63,11 @@ func getPropByOrderByItems(items []*ByItems) (*requiredProp, bool) {
 			return nil, false
 		}
 	}
-	return &requiredProp{cols: cols, desc: desc}, true
+	return &property.PhysicalProperty{Cols: cols, Desc: desc}, true
 }
 
-func (p *LogicalTableDual) findBestTask(prop *requiredProp) (task, error) {
-	if !prop.isEmpty() {
+func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
+	if !prop.IsEmpty() {
 		return invalidTask, nil
 	}
 	dual := PhysicalTableDual{RowCount: p.RowCount}.init(p.ctx, p.stats)
@@ -75,7 +76,7 @@ func (p *LogicalTableDual) findBestTask(prop *requiredProp) (task, error) {
 }
 
 // findBestTask implements LogicalPlan interface.
-func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err error) {
+func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTask task, err error) {
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
 	bestTask = p.getTask(prop)
@@ -83,7 +84,7 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 		return bestTask, nil
 	}
 
-	if prop.taskTp != rootTaskType {
+	if prop.TaskTp != property.RootTaskType {
 		// Currently all plan cannot totally push down.
 		p.storeTask(prop, invalidTask)
 		return invalidTask, nil
@@ -94,20 +95,20 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 
 	// If prop.enforced is true, cols of prop as parameter in exhaustPhysicalPlans should be nil
 	// And reset it for enforcing task prop and storing map<prop,task>
-	oldPropCols := prop.cols
-	if prop.enforced {
+	oldPropCols := prop.Cols
+	if prop.Enforced {
 		// First, get the bestTask without enforced prop
-		prop.enforced = false
+		prop.Enforced = false
 		bestTask, err = p.findBestTask(prop)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		prop.enforced = true
+		prop.Enforced = true
 		// Next, get the bestTask with enforced prop
-		prop.cols = []*expression.Column{}
+		prop.Cols = []*expression.Column{}
 	}
 	physicalPlans := p.self.exhaustPhysicalPlans(prop)
-	prop.cols = oldPropCols
+	prop.Cols = oldPropCols
 
 	for _, pp := range physicalPlans {
 		// find best child tasks firstly.
@@ -132,8 +133,8 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 		curTask := pp.attach2Task(childTasks...)
 
 		// enforce curTask property
-		if prop.enforced {
-			curTask = prop.enforceProperty(curTask, p.basePlan.ctx)
+		if prop.Enforced {
+			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
 		}
 
 		// get the most efficient one.
@@ -147,8 +148,8 @@ func (p *baseLogicalPlan) findBestTask(prop *requiredProp) (bestTask task, err e
 }
 
 // tryToGetMemTask will check if this table is a mem table. If it is, it will produce a task.
-func (ds *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error) {
-	if !prop.isEmpty() {
+func (ds *DataSource) tryToGetMemTask(prop *property.PhysicalProperty) (task task, err error) {
+	if !prop.IsEmpty() {
 		return nil, nil
 	}
 	if !infoschema.IsMemoryDB(ds.DBName.L) {
@@ -179,7 +180,7 @@ func (ds *DataSource) tryToGetMemTask(prop *requiredProp) (task task, err error)
 func (ds *DataSource) tryToGetDualTask() (task, error) {
 	for _, cond := range ds.pushedDownConds {
 		if _, ok := cond.(*expression.Constant); ok {
-			result, err := expression.EvalBool(ds.ctx, []expression.Expression{cond}, nil)
+			result, err := expression.EvalBool(ds.ctx, []expression.Expression{cond}, chunk.Row{})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -197,7 +198,7 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 
 // findBestTask implements the PhysicalPlan interface.
 // It will enumerate all the available indices and choose a plan with least cost.
-func (ds *DataSource) findBestTask(prop *requiredProp) (t task, err error) {
+func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
 	// So here we do nothing.
 	// TODO: Add a special prop to handle IndexJoin's inner plan.
@@ -213,29 +214,29 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (t task, err error) {
 
 	// If prop.enforced is true, the prop.cols need to be set nil for ds.findBestTask.
 	// Before function return, reset it for enforcing task prop and storing map<prop,task>.
-	oldPropCols := prop.cols
-	if prop.enforced {
+	oldPropCols := prop.Cols
+	if prop.Enforced {
 		// First, get the bestTask without enforced prop
-		prop.enforced = false
+		prop.Enforced = false
 		t, err = ds.findBestTask(prop)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		prop.enforced = true
+		prop.Enforced = true
 		if t != invalidTask {
 			ds.storeTask(prop, t)
 			return
 		}
 		// Next, get the bestTask with enforced prop
-		prop.cols = []*expression.Column{}
+		prop.Cols = []*expression.Column{}
 	}
 	defer func() {
 		if err != nil {
 			return
 		}
-		if prop.enforced {
-			prop.cols = oldPropCols
-			t = prop.enforceProperty(t, ds.basePlan.ctx)
+		if prop.Enforced {
+			prop.Cols = oldPropCols
+			t = enforceProperty(prop, t, ds.basePlan.ctx)
 		}
 		ds.storeTask(prop, t)
 	}()
@@ -252,6 +253,14 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (t task, err error) {
 	t = invalidTask
 
 	for _, path := range ds.possibleAccessPaths {
+		// if we already know the range of the scan is empty, just return a TableDual
+		if len(path.ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
+			dual := PhysicalTableDual{}.init(ds.ctx, ds.stats)
+			dual.SetSchema(ds.schema)
+			return &rootTask{
+				p: dual,
+			}, nil
+		}
 		if path.isTablePath {
 			tblTask, err := ds.convertToTableScan(prop, path)
 			if err != nil {
@@ -266,7 +275,7 @@ func (ds *DataSource) findBestTask(prop *requiredProp) (t task, err error) {
 		// this path's access cond is not nil or
 		// we have prop to match or
 		// this index is forced to choose.
-		if len(path.accessConds) > 0 || len(prop.cols) > 0 || path.forced {
+		if len(path.accessConds) > 0 || len(prop.Cols) > 0 || path.forced {
 			idxTask, err := ds.convertToIndexScan(prop, path)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -302,36 +311,6 @@ func isCoveringIndex(columns []*model.ColumnInfo, indexColumns []*model.IndexCol
 	return true
 }
 
-func (ds *DataSource) forceToIndexScan(idx *model.IndexInfo, remainedConds []expression.Expression) PhysicalPlan {
-	is := PhysicalIndexScan{
-		Table:            ds.tableInfo,
-		TableAsName:      ds.TableAsName,
-		DBName:           ds.DBName,
-		Columns:          ds.Columns,
-		Index:            idx,
-		dataSourceSchema: ds.schema,
-		Ranges:           ranger.FullRange(),
-		KeepOrder:        false,
-	}.init(ds.ctx)
-	is.filterCondition = remainedConds
-	is.stats = ds.stats
-	cop := &copTask{
-		indexPlan: is,
-	}
-	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
-		// On this way, it's double read case.
-		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
-		ts.SetSchema(is.dataSourceSchema)
-		cop.tablePlan = ts
-	}
-	is.initSchema(ds.id, idx, cop.tablePlan != nil)
-	indexConds, tblConds := splitIndexFilterConditions(remainedConds, idx.Columns, ds.tableInfo)
-	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
-	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
-	t := finishCopTask(ds.ctx, cop)
-	return t.plan()
-}
-
 // If there is a table reader which needs to keep order, we should append a pk to table scan.
 func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
 	if len(ds.schema.TblID2Handle) > 0 {
@@ -345,7 +324,7 @@ func (ts *PhysicalTableScan) appendExtraHandleCol(ds *DataSource) {
 }
 
 // convertToIndexScan converts the DataSource to index scan with idx.
-func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (task task, err error) {
+func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, path *accessPath) (task task, err error) {
 	idx := path.index
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
@@ -353,56 +332,66 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		DBName:           ds.DBName,
 		Columns:          ds.Columns,
 		Index:            idx,
+		IdxCols:          path.idxCols,
+		IdxColLens:       path.idxColLens,
+		AccessCondition:  path.accessConds,
+		Ranges:           path.ranges,
+		filterCondition:  path.indexFilters,
 		dataSourceSchema: ds.schema,
+		isPartition:      ds.isPartition,
+		physicalTableID:  ds.physicalTableID,
 	}.init(ds.ctx)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
 		is.Hist = &statsTbl.Indices[idx.ID].Histogram
 	}
-	is.Ranges = ranger.FullRange()
-	eqCount := 0
-	is.AccessCondition, is.Ranges, is.filterCondition, eqCount = path.accessConds, path.ranges, path.indexFilters, path.eqCondCount
 	rowCount := path.countAfterAccess
 	cop := &copTask{indexPlan: is}
 	if !isCoveringIndex(is.Columns, is.Index.Columns, is.Table.PKIsHandle) {
 		// If it's parent requires single read task, return max cost.
-		if prop.taskTp == copSingleReadTaskType {
+		if prop.TaskTp == property.CopSingleReadTaskType {
 			return invalidTask, nil
 		}
 		// On this way, it's double read case.
-		ts := PhysicalTableScan{Columns: ds.Columns, Table: is.Table}.init(ds.ctx)
+		ts := PhysicalTableScan{
+			Columns:         ds.Columns,
+			Table:           is.Table,
+			isPartition:     ds.isPartition,
+			physicalTableID: ds.physicalTableID,
+		}.init(ds.ctx)
 		ts.SetSchema(ds.schema.Clone())
 		cop.tablePlan = ts
-	} else if prop.taskTp == copDoubleReadTaskType {
+	} else if prop.TaskTp == property.CopDoubleReadTaskType {
 		// If it's parent requires double read task, return max cost.
 		return invalidTask, nil
 	}
 	is.initSchema(ds.id, idx, cop.tablePlan != nil)
 	// Check if this plan matches the property.
 	matchProperty := false
-	if !prop.isEmpty() {
+	if !prop.IsEmpty() {
 		for i, col := range idx.Columns {
 			// not matched
-			if col.Name.L == prop.cols[0].ColName.L {
-				matchProperty = matchIndicesProp(idx.Columns[i:], prop.cols)
+			if col.Name.L == prop.Cols[0].ColName.L {
+				matchProperty = matchIndicesProp(idx.Columns[i:], prop.Cols)
 				break
-			} else if i >= eqCount {
+			} else if i >= path.eqCondCount {
 				break
 			}
 		}
 	}
 	// Only use expectedCnt when it's smaller than the count we calculated.
-	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
-		selectivity := ds.statsAfterSelect.count / path.countAfterAccess
-		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
+	if (matchProperty || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
+		selectivity := ds.stats.RowCount / path.countAfterAccess
+		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
-	is.stats = ds.stats.scaleByExpectCnt(rowCount)
+	is.stats = property.NewSimpleStats(rowCount)
+	is.stats.UsePseudoStats = ds.statisticTable.Pseudo
 	cop.cst = rowCount * scanFactor
 	task = cop
 	if matchProperty {
-		if prop.desc {
+		if prop.Desc {
 			is.Desc = true
 			cop.cst = rowCount * descScanFactor
 		}
@@ -411,17 +400,17 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 		}
 		cop.keepOrder = true
 		is.KeepOrder = true
-		is.addPushedDownSelection(cop, ds, prop.expectedCnt, path)
+		is.addPushedDownSelection(cop, ds, prop.ExpectedCnt, path)
 	} else {
 		expectedCnt := math.MaxFloat64
-		if prop.isEmpty() {
-			expectedCnt = prop.expectedCnt
+		if prop.IsEmpty() {
+			expectedCnt = prop.ExpectedCnt
 		} else {
 			return invalidTask, nil
 		}
 		is.addPushedDownSelection(cop, ds, expectedCnt, path)
 	}
-	if prop.taskTp == rootTaskType {
+	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
@@ -429,15 +418,22 @@ func (ds *DataSource) convertToIndexScan(prop *requiredProp, path *accessPath) (
 	return task, nil
 }
 
+// TODO: refactor this part, we should not call Clone in fact.
 func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRead bool) {
 	indexCols := make([]*expression.Column, 0, len(idx.Columns))
 	for _, col := range idx.Columns {
-		indexCols = append(indexCols, &expression.Column{FromID: id, Position: col.Offset})
+		colFound := is.dataSourceSchema.FindColumnByName(col.Name.L)
+		if colFound == nil {
+			colFound = &expression.Column{ColName: col.Name, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()}
+		} else {
+			colFound = colFound.Clone().(*expression.Column)
+		}
+		indexCols = append(indexCols, colFound)
 	}
 	setHandle := false
 	for _, col := range is.Columns {
 		if (mysql.HasPriKeyFlag(col.Flag) && is.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-			indexCols = append(indexCols, &expression.Column{FromID: id, ID: col.ID, Position: col.Offset})
+			indexCols = append(indexCols, is.dataSourceSchema.FindColumnByName(col.Name.L))
 			setHandle = true
 			break
 		}
@@ -445,7 +441,7 @@ func (is *PhysicalIndexScan) initSchema(id int, idx *model.IndexInfo, isDoubleRe
 	// If it's double read case, the first index must return handle. So we should add extra handle column
 	// if there isn't a handle column.
 	if isDoubleRead && !setHandle {
-		indexCols = append(indexCols, &expression.Column{FromID: id, ID: model.ExtraHandleID, Position: -1})
+		indexCols = append(indexCols, &expression.Column{ID: model.ExtraHandleID, ColName: model.ExtraHandleName, UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID()})
 	}
 	is.SetSchema(expression.NewSchema(indexCols...))
 }
@@ -458,9 +454,9 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 		count := path.countAfterAccess
 		if count >= 1.0 {
 			selectivity := path.countAfterIndex / path.countAfterAccess
-			count = is.stats.count * selectivity
+			count = is.stats.RowCount * selectivity
 		}
-		stats := &statsInfo{count: count}
+		stats := &property.StatsInfo{RowCount: count}
 		indexSel := PhysicalSelection{Conditions: indexConds}.init(is.ctx, stats)
 		indexSel.SetChildren(is)
 		copTask.indexPlan = indexSel
@@ -468,7 +464,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *copTask, p *DataSou
 	if tableConds != nil {
 		copTask.finishIndexPlan()
 		copTask.cst += copTask.count() * cpuFactor
-		tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.statsAfterSelect.scaleByExpectCnt(expectedCnt))
+		tableSel := PhysicalSelection{Conditions: tableConds}.init(is.ctx, p.stats.ScaleByExpectCnt(expectedCnt))
 		tableSel.SetChildren(copTask.tablePlan)
 		copTask.tablePlan = tableSel
 	}
@@ -527,44 +523,20 @@ func checkIndexCondition(condition expression.Expression, indexColumns []*model.
 	return true
 }
 
-func (ds *DataSource) forceToTableScan(pk *expression.Column) PhysicalPlan {
-	var ranges []*ranger.Range
-	if pk != nil {
-		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
-	} else {
-		ranges = ranger.FullIntRange(false)
-	}
-	ts := PhysicalTableScan{
-		Table:       ds.tableInfo,
-		Columns:     ds.Columns,
-		TableAsName: ds.TableAsName,
-		DBName:      ds.DBName,
-		Ranges:      ranges,
-	}.init(ds.ctx)
-	ts.SetSchema(ds.schema)
-	ts.stats = ds.stats
-	ts.filterCondition = ds.pushedDownConds
-	copTask := &copTask{
-		tablePlan:         ts,
-		indexPlanFinished: true,
-	}
-	ts.addPushedDownSelection(copTask, ds.stats)
-	t := finishCopTask(ds.ctx, copTask)
-	return t.plan()
-}
-
 // convertToTableScan converts the DataSource to table scan.
-func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (task task, err error) {
+func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, path *accessPath) (task task, err error) {
 	// It will be handled in convertToIndexScan.
-	if prop.taskTp == copDoubleReadTaskType {
+	if prop.TaskTp == property.CopDoubleReadTaskType {
 		return invalidTask, nil
 	}
 
 	ts := PhysicalTableScan{
-		Table:       ds.tableInfo,
-		Columns:     ds.Columns,
-		TableAsName: ds.TableAsName,
-		DBName:      ds.DBName,
+		Table:           ds.tableInfo,
+		Columns:         ds.Columns,
+		TableAsName:     ds.TableAsName,
+		DBName:          ds.DBName,
+		isPartition:     ds.isPartition,
+		physicalTableID: ds.physicalTableID,
 	}.init(ds.ctx)
 	ts.SetSchema(ds.schema)
 	var pkCol *expression.Column
@@ -584,34 +556,35 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 		indexPlanFinished: true,
 	}
 	task = copTask
-	matchProperty := len(prop.cols) == 1 && pkCol != nil && prop.cols[0].Equal(nil, pkCol)
+	matchProperty := len(prop.Cols) == 1 && pkCol != nil && prop.Cols[0].Equal(nil, pkCol)
 	// Only use expectedCnt when it's smaller than the count we calculated.
-	// e.g. IndexScan(count1)->After Filter(count2). The `ds.statsAfterSelect.count` is count2. count1 is the one we need to calculate
+	// e.g. IndexScan(count1)->After Filter(count2). The `ds.stats.RowCount` is count2. count1 is the one we need to calculate
 	// If expectedCnt and count2 are both zero and we go into the below `if` block, the count1 will be set to zero though it's shouldn't be.
-	if (matchProperty || prop.isEmpty()) && prop.expectedCnt < ds.statsAfterSelect.count {
-		selectivity := ds.statsAfterSelect.count / rowCount
-		rowCount = math.Min(prop.expectedCnt/selectivity, rowCount)
+	if (matchProperty || prop.IsEmpty()) && prop.ExpectedCnt < ds.stats.RowCount {
+		selectivity := ds.stats.RowCount / rowCount
+		rowCount = math.Min(prop.ExpectedCnt/selectivity, rowCount)
 	}
-	ts.stats = ds.stats.scaleByExpectCnt(rowCount)
+	ts.stats = property.NewSimpleStats(rowCount)
+	ts.stats.UsePseudoStats = ds.statisticTable.Pseudo
 	copTask.cst = rowCount * scanFactor
 	if matchProperty {
-		if prop.desc {
+		if prop.Desc {
 			ts.Desc = true
 			copTask.cst = rowCount * descScanFactor
 		}
 		ts.KeepOrder = true
 		copTask.keepOrder = true
-		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(prop.expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	} else {
 		expectedCnt := math.MaxFloat64
-		if prop.isEmpty() {
-			expectedCnt = prop.expectedCnt
+		if prop.IsEmpty() {
+			expectedCnt = prop.ExpectedCnt
 		} else {
 			return invalidTask, nil
 		}
-		ts.addPushedDownSelection(copTask, ds.statsAfterSelect.scaleByExpectCnt(expectedCnt))
+		ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(expectedCnt))
 	}
-	if prop.taskTp == rootTaskType {
+	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
 		return invalidTask, nil
@@ -619,7 +592,7 @@ func (ds *DataSource) convertToTableScan(prop *requiredProp, path *accessPath) (
 	return task, nil
 }
 
-func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *statsInfo) {
+func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *property.StatsInfo) {
 	// Add filter condition to table plan now.
 	if len(ts.filterCondition) > 0 {
 		copTask.cst += copTask.count() * cpuFactor

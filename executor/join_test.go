@@ -266,6 +266,17 @@ func (s *testSuite) TestJoin(c *C) {
 	tk.MustExec(`insert into t values (1);`)
 	tk.MustQuery(`select t2.a, t1.a from t t1 inner join (select "1" as a) t2 on t2.a = t1.a;`).Check(testkit.Rows("1 1"))
 	tk.MustQuery(`select t2.a, t1.a from t t1 inner join (select "2" as b, "1" as a) t2 on t2.a = t1.a;`).Check(testkit.Rows("1 1"))
+
+	tk.MustExec("drop table if exists t1, t2, t3, t4")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create table t4(a int, b int)")
+	tk.MustExec("insert into t1 values(1, 1)")
+	tk.MustExec("insert into t2 values(1, 1)")
+	tk.MustExec("insert into t3 values(1, 1)")
+	tk.MustExec("insert into t4 values(1, 1)")
+	tk.MustQuery("select min(t2.b) from t1 right join t2 on t2.a=t1.a right join t3 on t2.a=t3.a left join t4 on t3.a=t4.a").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite) TestJoinCast(c *C) {
@@ -508,6 +519,8 @@ func (s *testSuite) TestSubquerySameTable(c *C) {
 func (s *testSuite) TestSubquery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_hash_join_concurrency=1")
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency=1")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int)")
@@ -830,6 +843,27 @@ func (s *testSuite) TestIndexLookupJoin(c *C) {
 	tk.MustExec("CREATE TABLE t(a BIGINT PRIMARY KEY, b BIGINT);")
 	tk.MustExec("INSERT INTO t VALUES(1, 2);")
 	tk.MustQuery("SELECT /*+ TIDB_INLJ(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a UNION ALL SELECT /*+ TIDB_INLJ(t1, t2) */ * FROM t t1 JOIN t t2 ON t1.a=t2.a;").Check(testkit.Rows("1 2 1 2", "1 2 1 2"))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a decimal(6,2), index idx(a));`)
+	tk.MustExec(`insert into t values(1.01), (2.02), (NULL);`)
+	tk.MustQuery(`select /*+ TIDB_INLJ(t1) */ t1.a from t t1 join t t2 on t1.a=t2.a order by t1.a;`).Check(testkit.Rows(
+		`1.01`,
+		`2.02`,
+	))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a bigint, b bigint, unique key idx1(a, b));`)
+	tk.MustExec(`insert into t values(1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6);`)
+	tk.MustExec(`set @@tidb_max_chunk_size = 2;`)
+	tk.MustQuery(`select /*+ TIDB_INLJ(t1) */ * from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b + 4;`).Check(testkit.Rows(
+		`1 1 <nil> <nil>`,
+		`1 2 <nil> <nil>`,
+		`1 3 <nil> <nil>`,
+		`1 4 <nil> <nil>`,
+		`1 5 1 1`,
+		`1 6 1 2`,
+	))
 }
 
 func (s *testSuite) TestMergejoinOrder(c *C) {
@@ -842,11 +876,11 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 	tk.MustExec("insert into t2 select a*100, b*100 from t1;")
 
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
-		"TableScan_10   cop table:t1, range:[-inf,+inf], keep order:true 10000.00",
-		"TableReader_11 MergeJoin_15  root data:TableScan_10 10000.00",
-		"TableScan_12   cop table:t2, range:[-inf,+inf], keep order:true 10000.00",
-		"TableReader_13 MergeJoin_15  root data:TableScan_12 10000.00",
-		"MergeJoin_15  TableReader_11,TableReader_13 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)] 12500.00",
+		"MergeJoin_15 12500.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
+		"├─TableReader_11 10000.00 root data:TableScan_10",
+		"│ └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
+		"└─TableReader_13 10000.00 root data:TableScan_12",
+		"  └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:true, stats:pseudo",
 	))
 
 	tk.MustExec("set @@tidb_max_chunk_size=1")
@@ -866,5 +900,13 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 		`1 2 1 2`,
 		`2 1 2 1`,
 		`2 2 2 2`,
+	))
+
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a decimal(6,2), index idx(a));`)
+	tk.MustExec(`insert into t values(1.01), (2.02), (NULL);`)
+	tk.MustQuery(`select /*+ TIDB_SMJ(t1) */ t1.a from t t1 join t t2 on t1.a=t2.a order by t1.a;`).Check(testkit.Rows(
+		`1.01`,
+		`2.02`,
 	))
 }

@@ -59,9 +59,9 @@ func (t *rootTask) invalid() bool {
 
 func (t *copTask) count() float64 {
 	if t.indexPlanFinished {
-		return t.tablePlan.StatsInfo().count
+		return t.tablePlan.statsInfo().RowCount
 	}
-	return t.indexPlan.StatsInfo().count
+	return t.indexPlan.statsInfo().RowCount
 }
 
 func (t *copTask) addCost(cst float64) {
@@ -107,7 +107,7 @@ func (t *copTask) finishIndexPlan() {
 		t.cst += t.count() * netWorkFactor
 		t.indexPlanFinished = true
 		if t.tablePlan != nil {
-			t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.StatsInfo()
+			t.tablePlan.(*PhysicalTableScan).stats = t.indexPlan.statsInfo()
 			t.cst += t.count() * scanFactor
 		}
 	}
@@ -209,15 +209,15 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
 		p := PhysicalIndexLookUpReader{tablePlan: t.tablePlan, indexPlan: t.indexPlan}.init(ctx)
-		p.stats = t.tablePlan.StatsInfo()
+		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.init(ctx)
-		p.stats = t.indexPlan.StatsInfo()
+		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
 		p := PhysicalTableReader{tablePlan: t.tablePlan}.init(ctx)
-		p.stats = t.tablePlan.StatsInfo()
+		p.stats = t.tablePlan.statsInfo()
 		newTask.p = p
 	}
 	return newTask
@@ -237,7 +237,7 @@ func (t *rootTask) copy() task {
 }
 
 func (t *rootTask) count() float64 {
-	return t.p.StatsInfo().count
+	return t.p.statsInfo().RowCount
 }
 
 func (t *rootTask) addCost(cst float64) {
@@ -403,26 +403,24 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	for i, aggFun := range p.AggFuncs {
 		finalAggFunc := &aggregation.AggFuncDesc{Name: aggFun.Name, HasDistinct: false}
 		args := make([]expression.Expression, 0, len(aggFun.Args))
-		if needCount(finalAggFunc) {
+		if aggregation.NeedCount(finalAggFunc.Name) {
 			ft := types.NewFieldType(mysql.TypeLonglong)
 			ft.Flen, ft.Charset, ft.Collate = 21, charset.CharsetBin, charset.CollationBin
 			partialSchema.Append(&expression.Column{
-				FromID:   p.ID(),
-				Position: partialCursor,
+				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
 				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
 				RetType:  ft,
 			})
-			args = append(args, partialSchema.Columns[partialCursor].Clone())
+			args = append(args, partialSchema.Columns[partialCursor])
 			partialCursor++
 		}
-		if needValue(finalAggFunc) {
+		if aggregation.NeedValue(finalAggFunc.Name) {
 			partialSchema.Append(&expression.Column{
-				FromID:   p.ID(),
-				Position: partialCursor,
+				UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
 				ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor)),
 				RetType:  finalSchema.Columns[i].GetType(),
 			})
-			args = append(args, partialSchema.Columns[partialCursor].Clone())
+			args = append(args, partialSchema.Columns[partialCursor])
 			partialCursor++
 		}
 		finalAggFunc.Args = args
@@ -435,13 +433,12 @@ func (p *basePhysicalAgg) newPartialAggregate() (partial, final PhysicalPlan) {
 	groupByItems := make([]expression.Expression, 0, len(p.GroupByItems))
 	for i, gbyExpr := range p.GroupByItems {
 		gbyCol := &expression.Column{
-			FromID:   p.ID(),
-			Position: partialCursor + i,
+			UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
 			ColName:  model.NewCIStr(fmt.Sprintf("col_%d", partialCursor+i)),
 			RetType:  gbyExpr.GetType(),
 		}
 		partialSchema.Append(gbyCol)
-		groupByItems = append(groupByItems, gbyCol.Clone())
+		groupByItems = append(groupByItems, gbyCol)
 	}
 
 	// Create physical "final" aggregation.
@@ -488,7 +485,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 }
 
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
-	cardinality := p.StatsInfo().count
+	cardinality := p.statsInfo().RowCount
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
 		partialAgg, finalAgg := p.newPartialAggregate()

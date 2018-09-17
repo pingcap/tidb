@@ -104,8 +104,6 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		strs = strs[:idx]
 		idxs = idxs[:last]
 		str = "Apply{" + strings.Join(children, "->") + "}"
-	case *LogicalExists, *PhysicalExists:
-		str = "Exists"
 	case *LogicalMaxOneRow, *PhysicalMaxOneRow:
 		str = "MaxOneRow"
 	case *LogicalLimit, *PhysicalLimit:
@@ -142,10 +140,14 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "UnionAll{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 	case *DataSource:
-		if x.TableAsName != nil && x.TableAsName.L != "" {
-			str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
+		if x.isPartition {
+			str = fmt.Sprintf("Partition(%d)", x.physicalTableID)
 		} else {
-			str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
+			if x.TableAsName != nil && x.TableAsName.L != "" {
+				str = fmt.Sprintf("DataScan(%s)", x.TableAsName)
+			} else {
+				str = fmt.Sprintf("DataScan(%s)", x.tableInfo.Name)
+			}
 		}
 	case *LogicalSelection:
 		str = fmt.Sprintf("Sel(%s)", x.Conditions)
@@ -154,9 +156,9 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *LogicalProjection, *PhysicalProjection:
 		str = "Projection"
 	case *LogicalTopN:
-		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
+		str = fmt.Sprintf("TopN(%v,%d,%d)", x.ByItems, x.Offset, x.Count)
 	case *PhysicalTopN:
-		str = fmt.Sprintf("TopN(%s,%d,%d)", x.ByItems, x.Offset, x.Count)
+		str = fmt.Sprintf("TopN(%v,%d,%d)", x.ByItems, x.Offset, x.Count)
 	case *LogicalTableDual, *PhysicalTableDual:
 		str = "Dual"
 	case *PhysicalHashAgg:
@@ -196,15 +198,15 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Analyze{"
 		var children []string
 		for _, idx := range x.IdxTasks {
-			children = append(children, fmt.Sprintf("Index(%s.%s)", idx.TableInfo.Name.O, idx.IndexInfo.Name.O))
+			children = append(children, fmt.Sprintf("Index(%s)", idx.IndexInfo.Name.O))
 		}
 		for _, col := range x.ColTasks {
 			var colNames []string
 			if col.PKInfo != nil {
-				colNames = append(colNames, fmt.Sprintf("%s.%s", col.TableInfo.Name.O, col.PKInfo.Name.O))
+				colNames = append(colNames, fmt.Sprintf("%s", col.PKInfo.Name.O))
 			}
 			for _, c := range col.ColsInfo {
-				colNames = append(colNames, fmt.Sprintf("%s.%s", col.TableInfo.Name.O, c.Name.O))
+				colNames = append(colNames, fmt.Sprintf("%s", c.Name.O))
 			}
 			children = append(children, fmt.Sprintf("Table(%s)", strings.Join(colNames, ", ")))
 		}

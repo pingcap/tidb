@@ -19,13 +19,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pkg/errors"
 )
 
 func TestT(t *testing.T) {
@@ -155,7 +155,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 	var mu sync.Mutex
 	wg := sync.WaitGroup{}
 	m := map[int64]struct{}{}
-	count := 100
+	count := 10
 	errCh := make(chan error, count)
 
 	allocIDs := func() {

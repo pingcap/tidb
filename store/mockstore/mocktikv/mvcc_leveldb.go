@@ -18,7 +18,6 @@ import (
 	"math"
 	"sync"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/goleveldb/leveldb"
 	"github.com/pingcap/goleveldb/leveldb/iterator"
 	"github.com/pingcap/goleveldb/leveldb/opt"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -893,6 +893,22 @@ func (mvcc *MVCCLevelDB) RawPut(key, value []byte) {
 	terror.Log(mvcc.db.Put(key, value, nil))
 }
 
+// RawBatchPut implements the RawKV interface
+func (mvcc *MVCCLevelDB) RawBatchPut(keys, values [][]byte) {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	batch := &leveldb.Batch{}
+	for i, key := range keys {
+		value := values[i]
+		if value == nil {
+			value = []byte{}
+		}
+		batch.Put(key, value)
+	}
+	terror.Log(mvcc.db.Write(batch, nil))
+}
+
 // RawGet implements the RawKV interface.
 func (mvcc *MVCCLevelDB) RawGet(key []byte) []byte {
 	mvcc.mu.Lock()
@@ -903,12 +919,38 @@ func (mvcc *MVCCLevelDB) RawGet(key []byte) []byte {
 	return ret
 }
 
+// RawBatchGet implements the RawKV interface.
+func (mvcc *MVCCLevelDB) RawBatchGet(keys [][]byte) [][]byte {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	var values [][]byte
+	for _, key := range keys {
+		value, err := mvcc.db.Get(key, nil)
+		terror.Log(err)
+		values = append(values, value)
+	}
+	return values
+}
+
 // RawDelete implements the RawKV interface.
 func (mvcc *MVCCLevelDB) RawDelete(key []byte) {
 	mvcc.mu.Lock()
 	defer mvcc.mu.Unlock()
 
 	terror.Log(mvcc.db.Delete(key, nil))
+}
+
+// RawBatchDelete implements the RawKV interface.
+func (mvcc *MVCCLevelDB) RawBatchDelete(keys [][]byte) {
+	mvcc.mu.Lock()
+	defer mvcc.mu.Unlock()
+
+	batch := &leveldb.Batch{}
+	for _, key := range keys {
+		batch.Delete(key)
+	}
+	terror.Log(mvcc.db.Write(batch, nil))
 }
 
 // RawScan implements the RawKV interface.

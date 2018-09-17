@@ -14,7 +14,6 @@
 package ddl
 
 import (
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -165,7 +165,7 @@ func (s *testIndexChangeSuite) TestIndexChange(c *C) {
 			}
 		}
 	}
-	d.start(context.Background())
+	d.start(context.Background(), nil)
 	testDropIndex(c, ctx, d, s.dbInfo, publicTable.Meta(), "c2")
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 }

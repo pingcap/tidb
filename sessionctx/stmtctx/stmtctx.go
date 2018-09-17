@@ -19,27 +19,40 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 )
+
+const (
+	// WarnLevelError represents level "Error" for 'SHOW WARNINGS' syntax.
+	WarnLevelError = "Error"
+	// WarnLevelWarning represents level "Warning" for 'SHOW WARNINGS' syntax.
+	WarnLevelWarning = "Warning"
+	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax.
+	WarnLevelNote = "Note"
+)
+
+// SQLWarn relates a sql warning and it's level.
+type SQLWarn struct {
+	Level string
+	Err   error
+}
 
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
 	// Set the following variables before execution
 
-	InInsertStmt         bool
-	InUpdateOrDeleteStmt bool
-	InSelectStmt         bool
-	IgnoreTruncate       bool
-	IgnoreZeroInDate     bool
-	// IgnoreErr is used for the following statements to avoid return an
-	// error, `insert`, `update`, and `delete`.
-	// If IgnoreErr is true and the statements meet some errors,
-	// e.g. duplicate keys, insert null to a not null column...,
-	// the errors will be appended as warnings.
-	// For the `load data` statement, IgnoreErr should be always true,
-	// because it is the same behavior as `insert ignore` statement.
-	IgnoreErr              bool
+	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
+	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
+	IsDDLJobInQueue        bool
+	InInsertStmt           bool
+	InUpdateOrDeleteStmt   bool
+	InSelectStmt           bool
+	IgnoreTruncate         bool
+	IgnoreZeroInDate       bool
+	DupKeyAsWarning        bool
+	BadNullAsWarning       bool
 	DividedByZeroAsWarning bool
 	TruncateAsWarning      bool
 	OverflowAsWarning      bool
@@ -53,8 +66,9 @@ type StatementContext struct {
 		sync.Mutex
 		affectedRows      uint64
 		foundRows         uint64
-		warnings          []error
+		warnings          []SQLWarn
 		histogramsNotLoad bool
+		execDetails       execdetails.ExecDetails
 	}
 
 	// Copied from SessionVars.TimeZone.
@@ -97,9 +111,9 @@ func (sc *StatementContext) AddFoundRows(rows uint64) {
 }
 
 // GetWarnings gets warnings.
-func (sc *StatementContext) GetWarnings() []error {
+func (sc *StatementContext) GetWarnings() []SQLWarn {
 	sc.mu.Lock()
-	warns := make([]error, len(sc.mu.warnings))
+	warns := make([]SQLWarn, len(sc.mu.warnings))
 	copy(warns, sc.mu.warnings)
 	sc.mu.Unlock()
 	return warns
@@ -116,18 +130,57 @@ func (sc *StatementContext) WarningCount() uint16 {
 	return wc
 }
 
+// NumWarnings gets warning count. It's different from `WarningCount` in that
+// `WarningCount` return the warning count of the last executed command, so if
+// the last command is a SHOW statement, `WarningCount` return 0. On the other
+// hand, `NumWarnings` always return number of warnings(or errors if `errOnly`
+// is set).
+func (sc *StatementContext) NumWarnings(errOnly bool) uint16 {
+	var wc uint16
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if errOnly {
+		for _, warn := range sc.mu.warnings {
+			if warn.Level == WarnLevelError {
+				wc++
+			}
+		}
+	} else {
+		wc = uint16(len(sc.mu.warnings))
+	}
+	return wc
+}
+
 // SetWarnings sets warnings.
-func (sc *StatementContext) SetWarnings(warns []error) {
+func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Lock()
 	sc.mu.warnings = warns
 	sc.mu.Unlock()
 }
 
-// AppendWarning appends a warning.
+// AppendWarning appends a warning with level 'Warning'.
 func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, warn)
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelWarning, warn})
+	}
+	sc.mu.Unlock()
+}
+
+// AppendNote appends a warning with level 'Note'.
+func (sc *StatementContext) AppendNote(warn error) {
+	sc.mu.Lock()
+	if len(sc.mu.warnings) < math.MaxUint16 {
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelNote, warn})
+	}
+	sc.mu.Unlock()
+}
+
+// AppendError appends a warning with level 'Error'.
+func (sc *StatementContext) AppendError(warn error) {
+	sc.mu.Lock()
+	if len(sc.mu.warnings) < math.MaxUint16 {
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelError, warn})
 	}
 	sc.mu.Unlock()
 }
@@ -184,4 +237,26 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.foundRows = 0
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
+}
+
+// MergeExecDetails merges a single region execution details into self, used to print
+// the information in slow query log.
+func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails) {
+	sc.mu.Lock()
+	sc.mu.execDetails.ProcessTime += details.ProcessTime
+	sc.mu.execDetails.WaitTime += details.WaitTime
+	sc.mu.execDetails.BackoffTime += details.BackoffTime
+	sc.mu.execDetails.RequestCount++
+	sc.mu.execDetails.TotalKeys += details.TotalKeys
+	sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
+	sc.mu.Unlock()
+}
+
+// GetExecDetails gets the execution details for the statement.
+func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
+	var details execdetails.ExecDetails
+	sc.mu.Lock()
+	details = sc.mu.execDetails
+	sc.mu.Unlock()
+	return details
 }

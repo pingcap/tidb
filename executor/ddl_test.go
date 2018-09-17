@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/testkit"
@@ -126,6 +128,9 @@ func (s *testSuite) TestCreateDropDatabase(c *C) {
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
 	_, err = tk.Exec("select * from t;")
 	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+
+	_, err = tk.Exec("drop database mysql")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestCreateDropTable(c *C) {
@@ -135,6 +140,9 @@ func (s *testSuite) TestCreateDropTable(c *C) {
 	tk.MustExec("drop table if exists drop_test")
 	tk.MustExec("create table drop_test (a int)")
 	tk.MustExec("drop table drop_test")
+
+	_, err := tk.Exec("drop table mysql.gc_delete_range")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestCreateDropIndex(c *C) {
@@ -398,4 +406,30 @@ func (s *testSuite) TestMaxHandleAddIndex(c *C) {
 	tk.MustExec(fmt.Sprintf("insert into t1 values(%v, 1)", 0))
 	tk.MustExec("alter table t1 add index idx_b(b)")
 	tk.MustExec("admin check table t1")
+}
+
+func (s *testSuite) TestSetDDLReorgWorkerCnt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(variable.DefTiDBDDLReorgWorkerCount))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 1")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(1))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
+	_, err := tk.Exec("set tidb_ddl_reorg_worker_cnt = invalid_val")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	c.Assert(variable.GetDDLReorgWorkerCounter(), Equals, int32(100))
+	_, err = tk.Exec("set tidb_ddl_reorg_worker_cnt = -1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set tidb_ddl_reorg_worker_cnt = 100")
+	res := tk.MustQuery("select @@tidb_ddl_reorg_worker_cnt")
+	res.Check(testkit.Rows("100"))
+
+	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
+	res.Check(testkit.Rows(fmt.Sprintf("%v", variable.DefTiDBDDLReorgWorkerCount)))
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 100")
+	res = tk.MustQuery("select @@global.tidb_ddl_reorg_worker_cnt")
+	res.Check(testkit.Rows("100"))
 }

@@ -16,13 +16,13 @@ package statistics
 import (
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // JSONTable is used for dumping statistics.
@@ -58,7 +58,7 @@ func dumpJSONCol(hist *Histogram, CMSketch *CMSketch) *jsonColumn {
 
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JSONTable, error) {
-	tbl, err := h.tableStatsFromStorage(tableInfo, true)
+	tbl, err := h.tableStatsFromStorage(tableInfo, tableInfo.ID, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -100,57 +100,19 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 		return errors.Trace(err)
 	}
 
-	if h.Lease > 0 {
-		hists := make([]*Histogram, 0, len(tbl.Columns))
-		cms := make([]*CMSketch, 0, len(tbl.Columns))
-		for _, col := range tbl.Columns {
-			hists = append(hists, &col.Histogram)
-			cms = append(cms, col.CMSketch)
-		}
-		h.AnalyzeResultCh() <- &AnalyzeResult{
-			TableID: tbl.TableID,
-			Hist:    hists,
-			Cms:     cms,
-			Count:   tbl.Count,
-			IsIndex: 0,
-			Err:     nil,
-		}
-
-		hists = make([]*Histogram, 0, len(tbl.Indices))
-		cms = make([]*CMSketch, 0, len(tbl.Indices))
-		for _, idx := range tbl.Indices {
-			hists = append(hists, &idx.Histogram)
-			cms = append(cms, idx.CMSketch)
-		}
-		h.AnalyzeResultCh() <- &AnalyzeResult{
-			TableID: tbl.TableID,
-			Hist:    hists,
-			Cms:     cms,
-			Count:   tbl.Count,
-			IsIndex: 1,
-			Err:     nil,
-		}
-
-		h.LoadMetaCh() <- &LoadMeta{
-			TableID:     tbl.TableID,
-			Count:       tbl.Count,
-			ModifyCount: tbl.ModifyCount,
-		}
-		return errors.Trace(err)
-	}
 	for _, col := range tbl.Columns {
-		err = SaveStatsToStorage(h.ctx, tbl.TableID, tbl.Count, 0, &col.Histogram, col.CMSketch)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 0, &col.Histogram, col.CMSketch, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for _, idx := range tbl.Indices {
-		err = SaveStatsToStorage(h.ctx, tbl.TableID, tbl.Count, 1, &idx.Histogram, idx.CMSketch)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.Count, 1, &idx.Histogram, idx.CMSketch, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	err = SaveMetaToStorage(h.ctx, tbl.TableID, tbl.Count, tbl.ModifyCount)
+	err = h.SaveMetaToStorage(tbl.PhysicalID, tbl.Count, tbl.ModifyCount)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -159,12 +121,16 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 
 // LoadStatsFromJSONToTable load statistic from JSONTable and return the Table of statistic.
 func (h *Handle) LoadStatsFromJSONToTable(tableInfo *model.TableInfo, jsonTbl *JSONTable) (*Table, error) {
+	newHistColl := HistColl{
+		PhysicalID:     tableInfo.ID,
+		HavePhysicalID: true,
+		Count:          jsonTbl.Count,
+		ModifyCount:    jsonTbl.ModifyCount,
+		Columns:        make(map[int64]*Column, len(jsonTbl.Columns)),
+		Indices:        make(map[int64]*Index, len(jsonTbl.Indices)),
+	}
 	tbl := &Table{
-		TableID:     tableInfo.ID,
-		Columns:     make(map[int64]*Column, len(jsonTbl.Columns)),
-		Indices:     make(map[int64]*Index, len(jsonTbl.Indices)),
-		Count:       jsonTbl.Count,
-		ModifyCount: jsonTbl.ModifyCount,
+		HistColl: newHistColl,
 	}
 	for id, jsonIdx := range jsonTbl.Indices {
 		for _, idxInfo := range tableInfo.Indices {
@@ -205,11 +171,4 @@ func (h *Handle) LoadStatsFromJSONToTable(tableInfo *model.TableInfo, jsonTbl *J
 		}
 	}
 	return tbl, nil
-}
-
-// LoadMeta is the statistic meta loaded from json file.
-type LoadMeta struct {
-	TableID     int64
-	Count       int64
-	ModifyCount int64
 }

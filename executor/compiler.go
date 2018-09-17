@@ -16,7 +16,6 @@ package executor
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -103,7 +103,7 @@ func isExpensiveQuery(p plan.Plan) bool {
 
 func isPhysicalPlanExpensive(p plan.PhysicalPlan) bool {
 	expensiveRowThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
-	if p.StatsInfo().Count() > expensiveRowThreshold {
+	if int64(p.StatsCount()) > expensiveRowThreshold {
 		return true
 	}
 
@@ -195,7 +195,7 @@ func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 	var is infoschema.InfoSchema
 	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(infoschema.InfoSchema)
-		log.Infof("[con:%d] use snapshot schema %d", sessVar.ConnectionID, is.SchemaMetaVersion())
+		log.Infof("con:%d use snapshot schema %d", sessVar.ConnectionID, is.SchemaMetaVersion())
 	} else {
 		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}

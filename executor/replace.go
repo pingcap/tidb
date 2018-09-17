@@ -14,10 +14,12 @@
 package executor
 
 import (
-	"github.com/juju/errors"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -44,7 +46,104 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *ReplaceExec) exec(rows []types.DatumRow) error {
+// removeRow removes the duplicate row and cleanup its keys in the key-value map,
+// but if the to-be-removed row equals to the to-be-added row, no remove or add things to do.
+func (e *ReplaceExec) removeRow(handle int64, r toBeCheckedRow) (bool, error) {
+	newRow := r.row
+	oldRow, err := e.batchChecker.getOldRow(e.ctx, r.t, handle)
+	if err != nil {
+		log.Errorf("[replace] handle is %d for the to-be-inserted row %v", handle, types.DatumsToStrNoErr(r.row))
+		return false, errors.Trace(err)
+	}
+	rowUnchanged, err := types.EqualDatums(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if rowUnchanged {
+		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		return true, nil
+	}
+
+	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+
+	// Cleanup keys map, because the record was removed.
+	err = e.deleteDupKeys(e.ctx, r.t, [][]types.Datum{oldRow})
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return false, nil
+}
+
+// replaceRow removes all duplicate rows for one row, then inserts it.
+func (e *ReplaceExec) replaceRow(r toBeCheckedRow) error {
+	if r.handleKey != nil {
+		if _, found := e.dupKVs[string(r.handleKey.newKV.key)]; found {
+			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			rowUnchanged, err := e.removeRow(handle, r)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if rowUnchanged {
+				return nil
+			}
+		}
+	}
+
+	// Keep on removing duplicated rows.
+	for {
+		rowUnchanged, foundDupKey, err := e.removeIndexRow(r)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if rowUnchanged {
+			return nil
+		}
+		if foundDupKey {
+			continue
+		}
+		break
+	}
+
+	// No duplicated rows now, insert the row.
+	newHandle, err := e.addRecord(r.row)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.fillBackKeys(r.t, r, newHandle)
+	return nil
+}
+
+// removeIndexRow removes the row which has a duplicated key.
+// the return values:
+//     1. bool: true when the row is unchanged. This means no need to remove, and then add the row.
+//     2. bool: true when found the duplicated key. This only means that duplicated key was found,
+//              and the row was removed.
+//     3. error: the error.
+func (e *ReplaceExec) removeIndexRow(r toBeCheckedRow) (bool, bool, error) {
+	for _, uk := range r.uniqueKeys {
+		if val, found := e.dupKVs[string(uk.newKV.key)]; found {
+			handle, err := tables.DecodeHandle(val)
+			if err != nil {
+				return false, found, errors.Trace(err)
+			}
+			rowUnchanged, err := e.removeRow(handle, r)
+			if err != nil {
+				return false, found, errors.Trace(err)
+			}
+			return rowUnchanged, found, nil
+		}
+	}
+	return false, false, nil
+}
+
+func (e *ReplaceExec) exec(newRows [][]types.Datum) error {
 	/*
 	 * MySQL uses the following algorithm for REPLACE (and LOAD DATA ... REPLACE):
 	 *  1. Try to insert the new row into the table
@@ -57,48 +156,22 @@ func (e *ReplaceExec) exec(rows []types.DatumRow) error {
 	 * because in this case, one row was inserted after the duplicate was deleted.
 	 * See http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
 	 */
-	idx := 0
-	rowsLen := len(rows)
-	sc := e.ctx.GetSessionVars().StmtCtx
-	for {
-		if idx >= rowsLen {
-			break
-		}
-		row := rows[idx]
-		h, err1 := e.Table.AddRecord(e.ctx, row, false)
-		if err1 == nil {
-			e.ctx.StmtAddDirtyTableOP(DirtyTableAddRow, e.Table.Meta().ID, h, row)
-			idx++
-			continue
-		}
-		if err1 != nil && !kv.ErrKeyExists.Equal(err1) {
-			return errors.Trace(err1)
-		}
-		oldRow, err1 := e.Table.Row(e.ctx, h)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		rowUnchanged, err1 := types.EqualDatums(sc, oldRow, row)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		if rowUnchanged {
-			// If row unchanged, we do not need to do insert.
-			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-			idx++
-			continue
-		}
-		// Remove current row and try replace again.
-		err1 = e.Table.RemoveRecord(e.ctx, h, oldRow)
-		if err1 != nil {
-			return errors.Trace(err1)
-		}
-		e.ctx.StmtAddDirtyTableOP(DirtyTableDeleteRow, e.Table.Meta().ID, h, nil)
-		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+	err := e.batchGetInsertKeys(e.ctx, e.Table, newRows)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	if e.lastInsertID != 0 {
-		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
+	// Batch get the to-be-replaced rows in storage.
+	err = e.initDupOldRowValue(e.ctx, e.Table, newRows)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, r := range e.toBeCheckedRows {
+		err = e.replaceRow(r)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	e.finished = true
 	return nil
@@ -115,15 +188,8 @@ func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.Trace(err)
 	}
 
-	var rows []types.DatumRow
 	if len(e.children) > 0 && e.children[0] != nil {
-		rows, err = e.getRowsSelectChunk(ctx, cols)
-	} else {
-		rows, err = e.getRows(cols)
+		return errors.Trace(e.insertRowsFromSelect(ctx, cols, e.exec))
 	}
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return errors.Trace(e.exec(rows))
+	return errors.Trace(e.insertRows(cols, e.exec))
 }

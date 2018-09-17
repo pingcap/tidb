@@ -33,7 +33,7 @@ func (s *testStatsUpdateSuite) TestGCStats(c *C) {
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("3"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("9"))
 	h := s.do.StatsHandle()
-	h.PrevLastVersion = math.MaxUint64
+	h.SetLastUpdateVersion(math.MaxUint64)
 	ddlLease := time.Duration(0)
 	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("2"))

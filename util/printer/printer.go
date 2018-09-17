@@ -31,7 +31,7 @@ var (
 	TiDBGitBranch = "None"
 	GoVersion     = "None"
 	// TiKVMinVersion is the minimum version of TiKV that can be compatible with the current TiDB.
-	TiKVMinVersion = "2.1.0-alpha.1-2f291dc12b0e05d71eb8873881c3ed11d343d6e6"
+	TiKVMinVersion = "2.1.0-alpha.1-ff3dd160846b7d1aed9079c389fc188f7f5ea13e"
 )
 
 // PrintTiDBInfo prints the TiDB version information.
@@ -43,6 +43,7 @@ func PrintTiDBInfo() {
 	log.Infof("UTC Build Time:  %s", TiDBBuildTS)
 	log.Infof("GoVersion:  %s", GoVersion)
 	log.Infof("Race Enabled: %v", israce.RaceEnabled)
+	log.Infof("Check Table Before Drop: %v", config.CheckTableBeforeDrop)
 	log.Infof("TiKV Min Version: %s", TiKVMinVersion)
 	configJSON, err := json.Marshal(config.GetGlobalConfig())
 	if err != nil {
@@ -59,14 +60,16 @@ func GetTiDBInfo() string {
 		"UTC Build Time: %s\n"+
 		"GoVersion: %s\n"+
 		"Race Enabled: %v\n"+
-		"TiKV Min Version: %s",
+		"TiKV Min Version: %s\n"+
+		"Check Table Before Drop: %v",
 		mysql.TiDBReleaseVersion,
 		TiDBGitHash,
 		TiDBGitBranch,
 		TiDBBuildTS,
 		GoVersion,
 		israce.RaceEnabled,
-		TiKVMinVersion)
+		TiKVMinVersion,
+		config.CheckTableBeforeDrop)
 }
 
 // checkValidity checks whether cols and every data have the same length.

@@ -254,7 +254,6 @@ func MockTable() *model.TableInfo {
 		FieldType: newLongType(),
 		ID:        10,
 	}
-
 	pkColumn.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	// Column 'b', 'c', 'd', 'f', 'g' is not null.
 	col0.Flag = mysql.NotNullFlag
@@ -316,7 +315,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t t1, t t2 where t1.a = t2.b and t2.b > 0 and t1.a = t1.c and t1.d like 'abc' and t2.d = t1.d",
-			best: "Join{DataScan(t2)->DataScan(t1)->Sel([like(cast(t1.d), abc, 92)])}(t2.b,t1.a)(t2.d,t1.d)->Projection",
+			best: "Join{DataScan(t2)->Sel([like(cast(t2.d), abc, 92)])->DataScan(t1)->Sel([like(cast(t1.d), abc, 92)])}(t2.b,t1.a)(t2.d,t1.d)->Projection",
 		},
 		{
 			sql:  "select * from t ta join t tb on ta.d = tb.d and ta.d > 1 where tb.a = 0",
@@ -440,6 +439,129 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	}
 }
 
+func newPartitionInfoSchema(definitions []model.PartitionDefinition) infoschema.InfoSchema {
+	tableInfo := *MockTable()
+	cols := make([]*model.ColumnInfo, 0, len(tableInfo.Columns))
+	cols = append(cols, tableInfo.Columns...)
+	cols = append(cols, &model.ColumnInfo{
+		State:     model.StatePublic,
+		Offset:    10,
+		Name:      model.NewCIStr("h"),
+		FieldType: newLongType(),
+		ID:        11,
+	})
+	partition := &model.PartitionInfo{
+		Type:        model.PartitionTypeRange,
+		Expr:        "h",
+		Enable:      true,
+		Definitions: definitions,
+	}
+	tableInfo.Columns = cols
+	tableInfo.Partition = partition
+	is := infoschema.MockInfoSchema([]*model.TableInfo{&tableInfo})
+	return is
+}
+
+func (s *testPlanSuite) TestTablePartition(c *C) {
+	defer testleak.AfterTest(c)()
+	definitions := []model.PartitionDefinition{
+		{
+			ID:       41,
+			Name:     model.NewCIStr("p1"),
+			LessThan: []string{"16"},
+		},
+		{
+			ID:       42,
+			Name:     model.NewCIStr("p2"),
+			LessThan: []string{"32"},
+		},
+		{
+			ID:       43,
+			Name:     model.NewCIStr("p3"),
+			LessThan: []string{"64"},
+		},
+		{
+			ID:       44,
+			Name:     model.NewCIStr("p4"),
+			LessThan: []string{"128"},
+		},
+		{
+			ID:       45,
+			Name:     model.NewCIStr("p5"),
+			LessThan: []string{"maxvalue"},
+		},
+	}
+	is := newPartitionInfoSchema(definitions)
+	// is1 equals to is without maxvalue partition.
+	definitions1 := make([]model.PartitionDefinition, len(definitions)-1)
+	copy(definitions1, definitions)
+	is1 := newPartitionInfoSchema(definitions1)
+
+	tests := []struct {
+		sql   string
+		first string
+		best  string
+		is    infoschema.InfoSchema
+	}{
+		{
+			sql:  "select * from t",
+			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)}->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h < 31",
+			best: "UnionAll{Partition(41)->Partition(42)}->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h < 61",
+			best: "UnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h > 17 and t.h < 61",
+			best: "UnionAll{Partition(42)->Partition(43)}->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h < 8",
+			best: "Partition(41)->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h > 128",
+			best: "Partition(45)->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h > 128",
+			best: "Dual->Projection",
+			is:   is1,
+		},
+		{
+			// NULL will be located in the first partition.
+			sql:  "select * from t where t.h is null",
+			best: "Partition(41)->Projection",
+			is:   is,
+		},
+		{
+			sql:  "select * from t where t.h is null or t.h > 70",
+			best: "UnionAll{Partition(41)->Partition(44)}->Projection",
+			is:   is1,
+		},
+	}
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := BuildLogicalPlan(s.ctx, stmt, ca.is)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(flagDecorrelate|flagPrunColumns|flagPredicatePushDown|flagPartitionProcessor, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, ca.best, Commentf("for %s", ca.sql))
+	}
+}
+
 func (s *testPlanSuite) TestSubquery(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
@@ -507,6 +629,10 @@ func (s *testPlanSuite) TestSubquery(c *C) {
 		{
 			sql:  "select t1.b from t t1 where t1.b = (select max(t2.a) from t t2 where t1.b=t2.b)",
 			best: "Join{DataScan(t1)->DataScan(t2)->Aggr(max(t2.a),firstrow(t2.b))}(t1.b,t2.b)->Projection->Sel([eq(t1.b, max(t2.a))])->Projection",
+		},
+		{
+			sql:  "select t1.b from t t1 where t1.b = (select avg(t2.a) from t t2 where t1.g=t2.g and (t1.b = 4 or t2.b = 2))",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Sel([eq(t1.g, t2.g) or(eq(t1.b, 4), eq(t2.b, 2))])->Aggr(avg(t2.a))}->Projection->Sel([eq(cast(t1.b), avg(t2.a))])->Projection",
 		},
 	}
 
@@ -1056,6 +1182,14 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "select a from t having sum(avg(a))",
 			err: ErrInvalidGroupFuncUse,
 		},
+		{
+			sql: "select concat(c_str, d_str) from t group by `concat(c_str, d_str)`",
+			err: nil,
+		},
+		{
+			sql: "select concat(c_str, d_str) from t group by `concat(c_str,d_str)`",
+			err: ErrUnknownColumn,
+		},
 	}
 	for _, tt := range tests {
 		sql := tt.sql
@@ -1217,7 +1351,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		ans []visitInfo
 	}{
 		{
-			sql: "insert into t values (1)",
+			sql: "insert into t (a) values (1)",
 			ans: []visitInfo{
 				{mysql.InsertPriv, "test", "t", ""},
 			},
@@ -1370,8 +1504,8 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 			is:        s.is,
 		}
 		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
-		builder.build(stmt)
-		c.Assert(builder.err, IsNil, comment)
+		_, err = builder.build(stmt)
+		c.Assert(err, IsNil, comment)
 
 		checkVisitInfo(c, builder.visitInfo, tt.ans, comment)
 	}
@@ -1473,13 +1607,12 @@ func (s *testPlanSuite) TestUnion(c *C) {
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		c.Assert(builder.err, IsNil)
-		plan := builder.build(stmt)
+		plan, err := builder.build(stmt)
 		if tt.err {
-			c.Assert(builder.err, NotNil)
+			c.Assert(err, NotNil)
 			return
 		}
-		c.Assert(builder.err, IsNil)
+		c.Assert(err, IsNil)
 		p := plan.(LogicalPlan)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
@@ -1585,6 +1718,11 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 			sql:  "select * from t union all (select * from t s order by a) limit 5",
 			best: "UnionAll{DataScan(t)->Limit->Projection->DataScan(s)->TopN([s.a],0,5)->Projection}->Limit",
 		},
+		// Test `ByItem` containing column from both sides.
+		{
+			sql:  "select ifnull(t1.b, t2.a) from t t1 left join t t2 on t1.e=t2.e order by ifnull(t1.b, t2.a) limit 5",
+			best: "Join{DataScan(t1)->DataScan(t2)}(t1.e,t2.e)->TopN([ifnull(t1.b, t2.a)],0,5)->Projection->Projection",
+		},
 	}
 	for i, tt := range tests {
 		comment := Commentf("case:%v sql:%s", i, tt.sql)
@@ -1596,8 +1734,8 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		c.Assert(builder.err, IsNil)
-		p := builder.build(stmt).(LogicalPlan)
+		p, err := builder.build(stmt)
+		c.Assert(err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)

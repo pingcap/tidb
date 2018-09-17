@@ -15,6 +15,7 @@ package kv
 
 import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/execdetails"
 	"golang.org/x/net/context"
 )
 
@@ -32,8 +33,8 @@ const (
 	BinlogInfo
 	// Skip existing check when "prewrite".
 	SkipCheckForWrite
-	// SchemaLeaseChecker is used for schema lease check.
-	SchemaLeaseChecker
+	// SchemaChecker is used for checking schema-validity.
+	SchemaChecker
 	// IsolationLevel sets isolation level for current transaction. The default level is SI.
 	IsolationLevel
 	// Priority marks the priority of this transaction.
@@ -42,8 +43,11 @@ const (
 	NotFillCache
 	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
 	SyncLog
-	// ForUpdate option would be set to true in 'select for update' transaction.
-	ForUpdate
+	// BypassLatch option tells 2PC commit to bypass latches, it would be true when the
+	// transaction is not conflict-retryable, for example: 'select for update', 'load data'.
+	BypassLatch
+	// KeyOnly retrieve only keys, it can be used in scan now.
+	KeyOnly
 )
 
 // Priority value for transaction priority.
@@ -211,6 +215,8 @@ type ResultSubset interface {
 	GetData() []byte
 	// GetStartKey gets the start key.
 	GetStartKey() Key
+	// GetExecDetails gets the detail information.
+	GetExecDetails() *execdetails.ExecDetails
 }
 
 // Response represents the response returned from KV layer.

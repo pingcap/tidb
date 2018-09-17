@@ -19,11 +19,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -52,6 +52,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
 	CommitMaxBackoff = 20000
+	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
 

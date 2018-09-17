@@ -43,18 +43,32 @@ func (p *PhysicalIndexScan) ExplainInfo() string {
 			}
 		}
 	}
-	if len(p.Ranges) > 0 {
-		buffer.WriteString(", range:")
+	haveCorCol := false
+	for _, cond := range p.AccessCondition {
+		if len(expression.ExtractCorColumns(cond)) > 0 {
+			haveCorCol = true
+			break
+		}
+	}
+	if len(p.rangeDecidedBy) > 0 {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
+	} else if haveCorCol {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
+	} else if len(p.Ranges) > 0 {
+		fmt.Fprint(buffer, ", range:")
 		for i, idxRange := range p.Ranges {
-			buffer.WriteString(idxRange.String())
+			fmt.Fprint(buffer, idxRange.String())
 			if i+1 < len(p.Ranges) {
-				buffer.WriteString(", ")
+				fmt.Fprint(buffer, ", ")
 			}
 		}
 	}
 	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
 	if p.Desc {
 		buffer.WriteString(", desc")
+	}
+	if p.stats.UsePseudoStats {
+		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
 }
@@ -70,18 +84,32 @@ func (p *PhysicalTableScan) ExplainInfo() string {
 	if p.pkCol != nil {
 		fmt.Fprintf(buffer, ", pk col:%s", p.pkCol.ExplainInfo())
 	}
-	if len(p.Ranges) > 0 {
-		buffer.WriteString(", range:")
+	haveCorCol := false
+	for _, cond := range p.AccessCondition {
+		if len(expression.ExtractCorColumns(cond)) > 0 {
+			haveCorCol = true
+			break
+		}
+	}
+	if len(p.rangeDecidedBy) > 0 {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.rangeDecidedBy)
+	} else if haveCorCol {
+		fmt.Fprintf(buffer, ", range: decided by %v", p.AccessCondition)
+	} else if len(p.Ranges) > 0 {
+		fmt.Fprint(buffer, ", range:")
 		for i, idxRange := range p.Ranges {
-			buffer.WriteString(idxRange.String())
+			fmt.Fprint(buffer, idxRange.String())
 			if i+1 < len(p.Ranges) {
-				buffer.WriteString(", ")
+				fmt.Fprint(buffer, ", ")
 			}
 		}
 	}
 	fmt.Fprintf(buffer, ", keep order:%v", p.KeepOrder)
 	if p.Desc {
 		buffer.WriteString(", desc")
+	}
+	if p.stats.UsePseudoStats {
+		buffer.WriteString(", stats:pseudo")
 	}
 	return buffer.String()
 }
@@ -98,17 +126,18 @@ func (p *PhysicalIndexReader) ExplainInfo() string {
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
-	return fmt.Sprintf("index:%s, table:%s", p.indexPlan.ExplainID(), p.tablePlan.ExplainID())
+	// The children can be inferred by the relation symbol.
+	return ""
 }
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalUnionScan) ExplainInfo() string {
-	return string(expression.ExplainExpressionList(p.Conditions))
+	return string(expression.SortedExplainExpressionList(p.Conditions))
 }
 
 // ExplainInfo implements PhysicalPlan interface.
 func (p *PhysicalSelection) ExplainInfo() string {
-	return string(expression.ExplainExpressionList(p.Conditions))
+	return string(expression.SortedExplainExpressionList(p.Conditions))
 }
 
 // ExplainInfo implements PhysicalPlan interface.
@@ -147,13 +176,15 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 	buffer := bytes.NewBufferString("")
 	if len(p.GroupByItems) > 0 {
 		fmt.Fprintf(buffer, "group by:%s, ",
-			expression.ExplainExpressionList(p.GroupByItems))
+			expression.SortedExplainExpressionList(p.GroupByItems))
 	}
-	buffer.WriteString("funcs:")
-	for i, agg := range p.AggFuncs {
-		buffer.WriteString(aggregation.ExplainAggFunc(agg))
-		if i+1 < len(p.AggFuncs) {
-			buffer.WriteString(", ")
+	if len(p.AggFuncs) > 0 {
+		buffer.WriteString("funcs:")
+		for i, agg := range p.AggFuncs {
+			buffer.WriteString(aggregation.ExplainAggFunc(agg))
+			if i+1 < len(p.AggFuncs) {
+				buffer.WriteString(", ")
+			}
 		}
 	}
 	return buffer.String()
@@ -179,15 +210,15 @@ func (p *PhysicalIndexJoin) ExplainInfo() string {
 	}
 	if len(p.LeftConditions) > 0 {
 		fmt.Fprintf(buffer, ", left cond:%s",
-			expression.ExplainExpressionList(p.LeftConditions))
+			expression.SortedExplainExpressionList(p.LeftConditions))
 	}
 	if len(p.RightConditions) > 0 {
 		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.ExplainExpressionList(p.RightConditions))
+			expression.SortedExplainExpressionList(p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.ExplainExpressionList(p.OtherConditions))
+			expression.SortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }
@@ -197,18 +228,18 @@ func (p *PhysicalHashJoin) ExplainInfo() string {
 	buffer := bytes.NewBufferString(p.JoinType.String())
 	fmt.Fprintf(buffer, ", inner:%s", p.Children()[p.InnerChildIdx].ExplainID())
 	if len(p.EqualConditions) > 0 {
-		fmt.Fprintf(buffer, ", equal:%s", p.EqualConditions)
+		fmt.Fprintf(buffer, ", equal:%v", p.EqualConditions)
 	}
 	if len(p.LeftConditions) > 0 {
 		fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
 	}
 	if len(p.RightConditions) > 0 {
 		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.ExplainExpressionList(p.RightConditions))
+			expression.SortedExplainExpressionList(p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.ExplainExpressionList(p.OtherConditions))
+			expression.SortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }
@@ -229,11 +260,11 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 	}
 	if len(p.RightConditions) > 0 {
 		fmt.Fprintf(buffer, ", right cond:%s",
-			expression.ExplainExpressionList(p.RightConditions))
+			expression.SortedExplainExpressionList(p.RightConditions))
 	}
 	if len(p.OtherConditions) > 0 {
 		fmt.Fprintf(buffer, ", other cond:%s",
-			expression.ExplainExpressionList(p.OtherConditions))
+			expression.SortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }

@@ -19,7 +19,9 @@ import (
 	"testing"
 	"time"
 
+	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -279,6 +281,17 @@ func (s *testTableCodecSuite) TestCutKey(c *C) {
 	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
 }
 
+func (s *testTableCodecSuite) TestDecodeBadDecical(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal")
+	dec := types.NewDecFromStringForTest("0.111")
+	b, err := codec.EncodeDecimal(nil, dec, 0, 0)
+	c.Assert(err, IsNil)
+	// Expect no panic.
+	_, _, err = codec.DecodeOne(b)
+	c.Assert(err, NotNil)
+}
+
 func (s *testTableCodecSuite) TestIndexKey(c *C) {
 	tableID := int64(4)
 	indexID := int64(5)
@@ -358,4 +371,18 @@ func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
 	c.Assert(decodeTableID, Equals, tableID)
 	c.Assert(decodeIndexID, Equals, indexID)
 	c.Assert(decodeValues, DeepEquals, valueStrs)
+}
+
+func BenchmarkHasTablePrefix(b *testing.B) {
+	k := kv.Key("foobar")
+	for i := 0; i < b.N; i++ {
+		hasTablePrefix(k)
+	}
+}
+
+func BenchmarkHasTablePrefixBuiltin(b *testing.B) {
+	k := kv.Key("foobar")
+	for i := 0; i < b.N; i++ {
+		k.HasPrefix(tablePrefix)
+	}
 }

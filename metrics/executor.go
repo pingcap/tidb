@@ -37,8 +37,3 @@ var (
 			Help:      "Counter of StmtNode.",
 		}, []string{LblType})
 )
-
-func init() {
-	prometheus.MustRegister(ExecutorCounter)
-	prometheus.MustRegister(StmtNodeCounter)
-}

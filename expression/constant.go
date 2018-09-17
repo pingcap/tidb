@@ -16,14 +16,15 @@ package expression
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -58,7 +59,7 @@ type Constant struct {
 // String implements fmt.Stringer interface.
 func (c *Constant) String() string {
 	if c.DeferredExpr != nil {
-		dt, err := c.Eval(nil)
+		dt, err := c.Eval(chunk.Row{})
 		if err != nil {
 			log.Errorf("Fail to eval constant, err: %s", err.Error())
 			return ""
@@ -88,10 +89,10 @@ func (c *Constant) GetType() *types.FieldType {
 }
 
 // Eval implements Expression interface.
-func (c *Constant) Eval(_ types.Row) (types.Datum, error) {
+func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 	if c.DeferredExpr != nil {
 		if sf, sfOK := c.DeferredExpr.(*ScalarFunction); sfOK {
-			dt, err := sf.Eval(nil)
+			dt, err := sf.Eval(chunk.Row{})
 			if err != nil {
 				return c.Value, err
 			}
@@ -114,9 +115,9 @@ func (c *Constant) Eval(_ types.Row) (types.Datum, error) {
 }
 
 // EvalInt returns int representation of Constant.
-func (c *Constant) EvalInt(ctx sessionctx.Context, _ types.Row) (int64, bool, error) {
+func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, error) {
 	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(nil)
+		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return 0, true, errors.Trace(err)
 		}
@@ -141,9 +142,9 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ types.Row) (int64, bool, er
 }
 
 // EvalReal returns real representation of Constant.
-func (c *Constant) EvalReal(ctx sessionctx.Context, _ types.Row) (float64, bool, error) {
+func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool, error) {
 	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(nil)
+		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return 0, true, errors.Trace(err)
 		}
@@ -168,9 +169,9 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ types.Row) (float64, bool,
 }
 
 // EvalString returns string representation of Constant.
-func (c *Constant) EvalString(ctx sessionctx.Context, _ types.Row) (string, bool, error) {
+func (c *Constant) EvalString(ctx sessionctx.Context, _ chunk.Row) (string, bool, error) {
 	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(nil)
+		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return "", true, errors.Trace(err)
 		}
@@ -192,9 +193,9 @@ func (c *Constant) EvalString(ctx sessionctx.Context, _ types.Row) (string, bool
 }
 
 // EvalDecimal returns decimal representation of Constant.
-func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ types.Row) (*types.MyDecimal, bool, error) {
+func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDecimal, bool, error) {
 	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(nil)
+		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return nil, true, errors.Trace(err)
 		}
@@ -212,9 +213,9 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ types.Row) (*types.MyDe
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
-func (c *Constant) EvalTime(ctx sessionctx.Context, _ types.Row) (val types.Time, isNull bool, err error) {
+func (c *Constant) EvalTime(ctx sessionctx.Context, _ chunk.Row) (val types.Time, isNull bool, err error) {
 	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(nil)
+		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return types.Time{}, true, errors.Trace(err)
 		}
@@ -239,9 +240,9 @@ func (c *Constant) EvalTime(ctx sessionctx.Context, _ types.Row) (val types.Time
 }
 
 // EvalDuration returns Duration representation of Constant.
-func (c *Constant) EvalDuration(ctx sessionctx.Context, _ types.Row) (val types.Duration, isNull bool, err error) {
+func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.Duration, isNull bool, err error) {
 	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(nil)
+		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return types.Duration{}, true, errors.Trace(err)
 		}
@@ -266,9 +267,9 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ types.Row) (val types.
 }
 
 // EvalJSON returns JSON representation of Constant.
-func (c *Constant) EvalJSON(ctx sessionctx.Context, _ types.Row) (json.BinaryJSON, bool, error) {
+func (c *Constant) EvalJSON(ctx sessionctx.Context, _ chunk.Row) (json.BinaryJSON, bool, error) {
 	if c.DeferredExpr != nil {
-		dt, err := c.DeferredExpr.Eval(nil)
+		dt, err := c.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
 			return json.BinaryJSON{}, true, errors.Trace(err)
 		}
@@ -296,8 +297,8 @@ func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
 	if !ok {
 		return false
 	}
-	_, err1 := y.Eval(nil)
-	_, err2 := c.Eval(nil)
+	_, err1 := y.Eval(chunk.Row{})
+	_, err2 := c.Eval(chunk.Row{})
 	if err1 != nil || err2 != nil {
 		return false
 	}
@@ -323,7 +324,7 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 	if len(c.hashcode) > 0 {
 		return c.hashcode
 	}
-	_, err := c.Eval(nil)
+	_, err := c.Eval(chunk.Row{})
 	if err != nil {
 		terror.Log(errors.Trace(err))
 	}
@@ -336,5 +337,9 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (c *Constant) ResolveIndices(_ *Schema) {
+func (c *Constant) ResolveIndices(_ *Schema) Expression {
+	return c
+}
+
+func (c *Constant) resolveIndices(_ *Schema) {
 }

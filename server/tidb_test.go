@@ -27,30 +27,37 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
 type TidbTestSuite struct {
 	tidbdrv *TiDBDriver
 	server  *Server
+	domain  *domain.Domain
+	store   kv.Storage
 }
 
 var suite = new(TidbTestSuite)
 var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	metrics.RegisterMetrics()
+	var err error
+	ts.store, err = mockstore.NewMockTikvStore()
 	session.SetStatsLease(0)
 	c.Assert(err, IsNil)
-	_, err = session.BootstrapSession(store)
+	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
-	ts.tidbdrv = NewTiDBDriver(store)
+	ts.tidbdrv = NewTiDBDriver(ts.store)
 	cfg := config.NewConfig()
 	cfg.Port = 4001
 	cfg.Status.ReportStatus = true
@@ -69,6 +76,12 @@ func (ts *TidbTestSuite) SetUpSuite(c *C) {
 }
 
 func (ts *TidbTestSuite) TearDownSuite(c *C) {
+	if ts.store != nil {
+		ts.store.Close()
+	}
+	if ts.domain != nil {
+		ts.domain.Close()
+	}
 	if ts.server != nil {
 		ts.server.Close()
 	}
@@ -259,11 +272,11 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
 	c.Assert(err, IsNil)
-	_, _, err = generateCert(1, "TiDB Server Certificate", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
 	c.Assert(err, IsNil)
 	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key.pem", "/tmp/client-cert.pem")
 	c.Assert(err, IsNil)
-	err = registerTLSConfig("client-certificate", "/tmp/ca-cert.pem", "/tmp/client-cert.pem", "/tmp/client-key.pem", "TiDB Server Certificate", true)
+	err = registerTLSConfig("client-certificate", "/tmp/ca-cert.pem", "/tmp/client-cert.pem", "/tmp/client-key.pem", "tidb-server", true)
 	c.Assert(err, IsNil)
 
 	defer func() {
@@ -317,7 +330,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.Addr = "localhost:4003"
 	}
 	err = runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
-	c.Assert(err, IsNil)
+	c.Assert(err, IsNil, Commentf("%v", errors.ErrorStack(err)))
 	runTestRegression(c, connOverrider, "TLSRegression")
 	server.Close()
 

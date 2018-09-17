@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -35,7 +34,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -99,8 +100,13 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
+
 	sc := flagsToStatementContext(dagReq.Flags)
-	sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	sc.TimeZone, err = constructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
@@ -111,6 +117,17 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		return nil, nil, nil, errors.Trace(err)
 	}
 	return ctx, e, dagReq, err
+}
+
+// constructTimeZone constructs timezone by name first. When the timezone name
+// is set, the daylight saving problem must be considered. Otherwise the
+// timezone offset in seconds east of UTC is used to constructed the timezone.
+func constructTimeZone(name string, offset int) (*time.Location, error) {
+	if name != "" {
+		return timeutil.LoadLocation(name)
+	}
+
+	return time.FixedZone("", offset), nil
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
@@ -384,26 +401,12 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 	return nil
 }
 
-// Flags are used by tipb.SelectRequest.Flags to handle execution mode, like how to handle truncate error.
-const (
-	// FlagIgnoreTruncate indicates if truncate error should be ignored.
-	// Read-only statements should ignore truncate error, write statements should not ignore truncate error.
-	FlagIgnoreTruncate uint64 = 1
-	// FlagTruncateAsWarning indicates if truncate error should be returned as warning.
-	// This flag only matters if FlagIgnoreTruncate is not set, in strict sql mode, truncate error should
-	// be returned as error, in non-strict sql mode, truncate error should be saved as warning.
-	FlagTruncateAsWarning uint64 = 1 << 1
-
-	// FlagPadCharToFullLength indicates if sql_mode 'PAD_CHAR_TO_FULL_LENGTH' is set.
-	FlagPadCharToFullLength uint64 = 1 << 2
-)
-
 // flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
 func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate = (flags & FlagIgnoreTruncate) > 0
-	sc.TruncateAsWarning = (flags & FlagTruncateAsWarning) > 0
-	sc.PadCharToFullLength = (flags & FlagPadCharToFullLength) > 0
+	sc.IgnoreTruncate = (flags & model.FlagIgnoreTruncate) > 0
+	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
+	sc.PadCharToFullLength = (flags & model.FlagPadCharToFullLength) > 0
 	return sc
 }
 
@@ -490,14 +493,13 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	if len(warnings) > 0 {
 		Warnings = make([]*tipb.Error, 0, len(warnings))
 		for i := range warnings {
-			Warnings = append(Warnings, toPBError(warnings[i]))
+			Warnings = append(Warnings, toPBError(warnings[i].Err))
 		}
 	}
 	streamResponse := tipb.StreamResponse{
-		Error:      toPBError(err),
-		EncodeType: tipb.EncodeType_TypeDefault,
-		Data:       data,
-		Warnings:   Warnings,
+		Error:    toPBError(err),
+		Data:     data,
+		Warnings: Warnings,
 	}
 	// The counts was the output count of each executor, but now it is the scan count of each range,
 	// so we need a flag to tell them apart.
@@ -513,7 +515,7 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	return &resp, nil
 }
 
-func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *coprocessor.KeyRange, []int64, []error, error) {
+func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *coprocessor.KeyRange, []int64, []stmtctx.SQLWarn, error) {
 	var chunk tipb.Chunk
 	var ran coprocessor.KeyRange
 	var finish bool
@@ -544,7 +546,7 @@ func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *cop
 	return chunk, finish, &ran, mock.exec.Counts(), warnings, nil
 }
 
-func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []error) *coprocessor.Response {
+func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []stmtctx.SQLWarn) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
@@ -554,7 +556,7 @@ func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []error)
 	if len(warnings) > 0 {
 		selResp.Warnings = make([]*tipb.Error, 0, len(warnings))
 		for i := range warnings {
-			selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i]))
+			selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i].Err))
 		}
 	}
 	if err != nil {

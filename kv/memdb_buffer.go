@@ -18,16 +18,16 @@ package kv
 import (
 	"sync/atomic"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/goleveldb/leveldb"
 	"github.com/pingcap/goleveldb/leveldb/comparer"
 	"github.com/pingcap/goleveldb/leveldb/iterator"
 	"github.com/pingcap/goleveldb/leveldb/memdb"
 	"github.com/pingcap/goleveldb/leveldb/util"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 )
 
-// memDBBuffer implements the MemBuffer interface.
+// memDbBuffer implements the MemBuffer interface.
 type memDbBuffer struct {
 	db              *memdb.DB
 	entrySizeLimit  int
@@ -95,15 +95,15 @@ func (m *memDbBuffer) Set(k Key, v []byte) error {
 		return errors.Trace(ErrCannotSetNilValue)
 	}
 	if len(k)+len(v) > m.entrySizeLimit {
-		return ErrEntryTooLarge.Gen("entry too large, size: %d", len(k)+len(v))
+		return ErrEntryTooLarge.GenWithStack("entry too large, size: %d", len(k)+len(v))
 	}
 
 	err := m.db.Put(k, v)
 	if m.Size() > m.bufferSizeLimit {
-		return ErrTxnTooLarge.Gen("transaction too large, size:%d", m.Size())
+		return ErrTxnTooLarge.GenWithStack("transaction too large, size:%d", m.Size())
 	}
 	if m.Len() > int(m.bufferLenLimit) {
-		return ErrTxnTooLarge.Gen("transaction too large, len:%d", m.Len())
+		return ErrTxnTooLarge.GenWithStack("transaction too large, len:%d", m.Len())
 	}
 	return errors.Trace(err)
 }

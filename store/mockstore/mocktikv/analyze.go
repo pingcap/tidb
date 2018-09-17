@@ -14,10 +14,7 @@
 package mocktikv
 
 import (
-	"time"
-
 	"github.com/golang/protobuf/proto"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
@@ -29,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -92,13 +90,13 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		var value []byte
 		for _, val := range values {
 			value = append(value, val...)
+			if cms != nil {
+				cms.InsertBytes(value)
+			}
 		}
 		err = statsBuilder.Iterate(types.NewBytesDatum(value))
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-		if cms != nil {
-			cms.InsertBytes(value)
 		}
 	}
 	hg := statistics.HistogramToProto(statsBuilder.Hist())
@@ -118,9 +116,13 @@ type analyzeColumnsExec struct {
 	fields  []*ast.ResultField
 }
 
-func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (*coprocessor.Response, error) {
+func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (_ *coprocessor.Response, err error) {
 	sc := flagsToStatementContext(analyzeReq.Flags)
-	sc.TimeZone = time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	sc.TimeZone, err = constructTimeZone("", int(analyzeReq.TimeZoneOffset))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)

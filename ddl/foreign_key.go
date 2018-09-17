@@ -14,13 +14,13 @@
 package ddl
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pkg/errors"
 )
 
-func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
@@ -50,11 +50,11 @@ func (d *ddl) onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ err
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		return ver, nil
 	default:
-		return ver, ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)
+		return ver, ErrInvalidForeignKeyState.GenWithStack("invalid fk state %v", fkInfo.State)
 	}
 }
 
-func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfo(t, job, schemaID)
 	if err != nil {
@@ -81,7 +81,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error
 
 	if !found {
 		job.State = model.JobStateCancelled
-		return ver, infoschema.ErrForeignKeyNotExists.GenByArgs(fkName)
+		return ver, infoschema.ErrForeignKeyNotExists.GenWithStackByArgs(fkName)
 	}
 
 	nfks := tblInfo.ForeignKeys[:0]
@@ -106,7 +106,7 @@ func (d *ddl) onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		return ver, nil
 	default:
-		return ver, ErrInvalidForeignKeyState.Gen("invalid fk state %v", fkInfo.State)
+		return ver, ErrInvalidForeignKeyState.GenWithStack("invalid fk state %v", fkInfo.State)
 	}
 
 }

@@ -17,7 +17,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/juju/errors"
+	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 // ErrSyntax indicates that a value does not have the right syntax for the target type.
@@ -233,4 +234,9 @@ func DoMatch(str string, patChars, patTypes []byte) bool {
 		}
 	}
 	return sIdx == len(str)
+}
+
+// Copy deep copies a string.
+func Copy(src string) string {
+	return string(hack.Slice(src))
 }

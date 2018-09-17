@@ -17,9 +17,9 @@ import (
 	"io"
 	"net"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -51,24 +51,24 @@ func (cc *clientConn) Run() {
 		tp, payload, err := cc.readPacket()
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
-				log.Errorf("[con:%d] read packet error, close this connection %s",
+				log.Errorf("con:%d read packet error, close this connection %s",
 					cc.connectionID, errors.ErrorStack(err))
 			}
 			return
 		}
 		if err = cc.dispatch(tp, payload); err != nil {
 			if terror.ErrorEqual(err, terror.ErrResultUndetermined) {
-				log.Errorf("[con:%d] result undetermined error, close this connection %s",
+				log.Errorf("con:%d result undetermined error, close this connection %s",
 					cc.connectionID, errors.ErrorStack(err))
 			} else if terror.ErrorEqual(err, terror.ErrCritical) {
-				log.Errorf("[con:%d] critical error, stop the server listener %s",
+				log.Errorf("con:%d critical error, stop the server listener %s",
 					cc.connectionID, errors.ErrorStack(err))
 				select {
 				case cc.server.stopListenerCh <- struct{}{}:
 				default:
 				}
 			}
-			log.Warnf("[con:%d] dispatch error: %s, %s", cc.connectionID, cc, err)
+			log.Warnf("con:%d dispatch error: %s", cc.connectionID, err)
 			cc.writeError(err)
 			return
 		}

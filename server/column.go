@@ -13,6 +13,10 @@
 
 package server
 
+import (
+	"github.com/pingcap/tidb/mysql"
+)
+
 // ColumnInfo contains information of a column
 type ColumnInfo struct {
 	Schema             string
@@ -42,8 +46,8 @@ func (column *ColumnInfo) Dump(buffer []byte) []byte {
 
 	buffer = dumpUint16(buffer, column.Charset)
 	buffer = dumpUint32(buffer, column.ColumnLength)
-	buffer = append(buffer, column.Type)
-	buffer = dumpUint16(buffer, column.Flag)
+	buffer = append(buffer, dumpType(column.Type))
+	buffer = dumpUint16(buffer, dumpFlag(column.Type, column.Flag))
 	buffer = append(buffer, column.Decimal)
 	buffer = append(buffer, 0, 0)
 
@@ -53,4 +57,24 @@ func (column *ColumnInfo) Dump(buffer []byte) []byte {
 	}
 
 	return buffer
+}
+
+func dumpFlag(tp byte, flag uint16) uint16 {
+	switch tp {
+	case mysql.TypeSet:
+		return flag | uint16(mysql.SetFlag)
+	case mysql.TypeEnum:
+		return flag | uint16(mysql.EnumFlag)
+	default:
+		return flag
+	}
+}
+
+func dumpType(tp byte) byte {
+	switch tp {
+	case mysql.TypeSet, mysql.TypeEnum:
+		return mysql.TypeString
+	default:
+		return tp
+	}
 }

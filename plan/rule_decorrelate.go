@@ -16,12 +16,12 @@ package plan
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 // extractCorColumnsBySchema only extracts the correlated columns that match the outer plan's schema.
@@ -182,13 +182,19 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 				agg.SetSchema(apply.Schema())
 				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().Keys[0])
 				newAggFuncs := make([]*aggregation.AggFuncDesc, 0, apply.Schema().Len())
-				for _, col := range outerPlan.Schema().Columns {
+
+				outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())
+				for i, col := range outerPlan.Schema().Columns {
 					first := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 					newAggFuncs = append(newAggFuncs, first)
+
+					outerCol, _ := outerPlan.Schema().Columns[i].Clone().(*expression.Column)
+					outerCol.RetType = first.RetTp
+					outerColsInSchema = append(outerColsInSchema, outerCol)
 				}
 				newAggFuncs = append(newAggFuncs, agg.AggFuncs...)
 				agg.AggFuncs = newAggFuncs
-				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
+				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
 				np, err := s.optimize(p)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -202,27 +208,34 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 			// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
 			// the equal conditions contain the correlated column of this apply.
 			if sel, ok := agg.children[0].(*LogicalSelection); ok && apply.JoinType == LeftOuterJoin {
-				var eqCondWithCorCol []*expression.ScalarFunction
+				var (
+					eqCondWithCorCol []*expression.ScalarFunction
+					remainedExpr     []expression.Expression
+				)
 				// Extract the equal condition.
-				for i := len(sel.Conditions) - 1; i >= 0; i-- {
-					if expr := apply.deCorColFromEqExpr(sel.Conditions[i]); expr != nil {
+				for _, cond := range sel.Conditions {
+					if expr := apply.deCorColFromEqExpr(cond); expr != nil {
 						eqCondWithCorCol = append(eqCondWithCorCol, expr.(*expression.ScalarFunction))
-						sel.Conditions = append(sel.Conditions[:i], sel.Conditions[i+1:]...)
+					} else {
+						remainedExpr = append(remainedExpr, cond)
 					}
 				}
 				if len(eqCondWithCorCol) > 0 {
+					originalExpr := sel.Conditions
+					sel.Conditions = remainedExpr
 					apply.extractCorColumnsBySchema()
 					// There's no other correlated column.
 					if len(apply.corCols) == 0 {
 						join := &apply.LogicalJoin
 						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
 						for _, eqCond := range eqCondWithCorCol {
-							clonedCol := eqCond.GetArgs()[1].Clone()
+							clonedCol := eqCond.GetArgs()[1]
 							// If the join key is not in the aggregation's schema, add first row function.
 							if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
 								newFunc := aggregation.NewAggFuncDesc(apply.ctx, ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
 								agg.AggFuncs = append(agg.AggFuncs, newFunc)
 								agg.schema.Append(clonedCol.(*expression.Column))
+								agg.schema.Columns[agg.schema.Len()-1].RetType = newFunc.RetTp
 							}
 							// If group by cols don't contain the join key, add it into this.
 							if agg.getGbyColIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
@@ -230,26 +243,28 @@ func (s *decorrelateSolver) optimize(p LogicalPlan) (LogicalPlan, error) {
 							}
 						}
 						agg.collectGroupByColumns()
-					}
-					// The selection may be useless, check and remove it.
-					if len(sel.Conditions) == 0 {
-						agg.SetChildren(sel.children[0])
-					}
-					defaultValueMap := s.aggDefaultValueMap(agg)
-					// We should use it directly, rather than building a projection.
-					if len(defaultValueMap) > 0 {
-						proj := LogicalProjection{}.init(agg.ctx)
-						proj.SetSchema(apply.schema)
-						proj.Exprs = expression.Column2Exprs(apply.schema.Columns)
-						for i, val := range defaultValueMap {
-							pos := proj.schema.ColumnIndex(agg.schema.Columns[i])
-							ifNullFunc := expression.NewFunctionInternal(agg.ctx, ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.schema.Columns[i].Clone(), val)
-							proj.Exprs[pos] = ifNullFunc
+						// The selection may be useless, check and remove it.
+						if len(sel.Conditions) == 0 {
+							agg.SetChildren(sel.children[0])
 						}
-						proj.SetChildren(apply)
-						p = proj
+						defaultValueMap := s.aggDefaultValueMap(agg)
+						// We should use it directly, rather than building a projection.
+						if len(defaultValueMap) > 0 {
+							proj := LogicalProjection{}.init(agg.ctx)
+							proj.SetSchema(apply.schema)
+							proj.Exprs = expression.Column2Exprs(apply.schema.Columns)
+							for i, val := range defaultValueMap {
+								pos := proj.schema.ColumnIndex(agg.schema.Columns[i])
+								ifNullFunc := expression.NewFunctionInternal(agg.ctx, ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.schema.Columns[i], val)
+								proj.Exprs[pos] = ifNullFunc
+							}
+							proj.SetChildren(apply)
+							p = proj
+						}
+						return s.optimize(p)
 					}
-					return s.optimize(p)
+					sel.Conditions = originalExpr
+					apply.extractCorColumnsBySchema()
 				}
 			}
 		}

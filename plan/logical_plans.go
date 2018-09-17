@@ -16,15 +16,16 @@ package plan
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -34,7 +35,6 @@ var (
 	_ LogicalPlan = &LogicalProjection{}
 	_ LogicalPlan = &LogicalSelection{}
 	_ LogicalPlan = &LogicalApply{}
-	_ LogicalPlan = &LogicalExists{}
 	_ LogicalPlan = &LogicalMaxOneRow{}
 	_ LogicalPlan = &LogicalTableDual{}
 	_ LogicalPlan = &DataSource{}
@@ -256,11 +256,6 @@ func (la *LogicalApply) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// LogicalExists checks if a query returns result.
-type LogicalExists struct {
-	logicalSchemaProducer
-}
-
 // LogicalMaxOneRow checks if a query returns no more than one row.
 type LogicalMaxOneRow struct {
 	baseLogicalPlan
@@ -285,6 +280,7 @@ type DataSource struct {
 	logicalSchemaProducer
 
 	indexHints []*ast.IndexHint
+	table      table.Table
 	tableInfo  *model.TableInfo
 	Columns    []*model.ColumnInfo
 	DBName     model.CIStr
@@ -299,19 +295,22 @@ type DataSource struct {
 	// relevantIndices means the indices match the push down conditions
 	relevantIndices []bool
 
-	// statsAfterSelect is the statsInfo for dataSource and selection.
-	statsAfterSelect *statsInfo
-
 	statisticTable *statistics.Table
 
 	// possibleAccessPaths stores all the possible access path for physical plan, including table scan.
 	possibleAccessPaths []*accessPath
+
+	// The data source may be a partition, rather than a real table.
+	isPartition     bool
+	physicalTableID int64
 }
 
 // accessPath tells how we access one index or just access table.
 type accessPath struct {
-	index  *model.IndexInfo
-	ranges []*ranger.Range
+	index      *model.IndexInfo
+	idxCols    []*expression.Column
+	idxColLens []int
+	ranges     []*ranger.Range
 	// countAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	countAfterAccess float64
 	// countAfterIndex is the row count after we apply filters on index and before we apply the table filters.
@@ -326,7 +325,9 @@ type accessPath struct {
 	forced bool
 }
 
-func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
+// deriveTablePathStats will fulfill the information that the accessPath need.
+// And it will check whether the primary key is covered only by point query.
+func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.countAfterAccess = float64(ds.statisticTable.Count)
@@ -339,50 +340,205 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) error {
 	}
 	if pkCol == nil {
 		path.ranges = ranger.FullIntRange(false)
-		return nil
+		return false, nil
 	}
 	path.ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.Flag))
 	if len(ds.pushedDownConds) == 0 {
-		return nil
+		return false, nil
 	}
 	path.accessConds, path.tableFilters = ranger.DetachCondsForTableRange(ds.ctx, ds.pushedDownConds, pkCol)
+	// If there's no access cond, we try to find that whether there's expression containing correlated column that
+	// can be used to access data.
+	corColInAccessConds := false
+	if len(path.accessConds) == 0 {
+		for i, filter := range path.tableFilters {
+			eqFunc, ok := filter.(*expression.ScalarFunction)
+			if !ok || eqFunc.FuncName.L != ast.EQ {
+				continue
+			}
+			lCol, lOk := eqFunc.GetArgs()[0].(*expression.Column)
+			if lOk && lCol.Equal(ds.ctx, pkCol) {
+				_, rOk := eqFunc.GetArgs()[1].(*expression.CorrelatedColumn)
+				if rOk {
+					path.accessConds = append(path.accessConds, filter)
+					path.tableFilters = append(path.tableFilters[:i], path.tableFilters[i+1:]...)
+					corColInAccessConds = true
+					break
+				}
+			}
+			rCol, rOk := eqFunc.GetArgs()[1].(*expression.Column)
+			if rOk && rCol.Equal(ds.ctx, pkCol) {
+				_, lOk := eqFunc.GetArgs()[0].(*expression.CorrelatedColumn)
+				if lOk {
+					path.accessConds = append(path.accessConds, filter)
+					path.tableFilters = append(path.tableFilters[:i], path.tableFilters[i+1:]...)
+					corColInAccessConds = true
+					break
+				}
+			}
+		}
+	}
+	if corColInAccessConds {
+		path.countAfterAccess = 1
+		return true, nil
+	}
 	path.ranges, err = ranger.BuildTableRange(path.accessConds, sc, pkCol.RetType)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
-	return errors.Trace(err)
+	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
+	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
+	if path.countAfterAccess < ds.stats.RowCount {
+		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
+	}
+	// Check whether the primary key is covered by point query.
+	noIntervalRange := true
+	for _, ran := range path.ranges {
+		if !ran.IsPoint(sc) {
+			noIntervalRange = false
+			break
+		}
+	}
+	return noIntervalRange, errors.Trace(err)
 }
 
-func (ds *DataSource) deriveIndexPathStats(path *accessPath) error {
+// deriveIndexPathStats will fulfill the information that the accessPath need.
+// And it will check whether this index is full matched by point query. We will use this check to
+// determine whether we remove other paths or not.
+func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
 	path.countAfterAccess = float64(ds.statisticTable.Count)
-	idxCols, lengths := expression.IndexInfo2Cols(ds.schema.Columns, path.index)
-	if len(idxCols) != 0 {
-		path.ranges, path.accessConds, path.indexFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, idxCols, lengths)
+	path.idxCols, path.idxColLens = expression.IndexInfo2Cols(ds.schema.Columns, path.index)
+	if len(path.idxCols) != 0 {
+		path.ranges, path.accessConds, path.tableFilters, path.eqCondCount, err = ranger.DetachCondAndBuildRangeForIndex(ds.ctx, ds.pushedDownConds, path.idxCols, path.idxColLens)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
-		path.countAfterAccess, err = ds.statisticTable.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
+		path.countAfterAccess, err = ds.stats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
-		path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.indexFilters, path.index.Columns, ds.tableInfo)
 	} else {
-		path.indexFilters, path.tableFilters = splitIndexFilterConditions(ds.pushedDownConds, path.index.Columns, ds.tableInfo)
+		path.tableFilters = ds.pushedDownConds
 	}
-	path.countAfterIndex = path.countAfterAccess
+	corColInAccessConds := false
+	if path.eqCondCount == len(path.accessConds) {
+		access, remained := path.splitCorColAccessCondFromFilters()
+		path.accessConds = append(path.accessConds, access...)
+		path.tableFilters = remained
+		if len(access) > 0 {
+			corColInAccessConds = true
+		}
+	}
+	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.index.Columns, ds.tableInfo)
+	if corColInAccessConds {
+		idxHist, ok := ds.stats.HistColl.Indices[path.index.ID]
+		if ok && !ds.stats.HistColl.Pseudo {
+			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
+		} else {
+			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+		}
+	}
+	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
+	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
+	if path.countAfterAccess < ds.stats.RowCount {
+		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
+	}
 	if path.indexFilters != nil {
-		selectivity, err := ds.statisticTable.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 			selectivity = selectionFactor
 		}
-		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.statsAfterSelect.count)
+		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)
 	}
-	return nil
+	// Check whether there's only point query.
+	noIntervalRanges := true
+	haveNullVal := false
+	for _, ran := range path.ranges {
+		// Not point or the not full matched.
+		if !ran.IsPoint(sc) || len(ran.HighVal) != len(path.index.Columns) {
+			noIntervalRanges = false
+			break
+		}
+		// Check whether there's null value.
+		for i := 0; i < len(path.index.Columns); i++ {
+			if ran.HighVal[i].IsNull() {
+				haveNullVal = true
+				break
+			}
+		}
+		if haveNullVal {
+			break
+		}
+	}
+	return noIntervalRanges && !haveNullVal, nil
+}
+
+func (path *accessPath) splitCorColAccessCondFromFilters() (access, remained []expression.Expression) {
+	access = make([]expression.Expression, len(path.idxCols)-path.eqCondCount)
+	used := make([]bool, len(path.tableFilters))
+	for i := path.eqCondCount; i < len(path.idxCols); i++ {
+		matched := false
+		for j, filter := range path.tableFilters {
+			if used[j] || !isColEqCorColOrConstant(filter, path.idxCols[i]) {
+				continue
+			}
+			matched = true
+			access[i-path.eqCondCount] = filter
+			if path.idxColLens[i] == types.UnspecifiedLength {
+				used[j] = true
+			}
+			break
+		}
+		if !matched {
+			access = access[:i-path.eqCondCount]
+			break
+		}
+	}
+	for i, ok := range used {
+		if !ok {
+			remained = append(remained, path.tableFilters[i])
+		}
+	}
+	return access, remained
+}
+
+// getEqOrInColOffset checks if the expression is a eq function that one side is constant or correlated column
+// and another is column.
+func isColEqCorColOrConstant(filter expression.Expression, col *expression.Column) bool {
+	f, ok := filter.(*expression.ScalarFunction)
+	if !ok || f.FuncName.L != ast.EQ {
+		return false
+	}
+	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+		if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
+			if col.Equal(nil, c) {
+				return true
+			}
+		}
+		if _, ok := f.GetArgs()[1].(*expression.CorrelatedColumn); ok {
+			if col.Equal(nil, c) {
+				return true
+			}
+		}
+	}
+	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+		if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
+			if col.Equal(nil, c) {
+				return true
+			}
+		}
+		if _, ok := f.GetArgs()[0].(*expression.CorrelatedColumn); ok {
+			if col.Equal(nil, c) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (ds *DataSource) getPKIsHandleCol() *expression.Column {

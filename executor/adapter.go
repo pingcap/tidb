@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -65,6 +66,10 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 		if dbName == "" && col.TblName.L != "" {
 			dbName = defaultDB
 		}
+		origColName := col.OrigColName
+		if origColName.L == "" {
+			origColName = col.ColName
+		}
 		rf := &ast.ResultField{
 			ColumnAsName: col.ColName,
 			TableAsName:  col.TblName,
@@ -72,7 +77,7 @@ func schema2ResultFields(schema *expression.Schema, defaultDB string) (rfs []*as
 			Table:        &model.TableInfo{Name: col.OrigTblName},
 			Column: &model.ColumnInfo{
 				FieldType: *col.RetType,
-				Name:      col.ColName,
+				Name:      origColName,
 			},
 		}
 		rfs = append(rfs, rf)
@@ -280,10 +285,10 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		var err error
 		isPointGet := IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, a.Plan)
 		if isPointGet {
-			log.Debugf("[con:%d][InitTxnWithStartTS] %s", ctx.GetSessionVars().ConnectionID, a.Text)
+			log.Debugf("con:%d InitTxnWithStartTS %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.InitTxnWithStartTS(math.MaxUint64)
 		} else {
-			log.Debugf("[con:%d][ActivePendingTxn] %s", ctx.GetSessionVars().ConnectionID, a.Text)
+			log.Debugf("con:%d ActivePendingTxn %s", ctx.GetSessionVars().ConnectionID, a.Text)
 			err = ctx.ActivePendingTxn()
 		}
 		if err != nil {
@@ -324,6 +329,9 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 	return e, nil
 }
 
+// QueryReplacer replaces new line and tab for grep result including query string.
+var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
+
 func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	level := log.GetLevel()
 	if level < log.WarnLevel {
@@ -339,19 +347,49 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	if len(sql) > int(cfg.Log.QueryLogMaxLen) {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
-	connID := a.Ctx.GetSessionVars().ConnectionID
-	currentDB := a.Ctx.GetSessionVars().CurrentDB
-	tableIDs := strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
-	indexIDs := strings.Replace(fmt.Sprintf("%v", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
+	sql = QueryReplacer.Replace(sql)
 
+	sessVars := a.Ctx.GetSessionVars()
+	connID := sessVars.ConnectionID
+	currentDB := sessVars.CurrentDB
+	var tableIDs, indexIDs string
+	if len(sessVars.StmtCtx.TableIDs) > 0 {
+		tableIDs = strings.Replace(fmt.Sprintf("table_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.TableIDs), " ", ",", -1)
+	}
+	if len(sessVars.StmtCtx.IndexIDs) > 0 {
+		indexIDs = strings.Replace(fmt.Sprintf("index_ids:%v ", a.Ctx.GetSessionVars().StmtCtx.IndexIDs), " ", ",", -1)
+	}
+	user := sessVars.User
+	var internal string
+	if sessVars.InRestrictedSQL {
+		internal = "[INTERNAL] "
+	}
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debugf(
-			"[QUERY] cost_time:%v succ:%v connection_id:%v txn_start_ts:%v database:%v table_ids:%v index_ids:%v sql:%v",
-			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			internal, costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
 		logutil.SlowQueryLogger.Warnf(
-			"[SLOW_QUERY] cost_time:%v succ:%v connection_id:%v txn_start_ts:%v database:%v table_ids:%v index_ids:%v sql:%v",
-			costTime, succ, connID, txnTS, currentDB, tableIDs, indexIDs, sql)
+			"[SLOW_QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
+			internal, costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+		var userString string
+		if user != nil {
+			userString = user.String()
+		}
+		domain.GetDomain(a.Ctx).LogTopNSlowQuery(&domain.SlowQueryInfo{
+			SQL:      sql,
+			Start:    a.startTime,
+			Duration: costTime,
+			Detail:   sessVars.StmtCtx.GetExecDetails(),
+			Succ:     succ,
+			ConnID:   connID,
+			TxnTS:    txnTS,
+			User:     userString,
+			DB:       currentDB,
+			TableIDs: tableIDs,
+			IndexIDs: indexIDs,
+			Internal: sessVars.InRestrictedSQL,
+		})
 	}
 }
 
@@ -388,6 +426,8 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plan.Plan
 	case *plan.PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*plan.PhysicalTableScan)
 		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
+	case *plan.PointGetPlan:
+		return true
 	default:
 		return false
 	}

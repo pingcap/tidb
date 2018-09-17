@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -22,26 +21,64 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 type simpleRewriter struct {
 	exprStack
 
-	tbl *model.TableInfo
-	err error
-	ctx sessionctx.Context
+	schema *Schema
+	err    error
+	ctx    sessionctx.Context
 }
 
-// ParseSimpleExpr parses simple expression string to Expression.
+// ParseSimpleExprWithTableInfo parses simple expression string to Expression.
 // The expression string must only reference the column in table Info.
-func ParseSimpleExpr(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
+func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
 	exprStr = "select " + exprStr
 	stmts, err := parser.New().Parse(exprStr, "", "")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	rewriter := &simpleRewriter{tbl: tableInfo, ctx: ctx}
+	return RewriteSimpleExprWithTableInfo(ctx, tableInfo, expr)
+}
+
+// RewriteSimpleExprWithTableInfo rewrites simple ast.ExprNode to expression.Expression.
+func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo, expr ast.ExprNode) (Expression, error) {
+	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	columns := ColumnInfos2ColumnsWithDBName(ctx, dbName, tbl.Name, tbl.Columns)
+	rewriter := &simpleRewriter{ctx: ctx, schema: NewSchema(columns...)}
+	expr.Accept(rewriter)
+	if rewriter.err != nil {
+		return nil, errors.Trace(rewriter.err)
+	}
+	return rewriter.pop(), nil
+}
+
+// ParseSimpleExprsWithSchema parses simple expression string to Expression.
+// The expression string must only reference the column in the given schema.
+func ParseSimpleExprsWithSchema(ctx sessionctx.Context, exprStr string, schema *Schema) ([]Expression, error) {
+	exprStr = "select " + exprStr
+	stmts, err := parser.New().Parse(exprStr, "", "")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
+	exprs := make([]Expression, 0, len(fields))
+	for _, field := range fields {
+		expr, err := RewriteSimpleExprWithSchema(ctx, field.Expr, schema)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		exprs = append(exprs, expr)
+	}
+	return exprs, nil
+}
+
+// RewriteSimpleExprWithSchema rewrites simple ast.ExprNode to expression.Expression.
+func RewriteSimpleExprWithSchema(ctx sessionctx.Context, expr ast.ExprNode, schema *Schema) (Expression, error) {
+	rewriter := &simpleRewriter{ctx: ctx, schema: schema}
 	expr.Accept(rewriter)
 	if rewriter.err != nil {
 		return nil, errors.Trace(rewriter.err)
@@ -50,23 +87,11 @@ func ParseSimpleExpr(ctx sessionctx.Context, exprStr string, tableInfo *model.Ta
 }
 
 func (sr *simpleRewriter) rewriteColumn(nodeColName *ast.ColumnNameExpr) (*Column, error) {
-	tblCols := sr.tbl.Columns
-	for i, col := range tblCols {
-		if col.Name.L == nodeColName.Name.Name.L {
-			return &Column{
-				FromID:      1,
-				ColName:     col.Name,
-				OrigTblName: sr.tbl.Name,
-				DBName:      model.NewCIStr(sr.ctx.GetSessionVars().CurrentDB),
-				TblName:     sr.tbl.Name,
-				RetType:     &col.FieldType,
-				ID:          col.ID,
-				Position:    col.Offset,
-				Index:       i,
-			}, nil
-		}
+	col := sr.schema.FindColumnByName(nodeColName.Name.Name.L)
+	if col != nil {
+		return col, nil
 	}
-	return nil, errBadField.Gen(nodeColName.Name.Name.O, "expression")
+	return nil, errBadField.GenWithStackByArgs(nodeColName.Name.Name.O, "expression")
 }
 
 func (sr *simpleRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
@@ -112,6 +137,11 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		if v.Sel == nil {
 			sr.inToExpression(len(v.List), v.Not, &v.Type)
 		}
+	case *ast.ParamMarkerExpr:
+		tp := types.NewFieldType(mysql.TypeUnspecified)
+		types.DefaultParamTypeForValue(v.GetValue(), tp)
+		value := &Constant{Value: v.Datum, RetType: tp}
+		sr.push(value)
 	case *ast.RowExpr:
 		sr.rowToScalarFunc(v)
 	case *ast.ParenthesesExpr:
@@ -138,7 +168,7 @@ func (sr *simpleRewriter) binaryOpToExpression(v *ast.BinaryOperationExpr) {
 		lLen := GetRowLen(left)
 		rLen := GetRowLen(right)
 		if lLen != 1 || rLen != 1 {
-			sr.err = ErrOperandColumns.GenByArgs(1)
+			sr.err = ErrOperandColumns.GenWithStackByArgs(1)
 			return
 		}
 		function, sr.err = NewFunction(sr.ctx, v.Op.String(), types.NewFieldType(mysql.TypeUnspecified), left, right)
@@ -168,7 +198,7 @@ func (sr *simpleRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	switch v.FnName.L {
 	case ast.Nullif:
 		if len(v.Args) != 2 {
-			sr.err = ErrIncorrectParameterCount.GenByArgs(v.FnName.O)
+			sr.err = ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
 			return true
 		}
 		param2 := sr.pop()
@@ -214,7 +244,7 @@ func (sr *simpleRewriter) constructBinaryOpFunction(l Expression, r Expression, 
 	if lLen == 1 && rLen == 1 {
 		return NewFunction(sr.ctx, op, types.NewFieldType(mysql.TypeTiny), l, r)
 	} else if rLen != lLen {
-		return nil, ErrOperandColumns.GenByArgs(lLen)
+		return nil, ErrOperandColumns.GenWithStackByArgs(lLen)
 	}
 	switch op {
 	case ast.EQ, ast.NE, ast.NullEQ:
@@ -273,7 +303,7 @@ func (sr *simpleRewriter) unaryOpToExpression(v *ast.UnaryOperationExpr) {
 	}
 	expr := sr.pop()
 	if GetRowLen(expr) != 1 {
-		sr.err = ErrOperandColumns.GenByArgs(1)
+		sr.err = ErrOperandColumns.GenWithStackByArgs(1)
 		return
 	}
 	newExpr, err := NewFunction(sr.ctx, op, &v.Type, expr)
@@ -351,7 +381,7 @@ func (sr *simpleRewriter) betweenToExpression(v *ast.BetweenExpr) {
 func (sr *simpleRewriter) isNullToExpression(v *ast.IsNullExpr) {
 	arg := sr.pop()
 	if GetRowLen(arg) != 1 {
-		sr.err = ErrOperandColumns.GenByArgs(1)
+		sr.err = ErrOperandColumns.GenWithStackByArgs(1)
 		return
 	}
 	function := sr.notToExpression(v.Not, ast.IsNull, &v.Type, arg)
@@ -384,7 +414,7 @@ func (sr *simpleRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 		op = ast.IsFalsity
 	}
 	if GetRowLen(arg) != 1 {
-		sr.err = ErrOperandColumns.GenByArgs(1)
+		sr.err = ErrOperandColumns.GenWithStackByArgs(1)
 		return
 	}
 	function := sr.notToExpression(v.Not, op, &v.Type, arg)
@@ -398,23 +428,23 @@ func (sr *simpleRewriter) inToExpression(lLen int, not bool, tp *types.FieldType
 	exprs := sr.popN(lLen + 1)
 	leftExpr := exprs[0]
 	elems := exprs[1:]
-	l := GetRowLen(leftExpr)
+	l, leftFt := GetRowLen(leftExpr), leftExpr.GetType()
 	for i := 0; i < lLen; i++ {
 		if l != GetRowLen(elems[i]) {
-			sr.err = ErrOperandColumns.GenByArgs(l)
+			sr.err = ErrOperandColumns.GenWithStackByArgs(l)
 			return
 		}
 	}
-	leftIsNull := leftExpr.GetType().Tp == mysql.TypeNull
+	leftIsNull := leftFt.Tp == mysql.TypeNull
 	if leftIsNull {
 		sr.push(Null.Clone())
 		return
 	}
-	leftEt := leftExpr.GetType().EvalType()
+	leftEt := leftFt.EvalType()
 	if leftEt == types.ETInt {
 		for i := 0; i < len(elems); i++ {
 			if c, ok := elems[i].(*Constant); ok {
-				elems[i] = RefineConstantArg(sr.ctx, c, opcode.EQ)
+				elems[i], _ = RefineComparedConstant(sr.ctx, mysql.HasUnsignedFlag(leftFt.Flag), c, opcode.EQ)
 			}
 		}
 	}

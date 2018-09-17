@@ -15,6 +15,7 @@ package privileges_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -58,10 +59,7 @@ type testPrivilegeSuite struct {
 func (s *testPrivilegeSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
 	s.dbName = "test"
-	s.store = newStore(c, s.dbName)
-	dom, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	s.dom = dom
+	s.dom, s.store = newStore(c, s.dbName)
 }
 
 func (s *testPrivilegeSuite) TearDownSuite(c *C) {
@@ -304,19 +302,37 @@ func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 	mustExec(c, se, `select * from information_schema.key_column_usage`)
 }
 
+func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	mustExec(c, se, `CREATE USER 'test_admin'@'localhost';`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	mustExec(c, se, `CREATE TABLE t(a int)`)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "test_admin", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), "ADMIN SHOW DDL JOBS")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	_, err = se.Execute(context.Background(), "ADMIN CHECK TABLE t")
+	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err = se.Execute(context.Background(), "ADMIN SHOW DDL JOBS")
+	c.Assert(err, IsNil)
+}
+
 func mustExec(c *C, se session.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)
 }
 
-func newStore(c *C, dbPath string) kv.Storage {
+func newStore(c *C, dbPath string) (*domain.Domain, kv.Storage) {
 	store, err := mockstore.NewMockTikvStore()
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	c.Assert(err, IsNil)
-	_, err = session.BootstrapSession(store)
+	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
-	return store
+	return dom, store
 }
 
 func newSession(c *C, store kv.Storage, dbName string) session.Session {

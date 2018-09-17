@@ -36,20 +36,20 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	// For pprof
+	_ "net/http/pprof"
 	"sync"
 	"sync/atomic"
 	"time"
-	// For pprof
-	_ "net/http/pprof"
 
 	"github.com/blacktear23/go-proxyprotocol"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -102,7 +102,11 @@ func (s *Server) ConnectionCount() int {
 }
 
 func (s *Server) getToken() *Token {
-	return s.concurrentLimiter.Get()
+	start := time.Now()
+	tok := s.concurrentLimiter.Get()
+	// Note that data smaller than one microsecond is ignored, because that case can be viewed as non-block.
+	metrics.GetTokenDurationHistogram.Observe(float64(time.Since(start).Nanoseconds() / 1e3))
+	return tok
 }
 
 func (s *Server) releaseToken(token *Token) {
@@ -307,9 +311,9 @@ func (s *Server) onConn(c net.Conn) {
 		terror.Log(errors.Trace(err))
 		return
 	}
-	log.Infof("[con:%d] new connection %s", conn.connectionID, c.RemoteAddr().String())
+	log.Infof("con:%d new connection %s", conn.connectionID, c.RemoteAddr().String())
 	defer func() {
-		log.Infof("[con:%d] close connection", conn.connectionID)
+		log.Infof("con:%d close connection", conn.connectionID)
 	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
@@ -321,14 +325,15 @@ func (s *Server) onConn(c net.Conn) {
 }
 
 // ShowProcessList implements the SessionManager interface.
-func (s *Server) ShowProcessList() []util.ProcessInfo {
-	var rs []util.ProcessInfo
+func (s *Server) ShowProcessList() map[uint64]util.ProcessInfo {
 	s.rwlock.RLock()
+	rs := make(map[uint64]util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
 		}
-		rs = append(rs, client.ctx.ShowProcess())
+		pi := client.ctx.ShowProcess()
+		rs[pi.ID] = pi
 	}
 	s.rwlock.RUnlock()
 	return rs

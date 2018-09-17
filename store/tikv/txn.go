@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -144,22 +144,19 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
 	switch opt {
-	case kv.IsolationLevel:
-		txn.snapshot.isolationLevel = val.(kv.IsoLevel)
 	case kv.Priority:
 		txn.snapshot.priority = kvPriorityToCommandPri(val.(int))
 	case kv.NotFillCache:
 		txn.snapshot.notFillCache = val.(bool)
 	case kv.SyncLog:
 		txn.snapshot.syncLog = val.(bool)
+	case kv.KeyOnly:
+		txn.snapshot.keyOnly = val.(bool)
 	}
 }
 
 func (txn *tikvTxn) DelOption(opt kv.Option) {
 	txn.us.DelOption(opt)
-	if opt == kv.IsolationLevel {
-		txn.snapshot.isolationLevel = kv.SI
-	}
 }
 
 func (txn *tikvTxn) Commit(ctx context.Context) error {
@@ -195,12 +192,12 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 
 	// latches enabled
-	var forUpdate bool
-	if option := txn.us.GetOption(kv.ForUpdate); option != nil {
-		forUpdate = option.(bool)
+	var bypassLatch bool
+	if option := txn.us.GetOption(kv.BypassLatch); option != nil {
+		bypassLatch = option.(bool)
 	}
-	// For update transaction is not retryable, commit directly.
-	if forUpdate {
+	// When bypassLatch flag is true, commit directly.
+	if bypassLatch {
 		err = committer.executeAndWriteFinishBinlog(ctx)
 		if err == nil {
 			txn.store.txnLatches.RefreshCommitTS(committer.keys, committer.commitTS)
@@ -245,6 +242,7 @@ func (txn *tikvTxn) LockKeys(keys ...kv.Key) error {
 	for _, key := range keys {
 		txn.lockKeys = append(txn.lockKeys, key)
 	}
+	txn.dirty = true
 	txn.mu.Unlock()
 	return nil
 }

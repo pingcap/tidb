@@ -27,11 +27,58 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"golang.org/x/net/context"
 )
+
+type DDLForTest interface {
+	// SetHook sets the hook.
+	SetHook(h Callback)
+	// SetInterceptoror sets the interceptor.
+	SetInterceptoror(h Interceptor)
+}
+
+// SetHook implements DDL.SetHook interface.
+func (d *ddl) SetHook(h Callback) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.mu.hook = h
+}
+
+// SetInterceptoror implements DDL.SetInterceptoror interface.
+func (d *ddl) SetInterceptoror(i Interceptor) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	d.mu.interceptor = i
+}
+
+// generalWorker returns the general worker.
+func (d *ddl) generalWorker() *worker {
+	return d.workers[generalWorker]
+}
+
+// restartWorkers is like the function of d.start. But it won't initialize the "workers" and create a new worker.
+// It only starts the original workers.
+func (d *ddl) restartWorkers(ctx context.Context) {
+	d.quitCh = make(chan struct{})
+	if !RunWorker {
+		return
+	}
+
+	err := d.ownerManager.CampaignOwner(ctx)
+	terror.Log(err)
+	for _, worker := range d.workers {
+		worker.wg.Add(1)
+		worker.quitCh = make(chan struct{})
+		go worker.start(d.ddlCtx)
+		asyncNotify(worker.ddlJobCh)
+	}
+}
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -111,8 +158,8 @@ func checkHistoryJobArgs(c *C, ctx sessionctx.Context, id int64, args *historyJo
 	}
 }
 
-func testCreateIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
-	job := &model.Job{
+func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
+	return &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAddIndex,
@@ -122,7 +169,10 @@ func testCreateIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
 				Length: types.UnspecifiedLength}}},
 	}
+}
 
+func testCreateIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
+	job := buildCreateIdxJob(dbInfo, tblInfo, unique, indexName, colName)
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
@@ -130,18 +180,31 @@ func testCreateIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo,
 	return job
 }
 
-func testDropIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
-	job := &model.Job{
+func buildDropIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
+	return &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionDropIndex,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{model.NewCIStr(indexName)},
 	}
+}
 
+func testDropIndex(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
+	job := buildDropIdxJob(dbInfo, tblInfo, indexName)
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
 	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
+}
+
+func buildRebaseAutoIDJobJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, newBaseID int64) *model.Job {
+	return &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionRebaseAutoID,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newBaseID},
+	}
 }

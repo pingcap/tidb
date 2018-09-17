@@ -16,8 +16,8 @@ package charset
 import (
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pkg/errors"
 )
 
 // Charset is a charset.
@@ -85,7 +85,7 @@ func ValidCharsetAndCollation(cs string, co string) bool {
 	if cs == "" {
 		cs = "utf8"
 	}
-
+	cs = strings.ToLower(cs)
 	c, ok := charsets[cs]
 	if !ok {
 		return false

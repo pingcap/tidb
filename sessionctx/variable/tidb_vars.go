@@ -32,15 +32,15 @@ const (
 	// The value can be a datetime string like '2017-11-11 20:20:20' or a tso string. When this variable is set, the session reads history data of that time.
 	TiDBSnapshot = "tidb_snapshot"
 
-	// tidb_import_data is used for loading data from a dump file, to speed up the loading process.
-	// When the value is set to true, unique index constraint is not checked.
-	TiDBImportingData = "tidb_import_data"
-
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
 	// Auto analyze will run if (table modify count)/(table row count) is greater than this value.
 	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
+
+	// Auto analyze will run if current time is within start time and end time.
+	TiDBAutoAnalyzeStartTime = "tidb_auto_analyze_start_time"
+	TiDBAutoAnalyzeEndTime   = "tidb_auto_analyze_end_time"
 
 	// tidb_checksum_table_concurrency is used to speed up the ADMIN CHECKSUM TABLE
 	// statement, when a table has multiple indices, those indices can be
@@ -92,11 +92,17 @@ const (
 	// tidb_retry_limit is the maximun number of retries when committing a transaction.
 	TiDBRetryLimit = "tidb_retry_limit"
 
+	// tidb_disable_txn_auto_retry disables transaction auto retry.
+	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
+
 	// tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
 	TiDBEnableStreaming = "tidb_enable_streaming"
 
 	// tidb_optimizer_selectivity_level is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
+
+	// tidb_enable_table_partition is used to enable table partition feature.
+	TiDBEnableTablePartition = "tidb_enable_table_partition"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -154,8 +160,27 @@ const (
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
 	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
 
+	// tidb_projection_concurrency is used for projection operator.
+	// This variable controls the worker number of projection operator.
+	TiDBProjectionConcurrency = "tidb_projection_concurrency"
+
+	// tidb_hashagg_partial_concurrency is used for hash agg executor.
+	// The hash agg executor starts multiple concurrent partial workers to do partial aggregate works.
+	TiDBHashAggPartialConcurrency = "tidb_hashagg_partial_concurrency"
+
+	// tidb_hashagg_final_concurrency is used for hash agg executor.
+	// The hash agg executor starts multiple concurrent final workers to do final aggregate works.
+	TiDBHashAggFinalConcurrency = "tidb_hashagg_final_concurrency"
+
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
+
+	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
+	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
+
+	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
+	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
+	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 )
 
 // Default TiDB system variable values.
@@ -168,6 +193,8 @@ const (
 	DefDistSQLScanConcurrency        = 15
 	DefBuildStatsConcurrency         = 4
 	DefAutoAnalyzeRatio              = 0.5
+	DefAutoAnalyzeStartTime          = "00:00 +0000"
+	DefAutoAnalyzeEndTime            = "23:59 +0000"
 	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
@@ -175,9 +202,8 @@ const (
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false
 	DefCurretTS                      = 0
-	DefMaxChunkSize                  = 1024
+	DefMaxChunkSize                  = 32
 	DefDMLBatchSize                  = 20000
-	DefTiDBMemQuotaQuery             = 32 << 30 // 32GB.
 	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin         = 32 << 30 // 32GB.
 	DefTiDBMemQuotaSort              = 32 << 30 // 32GB.
@@ -187,11 +213,20 @@ const (
 	DefTiDBMemQuotaNestedLoopApply   = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
+	DefTiDBDisableTxnAutoRetry       = false
 	DefTiDBHashJoinConcurrency       = 5
+	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0
+	DefTiDBDDLReorgWorkerCount       = 16
+	DefTiDBHashAggPartialConcurrency = 4
+	DefTiDBHashAggFinalConcurrency   = 4
 )
 
 // Process global variables.
 var (
-	ProcessGeneralLog uint32
+	ProcessGeneralLog      uint32
+	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
+	maxDDLReorgWorkerCount int32 = 128
+	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
+	DDLSlowOprThreshold uint32 = 300
 )

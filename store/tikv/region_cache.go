@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/google/btree"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -449,33 +449,38 @@ func (c *RegionCache) loadStoreAddr(bo *Backoffer, id uint64) (string, error) {
 	}
 }
 
-// OnRequestFail is used for clearing cache when a tikv server does not respond.
-func (c *RegionCache) OnRequestFail(ctx *RPCContext, err error) {
-	// Switch region's leader peer to next one.
-	regionID := ctx.Region
+// DropStoreOnSendRequestFail is used for clearing cache when a tikv server does not respond.
+func (c *RegionCache) DropStoreOnSendRequestFail(ctx *RPCContext, err error) {
+	// We need to drop the store only when the request is the first one failed on this store.
+	// Because too many concurrently requests trying to drop the store will be blocked on the lock.
+	failedRegionID := ctx.Region
+	failedStoreID := ctx.Peer.StoreId
 	c.mu.Lock()
-	if cachedregion, ok := c.mu.regions[regionID]; ok {
-		region := cachedregion.region
-		if !region.OnRequestFail(ctx.Peer.GetStoreId()) {
-			c.dropRegionFromCache(regionID)
-		}
+	_, ok := c.mu.regions[failedRegionID]
+	if !ok {
+		// The failed region is dropped already by another request, we don't need to iterate the regions
+		// and find regions on the failed store to drop.
+		c.mu.Unlock()
+		return
 	}
-	c.mu.Unlock()
-	// Store's meta may be out of date.
-	storeID := ctx.Peer.GetStoreId()
-	c.storeMu.Lock()
-	delete(c.storeMu.stores, storeID)
-	c.storeMu.Unlock()
-
-	log.Infof("drop regions of store %d from cache due to request fail, err: %v", storeID, err)
-
-	c.mu.Lock()
 	for id, r := range c.mu.regions {
-		if r.region.peer.GetStoreId() == storeID {
+		if r.region.peer.GetStoreId() == failedStoreID {
 			c.dropRegionFromCache(id)
 		}
 	}
 	c.mu.Unlock()
+
+	// Store's meta may be out of date.
+	var failedStoreAddr string
+	c.storeMu.Lock()
+	store, ok := c.storeMu.stores[failedStoreID]
+	if ok {
+		failedStoreAddr = store.Addr
+		delete(c.storeMu.stores, failedStoreID)
+	}
+	c.storeMu.Unlock()
+	log.Infof("drop regions that on the store %d(%s) due to send request fail, err: %v",
+		failedStoreID, failedStoreAddr, err)
 }
 
 // OnRegionStale removes the old region and inserts new regions into the cache.
@@ -531,9 +536,8 @@ func (item *btreeItem) Less(other btree.Item) bool {
 
 // Region stores region's meta and its leader peer.
 type Region struct {
-	meta              *metapb.Region
-	peer              *metapb.Peer
-	unreachableStores []uint64
+	meta *metapb.Region
+	peer *metapb.Peer
 }
 
 // GetID returns id.
@@ -579,26 +583,6 @@ func (r *Region) GetContext() *kvrpcpb.Context {
 		RegionEpoch: r.meta.RegionEpoch,
 		Peer:        r.peer,
 	}
-}
-
-// OnRequestFail records unreachable peer and tries to select another valid peer.
-// It returns false if all peers are unreachable.
-func (r *Region) OnRequestFail(storeID uint64) bool {
-	if r.peer.GetStoreId() != storeID {
-		return true
-	}
-	r.unreachableStores = append(r.unreachableStores, storeID)
-L:
-	for _, p := range r.meta.Peers {
-		for _, id := range r.unreachableStores {
-			if p.GetStoreId() == id {
-				continue L
-			}
-		}
-		r.peer = p
-		return true
-	}
-	return false
 }
 
 // SwitchPeer switches current peer to the one on specific store. It returns

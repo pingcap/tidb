@@ -161,6 +161,8 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	row := chk.GetRow(0)
 	datums := ast.RowToDatums(row, r.Fields())
 	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	c.Assert(r.Close(), IsNil)
+
 	mustExecSQL(c, se, "USE test;")
 	// Check privilege tables.
 	mustExecSQL(c, se, "SELECT * from mysql.db;")
@@ -173,6 +175,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	c.Assert(err, IsNil)
 	v := chk.GetRow(0)
 	c.Assert(v.GetInt64(0), Equals, globalVarsCount())
+	c.Assert(r.Close(), IsNil)
 
 	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
 	chk = r.NewChunk()
@@ -182,6 +185,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte("True"))
+	c.Assert(r.Close(), IsNil)
 }
 
 // TestUpgrade tests upgrading
@@ -202,6 +206,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
+	c.Assert(r.Close(), IsNil)
 
 	se1 := newSession(c, store, s.dbName)
 	ver, err := getBootstrapVersion(se1)
@@ -228,6 +233,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsTrue)
+	c.Assert(r.Close(), IsNil)
 
 	ver, err = getBootstrapVersion(se1)
 	c.Assert(err, IsNil)
@@ -246,6 +252,7 @@ func (s *testBootstrapSuite) TestUpgrade(c *C) {
 	row = chk.GetRow(0)
 	c.Assert(row.Len(), Equals, 1)
 	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
+	c.Assert(r.Close(), IsNil)
 
 	ver, err = getBootstrapVersion(se2)
 	c.Assert(err, IsNil)

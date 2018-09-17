@@ -1,6 +1,8 @@
-## importer
+# Importer
 
-importer is a tool for generating and inserting datas to database which is compatible with MySQL protocol, like MySQL, TiDB.
+## Importer introduction
+
+Importer is a tool for generating and inserting data to a database which is compatible with the MySQL protocol, like MySQL and TiDB.
 
 ## How to use
 
@@ -45,13 +47,17 @@ Or use config file.
 ```
 
 ## Rules
-Moreover, we have some interesting rules for column value generating, like:
+
+Moreover, we have some interesting rules for column value generating, like `range`, `step` and `set`.
 
 ### range
+
 ```
 ./importer -t "create table t(a int comment '[[range=1,10]]');" -P 4000 -c 1 -n 10
 ```
+
 Then the table rows will be like this:
+
 ```
 mysql> select * from t;
 +------+
@@ -70,16 +76,19 @@ mysql> select * from t;
 +------+
 10 rows in set (0.00 sec)
 ```
+
 Support Type: 
 
 tinyint | smallint | int | bigint | float | double | decimal | char | varchar | date | time | datetime | timestamp.
 
-
 ### step
+
 ```
 ./importer -t "create table t(a int unique comment '[[step=2]]');" -P 4000 -c 1 -n 10
 ```
+
 Then the table rows will be like this:
+
 ```
 mysql> select * from t;
 +------+
@@ -103,12 +112,14 @@ Support Type [can only be used in unique index]:
 
 tinyint | smallint | int | bigint | float | double | decimal | date | time | datetime | timestamp.
 
-
 ### set
+
 ```
 ./importer -t "create table t(a int comment '[[set=1,2,3]]');" -P 4000 -c 1 -n 10
 ```
+
 Then the table rows will be like this:
+
 ```
 mysql> select * from t;
 +------+
@@ -127,9 +138,10 @@ mysql> select * from t;
 +------+
 10 rows in set (0.00 sec)
 ```
+
 Support Type [can only be used in none unique index]: 
 
 tinyint | smallint | int | bigint | float | double | decimal | varchar.
 
 ## License
-Apache 2.0 license. See the [LICENSE](../LICENSE) file for details.
+Apache 2.0 license. See the [LICENSE](../../LICENSE) file for details.

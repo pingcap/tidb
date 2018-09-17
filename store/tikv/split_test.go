@@ -32,10 +32,10 @@ var _ = Suite(&testSplitSuite{})
 func (s *testSplitSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
-	client, pdClient, err := mocktikv.NewTestClient(s.cluster, nil, "")
+	client, pdClient, err := mocktikv.NewTiKVAndPDClient(s.cluster, nil, "")
 	c.Assert(err, IsNil)
 
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil, false)
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Check(err, IsNil)
 	s.store = store.(*tikvStore)
 	s.bo = NewBackoffer(context.Background(), 5000)

@@ -16,12 +16,12 @@ package tikv
 import (
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -154,9 +154,9 @@ func (s *RegionRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err err
 		}
 	}
 
-	s.regionCache.OnRequestFail(ctx, err)
+	s.regionCache.DropStoreOnSendRequestFail(ctx, err)
 
-	// Retry on request failure when it's not canceled.
+	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.

@@ -14,7 +14,6 @@
 package plan
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/model"
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -120,12 +120,9 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 	tableColumns := p.Table.Cols()
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
-			columns = append(columns, &model.ColumnInfo{
-				ID:   model.ExtraHandleID,
-				Name: model.ExtraHandleName,
-			})
+			columns = append(columns, model.NewExtraHandleColInfo())
 		} else {
-			columns = append(columns, tableColumns[col.Position])
+			columns = append(columns, model.FindColumnInfo(tableColumns, col.ColName.L))
 		}
 	}
 	idxExec := &tipb.IndexScan{

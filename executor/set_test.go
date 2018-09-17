@@ -17,7 +17,9 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 	"golang.org/x/net/context"
 )
 
@@ -88,16 +90,16 @@ func (s *testSuite) TestSetVar(c *C) {
 	// Set default
 	// {ScopeGlobal | ScopeSession, "low_priority_updates", "OFF"},
 	// For global var
-	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("0"))
 	tk.MustExec(`set @@global.low_priority_updates="ON";`)
-	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("1"))
 	tk.MustExec(`set @@global.low_priority_updates=DEFAULT;`) // It will be set to compiled-in default value.
-	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@global.low_priority_updates;`).Check(testkit.Rows("0"))
 	// For session
-	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("OFF"))
+	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("0"))
 	tk.MustExec(`set @@global.low_priority_updates="ON";`)
 	tk.MustExec(`set @@session.low_priority_updates=DEFAULT;`) // It will be set to global var value.
-	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@session.low_priority_updates;`).Check(testkit.Rows("1"))
 
 	// For mysql jdbc driver issue.
 	tk.MustQuery(`select @@session.tx_read_only;`).Check(testkit.Rows("0"))
@@ -131,13 +133,8 @@ func (s *testSuite) TestSetVar(c *C) {
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_bin")
 
-	tk.MustExec("set @@character_set_results = NULL")
-
-	c.Assert(vars.ImportingData, IsFalse)
-	tk.MustExec("set @@tidb_import_data = '1'")
-	c.Assert(vars.ImportingData, IsTrue)
-	tk.MustExec("set @@tidb_import_data = '0'")
-	c.Assert(vars.ImportingData, IsFalse)
+	tk.MustExec("set character_set_results = NULL")
+	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
 
 	// Test set transaction isolation level, which is equivalent to setting variable "tx_isolation".
 	tk.MustExec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
@@ -212,15 +209,18 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tx_isolation").Check(testkit.Rows("READ-COMMITTED"))
 
 	tk.MustExec("set global avoid_temporal_upgrade = on")
-	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("1"))
 	tk.MustExec("set @@global.avoid_temporal_upgrade = off")
-	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("off"))
+	tk.MustQuery(`select @@global.avoid_temporal_upgrade;`).Check(testkit.Rows("0"))
 	tk.MustExec("set session sql_log_bin = on")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
 	tk.MustExec("set sql_log_bin = off")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("off"))
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("0"))
 	tk.MustExec("set @@sql_log_bin = on")
-	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("ON"))
+	tk.MustQuery(`select @@session.sql_log_bin;`).Check(testkit.Rows("1"))
+
+	tk.MustExec("set @@tidb_general_log = 1")
+	tk.MustExec("set @@tidb_general_log = 0")
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
@@ -246,4 +246,203 @@ func (s *testSuite) TestSetCharset(c *C) {
 
 	// Issue 1523
 	tk.MustExec(`SET NAMES binary`)
+}
+
+func (s *testSuite) TestValidateSetVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set global tidb_distsql_scan_concurrency=-1;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency='fff';")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency=-1;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set @@tidb_batch_delete='ok';")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set @@tidb_batch_delete='On';")
+	tk.MustExec("set @@tidb_batch_delete='oFf';")
+	tk.MustExec("set @@tidb_batch_delete=1;")
+	tk.MustExec("set @@tidb_batch_delete=0;")
+
+	_, err = tk.Exec("set @@tidb_batch_delete=3;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set @@tidb_mem_quota_mergejoin='tidb';")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set @@group_concat_max_len=1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
+	result := tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("4"))
+
+	_, err = tk.Exec("set @@group_concat_max_len = 18446744073709551616")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+
+	// Test illegal type
+	_, err = tk.Exec("set @@group_concat_max_len='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set @@default_week_format=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect default_week_format value: '-1'"))
+	result = tk.MustQuery("select @@default_week_format;")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@default_week_format=9")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect default_week_format value: '9'"))
+	result = tk.MustQuery("select @@default_week_format;")
+	result.Check(testkit.Rows("7"))
+
+	_, err = tk.Exec("set @@error_count = 0")
+	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+
+	_, err = tk.Exec("set @@warning_count = 0")
+	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set time_zone='SySTeM'")
+	result = tk.MustQuery("select @@time_zone;")
+	result.Check(testkit.Rows("SYSTEM"))
+
+	// The following cases test value out of range and illegal type when setting system variables.
+	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html for more details.
+	tk.MustExec("set @@global.max_connections=100001")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '100001'"))
+	result = tk.MustQuery("select @@global.max_connections;")
+	result.Check(testkit.Rows("100000"))
+
+	tk.MustExec("set @@global.max_connections=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '-1'"))
+	result = tk.MustQuery("select @@global.max_connections;")
+	result.Check(testkit.Rows("1"))
+
+	_, err = tk.Exec("set @@global.max_connections='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.max_connect_errors=18446744073709551615")
+
+	tk.MustExec("set @@global.max_connect_errors=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connect_errors value: '-1'"))
+	result = tk.MustQuery("select @@global.max_connect_errors;")
+	result.Check(testkit.Rows("1"))
+
+	_, err = tk.Exec("set @@global.max_connect_errors=18446744073709551616")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.max_connections=100001")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '100001'"))
+	result = tk.MustQuery("select @@global.max_connections;")
+	result.Check(testkit.Rows("100000"))
+
+	tk.MustExec("set @@global.max_connections=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_connections value: '-1'"))
+	result = tk.MustQuery("select @@global.max_connections;")
+	result.Check(testkit.Rows("1"))
+
+	_, err = tk.Exec("set @@global.max_connections='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@max_sort_length=1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '1'"))
+	result = tk.MustQuery("select @@max_sort_length;")
+	result.Check(testkit.Rows("4"))
+
+	tk.MustExec("set @@max_sort_length=-100")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '-100'"))
+	result = tk.MustQuery("select @@max_sort_length;")
+	result.Check(testkit.Rows("4"))
+
+	tk.MustExec("set @@max_sort_length=8388609")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect max_sort_length value: '8388609'"))
+	result = tk.MustQuery("select @@max_sort_length;")
+	result.Check(testkit.Rows("8388608"))
+
+	_, err = tk.Exec("set @@max_sort_length='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.table_definition_cache=399")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect table_definition_cache value: '399'"))
+	result = tk.MustQuery("select @@global.table_definition_cache;")
+	result.Check(testkit.Rows("400"))
+
+	tk.MustExec("set @@global.table_definition_cache=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect table_definition_cache value: '-1'"))
+	result = tk.MustQuery("select @@global.table_definition_cache;")
+	result.Check(testkit.Rows("400"))
+
+	tk.MustExec("set @@global.table_definition_cache=524289")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect table_definition_cache value: '524289'"))
+	result = tk.MustQuery("select @@global.table_definition_cache;")
+	result.Check(testkit.Rows("524288"))
+
+	_, err = tk.Exec("set @@global.table_definition_cache='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@old_passwords=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect old_passwords value: '-1'"))
+	result = tk.MustQuery("select @@old_passwords;")
+	result.Check(testkit.Rows("0"))
+
+	tk.MustExec("set @@old_passwords=3")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect old_passwords value: '3'"))
+	result = tk.MustQuery("select @@old_passwords;")
+	result.Check(testkit.Rows("2"))
+
+	_, err = tk.Exec("set @@old_passwords='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@tmp_table_size=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tmp_table_size value: '-1'"))
+	result = tk.MustQuery("select @@tmp_table_size;")
+	result.Check(testkit.Rows("1024"))
+
+	tk.MustExec("set @@tmp_table_size=1020")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tmp_table_size value: '1020'"))
+	result = tk.MustQuery("select @@tmp_table_size;")
+	result.Check(testkit.Rows("1024"))
+
+	tk.MustExec("set @@tmp_table_size=167772161")
+	result = tk.MustQuery("select @@tmp_table_size;")
+	result.Check(testkit.Rows("167772161"))
+
+	tk.MustExec("set @@tmp_table_size=18446744073709551615")
+	result = tk.MustQuery("select @@tmp_table_size;")
+	result.Check(testkit.Rows("18446744073709551615"))
+
+	_, err = tk.Exec("set @@tmp_table_size=18446744073709551616")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	_, err = tk.Exec("set @@tmp_table_size='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue)
+
+	tk.MustExec("set @@global.connect_timeout=1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect connect_timeout value: '1'"))
+	result = tk.MustQuery("select @@global.connect_timeout;")
+	result.Check(testkit.Rows("2"))
+
+	tk.MustExec("set @@global.connect_timeout=31536000")
+	result = tk.MustQuery("select @@global.connect_timeout;")
+	result.Check(testkit.Rows("31536000"))
+
+	tk.MustExec("set @@global.connect_timeout=31536001")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect connect_timeout value: '31536001'"))
+	result = tk.MustQuery("select @@global.connect_timeout;")
+	result.Check(testkit.Rows("31536000"))
+
+	result = tk.MustQuery("select @@sql_select_limit;")
+	result.Check(testkit.Rows("18446744073709551615"))
+	tk.MustExec("set @@sql_select_limit=default")
+	result = tk.MustQuery("select @@sql_select_limit;")
+	result.Check(testkit.Rows("18446744073709551615"))
+
+	tk.MustExec("set @@global.flush_time=31536001")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect flush_time value: '31536001'"))
+
+	tk.MustExec("set @@global.interactive_timeout=31536001")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect interactive_timeout value: '31536001'"))
 }

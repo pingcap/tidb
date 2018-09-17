@@ -735,6 +735,9 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 		d.SetLength(20)
 		d.SetFrac(6)
 		d.SetMysqlDecimal(dec)
+		b, err := EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
+		c.Assert(err, IsNil)
+		decs = append(decs, b)
 	}
 	for i := 0; i < len(decs)-1; i++ {
 		cmp := bytes.Compare(decs[i], decs[i+1])
@@ -743,9 +746,9 @@ func (s *testCodecSuite) TestDecimal(c *C) {
 
 	d := types.NewDecFromStringForTest("-123.123456789")
 	_, err := EncodeDecimal(nil, d, 20, 5)
-	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue, Commentf("err %v", err))
 	_, err = EncodeDecimal(nil, d, 12, 10)
-	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrOverflow), IsTrue, Commentf("err %v", err))
 
 	sc.IgnoreTruncate = true
 	decimalDatum := types.NewDatum(d)

@@ -17,12 +17,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/plan/property"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // Plan is the description of an execution flow.
@@ -39,121 +39,22 @@ type Plan interface {
 	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() sessionctx.Context
+
+	// property.StatsInfo will return the property.StatsInfo for this plan.
+	statsInfo() *property.StatsInfo
 }
 
-// taskType is the type of execution task.
-type taskType int
-
-const (
-	rootTaskType          taskType = iota
-	copSingleReadTaskType          // TableScan and IndexScan
-	copDoubleReadTaskType          // IndexLookUp
-)
-
-// String implements fmt.Stringer interface.
-func (t taskType) String() string {
-	switch t {
-	case rootTaskType:
-		return "rootTask"
-	case copSingleReadTaskType:
-		return "copSingleReadTask"
-	case copDoubleReadTaskType:
-		return "copDoubleReadTask"
-	}
-	return "UnknownTaskType"
-}
-
-// requiredProp stands for the required physical property by parents.
-// It contains the orders, if the order is desc and the task types.
-type requiredProp struct {
-	cols []*expression.Column
-	desc bool
-	// taskTp means the type of task that an operator requires.
-	// It needs to be specified because two different tasks can't be compared with cost directly.
-	// e.g. If a copTask takes less cost than a rootTask, we can't sure that we must choose the former one. Because the copTask
-	// must be finished and increase its cost in sometime, but we can't make sure the finishing time. So the best way
-	// to let the comparison fair is to add taskType to required property.
-	taskTp taskType
-	// expectedCnt means this operator may be closed after fetching expectedCnt records.
-	expectedCnt float64
-	// hashcode stores the hash code of a requiredProp, will be lazily calculated when function "hashCode()" being called.
-	hashcode []byte
-	// whether need to enforce property.
-	enforced bool
-}
-
-func (p *requiredProp) enforceProperty(tsk task, ctx sessionctx.Context) task {
-	if p.isEmpty() || tsk.plan() == nil {
+func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
+	if p.IsEmpty() || tsk.plan() == nil {
 		return tsk
 	}
 	tsk = finishCopTask(ctx, tsk)
-	sortReqProp := &requiredProp{taskTp: rootTaskType, cols: p.cols, expectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.cols))}.init(ctx, tsk.plan().StatsInfo(), sortReqProp)
-	for _, col := range p.cols {
-		sort.ByItems = append(sort.ByItems, &ByItems{col, p.desc})
+	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Cols: p.Cols, ExpectedCnt: math.MaxFloat64}
+	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Cols))}.init(ctx, tsk.plan().statsInfo(), sortReqProp)
+	for _, col := range p.Cols {
+		sort.ByItems = append(sort.ByItems, &ByItems{col, p.Desc})
 	}
 	return sort.attach2Task(tsk)
-}
-
-func (p *requiredProp) allColsFromSchema(schema *expression.Schema) bool {
-	return schema.ColumnsIndices(p.cols) != nil
-}
-
-func (p *requiredProp) isPrefix(prop *requiredProp) bool {
-	if len(p.cols) > len(prop.cols) || p.desc != prop.desc {
-		return false
-	}
-	for i := range p.cols {
-		if !p.cols[i].Equal(nil, prop.cols[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-// Check if this prop's columns can match by items totally.
-func (p *requiredProp) matchItems(items []*ByItems) bool {
-	for i, col := range p.cols {
-		sortItem := items[i]
-		if sortItem.Desc != p.desc || !sortItem.Expr.Equal(nil, col) {
-			return false
-		}
-	}
-	return true
-}
-
-func (p *requiredProp) isEmpty() bool {
-	return len(p.cols) == 0
-}
-
-// hashCode calculates hash code for a requiredProp object.
-func (p *requiredProp) hashCode() []byte {
-	if p.hashcode != nil {
-		return p.hashcode
-	}
-	hashcodeSize := 8 + 8 + 8 + 16*len(p.cols) + 8
-	p.hashcode = make([]byte, 0, hashcodeSize)
-	if p.desc {
-		p.hashcode = codec.EncodeInt(p.hashcode, 1)
-	} else {
-		p.hashcode = codec.EncodeInt(p.hashcode, 0)
-	}
-	if p.enforced {
-		p.hashcode = codec.EncodeInt(p.hashcode, 1)
-	} else {
-		p.hashcode = codec.EncodeInt(p.hashcode, 0)
-	}
-	p.hashcode = codec.EncodeInt(p.hashcode, int64(p.taskTp))
-	p.hashcode = codec.EncodeFloat(p.hashcode, p.expectedCnt)
-	for i, length := 0, len(p.cols); i < length; i++ {
-		p.hashcode = append(p.hashcode, p.cols[i].HashCode(nil)...)
-	}
-	return p.hashcode
-}
-
-// String implements fmt.Stringer interface. Just for test.
-func (p *requiredProp) String() string {
-	return fmt.Sprintf("Prop{cols: %s, desc: %v, taskTp: %s, expectedCount: %v}", p.cols, p.desc, p.taskTp, p.expectedCnt)
 }
 
 // LogicalPlan is a tree of logical operators.
@@ -173,7 +74,7 @@ type LogicalPlan interface {
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// with the lowest cost.
-	findBestTask(prop *requiredProp) (task, error)
+	findBestTask(prop *property.PhysicalProperty) (task, error)
 
 	// buildKeyInfo will collect the information of unique keys into schema.
 	buildKeyInfo()
@@ -182,7 +83,7 @@ type LogicalPlan interface {
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
 	// deriveStats derives statistic info between plans.
-	deriveStats() (*statsInfo, error)
+	deriveStats() (*property.StatsInfo, error)
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
@@ -191,7 +92,7 @@ type LogicalPlan interface {
 	preparePossibleProperties() [][]*expression.Column
 
 	// exhaustPhysicalPlans generates all possible plans that can match the required property.
-	exhaustPhysicalPlans(*requiredProp) []PhysicalPlan
+	exhaustPhysicalPlans(*property.PhysicalProperty) []PhysicalPlan
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn
 
@@ -224,10 +125,10 @@ type PhysicalPlan interface {
 	ExplainInfo() string
 
 	// getChildReqProps gets the required property by child index.
-	getChildReqProps(idx int) *requiredProp
+	getChildReqProps(idx int) *property.PhysicalProperty
 
-	// StatsInfo will return the statsInfo for this plan.
-	StatsInfo() *statsInfo
+	// StatsCount returns the count of property.StatsInfo for this plan.
+	StatsCount() float64
 
 	// Get all the children.
 	Children() []PhysicalPlan
@@ -255,12 +156,12 @@ func (p *baseLogicalPlan) MaxOneRow() bool {
 type basePhysicalPlan struct {
 	basePlan
 
-	childrenReqProps []*requiredProp
+	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
 }
 
-func (p *basePhysicalPlan) getChildReqProps(idx int) *requiredProp {
+func (p *basePhysicalPlan) getChildReqProps(idx int) *property.PhysicalProperty {
 	return p.childrenReqProps[idx]
 }
 
@@ -269,13 +170,13 @@ func (p *basePhysicalPlan) ExplainInfo() string {
 	return ""
 }
 
-func (p *baseLogicalPlan) getTask(prop *requiredProp) task {
-	key := prop.hashCode()
+func (p *baseLogicalPlan) getTask(prop *property.PhysicalProperty) task {
+	key := prop.HashCode()
 	return p.taskMap[string(key)]
 }
 
-func (p *baseLogicalPlan) storeTask(prop *requiredProp, task task) {
-	key := prop.hashCode()
+func (p *baseLogicalPlan) storeTask(prop *property.PhysicalProperty, task task) {
+	key := prop.HashCode()
 	p.taskMap[string(key)] = task
 }
 
@@ -286,7 +187,7 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	switch p.self.(type) {
 	case *LogicalLock, *LogicalLimit, *LogicalSort, *LogicalSelection, *LogicalApply, *LogicalProjection:
 		p.maxOneRow = p.children[0].MaxOneRow()
-	case *LogicalMaxOneRow, *LogicalExists:
+	case *LogicalMaxOneRow:
 		p.maxOneRow = true
 	}
 }
@@ -338,7 +239,7 @@ type basePlan struct {
 	tp    string
 	id    int
 	ctx   sessionctx.Context
-	stats *statsInfo
+	stats *property.StatsInfo
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
@@ -347,6 +248,11 @@ func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {
 // ID implements Plan ID interface.
 func (p *basePlan) ID() int {
 	return p.id
+}
+
+// property.StatsInfo implements the Plan interface.
+func (p *basePlan) statsInfo() *property.StatsInfo {
+	return p.stats
 }
 
 func (p *basePlan) ExplainID() string {

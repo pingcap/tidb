@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -26,8 +25,10 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 // ScalarFunction is the function that returns a value.
@@ -79,7 +80,7 @@ func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldTy
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
-		return nil, errFunctionNotExists.GenByArgs("FUNCTION", funcName)
+		return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", funcName)
 	}
 	funcArgs := make([]Expression, len(args))
 	copy(funcArgs, args)
@@ -160,7 +161,7 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 }
 
 // Eval implements Expression interface.
-func (sf *ScalarFunction) Eval(row types.Row) (d types.Datum, err error) {
+func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	var (
 		res    interface{}
 		isNull bool
@@ -197,37 +198,37 @@ func (sf *ScalarFunction) Eval(row types.Row) (d types.Datum, err error) {
 }
 
 // EvalInt implements Expression interface.
-func (sf *ScalarFunction) EvalInt(ctx sessionctx.Context, row types.Row) (int64, bool, error) {
+func (sf *ScalarFunction) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
 	return sf.Function.evalInt(row)
 }
 
 // EvalReal implements Expression interface.
-func (sf *ScalarFunction) EvalReal(ctx sessionctx.Context, row types.Row) (float64, bool, error) {
+func (sf *ScalarFunction) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
 	return sf.Function.evalReal(row)
 }
 
 // EvalDecimal implements Expression interface.
-func (sf *ScalarFunction) EvalDecimal(ctx sessionctx.Context, row types.Row) (*types.MyDecimal, bool, error) {
+func (sf *ScalarFunction) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
 	return sf.Function.evalDecimal(row)
 }
 
 // EvalString implements Expression interface.
-func (sf *ScalarFunction) EvalString(ctx sessionctx.Context, row types.Row) (string, bool, error) {
+func (sf *ScalarFunction) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
 	return sf.Function.evalString(row)
 }
 
 // EvalTime implements Expression interface.
-func (sf *ScalarFunction) EvalTime(ctx sessionctx.Context, row types.Row) (types.Time, bool, error) {
+func (sf *ScalarFunction) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
 	return sf.Function.evalTime(row)
 }
 
 // EvalDuration implements Expression interface.
-func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row types.Row) (types.Duration, bool, error) {
+func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
 	return sf.Function.evalDuration(row)
 }
 
 // EvalJSON implements Expression interface.
-func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row types.Row) (json.BinaryJSON, bool, error) {
+func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
 	return sf.Function.evalJSON(row)
 }
 
@@ -245,8 +246,14 @@ func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
 }
 
 // ResolveIndices implements Expression interface.
-func (sf *ScalarFunction) ResolveIndices(schema *Schema) {
+func (sf *ScalarFunction) ResolveIndices(schema *Schema) Expression {
+	newSf := sf.Clone()
+	newSf.resolveIndices(schema)
+	return newSf
+}
+
+func (sf *ScalarFunction) resolveIndices(schema *Schema) {
 	for _, arg := range sf.GetArgs() {
-		arg.ResolveIndices(schema)
+		arg.resolveIndices(schema)
 	}
 }

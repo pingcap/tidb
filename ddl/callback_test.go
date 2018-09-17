@@ -15,10 +15,26 @@ package ddl
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/sessionctx"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
+
+type TestInterceptor struct {
+	*BaseInterceptor
+
+	OnGetInfoSchemaExported func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema
+}
+
+func (ti *TestInterceptor) OnGetInfoSchema(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
+	if ti.OnGetInfoSchemaExported != nil {
+		return ti.OnGetInfoSchemaExported(ctx, is)
+	}
+
+	return ti.BaseInterceptor.OnGetInfoSchema(ctx, is)
+}
 
 type TestDDLCallback struct {
 	*BaseCallback

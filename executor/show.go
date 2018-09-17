@@ -22,12 +22,12 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/format"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -125,7 +126,9 @@ func (e *ShowExec) fetchAll() error {
 	case ast.ShowVariables:
 		return e.fetchShowVariables()
 	case ast.ShowWarnings:
-		return e.fetchShowWarnings()
+		return e.fetchShowWarnings(false)
+	case ast.ShowErrors:
+		return e.fetchShowWarnings(true)
 	case ast.ShowProcessList:
 		return e.fetchShowProcessList()
 	case ast.ShowEvents:
@@ -143,6 +146,10 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
 		// empty result
+	case ast.ShowMasterStatus:
+		return e.fetchShowMasterStatus()
+	case ast.ShowPrivileges:
+		return e.fetchShowPrivileges()
 	}
 	return nil
 }
@@ -250,9 +257,16 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	for _, t := range tables {
 		now := types.CurrentTime(mysql.TypeDatetime)
 		e.appendRow([]interface{}{t.Meta().Name.O, "InnoDB", 10, "Compact", 100, 100, 100, 100, 100, 100, 100,
-			now, now, now, "utf8_general_ci", "", "", t.Meta().Comment})
+			model.TSConvert2Time(t.Meta().UpdateTS).String(), now, now, "utf8_general_ci", "", createOptions(t.Meta()), t.Meta().Comment})
 	}
 	return nil
+}
+
+func createOptions(tb *model.TableInfo) string {
+	if tb.GetPartitionInfo() != nil {
+		return "partitioned"
+	}
+	return ""
 }
 
 func (e *ShowExec) fetchShowColumns() error {
@@ -342,19 +356,19 @@ func (e *ShowExec) fetchShowIndex() error {
 				subPart = col.Length
 			}
 			e.appendRow([]interface{}{
-				tb.Meta().Name.O,  // Table
-				nonUniq,           // Non_unique
-				idx.Meta().Name.O, // Key_name
-				i + 1,             // Seq_in_index
-				col.Name.O,        // Column_name
-				"A",               // Collation
-				0,                 // Cardinality
-				subPart,           // Sub_part
-				nil,               // Packed
-				"YES",             // Null
+				tb.Meta().Name.O,       // Table
+				nonUniq,                // Non_unique
+				idx.Meta().Name.O,      // Key_name
+				i + 1,                  // Seq_in_index
+				col.Name.O,             // Column_name
+				"A",                    // Collation
+				0,                      // Cardinality
+				subPart,                // Sub_part
+				nil,                    // Packed
+				"YES",                  // Null
 				idx.Meta().Tp.String(), // Index_type
-				"",                 // Comment
-				idx.Meta().Comment, // Index_comment
+				"",                     // Comment
+				idx.Meta().Comment,     // Index_comment
 			})
 		}
 	}
@@ -373,6 +387,12 @@ func (e *ShowExec) fetchShowCharset() error {
 			desc.Maxlen,
 		})
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMasterStatus() error {
+	tso := e.ctx.GetSessionVars().TxnCtx.StartTS
+	e.appendRow([]interface{}{"tidb-binlog", tso, "", "", ""})
 	return nil
 }
 
@@ -465,9 +485,6 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var pkCol *table.Column
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
-		if col.State != model.StatePublic {
-			continue
-		}
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
 		if col.IsGenerated() {
 			// It's a generated column.
@@ -486,7 +503,8 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				buf.WriteString(" NOT NULL")
 			}
 			if !mysql.HasNoDefaultValueFlag(col.Flag) {
-				switch col.DefaultValue {
+				defaultValue := col.GetDefaultValue()
+				switch defaultValue {
 				case nil:
 					if !mysql.HasNotNullFlag(col.Flag) {
 						if col.Tp == mysql.TypeTimestamp {
@@ -497,7 +515,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				case "CURRENT_TIMESTAMP":
 					buf.WriteString(" DEFAULT CURRENT_TIMESTAMP")
 				default:
-					defaultValStr := fmt.Sprintf("%v", col.DefaultValue)
+					defaultValStr := fmt.Sprintf("%v", defaultValue)
 					if col.Tp == mysql.TypeBit {
 						defaultValBinaryLiteral := types.BinaryLiteral(defaultValStr)
 						buf.WriteString(fmt.Sprintf(" DEFAULT %s", defaultValBinaryLiteral.ToBitLiteralString(true)))
@@ -531,11 +549,14 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(",\n")
 	}
 
-	for i, idx := range tb.Indices() {
-		idxInfo := idx.Meta()
-		if idxInfo.State != model.StatePublic {
-			continue
+	publicIndices := make([]table.Index, 0, len(tb.Indices()))
+	for _, idx := range tb.Indices() {
+		if idx.Meta().State == model.StatePublic {
+			publicIndices = append(publicIndices, idx)
 		}
+	}
+	for i, idx := range publicIndices {
+		idxInfo := idx.Meta()
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
@@ -553,7 +574,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			cols = append(cols, colInfo)
 		}
 		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(cols, ",")))
-		if i != len(tb.Indices())-1 {
+		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
 		}
 	}
@@ -640,7 +661,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	db, ok := e.is.SchemaByName(e.DBName)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(e.DBName.O)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
 	}
 
 	var buf bytes.Buffer
@@ -688,6 +709,42 @@ func (e *ShowExec) fetchShowGrants() error {
 	return nil
 }
 
+func (e *ShowExec) fetchShowPrivileges() error {
+	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
+	e.appendRow([]interface{}{"Alter", "Tables", "To alter the table"})
+	e.appendRow([]interface{}{"Alter routine", "Functions,Procedures", "To alter or drop stored functions/procedures"})
+	e.appendRow([]interface{}{"Create", "Databases,Tables,Indexes", "To create new databases and tables"})
+	e.appendRow([]interface{}{"Create routine", "Databases", "To use CREATE FUNCTION/PROCEDURE"})
+	e.appendRow([]interface{}{"Create temporary tables", "Databases", "To use CREATE TEMPORARY TABLE"})
+	e.appendRow([]interface{}{"Create view", "Tables", "To create new views"})
+	e.appendRow([]interface{}{"Create user", "Server Admin", "To create new users"})
+	e.appendRow([]interface{}{"Delete", "Tables", "To delete existing rows"})
+	e.appendRow([]interface{}{"Drop", "Databases,Tables", "To drop databases, tables, and views"})
+	e.appendRow([]interface{}{"Event", "Server Admin", "To create, alter, drop and execute events"})
+	e.appendRow([]interface{}{"Execute", "Functions,Procedures", "To execute stored routines"})
+	e.appendRow([]interface{}{"File", "File access on server", "To read and write files on the server"})
+	e.appendRow([]interface{}{"Grant option", "Databases,Tables,Functions,Procedures", "To give to other users those privileges you possess"})
+	e.appendRow([]interface{}{"Index", "Tables", "To create or drop indexes"})
+	e.appendRow([]interface{}{"Insert", "Tables", "To insert data into tables"})
+	e.appendRow([]interface{}{"Lock tables", "Databases", "To use LOCK TABLES (together with SELECT privilege)"})
+	e.appendRow([]interface{}{"Process", "Server Admin", "To view the plain text of currently executing queries"})
+	e.appendRow([]interface{}{"Proxy", "Server Admin", "To make proxy user possible"})
+	e.appendRow([]interface{}{"References", "Databases,Tables", "To have references on tables"})
+	e.appendRow([]interface{}{"Reload", "Server Admin", "To reload or refresh tables, logs and privileges"})
+	e.appendRow([]interface{}{"Replication client", "Server Admin", "To ask where the slave or master servers are"})
+	e.appendRow([]interface{}{"Replication slave", "Server Admin", "To read binary log events from the master"})
+	e.appendRow([]interface{}{"Select", "Tables", "To retrieve rows from table"})
+	e.appendRow([]interface{}{"Show databases", "Server Admin", "To see all databases with SHOW DATABASES"})
+	e.appendRow([]interface{}{"Show view", "Tables", "To see views with SHOW CREATE VIEW"})
+	e.appendRow([]interface{}{"Shutdown", "Server Admin", "To shut down the server"})
+	e.appendRow([]interface{}{"Super", "Server Admin", "To use KILL thread, SET GLOBAL, CHANGE MASTER, etc."})
+	e.appendRow([]interface{}{"Trigger", "Tables", "To use triggers"})
+	e.appendRow([]interface{}{"Create tablespace", "Server Admin", "To create/alter/drop tablespaces"})
+	e.appendRow([]interface{}{"Update", "Tables", "To update existing rows"})
+	e.appendRow([]interface{}{"Usage", "Server Admin", "No privileges - allow connect only"})
+	return nil
+}
+
 func (e *ShowExec) fetchShowTriggers() error {
 	return nil
 }
@@ -700,16 +757,19 @@ func (e *ShowExec) fetchShowPlugins() error {
 	return nil
 }
 
-func (e *ShowExec) fetchShowWarnings() error {
+func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 	warns := e.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	for _, warn := range warns {
-		warn = errors.Cause(warn)
+	for _, w := range warns {
+		if errOnly && w.Level != stmtctx.WarnLevelError {
+			continue
+		}
+		warn := errors.Cause(w.Err)
 		switch x := warn.(type) {
 		case *terror.Error:
 			sqlErr := x.ToSQLError()
-			e.appendRow([]interface{}{"Warning", int64(sqlErr.Code), sqlErr.Message})
+			e.appendRow([]interface{}{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
-			e.appendRow([]interface{}{"Warning", int64(mysql.ErrUnknown), warn.Error()})
+			e.appendRow([]interface{}{w.Level, int64(mysql.ErrUnknown), warn.Error()})
 		}
 	}
 	return nil

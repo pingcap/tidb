@@ -28,9 +28,8 @@ func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
 			}
 			continue
 		}
-		cols, _ := expression.IndexInfo2Cols(ds.schema.Columns, path.index)
-		if len(cols) > 0 {
-			result = append(result, cols)
+		if len(path.idxCols) > 0 {
+			result = append(result, path.idxCols)
 		}
 	}
 	return result
