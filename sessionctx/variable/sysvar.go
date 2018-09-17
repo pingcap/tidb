@@ -713,11 +713,11 @@ const (
 	DelayKeyWrite = "delay_key_write"
 	// EndMakersInJSON is the name for 'end_markers_in_json' system variable.
 	EndMakersInJSON = "end_markers_in_json"
-	//InnodbCommitConcurrency is the name for 'innodb_commit_concurrency' system variable.
+	// InnodbCommitConcurrency is the name for 'innodb_commit_concurrency' system variable.
 	InnodbCommitConcurrency = "innodb_commit_concurrency"
-	//InnodbFastShutdown is the name for 'innodb_fast_shutdown' system variable.
+	// InnodbFastShutdown is the name for 'innodb_fast_shutdown' system variable.
 	InnodbFastShutdown = "innodb_fast_shutdown"
-	//InnodbLockWaitTimeout is the name for 'innodb_lock_wait_timeout' system variable.
+	// InnodbLockWaitTimeout is the name for 'innodb_lock_wait_timeout' system variable.
 	InnodbLockWaitTimeout = "innodb_lock_wait_timeout"
 	// SQLLogBin is the name for 'sql_log_bin' system variable.
 	SQLLogBin = "sql_log_bin"
@@ -763,7 +763,7 @@ const (
 	TmpTableSize = "tmp_table_size"
 	// ConnectTimeout is the name for 'connect_timeout' system variable.
 	ConnectTimeout = "connect_timeout"
-	//SyncBinlog is the name for 'sync_binlog' system variable.
+	// SyncBinlog is the name for 'sync_binlog' system variable.
 	SyncBinlog = "sync_binlog"
 )
 
