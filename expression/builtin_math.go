@@ -536,7 +536,7 @@ func (b *builtinCeilIntToDecSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDec evals a builtinCeilIntToDecSig.
+// evalDecimal evals a builtinCeilIntToDecSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_Ceil
 func (b *builtinCeilIntToDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
@@ -588,7 +588,7 @@ func (b *builtinCeilDecToDecSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDec evals a builtinCeilDecToDecSig.
+// evalDecimal evals a builtinCeilDecToDecSig.
 func (b *builtinCeilDecToDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
@@ -721,7 +721,7 @@ func (b *builtinFloorIntToDecSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDec evals a builtinFloorIntToDecSig.
+// evalDecimal evals a builtinFloorIntToDecSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_floor
 func (b *builtinFloorIntToDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
@@ -773,7 +773,7 @@ func (b *builtinFloorDecToDecSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalDec evals a builtinFloorDecToDecSig.
+// evalDecimal evals a builtinFloorDecToDecSig.
 func (b *builtinFloorDecToDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull || err != nil {
@@ -1671,7 +1671,7 @@ func (b *builtinSinSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalreal evals a builtinSinSig.
+// evalReal evals a builtinSinSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sin
 func (b *builtinSinSig) evalReal(row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
@@ -1704,7 +1704,7 @@ func (b *builtinTanSig) Clone() builtinFunc {
 	return newSig
 }
 
-// eval evals a builtinTanSig.
+// evalReal evals a builtinTanSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_tan
 func (b *builtinTanSig) evalReal(row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(b.ctx, row)
