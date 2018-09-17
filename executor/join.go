@@ -314,18 +314,18 @@ func (e *HashJoinExec) initializeForProbe() {
 func (e *HashJoinExec) fetchOuterAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
 	e.workerWaitGroup.Add(1)
-	go util.WithRecovery(func() { e.fetchOuterChunks(ctx) }, e.disposeOuterFetcher)
+	go util.WithRecovery(func() { e.fetchOuterChunks(ctx) }, e.finishOuterFetcher)
 
 	// Start e.concurrency join workers to probe hash table and join inner and outer rows.
 	for i := uint(0); i < e.concurrency; i++ {
 		e.workerWaitGroup.Add(1)
 		workID := i
-		go util.WithRecovery(func() { e.runJoinWorker(workID) }, e.disposeJoinWorker)
+		go util.WithRecovery(func() { e.runJoinWorker(workID) }, e.finishJoinWorker)
 	}
 	go util.WithRecovery(e.waitJoinWorkersAndCloseResultChan, nil)
 }
 
-func (e *HashJoinExec) disposeOuterFetcher(r interface{}) {
+func (e *HashJoinExec) finishOuterFetcher(r interface{}) {
 	for i := range e.outerResultChs {
 		close(e.outerResultChs[i])
 	}
@@ -335,7 +335,7 @@ func (e *HashJoinExec) disposeOuterFetcher(r interface{}) {
 	e.workerWaitGroup.Done()
 }
 
-func (e *HashJoinExec) disposeJoinWorker(r interface{}) {
+func (e *HashJoinExec) finishJoinWorker(r interface{}) {
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
@@ -485,7 +485,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
-		go util.WithRecovery(func() { e.fetchInnerAndBuildHashTable(ctx) }, e.disposeFetchInnerAndBuildHashTable)
+		go util.WithRecovery(func() { e.fetchInnerAndBuildHashTable(ctx) }, e.finishFetchInnerAndBuildHashTable)
 		e.fetchOuterAndProbeHashTable(ctx)
 		e.prepared = true
 	}
@@ -506,7 +506,7 @@ func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (e *HashJoinExec) disposeFetchInnerAndBuildHashTable(r interface{}) {
+func (e *HashJoinExec) finishFetchInnerAndBuildHashTable(r interface{}) {
 	if r != nil {
 		e.innerFinished <- errors.Errorf("%v", r)
 	}

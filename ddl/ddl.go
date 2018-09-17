@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
-	util2 "github.com/pingcap/tidb/util"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
@@ -371,7 +371,7 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			w := worker
-			go util2.WithRecovery(
+			go tidbutil.WithRecovery(
 				func() { w.start(d.ddlCtx) },
 				func(r interface{}) {
 					if r != nil {
