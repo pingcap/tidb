@@ -17,12 +17,12 @@ import (
 	"container/heap"
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

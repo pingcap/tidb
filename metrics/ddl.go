@@ -108,14 +108,3 @@ const (
 	LblAction  = "action"
 	LblVersion = "version"
 )
-
-func init() {
-	prometheus.MustRegister(JobsGauge)
-	prometheus.MustRegister(HandleJobHistogram)
-	prometheus.MustRegister(BatchAddIdxHistogram)
-	prometheus.MustRegister(DeploySyncerHistogram)
-	prometheus.MustRegister(UpdateSelfVersionHistogram)
-	prometheus.MustRegister(OwnerHandleSyncerHistogram)
-	prometheus.MustRegister(DDLWorkerHistogram)
-	prometheus.MustRegister(DDLCounter)
-}

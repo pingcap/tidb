@@ -20,15 +20,16 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
 	"github.com/coreos/etcd/etcdserver/api/v3rpc/rpctypes"
 	"github.com/coreos/etcd/mvcc/mvccpb"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -45,12 +46,14 @@ type Manager interface {
 	ID() string
 	// IsOwner returns whether the ownerManager is the owner.
 	IsOwner() bool
-	// SetOwner sets whether the ownerManager is the owner.
-	SetOwner(isOwner bool)
+	// RetireOwner make the manager to be a not owner. It's exported for testing.
+	RetireOwner()
 	// GetOwnerID gets the owner ID.
 	GetOwnerID(ctx context.Context) (string, error)
 	// CampaignOwner campaigns the owner.
 	CampaignOwner(ctx context.Context) error
+	// ResignOwner lets the owner start a new election.
+	ResignOwner(ctx context.Context) error
 	// Cancel cancels this etcd ownerManager campaign.
 	Cancel()
 }
@@ -60,6 +63,7 @@ const (
 	NewSessionDefaultRetryCnt = 3
 	// NewSessionRetryUnlimited is the unlimited retry times when create new session.
 	NewSessionRetryUnlimited = math.MaxInt64
+	keyOpDefaultTimeout      = 5 * time.Second
 )
 
 // DDLOwnerChecker is used to check whether tidb is owner.
@@ -70,22 +74,24 @@ type DDLOwnerChecker interface {
 
 // ownerManager represents the structure which is used for electing owner.
 type ownerManager struct {
-	owner   int32
-	id      string // id is the ID of the manager.
-	key     string
-	prompt  string
-	etcdCli *clientv3.Client
-	cancel  context.CancelFunc
+	id        string // id is the ID of the manager.
+	key       string
+	prompt    string
+	logPrefix string
+	etcdCli   *clientv3.Client
+	cancel    context.CancelFunc
+	elec      unsafe.Pointer
 }
 
 // NewOwnerManager creates a new Manager.
 func NewOwnerManager(etcdCli *clientv3.Client, prompt, id, key string, cancel context.CancelFunc) Manager {
 	return &ownerManager{
-		etcdCli: etcdCli,
-		id:      id,
-		key:     key,
-		prompt:  prompt,
-		cancel:  cancel,
+		etcdCli:   etcdCli,
+		id:        id,
+		key:       key,
+		prompt:    prompt,
+		cancel:    cancel,
+		logPrefix: fmt.Sprintf("[%s] %s ownerManager %s", prompt, key, id),
 	}
 }
 
@@ -96,16 +102,7 @@ func (m *ownerManager) ID() string {
 
 // IsOwner implements Manager.IsOwner interface.
 func (m *ownerManager) IsOwner() bool {
-	return atomic.LoadInt32(&m.owner) == 1
-}
-
-// SetOwner implements Manager.SetOwner interface.
-func (m *ownerManager) SetOwner(isOwner bool) {
-	if isOwner {
-		atomic.StoreInt32(&m.owner, 1)
-	} else {
-		atomic.StoreInt32(&m.owner, 0)
-	}
+	return atomic.LoadPointer(&m.elec) != unsafe.Pointer(nil)
 }
 
 // Cancel implements Manager.Cancel interface.
@@ -179,6 +176,33 @@ func (m *ownerManager) CampaignOwner(ctx context.Context) error {
 	return nil
 }
 
+// ResignOwner lets the owner start a new election.
+func (m *ownerManager) ResignOwner(ctx context.Context) error {
+	elec := (*concurrency.Election)(atomic.LoadPointer(&m.elec))
+	if elec == nil {
+		return errors.Errorf("This node is not a ddl owner, can't be resigned.")
+	}
+
+	childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
+	err := elec.Resign(childCtx)
+	cancel()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	log.Warnf("%s Resign ddl owner success!", m.logPrefix)
+	return nil
+}
+
+func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
+	atomic.StorePointer(&m.elec, unsafe.Pointer(elec))
+}
+
+// RetireOwner make the manager to be a not owner.
+func (m *ownerManager) RetireOwner() {
+	atomic.StorePointer(&m.elec, nil)
+}
+
 func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrency.Session) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -188,7 +212,7 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		}
 	}()
 
-	logPrefix := fmt.Sprintf("[%s] %s ownerManager %s", m.prompt, m.key, m.id)
+	logPrefix := m.logPrefix
 	var err error
 	for {
 		if err != nil {
@@ -232,9 +256,10 @@ func (m *ownerManager) campaignLoop(ctx context.Context, etcdSession *concurrenc
 		if err != nil {
 			continue
 		}
-		m.SetOwner(true)
+
+		m.toBeOwner(elec)
 		m.watchOwner(ctx, etcdSession, ownerKey)
-		m.SetOwner(false)
+		m.RetireOwner()
 
 		metrics.CampaignOwnerCounter.WithLabelValues(m.prompt, metrics.NoLongerOwner).Inc()
 		log.Warnf("%s isn't the owner", logPrefix)

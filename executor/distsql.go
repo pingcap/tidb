@@ -19,10 +19,8 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unsafe"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -39,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -115,22 +114,6 @@ func closeAll(objs ...Closeable) error {
 		}
 	}
 	return errors.Trace(err)
-}
-
-// zone returns the current timezone name and timezone offset in seconds.
-// In compatible with MySQL, we change `Local` to `System`.
-// TODO: Golang team plan to return system timezone name intead of
-// returning `Local` when `loc` is `time.Local`. We need keep an eye on this.
-func zone(sctx sessionctx.Context) (string, int64) {
-	loc := sctx.GetSessionVars().Location()
-	_, offset := time.Now().In(loc).Zone()
-	var name string
-	name = loc.String()
-	if name == "Local" {
-		name = "System"
-	}
-
-	return name, int64(offset)
 }
 
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.

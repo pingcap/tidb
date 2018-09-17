@@ -18,12 +18,12 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -52,6 +52,8 @@ const (
 	CmdRawBatchDelete
 	CmdRawDeleteRange
 	CmdRawScan
+
+	CmdUnsafeDestroyRange
 
 	CmdCop CmdType = 512 + iota
 	CmdCopStream
@@ -101,6 +103,8 @@ func (t CmdType) String() string {
 		return "RawDeleteRange"
 	case CmdRawScan:
 		return "RawScan"
+	case CmdUnsafeDestroyRange:
+		return "UnsafeDestroyRange"
 	case CmdCop:
 		return "Cop"
 	case CmdCopStream:
@@ -118,30 +122,31 @@ func (t CmdType) String() string {
 // Request wraps all kv/coprocessor requests.
 type Request struct {
 	kvrpcpb.Context
-	Type             CmdType
-	Get              *kvrpcpb.GetRequest
-	Scan             *kvrpcpb.ScanRequest
-	Prewrite         *kvrpcpb.PrewriteRequest
-	Commit           *kvrpcpb.CommitRequest
-	Cleanup          *kvrpcpb.CleanupRequest
-	BatchGet         *kvrpcpb.BatchGetRequest
-	BatchRollback    *kvrpcpb.BatchRollbackRequest
-	ScanLock         *kvrpcpb.ScanLockRequest
-	ResolveLock      *kvrpcpb.ResolveLockRequest
-	GC               *kvrpcpb.GCRequest
-	DeleteRange      *kvrpcpb.DeleteRangeRequest
-	RawGet           *kvrpcpb.RawGetRequest
-	RawBatchGet      *kvrpcpb.RawBatchGetRequest
-	RawPut           *kvrpcpb.RawPutRequest
-	RawBatchPut      *kvrpcpb.RawBatchPutRequest
-	RawDelete        *kvrpcpb.RawDeleteRequest
-	RawBatchDelete   *kvrpcpb.RawBatchDeleteRequest
-	RawDeleteRange   *kvrpcpb.RawDeleteRangeRequest
-	RawScan          *kvrpcpb.RawScanRequest
-	Cop              *coprocessor.Request
-	MvccGetByKey     *kvrpcpb.MvccGetByKeyRequest
-	MvccGetByStartTs *kvrpcpb.MvccGetByStartTsRequest
-	SplitRegion      *kvrpcpb.SplitRegionRequest
+	Type               CmdType
+	Get                *kvrpcpb.GetRequest
+	Scan               *kvrpcpb.ScanRequest
+	Prewrite           *kvrpcpb.PrewriteRequest
+	Commit             *kvrpcpb.CommitRequest
+	Cleanup            *kvrpcpb.CleanupRequest
+	BatchGet           *kvrpcpb.BatchGetRequest
+	BatchRollback      *kvrpcpb.BatchRollbackRequest
+	ScanLock           *kvrpcpb.ScanLockRequest
+	ResolveLock        *kvrpcpb.ResolveLockRequest
+	GC                 *kvrpcpb.GCRequest
+	DeleteRange        *kvrpcpb.DeleteRangeRequest
+	RawGet             *kvrpcpb.RawGetRequest
+	RawBatchGet        *kvrpcpb.RawBatchGetRequest
+	RawPut             *kvrpcpb.RawPutRequest
+	RawBatchPut        *kvrpcpb.RawBatchPutRequest
+	RawDelete          *kvrpcpb.RawDeleteRequest
+	RawBatchDelete     *kvrpcpb.RawBatchDeleteRequest
+	RawDeleteRange     *kvrpcpb.RawDeleteRangeRequest
+	RawScan            *kvrpcpb.RawScanRequest
+	UnsafeDestroyRange *kvrpcpb.UnsafeDestroyRangeRequest
+	Cop                *coprocessor.Request
+	MvccGetByKey       *kvrpcpb.MvccGetByKeyRequest
+	MvccGetByStartTs   *kvrpcpb.MvccGetByStartTsRequest
+	SplitRegion        *kvrpcpb.SplitRegionRequest
 }
 
 // ToSuperBatchRequest converts the request to an entry in SuperBatch request.
@@ -193,31 +198,32 @@ func (req *Request) ToSuperBatchRequest() *tikvpb.SuperBatchRequest_Request {
 
 // Response wraps all kv/coprocessor responses.
 type Response struct {
-	Type             CmdType
-	Get              *kvrpcpb.GetResponse
-	Scan             *kvrpcpb.ScanResponse
-	Prewrite         *kvrpcpb.PrewriteResponse
-	Commit           *kvrpcpb.CommitResponse
-	Cleanup          *kvrpcpb.CleanupResponse
-	BatchGet         *kvrpcpb.BatchGetResponse
-	BatchRollback    *kvrpcpb.BatchRollbackResponse
-	ScanLock         *kvrpcpb.ScanLockResponse
-	ResolveLock      *kvrpcpb.ResolveLockResponse
-	GC               *kvrpcpb.GCResponse
-	DeleteRange      *kvrpcpb.DeleteRangeResponse
-	RawGet           *kvrpcpb.RawGetResponse
-	RawBatchGet      *kvrpcpb.RawBatchGetResponse
-	RawPut           *kvrpcpb.RawPutResponse
-	RawBatchPut      *kvrpcpb.RawBatchPutResponse
-	RawDelete        *kvrpcpb.RawDeleteResponse
-	RawBatchDelete   *kvrpcpb.RawBatchDeleteResponse
-	RawDeleteRange   *kvrpcpb.RawDeleteRangeResponse
-	RawScan          *kvrpcpb.RawScanResponse
-	Cop              *coprocessor.Response
-	CopStream        *CopStreamResponse
-	MvccGetByKey     *kvrpcpb.MvccGetByKeyResponse
-	MvccGetByStartTS *kvrpcpb.MvccGetByStartTsResponse
-	SplitRegion      *kvrpcpb.SplitRegionResponse
+	Type               CmdType
+	Get                *kvrpcpb.GetResponse
+	Scan               *kvrpcpb.ScanResponse
+	Prewrite           *kvrpcpb.PrewriteResponse
+	Commit             *kvrpcpb.CommitResponse
+	Cleanup            *kvrpcpb.CleanupResponse
+	BatchGet           *kvrpcpb.BatchGetResponse
+	BatchRollback      *kvrpcpb.BatchRollbackResponse
+	ScanLock           *kvrpcpb.ScanLockResponse
+	ResolveLock        *kvrpcpb.ResolveLockResponse
+	GC                 *kvrpcpb.GCResponse
+	DeleteRange        *kvrpcpb.DeleteRangeResponse
+	RawGet             *kvrpcpb.RawGetResponse
+	RawBatchGet        *kvrpcpb.RawBatchGetResponse
+	RawPut             *kvrpcpb.RawPutResponse
+	RawBatchPut        *kvrpcpb.RawBatchPutResponse
+	RawDelete          *kvrpcpb.RawDeleteResponse
+	RawBatchDelete     *kvrpcpb.RawBatchDeleteResponse
+	RawDeleteRange     *kvrpcpb.RawDeleteRangeResponse
+	RawScan            *kvrpcpb.RawScanResponse
+	UnsafeDestroyRange *kvrpcpb.UnsafeDestroyRangeResponse
+	Cop                *coprocessor.Response
+	CopStream          *CopStreamResponse
+	MvccGetByKey       *kvrpcpb.MvccGetByKeyResponse
+	MvccGetByStartTS   *kvrpcpb.MvccGetByStartTsResponse
+	SplitRegion        *kvrpcpb.SplitRegionResponse
 }
 
 // FromSuperBatchResponse converts a SuperBatch response to Response.
@@ -323,6 +329,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.RawDeleteRange.Context = ctx
 	case CmdRawScan:
 		req.RawScan.Context = ctx
+	case CmdUnsafeDestroyRange:
+		req.UnsafeDestroyRange.Context = ctx
 	case CmdCop:
 		req.Cop.Context = ctx
 	case CmdCopStream:
@@ -421,6 +429,10 @@ func GenRegionErrorResp(req *Request, e *errorpb.Error) (*Response, error) {
 		resp.RawScan = &kvrpcpb.RawScanResponse{
 			RegionError: e,
 		}
+	case CmdUnsafeDestroyRange:
+		resp.UnsafeDestroyRange = &kvrpcpb.UnsafeDestroyRangeResponse{
+			RegionError: e,
+		}
 	case CmdCop:
 		resp.Cop = &coprocessor.Response{
 			RegionError: e,
@@ -491,6 +503,8 @@ func (resp *Response) GetRegionError() (*errorpb.Error, error) {
 		e = resp.RawDeleteRange.GetRegionError()
 	case CmdRawScan:
 		e = resp.RawScan.GetRegionError()
+	case CmdUnsafeDestroyRange:
+		e = resp.UnsafeDestroyRange.GetRegionError()
 	case CmdCop:
 		e = resp.Cop.GetRegionError()
 	case CmdCopStream:
@@ -553,6 +567,8 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.RawDeleteRange, err = client.RawDeleteRange(ctx, req.RawDeleteRange)
 	case CmdRawScan:
 		resp.RawScan, err = client.RawScan(ctx, req.RawScan)
+	case CmdUnsafeDestroyRange:
+		resp.UnsafeDestroyRange, err = client.UnsafeDestroyRange(ctx, req.UnsafeDestroyRange)
 	case CmdCop:
 		resp.Cop, err = client.Coprocessor(ctx, req.Cop)
 	case CmdCopStream:

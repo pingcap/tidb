@@ -16,7 +16,6 @@ package plan
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -146,7 +146,7 @@ func (p *LogicalJoin) columnSubstitute(schema *expression.Schema, exprs []expres
 }
 
 func (p *LogicalJoin) attachOnConds(onConds []expression.Expression) {
-	eq, left, right, other := extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan))
+	eq, left, right, other := extractOnCondition(onConds, p.children[0].(LogicalPlan), p.children[1].(LogicalPlan), false, false)
 	p.EqualConditions = append(eq, p.EqualConditions...)
 	p.LeftConditions = append(left, p.LeftConditions...)
 	p.RightConditions = append(right, p.RightConditions...)
@@ -387,10 +387,10 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 		return false, errors.Trace(err)
 	}
 	path.countAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.ranges)
-	// If the `countAfterAccess` is less than `stats.count`, there must be some inconsistent stats info.
-	// We prefer the `stats.count` because it could use more stats info to calculate the selectivity.
-	if path.countAfterAccess < ds.stats.count {
-		path.countAfterAccess = math.Min(ds.stats.count/selectionFactor, float64(ds.statisticTable.Count))
+	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
+	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
+	if path.countAfterAccess < ds.stats.RowCount {
+		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	// Check whether the primary key is covered by point query.
 	noIntervalRange := true
@@ -417,7 +417,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		path.countAfterAccess, err = ds.stats.histColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
+		path.countAfterAccess, err = ds.stats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -435,25 +435,25 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	}
 	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.index.Columns, ds.tableInfo)
 	if corColInAccessConds {
-		idxHist, ok := ds.stats.histColl.Indices[path.index.ID]
-		if ok && !ds.stats.histColl.Pseudo {
+		idxHist, ok := ds.stats.HistColl.Indices[path.index.ID]
+		if ok && !ds.stats.HistColl.Pseudo {
 			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
 		} else {
 			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
 		}
 	}
-	// If the `countAfterAccess` is less than `stats.count`, there must be some inconsistent stats info.
-	// We prefer the `stats.count` because it could use more stats info to calculate the selectivity.
-	if path.countAfterAccess < ds.stats.count {
-		path.countAfterAccess = math.Min(ds.stats.count/selectionFactor, float64(ds.statisticTable.Count))
+	// If the `countAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
+	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
+	if path.countAfterAccess < ds.stats.RowCount {
+		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
-		selectivity, err := ds.stats.histColl.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 			selectivity = selectionFactor
 		}
-		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.count)
+		path.countAfterIndex = math.Max(path.countAfterAccess*selectivity, ds.stats.RowCount)
 	}
 	// Check whether there's only point query.
 	noIntervalRanges := true

@@ -22,8 +22,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pkg/errors"
 )
 
 // BinaryLiteral is the internal type for storing bit / hex literal type.
@@ -108,7 +108,7 @@ func (b BinaryLiteral) ToInt(sc *stmtctx.StatementContext) (uint64, error) {
 		return 0, nil
 	}
 	if length > 8 {
-		var err error = ErrTruncatedWrongVal.GenByArgs("BINARY", b)
+		var err error = ErrTruncatedWrongVal.GenWithStackByArgs("BINARY", b)
 		if sc != nil {
 			err = sc.HandleTruncate(err)
 		}

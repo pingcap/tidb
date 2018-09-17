@@ -190,13 +190,6 @@
   version = "v1.1"
 
 [[projects]]
-  digest = "1:e8fd2854e80293d75ff2aab6df2ea0887bb604c2119f343dbd63e25dcf9f10ef"
-  name = "github.com/juju/errors"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "b2c7a7da5b2995941048f60146e67702a292e468"
-
-[[projects]]
   branch = "master"
   digest = "1:5985ef4caf91ece5d54817c11ea25f182697534f8ae6521eadcd628c142ac4b6"
   name = "github.com/matttproud/golang_protobuf_extensions"
@@ -281,7 +274,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:5d1ffbb5f63904390f71350a6f9d91e9b2e018dbbded1d8be71cd04df6635093"
+  digest = "1:84db0209caf3c48beaec43d15bd22ca6256d958b807c2ac626e2425e232e92c4"
   name = "github.com/pingcap/kvproto"
   packages = [
     "pkg/coprocessor",
@@ -294,45 +287,36 @@
     "pkg/tikvpb",
   ]
   pruneopts = "NUT"
-  revision = "279515615485b0f2d12f1421cc412fe2784e0190"
+  revision = "529c652955d8fa74faf56f91b2f428d5779fd7d5"
 
 [[projects]]
   branch = "master"
-  digest = "1:c9481427c87777d146d7e299c66cf08cf90a2ea2be035bb6581cfa1a78cdd39f"
+  digest = "1:2c64fe28351dc49da088194d80faceb34186e080a60c649694d094b2ccccacf5"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
   pruneopts = "NUT"
-  revision = "47a950e6649fa0151a6c5d0fc48a97c080012e3d"
+  revision = "b5992e356ff447a6fdaa450b3f5ea33afbd11680"
 
 [[projects]]
   branch = "master"
-  digest = "1:5b504d252d8014e70c12a6492878d041a0534b2deace4b8a4d71609bec7d4049"
+  digest = "1:14d83225e335cfa449b1f74d03c03ed70db64bf6af83a6e04c43e6e0021d6b94"
   name = "github.com/pingcap/tipb"
   packages = [
     "go-binlog",
-    "go-mysqlx",
-    "go-mysqlx/Connection",
-    "go-mysqlx/Crud",
-    "go-mysqlx/Datatypes",
-    "go-mysqlx/Expect",
-    "go-mysqlx/Expr",
-    "go-mysqlx/Notice",
-    "go-mysqlx/Resultset",
-    "go-mysqlx/Session",
-    "go-mysqlx/Sql",
     "go-tipb",
     "sharedbytes",
   ]
   pruneopts = "NUT"
-  revision = "5e46e0ec647edfee8fe001c5b51609460fb655bf"
+  revision = "371b48b15d93924a3a5375019e42b4420bc13d17"
 
 [[projects]]
-  digest = "1:5cf3f025cbee5951a4ee961de067c8a89fc95a5adabead774f82822efabab121"
+  digest = "1:91fee14a873676b2118c54e08c2e04897ea5c141b55a9b9fb8cf0721458d0d85"
   name = "github.com/pkg/errors"
   packages = ["."]
   pruneopts = "NUT"
-  revision = "645ef00459ed84a119197bfb8d8205042c6df63d"
-  version = "v0.8.0"
+  revision = "9316aeb006f59424c65ff505c217f90c43d6445d"
+  source = "https://github.com/pingcap/errors.git"
+  version = "v0.9.0"
 
 [[projects]]
   digest = "1:1ef3c4d6e78616bd3d1b5b7d8899febb9aa1b83d3373fbbdc2804408c7977b57"
@@ -547,7 +531,6 @@
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing",
     "github.com/grpc-ecosystem/go-grpc-prometheus",
-    "github.com/juju/errors",
     "github.com/ngaut/pools",
     "github.com/opentracing/basictracer-go",
     "github.com/opentracing/opentracing-go",
@@ -566,17 +549,8 @@
     "github.com/pingcap/kvproto/pkg/tikvpb",
     "github.com/pingcap/pd/pd-client",
     "github.com/pingcap/tipb/go-binlog",
-    "github.com/pingcap/tipb/go-mysqlx",
-    "github.com/pingcap/tipb/go-mysqlx/Connection",
-    "github.com/pingcap/tipb/go-mysqlx/Crud",
-    "github.com/pingcap/tipb/go-mysqlx/Datatypes",
-    "github.com/pingcap/tipb/go-mysqlx/Expect",
-    "github.com/pingcap/tipb/go-mysqlx/Expr",
-    "github.com/pingcap/tipb/go-mysqlx/Notice",
-    "github.com/pingcap/tipb/go-mysqlx/Resultset",
-    "github.com/pingcap/tipb/go-mysqlx/Session",
-    "github.com/pingcap/tipb/go-mysqlx/Sql",
     "github.com/pingcap/tipb/go-tipb",
+    "github.com/pkg/errors",
     "github.com/prometheus/client_golang/prometheus",
     "github.com/prometheus/client_golang/prometheus/push",
     "github.com/sirupsen/logrus",

@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -198,7 +198,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	metrics.StatsInaccuracyRate.Observe(rate)
 	s.Lock()
 	defer s.Unlock()
-	isIndex := q.hist.isIndexHist()
+	isIndex := q.tp == indexType
 	s.rateMap.update(q.tableID, q.hist.ID, rate, isIndex)
 	if len(s.feedback) < MaxQueryFeedbackCount {
 		s.feedback = append(s.feedback, q)
@@ -364,7 +364,14 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 	var err error
 	var successCount int
 	for _, fb := range h.feedback {
-		err = h.dumpFeedbackToKV(fb)
+		if fb.tp == pkType {
+			err = h.dumpFeedbackToKV(fb)
+		} else {
+			t, ok := h.statsCache.Load().(statsCache)[fb.tableID]
+			if ok {
+				err = dumpFeedbackForIndex(h, fb, t)
+			}
+		}
 		if err != nil {
 			break
 		}
@@ -381,7 +388,7 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 		return nil
 	}
 	var isIndex int64
-	if fb.hist.isIndexHist() {
+	if fb.tp == indexType {
 		isIndex = 1
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
@@ -415,9 +422,9 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 		}
 		tblStats := h.GetTableStats(table.Meta())
 		newTblStats := tblStats.copy()
-		if fb.hist.isIndexHist() {
+		if fb.tp == indexType {
 			idx, ok := tblStats.Indices[fb.hist.ID]
-			if !ok {
+			if !ok || idx.Histogram.Len() == 0 {
 				continue
 			}
 			newIdx := *idx
@@ -428,7 +435,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			newTblStats.Indices[fb.hist.ID] = &newIdx
 		} else {
 			col, ok := tblStats.Columns[fb.hist.ID]
-			if !ok {
+			if !ok || col.Histogram.Len() == 0 {
 				continue
 			}
 			newCol := *col
@@ -528,14 +535,14 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	var hist *Histogram
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
-		if ok {
+		if ok && idx.Histogram.Len() > 0 {
 			idxHist := idx.Histogram
 			hist = &idxHist
 			cms = idx.CMSketch.copy()
 		}
 	} else {
 		col, ok := tbl.Columns[histID]
-		if ok {
+		if ok && col.Histogram.Len() > 0 {
 			colHist := col.Histogram
 			hist = &colHist
 		}
@@ -552,7 +559,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		}
 	}
 	// Update the NDV of primary key column.
-	if table.Meta().PKIsHandle && isIndex == 0 {
+	if table.Meta().PKIsHandle && q.tp == pkType {
 		hist.NDV = int64(hist.totalRowCount())
 	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
@@ -670,6 +677,12 @@ func parseAutoAnalyzeRatio(ratio string) float64 {
 }
 
 func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
+	if start == "" {
+		start = variable.DefAutoAnalyzeStartTime
+	}
+	if end == "" {
+		end = variable.DefAutoAnalyzeEndTime
+	}
 	s, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, start, time.UTC)
 	if err != nil {
 		return s, s, errors.Trace(err)

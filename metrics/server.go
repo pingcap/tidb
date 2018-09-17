@@ -16,21 +16,21 @@ package metrics
 import (
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 // Metrics
 var (
-	QueryDurationHistogram = prometheus.NewHistogram(
+	QueryDurationHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "handle_query_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handled queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
-		})
+		}, []string{LblSQLType})
 
 	QueryTotalCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -121,20 +121,6 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1us ~ 2s
 		})
 )
-
-func init() {
-	prometheus.MustRegister(QueryDurationHistogram)
-	prometheus.MustRegister(QueryTotalCounter)
-	prometheus.MustRegister(ConnGauge)
-	prometheus.MustRegister(ExecuteErrorCounter)
-	prometheus.MustRegister(CriticalErrorCounter)
-	prometheus.MustRegister(ServerEventCounter)
-	prometheus.MustRegister(TimeJumpBackCounter)
-	prometheus.MustRegister(KeepAliveCounter)
-	prometheus.MustRegister(PlanCacheCounter)
-	prometheus.MustRegister(HandShakeErrorCounter)
-	prometheus.MustRegister(GetTokenDurationHistogram)
-}
 
 // ExecuteErrorToLabel converts an execute error to label.
 func ExecuteErrorToLabel(err error) string {

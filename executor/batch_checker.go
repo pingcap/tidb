@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 type keyValue struct {
@@ -39,12 +39,12 @@ type toBeCheckedRow struct {
 	rowValue   []byte
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
-	// The table or partition this row belongs to.
+	// t is the table or partition this row belongs to.
 	t table.Table
 }
 
 type batchChecker struct {
-	// For duplicate key update
+	// toBeCheckedRows is used for duplicate key update
 	toBeCheckedRows []toBeCheckedRow
 	dupKVs          map[string][]byte
 	dupOldRowValues map[string][]byte
@@ -257,13 +257,21 @@ func (b *batchChecker) fillBackKeys(t table.Table, row toBeCheckedRow, handle in
 	}
 }
 
-func (b *batchChecker) deleteDupKeys(row toBeCheckedRow) {
-	if row.handleKey != nil {
-		delete(b.dupKVs, string(row.handleKey.newKV.key))
+// deleteDupKeys picks primary/unique key-value pairs from rows and remove them from the dupKVs
+func (b *batchChecker) deleteDupKeys(ctx sessionctx.Context, t table.Table, rows [][]types.Datum) error {
+	cleanupRows, err := b.getKeysNeedCheck(ctx, t, rows)
+	if err != nil {
+		return errors.Trace(err)
 	}
-	for _, uk := range row.uniqueKeys {
-		delete(b.dupKVs, string(uk.newKV.key))
+	for _, row := range cleanupRows {
+		if row.handleKey != nil {
+			delete(b.dupKVs, string(row.handleKey.newKV.key))
+		}
+		for _, uk := range row.uniqueKeys {
+			delete(b.dupKVs, string(uk.newKV.key))
+		}
 	}
+	return nil
 }
 
 // getOldRow gets the table record row from storage for batch check.

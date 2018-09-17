@@ -24,13 +24,13 @@ import (
 	"github.com/grpc-ecosystem/go-grpc-middleware"
 	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -61,11 +61,12 @@ var MaxCallMsgSize = 1<<31 - 1
 
 // Timeout durations.
 const (
-	dialTimeout       = 5 * time.Second
-	readTimeoutShort  = 20 * time.Second  // For requests that read/write several key-values.
-	ReadTimeoutMedium = 60 * time.Second  // For requests that may need scan region.
-	ReadTimeoutLong   = 150 * time.Second // For requests that may need scan region multiple times.
-	GCTimeout         = 5 * time.Minute
+	dialTimeout               = 5 * time.Second
+	readTimeoutShort          = 20 * time.Second  // For requests that read/write several key-values.
+	ReadTimeoutMedium         = 60 * time.Second  // For requests that may need scan region.
+	ReadTimeoutLong           = 150 * time.Second // For requests that may need scan region multiple times.
+	GCTimeout                 = 5 * time.Minute
+	UnsafeDestroyRangeTimeout = 5 * time.Minute
 
 	grpcInitialWindowSize     = 1 << 30
 	grpcInitialConnWindowSize = 1 << 30
