@@ -65,6 +65,7 @@ var (
 	_ builtinFunc = &builtinJSONKeysSig{}
 	_ builtinFunc = &builtinJSONKeys2ArgsSig{}
 	_ builtinFunc = &builtinJSONLengthSig{}
+	_ builtinFunc = &builtinJSONValidSig{}
 )
 
 type jsonTypeFunctionClass struct {
@@ -688,8 +689,36 @@ type jsonValidFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONValidSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONValidSig) Clone() builtinFunc {
+	newSig := &builtinJSONValidSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_VALID")
+
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, []types.EvalType{types.ETJson}...)
+	sig := &builtinJSONValidSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonValidSig)
+	return sig, nil
+}
+
+func (b *builtinJSONValidSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+
+	_, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, nil
+	}
+
+	return 1, false, nil
 }
 
 type jsonArrayAppendFunctionClass struct {
