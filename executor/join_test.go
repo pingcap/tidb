@@ -910,3 +910,14 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 		`2.02`,
 	))
 }
+
+func (s *testSuite) TestEmbeddedOuterJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values(1, 1)")
+	tk.MustQuery("select * from (t1 left join t2 on t1.a = t2.a) left join (t2 t3 left join t2 t4 on t3.a = t4.a) on t2.b = 1").
+		Check(testkit.Rows("1 1 <nil> <nil> <nil> <nil> <nil> <nil>"))
+}

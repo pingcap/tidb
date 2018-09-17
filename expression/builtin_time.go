@@ -581,7 +581,7 @@ func calculateTimeDiff(sc *stmtctx.StatementContext, lhs, rhs types.Time) (d typ
 	return d, err != nil, errors.Trace(err)
 }
 
-// calculateTimeDiff calculates interval difference of two types.Duration.
+// calculateDurationTimeDiff calculates interval difference of two types.Duration.
 func calculateDurationTimeDiff(ctx sessionctx.Context, lhs, rhs types.Duration) (d types.Duration, isNull bool, err error) {
 	d, err = lhs.Sub(rhs)
 	if err != nil {
@@ -1002,7 +1002,7 @@ func (b *builtinMonthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return int64(date.Time.Month()), false, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
+// monthNameFunctionClass see https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_monthname
 type monthNameFunctionClass struct {
 	baseFunctionClass
 }
@@ -1744,7 +1744,7 @@ func (c *strToDateFunctionClass) getRetTp(ctx sessionctx.Context, arg Expression
 	return
 }
 
-// See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_str-to-date
+// getFunction see https://dev.mysql.com/doc/refman/5.5/en/date-and-time-functions.html#function_str-to-date
 func (c *strToDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
@@ -1843,6 +1843,7 @@ func (b *builtinStrToDateDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
+// evalDuration
 // TODO: If the NO_ZERO_DATE or NO_ZERO_IN_DATE SQL mode is enabled, zero dates or part of dates are disallowed.
 // In that case, STR_TO_DATE() returns NULL and generates a warning.
 func (b *builtinStrToDateDurationSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
@@ -4961,7 +4962,7 @@ func (b *builtinSubTimeDurationNullSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalTime evals a builtinSubTimeDurationNullSig.
+// evalDuration evals a builtinSubTimeDurationNullSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubTimeDurationNullSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	return types.ZeroDuration, true, nil
@@ -5071,7 +5072,7 @@ func (b *builtinTimeFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	return res, isNull, errors.Trace(err)
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
+// formatTime see https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_time-format
 func (b *builtinTimeFormatSig) formatTime(ctx sessionctx.Context, t types.Duration, formatMask string) (res string, err error) {
 	t2 := types.Time{
 		Time: types.FromDate(0, 0, 0, t.Hour(), t.Minute(), t.Second(), t.MicroSecond()),
