@@ -287,7 +287,8 @@ func (a *AggFuncDesc) typeInfer4Count(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
-// For child returns integer or decimal type, "sum" should returns a "decimal", otherwise it returns a "double".
+// typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
+// Because child returns integer or decimal type.
 func (a *AggFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
@@ -305,7 +306,8 @@ func (a *AggFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
-// For child returns integer or decimal type, "avg" should returns a "decimal", otherwise it returns a "double".
+// typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
+// Because child returns integer or decimal type.
 func (a *AggFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
