@@ -155,4 +155,13 @@ label = "cop"
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
 id	count	task	operator info
 Point_Get_1	1.00	root	table:index_prune, index:a b
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 ORDER BY a;
+id	count	task	operator info
+Point_Get_1	1.00	root	table:index_prune, index:a b
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b;
+id	count	task	operator info
+Point_Get_1	1.00	root	table:index_prune, index:a b
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b ORDER BY a limit 1;
+id	count	task	operator info
+Point_Get_1	1.00	root	table:index_prune, index:a b
 drop table if exists t1, t2, t3, index_prune;
