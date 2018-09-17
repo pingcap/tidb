@@ -1124,7 +1124,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  `select a from t where c = 1.9 and d > 3`,
-			best: "Dual->Projection",
+			best: "Dual",
 		},
 		{
 			sql:  `select a from t where c < 1.1`,
@@ -1144,7 +1144,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  `select a from t where c = 123456789098765432101234`,
-			best: "Dual->Projection",
+			best: "Dual",
 		},
 		{
 			sql:  `select a from t where c = 'hanfei'`,
