@@ -700,7 +700,6 @@ func (b *builtinJSONValidSig) Clone() builtinFunc {
 }
 
 func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-
 	if err := c.verifyArgs(args); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -712,7 +711,6 @@ func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 }
 
 func (b *builtinJSONValidSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
-
 	_, isNull, err = b.args[0].EvalJSON(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, nil
