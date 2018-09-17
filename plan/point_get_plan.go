@@ -179,7 +179,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		return nil
 	}
 	handleDatum := findPKHandle(tbl, pairs)
-	if handleDatum.Kind() != types.KindInt64 {
+	if handleDatum.Kind() != types.KindNull {
 		if len(pairs) != 1 {
 			return nil
 		}
