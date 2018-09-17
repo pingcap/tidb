@@ -481,6 +481,15 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`admin check table test.t;`)
 	_, err := tk.Exec("admin check table t")
 	c.Assert(err, NotNil)
+
+	// test add index on timestamp column which have default value
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`CREATE TABLE t1 (c2 YEAR, PRIMARY KEY (c2))`)
+	tk.MustExec(`INSERT INTO t1 SET c2 = '1912'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c3 TIMESTAMP NULL DEFAULT '1976-08-29 16:28:11'`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX c5 (c2, c3)`)
+	tk.MustExec(`admin check table t1`)
 }
 
 func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {
