@@ -144,8 +144,7 @@ func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 // 3. All the columns must be public and generated.
 // 4. The condition is an access path that the range is a unique key.
 func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetPlan {
-	if selStmt.GroupBy != nil || selStmt.Having != nil || selStmt.OrderBy != nil || selStmt.Limit != nil ||
-		selStmt.LockTp != ast.SelectLockNone {
+	if selStmt.Having != nil || selStmt.LockTp != ast.SelectLockNone {
 		return nil
 	}
 	tblName := getSingleTableName(selStmt.From)
