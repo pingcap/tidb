@@ -72,11 +72,10 @@ func (af *varPopFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *Ag
 
 // Update implements Aggregation interface.
 func (af *varPopFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
-	var err error
 	switch af.Mode {
 	case Partial1Mode, CompleteMode:
-		a := af.Args[0]
-		value, err := a.Eval(row)
+		var err error
+		value, err := af.Args[0].Eval(row)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -96,13 +95,13 @@ func (af *varPopFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 			evalCtx.Extra.SetFloat64(evalCtx.Extra.GetFloat64() + v*v)
 		}
 		evalCtx.Count++
-		return nil
 	case Partial2Mode, FinalMode:
-		err = af.updateValue(sc, evalCtx, row)
+		err := af.updateValue(sc, evalCtx, row)
+		return errors.Trace(err)
 	case DedupMode:
 		panic("DedupMode is not supported now.")
 	}
-	return errors.Trace(err)
+	return nil
 }
 
 // GetResult implements Aggregation interface.
