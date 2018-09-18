@@ -34,10 +34,12 @@ Here are proposed rules we can consider:
 
 1. Infer more filters/constraints from column equality relation
 
- We should be able to infer set of data constraints based on column equality, that is, any constraint on `a` now applies to `b` as long as:
+ We should be able to infer a set of data constraints based on column equality, that is, any constraint on `a` now applies to `b` as long as:
 
  * The constraint is deterministic
  * The constraint doesn’t have any side effect
+ * The constraint doesn't include `isnull()` expression: `isnull()` constraint cannot be propagated through equality
+ * The constraint doesn't include `cast()`/`convert()` expression: type cast may break the equality relation
 
  For example, 
 
@@ -49,18 +51,20 @@ Here are proposed rules we can consider:
   
  Equality propagation should also be included:
 
-| original expressions               | propagated filters       |
-| --------------------               | ------------------       |
-| a = b and cast(a, varchar(20)) = 5 | cast(b, varchar(20)) = 5 |
+| original expressions | propagated filters |
+| -------------------- | ------------------ |
+| a = b and abs(a) = 5 | abs(b) = 5         |
 
  But following predicates cannot be propagated:
 
-| unpropagateable expressions | reason                              |
-| --------------------------- | ------                              |
-| a = b and a < random()      | the expression is non-deterministic |
-| a = b and a < sleep()       | the expression has side effect      |
+| unpropagateable expressions            | reason                                    |
+| ---------------------------            | ------                                    |
+| a = b and a < random()                 | the expression is non-deterministic       |
+| a = b and a < sleep()                  | the expression has side effect            |
+| a = b and isnull(a)                    | isnull() cannot be propagated             |
+| a = b and cast(a as char(10)) = '+0.0' | type cast expression cannot be propagated |
 
-2. Infer NotNULL filters from null-rejected scalar expression
+2. Infer `NotNULL` filters from null-rejected scalar expression
 
  We can infer `NotNULL` constraints from a scalar expression that doesn’t accept NULL, then we can know that involved columns cannot be NULL and add `NotNull` filter to them:
 
@@ -73,9 +77,9 @@ Here are proposed rules we can consider:
 
  NOTE: Those columns should not have `NotNULL` constraint attribute, or the inferred filters are unnecessary.
 
-3. Fold the constraints based their semantics to avoid redundancy 
+3. Fold the constraints based on their semantics to avoid redundancy
 
- After the propagations we may produce some duplicates predicates, and they can be combined. We should analyze all of the conditions and try to make the predicates clean:
+ After the propagations we may produce some duplicate predicates, and they can be combined. We should analyze all of the conditions and try to make the predicates clean:
 
 | original expressions         | combined expression |
 | --------------------         | ------------------  |
@@ -113,7 +117,7 @@ TiDB(localhost:4000) > desc select * from t1 left join t2 on t1.a=t2.a where t1.
 
  NOTE: in this case, `t1.a in (12, 13)` works on the result of the outer join and we have pushed it down to the outer table.
 
- But we can further push this filter down to the inner table, since only the the records satisfied `t2.a in (12, 13)` could make join predicate `t1.a = t2.a` be positive in the join operator. So we can optimize this query to:
+ But we can further push this filter down to the inner table, since only the records satisfying `t2.a in (12, 13)` can make join predicate `t1.a = t2.a` positive in the join operator. So we can optimize this query to:
 
  `select * from t1 left join t2 on t1.a=t2.a and t2.a in (12, 13) where t1.a in (12, 13);`
 
@@ -137,11 +141,11 @@ TiDB(localhost:4000) > desc select * from t1 left join t2 on t1.a=t2.a and t2.a 
 
 ## Rationale
 
-Constraint propagation is commonly used as logical plan optimization in traditional databases. For example, [this doc](https://dev.mysql.com/doc/internals/en/optimizer-constant-propagation.html) explains some details of constant propagations in MySQL. It is is also widely adopted in distributed analytical engines, like Apache Hive, Apache SparkSQL, Apache Impala, et al. Those engines usually query on a huge amount of data.
+Constraint propagation is commonly used as logical plan optimization in traditional databases. For example, [this doc](https://dev.mysql.com/doc/internals/en/optimizer-constant-propagation.html) explains some details of constant propagations in MySQL. It is also widely adopted in distributed analytical engines, like Apache Hive, Apache SparkSQL, Apache Impala, et al. Those engines usually query on a huge amount of data.
 
 ### Advantages:
 
- Constraint propagation brings more detailed, explicit constraints to each data source involved in a query. With those constraints, we can filter data as early as possible, and thus reduce disc/network I/O and computational overheads during the execution of a query. In TiDB, most propagated filters can be pushed down to the storage level (TiKV), as a Coprocessor task, and leads to the following benefits:
+ Constraint propagation brings more detailed, explicit constraints to each data source involved in a query. With those constraints, we can filter data as early as possible, and thus reduce disk/network I/O and computational overheads during the execution of a query. In TiDB, most propagated filters can be pushed down to the storage level (TiKV), as a Coprocessor task, and leads to the following benefits:
 
  * Apply the filters at each storage segment (Region), which make the calculation distributed.
 
@@ -153,11 +157,11 @@ Constraint propagation is commonly used as logical plan optimization in traditio
 
 ### Disadvantages:
 
- Constraint propagation may brings unnecessary filters and leads to unnecessary overheads during a query, this is mostly due to the fact that logical optimization doesn't take data statistics into account, for example:
+ Constraint propagation may bring unnecessary filters and lead to unnecessary overheads during a query. This is mostly due to the fact that logical optimization doesn't take data statistics into account, for example:
 
  For a query `select * from t0, t1 on t0.a = t1.a where t1.a < 5`, we get a propagation `t0.a < 5`, but if all `t0.a` is greater than 5, applying the filter brings unnecessary overheads.
 
-Considering the trade-off, we still gain a lot of benefits from constraint propagation in most of cases; hence it still can be treated it as useful.
+Considering the trade-off, we still gain a lot of benefits from constraint propagation in most of cases; hence it still can be treated as useful.
 
 ## Compatibility
 
