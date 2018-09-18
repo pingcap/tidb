@@ -431,6 +431,10 @@ import (
 	timestampAdd		"TIMESTAMPADD"
 	timestampDiff		"TIMESTAMPDIFF"
 	trim			"TRIM"
+	std				"STD"
+	stddev			"STDDEV"
+	stddevPop		"STDDEV_POP"
+	stddevSamp		"STDDEV_SAMP"
 
 	/* The following tokens belong to TiDBKeyword. */
 	admin		"ADMIN"
@@ -465,12 +469,15 @@ import (
 	builtinMin
 	builtinNow
 	builtinPosition
-	builtinStddevPop
 	builtinSubDate
 	builtinSubstring
 	builtinSum
 	builtinSysDate
 	builtinTrim
+	builtinStd
+	builtinStddev
+	builtinStddevPop
+	builtinStddevSamp
 	builtinUser
 	builtinVarPop
 	builtinVarSamp
@@ -3788,6 +3795,22 @@ SumExpr:
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
 |	builtinSum '(' BuggyDefaultFalseDistinctOpt Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+	}
+|	builtinStd '(' BuggyDefaultFalseDistinctOpt Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+	}
+|	builtinStddev '(' BuggyDefaultFalseDistinctOpt Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+	}
+|	builtinStddevPop '(' BuggyDefaultFalseDistinctOpt Expression ')'
+	{
+		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+	}
+|	builtinStddevSamp '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}

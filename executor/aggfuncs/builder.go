@@ -52,6 +52,10 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitXor(aggFuncDesc, ordinal)
 	case ast.AggFuncBitAnd:
 		return buildBitAnd(aggFuncDesc, ordinal)
+	case ast.AggFuncStd, ast.AggFuncStddev, ast.AggFuncStddevPop:
+		return buildStddev(aggFuncDesc, ordinal)
+	case ast.AggFuncStddevSamp:
+		return buildStddevSamp(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -311,4 +315,86 @@ func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		ordinal: ordinal,
 	}
 	return &bitAndUint64{baseBitAggFunc{base}}
+}
+
+// buildStddev builds the AggFunc implementation for function "STDDEV", "STD" and "STDDEV_POP"
+func buildStddev(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	// Build stddev functions which consume the original data and remove the
+	// duplicated input of the same group.
+	case aggregation.DedupMode:
+		return nil // not implemented yet.
+
+	// Build stddev functions which consume the original data and update their
+	// partial results.
+	case aggregation.CompleteMode, aggregation.Partial1Mode:
+		switch aggFuncDesc.RetTp.EvalType() {
+		case types.ETDecimal:
+			if aggFuncDesc.HasDistinct {
+				return &stddevOriginal4DistinctDecimal{base}
+			}
+			return &stddevOriginal4Decimal{baseStddevDecimal{base}}
+		default:
+			if aggFuncDesc.HasDistinct {
+				return &stddevOriginal4DistinctFloat64{base}
+			}
+			return &stddevOriginal4Float64{baseStddevFloat64{base}}
+		}
+
+	// Build stddev functions which consume the partial result of other avg
+	// functions and update their partial results.
+	case aggregation.Partial2Mode, aggregation.FinalMode:
+		switch aggFuncDesc.RetTp.Tp {
+		case mysql.TypeNewDecimal:
+			return &stddevPartial4Decimal{baseStddevDecimal{base}}
+		case mysql.TypeDouble:
+			return &stddevPartial4Float64{baseStddevFloat64{base}}
+		}
+	}
+	return nil
+}
+
+// buildStddevSamp builds the AggFunc implementation for function "STDDEV_SAMP"
+func buildStddevSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	// Build stddev_samp functions which consume the original data and remove the
+	// duplicated input of the same group.
+	case aggregation.DedupMode:
+		return nil // not implemented yet.
+
+	// Build stddev_samp functions which consume the original data and update their
+	// partial results.
+	case aggregation.CompleteMode, aggregation.Partial1Mode:
+		switch aggFuncDesc.RetTp.EvalType() {
+		case types.ETDecimal:
+			if aggFuncDesc.HasDistinct {
+				return &stddevSampOriginal4DistinctDecimal{base}
+			}
+			return &stddevSampOriginal4Decimal{baseStddevSampDecimal{base}}
+		default:
+			if aggFuncDesc.HasDistinct {
+				return &stddevSampOriginal4DistinctFloat64{base}
+			}
+			return &stddevSampOriginal4Float64{baseStddevSampFloat64{base}}
+		}
+
+	// Build stddev_samp functions which consume the partial result of other avg
+	// functions and update their partial results.
+	case aggregation.Partial2Mode, aggregation.FinalMode:
+		switch aggFuncDesc.RetTp.Tp {
+		case mysql.TypeNewDecimal:
+			return &stddevSampPartial4Decimal{baseStddevSampDecimal{base}}
+		case mysql.TypeDouble:
+			return &stddevSampPartial4Float64{baseStddevSampFloat64{base}}
+		}
+	}
+	return nil
 }

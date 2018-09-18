@@ -2163,6 +2163,60 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	return err
 }
 
+// DecimalSqrt does the square root calculations of one decimal
+// from     - radicand
+// to       - result
+// fracIncr - increment of fraction
+func DecimalSqrt(from, to *MyDecimal, fracIncr int) error {
+	if from.negative {
+		return ErrTruncatedWrongVal
+	}
+
+	deviationStr := "0."
+	frac := fracIncr + (int)(from.digitsFrac)
+	for i := 1; i < frac; i++ {
+		deviationStr += "0"
+	}
+	deviationStr += "1"
+	deviation := new(MyDecimal)
+	err := deviation.FromString([]byte(deviationStr))
+	if err != nil {
+		return err
+	}
+	res := *from
+	var lastRes MyDecimal
+	var delta MyDecimal
+
+	for cmp := 1; cmp != -1 && err == nil; cmp, err = doSub(&delta, deviation, nil) {
+		lastRes = res
+		fromDivRes := new(MyDecimal)
+		err = DecimalDiv(from, &res, fromDivRes, fracIncr)
+		if err != nil {
+			return err
+		}
+		resAddFromDivRes := new(MyDecimal)
+		err = DecimalAdd(&res, fromDivRes, resAddFromDivRes)
+		if err != nil {
+			return err
+		}
+		decimalIntTwo := NewDecFromInt(2)
+		tmpRes := new(MyDecimal)
+		err = DecimalDiv(resAddFromDivRes, decimalIntTwo, tmpRes, 1)
+		if err != nil {
+			return err
+		}
+		res = *tmpRes
+		err = DecimalSub(&res, &lastRes, &delta)
+		if err != nil {
+			return err
+		}
+		delta.negative = false
+	}
+
+	*to = res
+	return err
+}
+
 // DecimalPeak returns the length of the encoded decimal.
 func DecimalPeak(b []byte) (int, error) {
 	if len(b) < 3 {
