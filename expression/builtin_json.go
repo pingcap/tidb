@@ -806,27 +806,32 @@ func (b *builtinJSONLengthSig) evalInt(row chunk.Row) (res int64, isNull bool, e
 		return res, isNull, errors.Trace(err)
 	}
 
-	if obj.Type() == "OBJECT" || obj.Type() == "ARRAY" {
-		var pathExpr json.PathExpression
-		if len(b.args) == 2 {
-			path, isNull, err := b.args[1].EvalString(b.ctx, row)
-			if isNull || err != nil {
-				return res, isNull, errors.Trace(err)
-			}
-			pathExpr, err = json.ParseJSONPathExpr(path)
-			if err != nil {
-				return res, true, errors.Trace(err)
-			}
-			if pathExpr.ContainsAnyAsterisk() {
-				return res, true, json.ErrInvalidJSONPathWildcard
-			}
-			var exists bool
-			obj, exists = obj.Extract([]json.PathExpression{pathExpr})
-			if !exists {
-				return res, true, nil
-			}
+	if obj.Type() != "OBJECT" && obj.Type() != "ARRAY" {
+		return 1, false, nil
+	}
+
+	if len(b.args) == 2 {
+		path, isNull, err := b.args[1].EvalString(b.ctx, row)
+		if isNull || err != nil {
+			return res, isNull, errors.Trace(err)
+		}
+
+		pathExpr, err := json.ParseJSONPathExpr(path)
+		if err != nil {
+			return res, true, errors.Trace(err)
+		}
+		if pathExpr.ContainsAnyAsterisk() {
+			return res, true, json.ErrInvalidJSONPathWildcard
+		}
+
+		obj, exists := obj.Extract([]json.PathExpression{pathExpr})
+		if !exists {
+			return res, true, nil
+		}
+		if obj.Type() != "OBJECT" && obj.Type() != "ARRAY" {
+			return 1, false, nil
 		}
 		return int64(obj.GetElemCount()), false, nil
 	}
-	return 1, false, nil
+	return int64(obj.GetElemCount()), false, nil
 }

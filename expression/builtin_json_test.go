@@ -444,6 +444,9 @@ func (s *testEvaluatorSuite) TestJSONLength(c *C) {
 		{[]interface{}{`null`, "$.a"}, 1, true},
 		// Tests nil arguments
 		{[]interface{}{nil}, nil, true},
+		{[]interface{}{nil, "a"}, nil, true},
+		{[]interface{}{`{"a": 1}`, nil}, nil, true},
+		{[]interface{}{nil, nil}, nil, true},
 		// Tests with path expression
 		{[]interface{}{`[1,2,[1,[5,[3]]]]`, "$[2]"}, 2, true},
 		{[]interface{}{`[{"a":1}]`, "$"}, 1, true},
@@ -451,6 +454,7 @@ func (s *testEvaluatorSuite) TestJSONLength(c *C) {
 		{[]interface{}{`{"a":{"a":1},"b":2}`, "$"}, 2, true},
 		{[]interface{}{`{"a":{"a":1},"b":2}`, "$.a"}, 1, true},
 		{[]interface{}{`{"a":{"a":1},"b":2}`, "$.a.a"}, 1, true},
+		{[]interface{}{`{"a": [1, 2, {"aa": "xx"}]}`, "$.a[2].aa"}, 1, true},
 		// Tests without path expression
 		{[]interface{}{`{}`}, 0, true},
 		{[]interface{}{`{"a":1}`}, 1, true},
