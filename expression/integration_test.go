@@ -3301,6 +3301,19 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$[*]')
 	`)
 	r.Check(testkit.Rows("1 0 1 0"))
+
+	r = tk.MustQuery(`select json_length('1')`)
+	r.Check(testkit.Rows("1"))
+	r = tk.MustQuery(`select json_length('{}')`)
+	r.Check(testkit.Rows("0"))
+	r = tk.MustQuery(`select json_length('[]')`)
+	r.Check(testkit.Rows("0"))
+	r = tk.MustQuery(`select json_length('{"a": 1}')`)
+	r.Check(testkit.Rows("1"))
+	r = tk.MustQuery(`select json_length('{"a": 1, "b": 2}')`)
+	r.Check(testkit.Rows("2"))
+	r = tk.MustQuery(`select json_length('[1, 2, 3]')`)
+	r.Check(testkit.Rows("3"))
 }
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
