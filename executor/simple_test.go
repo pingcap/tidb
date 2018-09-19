@@ -301,7 +301,7 @@ func (s *testSuite) TestFlushTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	_, err := tk.Exec("FLUSH TABLES")
-	c.Check(err, NotNil)
+	c.Check(err, IsNil)
 
 	_, err = tk.Exec("FLUSH TABLES WITH READ LOCK")
 	c.Check(err, NotNil)
