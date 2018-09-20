@@ -576,6 +576,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
+	case TiDBForcePriority:
+		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
 	}
 	s.systems[name] = val
 	return nil
