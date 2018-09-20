@@ -815,6 +815,23 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
 
+func extractLimitCountOffset(sc *stmtctx.StatementContext, limit *ast.Limit) (count uint64,
+	offset uint64, err error) {
+	if limit.Count != nil {
+		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
+		if err != nil {
+			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
+		}
+	}
+	if limit.Offset != nil {
+		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
+		if err != nil {
+			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
+		}
+	}
+	return count, offset, nil
+}
+
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPushDownTopN
 	var (
@@ -822,18 +839,8 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		err           error
 	)
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if limit.Offset != nil {
-		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
-		if err != nil {
-			return nil, ErrWrongArguments.GenWithStackByArgs("LIMIT")
-		}
-	}
-
-	if limit.Count != nil {
-		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
-		if err != nil {
-			return nil, ErrWrongArguments.GenWithStackByArgs("LIMIT")
-		}
+	if count, offset, err = extractLimitCountOffset(sc, limit); err != nil {
+		return nil, err
 	}
 
 	if count > math.MaxUint64-offset {

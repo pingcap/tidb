@@ -287,7 +287,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "thread_cache_size", "9"},
 	{ScopeGlobal, "log_slow_admin_statements", "OFF"},
 	{ScopeNone, "innodb_checksums", "ON"},
-	{ScopeNone, "hostname", "localhost"},
+	{ScopeNone, "hostname", ServerHostname},
 	{ScopeGlobal | ScopeSession, "auto_increment_offset", "1"},
 	{ScopeNone, "ft_stopword_file", "(built-in)"},
 	{ScopeGlobal, "innodb_max_dirty_pages_pct_lwm", "0"},
