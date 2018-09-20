@@ -83,6 +83,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 			return "", false, errors.Trace(err)
 		}
 		return string(j), true, nil
+	case TiDBForcePriority:
+		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
