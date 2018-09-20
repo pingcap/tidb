@@ -15,7 +15,7 @@ type testAstFormatSuite struct {
 }
 
 func getDefaultCharsetAndCollate() (string, string) {
-	return "utf8", "utf8_bin"
+	return mysql.DefaultCharset, mysql.DefaultCollationName
 }
 
 func (ts *testAstFormatSuite) TestAstFormat(c *C) {

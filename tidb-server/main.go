@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
@@ -57,25 +58,27 @@ import (
 
 // Flag Names
 const (
-	nmVersion          = "V"
-	nmConfig           = "config"
-	nmStore            = "store"
-	nmStorePath        = "path"
-	nmHost             = "host"
-	nmAdvertiseAddress = "advertise-address"
-	nmPort             = "P"
-	nmSocket           = "socket"
-	nmBinlogSocket     = "binlog-socket"
-	nmRunDDL           = "run-ddl"
-	nmLogLevel         = "L"
-	nmLogFile          = "log-file"
-	nmLogSlowQuery     = "log-slow-query"
-	nmReportStatus     = "report-status"
-	nmStatusPort       = "status"
-	nmMetricsAddr      = "metrics-addr"
-	nmMetricsInterval  = "metrics-interval"
-	nmDdlLease         = "lease"
-	nmTokenLimit       = "token-limit"
+	nmVersion            = "V"
+	nmConfig             = "config"
+	nmStore              = "store"
+	nmStorePath          = "path"
+	nmHost               = "host"
+	nmAdvertiseAddress   = "advertise-address"
+	nmPort               = "P"
+	nmSocket             = "socket"
+	nmBinlogSocket       = "binlog-socket"
+	nmRunDDL             = "run-ddl"
+	nmLogLevel           = "L"
+	nmLogFile            = "log-file"
+	nmLogSlowQuery       = "log-slow-query"
+	nmReportStatus       = "report-status"
+	nmStatusPort         = "status"
+	nmMetricsAddr        = "metrics-addr"
+	nmMetricsInterval    = "metrics-interval"
+	nmDdlLease           = "lease"
+	nmTokenLimit         = "token-limit"
+	nmCharacterSetServer = "character-set-server"
+	nmCollationServer    = "collation-server"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -86,16 +89,18 @@ var (
 	configPath = flag.String(nmConfig, "", "config file path")
 
 	// Base
-	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
-	storePath        = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
-	host             = flag.String(nmHost, "0.0.0.0", "tidb server host")
-	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
-	port             = flag.String(nmPort, "4000", "tidb server port")
-	socket           = flag.String(nmSocket, "", "The socket file to use for connection.")
-	binlogSocket     = flag.String(nmBinlogSocket, "", "socket file to write binlog")
-	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
-	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
-	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
+	store              = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
+	storePath          = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
+	host               = flag.String(nmHost, "0.0.0.0", "tidb server host")
+	advertiseAddress   = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
+	port               = flag.String(nmPort, "4000", "tidb server port")
+	socket             = flag.String(nmSocket, "", "The socket file to use for connection.")
+	binlogSocket       = flag.String(nmBinlogSocket, "", "socket file to write binlog")
+	runDDL             = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
+	ddlLease           = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
+	tokenLimit         = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
+	characterSetServer = flag.String(nmCharacterSetServer, mysql.DefaultCharset, "the default character set")
+	collationServer    = flag.String(nmCollationServer, mysql.DefaultCollationName, "the default character collation")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -128,12 +133,17 @@ func main() {
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
+	var err error
 	registerStores()
 	registerMetrics()
 	loadConfig()
 	overrideConfig()
-	validateConfig()
-	setGlobalVars()
+	if err = validateConfig(); err != nil {
+		terror.MustNil(err)
+	}
+	if err = setGlobalVars(); err != nil {
+		terror.MustNil(err)
+	}
 	setupLog()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
@@ -299,6 +309,12 @@ func overrideConfig() {
 	if actualFlags[nmTokenLimit] {
 		cfg.TokenLimit = uint(*tokenLimit)
 	}
+	if actualFlags[nmCharacterSetServer] {
+		cfg.CharacterSetServer = *characterSetServer
+	}
+	if actualFlags[nmCollationServer] {
+		cfg.CollationServer = *collationServer
+	}
 
 	// Log
 	if actualFlags[nmLogLevel] {
@@ -337,7 +353,7 @@ func overrideConfig() {
 	}
 }
 
-func validateConfig() {
+func validateConfig() error {
 	if cfg.Security.SkipGrantTable && !hasRootPrivilege() {
 		log.Error("TiDB run with skip-grant-table need root privilege.")
 		os.Exit(-1)
@@ -371,9 +387,11 @@ func validateConfig() {
 		log.Errorf("lower-case-table-names should be 0 or 1 or 2.")
 		os.Exit(-1)
 	}
+
+	return mysql.ValidateCharsetCollation(cfg.CharacterSetServer, cfg.CollationServer)
 }
 
-func setGlobalVars() {
+func setGlobalVars() error {
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
@@ -403,6 +421,8 @@ func setGlobalVars() {
 	tikv.GrpcKeepAliveTimeout = time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
+
+	return mysql.SetDefaultCharsetCollation(cfg.CharacterSetServer, cfg.CollationServer)
 }
 
 func setupLog() {

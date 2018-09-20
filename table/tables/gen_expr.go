@@ -18,13 +18,14 @@ import (
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pkg/errors"
 )
 
 // getDefaultCharsetAndCollate is copyed from ddl/ddl_api.go.
 func getDefaultCharsetAndCollate() (string, string) {
-	return "utf8", "utf8_bin"
+	return mysql.DefaultCharset, mysql.DefaultCollationName
 }
 
 // nameResolver is the visitor to resolve table name and column name.

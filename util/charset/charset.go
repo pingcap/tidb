@@ -83,7 +83,7 @@ func GetAllCharsets() []*Desc {
 func ValidCharsetAndCollation(cs string, co string) bool {
 	// We will use utf8 as a default charset.
 	if cs == "" {
-		cs = "utf8"
+		cs = mysql.DefaultCharset
 	}
 	cs = strings.ToLower(cs)
 	c, ok := charsets[cs]

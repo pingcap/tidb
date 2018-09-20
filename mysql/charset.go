@@ -13,7 +13,11 @@
 
 package mysql
 
-import "unicode"
+import (
+	"unicode"
+
+	"github.com/pkg/errors"
+)
 
 // CharsetIDs maps charset name to its default collation ID.
 var CharsetIDs = map[string]uint8{
@@ -553,17 +557,46 @@ var CollationNames = map[string]uint8{
 const (
 	UTF8Charset          = "utf8"
 	UTF8MB4Charset       = "utf8mb4"
-	DefaultCharset       = UTF8Charset
 	DefaultCollationID   = 83
 	BinaryCollationID    = 63
 	UTF8DefaultCollation = "utf8_bin"
-	DefaultCollationName = UTF8DefaultCollation
 
 	// MaxBytesOfCharacter, is the max bytes length of a character,
 	// refer to RFC3629, in UTF-8, characters from the U+0000..U+10FFFF range
 	// (the UTF-16 accessible range) are encoded using sequences of 1 to 4 octets.
 	MaxBytesOfCharacter = 4
 )
+
+var (
+	// DefaultCharset is the Default collation for the server
+	// This can be changes in the server configuration
+	DefaultCharset = UTF8Charset
+	// DefaultCollationName is the Default collation for the server
+	// This can be changes in the server configuration
+	DefaultCollationName = UTF8DefaultCollation
+)
+
+// ValidateCharsetCollation checks if this charset and collation are accepted by TiDB.
+func ValidateCharsetCollation(charset string, collation string) error {
+	if _, ok := Charsets[charset]; !ok {
+		return errors.Errorf("not a valid charset: %s", charset)
+	}
+	if _, ok := CollationNames[collation]; !ok {
+		return errors.Errorf("not a valid collation: %s", collation)
+	}
+	return nil
+}
+
+// SetDefaultCharsetCollation updates the default charset for the system.
+// This should only be changed at startup.
+func SetDefaultCharsetCollation(charset string, collation string) error {
+	if err := ValidateCharsetCollation(charset, collation); err != nil {
+		return err
+	}
+	DefaultCharset = charset
+	DefaultCollationName = collation
+	return nil
+}
 
 // IsUTF8Charset checks if charset is utf8 or utf8mb4
 func IsUTF8Charset(charset string) bool {

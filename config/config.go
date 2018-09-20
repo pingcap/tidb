@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pkg/errors"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -73,6 +74,8 @@ type Config struct {
 	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	CharacterSetServer  string            `toml:"character-set-server" json:"character-set-server"`
+	CollationServer     string            `toml:"collation-server" json:"collation-server"`
 }
 
 // Log is the log section of config.
@@ -320,6 +323,8 @@ var defaultConf = Config{
 	Binlog: Binlog{
 		WriteTimeout: "15s",
 	},
+	CharacterSetServer: mysql.DefaultCharset,
+	CollationServer:    mysql.DefaultCollationName,
 }
 
 var globalConf = defaultConf
