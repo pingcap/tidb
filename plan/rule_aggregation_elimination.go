@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-type aggregationEliminater struct {
+type aggregationEliminator struct {
 	aggregationEliminateChecker
 }
 
@@ -111,7 +111,7 @@ func (a *aggregationEliminateChecker) rewriteSumOrAvg(ctx sessionctx.Context, ex
 	}
 }
 
-func (a *aggregationEliminater) optimize(p LogicalPlan) (LogicalPlan, error) {
+func (a *aggregationEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
 		newChild, _ := a.optimize(child)

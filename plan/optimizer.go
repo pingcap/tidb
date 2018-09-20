@@ -45,7 +45,7 @@ var optRuleList = []logicalOptRule{
 	&columnPruner{},
 	&projectionEliminater{},
 	&buildKeySolver{},
-	&aggregationEliminater{},
+	&aggregationEliminator{},
 	&decorrelateSolver{},
 	&maxMinEliminator{},
 	&ppdSolver{},
