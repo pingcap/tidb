@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 )
 
@@ -237,6 +238,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 4, math.MaxUint64, vars)
 	case InteractiveTimeout:
 		return checkUInt64SystemVar(name, value, 1, secondsPerYear, vars)
+	case InnodbCommitConcurrency:
+		return checkUInt64SystemVar(name, value, 0, 1000, vars)
+	case InnodbFastShutdown:
+		return checkUInt64SystemVar(name, value, 0, 2, vars)
+	case InnodbLockWaitTimeout:
+		return checkUInt64SystemVar(name, value, 1, 1073741824, vars)
 	case MaxConnections:
 		return checkUInt64SystemVar(name, value, 1, 100000, vars)
 	case MaxConnectErrors:
@@ -260,6 +267,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case SQLSelectLimit:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case SyncBinlog:
+		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
 	case TableDefinitionCache:
 		return checkUInt64SystemVar(name, value, 400, 524288, vars)
 	case TmpTableSize:
@@ -352,8 +361,7 @@ func tidbOptInt64(opt string, defaultVal int64) int64 {
 
 func parseTimeZone(s string) (*time.Location, error) {
 	if strings.EqualFold(s, "SYSTEM") {
-		// TODO: Support global time_zone variable, it should be set to global time_zone value.
-		return time.Local, nil
+		return timeutil.SystemLocation(), nil
 	}
 
 	loc, err := time.LoadLocation(s)

@@ -175,9 +175,12 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 	}
 }
 
-func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
-	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
-	otherCond []expression.Expression) {
+// extractOnCondition divide conditions in CNF of join node into 4 groups.
+// These conditions can be where conditions, join conditions, or collection of both.
+// If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
+func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan,
+	deriveLeft bool, deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
+	rightCond []expression.Expression, otherCond []expression.Expression) {
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && binop.FuncName.L == ast.EQ {
@@ -210,6 +213,21 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 		} else if allFromLeft {
 			leftCond = append(leftCond, expr)
 		} else {
+			// Relax expr to two supersets: leftRelaxedCond and rightRelaxedCond, the expression now is
+			// `expr AND leftRelaxedCond AND rightRelaxedCond`. Motivation is to push filters down to
+			// children as much as possible.
+			if deriveLeft {
+				leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, left.Schema())
+				if leftRelaxedCond != nil {
+					leftCond = append(leftCond, leftRelaxedCond)
+				}
+			}
+			if deriveRight {
+				rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, right.Schema())
+				if rightRelaxedCond != nil {
+					rightCond = append(rightCond, rightRelaxedCond)
+				}
+			}
 			otherCond = append(otherCond, expr)
 		}
 	}
@@ -805,6 +823,23 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
 
+func extractLimitCountOffset(sc *stmtctx.StatementContext, limit *ast.Limit) (count uint64,
+	offset uint64, err error) {
+	if limit.Count != nil {
+		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
+		if err != nil {
+			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
+		}
+	}
+	if limit.Offset != nil {
+		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
+		if err != nil {
+			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
+		}
+	}
+	return count, offset, nil
+}
+
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPushDownTopN
 	var (
@@ -812,18 +847,8 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		err           error
 	)
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if limit.Offset != nil {
-		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
-		if err != nil {
-			return nil, ErrWrongArguments.GenWithStackByArgs("LIMIT")
-		}
-	}
-
-	if limit.Count != nil {
-		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
-		if err != nil {
-			return nil, ErrWrongArguments.GenWithStackByArgs("LIMIT")
-		}
+	if count, offset, err = extractLimitCountOffset(sc, limit); err != nil {
+		return nil, err
 	}
 
 	if count > math.MaxUint64-offset {

@@ -13,7 +13,11 @@
 
 package variable
 
-import "github.com/pingcap/tidb/mysql"
+import (
+	"os"
+
+	"github.com/pingcap/tidb/mysql"
+)
 
 /*
 	Steps to add a new TiDB specific system variable:
@@ -236,4 +240,5 @@ var (
 	maxDDLReorgWorkerCount int32  = 128
 	DDLSlowOprThreshold    uint32 = 300 // DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	ForcePriority                 = int32(DefTiDBForcePriority)
+	ServerHostname, _             = os.Hostname()
 )

@@ -453,9 +453,39 @@ func (s *testSuite) TestValidateSetVar(c *C) {
 	result = tk.MustQuery("select @@sql_select_limit;")
 	result.Check(testkit.Rows("18446744073709551615"))
 
+	tk.MustExec("set @@global.sync_binlog=-1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '-1'"))
+
+	tk.MustExec("set @@global.sync_binlog=4294967299")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '4294967299'"))
+
 	tk.MustExec("set @@global.flush_time=31536001")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect flush_time value: '31536001'"))
 
 	tk.MustExec("set @@global.interactive_timeout=31536001")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect interactive_timeout value: '31536001'"))
+
+	tk.MustExec("set @@global.innodb_commit_concurrency = -1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_commit_concurrency value: '-1'"))
+
+	tk.MustExec("set @@global.innodb_commit_concurrency = 1001")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_commit_concurrency value: '1001'"))
+
+	tk.MustExec("set @@global.innodb_fast_shutdown = -1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_fast_shutdown value: '-1'"))
+
+	tk.MustExec("set @@global.innodb_fast_shutdown = 3")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_fast_shutdown value: '3'"))
+
+	tk.MustExec("set @@global.innodb_lock_wait_timeout = 0")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '0'"))
+
+	tk.MustExec("set @@global.innodb_lock_wait_timeout = 1073741825")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
+
+	tk.MustExec("set @@innodb_lock_wait_timeout = 0")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '0'"))
+
+	tk.MustExec("set @@innodb_lock_wait_timeout = 1073741825")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
 }
