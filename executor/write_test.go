@@ -594,6 +594,12 @@ commit;`
 	INSERT t1 VALUES (1) ON DUPLICATE KEY UPDATE f1 = 1;`
 	tk.MustExec(testSQL)
 	tk.MustQuery(`SELECT * FROM t1;`).Check(testkit.Rows("1"))
+
+	testSQL = `drop table if exists t1;
+	create table t1(a int key, b int, unique(b));
+	insert into t1 values (1,1),(1,2),(3,1) on duplicate key update a=values(a), b=values(b);`
+	tk.MustExec(testSQL)
+	tk.MustQuery(`SELECT * FROM t1 order by a;`).Check(testkit.Rows("1 2", "3 1"))
 }
 
 func (s *testSuite) TestInsertIgnoreOnDup(c *C) {
@@ -1627,4 +1633,17 @@ func (s *testSuite) TestUpdateDelete(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table ttt;")
 	tk.MustExec("drop table ttt")
+}
+
+func (s *testSuite) TestInsertDateTimeWithTimeZone(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`set time_zone="+09:00";`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t (id int, c1 datetime not null default CURRENT_TIMESTAMP);`)
+	tk.MustExec(`set TIMESTAMP = 1234;`)
+	tk.MustExec(`insert t (id) values (1);`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
+		`1 1970-01-01 09:20:34`,
+	))
 }
