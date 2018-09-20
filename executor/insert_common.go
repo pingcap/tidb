@@ -218,7 +218,7 @@ func (e *InsertValues) evalRow(cols []*table.Column, list []expression.Expressio
 		row[offset], hasValue[offset] = val1, true
 	}
 
-	return e.fillRow(cols, row, hasValue, len(list))
+	return e.fillRow(row, hasValue)
 }
 
 // setValueForRefColumn set some default values for the row to eval the row value with other columns,
@@ -319,7 +319,7 @@ func (e *InsertValues) getRow(cols []*table.Column, vals []types.Datum) ([]types
 		hasValue[offset] = true
 	}
 
-	return e.fillRow(cols, row, hasValue, len(vals))
+	return e.fillRow(row, hasValue)
 }
 
 func (e *InsertValues) filterErr(err error) error {
@@ -373,7 +373,8 @@ func (e *InsertValues) fillColValue(datum types.Datum, idx int, column *table.Co
 
 // fillRow fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
-func (e *InsertValues) fillRow(cols []*table.Column, row []types.Datum, hasValue []bool, valLen int) ([]types.Datum, error) {
+func (e *InsertValues) fillRow(row []types.Datum, hasValue []bool) ([]types.Datum, error) {
+	gIdx := 0
 	for i, c := range e.Table.Cols() {
 		var err error
 		// Get the default value for all no value columns, the auto increment column is different from the others.
@@ -384,16 +385,15 @@ func (e *InsertValues) fillRow(cols []*table.Column, row []types.Datum, hasValue
 
 		// Evaluate the generated columns.
 		if c.IsGenerated() {
-			for j, expr := range e.GenExprs {
-				var val types.Datum
-				val, err = expr.Eval(chunk.MutRowFromDatums(row).ToRow())
-				if e.filterErr(err) != nil {
-					return nil, errors.Trace(err)
-				}
-				row[cols[valLen+j].Offset], err = table.CastValue(e.ctx, val, cols[valLen+j].ToInfo())
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
+			var val types.Datum
+			val, err = e.GenExprs[gIdx].Eval(chunk.MutRowFromDatums(row).ToRow())
+			gIdx++
+			if e.filterErr(err) != nil {
+				return nil, errors.Trace(err)
+			}
+			row[i], err = table.CastValue(e.ctx, val, c.ToInfo())
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 
