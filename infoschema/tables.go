@@ -684,13 +684,27 @@ var filesCols = []columnInfo{
 }
 
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
+
 	var rows [][]types.Datum
+
 	for _, schema := range schemas {
+
+		charset := mysql.DefaultCharset
+		collation := mysql.DefaultCollationName
+
+		if len(schema.Charset) > 0 {
+			charset = schema.Charset // Overwrite default
+		}
+
+		if len(schema.Collate) > 0 {
+			collation = schema.Collate // Overwrite default
+		}
+
 		record := types.MakeDatums(
-			catalogVal,                 // CATALOG_NAME
-			schema.Name.O,              // SCHEMA_NAME
-			mysql.DefaultCharset,       // DEFAULT_CHARACTER_SET_NAME
-			mysql.DefaultCollationName, // DEFAULT_COLLATION_NAME
+			catalogVal,    // CATALOG_NAME
+			schema.Name.O, // SCHEMA_NAME
+			charset,       // DEFAULT_CHARACTER_SET_NAME
+			collation,     // DEFAULT_COLLATION_NAME
 			nil,
 		)
 		rows = append(rows, record)
