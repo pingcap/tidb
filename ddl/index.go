@@ -474,6 +474,7 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	t := w.table
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
+	zone := w.sessCtx.GetSessionVars().GetTimeZone()
 	_, err := tablecodec.DecodeRowWithMap(rawRecord, w.colFieldMap, time.UTC, w.rowMap)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -499,6 +500,17 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+
+		if idxColumnVal.Kind() == types.KindMysqlTime {
+			t := idxColumnVal.GetMysqlTime()
+			if t.Type == mysql.TypeTimestamp && zone != time.UTC {
+				err := t.ConvertTimeZone(zone, time.UTC)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				idxColumnVal.SetMysqlTime(t)
+			}
 		}
 		idxVal[j] = idxColumnVal
 	}
