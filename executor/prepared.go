@@ -348,8 +348,10 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 	}
-	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
-		sc.Priority = priority
+	if !sessVars.InRestrictedSQL {
+		if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
+			sc.Priority = priority
+		}
 	}
 	if sessVars.LastInsertID > 0 {
 		sessVars.PrevLastInsertID = sessVars.LastInsertID
