@@ -560,7 +560,7 @@ func (ds *DataSource) TableInfo() *model.TableInfo {
 
 // LogicalUnionAll represents LogicalUnionAll plan.
 type LogicalUnionAll struct {
-	baseLogicalPlan
+	logicalSchemaProducer
 }
 
 // LogicalSort stands for the order by plan.
