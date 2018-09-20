@@ -91,6 +91,11 @@ func (s *testKeySuite) TestIsPoint(c *C) {
 			end:     []byte{123, 123, 0},
 			isPoint: true,
 		},
+		{
+			start:   []byte{255},
+			end:     []byte{0},
+			isPoint: false,
+		},
 	}
 	for _, tt := range tests {
 		kr := KeyRange{

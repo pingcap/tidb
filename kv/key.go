@@ -90,22 +90,24 @@ func (r *KeyRange) IsPoint() bool {
 	// Works like
 	//   return bytes.Equal(r.StartKey.PrefixNext(), r.EndKey)
 
-	// all255SuffixIdx is the index after which all bytes in StartKey are 255 and all bytes in EndKey are 0.
-	all255SuffixIdx := len(r.StartKey)
-	for i := len(r.StartKey) - 1; i >= 0; i-- {
+	i := len(r.StartKey) - 1
+	for ; i >= 0; i-- {
 		if r.StartKey[i] != 255 {
 			break
 		}
 		if r.EndKey[i] != 0 {
 			return false
 		}
-		all255SuffixIdx = i
+	}
+	if i < 0 {
+		// In case all bytes in StartKey are 255.
+		return false
 	}
 	// The byte at diffIdx in StartKey should be one less than the byte at diffIdx in EndKey.
 	// And bytes in StartKey and EndKey before diffIdx should be equal.
-	diffIdx := all255SuffixIdx - 1
-	return r.StartKey[diffIdx]+1 == r.EndKey[diffIdx] &&
-		bytes.Equal(r.StartKey[:diffIdx], r.EndKey[:diffIdx])
+	diffOneIdx := i
+	return r.StartKey[diffOneIdx]+1 == r.EndKey[diffOneIdx] &&
+		bytes.Equal(r.StartKey[:diffOneIdx], r.EndKey[:diffOneIdx])
 }
 
 // EncodedKey represents encoded key in low-level storage engine.
