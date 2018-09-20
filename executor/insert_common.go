@@ -384,13 +384,13 @@ func (e *InsertValues) fillRow(cols []*table.Column, row []types.Datum, hasValue
 
 		// Evaluate the generated columns.
 		if c.IsGenerated() {
-			for i, expr := range e.GenExprs {
+			for j, expr := range e.GenExprs {
 				var val types.Datum
 				val, err = expr.Eval(chunk.MutRowFromDatums(row).ToRow())
 				if e.filterErr(err) != nil {
 					return nil, errors.Trace(err)
 				}
-				row[cols[valLen+i].Offset], err = table.CastValue(e.ctx, val, cols[valLen+i].ToInfo())
+				row[cols[valLen+j].Offset], err = table.CastValue(e.ctx, val, cols[valLen+j].ToInfo())
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
