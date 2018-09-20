@@ -13,6 +13,10 @@
 
 package variable
 
+import (
+	"os"
+)
+
 /*
 	Steps to add a new TiDB specific system variable:
 
@@ -229,4 +233,5 @@ var (
 	maxDDLReorgWorkerCount int32 = 128
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold uint32 = 300
+	ServerHostname, _          = os.Hostname()
 )
