@@ -320,7 +320,7 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t value(1), (0)")
 	tk.MustQuery("select a from t group by 1")
 	// This result is compatible with MySQL, the readable result is shown in the next case.
-	result = tk.MustQuery("select max(a) from t group by a")
+	result = tk.MustQuery("select max(a) from t group by a order by a")
 	result.Check(testkit.Rows(string([]byte{0x0}), string([]byte{0x1})))
 	result = tk.MustQuery("select cast(a as signed) as idx, cast(max(a) as signed),  cast(min(a) as signed) from t group by 1 order by idx")
 	result.Check(testkit.Rows("0 0 0", "1 1 1"))
@@ -601,4 +601,15 @@ func (s *testSuite) TestBuildProjBelowAgg(c *C) {
 		"2 3 12 5,5,5 6",
 		"3 3 15 6,6,6 7",
 		"4 3 18 7,7,7 8"))
+}
+
+func (s *testSuite) TestFirstRowEnum(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a enum('a', 'b'));`)
+	tk.MustExec(`insert into t values('a');`)
+	tk.MustQuery(`select a from t group by a;`).Check(testkit.Rows(
+		`a`,
+	))
 }

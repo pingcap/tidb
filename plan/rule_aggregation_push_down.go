@@ -258,8 +258,10 @@ func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs 
 	}
 	for _, gbyCol := range gbyCols {
 		firstRow := aggregation.NewAggFuncDesc(agg.ctx, ast.AggFuncFirstRow, []expression.Expression{gbyCol}, false)
+		newCol, _ := gbyCol.Clone().(*expression.Column)
+		newCol.RetType = firstRow.RetTp
 		newAggFuncDescs = append(newAggFuncDescs, firstRow)
-		schema.Append(gbyCol)
+		schema.Append(newCol)
 	}
 	agg.AggFuncs = newAggFuncDescs
 	agg.SetSchema(schema)
