@@ -182,7 +182,7 @@ func (b *builtinUserSig) Clone() builtinFunc {
 	return newSig
 }
 
-// eval evals a builtinUserSig.
+// evalString evals a builtinUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
 func (b *builtinUserSig) evalString(row chunk.Row) (string, bool, error) {
 	data := b.ctx.GetSessionVars()
