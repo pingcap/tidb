@@ -67,4 +67,4 @@ This proposal has no effect on the compatibility.
 
 ## Open issues (if applicable)
 
-None
+https://github.com/pingcap/tidb/issues/7762
