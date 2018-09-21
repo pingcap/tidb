@@ -440,11 +440,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin cancel ddl jobs 1, 2", true},
 		{"admin recover index t1 idx_a", true},
 		{"admin cleanup index t1 idx_a", true},
-		{"admin show log top 3", true},
-		{"admin show log top user 5", true},
-		{"admin show log top internal 7", true},
-		{"admin show log top all 9", true},
-		{"admin show log recent 11", true},
+		{"admin show slow top 3", true},
+		{"admin show slow top internal 7", true},
+		{"admin show slow top all 9", true},
+		{"admin show slow recent 11", true},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
