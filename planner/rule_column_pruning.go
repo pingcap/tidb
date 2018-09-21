@@ -132,6 +132,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) {
 	for _, child := range p.Children() {
 		child.PruneColumns(parentUsedCols)
 	}
+	p.schema.Columns = p.children[0].Schema().Columns
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -161,6 +162,21 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	if ds.schema.Len() == 0 && !infoschema.IsMemoryDB(ds.DBName.L) {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		ds.schema.Append(ds.newExtraHandleSchemaCol())
+	}
+}
+
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) {
+	used := getUsedList(parentUsedCols, p.schema)
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] {
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+		}
+	}
+	for k, cols := range p.schema.TblID2Handle {
+		if p.schema.ColumnIndex(cols[0]) == -1 {
+			delete(p.schema.TblID2Handle, k)
+		}
 	}
 }
 

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 )
 
@@ -426,7 +427,7 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 func (s *SessionVars) Location() *time.Location {
 	loc := s.TimeZone
 	if loc == nil {
-		loc = time.Local
+		loc = timeutil.SystemLocation()
 	}
 	return loc
 }
@@ -575,6 +576,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
+	case TiDBForcePriority:
+		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
 	}
 	s.systems[name] = val
 	return nil

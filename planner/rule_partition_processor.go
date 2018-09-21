@@ -122,6 +122,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 	unionAll := LogicalUnionAll{}.init(ds.context())
 	unionAll.SetChildren(children...)
+	unionAll.SetSchema(ds.schema)
 	return unionAll, nil
 }
 
