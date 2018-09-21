@@ -120,6 +120,31 @@ var (
 			Help:      "Duration (us) for getting token, it should be small until concurrency limit is reached.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1us ~ 2s
 		})
+
+	SlowQueryProcessHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "slow_query_process_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of of slow queries.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
+		})
+	SlowQueryCopHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "slow_query_cop_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of of slow queries.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
+		})
+	SlowQueryWaitHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "slow_query_wait_duration_seconds",
+			Help:      "Bucketed histogram of processing time (s) of of slow queries.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
+		})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
