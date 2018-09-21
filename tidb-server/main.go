@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
@@ -385,15 +385,15 @@ func setGlobalVars() {
 	statistics.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
-	planner.AllowCartesianProduct = cfg.Performance.CrossJoin
+	core.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
 
-	planner.SetPreparedPlanCache(cfg.PreparedPlanCache.Enabled)
-	if planner.PreparedPlanCacheEnabled() {
-		planner.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
+	core.SetPreparedPlanCache(cfg.PreparedPlanCache.Enabled)
+	if core.PreparedPlanCacheEnabled() {
+		core.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
 	}
 
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {

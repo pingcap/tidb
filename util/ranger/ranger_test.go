@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -298,16 +298,16 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = planner.Preprocess(ctx, stmts[0], is, false)
+		err = core.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := planner.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := core.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(planner.LogicalPlan).Children()[0].(*planner.LogicalSelection)
+		selection := p.(core.LogicalPlan).Children()[0].(*core.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(ctx, cond, false))
 		}
-		tbl := selection.Children()[0].(*planner.DataSource).TableInfo()
+		tbl := selection.Children()[0].(*core.DataSource).TableInfo()
 		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
 		c.Assert(col, NotNil)
 		var filter []expression.Expression
@@ -553,12 +553,12 @@ func (s *testRangerSuite) TestIndexRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = planner.Preprocess(ctx, stmts[0], is, false)
+		err = core.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := planner.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := core.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(planner.LogicalPlan).Children()[0].(*planner.LogicalSelection)
-		tbl := selection.Children()[0].(*planner.DataSource).TableInfo()
+		selection := p.(core.LogicalPlan).Children()[0].(*core.LogicalSelection)
+		tbl := selection.Children()[0].(*core.DataSource).TableInfo()
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
@@ -640,12 +640,12 @@ func (s *testRangerSuite) TestIndexRangeForUnsignedInt(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = planner.Preprocess(ctx, stmts[0], is, false)
+		err = core.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := planner.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := core.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(planner.LogicalPlan).Children()[0].(*planner.LogicalSelection)
-		tbl := selection.Children()[0].(*planner.DataSource).TableInfo()
+		selection := p.(core.LogicalPlan).Children()[0].(*core.LogicalSelection)
+		tbl := selection.Children()[0].(*core.DataSource).TableInfo()
 		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
@@ -913,12 +913,12 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = planner.Preprocess(ctx, stmts[0], is, false)
+		err = core.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := planner.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := core.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		sel := p.(planner.LogicalPlan).Children()[0].(*planner.LogicalSelection)
-		ds, ok := sel.Children()[0].(*planner.DataSource)
+		sel := p.(core.LogicalPlan).Children()[0].(*core.LogicalSelection)
+		ds, ok := sel.Children()[0].(*core.DataSource)
 		c.Assert(ok, IsTrue, Commentf("expr:%v", tt.exprStr))
 		conds := make([]expression.Expression, 0, len(sel.Conditions))
 		for _, cond := range sel.Conditions {

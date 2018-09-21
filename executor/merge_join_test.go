@@ -18,7 +18,7 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -219,7 +219,7 @@ func checkMergeAndRun(tk *testkit.TestKit, c *C, sql string) *testkit.Result {
 	result := tk.MustQuery(explainedSql)
 	resultStr := fmt.Sprintf("%v", result.Rows())
 	if !strings.ContainsAny(resultStr, "MergeJoin") {
-		c.Error("Expected MergeJoin in planner.")
+		c.Error("Expected MergeJoin in core.")
 	}
 	return tk.MustQuery(sql)
 }
@@ -290,14 +290,14 @@ func (s *testSuite) TestMergeJoin(c *C) {
 	result = tk.MustQuery("select /*+ TIDB_SMJ(a, b) */ a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;")
 	result.Check(testkit.Rows("1", "2", "3"))
 
-	planner.AllowCartesianProduct = false
+	core.AllowCartesianProduct = false
 	_, err := tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t, t1")
-	c.Check(planner.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	c.Check(core.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	_, err = tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t left join t1 on 1")
-	c.Check(planner.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	c.Check(core.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	_, err = tk.Exec("select /*+ TIDB_SMJ(t,t1) */ * from t right join t1 on 1")
-	c.Check(planner.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	planner.AllowCartesianProduct = true
+	c.Check(core.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	core.AllowCartesianProduct = true
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(c1 int)")

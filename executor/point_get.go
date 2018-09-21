@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -30,7 +30,7 @@ import (
 	"golang.org/x/net/context"
 )
 
-func (b *executorBuilder) buildPointGet(p *planner.PointGetPlan) Executor {
+func (b *executorBuilder) buildPointGet(p *core.PointGetPlan) Executor {
 	return &PointGetExecutor{
 		ctx:     b.ctx,
 		schema:  p.Schema(),

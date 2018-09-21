@@ -18,7 +18,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
@@ -30,7 +30,7 @@ import (
 type SortExec struct {
 	baseExecutor
 
-	ByItems []*planner.ByItems
+	ByItems []*core.ByItems
 	Idx     int
 	fetched bool
 	schema  *expression.Schema
@@ -221,7 +221,7 @@ func (e *SortExec) keyChunksLess(i, j int) bool {
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
 	SortExec
-	limit      *planner.PhysicalLimit
+	limit      *core.PhysicalLimit
 	totalLimit int
 
 	chkHeap *topNChunkHeap

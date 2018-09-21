@@ -16,7 +16,7 @@ package executor
 import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
@@ -52,7 +52,7 @@ type TableReaderExecutor struct {
 	corColInFilter bool
 	// corColInAccess tells whether there's correlated column in access conditions.
 	corColInAccess bool
-	plans          []planner.PhysicalPlan
+	plans          []core.PhysicalPlan
 }
 
 // Open initialzes necessary variables for using this executor.
@@ -65,7 +65,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		}
 	}
 	if e.corColInAccess {
-		ts := e.plans[0].(*planner.PhysicalTableScan)
+		ts := e.plans[0].(*core.PhysicalTableScan)
 		access := ts.AccessCondition
 		pkTP := ts.Table.GetPkColInfo().FieldType
 		e.ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)

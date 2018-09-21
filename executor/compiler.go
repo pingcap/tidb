@@ -21,19 +21,19 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
-// Compiler compiles an ast.StmtNode to a physical planner.
+// Compiler compiles an ast.StmtNode to a physical plan.
 type Compiler struct {
 	Ctx sessionctx.Context
 }
 
-// Compile compiles an ast.StmtNode to a physical planner.
+// Compile compiles an ast.StmtNode to a physical plan.
 func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStmt, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil {
 		span1 := opentracing.StartSpan("executor.Compile", opentracing.ChildOf(span.Context()))
@@ -41,11 +41,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	infoSchema := GetInfoSchema(c.Ctx)
-	if err := planner.Preprocess(c.Ctx, stmtNode, infoSchema, false); err != nil {
+	if err := core.Preprocess(c.Ctx, stmtNode, infoSchema, false); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	finalPlan, err := planner.Optimize(c.Ctx, stmtNode, infoSchema)
+	finalPlan, err := core.Optimize(c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -57,14 +57,14 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		InfoSchema: infoSchema,
 		Plan:       finalPlan,
 		Expensive:  isExpensive,
-		Cacheable:  planner.Cacheable(stmtNode),
+		Cacheable:  core.Cacheable(stmtNode),
 		Text:       stmtNode.Text(),
 		StmtNode:   stmtNode,
 		Ctx:        c.Ctx,
 	}, nil
 }
 
-func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan planner.Plan) (expensive bool) {
+func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan core.Plan) (expensive bool) {
 	expensive = isExpensiveQuery(finalPlan)
 	if !expensive {
 		return
@@ -79,21 +79,21 @@ func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan planner.Plan) (expensive
 	return
 }
 
-func isExpensiveQuery(p planner.Plan) bool {
+func isExpensiveQuery(p core.Plan) bool {
 	switch x := p.(type) {
-	case planner.PhysicalPlan:
+	case core.PhysicalPlan:
 		return isPhysicalPlanExpensive(x)
-	case *planner.Execute:
+	case *core.Execute:
 		return isExpensiveQuery(x.Plan)
-	case *planner.Insert:
+	case *core.Insert:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanExpensive(x.SelectPlan)
 		}
-	case *planner.Delete:
+	case *core.Delete:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanExpensive(x.SelectPlan)
 		}
-	case *planner.Update:
+	case *core.Update:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanExpensive(x.SelectPlan)
 		}
@@ -101,7 +101,7 @@ func isExpensiveQuery(p planner.Plan) bool {
 	return false
 }
 
-func isPhysicalPlanExpensive(p planner.PhysicalPlan) bool {
+func isPhysicalPlanExpensive(p core.PhysicalPlan) bool {
 	expensiveRowThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
 	if int64(p.StatsCount()) > expensiveRowThreshold {
 		return true

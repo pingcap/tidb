@@ -19,7 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/planner"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -60,9 +60,9 @@ func (s *testSuite) TestStmtLabel(c *C) {
 		stmtNode, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		c.Check(err, IsNil)
 		is := executor.GetInfoSchema(tk.Se)
-		err = planner.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is, false)
+		err = core.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is, false)
 		c.Assert(err, IsNil)
-		_, err = planner.Optimize(tk.Se, stmtNode, is)
+		_, err = core.Optimize(tk.Se, stmtNode, is)
 		c.Assert(err, IsNil)
 		c.Assert(executor.GetStmtLabel(stmtNode), Equals, tt.label)
 	}
