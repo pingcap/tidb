@@ -63,52 +63,43 @@ func (h *slowQueryHeap) Refresh(now time.Time, period time.Duration) {
 }
 
 func (h *slowQueryHeap) Query(count int) []*SlowQueryInfo {
-	save := make([]*SlowQueryInfo, len(h.data))
-	copy(save, h.data)
-
+	// The sorted array still maintains the heap property.
 	sort.Sort(h)
 
-	ret := make([]*SlowQueryInfo, 0, count)
-	for i := len(h.data) - 1; i >= 0 && len(ret) <= count; i-- {
-		ret = append(ret, h.data[i])
-	}
-
-	// Sort breaks the data, recover it here.
-	h.data = save
-	return ret
+	// The result shoud be in decrease order.
+	return takeLastN(h.data, count)
 }
 
 type slowQueryQueue struct {
 	data []*SlowQueryInfo
-	head int
-	tail int
+	size int
 }
 
 func (q *slowQueryQueue) Enqueue(info *SlowQueryInfo) {
-	q.data[q.tail] = info
-	q.tail = (q.tail + 1) % len(q.data)
-	if q.tail == q.head {
-		q.head = (q.head + 1) % len(q.data)
+	if len(q.data) < q.size {
+		q.data = append(q.data, info)
+		return
 	}
+
+	q.data = append(q.data, info)[1:]
+	return
 }
 
 func (q *slowQueryQueue) Query(count int) []*SlowQueryInfo {
 	// Queue is empty.
-	if q.tail == q.head {
+	if len(q.data) == 0 {
 		return nil
 	}
+	return takeLastN(q.data, count)
+}
 
-	if count > len(q.data) {
-		count = len(q.data)
+func takeLastN(data []*SlowQueryInfo, count int) []*SlowQueryInfo {
+	if count > len(data) {
+		count = len(data)
 	}
 	ret := make([]*SlowQueryInfo, 0, count)
-	tail := (q.tail - 1 + len(q.data)) % len(q.data)
-	for len(ret) < count {
-		ret = append(ret, q.data[tail])
-		if tail == q.head {
-			break
-		}
-		tail = (tail - 1 + len(q.data)) % len(q.data)
+	for i := len(data) - 1; i >= 0 && len(ret) < count; i-- {
+		ret = append(ret, data[i])
 	}
 	return ret
 }
@@ -135,7 +126,8 @@ func newTopNSlowQueries(topN int, period time.Duration, queueSize int) *topNSlow
 	}
 	ret.user.data = make([]*SlowQueryInfo, 0, topN)
 	ret.internal.data = make([]*SlowQueryInfo, 0, topN)
-	ret.recent.data = make([]*SlowQueryInfo, queueSize+1)
+	ret.recent.size = queueSize
+	ret.recent.data = make([]*SlowQueryInfo, 0, queueSize)
 	return ret
 }
 
