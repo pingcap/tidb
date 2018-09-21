@@ -92,3 +92,43 @@ func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.
 		return data, errors.Errorf("invalid value %v for aggregate", sum.Kind())
 	}
 }
+
+// calculateSumSquare adds v^2 to sum
+func calculateSumSquare(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.Datum, err error) {
+	// for stddev and stddev_samp calculation
+	// stddev and stddev_samp use decimal for integer and decimal type, use float for others
+	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
+
+	switch v.Kind() {
+	case types.KindNull:
+	case types.KindInt64, types.KindUint64, types.KindMysqlDecimal:
+		var d *types.MyDecimal
+		d, err = v.ToDecimal(sc)
+		dd := new(types.MyDecimal)
+		types.DecimalMul(d, d, dd)
+		if err == nil {
+			data = types.NewDecimalDatum(dd)
+		}
+	default:
+		var f float64
+		f, err = v.ToFloat64(sc)
+		if err == nil {
+			data = types.NewFloat64Datum(f * f)
+		}
+	}
+
+	if err != nil {
+		return data, errors.Trace(err)
+	}
+	if data.IsNull() {
+		return sum, nil
+	}
+	switch sum.Kind() {
+	case types.KindNull:
+		return data, nil
+	case types.KindFloat64, types.KindMysqlDecimal:
+		return types.ComputePlus(sum, data)
+	default:
+		return data, errors.Errorf("invalid value %v for aggregate", sum.Kind())
+	}
+}

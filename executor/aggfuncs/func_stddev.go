@@ -75,8 +75,13 @@ func (e *baseStddevDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	countMulSquareAvgSum := new(types.MyDecimal)
+	err = types.DecimalMul(squareAvgSum, decimalCount, countMulSquareAvgSum)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	tmpVariance2 := new(types.MyDecimal)
-	err = types.DecimalAdd(tmpVariance, squareAvgSum, tmpVariance2)
+	err = types.DecimalAdd(tmpVariance, countMulSquareAvgSum, tmpVariance2)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -86,7 +91,7 @@ func (e *baseStddevDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 		return errors.Trace(err)
 	}
 	finalResult := new(types.MyDecimal)
-	err = types.DecimalSqrt(variance, finalResult)
+	err = types.DecimalSqrt(variance, finalResult, types.DivFracIncr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -291,8 +296,13 @@ func (e *stddevOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx
 	if err != nil {
 		return errors.Trace(err)
 	}
+	countMulSquareAvgSum := new(types.MyDecimal)
+	err = types.DecimalMul(squareAvgSum, decimalCount, countMulSquareAvgSum)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	tmpVariance2 := new(types.MyDecimal)
-	err = types.DecimalAdd(tmpVariance, squareAvgSum, tmpVariance2)
+	err = types.DecimalAdd(tmpVariance, countMulSquareAvgSum, tmpVariance2)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -302,7 +312,7 @@ func (e *stddevOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx
 		return errors.Trace(err)
 	}
 	finalResult := new(types.MyDecimal)
-	err = types.DecimalSqrt(variance, finalResult)
+	err = types.DecimalSqrt(variance, finalResult, types.DivFracIncr)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -334,8 +344,9 @@ func (e *baseStddevFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 	if p.count == 0 {
 		chk.AppendNull(e.ordinal)
 	} else {
-		avgSum := p.sum / (float64)(p.count)
-		chk.AppendFloat64(e.ordinal, math.Sqrt((p.sumSquare-2*p.sum*avgSum+avgSum*avgSum)/(float64)(p.count)))
+		count := float64(p.count)
+		avgSum := p.sum / count
+		chk.AppendFloat64(e.ordinal, math.Sqrt((p.sumSquare-2*p.sum*avgSum+count*avgSum*avgSum)/count))
 	}
 	return nil
 }
@@ -452,7 +463,8 @@ func (e *stddevOriginal4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	avgSum := p.sum / (float64)(p.count)
-	chk.AppendFloat64(e.ordinal, math.Sqrt((p.sumSquare-2*p.sum*avgSum+avgSum*avgSum)/(float64)(p.count)))
+	count := float64(p.count)
+	avgSum := p.sum / count
+	chk.AppendFloat64(e.ordinal, math.Sqrt((p.sumSquare-2*p.sum*avgSum+count*avgSum*avgSum)/count))
 	return nil
 }

@@ -16,6 +16,7 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
+
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
@@ -88,6 +89,10 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 		return &bitXorFunction{aggFunction: newAggFunc(ast.AggFuncBitXor, args, false)}, nil
 	case tipb.ExprType_Agg_BitAnd:
 		return &bitAndFunction{aggFunction: newAggFunc(ast.AggFuncBitAnd, args, false)}, nil
+	case tipb.ExprType_Std, tipb.ExprType_Stddev, tipb.ExprType_StddevPop:
+		return &stddevFunction{aggFunction: newAggFunc(ast.AggFuncStddev, args, false)}, nil
+	case tipb.ExprType_StddevSamp:
+		return &stddevSampFunction{aggFunction: newAggFunc(ast.AggFuncStddevSamp, args, false)}, nil
 	}
 	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
 }
@@ -97,6 +102,7 @@ type AggEvaluateContext struct {
 	DistinctChecker *distinctChecker
 	Count           int64
 	Value           types.Datum
+	ValueSumSquare  types.Datum
 	Buffer          *bytes.Buffer // Buffer is used for group_concat.
 	GotFirstRow     bool          // It will check if the agg has met the first row key.
 }

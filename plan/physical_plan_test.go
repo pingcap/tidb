@@ -308,10 +308,6 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.b desc",
 			best: "MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(t1.b,t2.b)",
 		},
-		{
-			sql:  "select /*+ TIDB_SMJ(t1,t2)*/ * from t t1, t t2 where t1.b = t2.b order by t2.b desc",
-			best: "MergeInnerJoin{TableReader(Table(t))->Sort->TableReader(Table(t))->Sort}(t1.b,t2.b)",
-		},
 		// Test Multi Merge Join.
 		{
 			sql:  "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
