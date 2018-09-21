@@ -206,10 +206,10 @@ type SessionVars struct {
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
-	// PlanID is the unique id of logical and physical planner.
+	// PlanID is the unique id of logical and physical plan.
 	PlanID int
 
-	// PlanColumnID is the unique id for column when building planner.
+	// PlanColumnID is the unique id for column when building plan.
 	PlanColumnID int64
 
 	// User is the user identity with which the session login.
@@ -280,7 +280,7 @@ type SessionVars struct {
 	// Table.alloc.
 	IDAllocator autoid.Allocator
 
-	// OptimizerSelectivityLevel defines the level of the selectivity estimation in planner.
+	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
 
 	// EnableTablePartition enables table partition feature.
@@ -364,7 +364,7 @@ func (s *SessionVars) CleanBuffers() {
 	}
 }
 
-// AllocPlanColumnID allocates column id for planner.
+// AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
 	s.PlanColumnID++
 	return s.PlanColumnID

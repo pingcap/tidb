@@ -111,7 +111,7 @@ func (la *LogicalApply) deCorColFromEqExpr(expr expression.Expression) expressio
 	return nil
 }
 
-// decorrelateSolver tries to convert apply plan to join planner.
+// decorrelateSolver tries to convert apply plan to join plan.
 type decorrelateSolver struct{}
 
 func (s *decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*expression.Constant {

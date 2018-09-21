@@ -82,7 +82,7 @@ type PhysicalIndexLookUpReader struct {
 	tablePlan  PhysicalPlan
 }
 
-// PhysicalIndexScan represents an index scan planner.
+// PhysicalIndexScan represents an index scan plan.
 type PhysicalIndexScan struct {
 	physicalSchemaProducer
 
@@ -130,7 +130,7 @@ type PhysicalMemTable struct {
 	TableAsName *model.CIStr
 }
 
-// PhysicalTableScan represents a table scan planner.
+// PhysicalTableScan represents a table scan plan.
 type PhysicalTableScan struct {
 	physicalSchemaProducer
 
@@ -270,7 +270,7 @@ type PhysicalUnionAll struct {
 	physicalSchemaProducer
 }
 
-// AggregationType stands for the mode of aggregation planner.
+// AggregationType stands for the mode of aggregation plan.
 type AggregationType int
 
 const (

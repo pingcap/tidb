@@ -43,7 +43,7 @@ type copTask struct {
 	indexPlan PhysicalPlan
 	tablePlan PhysicalPlan
 	cst       float64
-	// indexPlanFinished means we have finished index planner.
+	// indexPlanFinished means we have finished index plan.
 	indexPlanFinished bool
 	// keepOrder indicates if the plan scans data by order.
 	keepOrder bool
@@ -321,11 +321,11 @@ func (p *PhysicalTopN) getPushedDownTopN() *PhysicalTopN {
 
 func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
-	// This is a topN planner.
+	// This is a topN plan.
 	if copTask, ok := t.(*copTask); ok && p.canPushDown() {
 		pushedDownTopN := p.getPushedDownTopN()
-		// If all columns in topN are from index plan, we can push it to index planner. Or we finish the index plan and
-		// push it to table planner.
+		// If all columns in topN are from index plan, we can push it to index plan. Or we finish the index plan and
+		// push it to table plan.
 		if !copTask.indexPlanFinished && p.allColsFromSchema(copTask.indexPlan.Schema()) {
 			pushedDownTopN.SetChildren(copTask.indexPlan)
 			copTask.indexPlan = pushedDownTopN

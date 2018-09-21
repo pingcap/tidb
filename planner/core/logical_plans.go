@@ -91,7 +91,7 @@ const (
 	preferMergeJoin
 )
 
-// LogicalJoin is the logical join planner.
+// LogicalJoin is the logical join plan.
 type LogicalJoin struct {
 	logicalSchemaProducer
 
@@ -170,7 +170,7 @@ func (p *LogicalJoin) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// LogicalProjection represents a select fields planner.
+// LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
 	logicalSchemaProducer
 
@@ -195,7 +195,7 @@ func (p *LogicalProjection) extractCorrelatedCols() []*expression.CorrelatedColu
 	return corCols
 }
 
-// LogicalAggregation represents an aggregate planner.
+// LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
 	logicalSchemaProducer
 
@@ -205,7 +205,7 @@ type LogicalAggregation struct {
 	groupByCols []*expression.Column
 
 	possibleProperties [][]*expression.Column
-	inputCount         float64 // inputCount is the input count of this planner.
+	inputCount         float64 // inputCount is the input count of this plan.
 }
 
 func (la *LogicalAggregation) extractCorrelatedCols() []*expression.CorrelatedColumn {
@@ -261,7 +261,7 @@ type LogicalMaxOneRow struct {
 	baseLogicalPlan
 }
 
-// LogicalTableDual represents a dual table planner.
+// LogicalTableDual represents a dual table plan.
 type LogicalTableDual struct {
 	logicalSchemaProducer
 
@@ -558,12 +558,12 @@ func (ds *DataSource) TableInfo() *model.TableInfo {
 	return ds.tableInfo
 }
 
-// LogicalUnionAll represents LogicalUnionAll planner.
+// LogicalUnionAll represents LogicalUnionAll plan.
 type LogicalUnionAll struct {
 	logicalSchemaProducer
 }
 
-// LogicalSort stands for the order by planner.
+// LogicalSort stands for the order by plan.
 type LogicalSort struct {
 	baseLogicalPlan
 
@@ -578,7 +578,7 @@ func (ls *LogicalSort) extractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
-// LogicalTopN represents a top-n planner.
+// LogicalTopN represents a top-n plan.
 type LogicalTopN struct {
 	baseLogicalPlan
 
@@ -587,12 +587,12 @@ type LogicalTopN struct {
 	Count   uint64
 }
 
-// isLimit checks if TopN is a limit planner.
+// isLimit checks if TopN is a limit plan.
 func (lt *LogicalTopN) isLimit() bool {
 	return len(lt.ByItems) == 0
 }
 
-// LogicalLimit represents offset and limit planner.
+// LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
 	baseLogicalPlan
 
@@ -600,7 +600,7 @@ type LogicalLimit struct {
 	Count  uint64
 }
 
-// LogicalLock represents a select lock planner.
+// LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
 

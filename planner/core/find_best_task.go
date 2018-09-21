@@ -129,7 +129,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty) (bestTas
 			continue
 		}
 
-		// combine best child tasks with parent physical planner.
+		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
 		// enforce curTask property
@@ -201,7 +201,7 @@ func (ds *DataSource) tryToGetDualTask() (task, error) {
 func (ds *DataSource) findBestTask(prop *property.PhysicalProperty) (t task, err error) {
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself.
 	// So here we do nothing.
-	// TODO: Add a special prop to handle IndexJoin's inner planner.
+	// TODO: Add a special prop to handle IndexJoin's inner plan.
 	// Then we can remove forceToTableScan and forceToIndexScan.
 	if prop == nil {
 		return nil, nil

@@ -103,7 +103,7 @@ type UnionScanExec struct {
 	conditions []expression.Expression
 	columns    []*model.ColumnInfo
 
-	// belowHandleIndex is the handle's position of the below scan planner.
+	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 
 	addedRows           [][]types.Datum

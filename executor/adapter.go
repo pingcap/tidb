@@ -127,7 +127,7 @@ func (a *recordSet) Close() error {
 type ExecStmt struct {
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
-	// Plan stores a reference to the final physical planner.
+	// Plan stores a reference to the final physical plan.
 	Plan core.Plan
 	// Expensive represents whether this query is an expensive one.
 	Expensive bool

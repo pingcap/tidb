@@ -1374,7 +1374,7 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 	return p
 }
 
-// buildTrace builds a trace planner. Inside this method, it first optimize the
+// buildTrace builds a trace plan. Inside this method, it first optimize the
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *planBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {

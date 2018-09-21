@@ -102,14 +102,14 @@ type ChecksumTable struct {
 	Tables []*ast.TableName
 }
 
-// CancelDDLJobs represents a cancel DDL jobs planner.
+// CancelDDLJobs represents a cancel DDL jobs plan.
 type CancelDDLJobs struct {
 	baseSchemaProducer
 
 	JobIDs []int64
 }
 
-// Prepare represents prepare planner.
+// Prepare represents prepare plan.
 type Prepare struct {
 	baseSchemaProducer
 
@@ -125,7 +125,7 @@ type Prepared struct {
 	UseCache      bool
 }
 
-// Execute represents prepare planner.
+// Execute represents prepare plan.
 type Execute struct {
 	baseSchemaProducer
 
@@ -266,14 +266,14 @@ func (e *Execute) buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIn
 	return ranges, nil
 }
 
-// Deallocate represents deallocate planner.
+// Deallocate represents deallocate plan.
 type Deallocate struct {
 	baseSchemaProducer
 
 	Name string
 }
 
-// Show represents a show planner.
+// Show represents a show plan.
 type Show struct {
 	baseSchemaProducer
 
@@ -313,7 +313,7 @@ type InsertGeneratedColumns struct {
 	OnDuplicates []*expression.Assignment
 }
 
-// Insert represents an insert planner.
+// Insert represents an insert plan.
 type Insert struct {
 	baseSchemaProducer
 
@@ -336,7 +336,7 @@ type Insert struct {
 	SelectPlan PhysicalPlan
 }
 
-// Update represents Update planner.
+// Update represents Update plan.
 type Update struct {
 	baseSchemaProducer
 
@@ -345,7 +345,7 @@ type Update struct {
 	SelectPlan PhysicalPlan
 }
 
-// Delete represents a delete planner.
+// Delete represents a delete plan.
 type Delete struct {
 	baseSchemaProducer
 
@@ -378,7 +378,7 @@ type Analyze struct {
 	MaxNumBuckets uint64
 }
 
-// LoadData represents a loaddata planner.
+// LoadData represents a loaddata plan.
 type LoadData struct {
 	baseSchemaProducer
 
@@ -393,21 +393,21 @@ type LoadData struct {
 	GenCols InsertGeneratedColumns
 }
 
-// LoadStats represents a load stats planner.
+// LoadStats represents a load stats plan.
 type LoadStats struct {
 	baseSchemaProducer
 
 	Path string
 }
 
-// DDL represents a DDL statement planner.
+// DDL represents a DDL statement plan.
 type DDL struct {
 	baseSchemaProducer
 
 	Statement ast.DDLNode
 }
 
-// Explain represents a explain planner.
+// Explain represents a explain plan.
 type Explain struct {
 	baseSchemaProducer
 

@@ -40,7 +40,7 @@ type Plan interface {
 
 	context() sessionctx.Context
 
-	// property.StatsInfo will return the property.StatsInfo for this planner.
+	// property.StatsInfo will return the property.StatsInfo for this plan.
 	statsInfo() *property.StatsInfo
 }
 
@@ -70,8 +70,8 @@ type LogicalPlan interface {
 	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column)
 
-	// findBestTask converts the logical plan to the physical planner. It's a new interface.
-	// It is called recursively from the parent to the children to create the result physical planner.
+	// findBestTask converts the logical plan to the physical plan. It's a new interface.
+	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// with the lowest cost.
 	findBestTask(prop *property.PhysicalProperty) (task, error)
@@ -106,7 +106,7 @@ type LogicalPlan interface {
 	// Get all the children.
 	Children() []LogicalPlan
 
-	// SetChildren sets the children for the planner.
+	// SetChildren sets the children for the plan.
 	SetChildren(...LogicalPlan)
 }
 
@@ -127,13 +127,13 @@ type PhysicalPlan interface {
 	// getChildReqProps gets the required property by child index.
 	getChildReqProps(idx int) *property.PhysicalProperty
 
-	// StatsCount returns the count of property.StatsInfo for this planner.
+	// StatsCount returns the count of property.StatsInfo for this plan.
 	StatsCount() float64
 
 	// Get all the children.
 	Children() []PhysicalPlan
 
-	// SetChildren sets the children for the planner.
+	// SetChildren sets the children for the plan.
 	SetChildren(...PhysicalPlan)
 
 	// ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.

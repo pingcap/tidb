@@ -105,7 +105,7 @@ func (pe *projectionEliminater) optimize(lp LogicalPlan) (LogicalPlan, error) {
 	return root, nil
 }
 
-// eliminate eliminates the redundant projection in a logical planner.
+// eliminate eliminates the redundant projection in a logical plan.
 func (pe *projectionEliminater) eliminate(p LogicalPlan, replace map[string]*expression.Column, canEliminate bool) LogicalPlan {
 	proj, isProj := p.(*LogicalProjection)
 	childFlag := canEliminate

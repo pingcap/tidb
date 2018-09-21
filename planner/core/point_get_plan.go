@@ -89,12 +89,12 @@ func (p *PointGetPlan) getChildReqProps(idx int) *property.PhysicalProperty {
 	return nil
 }
 
-// StatsCount will return the the RowCount of property.StatsInfo for this planner.
+// StatsCount will return the the RowCount of property.StatsInfo for this plan.
 func (p *PointGetPlan) StatsCount() float64 {
 	return 1
 }
 
-// StatsCount will return the the RowCount of property.StatsInfo for this planner.
+// StatsCount will return the the RowCount of property.StatsInfo for this plan.
 func (p *PointGetPlan) statsInfo() *property.StatsInfo {
 	if p.stats == nil {
 		p.stats = &property.StatsInfo{}
@@ -108,7 +108,7 @@ func (p *PointGetPlan) Children() []PhysicalPlan {
 	return nil
 }
 
-// SetChildren sets the children for the planner.
+// SetChildren sets the children for the plan.
 func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
 
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.

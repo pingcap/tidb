@@ -1587,7 +1587,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *core.PhysicalTableReader) (*
 }
 
 // buildTableReader builds a table reader executor. It first build a no range table reader,
-// and then update it ranges from table scan core.
+// and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *core.PhysicalTableReader) *TableReaderExecutor {
 	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
@@ -1738,7 +1738,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *core.PhysicalIndexLookUpRead
 // dataReaderBuilder build an executor.
 // The executor can be used to read data in the ranges which are constructed by datums.
 // Differences from executorBuilder:
-// 1. dataReaderBuilder calculate data range from argument, rather than core.
+// 1. dataReaderBuilder calculate data range from argument, rather than plan.
 // 2. the result executor is already opened.
 type dataReaderBuilder struct {
 	core.Plan
@@ -1821,7 +1821,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	return e, errors.Trace(err)
 }
 
-// buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan core.
+// buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
 func buildKvRangesForIndexJoin(sc *stmtctx.StatementContext, tableID, indexID int64, keyDatums [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) ([]kv.KeyRange, error) {
 	kvRanges := make([]kv.KeyRange, 0, len(indexRanges)*len(keyDatums))
 	for _, val := range keyDatums {
