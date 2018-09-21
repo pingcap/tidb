@@ -234,7 +234,7 @@ func (s *testSuite) TestDefaultDBAfterDropCurDB(c *C) {
 	tk.MustExec(testSQL)
 	tk.MustQuery(`select database();`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("utf8"))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_unicode_ci"))
+	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("utf8_bin"))
 }
 
 func (s *testSuite) TestRenameTable(c *C) {

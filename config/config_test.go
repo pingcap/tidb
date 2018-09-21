@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/mysql"
 )
 
 var _ = Suite(&testConfigSuite{})
@@ -36,6 +37,8 @@ func (s *testConfigSuite) TestConfig(c *C) {
 	conf.Binlog.BinlogSocket = "/tmp/socket"
 	conf.Binlog.IgnoreError = true
 	conf.TiKVClient.CommitTimeout = "10s"
+	conf.CharacterSetServer = mysql.DefaultCharset
+	conf.CollationServer = mysql.DefaultCollationName
 
 	configFile := "config.toml"
 	_, localFile, _, _ := runtime.Caller(0)
