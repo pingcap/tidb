@@ -27,6 +27,7 @@ type aggregationEliminator struct {
 }
 
 type aggregationEliminateChecker struct {
+	aggregation.AggFuncTypeInferer
 }
 
 // tryToEliminateAggregation will eliminate aggregation grouped by unique key.
@@ -67,15 +68,19 @@ func (a *aggregationEliminateChecker) convertAggToProj(agg *LogicalAggregation) 
 func (a *aggregationEliminateChecker) rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) expression.Expression {
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
-		if aggFunc.Mode == aggregation.FinalMode {
-			return a.rewriteSumOrAvg(ctx, aggFunc.Args)
-		}
 		return a.rewriteCount(ctx, aggFunc.Args)
-	case ast.AggFuncSum, ast.AggFuncAvg:
-		return a.rewriteSumOrAvg(ctx, aggFunc.Args)
+	case ast.AggFuncSum:
+		return expression.BuildCastFunction(ctx, aggFunc.Args[0], a.InferSum(ctx, aggFunc.Args[0]))
+	case ast.AggFuncAvg:
+		return expression.BuildCastFunction(ctx, aggFunc.Args[0], a.InferAvg(ctx, aggFunc.Args[0]))
+	case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin:
+		return expression.BuildCastFunction(ctx, aggFunc.Args[0], a.InferMaxMin(ctx, aggFunc.Args[0]))
+	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
+		return expression.BuildCastFunction(ctx, aggFunc.Args[0], a.InferBitFuncs(ctx))
+	case ast.AggFuncGroupConcat:
+		return expression.BuildCastFunction(ctx, aggFunc.Args[0], a.InferGroupConcat(ctx))
 	default:
-		// Default we do nothing about expr.
-		return aggFunc.Args[0]
+		panic("Unsupported function")
 	}
 }
 
@@ -88,27 +93,8 @@ func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs
 		isNullExprs = append(isNullExprs, isNullExpr)
 	}
 	innerExpr := expression.ComposeDNFCondition(ctx, isNullExprs...)
-	newExpr := expression.NewFunctionInternal(ctx, ast.If, types.NewFieldType(mysql.TypeLonglong), innerExpr, expression.Zero, expression.One)
+	newExpr := expression.NewFunctionInternal(ctx, ast.If, a.InferCount(ctx), innerExpr, expression.Zero, expression.One)
 	return newExpr
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
-// The SUM() and AVG() functions return a DECIMAL value for exact-value arguments (integer or DECIMAL),
-// and a DOUBLE value for approximate-value arguments (FLOAT or DOUBLE).
-func (a *aggregationEliminateChecker) rewriteSumOrAvg(ctx sessionctx.Context, exprs []expression.Expression) expression.Expression {
-	// FIXME: Consider the case that avg is final mode.
-	expr := exprs[0]
-	switch expr.GetType().Tp {
-	// Integer type should be cast to decimal.
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		return expression.BuildCastFunction(ctx, expr, types.NewFieldType(mysql.TypeNewDecimal))
-		// Double and Decimal doesn't need to be cast.
-	case mysql.TypeDouble, mysql.TypeNewDecimal:
-		return expr
-		// Float should be cast to double. And other non-numeric type should be cast to double too.
-	default:
-		return expression.BuildCastFunction(ctx, expr, types.NewFieldType(mysql.TypeDouble))
-	}
 }
 
 func (a *aggregationEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
