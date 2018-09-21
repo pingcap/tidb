@@ -26,6 +26,7 @@ import (
 	"time"
 
 	gofail "github.com/etcd-io/gofail/runtime"
+	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
@@ -58,6 +59,8 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -2361,6 +2364,32 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Lock()
 	cli.mu.checkFlags = checkRequestOff
 	cli.mu.Unlock()
+}
+
+func (s *testSuite) TestTimezonePushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (ts timestamp)")
+	defer tk.MustExec("drop table t")
+	tk.MustExec(`insert into t values ("2018-09-13 10:02:06")`)
+
+	systemTZ := timeutil.SystemLocation()
+	c.Assert(systemTZ.String(), Not(Equals), "System")
+	ctx := context.Background()
+	count := 0
+	ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
+		count += 1
+		dagReq := new(tipb.DAGRequest)
+		err := proto.Unmarshal(req.Data, dagReq)
+		c.Assert(err, IsNil)
+		c.Assert(dagReq.GetTimeZoneName(), Equals, systemTZ.String())
+	})
+	tk.Se.Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+
+	tk.MustExec(`set time_zone="System"`)
+	tk.Se.Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+
+	c.Assert(count, Equals, 2) // Make sure the hook function is called.
 }
 
 func (s *testSuite) TestNotFillCacheFlag(c *C) {

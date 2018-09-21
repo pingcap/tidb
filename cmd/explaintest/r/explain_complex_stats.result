@@ -205,23 +205,23 @@ CREATE TABLE tbl_009 (a int, b int);
 load stats 's/explain_complex_stats_tbl_009.json';
 explain select sum(a) from (select * from tbl_001 union all select * from tbl_002 union all select * from tbl_003 union all select * from tbl_004 union all select * from tbl_005 union all select * from tbl_006 union all select * from tbl_007 union all select * from tbl_008 union all select * from tbl_009) x group by b;
 id	count	task	operator info
-HashAgg_25	18000.00	root	group by:x.b, funcs:sum(x.a)
-└─Union_26	18000.00	root	
-  ├─TableReader_29	2000.00	root	data:TableScan_28
-  │ └─TableScan_28	2000.00	cop	table:tbl_001, range:[-inf,+inf], keep order:false
-  ├─TableReader_32	2000.00	root	data:TableScan_31
-  │ └─TableScan_31	2000.00	cop	table:tbl_002, range:[-inf,+inf], keep order:false
-  ├─TableReader_35	2000.00	root	data:TableScan_34
-  │ └─TableScan_34	2000.00	cop	table:tbl_003, range:[-inf,+inf], keep order:false
+HashAgg_34	18000.00	root	group by:x.b, funcs:sum(x.a)
+└─Union_35	18000.00	root	
   ├─TableReader_38	2000.00	root	data:TableScan_37
-  │ └─TableScan_37	2000.00	cop	table:tbl_004, range:[-inf,+inf], keep order:false
+  │ └─TableScan_37	2000.00	cop	table:tbl_001, range:[-inf,+inf], keep order:false
   ├─TableReader_41	2000.00	root	data:TableScan_40
-  │ └─TableScan_40	2000.00	cop	table:tbl_005, range:[-inf,+inf], keep order:false
+  │ └─TableScan_40	2000.00	cop	table:tbl_002, range:[-inf,+inf], keep order:false
   ├─TableReader_44	2000.00	root	data:TableScan_43
-  │ └─TableScan_43	2000.00	cop	table:tbl_006, range:[-inf,+inf], keep order:false
+  │ └─TableScan_43	2000.00	cop	table:tbl_003, range:[-inf,+inf], keep order:false
   ├─TableReader_47	2000.00	root	data:TableScan_46
-  │ └─TableScan_46	2000.00	cop	table:tbl_007, range:[-inf,+inf], keep order:false
+  │ └─TableScan_46	2000.00	cop	table:tbl_004, range:[-inf,+inf], keep order:false
   ├─TableReader_50	2000.00	root	data:TableScan_49
-  │ └─TableScan_49	2000.00	cop	table:tbl_008, range:[-inf,+inf], keep order:false
-  └─TableReader_53	2000.00	root	data:TableScan_52
-    └─TableScan_52	2000.00	cop	table:tbl_009, range:[-inf,+inf], keep order:false
+  │ └─TableScan_49	2000.00	cop	table:tbl_005, range:[-inf,+inf], keep order:false
+  ├─TableReader_53	2000.00	root	data:TableScan_52
+  │ └─TableScan_52	2000.00	cop	table:tbl_006, range:[-inf,+inf], keep order:false
+  ├─TableReader_56	2000.00	root	data:TableScan_55
+  │ └─TableScan_55	2000.00	cop	table:tbl_007, range:[-inf,+inf], keep order:false
+  ├─TableReader_59	2000.00	root	data:TableScan_58
+  │ └─TableScan_58	2000.00	cop	table:tbl_008, range:[-inf,+inf], keep order:false
+  └─TableReader_62	2000.00	root	data:TableScan_61
+    └─TableScan_61	2000.00	cop	table:tbl_009, range:[-inf,+inf], keep order:false
