@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -125,9 +125,9 @@ func (s *testSuite) TestCreateDropDatabase(c *C) {
 	tk.MustExec("use drop_test;")
 	tk.MustExec("drop database drop_test;")
 	_, err := tk.Exec("drop table t;")
-	c.Assert(err.Error(), Equals, core.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 	_, err = tk.Exec("select * from t;")
-	c.Assert(err.Error(), Equals, core.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 
 	_, err = tk.Exec("drop database mysql")
 	c.Assert(err, NotNil)

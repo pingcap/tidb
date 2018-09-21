@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -189,13 +189,13 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
 
-		err = core.Preprocess(ctx, stmts[0], is, false)
+		err = plannercore.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, comment)
-		p, err := core.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
 
-		sel := p.(core.LogicalPlan).Children()[0].(*core.LogicalSelection)
-		ds := sel.Children()[0].(*core.DataSource)
+		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		ds := sel.Children()[0].(*plannercore.DataSource)
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.Columns, ds.Schema().Columns)
 
@@ -298,9 +298,9 @@ func BenchmarkSelectivity(b *testing.B) {
 	stmts, err := session.Parse(ctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
-	err = core.Preprocess(ctx, stmts[0], is, false)
+	err = plannercore.Preprocess(ctx, stmts[0], is, false)
 	c.Assert(err, IsNil, comment)
-	p, err := core.BuildLogicalPlan(ctx, stmts[0], is)
+	p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
 
 	file, _ := os.Create("cpu.profile")
@@ -310,7 +310,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	b.Run("selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := statsTbl.Selectivity(ctx, p.(core.LogicalPlan).Children()[0].(*core.LogicalSelection).Conditions)
+			_, err := statsTbl.Selectivity(ctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions)
 			c.Assert(err, IsNil)
 		}
 		b.ReportAllocs()

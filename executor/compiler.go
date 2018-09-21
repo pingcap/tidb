@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -41,11 +41,11 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 	}
 
 	infoSchema := GetInfoSchema(c.Ctx)
-	if err := core.Preprocess(c.Ctx, stmtNode, infoSchema, false); err != nil {
+	if err := plannercore.Preprocess(c.Ctx, stmtNode, infoSchema, false); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	finalPlan, err := core.Optimize(c.Ctx, stmtNode, infoSchema)
+	finalPlan, err := plannercore.Optimize(c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -57,14 +57,14 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		InfoSchema: infoSchema,
 		Plan:       finalPlan,
 		Expensive:  isExpensive,
-		Cacheable:  core.Cacheable(stmtNode),
+		Cacheable:  plannercore.Cacheable(stmtNode),
 		Text:       stmtNode.Text(),
 		StmtNode:   stmtNode,
 		Ctx:        c.Ctx,
 	}, nil
 }
 
-func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan core.Plan) (expensive bool) {
+func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan plannercore.Plan) (expensive bool) {
 	expensive = isExpensiveQuery(finalPlan)
 	if !expensive {
 		return
@@ -79,21 +79,21 @@ func logExpensiveQuery(stmtNode ast.StmtNode, finalPlan core.Plan) (expensive bo
 	return
 }
 
-func isExpensiveQuery(p core.Plan) bool {
+func isExpensiveQuery(p plannercore.Plan) bool {
 	switch x := p.(type) {
-	case core.PhysicalPlan:
+	case plannercore.PhysicalPlan:
 		return isPhysicalPlanExpensive(x)
-	case *core.Execute:
+	case *plannercore.Execute:
 		return isExpensiveQuery(x.Plan)
-	case *core.Insert:
+	case *plannercore.Insert:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanExpensive(x.SelectPlan)
 		}
-	case *core.Delete:
+	case *plannercore.Delete:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanExpensive(x.SelectPlan)
 		}
-	case *core.Update:
+	case *plannercore.Update:
 		if x.SelectPlan != nil {
 			return isPhysicalPlanExpensive(x.SelectPlan)
 		}
@@ -101,7 +101,7 @@ func isExpensiveQuery(p core.Plan) bool {
 	return false
 }
 
-func isPhysicalPlanExpensive(p core.PhysicalPlan) bool {
+func isPhysicalPlanExpensive(p plannercore.PhysicalPlan) bool {
 	expensiveRowThreshold := int64(config.GetGlobalConfig().Log.ExpensiveThreshold)
 	if int64(p.StatsCount()) > expensiveRowThreshold {
 		return true

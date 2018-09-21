@@ -19,7 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pkg/errors"
@@ -27,17 +27,17 @@ import (
 )
 
 func (s *testSuite) TestPrepared(c *C) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	orgCapacity := core.PreparedPlanCacheCapacity
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-		core.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		core.SetPreparedPlanCache(flag)
-		core.PreparedPlanCacheCapacity = 100
+		plannercore.SetPreparedPlanCache(flag)
+		plannercore.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -51,13 +51,13 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(executor.ErrPrepareMulti.Equal(err), IsTrue)
 		// The variable count does not match.
 		_, err = tk.Exec(`prepare stmt_test_4 from 'select id from prepare_test where id > ? and id < ?'; set @a = 1; execute stmt_test_4 using @a;`)
-		c.Assert(core.ErrWrongParamCount.Equal(err), IsTrue)
+		c.Assert(plannercore.ErrWrongParamCount.Equal(err), IsTrue)
 		// Prepare and deallocate prepared statement immediately.
 		tk.MustExec(`prepare stmt_test_5 from 'select id from prepare_test where id > ?'; deallocate prepare stmt_test_5;`)
 
 		// Statement not found.
 		_, err = tk.Exec("deallocate prepare stmt_test_5")
-		c.Assert(core.ErrStmtNotFound.Equal(err), IsTrue)
+		c.Assert(plannercore.ErrStmtNotFound.Equal(err), IsTrue)
 
 		// incorrect SQLs in prepare. issue #3738, SQL in prepare stmt is parsed in DoPrepare.
 		_, err = tk.Exec(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`)
@@ -65,7 +65,7 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// The `stmt_test5` should not be found.
 		_, err = tk.Exec(`set @a = 1; execute stmt_test_5 using @a;`)
-		c.Assert(core.ErrStmtNotFound.Equal(err), IsTrue)
+		c.Assert(plannercore.ErrStmtNotFound.Equal(err), IsTrue)
 
 		// Use parameter marker with argument will run prepared statement.
 		result := tk.MustQuery("select distinct c1, c2 from prepare_test where c1 = ?", 1)
@@ -128,11 +128,11 @@ func (s *testSuite) TestPrepared(c *C) {
 		tk.MustExec("alter table prepare_test drop column c2")
 
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 1)
-		c.Assert(core.ErrUnknownColumn.Equal(err), IsTrue)
+		c.Assert(plannercore.ErrUnknownColumn.Equal(err), IsTrue)
 
 		tk.MustExec("drop table prepare_test")
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtId, 1)
-		c.Assert(core.ErrSchemaChanged.Equal(err), IsTrue)
+		c.Assert(plannercore.ErrSchemaChanged.Equal(err), IsTrue)
 
 		// issue 3381
 		tk.MustExec("drop table if exists prepare3")
@@ -187,17 +187,17 @@ func (s *testSuite) TestPrepared(c *C) {
 }
 
 func (s *testSuite) TestPreparedLimitOffset(c *C) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	orgCapacity := core.PreparedPlanCacheCapacity
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-		core.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		core.SetPreparedPlanCache(flag)
-		core.PreparedPlanCacheCapacity = 100
+		plannercore.SetPreparedPlanCache(flag)
+		plannercore.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -213,7 +213,7 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 
 		tk.MustExec(`set @c="-1"`)
 		_, err := tk.Exec("execute stmt_test_1 using @c, @c")
-		c.Assert(core.ErrWrongArguments.Equal(err), IsTrue)
+		c.Assert(plannercore.ErrWrongArguments.Equal(err), IsTrue)
 
 		stmtID, _, _, err := tk.Se.PrepareStmt("select id from prepare_test limit ?")
 		c.Assert(err, IsNil)
@@ -223,16 +223,16 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 }
 
 func (s *testSuite) TestPreparedNullParam(c *C) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	orgCapacity := core.PreparedPlanCacheCapacity
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-		core.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		core.SetPreparedPlanCache(flag)
-		core.PreparedPlanCacheCapacity = 100
+		plannercore.SetPreparedPlanCache(flag)
+		plannercore.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -287,16 +287,16 @@ func (s *testSuite) TestPrepareMaxParamCountCheck(c *C) {
 }
 
 func (s *testSuite) TestPrepareWithAggregation(c *C) {
-	orgEnable := core.PreparedPlanCacheEnabled()
-	orgCapacity := core.PreparedPlanCacheCapacity
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
 	defer func() {
-		core.SetPreparedPlanCache(orgEnable)
-		core.PreparedPlanCacheCapacity = orgCapacity
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
 	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		core.SetPreparedPlanCache(flag)
-		core.PreparedPlanCacheCapacity = 100
+		plannercore.SetPreparedPlanCache(flag)
+		plannercore.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")

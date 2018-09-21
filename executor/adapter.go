@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/planner/core"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
@@ -128,7 +128,7 @@ type ExecStmt struct {
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
-	Plan core.Plan
+	Plan plannercore.Plan
 	// Expensive represents whether this query is an expensive one.
 	Expensive bool
 	// Cacheable represents whether the physical plan can be cached.
@@ -155,11 +155,11 @@ func (a *ExecStmt) IsPrepared() bool {
 
 // IsReadOnly returns true if a statement is read only.
 // It will update readOnlyCheckStmt if current ExecStmt can be conveted to
-// a core.Execute. Last step is using ast.IsReadOnly function to determine
+// a plannercore.Execute. Last step is using ast.IsReadOnly function to determine
 // a statement is read only or not.
 func (a *ExecStmt) IsReadOnly() bool {
 	readOnlyCheckStmt := a.StmtNode
-	if checkPlan, ok := a.Plan.(*core.Execute); ok {
+	if checkPlan, ok := a.Plan.(*plannercore.Execute); ok {
 		readOnlyCheckStmt = checkPlan.Stmt
 	}
 	return ast.IsReadOnly(readOnlyCheckStmt)
@@ -170,10 +170,10 @@ func (a *ExecStmt) IsReadOnly() bool {
 func (a *ExecStmt) RebuildPlan() (int64, error) {
 	is := GetInfoSchema(a.Ctx)
 	a.InfoSchema = is
-	if err := core.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
+	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
 		return 0, errors.Trace(err)
 	}
-	p, err := core.Optimize(a.Ctx, a.StmtNode, is)
+	p, err := plannercore.Optimize(a.Ctx, a.StmtNode, is)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -187,7 +187,7 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	a.startTime = time.Now()
 	sctx := a.Ctx
-	if _, ok := a.Plan.(*core.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
+	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency
 		oriIndex := sctx.GetSessionVars().IndexSerialScanConcurrency
@@ -218,7 +218,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
 		sql := a.OriginText()
-		if simple, ok := a.Plan.(*core.Simple); ok && simple.Statement != nil {
+		if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
 			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
 				// Use SecureText to avoid leak password information.
 				sql = ss.SecureText()
@@ -279,7 +279,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 
 // buildExecutor build a executor from plan, prepared statement may need additional procedure.
 func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
-	if _, ok := a.Plan.(*core.Execute); !ok {
+	if _, ok := a.Plan.(*plannercore.Execute); !ok {
 		// Do not sync transaction for Execute statement, because the real optimization work is done in
 		// "ExecuteExec.Build".
 		var err error
@@ -305,7 +305,7 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 			}
 		}
 	}
-	if _, ok := a.Plan.(*core.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
+	if _, ok := a.Plan.(*plannercore.Analyze); ok && ctx.GetSessionVars().InRestrictedSQL {
 		ctx.GetSessionVars().StmtCtx.Priority = kv.PriorityLow
 	}
 
@@ -397,7 +397,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 //  1. ctx is auto commit tagged
 //  2. txn is nil
 //  2. plan is point get by pk or unique key
-func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p core.Plan) bool {
+func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p plannercore.Plan) bool {
 	// check auto commit
 	if !ctx.GetSessionVars().IsAutocommit() {
 		return false
@@ -409,7 +409,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p core.Plan
 	}
 
 	// check plan
-	if proj, ok := p.(*core.PhysicalProjection); ok {
+	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
 		if len(proj.Children()) != 1 {
 			return false
 		}
@@ -417,16 +417,16 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p core.Plan
 	}
 
 	switch v := p.(type) {
-	case *core.PhysicalIndexReader:
-		indexScan := v.IndexPlans[0].(*core.PhysicalIndexScan)
+	case *plannercore.PhysicalIndexReader:
+		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
-	case *core.PhysicalIndexLookUpReader:
-		indexScan := v.IndexPlans[0].(*core.PhysicalIndexScan)
+	case *plannercore.PhysicalIndexLookUpReader:
+		indexScan := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx)
-	case *core.PhysicalTableReader:
-		tableScan := v.TablePlans[0].(*core.PhysicalTableScan)
+	case *plannercore.PhysicalTableReader:
+		tableScan := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
-	case *core.PointGetPlan:
+	case *plannercore.PointGetPlan:
 		return true
 	default:
 		return false
