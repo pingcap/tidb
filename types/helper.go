@@ -195,7 +195,7 @@ func strToInt(str string) (int64, error) {
 
 // CalculateMerge merge variance and partialCount > 0 and mergeCount > 0.
 // NOTE: mergeCount and mergeSum do not include partialCount and partialSum yet.
-
+//
 // Evaluate the variance using the algorithm described by Chan, Golub, and LeVeque in
 // "Algorithms for computing the sample variance: analysis and recommendations"
 // The American Statistician, 37 (1983) pp. 242--247.
