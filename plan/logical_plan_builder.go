@@ -175,9 +175,12 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 	}
 }
 
-func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
-	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
-	otherCond []expression.Expression) {
+// extractOnCondition divide conditions in CNF of join node into 4 groups.
+// These conditions can be where conditions, join conditions, or collection of both.
+// If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
+func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan,
+	deriveLeft bool, deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
+	rightCond []expression.Expression, otherCond []expression.Expression) {
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && binop.FuncName.L == ast.EQ {
@@ -210,6 +213,21 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 		} else if allFromLeft {
 			leftCond = append(leftCond, expr)
 		} else {
+			// Relax expr to two supersets: leftRelaxedCond and rightRelaxedCond, the expression now is
+			// `expr AND leftRelaxedCond AND rightRelaxedCond`. Motivation is to push filters down to
+			// children as much as possible.
+			if deriveLeft {
+				leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, left.Schema())
+				if leftRelaxedCond != nil {
+					leftCond = append(leftCond, leftRelaxedCond)
+				}
+			}
+			if deriveRight {
+				rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, right.Schema())
+				if rightRelaxedCond != nil {
+					rightCond = append(rightCond, rightRelaxedCond)
+				}
+			}
 			otherCond = append(otherCond, expr)
 		}
 	}
@@ -628,49 +646,41 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 }
 
 func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
-	unionSchema := u.children[0].Schema().Clone()
+	unionCols := make([]*expression.Column, 0, u.children[0].Schema().Len())
 
 	// Infer union result types by its children's schema.
-	for i, col := range unionSchema.Columns {
-		var resultTp *types.FieldType
-		for j, child := range u.children {
-			childTp := child.Schema().Columns[i].RetType
-			if j == 0 {
-				resultTp = childTp
-			} else {
-				resultTp = unionJoinFieldType(resultTp, childTp)
-			}
+	for i, col := range u.children[0].Schema().Columns {
+		resultTp := col.RetType
+		for j := 1; j < len(u.children); j++ {
+			childTp := u.children[j].Schema().Columns[i].RetType
+			resultTp = unionJoinFieldType(resultTp, childTp)
 		}
-		unionSchema.Columns[i] = col.Clone().(*expression.Column)
-		unionSchema.Columns[i].RetType = resultTp
-		unionSchema.Columns[i].DBName = model.NewCIStr("")
+		unionCols = append(unionCols, &expression.Column{
+			ColName:  col.ColName,
+			TblName:  col.TblName,
+			RetType:  resultTp,
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+		})
 	}
-	// If the types of some child don't match the types of union, we add a projection with cast function.
+	u.schema = expression.NewSchema(unionCols...)
+	// Process each child and add a projection above original child.
+	// So the schema of `UnionAll` can be the same with its children's.
 	for childID, child := range u.children {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
-		needProjection := false
 		for i, srcCol := range child.Schema().Columns {
-			dstType := unionSchema.Columns[i].RetType
+			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
 				exprs[i] = expression.BuildCastFunction4Union(b.ctx, srcCol, dstType)
-				needProjection = true
 			} else {
 				exprs[i] = srcCol
 			}
 		}
-		if _, isProj := child.(*LogicalProjection); needProjection || !isProj {
-			b.optFlag |= flagEliminateProjection
-			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
-			if childID == 0 {
-				for _, col := range unionSchema.Columns {
-					col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
-				}
-			}
-			proj.SetChildren(child)
-			u.children[childID] = proj
-		}
-		u.children[childID].(*LogicalProjection).SetSchema(unionSchema.Clone())
+		b.optFlag |= flagEliminateProjection
+		proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
+		proj.SetSchema(expression.NewSchema(unionCols...))
+		proj.SetChildren(child)
+		u.children[childID] = proj
 	}
 }
 
@@ -680,7 +690,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 		return nil, errors.Trace(err)
 	}
 
-	unionDistinctPlan := b.buildSubUnion(distinctSelectPlans)
+	unionDistinctPlan := b.buildUnionAll(distinctSelectPlans)
 	if unionDistinctPlan != nil {
 		unionDistinctPlan = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
 		if len(allSelectPlans) > 0 {
@@ -688,7 +698,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 		}
 	}
 
-	unionAllPlan := b.buildSubUnion(allSelectPlans)
+	unionAllPlan := b.buildUnionAll(allSelectPlans)
 	unionPlan := unionDistinctPlan
 	if unionAllPlan != nil {
 		unionPlan = unionAllPlan
@@ -740,7 +750,7 @@ func (b *planBuilder) divideUnionSelectPlans(selects []*ast.SelectStmt) (distinc
 	return children[:firstUnionAllIdx], children[firstUnionAllIdx:], nil
 }
 
-func (b *planBuilder) buildSubUnion(subPlan []LogicalPlan) LogicalPlan {
+func (b *planBuilder) buildUnionAll(subPlan []LogicalPlan) LogicalPlan {
 	if len(subPlan) == 0 {
 		return nil
 	}
@@ -805,6 +815,23 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
 
+func extractLimitCountOffset(sc *stmtctx.StatementContext, limit *ast.Limit) (count uint64,
+	offset uint64, err error) {
+	if limit.Count != nil {
+		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
+		if err != nil {
+			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
+		}
+	}
+	if limit.Offset != nil {
+		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
+		if err != nil {
+			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
+		}
+	}
+	return count, offset, nil
+}
+
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPushDownTopN
 	var (
@@ -812,18 +839,8 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		err           error
 	)
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if limit.Offset != nil {
-		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
-		if err != nil {
-			return nil, ErrWrongArguments.GenWithStackByArgs("LIMIT")
-		}
-	}
-
-	if limit.Count != nil {
-		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
-		if err != nil {
-			return nil, ErrWrongArguments.GenWithStackByArgs("LIMIT")
-		}
+	if count, offset, err = extractLimitCountOffset(sc, limit); err != nil {
+		return nil, err
 	}
 
 	if count > math.MaxUint64-offset {
