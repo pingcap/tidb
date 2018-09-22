@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2018 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,11 +20,11 @@ import (
 	"github.com/pkg/errors"
 )
 
-type varPopFunction struct {
+type baseVarianceFunction struct {
 	aggFunction
 }
 
-func (af *varPopFunction) updateValue(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row chunk.Row) error {
+func (af *baseVarianceFunction) updateValue(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	value, err := af.Args[2].Eval(row)
 	if err != nil {
 		return errors.Trace(err)
@@ -32,7 +32,7 @@ func (af *varPopFunction) updateValue(sc *stmtctx.StatementContext, evalCtx *Agg
 	if value.IsNull() {
 		return nil
 	}
-	squareSum, err := value.ToFloat64(sc)
+	variance, err := value.ToFloat64(sc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -49,29 +49,31 @@ func (af *varPopFunction) updateValue(sc *stmtctx.StatementContext, evalCtx *Agg
 		return errors.Trace(err)
 	}
 
-	if evalCtx.Value.IsNull() {
-		evalCtx.Value.SetFloat64(sum)
-		evalCtx.Extra.SetFloat64(squareSum)
-	} else {
-		evalCtx.Value.SetFloat64(evalCtx.Value.GetFloat64() + sum)
-		evalCtx.Extra.SetFloat64(evalCtx.Extra.GetFloat64() + squareSum)
-	}
 	count, err := af.Args[0].Eval(row)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	if evalCtx.Value.IsNull() || evalCtx.Count == 0 {
+		evalCtx.Value.SetFloat64(sum)
+		evalCtx.Variance.SetFloat64(variance)
+	} else if count.GetInt64() != 0 {
+		variance = types.CalculateMerge(evalCtx.Count, count.GetInt64(), evalCtx.Value.GetFloat64(), sum, evalCtx.Variance.GetFloat64(), variance)
+		evalCtx.Value.SetFloat64(evalCtx.Value.GetFloat64() + sum)
+		evalCtx.Variance.SetFloat64(variance)
 	}
 	evalCtx.Count += count.GetInt64()
 	return nil
 }
 
-func (af *varPopFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+func (af *baseVarianceFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
 	evalCtx.Value.SetNull()
-	evalCtx.Extra.SetNull()
+	evalCtx.Variance.SetNull()
 	evalCtx.Count = 0
 }
 
 // Update implements Aggregation interface.
-func (af *varPopFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
+func (af *baseVarianceFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	switch af.Mode {
 	case Partial1Mode, CompleteMode:
 		var err error
@@ -87,12 +89,13 @@ func (af *varPopFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 			return errors.Trace(err)
 		}
 
-		if evalCtx.Value.IsNull() {
+		if evalCtx.Value.IsNull() || evalCtx.Count == 0 {
 			evalCtx.Value.SetFloat64(v)
-			evalCtx.Extra.SetFloat64(v * v)
+			evalCtx.Variance.SetFloat64(0)
 		} else {
+			variance := types.CalculateMerge(evalCtx.Count, 1, evalCtx.Value.GetFloat64(), v, evalCtx.Variance.GetFloat64(), 0)
 			evalCtx.Value.SetFloat64(evalCtx.Value.GetFloat64() + v)
-			evalCtx.Extra.SetFloat64(evalCtx.Extra.GetFloat64() + v*v)
+			evalCtx.Variance.SetFloat64(variance)
 		}
 		evalCtx.Count++
 	case Partial2Mode, FinalMode:
@@ -104,19 +107,22 @@ func (af *varPopFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 	return nil
 }
 
+// GetPartialResult implements Aggregation interface.
+func (af *baseVarianceFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{types.NewIntDatum(evalCtx.Count), evalCtx.Value, evalCtx.Variance}
+}
+
+type varPopFunction struct {
+	baseVarianceFunction
+}
+
 // GetResult implements Aggregation interface.
 func (af *varPopFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 	if evalCtx.Count == 0 {
 		d.SetNull()
 		return
 	}
-	squareSum := evalCtx.Extra.GetFloat64()
-	sum := evalCtx.Value.GetFloat64()
-	d.SetFloat64((squareSum - sum*sum/float64(evalCtx.Count)) / float64(evalCtx.Count))
-	return
-}
 
-// GetPartialResult implements Aggregation interface.
-func (af *varPopFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
-	return []types.Datum{types.NewIntDatum(evalCtx.Count), evalCtx.Value, evalCtx.Extra}
+	d.SetFloat64(evalCtx.Variance.GetFloat64() / float64(evalCtx.Count))
+	return
 }

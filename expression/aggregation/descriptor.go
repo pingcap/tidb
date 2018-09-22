@@ -115,17 +115,17 @@ func (a *AggFuncDesc) Split(ordinal []int) (finalAggDesc *AggFuncDesc) {
 	case ast.AggFuncVarPop:
 		args := make([]expression.Expression, 0, 3)
 		args = append(args, &expression.Column{
-			ColName: model.NewCIStr(fmt.Sprintf("avg_final_col_%d", ordinal[0])),
+			ColName: model.NewCIStr(fmt.Sprintf("var_pop_final_col_%d", ordinal[0])),
 			Index:   ordinal[0],
 			RetType: types.NewFieldType(mysql.TypeLonglong),
 		})
 		args = append(args, &expression.Column{
-			ColName: model.NewCIStr(fmt.Sprintf("avg_final_col_%d", ordinal[1])),
+			ColName: model.NewCIStr(fmt.Sprintf("var_pop_final_col_%d", ordinal[1])),
 			Index:   ordinal[1],
 			RetType: a.RetTp,
 		})
 		args = append(args, &expression.Column{
-			ColName: model.NewCIStr(fmt.Sprintf("avg_final_col_%d", ordinal[2])),
+			ColName: model.NewCIStr(fmt.Sprintf("var_pop_final_col_%d", ordinal[2])),
 			Index:   ordinal[2],
 			RetType: a.RetTp,
 		})
@@ -297,7 +297,7 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 	case ast.AggFuncBitAnd:
 		return &bitAndFunction{aggFunction: aggFunc}
 	case ast.AggFuncVarPop:
-		return &varPopFunction{aggFunction: aggFunc}
+		return &varPopFunction{baseVarianceFunction{aggFunction: aggFunc}}
 	default:
 		panic("unsupported agg function")
 	}

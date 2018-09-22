@@ -89,7 +89,7 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 	case tipb.ExprType_Agg_BitAnd:
 		return &bitAndFunction{aggFunction: newAggFunc(ast.AggFuncBitAnd, args, false)}, nil
 	case tipb.ExprType_VarPop:
-		return &varPopFunction{aggFunction: newAggFunc(ast.AggFuncVarPop, args, false)}, nil
+		return &varPopFunction{baseVarianceFunction{aggFunction: newAggFunc(ast.AggFuncVarPop, args, false)}}, nil
 	}
 	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
 }
@@ -99,7 +99,7 @@ type AggEvaluateContext struct {
 	DistinctChecker *distinctChecker
 	Count           int64
 	Value           types.Datum
-	Extra           types.Datum
+	Variance        types.Datum   // Variance is used for the population standard deviation/sample variance aggregate functions.
 	Buffer          *bytes.Buffer // Buffer is used for group_concat.
 	GotFirstRow     bool          // It will check if the agg has met the first row key.
 }

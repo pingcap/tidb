@@ -322,18 +322,15 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		ordinal: ordinal,
 	}
 	switch aggFuncDesc.Mode {
-	// Build var_pop functions which consume the original data and remove the
-	// duplicated input of the same group.
+	// Build var_pop functions which consume the original data and remove the duplicated input of the same group.
 	case aggregation.DedupMode:
 		return nil // not implemented yet.
-	// Build var_pop functions which consume the original data and update their
-	// partial results.
+	// Build var_pop functions which consume the original data and update their partial results.
 	case aggregation.CompleteMode, aggregation.Partial1Mode:
-		return &varPopOriginal4Float64{baseVarPopFloat64{base}}
-	// Build var_pop functions which consume the partial result of other avg
-	// functions and update their partial results.
+		return &baseVarianceOriginal4Float64{baseVarianceFloat64{base, kindVariance}}
+	// Build var_pop functions which consume the partial result of other var_pop functions and update their partial results.
 	case aggregation.Partial2Mode, aggregation.FinalMode:
-		return &varPopPartial4Float64{baseVarPopFloat64{base}}
+		return &baseVariancePartial4Float64{baseVarianceFloat64{base, kindVariance}}
 	}
 	return nil
 }
