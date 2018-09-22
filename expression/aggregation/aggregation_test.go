@@ -582,17 +582,17 @@ func (s *testAggFuncSuit) TestVarPop(c *C) {
 		c.Assert(err, IsNil)
 	}
 	result = varPopFunc.GetResult(evalCtx)
-	c.Assert(types.CompareFloat64(result.GetFloat64(), 561) == 0, IsTrue)
+	c.Assert(math.Abs(result.GetFloat64()-561.0) < 1e-5, IsTrue)
 	err := varPopFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, s.nullRow)
 	c.Assert(err, IsNil)
 	result = varPopFunc.GetResult(evalCtx)
-	c.Assert(types.CompareFloat64(result.GetFloat64(), 561) == 0, IsTrue)
+	c.Assert(math.Abs(result.GetFloat64()-561.0) < 1e-5, IsTrue)
 }
 
 func (s *testAggFuncSuit) TestVarPopFinalMode(c *C) {
 	rows := make([][]types.Datum, 0, 100)
 	for i := 1; i <= 100; i++ {
-		rows = append(rows, types.MakeDatums(i, float64(i*i), float64(i*i*i)))
+		rows = append(rows, types.MakeDatums(i, float64(i*i), float64(0)))
 	}
 	ctx := mock.NewContext()
 	cntCol := &expression.Column{
@@ -603,11 +603,11 @@ func (s *testAggFuncSuit) TestVarPopFinalMode(c *C) {
 		Index:   1,
 		RetType: types.NewFieldType(mysql.TypeDouble),
 	}
-	squareSumCol := &expression.Column{
+	varianceCol := &expression.Column{
 		Index:   2,
 		RetType: types.NewFieldType(mysql.TypeDouble),
 	}
-	varPopFunc := NewAggFuncDesc(s.ctx, ast.AggFuncVarPop, []expression.Expression{cntCol, sumCol, squareSumCol}, false)
+	varPopFunc := NewAggFuncDesc(s.ctx, ast.AggFuncVarPop, []expression.Expression{cntCol, sumCol, varianceCol}, false)
 	varPopFunc.Mode = FinalMode
 	avgFunc := varPopFunc.GetAggFunc(ctx)
 	evalCtx := avgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
@@ -617,5 +617,5 @@ func (s *testAggFuncSuit) TestVarPopFinalMode(c *C) {
 		c.Assert(err, IsNil)
 	}
 	result := avgFunc.GetResult(evalCtx)
-	c.Assert(types.CompareFloat64(result.GetFloat64(), 561) == 0, IsTrue)
+	c.Assert(math.Abs(result.GetFloat64()-561.0) < 1e-5, IsTrue)
 }
