@@ -177,7 +177,7 @@ Here are rough ideas about possible implementations:
 
  * For proposal #3, the [ranger](https://github.com/pingcap/tidb/blob/6fb1a637fbfd41b2004048d8cb995de6442085e2/util/ranger/ranger.go#L14) may be useful to help us collect and fold comparison constraints
 
- * For proposal #4, current rule [PredicatePushDown](https://github.com/pingcap/tidb/blob/b3d4ed79b978efadf2974f78db8eeb711509e545/plan/rule_predicate_push_down.go#L1) may be enhanced to archive it
+ * For proposal #4, current rule [PredicatePushDown](https://github.com/pingcap/tidb/blob/b3d4ed79b978efadf2974f78db8eeb711509e545/plan/rule_predicate_push_down.go#L1) may be enhanced to achieve it
 
 ## Open issues (if applicable)
 
