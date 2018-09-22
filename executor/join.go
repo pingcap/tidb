@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"runtime"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -23,12 +22,12 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -188,20 +187,6 @@ func (e *HashJoinExec) getJoinKeyFromChkRow(isOuterKey bool, row chunk.Row, keyB
 // fetchOuterChunks get chunks from fetches chunks from the big table in a background goroutine
 // and sends the chunks to multiple channels which will be read by multiple join workers.
 func (e *HashJoinExec) fetchOuterChunks(ctx context.Context) {
-	defer func() {
-		for i := range e.outerResultChs {
-			close(e.outerResultChs[i])
-		}
-		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			log.Errorf("hash join outer fetcher panic stack is:\n%s", buf)
-			e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
-		}
-		e.workerWaitGroup.Done()
-	}()
-
 	hasWaitedForInner := false
 	for {
 		if e.finished.Load().(bool) {
@@ -264,15 +249,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 // fetchInnerRows fetches all rows from inner executor,
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh chan struct{}) {
-	defer func() {
-		close(chkCh)
-		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			log.Errorf("hash join inner fetcher panic stack is:\n%s", buf)
-		}
-	}()
+	defer close(chkCh)
 	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
@@ -337,14 +314,32 @@ func (e *HashJoinExec) initializeForProbe() {
 func (e *HashJoinExec) fetchOuterAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
 	e.workerWaitGroup.Add(1)
-	go e.fetchOuterChunks(ctx)
+	go util.WithRecovery(func() { e.fetchOuterChunks(ctx) }, e.finishOuterFetcher)
 
 	// Start e.concurrency join workers to probe hash table and join inner and outer rows.
 	for i := uint(0); i < e.concurrency; i++ {
 		e.workerWaitGroup.Add(1)
-		go e.runJoinWorker(i)
+		workID := i
+		go util.WithRecovery(func() { e.runJoinWorker(workID) }, e.finishJoinWorker)
 	}
-	go e.waitJoinWorkersAndCloseResultChan()
+	go util.WithRecovery(e.waitJoinWorkersAndCloseResultChan, nil)
+}
+
+func (e *HashJoinExec) finishOuterFetcher(r interface{}) {
+	for i := range e.outerResultChs {
+		close(e.outerResultChs[i])
+	}
+	if r != nil {
+		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
+	}
+	e.workerWaitGroup.Done()
+}
+
+func (e *HashJoinExec) finishJoinWorker(r interface{}) {
+	if r != nil {
+		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
+	}
+	e.workerWaitGroup.Done()
 }
 
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
@@ -353,16 +348,6 @@ func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 }
 
 func (e *HashJoinExec) runJoinWorker(workerID uint) {
-	defer func() {
-		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			log.Errorf("hash join worker %v panic stack is:\n%s", workerID, buf)
-			e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
-		}
-		e.workerWaitGroup.Done()
-	}()
 	var (
 		outerResult *chunk.Chunk
 		selected    = make([]bool, 0, chunk.InitialCapacity)
@@ -500,7 +485,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
-		go e.fetchInnerAndBuildHashTable(ctx)
+		go util.WithRecovery(func() { e.fetchInnerAndBuildHashTable(ctx) }, e.finishFetchInnerAndBuildHashTable)
 		e.fetchOuterAndProbeHashTable(ctx)
 		e.prepared = true
 	}
@@ -521,21 +506,18 @@ func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	return nil
 }
 
+func (e *HashJoinExec) finishFetchInnerAndBuildHashTable(r interface{}) {
+	if r != nil {
+		e.innerFinished <- errors.Errorf("%v", r)
+	}
+	close(e.innerFinished)
+}
+
 func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
-	defer func() {
-		if r := recover(); r != nil {
-			buf := make([]byte, 4096)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
-			log.Errorf("HashJoinExec.fetchInnerAndBuildHashTable paniced, stack is:\n%s", buf)
-			e.innerFinished <- errors.Errorf("%v", r)
-		}
-		close(e.innerFinished)
-	}()
 	// innerResultCh transfer inner result chunk from inner fetch to build hash table.
 	innerResultCh := make(chan *chunk.Chunk, e.concurrency)
 	doneCh := make(chan struct{})
-	go e.fetchInnerRows(ctx, innerResultCh, doneCh)
+	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
 
 	if e.finished.Load().(bool) {
 		return

@@ -229,7 +229,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 
 // tableStatsFromStorage loads table stats info from storage.
 func (h *Handle) tableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool) (*Table, error) {
-	table, ok := h.statsCache.Load().(statsCache)[tableInfo.ID]
+	table, ok := h.statsCache.Load().(statsCache)[physicalID]
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if !ok {
@@ -283,7 +283,7 @@ func (t *Table) String() string {
 	return strings.Join(strs, "\n")
 }
 
-func (t *Table) indexStartWithColumnForDebugLog(colName string) *Index {
+func (t *Table) indexStartWithColumn(colName string) *Index {
 	for _, index := range t.Indices {
 		if index.Info.Columns[0].Name.L == colName {
 			return index
@@ -292,7 +292,7 @@ func (t *Table) indexStartWithColumnForDebugLog(colName string) *Index {
 	return nil
 }
 
-func (t *Table) columnByNameForDebugLog(colName string) *Column {
+func (t *Table) columnByName(colName string) *Column {
 	for _, c := range t.Columns {
 		if c.Info.Name.L == colName {
 			return c

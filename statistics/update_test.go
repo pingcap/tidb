@@ -1041,3 +1041,80 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 		c.Assert(statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now), Equals, test.result)
 	}
 }
+
+func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability = 1
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), index idx_ab(a,b), index idx_ac(a,c), index idx_b(b))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (1, %d, %d)", i, i))
+	}
+	h := s.do.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	testKit.MustExec("analyze table t with 3 buckets")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (1, %d, %d)", i, i))
+	}
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	is := s.do.InfoSchema()
+	h.Update(is)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	tests := []struct {
+		sql     string
+		hist    string
+		idxCols int
+		rangeID int64
+		idxID   int64
+		eqCount uint32
+	}{
+		{
+			sql: "select * from t use index(idx_ab) where a = 1 and b < 21",
+			hist: "index:3 ndv:20\n" +
+				"num: 16 lower_bound: -inf upper_bound: 7 repeats: 0\n" +
+				"num: 16 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
+				"num: 8 lower_bound: 16 upper_bound: 21 repeats: 0",
+			rangeID: tblInfo.Indices[2].ID,
+			idxID:   tblInfo.Indices[0].ID,
+			idxCols: 1,
+			eqCount: 39,
+		},
+		{
+			sql: "select * from t use index(idx_ac) where a = 1 and c < 21",
+			hist: "column:3 ndv:20 totColSize:20\n" +
+				"num: 13 lower_bound: -9223372036854775808 upper_bound: 6 repeats: 0\n" +
+				"num: 13 lower_bound: 7 upper_bound: 13 repeats: 0\n" +
+				"num: 12 lower_bound: 14 upper_bound: 21 repeats: 0",
+			rangeID: tblInfo.Columns[2].ID,
+			idxID:   tblInfo.Indices[1].ID,
+			idxCols: 0,
+			eqCount: 35,
+		},
+	}
+	for i, t := range tests {
+		testKit.MustQuery(t.sql)
+		c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+		h.Update(is)
+		tbl := h.GetTableStats(tblInfo)
+		if t.idxCols == 0 {
+			c.Assert(tbl.Columns[t.rangeID].ToString(0), Equals, tests[i].hist)
+		} else {
+			c.Assert(tbl.Indices[t.rangeID].ToString(1), Equals, tests[i].hist)
+		}
+		val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+		c.Assert(err, IsNil)
+		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, t.eqCount)
+	}
+}

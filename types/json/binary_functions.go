@@ -102,7 +102,7 @@ func unquoteString(s string) (string, error) {
 			case '\\':
 				ret.WriteByte('\\')
 			case 'u':
-				if i+5 > len(s) {
+				if i+4 > len(s) {
 					return "", errors.Errorf("Invalid unicode: %s", s[i+1:])
 				}
 				char, size, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
@@ -110,7 +110,7 @@ func unquoteString(s string) (string, error) {
 					return "", errors.Trace(err)
 				}
 				ret.Write(char[0:size])
-				i += 5
+				i += 4
 			default:
 				// For all other escape sequences, backslash is ignored.
 				ret.WriteByte(s[i])
