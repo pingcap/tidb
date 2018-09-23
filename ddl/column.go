@@ -320,7 +320,8 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		// Get sessionctx from context resource pool.
-		ctx, err := w.sessPool.get()
+		var ctx sessionctx.Context
+		ctx, err = w.sessPool.get()
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -338,9 +339,10 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		if err != nil {
 			// Execute rollback if an error occurs.
 			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag
-			ver, err1 := updateVersionAndTableInfo(t, job, tblInfo, true)
-			if err != nil {
-				return ver, errors.Trace(err1)
+			var err1 error
+			ver, err1 = updateVersionAndTableInfo(t, job, tblInfo, true)
+			if err1 != nil {
+				return ver, errors.Trace(err)
 			}
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
