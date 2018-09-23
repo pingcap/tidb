@@ -70,6 +70,7 @@ explain select * from t where b = 1 and b = 2;
 drop table if exists t;
 create table t(a bigint primary key);
 explain select * from t where a = 1 and a = 2;
+explain select null or a > 1 from t;
 
 drop table if exists ta, tb;
 create table ta (a varchar(20));

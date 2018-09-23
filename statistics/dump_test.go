@@ -14,6 +14,8 @@
 package statistics_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -62,7 +64,7 @@ func (s *testDumpStatsSuite) TestConversion(c *C) {
 	c.Assert(err, IsNil)
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta())
 	c.Assert(err, IsNil)
-	loadTbl, err := h.LoadStatsFromJSONToTable(tableInfo.Meta(), jsonTbl)
+	loadTbl, err := statistics.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
 	c.Assert(err, IsNil)
 
 	tbl := h.GetTableStats(tableInfo.Meta())
@@ -72,4 +74,50 @@ func (s *testDumpStatsSuite) TestConversion(c *C) {
 	c.Assert(err, IsNil)
 	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
 	assertTableEqual(c, loadTblInStorage, tbl)
+}
+
+func (s *testDumpStatsSuite) TestDumpPartitions(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_enable_table_partition=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
+PARTITION BY RANGE ( a ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+)`
+	tk.MustExec(createTable)
+	for i := 1; i < 21; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d)`, i, i))
+	}
+	tk.MustExec("analyze table t")
+	is := s.do.InfoSchema()
+	h := s.do.StatsHandle()
+	h.Update(is)
+
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo)
+	c.Assert(err, IsNil)
+	pi := tableInfo.GetPartitionInfo()
+	originTables := make([]*statistics.Table, 0, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		originTables = append(originTables, h.GetPartitionStats(tableInfo, def.ID))
+	}
+
+	tk.MustExec("truncate table mysql.stats_meta")
+	tk.MustExec("truncate table mysql.stats_histograms")
+	tk.MustExec("truncate table mysql.stats_buckets")
+	h.Clear()
+
+	err = h.LoadStatsFromJSON(s.do.InfoSchema(), jsonTbl)
+	c.Assert(err, IsNil)
+	for i, def := range pi.Definitions {
+		t := h.GetPartitionStats(tableInfo, def.ID)
+		assertTableEqual(c, originTables[i], t)
+	}
 }
