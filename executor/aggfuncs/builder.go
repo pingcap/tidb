@@ -327,10 +327,10 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		return nil // not implemented yet.
 	// Build var_pop functions which consume the original data and update their partial results.
 	case aggregation.CompleteMode, aggregation.Partial1Mode:
-		return &baseVarianceOriginal4Float64{baseVarianceFloat64{base, kindVariance}}
+		return &varianceOriginal4Float64{baseVarianceFloat64{base, kindVarPop}}
 	// Build var_pop functions which consume the partial result of other var_pop functions and update their partial results.
 	case aggregation.Partial2Mode, aggregation.FinalMode:
-		return &baseVariancePartial4Float64{baseVarianceFloat64{base, kindVariance}}
+		return &variancePartial4Float64{baseVarianceFloat64{base, kindVarPop}}
 	}
 	return nil
 }

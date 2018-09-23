@@ -24,6 +24,18 @@ type baseVarianceFunction struct {
 	aggFunction
 }
 
+func merge(evalCtx *AggEvaluateContext, count int64, sum float64, variance float64) {
+	if evalCtx.Value.IsNull() || evalCtx.Count == 0 {
+		evalCtx.Value.SetFloat64(sum)
+		evalCtx.Variance.SetFloat64(variance)
+	} else if count != 0 {
+		variance = types.CalculateMerge(evalCtx.Count, count, evalCtx.Value.GetFloat64(), sum, evalCtx.Variance.GetFloat64(), variance)
+		evalCtx.Value.SetFloat64(evalCtx.Value.GetFloat64() + sum)
+		evalCtx.Variance.SetFloat64(variance)
+	}
+	evalCtx.Count += count
+}
+
 func (af *baseVarianceFunction) updateValue(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	value, err := af.Args[2].Eval(row)
 	if err != nil {
@@ -53,16 +65,7 @@ func (af *baseVarianceFunction) updateValue(sc *stmtctx.StatementContext, evalCt
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	if evalCtx.Value.IsNull() || evalCtx.Count == 0 {
-		evalCtx.Value.SetFloat64(sum)
-		evalCtx.Variance.SetFloat64(variance)
-	} else if count.GetInt64() != 0 {
-		variance = types.CalculateMerge(evalCtx.Count, count.GetInt64(), evalCtx.Value.GetFloat64(), sum, evalCtx.Variance.GetFloat64(), variance)
-		evalCtx.Value.SetFloat64(evalCtx.Value.GetFloat64() + sum)
-		evalCtx.Variance.SetFloat64(variance)
-	}
-	evalCtx.Count += count.GetInt64()
+	merge(evalCtx, count.GetInt64(), sum, variance)
 	return nil
 }
 
@@ -88,16 +91,7 @@ func (af *baseVarianceFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		if evalCtx.Value.IsNull() || evalCtx.Count == 0 {
-			evalCtx.Value.SetFloat64(v)
-			evalCtx.Variance.SetFloat64(0)
-		} else {
-			variance := types.CalculateMerge(evalCtx.Count, 1, evalCtx.Value.GetFloat64(), v, evalCtx.Variance.GetFloat64(), 0)
-			evalCtx.Value.SetFloat64(evalCtx.Value.GetFloat64() + v)
-			evalCtx.Variance.SetFloat64(variance)
-		}
-		evalCtx.Count++
+		merge(evalCtx, 1, v, 0)
 	case Partial2Mode, FinalMode:
 		err := af.updateValue(sc, evalCtx, row)
 		return errors.Trace(err)
