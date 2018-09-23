@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"fmt"
+
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl/util"
@@ -417,7 +418,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	return ver, nil
 }
 
-// CheckForNullValue
+// CheckForNullValue check for null values of the field.
 func CheckForNullValue(ctx sessionctx.Context, schema, table, oldCol, newCol model.CIStr) error {
 	sql := fmt.Sprintf(`select * from %s.%s where %s is null; `, schema.L, table.L, oldCol.L)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
