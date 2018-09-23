@@ -1226,8 +1226,8 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table t3 change t.a aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
-	sql = "alter table t3 change aa a bigint not null"
-	s.testErrorCode(c, sql, tmysql.ErrUnknown)
+	//sql = "alter table t3 change aa a bigint not null"
+	//s.testErrorCode(c, sql, tmysql.ErrUnknown)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
 	// Rename to an existing column.
@@ -3416,6 +3416,18 @@ func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLC
 	return hook.OnJobUpdatedExported, c3IdxInfo
 }
 
+func (s *testDBSuite) TestColumnModifyingDefinition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists test2;")
+	s.tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
+	s.tk.MustExec("alter table test2 change c2 a bigint not null;")
+
+	s.tk.MustExec("drop table if exists test2;")
+	s.tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
+	s.tk.MustExec("insert into test2(c2) values (null);")
+	s.testErrorCode(c, "alter table test2 change c2 a bigint not null;", tmysql.WarnDataTruncated)
+}
 func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

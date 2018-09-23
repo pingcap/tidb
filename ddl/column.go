@@ -14,12 +14,16 @@
 package ddl
 
 import (
+	"fmt"
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -267,7 +271,7 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return updateColumn(t, job, newCol, &newCol.Name)
 }
 
-func onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
 	oldColName := &model.CIStr{}
 	pos := &ast.ColumnPosition{}
@@ -277,11 +281,16 @@ func onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	return doModifyColumn(t, job, newCol, oldColName, pos)
+	return w.doModifyColumn(t, job, newCol, oldColName, pos)
 }
 
 // doModifyColumn updates the column information and reorders all columns.
-func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
+func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -307,6 +316,35 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 	//      return ver, errors.New("the column state is wrong")
 	// }
 	// }
+
+	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
+		// Get sessionctx from context resource pool.
+		ctx, err := w.sessPool.get()
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		defer w.sessPool.put(ctx)
+
+		// Modify the type defined Flag to NotNullFlag.
+		tblInfo.Columns[oldCol.Offset].Flag = newCol.Flag
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
+		if err != nil {
+			// Execute rollback if an error occurs.
+			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag
+			ver, err1 := updateVersionAndTableInfo(t, job, tblInfo, true)
+			if err != nil {
+				return ver, errors.Trace(err1)
+			}
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
 
 	// We need the latest column's offset and state. This information can be obtained from the store.
 	newCol.Offset = oldCol.Offset
@@ -377,6 +415,20 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+// CheckForNullValue
+func CheckForNullValue(ctx sessionctx.Context, schema, table, oldCol, newCol model.CIStr) error {
+	sql := fmt.Sprintf(`select * from %s.%s where %s is null; `, schema.L, table.L, oldCol.L)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if len(rows) != 0 {
+		return ErrWarnDataTruncated.GenByArgs(newCol.L, len(rows))
+	}
+	return nil
 }
 
 func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {

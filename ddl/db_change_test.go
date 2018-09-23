@@ -551,6 +551,18 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
 
+func (s *testStateChangeSuite) TestParallelColumnModifyingDefinition(c *C) {
+	sql1 := "insert into t(b) values (null);"
+	sql2 := "alter table t change b b2 bigint not null;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		if err2 != nil {
+			c.Assert(err2.Error(), Equals, "[ddl:1265]Data truncated for column 'b2' at row 1")
+		}
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
 func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 	sql1 := "ALTER TABLE t CHANGE a aa int;"
 	sql2 := "ALTER TABLE t CHANGE b aa int;"

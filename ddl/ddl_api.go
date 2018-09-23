@@ -1635,9 +1635,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errUnsupportedModifyColumn.GenByArgs("set auto_increment")
 	}
 
-	// We don't support modifying the type definitions from 'null' to 'not null' now.
+	// We support modifying the type definitions of 'null ' to 'not null ' now.
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenByArgs("null to not null")
+		if err = CheckForNullValue(ctx, ident.Schema, ident.Name, col.Name, newCol.Name); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(t.Cols(), col, newCol); err != nil {

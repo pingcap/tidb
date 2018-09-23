@@ -491,7 +491,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropColumn:
 		ver, err = onDropColumn(t, job)
 	case model.ActionModifyColumn:
-		ver, err = onModifyColumn(t, job)
+		ver, err = w.onModifyColumn(t, job)
 	case model.ActionSetDefaultValue:
 		ver, err = onSetDefaultValue(t, job)
 	case model.ActionAddIndex:
