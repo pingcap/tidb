@@ -52,7 +52,7 @@ func (p *partialResult4VarianceFloat64) merge(count int64, sum float64, variance
 	if p.count == 0 {
 		p.count, p.sum, p.variance = count, sum, variance
 	} else {
-		variance := types.CalculateMerge(p.count, count, p.sum, sum, p.variance, variance)
+		variance = types.CalculateMerge(p.count, count, p.sum, sum, p.variance, variance)
 		p.count += count
 		p.sum += sum
 		p.variance = variance
