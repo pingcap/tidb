@@ -18,8 +18,8 @@ import (
 	"encoding/binary"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pkg/errors"
 )
 
 // HashPair is the pair for (field, value) in a hash.

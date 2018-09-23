@@ -11,14 +11,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package gcworker
+package metrics
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// Metrics for the GC worker.
 var (
-	gcWorkerCounter = prometheus.NewCounterVec(
+	GCWorkerCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -26,7 +27,7 @@ var (
 			Help:      "Counter of gc worker actions.",
 		}, []string{"type"})
 
-	gcHistogram = prometheus.NewHistogramVec(
+	GCHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -35,7 +36,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 13),
 		}, []string{"stage"})
 
-	gcConfigGauge = prometheus.NewGaugeVec(
+	GCConfigGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -43,7 +44,7 @@ var (
 			Help:      "Gauge of GC configs.",
 		}, []string{"type"})
 
-	gcJobFailureCounter = prometheus.NewCounterVec(
+	GCJobFailureCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -51,7 +52,7 @@ var (
 			Help:      "Counter of gc job failure.",
 		}, []string{"type"})
 
-	gcActionRegionResultCounter = prometheus.NewCounterVec(
+	GCActionRegionResultCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -59,7 +60,7 @@ var (
 			Help:      "Counter of gc action result on region level.",
 		}, []string{"type"})
 
-	gcRegionTooManyLocksCounter = prometheus.NewCounter(
+	GCRegionTooManyLocksCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -67,12 +68,3 @@ var (
 			Help:      "Counter of gc scan lock request more than once in the same region.",
 		})
 )
-
-func init() {
-	prometheus.MustRegister(gcWorkerCounter)
-	prometheus.MustRegister(gcConfigGauge)
-	prometheus.MustRegister(gcHistogram)
-	prometheus.MustRegister(gcJobFailureCounter)
-	prometheus.MustRegister(gcActionRegionResultCounter)
-	prometheus.MustRegister(gcRegionTooManyLocksCounter)
-}

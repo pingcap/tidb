@@ -14,11 +14,11 @@
 package aggregation
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
+	"github.com/pkg/errors"
 )
 
 // distinctChecker stores existing keys and checks if given data is distinct.

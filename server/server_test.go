@@ -320,7 +320,7 @@ func runTestPreparedString(t *C) {
 	})
 }
 
-// This test case does not really cover binary timestamp format, because MySQL driver in golang
+// runTestPreparedTimestamp does not really cover binary timestamp format, because MySQL driver in golang
 // does not use this format. MySQL driver in golang will convert the timestamp to a string.
 // This case guarantees it could work.
 func runTestPreparedTimestamp(t *C) {

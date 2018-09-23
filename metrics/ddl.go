@@ -63,7 +63,7 @@ var (
 			Name:      "update_self_ver_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of update self version",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
-		}, []string{LblVersion, LblResult})
+		}, []string{LblResult})
 
 	OwnerUpdateGlobalVersion   = "update_global_version"
 	OwnerGetGlobalVersion      = "get_global_version"
@@ -75,7 +75,7 @@ var (
 			Name:      "owner_handle_syncer_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) of handle syncer",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20),
-		}, []string{LblType, LblVersion, LblResult})
+		}, []string{LblType, LblResult})
 
 	// Metrics for ddl_worker.go.
 	WorkerAddDDLJob         = "add_job"
@@ -105,17 +105,5 @@ var (
 
 // Label constants.
 const (
-	LblAction  = "action"
-	LblVersion = "version"
+	LblAction = "action"
 )
-
-func init() {
-	prometheus.MustRegister(JobsGauge)
-	prometheus.MustRegister(HandleJobHistogram)
-	prometheus.MustRegister(BatchAddIdxHistogram)
-	prometheus.MustRegister(DeploySyncerHistogram)
-	prometheus.MustRegister(UpdateSelfVersionHistogram)
-	prometheus.MustRegister(OwnerHandleSyncerHistogram)
-	prometheus.MustRegister(DDLWorkerHistogram)
-	prometheus.MustRegister(DDLCounter)
-}

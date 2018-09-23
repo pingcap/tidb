@@ -72,7 +72,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		},
 		{
 			sql:  "select * from t where (t.c > 0 and t.c < 1) or (t.c > 2 and t.c < 3) or (t.c > 4 and t.c < 5) or (t.c > 6 and t.c < 7) or (t.c > 9 and t.c < 10)",
-			best: "IndexLookUp(Index(t.c_d_e)[], Table(t))",
+			best: "Dual",
 		},
 		// Test TopN to table branch in double read.
 		{
@@ -87,7 +87,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 		// Test Null Range but the column has not null flag.
 		{
 			sql:  "select * from t where t.c is null",
-			best: "IndexLookUp(Index(t.c_d_e)[], Table(t))",
+			best: "Dual",
 		},
 		// Test TopN to index branch in double read.
 		{
@@ -1029,7 +1029,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  "select a from t where c in (1, 2, 3) and (d > 3 and d < 4 or d > 5 and d < 6)",
-			best: "IndexReader(Index(t.c_d_e)[])->Projection",
+			best: "Dual->Projection",
 		},
 		{
 			sql:  "select a from t where c in (1, 2, 3) and (d > 2 and d < 4 or d > 5 and d < 7)",
@@ -1124,7 +1124,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  `select a from t where c = 1.9 and d > 3`,
-			best: "Dual->Projection",
+			best: "Dual",
 		},
 		{
 			sql:  `select a from t where c < 1.1`,
@@ -1144,7 +1144,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		},
 		{
 			sql:  `select a from t where c = 123456789098765432101234`,
-			best: "Dual->Projection",
+			best: "Dual",
 		},
 		{
 			sql:  `select a from t where c = 'hanfei'`,

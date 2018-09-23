@@ -25,7 +25,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/x-server"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
@@ -129,6 +129,7 @@ func main() {
 		os.Exit(0)
 	}
 	registerStores()
+	registerMetrics()
 	loadConfig()
 	overrideConfig()
 	validateConfig()
@@ -152,6 +153,10 @@ func registerStores() {
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
 	err = session.RegisterStore("mocktikv", mockstore.MockDriver{})
 	terror.MustNil(err)
+}
+
+func registerMetrics() {
+	metrics.RegisterMetrics()
 }
 
 func createStoreAndDomain() {
@@ -383,6 +388,9 @@ func setGlobalVars() {
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
+	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
+	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
+
 	plan.SetPreparedPlanCache(cfg.PreparedPlanCache.Enabled)
 	if plan.PreparedPlanCacheEnabled() {
 		plan.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
@@ -393,9 +401,6 @@ func setGlobalVars() {
 	}
 	tikv.GrpcKeepAliveTime = time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
 	tikv.GrpcKeepAliveTimeout = time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second
-
-	// set lower_case_table_names
-	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }

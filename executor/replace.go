@@ -14,11 +14,11 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -71,13 +71,9 @@ func (e *ReplaceExec) removeRow(handle int64, r toBeCheckedRow) (bool, error) {
 	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 
 	// Cleanup keys map, because the record was removed.
-	cleanupRows, err := e.getKeysNeedCheck(e.ctx, r.t, [][]types.Datum{oldRow})
+	err = e.deleteDupKeys(e.ctx, r.t, [][]types.Datum{oldRow})
 	if err != nil {
 		return false, errors.Trace(err)
-	}
-	if len(cleanupRows) > 0 {
-		// The length of need-to-cleanup rows should be at most 1, due to we only input 1 row.
-		e.deleteDupKeys(cleanupRows[0])
 	}
 	return false, nil
 }

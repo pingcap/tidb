@@ -16,10 +16,10 @@ package tables
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pkg/errors"
 )
 
 // getDefaultCharsetAndCollate is copyed from ddl/ddl_api.go.

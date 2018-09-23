@@ -22,7 +22,6 @@ import (
 	"unicode"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -115,7 +115,9 @@ func (b *planBuilder) buildAggregation(p LogicalPlan, aggFuncList []*ast.Aggrega
 	for _, col := range p.Schema().Columns {
 		newFunc := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 		plan4Agg.AggFuncs = append(plan4Agg.AggFuncs, newFunc)
-		schema4Agg.Append(col)
+		newCol, _ := col.Clone().(*expression.Column)
+		newCol.RetType = newFunc.RetTp
+		schema4Agg.Append(newCol)
 	}
 	plan4Agg.SetChildren(p)
 	plan4Agg.GroupByItems = gbyItems
@@ -137,7 +139,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 		case *ast.TableName:
 			p, err = b.buildDataSource(v)
 		default:
-			err = ErrUnsupportedType.GenByArgs(v)
+			err = ErrUnsupportedType.GenWithStackByArgs(v)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -159,7 +161,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 		for _, col := range p.Schema().Columns {
 			name := col.ColName.O
 			if _, ok := dupNames[name]; ok {
-				return nil, ErrDupFieldName.GenByArgs(name)
+				return nil, ErrDupFieldName.GenWithStackByArgs(name)
 			}
 			dupNames[name] = struct{}{}
 		}
@@ -169,13 +171,16 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) (p LogicalPlan,
 	case *ast.UnionStmt:
 		return b.buildUnion(x)
 	default:
-		return nil, ErrUnsupportedType.Gen("Unsupported ast.ResultSetNode(%T) for buildResultSetNode()", x)
+		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.ResultSetNode(%T) for buildResultSetNode()", x)
 	}
 }
 
-func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan) (
-	eqCond []*expression.ScalarFunction, leftCond []expression.Expression, rightCond []expression.Expression,
-	otherCond []expression.Expression) {
+// extractOnCondition divide conditions in CNF of join node into 4 groups.
+// These conditions can be where conditions, join conditions, or collection of both.
+// If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
+func extractOnCondition(conditions []expression.Expression, left LogicalPlan, right LogicalPlan,
+	deriveLeft bool, deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
+	rightCond []expression.Expression, otherCond []expression.Expression) {
 	for _, expr := range conditions {
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && binop.FuncName.L == ast.EQ {
@@ -208,6 +213,21 @@ func extractOnCondition(conditions []expression.Expression, left LogicalPlan, ri
 		} else if allFromLeft {
 			leftCond = append(leftCond, expr)
 		} else {
+			// Relax expr to two supersets: leftRelaxedCond and rightRelaxedCond, the expression now is
+			// `expr AND leftRelaxedCond AND rightRelaxedCond`. Motivation is to push filters down to
+			// children as much as possible.
+			if deriveLeft {
+				leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, left.Schema())
+				if leftRelaxedCond != nil {
+					leftCond = append(leftCond, leftRelaxedCond)
+				}
+			}
+			if deriveRight {
+				rightRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, right.Schema())
+				if rightRelaxedCond != nil {
+					rightCond = append(rightCond, rightRelaxedCond)
+				}
+			}
 			otherCond = append(otherCond, expr)
 		}
 	}
@@ -405,7 +425,7 @@ func (b *planBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 	if len(filter) > 0 && len(filter) != commonLen {
 		for col, notExist := range filter {
 			if notExist {
-				return ErrUnknownColumn.GenByArgs(col, "from clause")
+				return ErrUnknownColumn.GenWithStackByArgs(col, "from clause")
 			}
 		}
 	}
@@ -626,49 +646,41 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 }
 
 func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
-	unionSchema := u.children[0].Schema().Clone()
+	unionCols := make([]*expression.Column, 0, u.children[0].Schema().Len())
 
 	// Infer union result types by its children's schema.
-	for i, col := range unionSchema.Columns {
-		var resultTp *types.FieldType
-		for j, child := range u.children {
-			childTp := child.Schema().Columns[i].RetType
-			if j == 0 {
-				resultTp = childTp
-			} else {
-				resultTp = unionJoinFieldType(resultTp, childTp)
-			}
+	for i, col := range u.children[0].Schema().Columns {
+		resultTp := col.RetType
+		for j := 1; j < len(u.children); j++ {
+			childTp := u.children[j].Schema().Columns[i].RetType
+			resultTp = unionJoinFieldType(resultTp, childTp)
 		}
-		unionSchema.Columns[i] = col.Clone().(*expression.Column)
-		unionSchema.Columns[i].RetType = resultTp
-		unionSchema.Columns[i].DBName = model.NewCIStr("")
+		unionCols = append(unionCols, &expression.Column{
+			ColName:  col.ColName,
+			TblName:  col.TblName,
+			RetType:  resultTp,
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+		})
 	}
-	// If the types of some child don't match the types of union, we add a projection with cast function.
+	u.schema = expression.NewSchema(unionCols...)
+	// Process each child and add a projection above original child.
+	// So the schema of `UnionAll` can be the same with its children's.
 	for childID, child := range u.children {
 		exprs := make([]expression.Expression, len(child.Schema().Columns))
-		needProjection := false
 		for i, srcCol := range child.Schema().Columns {
-			dstType := unionSchema.Columns[i].RetType
+			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
 				exprs[i] = expression.BuildCastFunction4Union(b.ctx, srcCol, dstType)
-				needProjection = true
 			} else {
 				exprs[i] = srcCol
 			}
 		}
-		if _, isProj := child.(*LogicalProjection); needProjection || !isProj {
-			b.optFlag |= flagEliminateProjection
-			proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
-			if childID == 0 {
-				for _, col := range unionSchema.Columns {
-					col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
-				}
-			}
-			proj.SetChildren(child)
-			u.children[childID] = proj
-		}
-		u.children[childID].(*LogicalProjection).SetSchema(unionSchema.Clone())
+		b.optFlag |= flagEliminateProjection
+		proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
+		proj.SetSchema(expression.NewSchema(unionCols...))
+		proj.SetChildren(child)
+		u.children[childID] = proj
 	}
 }
 
@@ -678,7 +690,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 		return nil, errors.Trace(err)
 	}
 
-	unionDistinctPlan := b.buildSubUnion(distinctSelectPlans)
+	unionDistinctPlan := b.buildUnionAll(distinctSelectPlans)
 	if unionDistinctPlan != nil {
 		unionDistinctPlan = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
 		if len(allSelectPlans) > 0 {
@@ -686,7 +698,7 @@ func (b *planBuilder) buildUnion(union *ast.UnionStmt) (LogicalPlan, error) {
 		}
 	}
 
-	unionAllPlan := b.buildSubUnion(allSelectPlans)
+	unionAllPlan := b.buildUnionAll(allSelectPlans)
 	unionPlan := unionDistinctPlan
 	if unionAllPlan != nil {
 		unionPlan = unionAllPlan
@@ -731,14 +743,14 @@ func (b *planBuilder) divideUnionSelectPlans(selects []*ast.SelectStmt) (distinc
 			columnNums = selectPlan.Schema().Len()
 		}
 		if selectPlan.Schema().Len() != columnNums {
-			return nil, nil, ErrWrongNumberOfColumnsInSelect.GenByArgs()
+			return nil, nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 		}
 		children[i] = selectPlan
 	}
 	return children[:firstUnionAllIdx], children[firstUnionAllIdx:], nil
 }
 
-func (b *planBuilder) buildSubUnion(subPlan []LogicalPlan) LogicalPlan {
+func (b *planBuilder) buildUnionAll(subPlan []LogicalPlan) LogicalPlan {
 	if len(subPlan) == 0 {
 		return nil
 	}
@@ -803,6 +815,23 @@ func getUintForLimitOffset(sc *stmtctx.StatementContext, val interface{}) (uint6
 	return 0, errors.Errorf("Invalid type %T for LogicalLimit/Offset", val)
 }
 
+func extractLimitCountOffset(sc *stmtctx.StatementContext, limit *ast.Limit) (count uint64,
+	offset uint64, err error) {
+	if limit.Count != nil {
+		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
+		if err != nil {
+			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
+		}
+	}
+	if limit.Offset != nil {
+		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
+		if err != nil {
+			return 0, 0, ErrWrongArguments.GenWithStackByArgs("LIMIT")
+		}
+	}
+	return count, offset, nil
+}
+
 func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPushDownTopN
 	var (
@@ -810,18 +839,8 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		err           error
 	)
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if limit.Offset != nil {
-		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
-		if err != nil {
-			return nil, ErrWrongArguments.GenByArgs("LIMIT")
-		}
-	}
-
-	if limit.Count != nil {
-		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
-		if err != nil {
-			return nil, ErrWrongArguments.GenByArgs("LIMIT")
-		}
+	if count, offset, err = extractLimitCountOffset(sc, limit); err != nil {
+		return nil, err
 	}
 
 	if count > math.MaxUint64-offset {
@@ -890,7 +909,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 				index = i
 			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) &&
 				!colMatch(curCol.Name, matchedExpr.(*ast.ColumnNameExpr).Name) {
-				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L, clauseMsg[fieldList])
+				return -1, ErrAmbiguous.GenWithStackByArgs(curCol.Name.Name.L, clauseMsg[fieldList])
 			}
 		}
 	}
@@ -1019,7 +1038,7 @@ func (a *havingAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, ok bool
 					return n, true
 				}
 			}
-			a.err = ErrUnknownColumn.GenByArgs(v.Name.OrigColName(), clauseMsg[a.curClause])
+			a.err = ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), clauseMsg[a.curClause])
 			return node, false
 		}
 		if a.inAggFunc {
@@ -1125,7 +1144,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				ret := g.fields[index].Expr
 				ret.Accept(extractor)
 				if len(extractor.AggFuncs) != 0 {
-					err = ErrIllegalReference.GenByArgs(v.Name.OrigColName(), "reference to group function")
+					err = ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to group function")
 				} else {
 					return ret, true
 				}
@@ -1141,7 +1160,7 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		ret := g.fields[v.N-1].Expr
 		ret.Accept(extractor)
 		if len(extractor.AggFuncs) != 0 {
-			g.err = ErrWrongGroupField.GenByArgs(g.fields[v.N-1].Text())
+			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[v.N-1].Text())
 			return inNode, false
 		}
 		return ret, true
@@ -1402,9 +1421,9 @@ func (b *planBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 		}
 		switch errExprLoc.Loc {
 		case ErrExprInSelect:
-			return ErrFieldNotInGroupBy.GenByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.Fields.Fields[errExprLoc.Offset].Text())
+			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.Fields.Fields[errExprLoc.Offset].Text())
 		case ErrExprInOrderBy:
-			return ErrFieldNotInGroupBy.GenByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.OrderBy.Items[errExprLoc.Offset].Expr.Text())
+			return ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.OrderBy.Items[errExprLoc.Offset].Expr.Text())
 		}
 		return nil
 	}
@@ -1453,7 +1472,7 @@ func (c *colResolverForOnlyFullGroupBy) Leave(node ast.Node) (ast.Node, bool) {
 
 func (c *colResolverForOnlyFullGroupBy) Check() error {
 	if c.hasAggFunc && c.firstNonAggCol != nil {
-		return ErrMixOfGroupFuncAndFields.GenByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
+		return ErrMixOfGroupFuncAndFields.GenWithStackByArgs(c.firstNonAggColIdx+1, c.firstNonAggCol.Name.O)
 	}
 	return nil
 }
@@ -1547,7 +1566,7 @@ func (b *planBuilder) unfoldWildStar(p LogicalPlan, selectFields []*ast.SelectFi
 			}
 		}
 		if !findTblNameInSchema {
-			return nil, ErrBadTable.GenByArgs(tblName)
+			return nil, ErrBadTable.GenWithStackByArgs(tblName)
 		}
 	}
 	return resultList, nil
@@ -2085,7 +2104,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 		tableInfo := tn.TableInfo
 		tableVal, found := b.is.TableByID(tableInfo.ID)
 		if !found {
-			return nil, nil, infoschema.ErrTableNotExists.GenByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
+			return nil, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tn.DBInfo.Name.O, tableInfo.Name.O)
 		}
 		for i, colInfo := range tableInfo.Columns {
 			if !colInfo.IsGenerated() {
@@ -2093,7 +2112,7 @@ func (b *planBuilder) buildUpdateLists(tableList []*ast.TableName, list []*ast.A
 			}
 			columnFullName := fmt.Sprintf("%s.%s.%s", tn.Schema.L, tn.Name.L, colInfo.Name.L)
 			if _, ok := modifyColumns[columnFullName]; ok {
-				return nil, nil, ErrBadGeneratedColumn.GenByArgs(colInfo.Name.O, tableInfo.Name.O)
+				return nil, nil, ErrBadGeneratedColumn.GenWithStackByArgs(colInfo.Name.O, tableInfo.Name.O)
 			}
 			for _, asName := range tableAsName[tableInfo] {
 				virtualAssignments = append(virtualAssignments, &ast.Assignment{
@@ -2257,11 +2276,11 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 					}
 					if asName == tblName {
 						// check sql like: `delete a from (select * from t) as a, t`
-						return nil, ErrNonUpdatableTable.GenByArgs(tn.Name.O, "DELETE")
+						return nil, ErrNonUpdatableTable.GenWithStackByArgs(tn.Name.O, "DELETE")
 					}
 				}
 				// check sql like: `delete b from (select * from t) as a, t`
-				return nil, ErrUnknownTable.GenByArgs(tn.Name.O, "MULTI DELETE")
+				return nil, ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tn.Schema.L, tn.TableInfo.Name.L, "")
 		}

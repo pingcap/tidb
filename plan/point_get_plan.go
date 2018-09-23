@@ -17,16 +17,17 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/plan/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // PointGetPlan is a fast plan for simple point get.
@@ -84,21 +85,21 @@ func (p *PointGetPlan) ExplainInfo() string {
 }
 
 // getChildReqProps gets the required property by child index.
-func (p *PointGetPlan) getChildReqProps(idx int) *requiredProp {
+func (p *PointGetPlan) getChildReqProps(idx int) *property.PhysicalProperty {
 	return nil
 }
 
-// StatsCount will return the the count of statsInfo for this plan.
+// StatsCount will return the the RowCount of property.StatsInfo for this plan.
 func (p *PointGetPlan) StatsCount() float64 {
 	return 1
 }
 
-// StatsCount will return the the count of statsInfo for this plan.
-func (p *PointGetPlan) statsInfo() *statsInfo {
+// StatsCount will return the the RowCount of property.StatsInfo for this plan.
+func (p *PointGetPlan) statsInfo() *property.StatsInfo {
 	if p.stats == nil {
-		p.stats = &statsInfo{}
+		p.stats = &property.StatsInfo{}
 	}
-	p.stats.count = 1
+	p.stats.RowCount = 1
 	return p.stats
 }
 
@@ -138,14 +139,19 @@ func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 // tryPointGetPlan determine if the SelectStmt can use a PointGetPlan.
 // Returns nil if not applicable.
 // To use the PointGetPlan the following rules must be satisfied:
-// 1. No group-by, having, order by, limit clause.
+// 1. For the limit clause, the count should at least 1 and the offset is 0.
 // 2. It must be a single table select.
 // 3. All the columns must be public and generated.
 // 4. The condition is an access path that the range is a unique key.
 func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetPlan {
-	if selStmt.GroupBy != nil || selStmt.Having != nil || selStmt.OrderBy != nil || selStmt.Limit != nil ||
-		selStmt.LockTp != ast.SelectLockNone {
+	if selStmt.Having != nil || selStmt.LockTp != ast.SelectLockNone {
 		return nil
+	} else if selStmt.Limit != nil {
+		sc := ctx.GetSessionVars().StmtCtx
+		count, offset, err := extractLimitCountOffset(sc, selStmt.Limit)
+		if err != nil || count == 0 || offset > 0 {
+			return nil
+		}
 	}
 	tblName := getSingleTableName(selStmt.From)
 	if tblName == nil {

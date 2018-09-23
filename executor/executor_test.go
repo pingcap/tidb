@@ -26,7 +26,7 @@ import (
 	"time"
 
 	gofail "github.com/etcd-io/gofail/runtime"
-	"github.com/juju/errors"
+	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
@@ -59,6 +59,9 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -990,12 +993,12 @@ func (s *testSuite) TestUnion(c *C) {
 
 	_, err := tk.Exec("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
-	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
 	_, err = tk.Exec("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
 	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
@@ -1283,23 +1286,23 @@ func (s *testSuite) TestJSON(c *C) {
 
 	_, err = tk.Exec(`create table test_bad_json(a json default '{}')`)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a blob default 'hello')`)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a text default 'world')`)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	// check json fields cannot be used as key.
 	_, err = tk.Exec(`create table test_bad_json(id int, a json, key (a))`)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrJSONUsedAsKey))
 
 	// check CAST AS JSON.
@@ -1378,7 +1381,7 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 		_, err := tk.Exec(tt.stmt)
 		if tt.err != 0 {
 			c.Assert(err, NotNil, Commentf("sql is `%v`", tt.stmt))
-			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			terr := errors.Cause(err).(*terror.Error)
 			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err), Commentf("sql is %v", tt.stmt))
 		} else {
 			c.Assert(err, IsNil)
@@ -1513,7 +1516,7 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 		_, err := tk.Exec(tt.stmt)
 		if tt.err != 0 {
 			c.Assert(err, NotNil)
-			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			terr := errors.Cause(err).(*terror.Error)
 			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
 		} else {
 			c.Assert(err, IsNil)
@@ -2357,6 +2360,32 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Unlock()
 }
 
+func (s *testSuite) TestTimezonePushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (ts timestamp)")
+	defer tk.MustExec("drop table t")
+	tk.MustExec(`insert into t values ("2018-09-13 10:02:06")`)
+
+	systemTZ := timeutil.SystemLocation()
+	c.Assert(systemTZ.String(), Not(Equals), "System")
+	ctx := context.Background()
+	count := 0
+	ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
+		count += 1
+		dagReq := new(tipb.DAGRequest)
+		err := proto.Unmarshal(req.Data, dagReq)
+		c.Assert(err, IsNil)
+		c.Assert(dagReq.GetTimeZoneName(), Equals, systemTZ.String())
+	})
+	tk.Se.Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+
+	tk.MustExec(`set time_zone="System"`)
+	tk.Se.Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+
+	c.Assert(count, Equals, 2) // Make sure the hook function is called.
+}
+
 func (s *testSuite) TestNotFillCacheFlag(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2651,7 +2680,7 @@ func (s *testSuite) TestContainDotColumn(c *C) {
 
 	tk.MustExec("drop table if exists t3")
 	_, err := tk.Exec("create table t3(s.a char);")
-	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongTableName))
 }
 

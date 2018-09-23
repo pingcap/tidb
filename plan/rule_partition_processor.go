@@ -13,11 +13,11 @@
 package plan
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 )
 
 // partitionProcessor rewrites the ast for table partition.
@@ -122,6 +122,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 	unionAll := LogicalUnionAll{}.init(ds.context())
 	unionAll.SetChildren(children...)
+	unionAll.SetSchema(ds.schema)
 	return unionAll, nil
 }
 
