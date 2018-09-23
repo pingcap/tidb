@@ -427,7 +427,7 @@ func CheckForNullValue(ctx sessionctx.Context, schema, table, oldCol, newCol mod
 	}
 
 	if len(rows) != 0 {
-		return ErrWarnDataTruncated.GenByArgs(newCol.L, len(rows))
+		return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, len(rows))
 	}
 	return nil
 }
