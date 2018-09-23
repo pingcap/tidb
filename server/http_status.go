@@ -37,6 +37,8 @@ func (s *Server) startStatusHTTP() {
 
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
+	router.HandleFunc("/", s.handleHTTPRoot)
+
 	router.HandleFunc("/status", s.handleStatus)
 	// HTTP path for prometheus.
 	router.Handle("/metrics", prometheus.Handler())
@@ -122,4 +124,25 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 		_, err = w.Write(js)
 		terror.Log(errors.Trace(err))
 	}
+}
+
+func (s *Server) handleHTTPRoot(w http.ResponseWriter, req *http.Request) {
+	var landingPage = []byte(`<html>
+<head><title>TiDB Status and Metrics Report</title></head>
+<body>
+<h1>TiDB Status and Metrics Report</h1>
+<table>
+<tr><td><a href='/status'>Status</a><td></tr>
+<tr><td><a href='/metrics'>Metrics</a><td></tr>
+<tr><td><a href='/settings'>Settings</a><td></tr>
+<tr><td><a href='/binlog/recover'>BinlogRecover</a><td></tr>
+<tr><td><a href='/schema'>Schema</a><td></tr>
+<tr><td><a href='/info'>Info</a><td></tr>
+<tr><td><a href='/info/all'>InfoAll</a><td></tr>
+<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>
+</table>
+</body>
+</html>
+`)
+	w.Write(landingPage)
 }
