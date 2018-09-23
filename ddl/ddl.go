@@ -190,9 +190,8 @@ var (
 	// ErrUniqueKeyNeedAllFieldsInPf returns must include all columns in the table's partitioning function.
 	ErrUniqueKeyNeedAllFieldsInPf = terror.ClassDDL.New(codeUniqueKeyNeedAllFieldsInPf, mysql.MySQLErrName[mysql.ErrUniqueKeyNeedAllFieldsInPf])
 	errWrongExprInPartitionFunc   = terror.ClassDDL.New(codeWrongExprInPartitionFunc, mysql.MySQLErrName[mysql.ErrWrongExprInPartitionFunc])
-
-	// ErrWarnDataTruncated returns data truncated for column '%s' at row %d.
-	ErrWarnDataTruncated = terror.ClassDDL.New(codeWarnDataTruncated,mysql.MySQLErrName[mysql.WarnDataTruncated])
+	// ErrWarnDataTruncated returns data truncated error.
+	ErrWarnDataTruncated = terror.ClassDDL.New(codeWarnDataTruncated, mysql.MySQLErrName[mysql.WarnDataTruncated])
 )
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
@@ -623,7 +622,7 @@ const (
 	codeUniqueKeyNeedAllFieldsInPf             = terror.ErrCode(mysql.ErrUniqueKeyNeedAllFieldsInPf)
 	codePrimaryCantHaveNull                    = terror.ErrCode(mysql.ErrPrimaryCantHaveNull)
 	codeWrongExprInPartitionFunc               = terror.ErrCode(mysql.ErrWrongExprInPartitionFunc)
-	codeWarnDataTruncated 					   = terror.ErrCode(mysql.WarnDataTruncated)
+	codeWarnDataTruncated                      = terror.ErrCode(mysql.WarnDataTruncated)
 )
 
 func init() {
@@ -671,7 +670,7 @@ func init() {
 		codeUniqueKeyNeedAllFieldsInPf:             mysql.ErrUniqueKeyNeedAllFieldsInPf,
 		codePrimaryCantHaveNull:                    mysql.ErrPrimaryCantHaveNull,
 		codeWrongExprInPartitionFunc:               mysql.ErrWrongExprInPartitionFunc,
-		codeWarnDataTruncated:						mysql.WarnDataTruncated,
+		codeWarnDataTruncated:                      mysql.WarnDataTruncated,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
 }
