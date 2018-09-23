@@ -66,6 +66,7 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 		{`"hello,\"quoted string\",world"`, `hello,"quoted string",world`},
 		{`"hello,\"宽字符\",world"`, `hello,"宽字符",world`},
 		{`Invalid Json string\tis OK`, `Invalid Json string	is OK`},
+		{`"1\\u2232\\u22322"`, `1\u2232\u22322`},
 	}
 	dtbl := tblToDtbl(tbl)
 	for _, t := range dtbl {
