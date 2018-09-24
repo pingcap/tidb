@@ -246,7 +246,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "myisam_mmap_size", "18446744073709551615"},
 	{ScopeGlobal, "init_slave", ""},
 	{ScopeNone, "innodb_buffer_pool_instances", "8"},
-	{ScopeGlobal | ScopeSession, "block_encryption_mode", "aes-128-ecb"},
+	{ScopeGlobal | ScopeSession, BlockEncryptionMode, "aes-128-ecb"},
 	{ScopeGlobal | ScopeSession, "max_length_for_sort_data", "1024"},
 	{ScopeNone, "character_set_system", "utf8"},
 	{ScopeGlobal | ScopeSession, "interactive_timeout", "28800"},
@@ -766,6 +766,8 @@ const (
 	ConnectTimeout = "connect_timeout"
 	// SyncBinlog is the name for 'sync_binlog' system variable.
 	SyncBinlog = "sync_binlog"
+	// BlockEncryptionMode is the name for 'block_encryption_mode' system variable.
+	BlockEncryptionMode = "block_encryption_mode"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
