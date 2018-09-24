@@ -330,6 +330,8 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		// Modify the type defined Flag to NotNullFlag.
 		tblInfo.Columns[oldCol.Offset].Flag = newCol.Flag
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		// Wait for two leases to ensure that all nodes in the cluster are updated successfully.
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -337,7 +339,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 
 		err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
 		if err != nil {
-			// Execute rollback if an error occurs.
+			// If there is a null value inserted, it cannot be modified and needs to be rollback.
 			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag
 			var err1 error
 			ver, err1 = updateVersionAndTableInfo(t, job, tblInfo, true)
