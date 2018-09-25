@@ -33,6 +33,7 @@ type JSONTable struct {
 	Indices      map[string]*jsonColumn `json:"indices"`
 	Count        int64                  `json:"count"`
 	ModifyCount  int64                  `json:"modify_count"`
+	Partitions   map[string]*JSONTable  `json:"partitions"`
 }
 
 type jsonColumn struct {
@@ -58,7 +59,30 @@ func dumpJSONCol(hist *Histogram, CMSketch *CMSketch) *jsonColumn {
 
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JSONTable, error) {
-	tbl, err := h.tableStatsFromStorage(tableInfo, tableInfo.ID, true)
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID)
+	}
+	jsonTbl := &JSONTable{
+		DatabaseName: dbName,
+		TableName:    tableInfo.Name.L,
+		Partitions:   make(map[string]*JSONTable, len(pi.Definitions)),
+	}
+	for _, def := range pi.Definitions {
+		tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if tbl == nil {
+			continue
+		}
+		jsonTbl.Partitions[def.Name.L] = tbl
+	}
+	return jsonTbl, nil
+}
+
+func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64) (*JSONTable, error) {
+	tbl, err := h.tableStatsFromStorage(tableInfo, physicalID, true)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -91,11 +115,37 @@ func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo) (*JS
 
 // LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable) error {
-	tableInfo, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
+	table, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tbl, err := h.LoadStatsFromJSONToTable(tableInfo.Meta(), jsonTbl)
+	tableInfo := table.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, jsonTbl)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		if jsonTbl.Partitions == nil {
+			return errors.New("No partition statistics")
+		}
+		for _, def := range pi.Definitions {
+			tbl := jsonTbl.Partitions[def.Name.L]
+			if tbl == nil {
+				continue
+			}
+			err := h.loadStatsFromJSON(tableInfo, def.ID, tbl)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return errors.Trace(h.Update(is))
+}
+
+func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *JSONTable) error {
+	tbl, err := TableStatsFromJSON(tableInfo, physicalID, jsonTbl)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -116,13 +166,13 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(h.Update(is))
+	return nil
 }
 
-// LoadStatsFromJSONToTable load statistic from JSONTable and return the Table of statistic.
-func (h *Handle) LoadStatsFromJSONToTable(tableInfo *model.TableInfo, jsonTbl *JSONTable) (*Table, error) {
+// TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
+func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *JSONTable) (*Table, error) {
 	newHistColl := HistColl{
-		PhysicalID:     tableInfo.ID,
+		PhysicalID:     physicalID,
 		HavePhysicalID: true,
 		Count:          jsonTbl.Count,
 		ModifyCount:    jsonTbl.ModifyCount,

@@ -352,6 +352,11 @@ create table t(a bigint primary key);
 explain select * from t where a = 1 and a = 2;
 id	count	task	operator info
 TableDual_5	0.00	root	rows:0
+explain select null or a > 1 from t;
+id	count	task	operator info
+Projection_3	10000.00	root	or(NULL, gt(test.t.a, 1))
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists ta, tb;
 create table ta (a varchar(20));
 create table tb (a varchar(20));
