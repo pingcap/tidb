@@ -157,6 +157,7 @@ type Performance struct {
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
+	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -290,6 +291,7 @@ var defaultConf = Config{
 		FeedbackProbability: 0.05,
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,
+		ForcePriority:       "NO_PRIORITY",
 	},
 	XProtocol: XProtocol{
 		XHost: "",
