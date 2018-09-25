@@ -221,6 +221,19 @@ func (s *testSuite) TestSetVar(c *C) {
 
 	tk.MustExec("set @@tidb_general_log = 1")
 	tk.MustExec("set @@tidb_general_log = 0")
+
+	tk.MustExec(`set tidb_force_priority = "no_priority"`)
+	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
+	tk.MustExec(`set tidb_force_priority = "low_priority"`)
+	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("LOW_PRIORITY"))
+	tk.MustExec(`set tidb_force_priority = "high_priority"`)
+	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("HIGH_PRIORITY"))
+	tk.MustExec(`set tidb_force_priority = "delayed"`)
+	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("DELAYED"))
+	tk.MustExec(`set tidb_force_priority = "abc"`)
+	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
+	_, err = tk.Exec(`set global tidb_force_priority = ""`)
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestSetCharset(c *C) {

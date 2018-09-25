@@ -286,9 +286,8 @@ func mockContext() sessionctx.Context {
 func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 	defer testleak.AfterTest(c)()
 	tests := []struct {
-		sql   string
-		first string
-		best  string
+		sql  string
+		best string
 	}{
 		{
 			sql:  "select count(*) from t a, t b where a.a = b.a",
@@ -372,7 +371,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select a, d from (select * from t union all select * from t union all select * from t) z where a < 10",
-			best: "UnionAll{DataScan(t)->Projection->DataScan(t)->Projection->DataScan(t)->Projection}->Projection",
+			best: "UnionAll{DataScan(t)->Projection->Projection->DataScan(t)->Projection->Projection->DataScan(t)->Projection->Projection}->Projection",
 		},
 		{
 			sql:  "select (select count(*) from t where t.a = k.a) from t k",
@@ -548,8 +547,8 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 	}{
 		// issue #7628, left join with where condition
 		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2)",
-			sel:   "[or(and(eq(t1.a, 1), eq(t2.a, 1)), and(eq(t1.a, 2), eq(t2.a, 2)))]",
+			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.a=1 and t2.a is null) or (t1.a=2 and t2.a=2)",
+			sel:   "[or(and(eq(t1.a, 1), isnull(t2.a)), and(eq(t1.a, 2), eq(t2.a, 2)))]",
 			left:  "[or(eq(t1.a, 1), eq(t1.a, 2))]",
 			right: "[]",
 		},
@@ -560,8 +559,8 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 			right: "[]",
 		},
 		{
-			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4))) or (t1.a=2 and t2.a=2)",
-			sel:   "[or(and(eq(t1.c, 1), or(and(eq(t1.a, 3), eq(t2.a, 3)), and(eq(t1.a, 4), eq(t2.a, 4)))), and(eq(t1.a, 2), eq(t2.a, 2)))]",
+			sql:   "select * from t as t1 left join t as t2 on t1.b = t2.b where (t1.c=1 and ((t1.a=3 and t2.a=3) or (t1.a=4 and t2.a=4))) or (t1.a=2 and t2.a is null)",
+			sel:   "[or(and(eq(t1.c, 1), or(and(eq(t1.a, 3), eq(t2.a, 3)), and(eq(t1.a, 4), eq(t2.a, 4)))), and(eq(t1.a, 2), isnull(t2.a)))]",
 			left:  "[or(and(eq(t1.c, 1), or(eq(t1.a, 3), eq(t1.a, 4))), eq(t1.a, 2))]",
 			right: "[]",
 		},
@@ -590,6 +589,63 @@ func (s *testPlanSuite) TestOuterWherePredicatePushDown(c *C) {
 		rightCond := fmt.Sprintf("%s", rightPlan.pushedDownConds)
 		c.Assert(leftCond, Equals, ca.left, comment)
 		c.Assert(rightCond, Equals, ca.right, comment)
+	}
+}
+
+func (s *testPlanSuite) TestSimplifyOuterJoin(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql      string
+		best     string
+		joinType string
+	}{
+		{
+			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where t1.c > 1 or t2.c > 1;",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Sel([or(gt(t1.c, 1), gt(t2.c, 1))])->Projection",
+			joinType: "left outer join",
+		},
+		{
+			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where t1.c > 1 and t2.c > 1;",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			joinType: "inner join",
+		},
+		{
+			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 or t2.c > 1);",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Projection",
+			joinType: "inner join",
+		},
+		{
+			sql:      "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 and t2.c > 1);",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(t1.b,t2.b)->Sel([not(and(le(t1.c, 1), le(t2.c, 1)))])->Projection",
+			joinType: "left outer join",
+		},
+		{
+			sql:      "select * from t t1 left join t t2 on t1.b > 1 where t1.c = t2.c;",
+			best:     "Join{DataScan(t1)->DataScan(t2)}(t1.c,t2.c)->Projection",
+			joinType: "inner join",
+		},
+		{
+			sql:      "select * from t t1 left join t t2 on true where t1.b <=> t2.b;",
+			best:     "Join{DataScan(t1)->DataScan(t2)}->Sel([nulleq(t1.b, t2.b)])->Projection",
+			joinType: "left outer join",
+		},
+	}
+	for _, ca := range tests {
+		comment := Commentf("for %s", ca.sql)
+		stmt, err := s.ParseOneStmt(ca.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
+		c.Assert(err, IsNil, comment)
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns, p.(LogicalPlan))
+		c.Assert(err, IsNil, comment)
+		c.Assert(ToString(p), Equals, ca.best, comment)
+		join, ok := p.(LogicalPlan).Children()[0].(*LogicalJoin)
+		if !ok {
+			join, ok = p.(LogicalPlan).Children()[0].Children()[0].(*LogicalJoin)
+			c.Assert(ok, IsTrue, comment)
+		}
+		joinType := fmt.Sprintf("%s", join.JoinType.String())
+		c.Assert(joinType, Equals, ca.joinType, comment)
 	}
 }
 
@@ -1011,7 +1067,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		},
 		{
 			sql:  "select sum(c1) from (select c c1, d c2 from t a union all select a c1, b c2 from t b union all select b c1, e c2 from t c) x group by c2",
-			best: "UnionAll{DataScan(a)->Aggr(sum(a.c),firstrow(a.d))->DataScan(b)->Aggr(sum(b.a),firstrow(b.b))->DataScan(c)->Aggr(sum(c.b),firstrow(c.e))}->Aggr(sum(join_agg_0))->Projection",
+			best: "UnionAll{DataScan(a)->Projection->Aggr(sum(a.c1),firstrow(a.c2))->DataScan(b)->Projection->Aggr(sum(b.c1),firstrow(b.c2))->DataScan(c)->Projection->Aggr(sum(c.c1),firstrow(c.c2))}->Aggr(sum(join_agg_0))->Projection",
 		},
 		{
 			sql:  "select max(a.b), max(b.b) from t a join t b on a.c = b.c group by a.a",
@@ -1023,7 +1079,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 		},
 		{
 			sql:  "select max(c.b) from (select * from t a union all select * from t b) c group by c.a",
-			best: "UnionAll{DataScan(a)->Projection->DataScan(b)->Projection}->Projection->Projection",
+			best: "UnionAll{DataScan(a)->Projection->Projection->Projection->DataScan(b)->Projection->Projection->Projection}->Aggr(max(join_agg_0))->Projection",
 		},
 		{
 			sql:  "select max(a.c) from t a join t b on a.a=b.a and a.b=b.b group by a.b",

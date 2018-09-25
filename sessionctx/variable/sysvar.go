@@ -246,7 +246,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "myisam_mmap_size", "18446744073709551615"},
 	{ScopeGlobal, "init_slave", ""},
 	{ScopeNone, "innodb_buffer_pool_instances", "8"},
-	{ScopeGlobal | ScopeSession, "block_encryption_mode", "aes-128-ecb"},
+	{ScopeGlobal | ScopeSession, BlockEncryptionMode, "aes-128-ecb"},
 	{ScopeGlobal | ScopeSession, "max_length_for_sort_data", "1024"},
 	{ScopeNone, "character_set_system", "utf8"},
 	{ScopeGlobal | ScopeSession, "interactive_timeout", "28800"},
@@ -287,7 +287,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "thread_cache_size", "9"},
 	{ScopeGlobal, "log_slow_admin_statements", "OFF"},
 	{ScopeNone, "innodb_checksums", "ON"},
-	{ScopeNone, "hostname", "localhost"},
+	{ScopeNone, "hostname", ServerHostname},
 	{ScopeGlobal | ScopeSession, "auto_increment_offset", "1"},
 	{ScopeNone, "ft_stopword_file", "(built-in)"},
 	{ScopeGlobal, "innodb_max_dirty_pages_pct_lwm", "0"},
@@ -663,6 +663,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBConfig, ""},
 	{ScopeGlobal | ScopeSession, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
+	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
@@ -765,6 +766,8 @@ const (
 	ConnectTimeout = "connect_timeout"
 	// SyncBinlog is the name for 'sync_binlog' system variable.
 	SyncBinlog = "sync_binlog"
+	// BlockEncryptionMode is the name for 'block_encryption_mode' system variable.
+	BlockEncryptionMode = "block_encryption_mode"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
