@@ -29,7 +29,6 @@ type aggregationEliminator struct {
 }
 
 type aggregationEliminateChecker struct {
-	aggregation.AggFuncTypeInferer
 }
 
 // tryToEliminateAggregation will eliminate aggregation grouped by unique key.
@@ -95,7 +94,7 @@ func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs
 		isNullExprs = append(isNullExprs, isNullExpr)
 	}
 	innerExpr := expression.ComposeDNFCondition(ctx, isNullExprs...)
-	newExpr := expression.NewFunctionInternal(ctx, ast.If, a.InferCount(ctx), innerExpr, expression.Zero, expression.One)
+	newExpr := expression.NewFunctionInternal(ctx, ast.If, targetTp, innerExpr, expression.Zero, expression.One)
 	return newExpr
 }
 
