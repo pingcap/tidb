@@ -389,8 +389,10 @@ func (b *executorBuilder) buildChecksumTable(v *plannercore.ChecksumTable) Execu
 }
 
 func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) Executor {
+	base := newBaseExecutor(b.ctx, nil, v.ExplainID())
+	base.initCap = chunk.NoDataChunkCap
 	e := &DeallocateExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()).withInitCap(chunk.NoDataChunkCap),
+		baseExecutor: base,
 		Name:         v.Name,
 	}
 	return e
@@ -423,8 +425,10 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 		return nil
 	}
 	n := int(mathutil.MinUint64(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec)
+	base.initCap = n
 	e := &LimitExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec).withInitCap(n),
+		baseExecutor: base,
 		begin:        v.Offset,
 		end:          v.Offset + v.Count,
 	}
@@ -432,8 +436,10 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 }
 
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base.initCap = chunk.NoDataChunkCap
 	e := &PrepareExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()).withInitCap(chunk.NoDataChunkCap),
+		baseExecutor: base,
 		is:           b.is,
 		name:         v.Name,
 		sqlText:      v.SQLText,
@@ -487,8 +493,10 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 	case *ast.RevokeStmt:
 		return b.buildRevoke(s)
 	}
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base.initCap = chunk.NoDataChunkCap
 	e := &SimpleExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()).withInitCap(chunk.NoDataChunkCap),
+		baseExecutor: base,
 		Statement:    v.Statement,
 		is:           b.is,
 	}
@@ -496,8 +504,10 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 }
 
 func (b *executorBuilder) buildSet(v *plannercore.Set) Executor {
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base.initCap = chunk.NoDataChunkCap
 	e := &SetExecutor{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()).withInitCap(chunk.NoDataChunkCap),
+		baseExecutor: base,
 		vars:         v.VarAssigns,
 	}
 	return e
@@ -511,10 +521,11 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	}
 	var baseExec baseExecutor
 	if selectExec != nil {
-		baseExec = newBaseExecutor(b.ctx, nil, v.ExplainID(), selectExec).withInitCap(chunk.NoDataChunkCap)
+		baseExec = newBaseExecutor(b.ctx, nil, v.ExplainID(), selectExec)
 	} else {
-		baseExec = newBaseExecutor(b.ctx, nil, v.ExplainID()).withInitCap(chunk.NoDataChunkCap)
+		baseExec = newBaseExecutor(b.ctx, nil, v.ExplainID())
 	}
+	baseExec.initCap = chunk.NoDataChunkCap
 
 	ivs := &InsertValues{
 		baseExecutor:          baseExec,
@@ -1084,8 +1095,10 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 		b.err = errors.Errorf("buildTableDual failed, invalid row count for dual table: %v", v.RowCount)
 		return nil
 	}
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
+	base.initCap = v.RowCount
 	e := &TableDualExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()).withInitCap(v.RowCount),
+		baseExecutor: base,
 		numDualRows:  v.RowCount,
 	}
 	// Init the startTS for later use.
@@ -1202,9 +1215,10 @@ func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Execu
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	e := &MaxOneRowExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec).withInitCap(2).withMaxChunkSize(2),
-	}
+	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec)
+	base.initCap = 2
+	base.maxChunkSize = 2
+	e := &MaxOneRowExec{baseExecutor: base}
 	return e
 }
 
@@ -1234,8 +1248,10 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		return nil
 	}
 	columns2Handle := buildColumns2Handle(v.SelectPlan.Schema(), tblID2table)
+	base := newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec)
+	base.initCap = chunk.NoDataChunkCap
 	updateExec := &UpdateExec{
-		baseExecutor:   newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec).withInitCap(chunk.NoDataChunkCap),
+		baseExecutor:   base,
 		SelectExec:     selExec,
 		OrderedList:    v.OrderedList,
 		tblID2table:    tblID2table,
@@ -1313,8 +1329,10 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
+	base := newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec)
+	base.initCap = chunk.NoDataChunkCap
 	deleteExec := &DeleteExec{
-		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec).withInitCap(chunk.NoDataChunkCap),
+		baseExecutor: base,
 		SelectExec:   selExec,
 		Tables:       v.Tables,
 		IsMultiTable: v.IsMultiTable,
