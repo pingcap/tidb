@@ -37,9 +37,9 @@ func (sf *stddevSampFunction) updateSingle(sc *stmtctx.StatementContext, evalCtx
 		return nil
 	}
 	if sf.HasDistinct {
-		d, err := evalCtx.DistinctChecker.Check([]types.Datum{value})
-		if err != nil {
-			return errors.Trace(err)
+		d, err1 := evalCtx.DistinctChecker.Check([]types.Datum{value})
+		if err1 != nil {
+			return errors.Trace(err1)
 		}
 		if !d {
 			return nil
