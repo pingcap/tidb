@@ -226,7 +226,7 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 	}
 
 	// Try to limits the memory usage.
-	if latch.count > 5 {
+	if latch.count > latchListCount {
 		latch.recycle(lock.startTS)
 	}
 
@@ -246,10 +246,8 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 	return acquireLocked
 }
 
+// recycle is not thread safe, the latch should acquire its lock before executing this function.
 func (l *latch) recycle(currentTS uint64) {
-	l.Lock()
-	defer l.Unlock()
-
 	if l.queue == nil {
 		return
 	}
@@ -278,7 +276,9 @@ func (l *latch) recycle(currentTS uint64) {
 func (latches *Latches) recycle(currentTS uint64) {
 	for i := 0; i < len(latches.slots); i++ {
 		latch := &latches.slots[i]
+		latch.Lock()
 		latch.recycle(currentTS)
+		latch.Unlock()
 	}
 }
 
