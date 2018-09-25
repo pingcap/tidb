@@ -426,6 +426,11 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 			sql:  "select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0",
 			best: "Join{DataScan(t1)->DataScan(t2)}(t1.a,t2.a)->Projection",
 		},
+		// issue #7728
+		{
+			sql:  "select * from t t1 join t t2 on t1.a = t2.a where t2.a = null",
+			best: "Dual->Projection",
+		},
 	}
 	for _, ca := range tests {
 		comment := Commentf("for %s", ca.sql)
