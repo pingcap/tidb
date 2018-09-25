@@ -184,7 +184,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		return nil
 	}
 	handleDatum := findPKHandle(tbl, pairs)
-	if handleDatum.Kind() == types.KindInt64 {
+	if handleDatum.Kind() != types.KindNull {
 		if len(pairs) != 1 {
 			return nil
 		}
@@ -193,7 +193,11 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 			return nil
 		}
 		p := newPointGetPlan(ctx, schema, tbl)
-		p.Handle = handleDatum.GetInt64()
+		var err error
+		p.Handle, err = handleDatum.ToInt64(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return nil
+		}
 		return p
 	}
 	for _, idxInfo := range tbl.Indices {
@@ -201,7 +205,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 			continue
 		}
 		if idxInfo.State != model.StatePublic {
-			return nil
+			continue
 		}
 		idxValues := getIndexValues(idxInfo, pairs)
 		if idxValues == nil {
