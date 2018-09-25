@@ -46,6 +46,7 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 
 		// Expressions.
 		{`f between 30 and 50`, "`f` BETWEEN 30 AND 50"},
+		{`f not between 30 and 50`, "`f` NOT BETWEEN 30 AND 50"},
 		{`345 + "  hello  "`, `345 + "  hello  "`},
 		{`"hello world"    >=    'hello world'`, `"hello world" >= "hello world"`},
 		{`case 3 when 1 then false else true end`, `CASE 3 WHEN 1 THEN FALSE ELSE TRUE END`},
@@ -57,7 +58,9 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		{`3 is false`, `3 IS FALSE`},
 		{`  ( x is false  )`, "(`x` IS FALSE)"},
 		{`3 in ( a,b,"h",6 )`, "3 IN (`a`,`b`,\"h\",6)"},
+		{`3 not in ( a,b,"h",6 )`, "3 NOT IN (`a`,`b`,\"h\",6)"},
 		{`"abc" like '%b%'`, `"abc" LIKE "%b%"`},
+		{`"abc" not like '%b%'`, `"abc" NOT LIKE "%b%"`},
 		{`"abc" like '%b%' escape '_'`, `"abc" LIKE "%b%" ESCAPE '_'`},
 		{`"abc" regexp '.*bc?'`, `"abc" REGEXP ".*bc?"`},
 		{`"abc" not regexp '.*bc?'`, `"abc" NOT REGEXP ".*bc?"`},
