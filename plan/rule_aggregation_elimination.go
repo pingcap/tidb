@@ -14,6 +14,8 @@
 package plan
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -68,23 +70,23 @@ func (a *aggregationEliminateChecker) convertAggToProj(agg *LogicalAggregation) 
 func (a *aggregationEliminateChecker) rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) expression.Expression {
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
-		return a.rewriteCount(ctx, aggFunc.Args)
+		return a.rewriteCount(ctx, aggFunc.Args, aggFunc.RetTp)
 	case ast.AggFuncSum:
-		return expression.BuildCastFunction(ctx, aggFunc.Args[0], a.InferSum(ctx, aggFunc.Args[0]))
+		return a.wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 	case ast.AggFuncAvg:
-		return expression.BuildCastFunction(ctx, aggFunc.Args[0], a.InferAvg(ctx, aggFunc.Args[0]))
+		return a.wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 	case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin:
-		return expression.BuildCastFunction(ctx, aggFunc.Args[0], a.InferMaxMin(ctx, aggFunc.Args[0]))
+		return a.wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
-		return expression.BuildCastFunction(ctx, aggFunc.Args[0], a.InferBitFuncs(ctx))
+		return a.rewriteBitFunc(ctx, aggFunc.Name, aggFunc.Args[0], aggFunc.RetTp)
 	case ast.AggFuncGroupConcat:
-		return expression.BuildCastFunction(ctx, aggFunc.Args[0], a.InferGroupConcat(ctx))
+		return a.wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 	default:
 		panic("Unsupported function")
 	}
 }
 
-func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs []expression.Expression) expression.Expression {
+func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs []expression.Expression, targetTp *types.FieldType) expression.Expression {
 	// If is count(expr), we will change it to if(isnull(expr), 0, 1).
 	// If is count(distinct x, y, z) we will change it to if(isnull(x) or isnull(y) or isnull(z), 0, 1).
 	isNullExprs := make([]expression.Expression, 0, len(exprs))
@@ -95,6 +97,25 @@ func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs
 	innerExpr := expression.ComposeDNFCondition(ctx, isNullExprs...)
 	newExpr := expression.NewFunctionInternal(ctx, ast.If, a.InferCount(ctx), innerExpr, expression.Zero, expression.One)
 	return newExpr
+}
+
+func (a *aggregationEliminateChecker) rewriteBitFunc(ctx sessionctx.Context, funcType string, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
+	innerCast := expression.WrapWithCastAsInt(ctx, arg)
+	outerCast := a.wrapCastFunction(ctx, innerCast, targetTp)
+	var finalExpr expression.Expression
+	if funcType != ast.AggFuncBitAnd {
+		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, targetTp, outerCast, expression.Zero.Clone())
+	} else {
+		finalExpr = expression.NewFunctionInternal(ctx, ast.Ifnull, outerCast.GetType(), outerCast, &expression.Constant{Value: types.NewUintDatum(math.MaxUint64), RetType: targetTp})
+	}
+	return finalExpr
+}
+
+func (a *aggregationEliminateChecker) wrapCastFunction(ctx sessionctx.Context, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
+	if arg.GetType() == targetTp {
+		return arg
+	}
+	return expression.BuildCastFunction(ctx, arg, targetTp)
 }
 
 func (a *aggregationEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
