@@ -99,6 +99,7 @@ func (a *aggregationEliminateChecker) rewriteCount(ctx sessionctx.Context, exprs
 }
 
 func (a *aggregationEliminateChecker) rewriteBitFunc(ctx sessionctx.Context, funcType string, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
+	// For not integer type. We need to cast(cast(arg as signed) as unsigned) to make the bit function work.
 	innerCast := expression.WrapWithCastAsInt(ctx, arg)
 	outerCast := a.wrapCastFunction(ctx, innerCast, targetTp)
 	var finalExpr expression.Expression
@@ -110,6 +111,7 @@ func (a *aggregationEliminateChecker) rewriteBitFunc(ctx sessionctx.Context, fun
 	return finalExpr
 }
 
+// wrapCastFunction will wrap a cast if the targetTp is not equal to the arg's.
 func (a *aggregationEliminateChecker) wrapCastFunction(ctx sessionctx.Context, arg expression.Expression, targetTp *types.FieldType) expression.Expression {
 	if arg.GetType() == targetTp {
 		return arg
