@@ -33,7 +33,6 @@ import (
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
 type AggFuncDesc struct {
-	typeInferer AggFuncTypeInferer
 	// Name represents the aggregation function name.
 	Name string
 	// Args represents the arguments of the aggregation function.
@@ -44,10 +43,6 @@ type AggFuncDesc struct {
 	Mode AggFunctionMode
 	// HasDistinct represents whether the aggregation function contains distinct attribute.
 	HasDistinct bool
-}
-
-// AggFuncTypeInferer infers the type of aggregate functions.
-type AggFuncTypeInferer struct {
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
@@ -150,21 +145,17 @@ func (a *AggFuncDesc) String() string {
 func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) {
 	switch a.Name {
 	case ast.AggFuncCount:
-		a.RetTp = a.typeInferer.InferCount(ctx)
+		a.typeInfer4Count(ctx)
 	case ast.AggFuncSum:
-		//TODO: a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
-		a.RetTp = a.typeInferer.InferSum(ctx, a.Args[0])
+		a.typeInfer4Sum(ctx)
 	case ast.AggFuncAvg:
-		a.RetTp = a.typeInferer.InferAvg(ctx, a.Args[0])
-		// TODO: a.Args[0] = expression.WrapWithCastAsDecimal(ctx, a.Args[0])
+		a.typeInfer4Avg(ctx)
 	case ast.AggFuncGroupConcat:
-		a.RetTp = a.typeInferer.InferGroupConcat(ctx)
-		// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
+		a.typeInfer4GroupConcat(ctx)
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
-		a.RetTp = a.typeInferer.InferMaxMin(ctx, a.Args[0])
+		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
-		a.RetTp = a.typeInferer.InferBitFuncs(ctx)
-		// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+		a.typeInfer4BitFuncs(ctx)
 	default:
 		panic("unsupported agg function: " + a.Name)
 	}
@@ -290,90 +281,83 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 	}
 }
 
-// InferCount infers the type of COUNT function.
-func (a *AggFuncTypeInferer) InferCount(ctx sessionctx.Context) (retTp *types.FieldType) {
-	retTp = types.NewFieldType(mysql.TypeLonglong)
-	retTp.Flen = 21
-	types.SetBinChsClnFlag(retTp)
-	return
+func (a *AggFuncDesc) typeInfer4Count(ctx sessionctx.Context) {
+	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
+	a.RetTp.Flen = 21
+	types.SetBinChsClnFlag(a.RetTp)
 }
 
-// InferSum infers the type of SUM function. It should returns a "decimal" for exact numeric values, otherwise it returns a "double".
-func (a *AggFuncTypeInferer) InferSum(ctx sessionctx.Context, arg expression.Expression) (retTp *types.FieldType) {
-	switch arg.GetType().Tp {
+// typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
+// Because child returns integer or decimal type.
+func (a *AggFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
+	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
-		retTp = types.NewFieldType(mysql.TypeNewDecimal)
-		retTp.Flen, retTp.Decimal = mysql.MaxDecimalWidth, arg.GetType().Decimal
-		if retTp.Decimal < 0 || retTp.Decimal > mysql.MaxDecimalScale {
-			retTp.Decimal = mysql.MaxDecimalScale
+		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
+		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxDecimalWidth, a.Args[0].GetType().Decimal
+		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
+			a.RetTp.Decimal = mysql.MaxDecimalScale
 		}
-		// TODO: cast arg as expression.WrapWithCastAsDecimal(ctx, arg)
+		// TODO: a.Args[0] = expression.WrapWithCastAsDecimal(ctx, a.Args[0])
 	default:
-		retTp = types.NewFieldType(mysql.TypeDouble)
-		retTp.Flen, retTp.Decimal = mysql.MaxRealWidth, arg.GetType().Decimal
-		// TODO: cast arg as expression.WrapWithCastAsDecimal(ctx, arg)
+		a.RetTp = types.NewFieldType(mysql.TypeDouble)
+		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
+		//TODO: a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
 	}
-	types.SetBinChsClnFlag(retTp)
-	return retTp
+	types.SetBinChsClnFlag(a.RetTp)
 }
 
-// InferAvg infers the type of AVG function. It should returns a "decimal" for exact numeric values, otherwise it returns a "double".
-func (a *AggFuncTypeInferer) InferAvg(ctx sessionctx.Context, arg expression.Expression) (retTp *types.FieldType) {
-	switch arg.GetType().Tp {
+// typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
+// Because child returns integer or decimal type.
+func (a *AggFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
+	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
-		retTp = types.NewFieldType(mysql.TypeNewDecimal)
-		if arg.GetType().Decimal < 0 {
-			retTp.Decimal = mysql.MaxDecimalScale
+		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
+		if a.Args[0].GetType().Decimal < 0 {
+			a.RetTp.Decimal = mysql.MaxDecimalScale
 		} else {
-			retTp.Decimal = mathutil.Min(arg.GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
+			a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
 		}
-		retTp.Flen = mysql.MaxDecimalWidth
-		// TODO: arg = expression.WrapWithCastAsDecimal(ctx, arg)
+		a.RetTp.Flen = mysql.MaxDecimalWidth
+		// TODO: a.Args[0] = expression.WrapWithCastAsDecimal(ctx, a.Args[0])
 	default:
-		retTp = types.NewFieldType(mysql.TypeDouble)
-		retTp.Flen, retTp.Decimal = mysql.MaxRealWidth, arg.GetType().Decimal
-		// TODO: arg = expression.WrapWithCastAsReal(ctx, arg)
+		a.RetTp = types.NewFieldType(mysql.TypeDouble)
+		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
+		// TODO: a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
 	}
-	types.SetBinChsClnFlag(retTp)
-	return
+	types.SetBinChsClnFlag(a.RetTp)
 }
 
-// InferGroupConcat infers type of GROUP_CONCAT function.
-func (a *AggFuncTypeInferer) InferGroupConcat(ctx sessionctx.Context) (retTp *types.FieldType) {
-	retTp = types.NewFieldType(mysql.TypeVarString)
-	retTp.Charset = charset.CharsetUTF8
-	retTp.Collate = charset.CollationUTF8
-	retTp.Flen, retTp.Decimal = mysql.MaxBlobWidth, 0
-	return
+func (a *AggFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
+	a.RetTp = types.NewFieldType(mysql.TypeVarString)
+	a.RetTp.Charset = charset.CharsetUTF8
+	a.RetTp.Collate = charset.CollationUTF8
+	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxBlobWidth, 0
+	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
 }
 
-// InferMaxMin infers type of MAX/MIN/FIRST_ROW function.
-func (a *AggFuncTypeInferer) InferMaxMin(ctx sessionctx.Context, arg expression.Expression) (retTp *types.FieldType) {
-	_, argIsScalaFunc := arg.(*expression.ScalarFunction)
-	if argIsScalaFunc && arg.GetType().Tp == mysql.TypeFloat {
+func (a *AggFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
+	_, argIsScalaFunc := a.Args[0].(*expression.ScalarFunction)
+	if argIsScalaFunc && a.Args[0].GetType().Tp == mysql.TypeFloat {
 		// For scalar function, the result of "float32" is set to the "float64"
-		// field in the "Datum". If we do not wrap a cast-as-double function on arg,
-		// error would happen when extracting the evaluation of arg to a ProjectionExec.
+		// field in the "Datum". If we do not wrap a cast-as-double function on a.Args[0],
+		// error would happen when extracting the evaluation of a.Args[0] to a ProjectionExec.
 		tp := types.NewFieldType(mysql.TypeDouble)
 		tp.Flen, tp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 		types.SetBinChsClnFlag(tp)
-		arg = expression.BuildCastFunction(ctx, arg, tp)
+		a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
 	}
-	retTp = arg.GetType()
-	if retTp.Tp == mysql.TypeEnum || retTp.Tp == mysql.TypeSet {
-		retTp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxFieldCharLength}
+	a.RetTp = a.Args[0].GetType()
+	if a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet {
+		a.RetTp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxFieldCharLength}
 	}
-	return retTp
 }
 
-// InferBitFuncs infers type of bit functions, such as BIT_XOR, BIT_OR ...
-func (a *AggFuncTypeInferer) InferBitFuncs(ctx sessionctx.Context) (retTp *types.FieldType) {
-	retTp = types.NewFieldType(mysql.TypeLonglong)
-	retTp.Flen = 21
-	types.SetBinChsClnFlag(retTp)
-	retTp.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
+func (a *AggFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
+	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
+	a.RetTp.Flen = 21
+	types.SetBinChsClnFlag(a.RetTp)
+	a.RetTp.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
-	return
 }
 
 func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
