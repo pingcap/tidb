@@ -43,7 +43,7 @@ func (h *slowQueryHeap) Pop() interface{} {
 	return x
 }
 
-func (h *slowQueryHeap) Refresh(now time.Time, period time.Duration) {
+func (h *slowQueryHeap) RemoveExpired(now time.Time, period time.Duration) {
 	// Remove outdated slow query element.
 	idx := 0
 	for i := 0; i < len(h.data); i++ {
@@ -155,9 +155,9 @@ func (q *topNSlowQueries) Append(info *SlowQueryInfo) {
 	}
 }
 
-func (q *topNSlowQueries) Refresh(now time.Time) {
-	q.user.Refresh(now, q.period)
-	q.internal.Refresh(now, q.period)
+func (q *topNSlowQueries) RemoveExpired(now time.Time) {
+	q.user.RemoveExpired(now, q.period)
+	q.internal.RemoveExpired(now, q.period)
 }
 
 type showLogMessage struct {

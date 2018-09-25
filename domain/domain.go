@@ -358,7 +358,7 @@ func (do *Domain) topNSlowQueryLoop() {
 	for {
 		select {
 		case now := <-ticker.C:
-			do.slowQuery.Refresh(now)
+			do.slowQuery.RemoveExpired(now)
 		case info, ok := <-do.slowQuery.ch:
 			if !ok {
 				return

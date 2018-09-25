@@ -69,7 +69,7 @@ func (t *testTopNSlowQuerySuite) TestPush(c *C) {
 	c.Assert(slowQuery.user.data[0].Duration, Equals, 1300*time.Millisecond)
 }
 
-func (t *testTopNSlowQuerySuite) TestRefresh(c *C) {
+func (t *testTopNSlowQuerySuite) TestRemoveExpired(c *C) {
 	now := time.Now()
 	slowQuery := newTopNSlowQueries(6, 3*time.Second, 10)
 
@@ -80,7 +80,7 @@ func (t *testTopNSlowQuerySuite) TestRefresh(c *C) {
 	slowQuery.Append(&SlowQueryInfo{Start: now.Add(4 * time.Second), Duration: 2})
 	c.Assert(slowQuery.user.data[0].Duration, Equals, 2*time.Nanosecond)
 
-	slowQuery.Refresh(now.Add(5 * time.Second))
+	slowQuery.RemoveExpired(now.Add(5 * time.Second))
 	c.Assert(len(slowQuery.user.data), Equals, 2)
 	c.Assert(slowQuery.user.data[0].Duration, Equals, 2*time.Nanosecond)
 
@@ -91,7 +91,7 @@ func (t *testTopNSlowQuerySuite) TestRefresh(c *C) {
 	c.Assert(len(slowQuery.user.data), Equals, 6)
 	c.Assert(slowQuery.user.data[0].Duration, Equals, 0*time.Nanosecond)
 
-	slowQuery.Refresh(now.Add(6 * time.Second))
+	slowQuery.RemoveExpired(now.Add(6 * time.Second))
 	c.Assert(len(slowQuery.user.data), Equals, 4)
 	c.Assert(slowQuery.user.data[0].Duration, Equals, 0*time.Nanosecond)
 }
