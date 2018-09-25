@@ -425,16 +425,16 @@ import (
 	maxExecutionTime	"MAX_EXECUTION_TIME"
 	now			"NOW"
 	position		"POSITION"
+	std				"STD"
+	stddev			"STDDEV"
+	stddevPop		"STDDEV_POP"
+	stddevSamp		"STDDEV_SAMP"
 	subDate			"SUBDATE"
 	sum			"SUM"
 	substring		"SUBSTRING"
 	timestampAdd		"TIMESTAMPADD"
 	timestampDiff		"TIMESTAMPDIFF"
 	trim			"TRIM"
-	std				"STD"
-	stddev			"STDDEV"
-	stddevPop		"STDDEV_POP"
-	stddevSamp		"STDDEV_SAMP"
 
 	/* The following tokens belong to TiDBKeyword. */
 	admin		"ADMIN"
@@ -473,11 +473,11 @@ import (
 	builtinSubstring
 	builtinSum
 	builtinSysDate
-	builtinTrim
 	builtinStd
 	builtinStddev
 	builtinStddevPop
 	builtinStddevSamp
+	builtinTrim
 	builtinUser
 	builtinVarPop
 	builtinVarSamp
@@ -2832,7 +2832,8 @@ TiDBKeyword:
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
-| "INPLACE" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
+| "INPLACE" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM" 
+| "STD" | "STDDEV" | "STDDEV_POP" | "STDDEV_SAMP"
 
 /************************************************************************************
  *
