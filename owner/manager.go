@@ -148,8 +148,10 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 		//		etcdCli.ActiveConnection().Close()
 		//	}
 		startTime := time.Now()
+		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
 		etcdSession, err = concurrency.NewSession(etcdCli,
-			concurrency.WithTTL(ttl), concurrency.WithContext(ctx))
+			concurrency.WithTTL(ttl), concurrency.WithContext(childCtx))
+		cancel()
 		metrics.NewSessionHistogram.WithLabelValues(logPrefix, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err == nil {
 			break
