@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -130,7 +130,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return ErrPsManyParam
 	}
 
-	err = plan.Preprocess(e.ctx, stmt, e.is, true)
+	err = plannercore.Preprocess(e.ctx, stmt, e.is, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -149,14 +149,14 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
-	prepared.UseCache = plan.PreparedPlanCacheEnabled() && (vars.LightningMode || plan.Cacheable(stmt))
+	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && (vars.LightningMode || plannercore.Cacheable(stmt))
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
 		prepared.Params[i].SetDatum(types.NewIntDatum(0))
 	}
-	var p plan.Plan
-	p, err = plan.BuildLogicalPlan(e.ctx, stmt, e.is)
+	var p plannercore.Plan
+	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -185,7 +185,7 @@ type ExecuteExec struct {
 	id        uint32
 	stmtExec  Executor
 	stmt      ast.StmtNode
-	plan      plan.Plan
+	plan      plannercore.Plan
 }
 
 // Next implements the Executor Next interface.
@@ -228,7 +228,7 @@ func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return errors.Trace(plan.ErrStmtNotFound)
+		return errors.Trace(plannercore.ErrStmtNotFound)
 	}
 	delete(vars.PreparedStmtNameToID, e.Name)
 	delete(vars.PreparedStmts, id)
@@ -246,7 +246,7 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 		execStmt.UsingVars[i] = ast.NewValueExpr(val)
 	}
 	is := GetInfoSchema(ctx)
-	execPlan, err := plan.Optimize(ctx, execStmt, is)
+	execPlan, err := plannercore.Optimize(ctx, execStmt, is)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -268,11 +268,11 @@ func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.Stm
 	ok := false
 	if stmt.Name != "" {
 		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
-			return nil, plan.ErrStmtNotFound
+			return nil, plannercore.ErrStmtNotFound
 		}
 	}
 	if prepared, ok := vars.PreparedStmts[execID]; ok {
 		return prepared.Stmt, nil
 	}
-	return nil, plan.ErrStmtNotFound
+	return nil, plannercore.ErrStmtNotFound
 }

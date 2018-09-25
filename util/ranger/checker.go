@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-// conditionChecker checks if this condition can be pushed to index plan.
+// conditionChecker checks if this condition can be pushed to index planner.
 type conditionChecker struct {
 	colName       model.CIStr
 	shouldReserve bool // check if a access condition should be reserved in filter conditions.
