@@ -148,7 +148,7 @@ type Column struct {
 	OrigTblName model.CIStr
 	TblName     model.CIStr
 	RetType     *types.FieldType
-	// This id is used to specify whether this column is ExtraHandleColumn or to access histogram.
+	// ID is used to specify whether this column is ExtraHandleColumn or to access histogram.
 	// We'll try to remove it in the future.
 	ID int64
 	// UniqueID is the unique id of this column.
