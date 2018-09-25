@@ -126,7 +126,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GCRegionTooManyLocksCounter)
 	prometheus.MustRegister(GCWorkerCounter)
 	prometheus.MustRegister(TSFutureWaitDuration)
-	prometheus.MustRegister(SlowQueryProcessHistogram)
-	prometheus.MustRegister(SlowQueryCopHistogram)
-	prometheus.MustRegister(SlowQueryWaitHistogram)
+	prometheus.MustRegister(TotalQueryProcHistogram)
+	prometheus.MustRegister(TotalCopProcHistogram)
+	prometheus.MustRegister(TotalCopWaitHistogram)
 }

@@ -121,7 +121,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1us ~ 2s
 		})
 
-	SlowQueryProcessHistogram = prometheus.NewHistogram(
+	TotalQueryProcHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -129,7 +129,7 @@ var (
 			Help:      "Bucketed histogram of processing time (s) of of slow queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22), // 1ms ~ 4096s
 		})
-	SlowQueryCopHistogram = prometheus.NewHistogram(
+	TotalCopProcHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -137,7 +137,7 @@ var (
 			Help:      "Bucketed histogram of all cop processing time (s) of of slow queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 22),
 		})
-	SlowQueryWaitHistogram = prometheus.NewHistogram(
+	TotalCopWaitHistogram = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
