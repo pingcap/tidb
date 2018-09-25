@@ -806,7 +806,7 @@ func (b *builtinJSONLengthSig) evalInt(row chunk.Row) (res int64, isNull bool, e
 		return res, isNull, errors.Trace(err)
 	}
 
-	if obj.Type() != "OBJECT" && obj.Type() != "ARRAY" {
+	if obj.TypeCode != json.TypeCodeObject && obj.TypeCode != json.TypeCodeArray {
 		return 1, false, nil
 	}
 
@@ -824,14 +824,14 @@ func (b *builtinJSONLengthSig) evalInt(row chunk.Row) (res int64, isNull bool, e
 			return res, true, json.ErrInvalidJSONPathWildcard
 		}
 
-		obj, exists := obj.Extract([]json.PathExpression{pathExpr})
+		var exists bool
+		obj, exists = obj.Extract([]json.PathExpression{pathExpr})
 		if !exists {
 			return res, true, nil
 		}
-		if obj.Type() != "OBJECT" && obj.Type() != "ARRAY" {
+		if obj.TypeCode != json.TypeCodeObject && obj.TypeCode != json.TypeCodeArray {
 			return 1, false, nil
 		}
-		return int64(obj.GetElemCount()), false, nil
 	}
 	return int64(obj.GetElemCount()), false, nil
 }
