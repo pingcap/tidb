@@ -16,8 +16,10 @@ package latch
 import (
 	"sync/atomic"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 )
 
 func TestT(t *testing.T) {
@@ -103,4 +105,45 @@ func (s *testLatchSuite) TestFirstAcquireFailedWithStale(c *C) {
 	result = s.latches.acquire(lockB)
 	c.Assert(result, Equals, acquireStale)
 	s.latches.release(lockB, wakeupList)
+}
+
+func (s *testLatchSuite) TestRecycle(c *C) {
+	latches := NewLatches(8)
+	now := time.Now()
+	startTS := oracle.ComposeTS(oracle.GetPhysical(now), 0)
+	lock := latches.genLock(startTS, [][]byte{
+		[]byte("a"), []byte("b"),
+	})
+	lock1 := latches.genLock(startTS, [][]byte{
+		[]byte("b"), []byte("c"),
+	})
+	c.Assert(latches.acquire(lock), Equals, acquireSuccess)
+	c.Assert(latches.acquire(lock1), Equals, acquireLocked)
+	lock.SetCommitTS(startTS + 1)
+	var wakeupList []*Lock
+	latches.release(lock, wakeupList)
+
+	lock2 := latches.genLock(startTS+3, [][]byte{
+		[]byte("b"), []byte("c"),
+	})
+	c.Assert(latches.acquire(lock2), Equals, acquireSuccess)
+	wakeupList = wakeupList[:0]
+	latches.release(lock2, wakeupList)
+
+	allEmpty := true
+	for i := 0; i < len(latches.slots); i++ {
+		latch := &latches.slots[i]
+		if latch.queue != nil {
+			allEmpty = false
+		}
+	}
+	c.Assert(allEmpty, IsFalse)
+
+	currentTS := oracle.ComposeTS(oracle.GetPhysical(now.Add(expireDuration)), 3)
+	latches.recycle(currentTS)
+
+	for i := 0; i < len(latches.slots); i++ {
+		latch := &latches.slots[i]
+		c.Assert(latch.queue, IsNil)
+	}
 }

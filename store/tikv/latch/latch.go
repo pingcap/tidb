@@ -35,6 +35,7 @@ type node struct {
 // latch stores a key's waiting transactions information.
 type latch struct {
 	queue   *node
+	count   int
 	waiting []*Lock
 	sync.Mutex
 }
@@ -174,14 +175,7 @@ func (latches *Latches) releaseSlot(lock *Lock) (nextLock *Lock) {
 	latch.Lock()
 	defer latch.Unlock()
 
-	var find *node
-	for n := latch.queue; n != nil; n = n.next {
-		if bytes.Compare(n.key, key) == 0 {
-			find = n
-			break
-		}
-	}
-
+	find := findNode(latch.queue, key)
 	if find.value != lock {
 		panic("releaseSlot wrong")
 	}
@@ -216,15 +210,7 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 	latch.Lock()
 	defer latch.Unlock()
 
-	var find *node
-	for n := latch.queue; n != nil; n = n.next {
-		if bytes.Compare(n.key, key) == 0 {
-			find = n
-			break
-		}
-		// TODO: Invalidate old data.
-	}
-
+	find := findNode(latch.queue, key)
 	if find == nil {
 		tmp := &node{
 			slotID: slotID,
@@ -233,8 +219,15 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 		}
 		tmp.next = latch.queue
 		latch.queue = tmp
+		latch.count++
+
 		lock.acquiredCount++
 		return acquireSuccess
+	}
+
+	// Try to limits the memory usage.
+	if latch.count > 5 {
+		latch.recycle(lock.startTS)
 	}
 
 	if find.maxCommitTS > lock.startTS {
@@ -251,4 +244,49 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 	// Push the current transaction into waitingQueue.
 	latch.waiting = append(latch.waiting, lock)
 	return acquireLocked
+}
+
+func (l *latch) recycle(currentTS uint64) {
+	l.Lock()
+	defer l.Unlock()
+
+	if l.queue == nil {
+		return
+	}
+
+	prev := l.queue
+	curr := l.queue.next
+
+	// Handle list nodes.
+	for curr != nil {
+		if tsoSub(currentTS, curr.maxCommitTS) >= expireDuration {
+			l.count--
+			prev.next = curr.next
+		} else {
+			prev = curr
+		}
+		curr = curr.next
+	}
+
+	// Handle the head node.
+	if tsoSub(currentTS, l.queue.maxCommitTS) >= expireDuration {
+		l.queue = nil
+	}
+	return
+}
+
+func (latches *Latches) recycle(currentTS uint64) {
+	for i := 0; i < len(latches.slots); i++ {
+		latch := &latches.slots[i]
+		latch.recycle(currentTS)
+	}
+}
+
+func findNode(list *node, key []byte) *node {
+	for n := list; n != nil; n = n.next {
+		if bytes.Compare(n.key, key) == 0 {
+			return n
+		}
+	}
+	return nil
 }
