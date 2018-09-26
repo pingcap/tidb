@@ -340,9 +340,9 @@ func (do *Domain) LogSlowQuery(query *SlowQueryInfo) {
 }
 
 // ShowSlowQuery returns the slow queries.
-func (do *Domain) ShowSlowQuery(showLog *ast.ShowLog) []*SlowQueryInfo {
-	msg := &showLogMessage{
-		request: showLog,
+func (do *Domain) ShowSlowQuery(showSlow *ast.ShowSlow) []*SlowQueryInfo {
+	msg := &showSlowMessage{
+		request: showSlow,
 	}
 	msg.Add(1)
 	do.slowQuery.msgCh <- msg
@@ -366,9 +366,9 @@ func (do *Domain) topNSlowQueryLoop() {
 			do.slowQuery.Append(info)
 		case msg := <-do.slowQuery.msgCh:
 			req := msg.request
-			if req.Tp == ast.ShowLogTop {
+			if req.Tp == ast.ShowSlowTop {
 				msg.result = do.slowQuery.QueryTop(int(req.Count), req.Kind)
-			} else if req.Tp == ast.ShowLogRecent {
+			} else if req.Tp == ast.ShowSlowRecent {
 				msg.result = do.slowQuery.QueryRecent(int(req.Count))
 			}
 			msg.Done()

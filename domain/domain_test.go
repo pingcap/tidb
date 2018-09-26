@@ -107,22 +107,22 @@ func (*testSuite) TestT(c *C) {
 	// Collecting slow queries is asynchronous, wait a while to ensure it's done.
 	time.Sleep(5 * time.Millisecond)
 
-	res := dom.ShowSlowQuery(&ast.ShowLog{Tp: ast.ShowLogTop, Count: 2})
+	res := dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2})
 	c.Assert(res, HasLen, 2)
 	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
 	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
 
-	res = dom.ShowSlowQuery(&ast.ShowLog{Tp: ast.ShowLogTop, Count: 2, Kind: "internal"})
+	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2, Kind: ast.ShowSlowKindInternal})
 	c.Assert(res, HasLen, 1)
 	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
 
-	res = dom.ShowSlowQuery(&ast.ShowLog{Tp: ast.ShowLogTop, Count: 4, Kind: "all"})
+	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 4, Kind: ast.ShowSlowKindAll})
 	c.Assert(res, HasLen, 3)
 	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
 	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
 	c.Assert(*res[2], Equals, SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
 
-	res = dom.ShowSlowQuery(&ast.ShowLog{Tp: ast.ShowLogRecent, Count: 2})
+	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 2})
 	c.Assert(res, HasLen, 2)
 	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
 	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})

@@ -114,7 +114,7 @@ type topNSlowQueries struct {
 	topN     int
 	period   time.Duration
 	ch       chan *SlowQueryInfo
-	msgCh    chan *showLogMessage
+	msgCh    chan *showSlowMessage
 }
 
 func newTopNSlowQueries(topN int, period time.Duration, queueSize int) *topNSlowQueries {
@@ -122,7 +122,7 @@ func newTopNSlowQueries(topN int, period time.Duration, queueSize int) *topNSlow
 		topN:   topN,
 		period: period,
 		ch:     make(chan *SlowQueryInfo, 1000),
-		msgCh:  make(chan *showLogMessage, 10),
+		msgCh:  make(chan *showSlowMessage, 10),
 	}
 	ret.user.data = make([]*SlowQueryInfo, 0, topN)
 	ret.internal.data = make([]*SlowQueryInfo, 0, topN)
@@ -160,8 +160,8 @@ func (q *topNSlowQueries) RemoveExpired(now time.Time) {
 	q.internal.RemoveExpired(now, q.period)
 }
 
-type showLogMessage struct {
-	request *ast.ShowLog
+type showSlowMessage struct {
+	request *ast.ShowSlow
 	result  []*SlowQueryInfo
 	sync.WaitGroup
 }
@@ -177,21 +177,21 @@ func (q *topNSlowQueries) QueryRecent(count int) []*SlowQueryInfo {
 	return q.recent.Query(count)
 }
 
-func (q *topNSlowQueries) QueryTop(count int, kind string) []*SlowQueryInfo {
+func (q *topNSlowQueries) QueryTop(count int, kind ast.ShowSlowKind) []*SlowQueryInfo {
 	var ret []*SlowQueryInfo
 	switch kind {
-	case "user", "":
+	case ast.ShowSlowKindDefault:
 		ret = q.user.Query(count)
-	case "internal":
+	case ast.ShowSlowKindInternal:
 		ret = q.internal.Query(count)
-	case "all":
+	case ast.ShowSlowKindAll:
 		tmp := make([]*SlowQueryInfo, 0, len(q.user.data)+len(q.internal.data))
 		tmp = append(tmp, q.user.data...)
 		tmp = append(tmp, q.internal.data...)
 		tmp1 := slowQueryHeap{tmp}
 		sort.Sort(&tmp1)
 		ret = make([]*SlowQueryInfo, 0, count)
-		for i := len(tmp) - 1; i >= 0 && len(ret) <= count; i-- {
+		for i := len(tmp) - 1; i >= 0 && len(ret) < count; i-- {
 			ret = append(ret, tmp[i])
 		}
 	}

@@ -19,7 +19,6 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
-	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/distsql"
@@ -27,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -117,22 +116,6 @@ func closeAll(objs ...Closeable) error {
 	return errors.Trace(err)
 }
 
-// zone returns the current timezone name and timezone offset in seconds.
-// In compatible with MySQL, we change `Local` to `System`.
-// TODO: Golang team plan to return system timezone name intead of
-// returning `Local` when `loc` is `time.Local`. We need keep an eye on this.
-func zone(sctx sessionctx.Context) (string, int64) {
-	loc := sctx.GetSessionVars().Location()
-	_, offset := time.Now().In(loc).Zone()
-	var name string
-	name = loc.String()
-	if name == "Local" {
-		name = "System"
-	}
-
-	return name, int64(offset)
-}
-
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
 func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
@@ -211,7 +194,7 @@ func splitRanges(ranges []*ranger.Range, keepOrder bool) ([]*ranger.Range, []*ra
 
 // rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range
 // by substitute correlated column with the constant.
-func rebuildIndexRanges(ctx sessionctx.Context, is *plan.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
+func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
 	for _, cond := range is.AccessCondition {
 		newCond, err1 := expression.SubstituteCorCol2Constant(cond)
@@ -247,7 +230,7 @@ type IndexReaderExecutor struct {
 	corColInAccess bool
 	idxCols        []*expression.Column
 	colLens        []int
-	plans          []plan.PhysicalPlan
+	plans          []plannercore.PhysicalPlan
 }
 
 // Close clears all resources hold by current object.
@@ -271,7 +254,7 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.ctx, e.plans[0].(*plan.PhysicalIndexScan), e.idxCols, e.colLens)
+		e.ranges, err = rebuildIndexRanges(e.ctx, e.plans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -350,9 +333,9 @@ type IndexLookUpExecutor struct {
 	isCheckOp bool
 
 	corColInIdxSide bool
-	idxPlans        []plan.PhysicalPlan
+	idxPlans        []plannercore.PhysicalPlan
 	corColInTblSide bool
-	tblPlans        []plan.PhysicalPlan
+	tblPlans        []plannercore.PhysicalPlan
 	corColInAccess  bool
 	idxCols         []*expression.Column
 	colLens         []int
@@ -362,7 +345,7 @@ type IndexLookUpExecutor struct {
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.ctx, e.idxPlans[0].(*plan.PhysicalIndexScan), e.idxCols, e.colLens)
+		e.ranges, err = rebuildIndexRanges(e.ctx, e.idxPlans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
 		if err != nil {
 			return errors.Trace(err)
 		}
