@@ -257,7 +257,7 @@ func (l *latch) recycle(currentTS uint64) {
 
 	// Handle list nodes.
 	for curr != nil {
-		if tsoSub(currentTS, curr.maxCommitTS) >= expireDuration {
+		if tsoSub(currentTS, curr.maxCommitTS) >= expireDuration && cur.value == nil {
 			l.count--
 			prev.next = curr.next
 		} else {
