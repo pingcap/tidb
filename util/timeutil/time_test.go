@@ -37,6 +37,11 @@ func (s *testTimeSuite) TestgetTZNameFromFileName(c *C) {
 
 	c.Assert(err, IsNil)
 	c.Assert(tz, Equals, "Asia/Shanghai")
+
+	tz, err = inferTZNameFromFileName("/usr/share/zoneinfo.default/Asia/Shanghai")
+
+	c.Assert(err, IsNil)
+	c.Assert(tz, Equals, "Asia/Shanghai")
 }
 
 func (s *testTimeSuite) TestLocal(c *C) {
