@@ -297,7 +297,7 @@ func (a *AggFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
 		}
-		a.RetTp.Flag = a.Args[0].GetType().Flag & mysql.UnsignedFlag
+		a.RetTp.Flag |= a.Args[0].GetType().Flag & mysql.UnsignedFlag
 		// TODO: a.Args[0] = expression.WrapWithCastAsDecimal(ctx, a.Args[0])
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
@@ -322,7 +322,7 @@ func (a *AggFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 		} else {
 			a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
 		}
-		a.RetTp.Flag = a.Args[0].GetType().Flag & mysql.UnsignedFlag
+		a.RetTp.Flag |= a.Args[0].GetType().Flag & mysql.UnsignedFlag
 		a.RetTp.Flen = mysql.MaxDecimalWidth
 		// TODO: a.Args[0] = expression.WrapWithCastAsDecimal(ctx, a.Args[0])
 	case mysql.TypeDouble, mysql.TypeFloat:
