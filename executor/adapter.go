@@ -381,7 +381,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		if user != nil {
 			userString = user.String()
 		}
-		domain.GetDomain(a.Ctx).LogTopNSlowQuery(&domain.SlowQueryInfo{
+		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:      sql,
 			Start:    a.startTime,
 			Duration: costTime,
