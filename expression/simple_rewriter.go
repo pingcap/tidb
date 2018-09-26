@@ -45,7 +45,7 @@ func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableI
 }
 
 // ParseSimpleExprCastWithTableInfo parses simple expression string to Expression.
-// And the expr return will cast to the target type.
+// And the expr returns will cast to the target type.
 func ParseSimpleExprCastWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo, targetFt *types.FieldType) (Expression, error) {
 	e, err := ParseSimpleExprWithTableInfo(ctx, exprStr, tableInfo)
 	if err != nil {

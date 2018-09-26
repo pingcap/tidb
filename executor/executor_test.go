@@ -275,7 +275,7 @@ func (s *testSuite) TestAdmin(c *C) {
 
 	// For add index on virtual column
 	tk.MustExec("drop table if exists t1;")
-	tk.MustExec(" create table t1 ( b json , c int as (JSON_EXTRACT(b,'$.d')));")
+	tk.MustExec("create table t1 ( b json , c int as (JSON_EXTRACT(b,'$.d')));")
 	tk.MustExec("insert into t1 set b='{\"d\": 100}';")
 	tk.MustExec("alter table t1 add index idx(c);")
 	tk.MustExec("admin check table t1;")
