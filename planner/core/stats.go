@@ -98,8 +98,8 @@ func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			// If there's only point range. Just remove other possible paths.
-			if noIntervalRanges {
+			// If we have point or empty range, just remove other possible paths.
+			if noIntervalRanges || len(path.ranges) == 0 {
 				ds.possibleAccessPaths[0] = path
 				ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 				break
@@ -110,14 +110,13 @@ func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// If there's only point range and this index is unique key. Just remove other possible paths.
-		if noIntervalRanges && path.index.Unique {
+		// If we have empty range, or point range on unique index, just remove other possible paths.
+		if (noIntervalRanges && path.index.Unique) || len(path.ranges) == 0 {
 			ds.possibleAccessPaths[0] = path
 			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 			break
 		}
 	}
-	histColl.Count = int64(ds.stats.RowCount)
 	ds.stats.HistColl = histColl
 	return ds.stats, nil
 }
@@ -202,12 +201,12 @@ func getCardinality(cols []*expression.Column, schema *expression.Schema, profil
 		log.Errorf("Cannot find column %v indices from schema %s", cols, schema)
 		return 0
 	}
-	var Cardinality = 1.0
+	var cardinality = 1.0
 	for _, idx := range indices {
 		// It is a very elementary estimation.
-		Cardinality = math.Max(Cardinality, profile.Cardinality[idx])
+		cardinality = math.Max(cardinality, profile.Cardinality[idx])
 	}
-	return Cardinality
+	return cardinality
 }
 
 func (p *LogicalProjection) deriveStats() (*property.StatsInfo, error) {
@@ -286,20 +285,20 @@ func (la *LogicalAggregation) deriveStats() (*property.StatsInfo, error) {
 		cols := expression.ExtractColumns(gbyExpr)
 		gbyCols = append(gbyCols, cols...)
 	}
-	Cardinality := getCardinality(gbyCols, la.children[0].Schema(), childProfile)
+	cardinality := getCardinality(gbyCols, la.children[0].Schema(), childProfile)
 	la.stats = &property.StatsInfo{
-		RowCount:    Cardinality,
+		RowCount:    cardinality,
 		Cardinality: make([]float64, la.schema.Len()),
 	}
-	// We cannot estimate the Cardinality for every output, so we use a conservative strategy.
+	// We cannot estimate the cardinality for every output, so we use a conservative strategy.
 	for i := range la.stats.Cardinality {
-		la.stats.Cardinality[i] = Cardinality
+		la.stats.Cardinality[i] = cardinality
 	}
 	la.inputCount = childProfile.RowCount
 	return la.stats, nil
 }
 
-// deriveStats prepares StatsInfo.
+// deriveStats prepares property.StatsInfo.
 // If the type of join is SemiJoin, the selectivity of it will be same as selection's.
 // If the type of join is LeftOuterSemiJoin, it will not add or remove any row. The last column is a boolean value, whose Cardinality should be two.
 // If the type of join is inner/outer join, the output of join(s, t) should be N(s) * N(t) / (V(s.key) * V(t.key)) * Min(s.key, t.key).
@@ -349,21 +348,21 @@ func (p *LogicalJoin) deriveStats() (*property.StatsInfo, error) {
 	}
 	leftKeyCardinality := getCardinality(leftKeys, p.children[0].Schema(), leftProfile)
 	rightKeyCardinality := getCardinality(rightKeys, p.children[1].Schema(), rightProfile)
-	RowCount := leftProfile.RowCount * rightProfile.RowCount / math.Max(leftKeyCardinality, rightKeyCardinality)
+	count := leftProfile.RowCount * rightProfile.RowCount / math.Max(leftKeyCardinality, rightKeyCardinality)
 	if p.JoinType == LeftOuterJoin {
-		RowCount = math.Max(RowCount, leftProfile.RowCount)
+		count = math.Max(count, leftProfile.RowCount)
 	} else if p.JoinType == RightOuterJoin {
-		RowCount = math.Max(RowCount, rightProfile.RowCount)
+		count = math.Max(count, rightProfile.RowCount)
 	}
-	Cardinality := make([]float64, 0, p.schema.Len())
-	Cardinality = append(Cardinality, leftProfile.Cardinality...)
-	Cardinality = append(Cardinality, rightProfile.Cardinality...)
-	for i := range Cardinality {
-		Cardinality[i] = math.Min(Cardinality[i], RowCount)
+	cardinality := make([]float64, 0, p.schema.Len())
+	cardinality = append(cardinality, leftProfile.Cardinality...)
+	cardinality = append(cardinality, rightProfile.Cardinality...)
+	for i := range cardinality {
+		cardinality[i] = math.Min(cardinality[i], count)
 	}
 	p.stats = &property.StatsInfo{
-		RowCount:    RowCount,
-		Cardinality: Cardinality,
+		RowCount:    count,
+		Cardinality: cardinality,
 	}
 	return p.stats, nil
 }

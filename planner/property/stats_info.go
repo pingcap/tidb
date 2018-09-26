@@ -50,7 +50,6 @@ func (s *StatsInfo) Scale(factor float64) *StatsInfo {
 	profile := &StatsInfo{
 		RowCount:       s.RowCount * factor,
 		Cardinality:    make([]float64, len(s.Cardinality)),
-		HistColl:       s.HistColl,
 		UsePseudoStats: s.UsePseudoStats,
 	}
 	for i := range profile.Cardinality {
