@@ -298,6 +298,16 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	}
 
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
+	if job.IsRollingback() {
+		// field flag reset to null.
+		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(oldName, tblInfo.Name)
@@ -333,21 +343,17 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		// Wait for two leases to ensure that all nodes in the cluster are updated successfully.
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
 
 		err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
-		if err != nil {
-			// If there is a null value inserted, it cannot be modified and needs to be rollback.
-			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag
-			var err1 error
-			ver, err1 = updateVersionAndTableInfo(t, job, tblInfo, true)
-			if err1 != nil {
+		// If there is a null value inserted, it cannot be modified and needs to be rollback.
+		if ErrWarnDataTruncated.Equal(err) {
+			ver, err = modifyColumn2RollbackJob(t, tblInfo, job, oldCol)
+			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
 		}
 	}
 
@@ -424,7 +430,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 
 // CheckForNullValue ensure there are no null values of the column of this table.
 func CheckForNullValue(ctx sessionctx.Context, schema, table, oldCol, newCol model.CIStr) error {
-	sql := fmt.Sprintf(`select count(*) from %s.%s where %s is null; `, schema.L, table.L, oldCol.L)
+	sql := fmt.Sprintf("select count(*) from `%s`.`%s` where `%s` is null;", schema.L, table.L, oldCol.L)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -479,4 +485,14 @@ func checkAddColumnTooManyColumns(oldCols int) error {
 		return errTooManyFields
 	}
 	return nil
+}
+
+func modifyColumn2RollbackJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo) (ver int64, _ error) {
+	job.State = model.JobStateRollingback
+	tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag
+	ver, err := updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	return ver, nil
 }
