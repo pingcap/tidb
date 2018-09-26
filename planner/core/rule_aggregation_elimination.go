@@ -69,17 +69,14 @@ func (a *aggregationEliminateChecker) convertAggToProj(agg *LogicalAggregation) 
 func (a *aggregationEliminateChecker) rewriteExpr(ctx sessionctx.Context, aggFunc *aggregation.AggFuncDesc) expression.Expression {
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
+		if aggFunc.Mode == aggregation.FinalMode {
+			return a.wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
+		}
 		return a.rewriteCount(ctx, aggFunc.Args, aggFunc.RetTp)
-	case ast.AggFuncSum:
-		return a.wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
-	case ast.AggFuncAvg:
-		return a.wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
-	case ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin:
+	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncGroupConcat:
 		return a.wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		return a.rewriteBitFunc(ctx, aggFunc.Name, aggFunc.Args[0], aggFunc.RetTp)
-	case ast.AggFuncGroupConcat:
-		return a.wrapCastFunction(ctx, aggFunc.Args[0], aggFunc.RetTp)
 	default:
 		panic("Unsupported function")
 	}
