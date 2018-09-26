@@ -637,11 +637,31 @@ func (s *testSuite) TestShowTableStatus(c *C) {
  		partition by range(a)
  		( partition p0 values less than (10),
 		  partition p1 values less than (20),
-    	  partition p2 values less than (maxvalue)
+		  partition p2 values less than (maxvalue)
   		);`)
 	rs, err = tk.Exec("show table status from test like 'tp';")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
+}
+
+func (s *testSuite) TestShowSlow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a bigint)`)
+	tk.MustQuery(`select sleep(1)`)
+
+	result := tk.MustQuery(`admin show slow recent 3`)
+	c.Check(result.Rows(), HasLen, 1)
+
+	result = tk.MustQuery(`admin show slow top 3`)
+	c.Check(result.Rows(), HasLen, 1)
+
+	result = tk.MustQuery(`admin show slow top internal 3`)
+	c.Check(result.Rows(), HasLen, 0)
+
+	result = tk.MustQuery(`admin show slow top all 3`)
+	c.Check(result.Rows(), HasLen, 1)
 }
