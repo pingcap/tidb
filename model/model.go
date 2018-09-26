@@ -169,6 +169,8 @@ type TableInfo struct {
 	ShardRowIDBits uint64
 
 	Partition *PartitionInfo `json:"partition"`
+
+	Compression string `json:"compression"`
 }
 
 // GetPartitionInfo returns the partition information.
