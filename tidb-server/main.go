@@ -18,11 +18,9 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -46,9 +44,10 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/x-server"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
@@ -142,7 +141,7 @@ func main() {
 	setupMetrics()
 	createStoreAndDomain()
 	createServer()
-	setupSignalHandler()
+	signal.SetupSignalHandler(serverShutdown)
 	runServer()
 	cleanup()
 	os.Exit(0)
@@ -438,37 +437,14 @@ func createServer() {
 	}
 }
 
-func setupSignalHandler() {
-	usrDefSignalChan := make(chan os.Signal, 1)
-	signal.Notify(usrDefSignalChan, syscall.SIGUSR1)
-	go func() {
-		buf := make([]byte, 1<<16)
-		for {
-			sig := <-usrDefSignalChan
-			if sig == syscall.SIGUSR1 {
-				stackLen := runtime.Stack(buf, true)
-				log.Printf("\n=== Got signal [%s] to dump goroutine stack. ===\n%s\n=== Finished dumping goroutine stack. ===\n", sig, buf[:stackLen])
-			}
-		}
-	}()
-
-	closeSignalChan := make(chan os.Signal, 1)
-	signal.Notify(closeSignalChan,
-		syscall.SIGHUP,
-		syscall.SIGINT,
-		syscall.SIGTERM,
-		syscall.SIGQUIT)
-	go func() {
-		sig := <-closeSignalChan
-		log.Infof("Got signal [%s] to exit.", sig)
-		if sig == syscall.SIGQUIT {
-			graceful = true
-		}
-		if xsvr != nil {
-			xsvr.Close() // Should close xserver before server.
-		}
-		svr.Close()
-	}()
+func serverShutdown(isgraceful bool) {
+	if isgraceful {
+		graceful = true
+	}
+	if xsvr != nil {
+		xsvr.Close() // Should close xserver before server.
+	}
+	svr.Close()
 }
 
 func setupMetrics() {
