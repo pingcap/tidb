@@ -280,7 +280,7 @@ type SessionVars struct {
 	// Table.alloc.
 	IDAllocator autoid.Allocator
 
-	// OptimizerSelectivityLevel defines the level of the selectivity estimation in planner.
+	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
 
 	// EnableTablePartition enables table partition feature.
@@ -364,7 +364,7 @@ func (s *SessionVars) CleanBuffers() {
 	}
 }
 
-// AllocPlanColumnID allocates column id for planner.
+// AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
 	s.PlanColumnID++
 	return s.PlanColumnID
