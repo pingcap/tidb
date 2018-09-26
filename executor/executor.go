@@ -101,8 +101,8 @@ func (e *baseExecutor) Schema() *expression.Schema {
 	return e.schema
 }
 
-// newChunk creates a new chunk to buffer current executor's result.
-func (e *baseExecutor) newChunk() *chunk.Chunk {
+// newFirstChunk creates a new chunk to buffer current executor's result.
+func (e *baseExecutor) newFirstChunk() *chunk.Chunk {
 	return chunk.New(e.retTypes(), e.initCap, e.maxChunkSize)
 }
 
@@ -152,7 +152,7 @@ type Executor interface {
 	Schema() *expression.Schema
 
 	retTypes() []*types.FieldType
-	newChunk() *chunk.Chunk
+	newFirstChunk() *chunk.Chunk
 }
 
 // CancelDDLJobsExec represents a cancel DDL jobs executor.
@@ -461,7 +461,7 @@ func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	chk = e.src.newChunk()
+	chk = e.src.newFirstChunk()
 	for {
 		err := e.src.Next(ctx, chk)
 		if err != nil {
@@ -598,7 +598,7 @@ func (e *LimitExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	e.childResult = e.children[0].newChunk()
+	e.childResult = e.children[0].newFirstChunk()
 	e.cursor = 0
 	e.meetFirstBatch = e.begin == 0
 	return nil
@@ -630,7 +630,7 @@ func init() {
 		if err != nil {
 			return rows, errors.Trace(err)
 		}
-		chk := exec.newChunk()
+		chk := exec.newFirstChunk()
 		for {
 			err = exec.Next(ctx, chk)
 			if err != nil {
@@ -698,7 +698,7 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	e.childResult = e.children[0].newChunk()
+	e.childResult = e.children[0].newFirstChunk()
 	e.batched = expression.Vectorizable(e.filters)
 	if e.batched {
 		e.selected = make([]bool, 0, chunk.InitialCapacity)
@@ -911,7 +911,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return errors.New("subquery returns more than 1 row")
 	}
 
-	childChunk := e.children[0].newChunk()
+	childChunk := e.children[0].newFirstChunk()
 	err = e.children[0].Next(ctx, childChunk)
 	if childChunk.NumRows() != 0 {
 		return errors.New("subquery returns more than 1 row")
@@ -973,7 +973,7 @@ func (e *UnionExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	for _, child := range e.children {
-		e.childrenResults = append(e.childrenResults, child.newChunk())
+		e.childrenResults = append(e.childrenResults, child.newFirstChunk())
 	}
 	e.stopFetchData.Store(false)
 	e.initialized = false

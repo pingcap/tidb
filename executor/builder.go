@@ -390,7 +390,7 @@ func (b *executorBuilder) buildChecksumTable(v *plannercore.ChecksumTable) Execu
 
 func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) Executor {
 	base := newBaseExecutor(b.ctx, nil, v.ExplainID())
-	base.initCap = chunk.NoDataChunkCap
+	base.initCap = chunk.ZeroCapacity
 	e := &DeallocateExec{
 		baseExecutor: base,
 		Name:         v.Name,
@@ -437,7 +437,7 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
-	base.initCap = chunk.NoDataChunkCap
+	base.initCap = chunk.ZeroCapacity
 	e := &PrepareExec{
 		baseExecutor: base,
 		is:           b.is,
@@ -494,7 +494,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 		return b.buildRevoke(s)
 	}
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
-	base.initCap = chunk.NoDataChunkCap
+	base.initCap = chunk.ZeroCapacity
 	e := &SimpleExec{
 		baseExecutor: base,
 		Statement:    v.Statement,
@@ -505,7 +505,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 
 func (b *executorBuilder) buildSet(v *plannercore.Set) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
-	base.initCap = chunk.NoDataChunkCap
+	base.initCap = chunk.ZeroCapacity
 	e := &SetExecutor{
 		baseExecutor: base,
 		vars:         v.VarAssigns,
@@ -525,7 +525,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	} else {
 		baseExec = newBaseExecutor(b.ctx, nil, v.ExplainID())
 	}
-	baseExec.initCap = chunk.NoDataChunkCap
+	baseExec.initCap = chunk.ZeroCapacity
 
 	ivs := &InsertValues{
 		baseExecutor:          baseExec,
@@ -1249,7 +1249,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 	}
 	columns2Handle := buildColumns2Handle(v.SelectPlan.Schema(), tblID2table)
 	base := newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec)
-	base.initCap = chunk.NoDataChunkCap
+	base.initCap = chunk.ZeroCapacity
 	updateExec := &UpdateExec{
 		baseExecutor:   base,
 		SelectExec:     selExec,
@@ -1330,7 +1330,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		return nil
 	}
 	base := newBaseExecutor(b.ctx, nil, v.ExplainID(), selExec)
-	base.initCap = chunk.NoDataChunkCap
+	base.initCap = chunk.ZeroCapacity
 	deleteExec := &DeleteExec{
 		baseExecutor: base,
 		SelectExec:   selExec,
@@ -1553,7 +1553,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 	}
 	e.innerCtx.keyCols = innerKeyCols
-	e.joinResult = e.newChunk()
+	e.joinResult = e.newFirstChunk()
 	metrics.ExecutorCounter.WithLabelValues("IndexLookUpJoin").Inc()
 	return e
 }

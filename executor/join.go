@@ -262,7 +262,7 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 			if e.finished.Load().(bool) {
 				return
 			}
-			chk := e.children[e.innerIdx].newChunk()
+			chk := e.children[e.innerIdx].newFirstChunk()
 			err = e.innerExec.Next(ctx, chk)
 			if err != nil {
 				e.innerFinished <- errors.Trace(err)
@@ -289,7 +289,7 @@ func (e *HashJoinExec) initializeForProbe() {
 	e.outerChkResourceCh = make(chan *outerChkResource, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.outerChkResourceCh <- &outerChkResource{
-			chk:  e.outerExec.newChunk(),
+			chk:  e.outerExec.newFirstChunk(),
 			dest: e.outerResultChs[i],
 		}
 	}
@@ -299,7 +299,7 @@ func (e *HashJoinExec) initializeForProbe() {
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
-		e.joinChkResourceCh[i] <- e.newChunk()
+		e.joinChkResourceCh[i] <- e.newFirstChunk()
 	}
 
 	// e.joinResultCh is for transmitting the join result chunks to the main thread.
@@ -620,8 +620,8 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	}
 	e.cursor = 0
 	e.innerRows = e.innerRows[:0]
-	e.outerChunk = e.outerExec.newChunk()
-	e.innerChunk = e.innerExec.newChunk()
+	e.outerChunk = e.outerExec.newFirstChunk()
+	e.innerChunk = e.innerExec.newFirstChunk()
 	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)

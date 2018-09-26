@@ -119,7 +119,7 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 	if err := us.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	us.snapshotChunkBuffer = us.newChunk()
+	us.snapshotChunkBuffer = us.newFirstChunk()
 	return nil
 }
 

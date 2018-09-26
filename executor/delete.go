@@ -104,7 +104,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
 	fields := e.children[0].retTypes()
-	chk := e.children[0].newChunk()
+	chk := e.children[0].newFirstChunk()
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
 
@@ -185,7 +185,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	colPosInfos := e.getColPosInfos(e.children[0].Schema())
 	tblRowMap := make(tableRowMapType)
 	fields := e.children[0].retTypes()
-	chk := e.children[0].newChunk()
+	chk := e.children[0].newFirstChunk()
 	for {
 		iter := chunk.NewIterator4Chunk(chk)
 		err := e.children[0].Next(ctx, chk)

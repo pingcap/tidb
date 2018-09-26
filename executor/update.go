@@ -140,7 +140,7 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	fields := e.children[0].retTypes()
 	globalRowIdx := 0
-	chk := e.children[0].newChunk()
+	chk := e.children[0].newFirstChunk()
 	for {
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {

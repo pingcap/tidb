@@ -66,7 +66,7 @@ type ShowExec struct {
 func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
-		e.result = e.newChunk()
+		e.result = e.newFirstChunk()
 		err := e.fetchAll()
 		if err != nil {
 			return errors.Trace(err)

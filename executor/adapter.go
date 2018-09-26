@@ -112,7 +112,7 @@ func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // NewChunk create a new chunk using NewChunk function in chunk package.
 func (a *recordSet) NewChunk() *chunk.Chunk {
-	return a.executor.newChunk()
+	return a.executor.newFirstChunk()
 }
 
 func (a *recordSet) Close() error {
@@ -270,7 +270,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.logSlowQuery(txnTS, err == nil)
 	}()
 
-	err = e.Next(ctx, e.newChunk())
+	err = e.Next(ctx, e.newFirstChunk())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

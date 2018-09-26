@@ -250,7 +250,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	fields := selectExec.retTypes()
-	chk := selectExec.newChunk()
+	chk := selectExec.newFirstChunk()
 	iter := chunk.NewIterator4Chunk(chk)
 	rows := make([][]types.Datum, 0, chk.Capacity())
 

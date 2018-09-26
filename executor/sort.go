@@ -111,7 +111,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for {
-		chk := e.children[0].newChunk()
+		chk := e.children[0].newFirstChunk()
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -327,7 +327,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for e.rowChunks.Len() < e.totalLimit {
-		srcChk := e.children[0].newChunk()
+		srcChk := e.children[0].newFirstChunk()
 		err := e.children[0].Next(ctx, srcChk)
 		if err != nil {
 			return errors.Trace(err)
@@ -362,7 +362,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	if e.keyChunks != nil {
 		childKeyChk = chunk.NewChunkWithCapacity(e.keyTypes, e.maxChunkSize)
 	}
-	childRowChk := e.children[0].newChunk()
+	childRowChk := e.children[0].newFirstChunk()
 	for {
 		err := e.children[0].Next(ctx, childRowChk)
 		if err != nil {

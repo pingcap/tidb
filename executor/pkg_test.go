@@ -92,9 +92,9 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		joiner:       joiner,
 	}
 	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.initCap, innerExec.maxChunkSize)
-	join.innerChunk = innerExec.newChunk()
-	join.outerChunk = outerExec.newChunk()
-	joinChk := join.newChunk()
+	join.innerChunk = innerExec.newFirstChunk()
+	join.outerChunk = outerExec.newFirstChunk()
+	joinChk := join.newFirstChunk()
 	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
 		err := join.Next(ctx, joinChk)

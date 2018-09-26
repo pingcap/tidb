@@ -38,7 +38,7 @@ type Chunk struct {
 // Capacity constants.
 const (
 	InitialCapacity = 32
-	NoDataChunkCap  = -1
+	ZeroCapacity    = -1
 )
 
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
@@ -51,7 +51,7 @@ func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
 //  maxChunkSize: the max limit for the number of rows.
 func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	chk := new(Chunk)
-	if cap == NoDataChunkCap {
+	if cap == ZeroCapacity {
 		return chk
 	}
 	chk.columns = make([]*column, 0, len(fields))
