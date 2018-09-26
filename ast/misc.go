@@ -627,7 +627,7 @@ type HandleRange struct {
 	End   int64
 }
 
-// ShowSlowType defines the type for SlowLog.
+// ShowSlowType defines the type for SlowSlow statement.
 type ShowSlowType int
 
 const (
@@ -637,14 +637,25 @@ const (
 	ShowSlowRecent
 )
 
+// ShowSlowKind defines the kind for SlowSlow statement when the type is ShowSlowTop.
+type ShowSlowKind int
+
+const (
+	// ShowSlowKindDefault is a ShowSlowKind constant.
+	ShowSlowKindDefault ShowSlowKind = iota
+	// ShowSlowKindInternal is a ShowSlowKind constant.
+	ShowSlowKindInternal
+	// ShowSlowKindAll is a ShowSlowKind constant.
+	ShowSlowKindAll
+)
+
 // ShowSlow is used for the following command:
 //	admin show slow top [ internal | all] N
 //	admin show slow recent N
 type ShowSlow struct {
 	Tp    ShowSlowType
 	Count uint64
-	// May be "internal" or "all", default is ""
-	Kind string
+	Kind  ShowSlowKind
 }
 
 // AdminStmt is the struct for Admin statement.

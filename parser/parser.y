@@ -5246,6 +5246,7 @@ AdminShowSlow:
 	{
 		$$ = &ast.ShowSlow{
 			Tp: ast.ShowSlowTop,
+			Kind: ast.ShowSlowKindDefault,
 			Count: getUint64FromNUM($2),
 		}
 	}
@@ -5253,7 +5254,7 @@ AdminShowSlow:
 	{
 		$$ = &ast.ShowSlow{
 			Tp: ast.ShowSlowTop,
-			Kind: "internal",
+			Kind: ast.ShowSlowKindInternal,
 			Count: getUint64FromNUM($3),
 		}
 	}
@@ -5261,7 +5262,7 @@ AdminShowSlow:
 	{
 		$$ = &ast.ShowSlow{
 			Tp: ast.ShowSlowTop,
-			Kind: "all",
+			Kind: ast.ShowSlowKindAll,
 			Count: getUint64FromNUM($3),
 		}
 	}
