@@ -78,7 +78,7 @@ export PATH=$PATH:$GOPATH/bin
 TiDB uses [`dep`](https://github.com/golang/dep) to manage dependencies.
 
 ```sh
-go get -u  github.com/golang/dep/cmd/dep
+go get -u github.com/golang/dep/cmd/dep
 ```
 
 ## Workflow

@@ -29,7 +29,7 @@ SELECT 1, @a, @@autocommit as a, c1 from t;
 SET @b = "123";
 SELECT @b + "123";
 # TODO: the field name for 1 + 1 should be "1 + 1", but now is 2
-# we may discuss whether to support it like in MySQL later. 
+# we may discuss whether to support it like in MySQL later.
 SELECT 1 + 1;
 
 SELECT 1 a, 1 as a, 1 + 1 a;
@@ -60,7 +60,7 @@ SELECT * from (SELECT 1, 1) as a;
 --error ER_DUP_FIELDNAME
 SELECT * from (SELECT * FROM t, t2) as a;
 
-# Select bool field 
+# Select bool field
 DROP TABLE IF EXISTS t;
 CREATE TABLE t (c1 INT, c2 INT);
 INSERT INTO t VALUES (1, 2), (1, 1), (1, 3);
@@ -86,7 +86,7 @@ select c2 from t where not null is null;
 # unary field name
 select !(1 + 2);
 
-# - + 
+# - +
 select + - 1, --1, +-+-+1, + "123";
 select --------------------1, ++++++++++++++++++++1;
 select --+(1 + 1), +-+-(1 * 1);
@@ -153,3 +153,13 @@ explain select count(a) from t where b>0 group by a, b order by a;
 select count(a) from t where b>0 group by a, b order by a;
 explain select count(a) from t where b>0 group by a, b order by a limit 1;
 select count(a) from t where b>0 group by a, b order by a limit 1;
+
+# test outer join simplification, issue #7687
+drop table if exists t;
+create table t (id int primary key, a int, b int);
+explain select * from (t t1 left join t t2 on t1.a = t2.a) left join (t t3 left join t t4 on t3.a = t4.a) on t2.b = 1;
+
+drop table if exists t;
+create table t(a bigint primary key, b bigint);
+desc select * from t where a = 1;
+desc select * from t where a = '1';

@@ -305,3 +305,26 @@ Projection_9	1.00	root	count(a)
 select count(a) from t where b>0 group by a, b order by a limit 1;
 count(a)
 3
+drop table if exists t;
+create table t (id int primary key, a int, b int);
+explain select * from (t t1 left join t t2 on t1.a = t2.a) left join (t t3 left join t t4 on t3.a = t4.a) on t2.b = 1;
+id	count	task	operator info
+HashLeftJoin_10	156250000.00	root	left outer join, inner:HashLeftJoin_16, left cond:[eq(t2.b, 1)]
+├─HashLeftJoin_11	12500.00	root	left outer join, inner:TableReader_15, equal:[eq(t1.a, t2.a)]
+│ ├─TableReader_13	10000.00	root	data:TableScan_12
+│ │ └─TableScan_12	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+│ └─TableReader_15	10000.00	root	data:TableScan_14
+│   └─TableScan_14	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+└─HashLeftJoin_16	12500.00	root	left outer join, inner:TableReader_20, equal:[eq(t3.a, t4.a)]
+  ├─TableReader_18	10000.00	root	data:TableScan_17
+  │ └─TableScan_17	10000.00	cop	table:t3, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableReader_20	10000.00	root	data:TableScan_19
+    └─TableScan_19	10000.00	cop	table:t4, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a bigint primary key, b bigint);
+desc select * from t where a = 1;
+id	count	task	operator info
+Point_Get_1	1.00	root	table:t, handle:1
+desc select * from t where a = '1';
+id	count	task	operator info
+Point_Get_1	1.00	root	table:t, handle:1
