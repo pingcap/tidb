@@ -40,7 +40,7 @@ type RowDecoder struct {
 	haveGenColumn bool
 }
 
-// NewRowDecoder return a new RowDecoder.
+// NewRowDecoder returns a new RowDecoder.
 func NewRowDecoder(cols []*table.Column, decodeColMap map[int64]Column) RowDecoder {
 	colFieldMap := make(map[int64]*types.FieldType, len(decodeColMap))
 	haveGenCol := false
@@ -68,7 +68,7 @@ func NewRowDecoder(cols []*table.Column, decodeColMap map[int64]Column) RowDecod
 	}
 }
 
-// DecodeAndEvalRowWithMap decodes a byte slice into datums and eval the generated column value.
+// DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
 func (rd RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	_, err := tablecodec.DecodeRowWithMap(b, rd.colTypes, loc, row)
 	if err != nil {
@@ -82,7 +82,7 @@ func (rd RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, l
 		rd.mutRow.SetValue(rd.columns[id].Info.Offset, v.GetValue())
 	}
 	for id, col := range rd.columns {
-		if _, ok := row[id]; ok || col.GenExpr == nil {
+		if col.GenExpr == nil {
 			continue
 		}
 		// Eval the column value

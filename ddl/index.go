@@ -879,7 +879,7 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 		tpExpr := decoder.Column{
 			Info: col.ToInfo(),
 		}
-		if col.IsGenerated() && col.GeneratedStored == false {
+		if col.IsGenerated() && !col.GeneratedStored {
 			for _, c := range cols {
 				if strings.Contains(col.GeneratedExprString, c.Name.L) {
 					decodeColMap[c.ID] = decoder.Column{
