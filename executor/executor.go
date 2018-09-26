@@ -481,8 +481,9 @@ func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 type ShowSlowExec struct {
 	baseExecutor
 
-	done     bool
 	ShowSlow *ast.ShowSlow
+	result   []*domain.SlowQueryInfo
+	cursor   int
 }
 
 // Open implements the Executor Open interface.
@@ -490,19 +491,21 @@ func (e *ShowSlowExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
+
+	dom := domain.GetDomain(e.ctx)
+	e.result = dom.ShowSlowQuery(e.ShowSlow)
 	return nil
 }
 
 // Next implements the Executor Next interface.
 func (e *ShowSlowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if e.done {
+	if e.cursor >= len(e.result) {
 		return nil
 	}
 
-	dom := domain.GetDomain(e.ctx)
-	slowQueries := dom.ShowSlowQuery(e.ShowSlow)
-	for _, slow := range slowQueries {
+	for e.cursor < len(e.result) && chk.NumRows() < e.maxChunkSize {
+		slow := e.result[e.cursor]
 		chk.AppendString(0, slow.SQL)
 		chk.AppendTime(1, types.Time{
 			Time: types.FromGoTime(slow.Start),
@@ -527,8 +530,8 @@ func (e *ShowSlowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		} else {
 			chk.AppendInt64(11, 1)
 		}
+		e.cursor++
 	}
-	e.done = true
 	return nil
 }
 
