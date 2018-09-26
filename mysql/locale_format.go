@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 func formatENUS(number string, precision string) (string, error) {

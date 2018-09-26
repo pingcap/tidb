@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -316,7 +316,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			}
 			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
-				return errInvalidPrivilegeType.Gen("Unknown Privilege Type!")
+				return errInvalidPrivilegeType.GenWithStack("Unknown Privilege Type!")
 			}
 			value.Privileges |= priv
 		}
@@ -343,7 +343,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*ast.ResultField) 
 			}
 			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
-				return errInvalidPrivilegeType.Gen("Unknown Privilege Type!")
+				return errInvalidPrivilegeType.GenWithStack("Unknown Privilege Type!")
 			}
 			value.Privileges |= priv
 		}

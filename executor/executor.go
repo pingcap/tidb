@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -28,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -387,7 +387,7 @@ func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if err != nil {
 			log.Warnf("%v error:%v", t.Name, errors.ErrorStack(err))
 			if admin.ErrDataInConsistent.Equal(err) {
-				return ErrAdminCheckTable.Gen("%v err:%v", t.Name, err)
+				return ErrAdminCheckTable.GenWithStack("%v err:%v", t.Name, err)
 			}
 
 			return errors.Errorf("%v err:%v", t.Name, err)
@@ -474,31 +474,30 @@ func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-type ShowLogExec struct {
+type ShowSlowExec struct {
 	baseExecutor
 
-	done    bool
-	ShowLog *ast.ShowLog
+	done     bool
+	ShowSlow *ast.ShowSlow
 }
 
 // Open implements the Executor Open interface.
-func (e *ShowLogExec) Open(ctx context.Context) error {
+func (e *ShowSlowExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func (e *ShowLogExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *ShowSlowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil
 	}
 
 	dom := domain.GetDomain(e.ctx)
-	slowQueries := dom.ShowTopNSlowQuery(e.ShowLog)
+	slowQueries := dom.ShowSlowQuery(e.ShowSlow)
 	for _, slow := range slowQueries {
-		fmt.Println("--------", slow)
 		chk.AppendString(0, slow.SQL)
 		chk.AppendTime(1, types.Time{
 			Time: types.FromGoTime(slow.Start),
@@ -668,7 +667,7 @@ func init() {
 	// While doing optimization in the plan package, we need to execute uncorrelated subquery,
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
-	plan.EvalSubquery = func(p plan.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
+	plannercore.EvalSubquery = func(p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
 		err = sctx.ActivePendingTxn()
 		if err != nil {
 			return rows, errors.Trace(err)
@@ -761,7 +760,7 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Close implements plan.Plan Close interface.
+// Close implements plannercore.Plan Close interface.
 func (e *SelectionExec) Close() error {
 	e.childResult = nil
 	e.selected = nil

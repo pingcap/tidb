@@ -25,14 +25,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/mysql"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/x-server"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	log "github.com/sirupsen/logrus"
@@ -385,12 +386,16 @@ func setGlobalVars() {
 	statistics.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
-	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
+	plannercore.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
+	variable.ForcePriority = int32(mysql.Str2Priority(cfg.Performance.ForcePriority))
 
-	plan.SetPreparedPlanCache(cfg.PreparedPlanCache.Enabled)
-	if plan.PreparedPlanCacheEnabled() {
-		plan.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
+	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
+	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
+
+	plannercore.SetPreparedPlanCache(cfg.PreparedPlanCache.Enabled)
+	if plannercore.PreparedPlanCacheEnabled() {
+		plannercore.PreparedPlanCacheCapacity = cfg.PreparedPlanCache.Capacity
 	}
 
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
@@ -398,9 +403,6 @@ func setGlobalVars() {
 	}
 	tikv.GrpcKeepAliveTime = time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
 	tikv.GrpcKeepAliveTimeout = time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second
-
-	// set lower_case_table_names
-	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }

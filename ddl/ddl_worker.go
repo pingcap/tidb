@@ -19,7 +19,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -28,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -127,14 +126,6 @@ func (w *worker) start(d *ddlCtx) {
 
 	ticker := time.NewTicker(checkTime)
 	defer ticker.Stop()
-	defer func() {
-		r := recover()
-		if r != nil {
-			buf := util.GetStack()
-			log.Errorf("[ddl-%s] ddl %s, %v %s", w, d.uuid, r, buf)
-			metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-		}
-	}()
 
 	for {
 		select {
@@ -272,7 +263,7 @@ func (w *worker) deleteRange(job *model.Job) error {
 	if job.Version <= currentVersion {
 		err = w.delRangeManager.addDelRangeJob(job)
 	} else {
-		err = errInvalidJobVersion.GenByArgs(job.Version, currentVersion)
+		err = errInvalidJobVersion.GenWithStackByArgs(job.Version, currentVersion)
 	}
 	return errors.Trace(err)
 }
@@ -519,7 +510,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
-		err = errInvalidDDLJob.Gen("invalid ddl job %v", job)
+		err = errInvalidDDLJob.GenWithStack("invalid ddl job %v", job)
 	}
 
 	// Save errors in job, so that others can know errors happened.

@@ -40,10 +40,10 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -432,7 +432,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			}
 			continue
 		default:
-			err = errUnknownFieldType.Gen("stmt unknown field type %d", tp)
+			err = errUnknownFieldType.GenWithStack("stmt unknown field type %d", tp)
 			return
 		}
 	}

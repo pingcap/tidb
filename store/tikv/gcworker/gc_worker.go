@@ -22,9 +22,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -45,6 +47,7 @@ type GCWorker struct {
 	uuid        string
 	desc        string
 	store       tikv.Storage
+	pdClient    pd.Client
 	gcIsRunning bool
 	lastFinish  time.Time
 	cancel      context.CancelFunc
@@ -54,7 +57,7 @@ type GCWorker struct {
 }
 
 // NewGCWorker creates a GCWorker instance.
-func NewGCWorker(store tikv.Storage) (tikv.GCHandler, error) {
+func NewGCWorker(store tikv.Storage, pdClient pd.Client) (tikv.GCHandler, error) {
 	ver, err := store.CurrentVersion()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -67,6 +70,7 @@ func NewGCWorker(store tikv.Storage) (tikv.GCHandler, error) {
 		uuid:        strconv.FormatUint(ver.Ver, 16),
 		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:       store,
+		pdClient:    pdClient,
 		gcIsRunning: false,
 		lastFinish:  time.Now(),
 		done:        make(chan error),
@@ -98,10 +102,11 @@ const (
 	gcLeaderDescKey      = "tikv_gc_leader_desc"
 	gcLeaderLeaseKey     = "tikv_gc_leader_lease"
 
-	gcLastRunTimeKey     = "tikv_gc_last_run_time"
-	gcRunIntervalKey     = "tikv_gc_run_interval"
-	gcDefaultRunInterval = time.Minute * 10
-	gcWaitTime           = time.Minute * 1
+	gcLastRunTimeKey       = "tikv_gc_last_run_time"
+	gcRunIntervalKey       = "tikv_gc_run_interval"
+	gcDefaultRunInterval   = time.Minute * 10
+	gcWaitTime             = time.Minute * 1
+	gcRedoDeleteRangeDelay = 24 * time.Hour
 
 	gcLifeTimeKey        = "tikv_gc_life_time"
 	gcDefaultLifeTime    = time.Minute * 10
@@ -333,6 +338,13 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 		w.done <- errors.Trace(err)
 		return
 	}
+	err = w.redoDeleteRanges(ctx, safePoint)
+	if err != nil {
+		log.Errorf("[gc worker] %s redo-delete range returns an error %v", w.uuid, errors.ErrorStack(err))
+		metrics.GCJobFailureCounter.WithLabelValues("redo_delete_range").Inc()
+		w.done <- errors.Trace(err)
+		return
+	}
 	err = w.doGC(ctx, safePoint)
 	if err != nil {
 		log.Errorf("[gc worker] %s do GC returns an error %v", w.uuid, errors.ErrorStack(err))
@@ -344,6 +356,7 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64) {
 	w.done <- nil
 }
 
+// `deleteRanges` processes all delete range records whose ts < safePoint in table `gc_delete_range`
 func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	metrics.GCWorkerCounter.WithLabelValues("delete_range").Inc()
 
@@ -356,21 +369,14 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 
 	log.Infof("[gc worker] %s start delete %v ranges", w.uuid, len(ranges))
 	startTime := time.Now()
-	regions := 0
 	for _, r := range ranges {
-		startKey, rangeEndKey := r.Range()
+		startKey, endKey := r.Range()
 
-		deleteRangeTask := tikv.NewDeleteRangeTask(ctx, w.store, startKey, rangeEndKey)
-		err := deleteRangeTask.Execute()
-
+		err = w.sendUnsafeDestroyRangeRequest(ctx, startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if deleteRangeTask.IsCanceled() {
-			return errors.New("[gc worker] gc job canceled")
-		}
 
-		regions += deleteRangeTask.CompletedRegions()
 		se := createSession(w.store)
 		err = util.CompleteDeleteRange(se, r)
 		se.Close()
@@ -378,9 +384,86 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 			return errors.Trace(err)
 		}
 	}
-	log.Infof("[gc worker] %s finish delete %v ranges, regions: %v, cost time: %s", w.uuid, len(ranges), regions, time.Since(startTime))
+	log.Infof("[gc worker] %s finish delete %v ranges, cost time: %s", w.uuid, len(ranges), time.Since(startTime))
 	metrics.GCHistogram.WithLabelValues("delete_ranges").Observe(time.Since(startTime).Seconds())
 	return nil
+}
+
+// `redoDeleteRanges` checks all deleted ranges whose ts is at least `lifetime + 24h` ago. See TiKV RFC #2.
+func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error {
+	metrics.GCWorkerCounter.WithLabelValues("redo_delete_range").Inc()
+
+	// We check delete range records that are deleted about 24 hours ago.
+	redoDeleteRangesTs := safePoint - oracle.ComposeTS(int64(gcRedoDeleteRangeDelay.Seconds())*1000, 0)
+
+	se := createSession(w.store)
+	ranges, err := util.LoadDoneDeleteRanges(se, redoDeleteRangesTs)
+	se.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	log.Infof("[gc worker] %s start redo-delete %v ranges", w.uuid, len(ranges))
+	startTime := time.Now()
+	for _, r := range ranges {
+		startKey, endKey := r.Range()
+
+		err = w.sendUnsafeDestroyRangeRequest(ctx, startKey, endKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		se := createSession(w.store)
+		err := util.DeleteDoneRecord(se, r)
+		se.Close()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	log.Infof("[gc worker] %s finish redo-delete %v ranges, cost time: %s", w.uuid, len(ranges), time.Since(startTime))
+	metrics.GCHistogram.WithLabelValues("redo_delete_ranges").Observe(time.Since(startTime).Seconds())
+	return nil
+}
+
+func (w *GCWorker) sendUnsafeDestroyRangeRequest(ctx context.Context, startKey []byte, endKey []byte) error {
+	// Get all stores every time deleting a region. So the store list is less probably to be stale.
+	stores, err := w.pdClient.GetAllStores(ctx)
+	if err != nil {
+		log.Errorf("[gc worker] %s delete ranges: got an error while trying to get store list from pd: %v", w.uuid, errors.ErrorStack(err))
+		return errors.Trace(err)
+	}
+
+	req := &tikvrpc.Request{
+		Type: tikvrpc.CmdUnsafeDestroyRange,
+		UnsafeDestroyRange: &kvrpcpb.UnsafeDestroyRangeRequest{
+			StartKey: startKey,
+			EndKey:   endKey,
+		},
+	}
+
+	var wg sync.WaitGroup
+
+	for _, store := range stores {
+		if store.State != metapb.StoreState_Up {
+			continue
+		}
+
+		address := store.Address
+		storeID := store.Id
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err1 := w.store.GetTiKVClient().SendRequest(ctx, address, req, tikv.UnsafeDestroyRangeTimeout)
+			if err1 != nil {
+				log.Errorf("[gc worker] %s destroy range on store %v failed with error: %v", w.uuid, storeID, errors.ErrorStack(err))
+				err = err1
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	return errors.Trace(err)
 }
 
 func (w *GCWorker) loadGCConcurrencyWithDefault() (int, error) {

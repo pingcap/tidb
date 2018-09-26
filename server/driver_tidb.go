@@ -17,7 +17,6 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

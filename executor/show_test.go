@@ -18,13 +18,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -547,9 +547,9 @@ func (s *testSuite) TestShowErrors(c *C) {
 func (s *testSuite) TestIssue3641(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("show tables;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 	_, err = tk.Exec("show table status;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 }
 
 // TestShow2 is moved from session_test

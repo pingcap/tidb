@@ -14,12 +14,11 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -27,10 +26,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
-func (b *executorBuilder) buildPointGet(p *plan.PointGetPlan) Executor {
+func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	return &PointGetExecutor{
 		ctx:     b.ctx,
 		schema:  p.Schema(),
@@ -102,7 +102,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	if len(val) == 0 {
 		if e.idxInfo != nil {
-			return kv.ErrNotExist.Gen("inconsistent extra index %s, handle %d not found in table",
+			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 				e.idxInfo.Name.O, e.handle)
 		}
 		return nil

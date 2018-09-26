@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -50,27 +50,16 @@ var (
 	_ functionClass = &jsonKeysFunctionClass{}
 	_ functionClass = &jsonLengthFunctionClass{}
 
-	// Type of JSON value.
 	_ builtinFunc = &builtinJSONTypeSig{}
-	// Unquote JSON value.
 	_ builtinFunc = &builtinJSONUnquoteSig{}
-	// Create JSON array.
 	_ builtinFunc = &builtinJSONArraySig{}
-	// Create JSON object.
 	_ builtinFunc = &builtinJSONObjectSig{}
-	// Return data from JSON document.
 	_ builtinFunc = &builtinJSONExtractSig{}
-	// Insert data into JSON document.
 	_ builtinFunc = &builtinJSONSetSig{}
-	// Insert data into JSON document.
 	_ builtinFunc = &builtinJSONInsertSig{}
-	// Replace values in JSON document.
 	_ builtinFunc = &builtinJSONReplaceSig{}
-	// Remove data from JSON document.
 	_ builtinFunc = &builtinJSONRemoveSig{}
-	// Merge JSON documents, preserving duplicate keys.
 	_ builtinFunc = &builtinJSONMergeSig{}
-	// Check JSON document contains specific target.
 	_ builtinFunc = &builtinJSONContainsSig{}
 )
 
@@ -216,7 +205,7 @@ func (c *jsonSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		return nil, errors.Trace(err)
 	}
 	if len(args)&1 != 1 {
-		return nil, ErrIncorrectParameterCount.GenByArgs(c.funcName)
+		return nil, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETJson)
@@ -256,7 +245,7 @@ func (c *jsonInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, errors.Trace(err)
 	}
 	if len(args)&1 != 1 {
-		return nil, ErrIncorrectParameterCount.GenByArgs(c.funcName)
+		return nil, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETJson)
@@ -296,7 +285,7 @@ func (c *jsonReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 		return nil, errors.Trace(err)
 	}
 	if len(args)&1 != 1 {
-		return nil, ErrIncorrectParameterCount.GenByArgs(c.funcName)
+		return nil, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	argTps = append(argTps, types.ETJson)
@@ -433,7 +422,7 @@ func (c *jsonObjectFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 		return nil, errors.Trace(err)
 	}
 	if len(args)&1 != 0 {
-		return nil, ErrIncorrectParameterCount.GenByArgs(c.funcName)
+		return nil, ErrIncorrectParameterCount.GenWithStackByArgs(c.funcName)
 	}
 	argTps := make([]types.EvalType, 0, len(args))
 	for i := 0; i < len(args)-1; i += 2 {
@@ -450,7 +439,7 @@ func (c *jsonObjectFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 
 func (b *builtinJSONObjectSig) evalJSON(row chunk.Row) (res json.BinaryJSON, isNull bool, err error) {
 	if len(b.args)&1 == 1 {
-		err = ErrIncorrectParameterCount.GenByArgs(ast.JSONObject)
+		err = ErrIncorrectParameterCount.GenWithStackByArgs(ast.JSONObject)
 		return res, true, errors.Trace(err)
 	}
 	jsons := make(map[string]interface{}, len(b.args)>>1)
@@ -696,7 +685,7 @@ type jsonValidFunctionClass struct {
 }
 
 func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_VALID")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_VALID")
 }
 
 type jsonArrayAppendFunctionClass struct {
@@ -704,7 +693,7 @@ type jsonArrayAppendFunctionClass struct {
 }
 
 func (c *jsonArrayAppendFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_ARRAY_APPEND")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_ARRAY_APPEND")
 }
 
 type jsonArrayInsertFunctionClass struct {
@@ -712,7 +701,7 @@ type jsonArrayInsertFunctionClass struct {
 }
 
 func (c *jsonArrayInsertFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_ARRAY_INSERT")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_ARRAY_INSERT")
 }
 
 type jsonMergePatchFunctionClass struct {
@@ -720,7 +709,7 @@ type jsonMergePatchFunctionClass struct {
 }
 
 func (c *jsonMergePatchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_MERGE_PATCH")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_MERGE_PATCH")
 }
 
 type jsonMergePreserveFunctionClass struct {
@@ -728,7 +717,7 @@ type jsonMergePreserveFunctionClass struct {
 }
 
 func (c *jsonMergePreserveFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_MERGE_PRESERVE")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_MERGE_PRESERVE")
 }
 
 type jsonPrettyFunctionClass struct {
@@ -736,7 +725,7 @@ type jsonPrettyFunctionClass struct {
 }
 
 func (c *jsonPrettyFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_PRETTY")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_PRETTY")
 }
 
 type jsonQuoteFunctionClass struct {
@@ -744,7 +733,7 @@ type jsonQuoteFunctionClass struct {
 }
 
 func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_QUOTE")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_QUOTE")
 }
 
 type jsonSearchFunctionClass struct {
@@ -752,7 +741,7 @@ type jsonSearchFunctionClass struct {
 }
 
 func (c *jsonSearchFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_SEARCH")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_SEARCH")
 }
 
 type jsonStorageSizeFunctionClass struct {
@@ -760,7 +749,7 @@ type jsonStorageSizeFunctionClass struct {
 }
 
 func (c *jsonStorageSizeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_STORAGE_SIZE")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_STORAGE_SIZE")
 }
 
 type jsonDepthFunctionClass struct {
@@ -768,7 +757,7 @@ type jsonDepthFunctionClass struct {
 }
 
 func (c *jsonDepthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_DEPTH")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_DEPTH")
 }
 
 type jsonKeysFunctionClass struct {
@@ -776,7 +765,7 @@ type jsonKeysFunctionClass struct {
 }
 
 func (c *jsonKeysFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_KEYS")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_KEYS")
 }
 
 type jsonLengthFunctionClass struct {
@@ -784,5 +773,5 @@ type jsonLengthFunctionClass struct {
 }
 
 func (c *jsonLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "JSON_LENGTH")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_LENGTH")
 }

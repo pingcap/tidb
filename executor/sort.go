@@ -17,12 +17,12 @@ import (
 	"container/heap"
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -30,7 +30,7 @@ import (
 type SortExec struct {
 	baseExecutor
 
-	ByItems []*plan.ByItems
+	ByItems []*plannercore.ByItems
 	Idx     int
 	fetched bool
 	schema  *expression.Schema
@@ -221,7 +221,7 @@ func (e *SortExec) keyChunksLess(i, j int) bool {
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
 	SortExec
-	limit      *plan.PhysicalLimit
+	limit      *plannercore.PhysicalLimit
 	totalLimit int
 
 	chkHeap *topNChunkHeap

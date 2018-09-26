@@ -43,7 +43,7 @@ func (h *slowQueryHeap) Pop() interface{} {
 	return x
 }
 
-func (h *slowQueryHeap) Refresh(now time.Time, period time.Duration) {
+func (h *slowQueryHeap) RemoveExpired(now time.Time, period time.Duration) {
 	// Remove outdated slow query element.
 	idx := 0
 	for i := 0; i < len(h.data); i++ {
@@ -63,50 +63,43 @@ func (h *slowQueryHeap) Refresh(now time.Time, period time.Duration) {
 }
 
 func (h *slowQueryHeap) Query(count int) []*SlowQueryInfo {
-	save := make([]*SlowQueryInfo, len(h.data))
-	copy(save, h.data)
+	// The sorted array still maintains the heap property.
+	sort.Sort(h)
 
-	if count > len(h.data) {
-		count = len(h.data)
-	}
-	ret := make([]*SlowQueryInfo, 0, count)
-	for i := 0; i < count; i++ {
-		ret = append(ret, heap.Pop(h).(*SlowQueryInfo))
-	}
-
-	// heap.Pop breaks the data, recover it here.
-	h.data = save
-	return ret
+	// The result shoud be in decrease order.
+	return takeLastN(h.data, count)
 }
 
 type slowQueryQueue struct {
 	data []*SlowQueryInfo
-	head int
-	tail int
+	size int
 }
 
 func (q *slowQueryQueue) Enqueue(info *SlowQueryInfo) {
-	q.data[q.tail] = info
-	q.tail = (q.tail + 1) % len(q.data)
-	if q.tail == q.head {
-		q.head = (q.head + 1) % len(q.data)
+	if len(q.data) < q.size {
+		q.data = append(q.data, info)
+		return
 	}
+
+	q.data = append(q.data, info)[1:]
+	return
 }
 
 func (q *slowQueryQueue) Query(count int) []*SlowQueryInfo {
 	// Queue is empty.
-	if q.tail == q.head {
+	if len(q.data) == 0 {
 		return nil
 	}
+	return takeLastN(q.data, count)
+}
 
-	if count > len(q.data) {
-		count = len(q.data)
+func takeLastN(data []*SlowQueryInfo, count int) []*SlowQueryInfo {
+	if count > len(data) {
+		count = len(data)
 	}
 	ret := make([]*SlowQueryInfo, 0, count)
-	tail := (q.tail - 1) % len(q.data)
-	for tail != q.head && len(ret) < count {
-		ret = append(ret, q.data[tail])
-		tail = (tail - 1) % len(q.data)
+	for i := len(data) - 1; i >= 0 && len(ret) < count; i-- {
+		ret = append(ret, data[i])
 	}
 	return ret
 }
@@ -121,7 +114,7 @@ type topNSlowQueries struct {
 	topN     int
 	period   time.Duration
 	ch       chan *SlowQueryInfo
-	msgCh    chan *showLogMessage
+	msgCh    chan *showSlowMessage
 }
 
 func newTopNSlowQueries(topN int, period time.Duration, queueSize int) *topNSlowQueries {
@@ -129,11 +122,12 @@ func newTopNSlowQueries(topN int, period time.Duration, queueSize int) *topNSlow
 		topN:   topN,
 		period: period,
 		ch:     make(chan *SlowQueryInfo, 1000),
-		msgCh:  make(chan *showLogMessage, 1),
+		msgCh:  make(chan *showSlowMessage, 10),
 	}
 	ret.user.data = make([]*SlowQueryInfo, 0, topN)
 	ret.internal.data = make([]*SlowQueryInfo, 0, topN)
-	ret.recent.data = make([]*SlowQueryInfo, queueSize)
+	ret.recent.size = queueSize
+	ret.recent.data = make([]*SlowQueryInfo, 0, queueSize)
 	return ret
 }
 
@@ -161,13 +155,13 @@ func (q *topNSlowQueries) Append(info *SlowQueryInfo) {
 	}
 }
 
-func (q *topNSlowQueries) Refresh(now time.Time) {
-	q.user.Refresh(now, q.period)
-	q.internal.Refresh(now, q.period)
+func (q *topNSlowQueries) RemoveExpired(now time.Time) {
+	q.user.RemoveExpired(now, q.period)
+	q.internal.RemoveExpired(now, q.period)
 }
 
-type showLogMessage struct {
-	request *ast.ShowLog
+type showSlowMessage struct {
+	request *ast.ShowSlow
 	result  []*SlowQueryInfo
 	sync.WaitGroup
 }
@@ -183,20 +177,20 @@ func (q *topNSlowQueries) QueryRecent(count int) []*SlowQueryInfo {
 	return q.recent.Query(count)
 }
 
-func (q *topNSlowQueries) QueryTop(count int, kind string) []*SlowQueryInfo {
+func (q *topNSlowQueries) QueryTop(count int, kind ast.ShowSlowKind) []*SlowQueryInfo {
 	var ret []*SlowQueryInfo
 	switch kind {
-	case "user", "":
+	case ast.ShowSlowKindDefault:
 		ret = q.user.Query(count)
-	case "internal":
+	case ast.ShowSlowKindInternal:
 		ret = q.internal.Query(count)
-	case "all":
-		tmp1 := q.user.Query(count)
-		tmp2 := q.internal.Query(count)
-		tmp1 = append(tmp1, tmp2...)
-		tmp3 := slowQueryHeap{tmp1}
-		sort.Sort(&tmp3)
-		ret = tmp1[:count]
+	case ast.ShowSlowKindAll:
+		tmp := make([]*SlowQueryInfo, 0, len(q.user.data)+len(q.internal.data))
+		tmp = append(tmp, q.user.data...)
+		tmp = append(tmp, q.internal.data...)
+		tmp1 := slowQueryHeap{tmp}
+		sort.Sort(&tmp1)
+		ret = takeLastN(tmp, count)
 	}
 	return ret
 }

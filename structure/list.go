@@ -16,8 +16,8 @@ package structure
 import (
 	"encoding/binary"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pkg/errors"
 )
 
 type listMeta struct {
@@ -188,7 +188,7 @@ func (t *TxStructure) LSet(key []byte, index int64, value []byte) error {
 	if index >= meta.LIndex && index < meta.RIndex {
 		return t.readWriter.Set(t.encodeListDataKey(key, index), value)
 	}
-	return errInvalidListIndex.Gen("invalid list index %d", index)
+	return errInvalidListIndex.GenWithStack("invalid list index %d", index)
 }
 
 // LClear removes the list of the key.

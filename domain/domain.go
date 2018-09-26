@@ -23,7 +23,6 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
-	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -331,17 +331,18 @@ func (do *Domain) Reload() error {
 	return nil
 }
 
-// LogTopNSlowQuery keeps topN recent slow queries in domain.
-func (do *Domain) LogTopNSlowQuery(query *SlowQueryInfo) {
+// LogSlowQuery keeps topN recent slow queries in domain.
+func (do *Domain) LogSlowQuery(query *SlowQueryInfo) {
 	select {
 	case do.slowQuery.ch <- query:
 	default:
 	}
 }
 
-func (do *Domain) ShowTopNSlowQuery(showLog *ast.ShowLog) []*SlowQueryInfo {
-	msg := &showLogMessage{
-		request: showLog,
+// ShowSlowQuery returns the slow queries.
+func (do *Domain) ShowSlowQuery(showSlow *ast.ShowSlow) []*SlowQueryInfo {
+	msg := &showSlowMessage{
+		request: showSlow,
 	}
 	msg.Add(1)
 	do.slowQuery.msgCh <- msg
@@ -357,7 +358,7 @@ func (do *Domain) topNSlowQueryLoop() {
 	for {
 		select {
 		case now := <-ticker.C:
-			do.slowQuery.Refresh(now)
+			do.slowQuery.RemoveExpired(now)
 		case info, ok := <-do.slowQuery.ch:
 			if !ok {
 				return
@@ -365,9 +366,9 @@ func (do *Domain) topNSlowQueryLoop() {
 			do.slowQuery.Append(info)
 		case msg := <-do.slowQuery.msgCh:
 			req := msg.request
-			if req.Tp == ast.ShowLogTop {
+			if req.Tp == ast.ShowSlowTop {
 				msg.result = do.slowQuery.QueryTop(int(req.Count), req.Kind)
-			} else if req.Tp == ast.ShowLogRecent {
+			} else if req.Tp == ast.ShowSlowRecent {
 				msg.result = do.slowQuery.QueryRecent(int(req.Count))
 			}
 			msg.Done()
