@@ -14,6 +14,7 @@
 package mysql
 
 import (
+	"strings"
 	"unicode"
 
 	"github.com/pkg/errors"
@@ -576,13 +577,19 @@ var (
 	DefaultCollationName = UTF8DefaultCollation
 )
 
-// ValidateCharsetCollation checks if this charset and collation are accepted by TiDB.
-func ValidateCharsetCollation(charset string, collation string) error {
+// ValidateDefaultCharsetCollation checks if this charset and collation are accepted by TiDB.
+func ValidateDefaultCharsetCollation(charset string, collation string) error {
 	if _, ok := Charsets[charset]; !ok {
 		return errors.Errorf("not a valid charset: %s", charset)
 	}
 	if _, ok := CollationNames[collation]; !ok {
 		return errors.Errorf("not a valid collation: %s", collation)
+	}
+	if charset != UTF8Charset && charset != UTF8MB4Charset {
+		return errors.Errorf("only utf8 and utf8mb4 are alowed as the default charset, got: %s", charset)
+	}
+	if !strings.HasPrefix(collation, charset) {
+		return errors.Errorf("collation %s is not valid for charset: %s", collation, charset)
 	}
 	return nil
 }
@@ -590,7 +597,7 @@ func ValidateCharsetCollation(charset string, collation string) error {
 // SetDefaultCharsetCollation updates the default charset for the system.
 // This should only be changed at startup.
 func SetDefaultCharsetCollation(charset string, collation string) error {
-	if err := ValidateCharsetCollation(charset, collation); err != nil {
+	if err := ValidateDefaultCharsetCollation(charset, collation); err != nil {
 		return err
 	}
 	DefaultCharset = charset

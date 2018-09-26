@@ -387,7 +387,7 @@ func validateConfig() error {
 		os.Exit(-1)
 	}
 
-	return mysql.ValidateCharsetCollation(cfg.CharacterSetServer, cfg.CollationServer)
+	return mysql.ValidateDefaultCharsetCollation(cfg.CharacterSetServer, cfg.CollationServer)
 }
 
 func setGlobalVars() error {
