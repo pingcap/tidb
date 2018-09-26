@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 )
 
@@ -279,7 +280,7 @@ type SessionVars struct {
 	// Table.alloc.
 	IDAllocator autoid.Allocator
 
-	// OptimizerSelectivityLevel defines the level of the selectivity estimation in planner.
+	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
 
 	// EnableTablePartition enables table partition feature.
@@ -363,7 +364,7 @@ func (s *SessionVars) CleanBuffers() {
 	}
 }
 
-// AllocPlanColumnID allocates column id for planner.
+// AllocPlanColumnID allocates column id for plan.
 func (s *SessionVars) AllocPlanColumnID() int64 {
 	s.PlanColumnID++
 	return s.PlanColumnID
@@ -426,7 +427,7 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 func (s *SessionVars) Location() *time.Location {
 	loc := s.TimeZone
 	if loc == nil {
-		loc = time.Local
+		loc = timeutil.SystemLocation()
 	}
 	return loc
 }
@@ -575,6 +576,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
+	case TiDBForcePriority:
+		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
 	}
 	s.systems[name] = val
 	return nil

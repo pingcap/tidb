@@ -95,6 +95,34 @@ func (s *testSuite) TestInsertOnDuplicateKey(c *C) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 2 3`))
 	tk.MustExec(`insert into t (v, k1, k2) select c, a, b from (select "3" c, "1" a, "2" b) tmp on duplicate key update v=c;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 2 3`))
+
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1(id int, a int, b int);`)
+	tk.MustExec(`insert into t1 values (1, 1, 1);`)
+	tk.MustExec(`insert into t1 values (2, 2, 1);`)
+	tk.MustExec(`insert into t1 values (3, 3, 1);`)
+	tk.MustExec(`create table t2(a int primary key, b int, unique(b));`)
+	tk.MustExec(`insert into t2 select a, b from t1 order by id on duplicate key update a=t1.a, b=t1.b;`)
+	tk.MustQuery(`select * from t2 order by a;`).Check(testkit.Rows(`3 1`))
+
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1(id int, a int, b int);`)
+	tk.MustExec(`insert into t1 values (1, 1, 1);`)
+	tk.MustExec(`insert into t1 values (2, 1, 2);`)
+	tk.MustExec(`insert into t1 values (3, 3, 1);`)
+	tk.MustExec(`create table t2(a int primary key, b int, unique(b));`)
+	tk.MustExec(`insert into t2 select a, b from t1 order by id on duplicate key update a=t1.a, b=t1.b;`)
+	tk.MustQuery(`select * from t2 order by a;`).Check(testkit.Rows(`1 2`, `3 1`))
+
+	tk.MustExec(`drop table if exists t1, t2;`)
+	tk.MustExec(`create table t1(id int, a int, b int, c int);`)
+	tk.MustExec(`insert into t1 values (1, 1, 1, 1);`)
+	tk.MustExec(`insert into t1 values (2, 2, 1, 2);`)
+	tk.MustExec(`insert into t1 values (3, 3, 2, 2);`)
+	tk.MustExec(`insert into t1 values (4, 4, 2, 2);`)
+	tk.MustExec(`create table t2(a int primary key, b int, c int, unique(b), unique(c));`)
+	tk.MustExec(`insert into t2 select a, b, c from t1 order by id on duplicate key update b=t2.b, c=t2.c;`)
+	tk.MustQuery(`select * from t2 order by a;`).Check(testkit.Rows(`1 1 1`, `3 2 2`))
 }
 
 func (s *testSuite) TestUpdateDuplicateKey(c *C) {
