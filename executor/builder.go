@@ -117,6 +117,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildShowDDLJobs(v)
 	case *plannercore.ShowDDLJobQueries:
 		return b.buildShowDDLJobQueries(v)
+	case *plannercore.ShowSlow:
+		return b.buildShowSlow(v)
 	case *plannercore.Show:
 		return b.buildShow(v)
 	case *plannercore.Simple:
@@ -223,6 +225,14 @@ func (b *executorBuilder) buildShowDDLJobQueries(v *plannercore.ShowDDLJobQuerie
 	e := &ShowDDLJobQueriesExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		jobIDs:       v.JobIDs,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildShowSlow(v *plannercore.ShowSlow) Executor {
+	e := &ShowSlowExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		ShowSlow:     v.ShowSlow,
 	}
 	return e
 }

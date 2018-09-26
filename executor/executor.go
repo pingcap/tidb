@@ -21,10 +21,12 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -470,6 +472,67 @@ func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if chk.NumRows() == 0 {
 			break
 		}
+	}
+	return nil
+}
+
+// ShowSlowExec represents the executor of showing the slow queries.
+// It is build from the "admin show slow" statement:
+//	admin show slow top [internal | all] N
+//	admin show slow recent N
+type ShowSlowExec struct {
+	baseExecutor
+
+	ShowSlow *ast.ShowSlow
+	result   []*domain.SlowQueryInfo
+	cursor   int
+}
+
+// Open implements the Executor Open interface.
+func (e *ShowSlowExec) Open(ctx context.Context) error {
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
+	dom := domain.GetDomain(e.ctx)
+	e.result = dom.ShowSlowQuery(e.ShowSlow)
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *ShowSlowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
+	if e.cursor >= len(e.result) {
+		return nil
+	}
+
+	for e.cursor < len(e.result) && chk.NumRows() < e.maxChunkSize {
+		slow := e.result[e.cursor]
+		chk.AppendString(0, slow.SQL)
+		chk.AppendTime(1, types.Time{
+			Time: types.FromGoTime(slow.Start),
+			Type: mysql.TypeTimestamp,
+			Fsp:  types.MaxFsp,
+		})
+		chk.AppendDuration(2, types.Duration{Duration: slow.Duration, Fsp: types.MaxFsp})
+		chk.AppendString(3, slow.Detail.String())
+		if slow.Succ {
+			chk.AppendInt64(4, 1)
+		} else {
+			chk.AppendInt64(4, 0)
+		}
+		chk.AppendUint64(5, slow.ConnID)
+		chk.AppendUint64(6, slow.TxnTS)
+		chk.AppendString(7, slow.User)
+		chk.AppendString(8, slow.DB)
+		chk.AppendString(9, slow.TableIDs)
+		chk.AppendString(10, slow.IndexIDs)
+		if slow.Internal {
+			chk.AppendInt64(11, 0)
+		} else {
+			chk.AppendInt64(11, 1)
+		}
+		e.cursor++
 	}
 	return nil
 }
