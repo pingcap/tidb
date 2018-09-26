@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
@@ -1741,7 +1740,7 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		argLen = mysql.MaxIntWidth
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	tp.Charset, tp.Collate = mysql.DefaultCharset, mysql.DefaultCollationName
 	tp.Flen, tp.Decimal = argLen, types.UnspecifiedLength
 	return BuildCastFunction(ctx, expr, tp)
 }
@@ -1804,8 +1803,8 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 		Tp:      mysql.TypeJSON,
 		Flen:    12582912, // FIXME: Here the Flen is not trusted.
 		Decimal: 0,
-		Charset: charset.CharsetUTF8,
-		Collate: charset.CollationUTF8,
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
 		Flag:    mysql.BinaryFlag,
 	}
 	return BuildCastFunction(ctx, expr, tp)

@@ -282,10 +282,10 @@ func (ft *FieldType) FormatAsCastType(w io.Writer) {
 		if ft.Flen != UnspecifiedLength {
 			fmt.Fprintf(w, "(%d)", ft.Flen)
 		}
-		if ft.Flag&mysql.BinaryFlag != 0 {
+		if mysql.HasBinaryFlag(ft.Flag) {
 			fmt.Fprint(w, " BINARY")
 		}
-		if ft.Charset != charset.CharsetBin && ft.Charset != charset.CharsetUTF8 {
+		if ft.Charset != charset.CharsetBin && ft.Charset != mysql.DefaultCharset {
 			fmt.Fprintf(w, " %s", ft.Charset)
 		}
 	case mysql.TypeDate:

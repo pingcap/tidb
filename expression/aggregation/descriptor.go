@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/charset"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
@@ -329,8 +328,8 @@ func (a *AggFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 
 func (a *AggFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeVarString)
-	a.RetTp.Charset = charset.CharsetUTF8
-	a.RetTp.Collate = charset.CollationUTF8
+	a.RetTp.Charset = mysql.DefaultCharset
+	a.RetTp.Collate = mysql.DefaultCollationName
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxBlobWidth, 0
 	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
 }
