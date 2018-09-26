@@ -224,7 +224,7 @@ func (p *LogicalProjection) deriveStats() (*property.StatsInfo, error) {
 		p.stats.Cardinality[i] = getCardinality(cols, p.children[0].Schema(), childProfile)
 	}
 	// If we enables the enhance selectivity we'll try to maintain the histogram.
-	if p.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && !childProfile.HistColl.Pseudo {
+	if p.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && childProfile.HistColl != nil && !childProfile.HistColl.Pseudo {
 		p.deriveHistStats(childProfile)
 	}
 	return p.stats, nil
