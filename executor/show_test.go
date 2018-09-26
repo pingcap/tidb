@@ -653,6 +653,9 @@ func (s *testSuite) TestShowSlow(c *C) {
 	tk.MustExec(`create table t(a bigint)`)
 	tk.MustQuery(`select sleep(1)`)
 
+	// Collecting slow queries is asynchronous, wait a while to ensure it's done.
+	time.Sleep(5 * time.Millisecond)
+
 	result := tk.MustQuery(`admin show slow recent 3`)
 	c.Check(result.Rows(), HasLen, 1)
 

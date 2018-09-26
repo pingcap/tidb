@@ -474,6 +474,10 @@ func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
+// ShowSlowExec represents the executor of showing the slow queries.
+// It is build from the "admin show slow" statement:
+//	admin show slow top [internal | all] N
+//	admin show slow recent N
 type ShowSlowExec struct {
 	baseExecutor
 
@@ -489,6 +493,7 @@ func (e *ShowSlowExec) Open(ctx context.Context) error {
 	return nil
 }
 
+// Next implements the Executor Next interface.
 func (e *ShowSlowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
