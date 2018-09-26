@@ -26,7 +26,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -902,7 +902,7 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row chunk.Row) (res int64, isNull b
 	}
 
 	if types.ErrOverflow.Equal(err) {
-		warnErr := types.ErrTruncatedWrongVal.GenByArgs("DECIMAL", val)
+		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", val)
 		err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
 	}
 
@@ -968,7 +968,7 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row chunk.Row) (res types.Time, i
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc, string(val.ToString()), b.tp.Tp, b.tp.Decimal)
+	res, err = types.ParseTimeFromFloatString(sc, string(val.ToString()), b.tp.Tp, b.tp.Decimal)
 	if err != nil {
 		return res, false, errors.Trace(err)
 	}
@@ -1053,7 +1053,7 @@ func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string
 			uval := uint64(math.MaxUint64)
 			res = int64(uval)
 		}
-		warnErr := types.ErrTruncatedWrongVal.GenByArgs("INTEGER", origStr)
+		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", origStr)
 		err = sc.HandleOverflow(origErr, warnErr)
 	}
 	return

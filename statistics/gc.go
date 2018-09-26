@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

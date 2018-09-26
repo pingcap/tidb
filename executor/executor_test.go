@@ -26,7 +26,7 @@ import (
 	"time"
 
 	gofail "github.com/etcd-io/gofail/runtime"
-	"github.com/juju/errors"
+	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -59,6 +59,9 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -292,7 +295,9 @@ type testCase struct {
 
 func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 	c *C, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
+	origin := ld.IgnoreLines
 	for _, tt := range tests {
+		ld.IgnoreLines = origin
 		c.Assert(ctx.NewTxn(), IsNil)
 		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
@@ -713,7 +718,7 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustQuery("select * from t where 1 order by b").Check(testkit.Rows("1 1", "2 2"))
 	tk.MustQuery("select * from t where a between 1 and 2 order by a desc").Check(testkit.Rows("2 2", "1 1"))
 
-	// Test double read and topN is pushed down to first read plan.
+	// Test double read and topN is pushed down to first read plannercore.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx(b))")
 	tk.MustExec("insert into t values(1, 3, 1)")
@@ -988,16 +993,16 @@ func (s *testSuite) TestUnion(c *C) {
 
 	_, err := tk.Exec("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
-	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
 	_, err = tk.Exec("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
 	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
-	c.Assert(terror.ErrorEqual(err, plan.ErrWrongUsage), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongUsage), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("(select a from t limit 1) union all select a from t limit 1")
 	c.Assert(err, IsNil)
@@ -1281,23 +1286,23 @@ func (s *testSuite) TestJSON(c *C) {
 
 	_, err = tk.Exec(`create table test_bad_json(a json default '{}')`)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a blob default 'hello')`)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	_, err = tk.Exec(`create table test_bad_json(a text default 'world')`)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrBlobCantHaveDefault))
 
 	// check json fields cannot be used as key.
 	_, err = tk.Exec(`create table test_bad_json(id int, a json, key (a))`)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrJSONUsedAsKey))
 
 	// check CAST AS JSON.
@@ -1376,7 +1381,7 @@ func (s *testSuite) TestGeneratedColumnWrite(c *C) {
 		_, err := tk.Exec(tt.stmt)
 		if tt.err != 0 {
 			c.Assert(err, NotNil, Commentf("sql is `%v`", tt.stmt))
-			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			terr := errors.Cause(err).(*terror.Error)
 			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err), Commentf("sql is %v", tt.stmt))
 		} else {
 			c.Assert(err, IsNil)
@@ -1511,7 +1516,7 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 		_, err := tk.Exec(tt.stmt)
 		if tt.err != 0 {
 			c.Assert(err, NotNil)
-			terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+			terr := errors.Cause(err).(*terror.Error)
 			c.Assert(terr.Code(), Equals, terror.ErrCode(tt.err))
 		} else {
 			c.Assert(err, IsNil)
@@ -1698,9 +1703,9 @@ func (s *testSuite) TestIsPointGet(c *C) {
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plan.Preprocess(ctx, stmtNode, infoSchema, false)
+		err = plannercore.Preprocess(ctx, stmtNode, infoSchema, false)
 		c.Check(err, IsNil)
-		p, err := plan.Optimize(ctx, stmtNode, infoSchema)
+		p, err := plannercore.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
 		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(ret, Equals, result)
@@ -1766,26 +1771,31 @@ func (s *testSuite) TestColumnName(c *C) {
 	fields := rs.Fields()
 	c.Check(len(fields), Equals, 2)
 	c.Check(fields[0].Column.Name.L, Equals, "1 + c")
+	c.Check(fields[0].ColumnAsName.L, Equals, "1 + c")
 	c.Check(fields[1].Column.Name.L, Equals, "count(*)")
+	c.Check(fields[1].ColumnAsName.L, Equals, "count(*)")
 	rs, err = tk.Exec("select (c) > all (select c from t) from t")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
 	c.Check(fields[0].Column.Name.L, Equals, "(c) > all (select c from t)")
+	c.Check(fields[0].ColumnAsName.L, Equals, "(c) > all (select c from t)")
 	tk.MustExec("begin")
 	tk.MustExec("insert t values(1,1)")
 	rs, err = tk.Exec("select c d, d c from t")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 2)
-	c.Check(fields[0].Column.Name.L, Equals, "d")
-	c.Check(fields[1].Column.Name.L, Equals, "c")
+	c.Check(fields[0].Column.Name.L, Equals, "c")
+	c.Check(fields[0].ColumnAsName.L, Equals, "d")
+	c.Check(fields[1].Column.Name.L, Equals, "d")
+	c.Check(fields[1].ColumnAsName.L, Equals, "c")
 	// Test case for query a column of a table.
 	// In this case, all attributes have values.
 	rs, err = tk.Exec("select c as a from t as t2")
 	c.Check(err, IsNil)
 	fields = rs.Fields()
-	c.Check(fields[0].Column.Name.L, Equals, "a")
+	c.Check(fields[0].Column.Name.L, Equals, "c")
 	c.Check(fields[0].ColumnAsName.L, Equals, "a")
 	c.Check(fields[0].Table.Name.L, Equals, "t")
 	c.Check(fields[0].TableAsName.L, Equals, "t2")
@@ -2350,6 +2360,32 @@ func (s *testContextOptionSuite) TestCoprocessorPriority(c *C) {
 	cli.mu.Unlock()
 }
 
+func (s *testSuite) TestTimezonePushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (ts timestamp)")
+	defer tk.MustExec("drop table t")
+	tk.MustExec(`insert into t values ("2018-09-13 10:02:06")`)
+
+	systemTZ := timeutil.SystemLocation()
+	c.Assert(systemTZ.String(), Not(Equals), "System")
+	ctx := context.Background()
+	count := 0
+	ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
+		count += 1
+		dagReq := new(tipb.DAGRequest)
+		err := proto.Unmarshal(req.Data, dagReq)
+		c.Assert(err, IsNil)
+		c.Assert(dagReq.GetTimeZoneName(), Equals, systemTZ.String())
+	})
+	tk.Se.Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+
+	tk.MustExec(`set time_zone="System"`)
+	tk.Se.Execute(ctx1, `select * from t where ts = "2018-09-13 10:02:06"`)
+
+	c.Assert(count, Equals, 2) // Make sure the hook function is called.
+}
+
 func (s *testSuite) TestNotFillCacheFlag(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2644,7 +2680,7 @@ func (s *testSuite) TestContainDotColumn(c *C) {
 
 	tk.MustExec("drop table if exists t3")
 	_, err := tk.Exec("create table t3(s.a char);")
-	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongTableName))
 }
 

@@ -22,8 +22,8 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 // Type returns type of BinaryJSON as string.
@@ -102,7 +102,7 @@ func unquoteString(s string) (string, error) {
 			case '\\':
 				ret.WriteByte('\\')
 			case 'u':
-				if i+5 > len(s) {
+				if i+4 > len(s) {
 					return "", errors.Errorf("Invalid unicode: %s", s[i+1:])
 				}
 				char, size, err := decodeEscapedUnicode(hack.Slice(s[i+1 : i+5]))
@@ -110,7 +110,7 @@ func unquoteString(s string) (string, error) {
 					return "", errors.Trace(err)
 				}
 				ret.Write(char[0:size])
-				i += 5
+				i += 4
 			default:
 				// For all other escape sequences, backslash is ignored.
 				ret.WriteByte(s[i])
@@ -170,7 +170,7 @@ func (bj BinaryJSON) extractTo(buf []BinaryJSON, pathExpr PathExpression) []Bina
 	currentLeg, subPathExpr := pathExpr.popOneLeg()
 	if currentLeg.typ == pathLegIndex {
 		if bj.TypeCode != TypeCodeArray {
-			if currentLeg.arrayIndex <= 0 {
+			if currentLeg.arrayIndex <= 0 && currentLeg.arrayIndex != arrayIndexAsterisk {
 				buf = bj.extractTo(buf, subPathExpr)
 			}
 			return buf
@@ -688,4 +688,46 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 	}
 	err = errors.New("Invalid JSON bytes")
 	return
+}
+
+// ContainsBinary check whether JSON document contains specific target according the following rules:
+// 1) object contains a target object if and only if every key is contained in source object and the value associated with the target key is contained in the value associated with the source key;
+// 2) array contains a target nonarray if and only if the target is contained in some element of the array;
+// 3) array contains a target array if and only if every element is contained in some element of the array;
+// 4) scalar contains a target scalar if and only if they are comparable and are equal;
+func ContainsBinary(obj, target BinaryJSON) bool {
+	switch obj.TypeCode {
+	case TypeCodeObject:
+		if target.TypeCode == TypeCodeObject {
+			len := target.getElemCount()
+			for i := 0; i < len; i++ {
+				key := target.objectGetKey(i)
+				val := target.objectGetVal(i)
+				if exp, exists := obj.objectSearchKey(key); !exists || !ContainsBinary(exp, val) {
+					return false
+				}
+			}
+			return true
+		}
+		return false
+	case TypeCodeArray:
+		if target.TypeCode == TypeCodeArray {
+			len := target.getElemCount()
+			for i := 0; i < len; i++ {
+				if !ContainsBinary(obj, target.arrayGetElem(i)) {
+					return false
+				}
+			}
+			return true
+		}
+		len := obj.getElemCount()
+		for i := 0; i < len; i++ {
+			if ContainsBinary(obj.arrayGetElem(i), target) {
+				return true
+			}
+		}
+		return false
+	default:
+		return CompareBinary(obj, target) == 0
+	}
 }

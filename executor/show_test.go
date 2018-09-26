@@ -18,13 +18,12 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -100,6 +100,37 @@ func (s *testSuite) TestShow(c *C) {
 			"  `c3` mediumint(8) UNSIGNED DEFAULT NULL,\n" +
 			"  `c4` int(10) UNSIGNED DEFAULT NULL,\n" +
 			"  `c5` bigint(20) UNSIGNED DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	// Issue #7665
+	tk.MustExec("drop table if exists `decimalschema`")
+	testSQL = "create table `decimalschema` (`c1` decimal);"
+	tk.MustExec(testSQL)
+	testSQL = "show create table decimalschema"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
+			"  `c1` decimal(11,0) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	tk.MustExec("drop table if exists `decimalschema`")
+	testSQL = "create table `decimalschema` (`c1` decimal(15));"
+	tk.MustExec(testSQL)
+	testSQL = "show create table decimalschema"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
+			"  `c1` decimal(15,0) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
@@ -516,9 +547,9 @@ func (s *testSuite) TestShowErrors(c *C) {
 func (s *testSuite) TestIssue3641(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("show tables;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 	_, err = tk.Exec("show table status;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 }
 
 // TestShow2 is moved from session_test

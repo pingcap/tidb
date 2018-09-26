@@ -16,12 +16,12 @@ package executor
 import (
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -270,6 +270,7 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 
 func (us *UnionScanExec) buildAndSortAddedRows() error {
 	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
+	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	for h, data := range us.dirty.addedRows {
 		newData := make([]types.Datum, 0, us.schema.Len())
 		for _, col := range us.columns {
@@ -279,7 +280,8 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 				newData = append(newData, data[col.Offset])
 			}
 		}
-		matched, err := expression.EvalBool(us.ctx, us.conditions, chunk.MutRowFromDatums(newData).ToRow())
+		mutableRow.SetDatums(newData...)
+		matched, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 		if err != nil {
 			return errors.Trace(err)
 		}

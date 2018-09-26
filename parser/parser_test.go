@@ -19,13 +19,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 func TestT(t *testing.T) {
@@ -389,6 +389,11 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t character set utf8 fields terminated by 'ab' lines terminated by 'xy' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t (a,b) fields terminated by 'ab'", false},
+		{"load data local infile '/tmp/t.csv' into table t ignore 1 lines", true},
+		{"load data local infile '/tmp/t.csv' into table t ignore -1 lines", false},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' (a,b) ignore 1 lines", false},
+		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy' ignore 1 lines", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*' ignore 1 lines (a,b)", true},
 
 		// select for update
 		{"SELECT * from t for update", true},
@@ -435,6 +440,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin cancel ddl jobs 1, 2", true},
 		{"admin recover index t1 idx_a", true},
 		{"admin cleanup index t1 idx_a", true},
+		{"admin show slow top 3", true},
+		{"admin show slow top internal 7", true},
+		{"admin show slow top all 9", true},
+		{"admin show slow recent 11", true},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
@@ -2291,6 +2300,8 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t1 index", true},
 		{"analyze table t1 index a", true},
 		{"analyze table t1 index a,b", true},
+		{"analyze table t with 4 buckets", true},
+		{"analyze table t index a with 4 buckets", true},
 	}
 	s.RunTest(c, table)
 }

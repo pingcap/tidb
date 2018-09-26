@@ -22,9 +22,9 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/coreos/etcd/clientv3/concurrency"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -221,7 +221,7 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, version int
 	err := PutKVToEtcd(ctx, s.etcdCli, putKeyNoRetry, s.selfSchemaVerPath, ver,
 		clientv3.WithLease(s.session.Lease()))
 
-	metrics.UpdateSelfVersionHistogram.WithLabelValues(ver, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	metrics.UpdateSelfVersionHistogram.WithLabelValues(metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
 
@@ -232,7 +232,7 @@ func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx context.Context, vers
 	// TODO: If the version is larger than the original global version, we need set the version.
 	// Otherwise, we'd better set the original global version.
 	err := PutKVToEtcd(ctx, s.etcdCli, putKeyRetryUnlimited, DDLGlobalSchemaVersion, ver)
-	metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerUpdateGlobalVersion, ver, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerUpdateGlobalVersion, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
 
@@ -276,8 +276,7 @@ func (s *schemaVersionSyncer) MustGetGlobalVersion(ctx context.Context) (int64, 
 	intervalCnt := int(time.Second / keyOpRetryInterval)
 
 	defer func() {
-		gVer := strconv.FormatInt(int64(ver), 10)
-		metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerGetGlobalVersion, gVer, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerGetGlobalVersion, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
 		if err != nil {
@@ -325,8 +324,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, latestV
 
 	var err error
 	defer func() {
-		ver := strconv.FormatInt(latestVer, 10)
-		metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerGetGlobalVersion, ver, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		metrics.OwnerHandleSyncerHistogram.WithLabelValues(metrics.OwnerCheckAllVersions, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
 		if isContextDone(ctx) {

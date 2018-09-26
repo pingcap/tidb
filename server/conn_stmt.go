@@ -40,10 +40,10 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -246,12 +246,20 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 	var isNull bool
 
 	for i := 0; i < len(args); i++ {
-		if nullBitmap[i>>3]&(1<<(uint(i)%8)) > 0 {
-			args[i] = nil
-			continue
-		}
+		// if params had received via ComStmtSendLongData, use them directly.
+		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
+		// see clientConn#handleStmtSendLongData
 		if boundParams[i] != nil {
 			args[i] = boundParams[i]
+			continue
+		}
+
+		// check nullBitMap to determine the NULL arguments.
+		// ref https://dev.mysql.com/doc/internals/en/com-stmt-execute.html
+		// notice: some client(e.g. mariadb) will set nullBitMap even if data had be sent via ComStmtSendLongData,
+		// so this check need place after boundParam's check.
+		if nullBitmap[i>>3]&(1<<(uint(i)%8)) > 0 {
+			args[i] = nil
 			continue
 		}
 
@@ -424,7 +432,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			}
 			continue
 		default:
-			err = errUnknownFieldType.Gen("stmt unknown field type %d", tp)
+			err = errUnknownFieldType.GenWithStack("stmt unknown field type %d", tp)
 			return
 		}
 	}
@@ -528,7 +536,7 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 	return cc.writeOK()
 }
 
-// See https://dev.mysql.com/doc/internals/en/com-set-option.html
+// handleSetOption refer to https://dev.mysql.com/doc/internals/en/com-set-option.html
 func (cc *clientConn) handleSetOption(data []byte) (err error) {
 	if len(data) < 2 {
 		return mysql.ErrMalformPacket

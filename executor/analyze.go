@@ -17,7 +17,6 @@ import (
 	"runtime"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -41,8 +41,6 @@ type AnalyzeExec struct {
 	baseExecutor
 	tasks []*analyzeTask
 }
-
-var maxBucketSize = int64(256)
 
 const (
 	maxSampleSize        = 10000
@@ -167,6 +165,7 @@ type AnalyzeIndexExec struct {
 	priority        int
 	analyzePB       *tipb.AnalyzeReq
 	result          distsql.SelectResult
+	maxNumBuckets   uint64
 }
 
 func (e *AnalyzeIndexExec) open() error {
@@ -177,7 +176,7 @@ func (e *AnalyzeIndexExec) open() error {
 		SetConcurrency(e.concurrency).
 		Build()
 	ctx := context.TODO()
-	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
+	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -211,7 +210,7 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), int(maxBucketSize))
+		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), int(e.maxNumBuckets))
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -255,6 +254,7 @@ type AnalyzeColumnsExec struct {
 	keepOrder       bool
 	analyzePB       *tipb.AnalyzeReq
 	resultHandler   *tableResultHandler
+	maxNumBuckets   uint64
 }
 
 func (e *AnalyzeColumnsExec) open() error {
@@ -295,7 +295,7 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		return nil, errors.Trace(err)
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -339,7 +339,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		}
 		sc := e.ctx.GetSessionVars().StmtCtx
 		if e.pkInfo != nil {
-			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), int(maxBucketSize))
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), int(e.maxNumBuckets))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -365,7 +365,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 				return nil, nil, errors.Trace(err)
 			}
 		}
-		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i], &col.FieldType)
+		hg, err := statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), col.ID, collectors[i], &col.FieldType)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -373,14 +373,4 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		cms = append(cms, collectors[i].CMSketch)
 	}
 	return hists, cms, nil
-}
-
-// SetMaxBucketSizeForTest sets the `maxBucketSize`.
-func SetMaxBucketSizeForTest(size int64) {
-	maxBucketSize = size
-}
-
-// GetMaxBucketSizeForTest gets the `maxBucketSize`.
-func GetMaxBucketSizeForTest() int64 {
-	return maxBucketSize
 }

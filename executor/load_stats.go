@@ -16,11 +16,11 @@ package executor
 import (
 	"encoding/json"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 

@@ -55,6 +55,10 @@ type Client interface {
 	// The store may expire later. Caller is responsible for caching and taking care
 	// of store change.
 	GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
+	// GetAllStores gets all stores from pd.
+	// The store may expire later. Caller is responsible for caching and taking care
+	// of store change.
+	GetAllStores(ctx context.Context) ([]*metapb.Store, error)
 	// Update GC safe point. TiKV will check it and do GC themselves if necessary.
 	// If the given safePoint is less than the current one, it will not be updated.
 	// Returns the new safePoint after updating.
@@ -131,10 +135,10 @@ func NewClient(pdAddrs []string, security SecurityOption) (Client, error) {
 	c.connMu.clientConns = make(map[string]*grpc.ClientConn)
 
 	if err := c.initClusterID(); err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 	if err := c.updateLeader(); err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 	log.Infof("[pd] init cluster id %v", c.clusterID)
 
@@ -188,10 +192,7 @@ func (c *client) updateLeader() error {
 			}
 		}
 		c.updateURLs(members.GetMembers())
-		if err = c.switchLeader(members.GetLeader().GetClientUrls()); err != nil {
-			return errors.WithStack(err)
-		}
-		return nil
+		return c.switchLeader(members.GetLeader().GetClientUrls())
 	}
 	return errors.Errorf("failed to get leader from %v", c.urls)
 }
@@ -199,7 +200,7 @@ func (c *client) updateLeader() error {
 func (c *client) getMembers(ctx context.Context, url string) (*pdpb.GetMembersResponse, error) {
 	cc, err := c.getOrCreateGRPCConn(url)
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 	members, err := pdpb.NewPDClient(cc).GetMembers(ctx, &pdpb.GetMembersRequest{})
 	if err != nil {
@@ -222,7 +223,7 @@ func (c *client) switchLeader(addrs []string) error {
 
 	log.Infof("[pd] leader switches to: %v, previous: %v", addr, oldLeader)
 	if _, err := c.getOrCreateGRPCConn(addr); err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 
 	c.connMu.Lock()
@@ -366,7 +367,7 @@ func (c *client) tsLoop() {
 				log.Errorf("[pd] create tso stream error: %v", err)
 				c.ScheduleCheckLeader()
 				cancel()
-				c.revokeTSORequest(err)
+				c.revokeTSORequest(errors.WithStack(err))
 				select {
 				case <-time.After(time.Second):
 				case <-loopCtx.Done():
@@ -439,21 +440,21 @@ func (c *client) processTSORequests(stream pdpb.PD_TsoClient, requests []*tsoReq
 	}
 
 	if err := stream.Send(req); err != nil {
+		err = errors.WithStack(err)
 		c.finishTSORequest(requests, 0, 0, err)
-		return errors.WithStack(err)
+		return err
 	}
 	resp, err := stream.Recv()
 	if err != nil {
-		c.finishTSORequest(requests, 0, 0, errors.WithStack(err))
-		return errors.WithStack(err)
+		err = errors.WithStack(err)
+		c.finishTSORequest(requests, 0, 0, err)
+		return err
 	}
 	requestDuration.WithLabelValues("tso").Observe(time.Since(start).Seconds())
-	if err == nil && resp.GetCount() != uint32(len(requests)) {
-		err = errTSOLength
-	}
-	if err != nil {
-		c.finishTSORequest(requests, 0, 0, errors.WithStack(err))
-		return errors.WithStack(err)
+	if resp.GetCount() != uint32(len(requests)) {
+		err = errors.WithStack(errTSOLength)
+		c.finishTSORequest(requests, 0, 0, err)
+		return err
 	}
 
 	physical, logical := resp.GetTimestamp().GetPhysical(), resp.GetTimestamp().GetLogical()
@@ -477,7 +478,7 @@ func (c *client) revokeTSORequest(err error) {
 	n := len(c.tsoRequests)
 	for i := 0; i < n; i++ {
 		req := <-c.tsoRequests
-		req.done <- errors.WithStack(err)
+		req.done <- err
 	}
 }
 
@@ -485,7 +486,7 @@ func (c *client) Close() {
 	c.cancel()
 	c.wg.Wait()
 
-	c.revokeTSORequest(errClosing)
+	c.revokeTSORequest(errors.WithStack(errClosing))
 
 	c.connMu.Lock()
 	defer c.connMu.Unlock()
@@ -555,26 +556,27 @@ type TSFuture interface {
 	Wait() (int64, int64, error)
 }
 
-func (req *tsoRequest) Wait() (int64, int64, error) {
+func (req *tsoRequest) Wait() (physical int64, logical int64, err error) {
 	// If tso command duration is observed very high, the reason could be it
 	// takes too long for Wait() be called.
 	cmdDuration.WithLabelValues("tso_async_wait").Observe(time.Since(req.start).Seconds())
 	select {
-	case err := <-req.done:
+	case err = <-req.done:
+		err = errors.WithStack(err)
 		defer tsoReqPool.Put(req)
 		if err != nil {
 			cmdFailedDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds())
-			return 0, 0, errors.WithStack(err)
+			return 0, 0, err
 		}
-		physical, logical := req.physical, req.logical
+		physical, logical = req.physical, req.logical
 		cmdDuration.WithLabelValues("tso").Observe(time.Since(req.start).Seconds())
-		return physical, logical, err
+		return
 	case <-req.ctx.Done():
 		return 0, 0, errors.WithStack(req.ctx.Err())
 	}
 }
 
-func (c *client) GetTS(ctx context.Context) (int64, int64, error) {
+func (c *client) GetTS(ctx context.Context) (physical int64, logical int64, err error) {
 	resp := c.GetTSAsync(ctx)
 	return resp.Wait()
 }
@@ -676,6 +678,29 @@ func (c *client) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, e
 		return nil, nil
 	}
 	return store, nil
+}
+
+func (c *client) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil {
+		span = opentracing.StartSpan("pdclient.GetAllStores", opentracing.ChildOf(span.Context()))
+		defer span.Finish()
+	}
+	start := time.Now()
+	defer func() { cmdDuration.WithLabelValues("get_all_stores").Observe(time.Since(start).Seconds()) }()
+
+	ctx, cancel := context.WithTimeout(ctx, pdTimeout)
+	resp, err := c.leaderClient().GetAllStores(ctx, &pdpb.GetAllStoresRequest{
+		Header: c.requestHeader(),
+	})
+	cancel()
+
+	if err != nil {
+		cmdFailedDuration.WithLabelValues("get_all_stores").Observe(time.Since(start).Seconds())
+		c.ScheduleCheckLeader()
+		return nil, errors.WithStack(err)
+	}
+	stores := resp.GetStores()
+	return stores, nil
 }
 
 func (c *client) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {

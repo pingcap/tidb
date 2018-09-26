@@ -18,12 +18,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -88,13 +88,14 @@ func (e *LoadDataExec) Open(ctx context.Context) error {
 type LoadDataInfo struct {
 	*InsertValues
 
-	row        []types.Datum
-	Path       string
-	Table      table.Table
-	FieldsInfo *ast.FieldsClause
-	LinesInfo  *ast.LinesClause
-	Ctx        sessionctx.Context
-	columns    []*table.Column
+	row         []types.Datum
+	Path        string
+	Table       table.Table
+	FieldsInfo  *ast.FieldsClause
+	LinesInfo   *ast.LinesClause
+	IgnoreLines uint64
+	Ctx         sessionctx.Context
+	columns     []*table.Column
 }
 
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.
@@ -235,6 +236,10 @@ func (e *LoadDataInfo) InsertData(prevData, curData []byte) ([]byte, bool, error
 			curData = nil
 		}
 
+		if e.IgnoreLines > 0 {
+			e.IgnoreLines--
+			continue
+		}
 		cols, err := e.getFieldsFromLine(line)
 		if err != nil {
 			return nil, false, errors.Trace(err)
