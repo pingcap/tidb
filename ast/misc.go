@@ -628,8 +628,6 @@ type HandleRange struct {
 }
 
 // ShowSlowType defines the type for SlowSlow statement.
-//	admin show log top [internal | all] N
-//	admin show log recent N
 type ShowSlowType int
 
 const (
