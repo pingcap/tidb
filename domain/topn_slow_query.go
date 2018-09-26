@@ -190,10 +190,7 @@ func (q *topNSlowQueries) QueryTop(count int, kind ast.ShowSlowKind) []*SlowQuer
 		tmp = append(tmp, q.internal.data...)
 		tmp1 := slowQueryHeap{tmp}
 		sort.Sort(&tmp1)
-		ret = make([]*SlowQueryInfo, 0, count)
-		for i := len(tmp) - 1; i >= 0 && len(ret) < count; i-- {
-			ret = append(ret, tmp[i])
-		}
+		ret = takeLastN(tmp, count)
 	}
 	return ret
 }
