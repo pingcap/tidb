@@ -422,16 +422,16 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	return ver, nil
 }
 
-// CheckForNullValue check for null values of the field.
+// CheckForNullValue ensure there are no null values of the column of this table.
 func CheckForNullValue(ctx sessionctx.Context, schema, table, oldCol, newCol model.CIStr) error {
-	sql := fmt.Sprintf(`select * from %s.%s where %s is null; `, schema.L, table.L, oldCol.L)
+	sql := fmt.Sprintf(`select count(*) from %s.%s where %s is null; `, schema.L, table.L, oldCol.L)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	if len(rows) != 0 {
-		return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, len(rows))
+	rowCount := rows[0].GetInt64(0)
+	if rowCount != 0 {
+		return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, rowCount)
 	}
 	return nil
 }
