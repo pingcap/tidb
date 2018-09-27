@@ -107,16 +107,21 @@ func inferTZNameFromFileName(path string) (string, error) {
 	return "", errors.New(fmt.Sprintf("path %s is not supported", path))
 }
 
-// SystemLocation returns time.SystemLocation's IANA timezone location. It is TiDB's global timezone location.
-func SystemLocation() *time.Location {
-	loc, err := LoadLocation(systemTZ)
-	if err != nil {
-		return nil
-	}
-	return loc
-}
-
 var mu sync.Mutex
+var systemLoc *time.Location = &dummyLoc
+var dummyLoc time.Location
+
+// SystemLocation returns time.Location's IANA timezone location. It is TiDB's global timezone location.
+func SystemLocation() *time.Location {
+	if systemLoc == &dummyLoc {
+		loc, err := LoadLocation(systemTZ)
+		if err != nil {
+			return nil
+		}
+		systemLoc = loc
+	}
+	return systemLoc
+}
 
 // SetSystemTZ sets systemTZ by the value loaded from mysql.tidb.
 func SetSystemTZ(name string) {
@@ -125,9 +130,9 @@ func SetSystemTZ(name string) {
 	mu.Unlock()
 }
 
-// getLoc first trying to load location from a cache map. If nothing found in such map, then call
+// getLoc first tries to load location from a cache map. If nothing found in such map, then call
 // `time.LoadLocation` to get a timezone location. After trying both way, an error will be returned
-//  if valid Location is not found.
+//  if valid Location cannot be found.
 func (lm *locCache) getLoc(name string) (*time.Location, error) {
 	lm.RLock()
 	v, ok := lm.locMap[name]

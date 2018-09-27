@@ -54,12 +54,14 @@ func (s *testTimeSuite) TestLocal(c *C) {
 	os.Setenv("TZ", "UTC")
 	// reset systemTZ
 	systemTZ = InferSystemTZ()
+	systemLoc = &dummyLoc
 	loc = SystemLocation()
 	c.Assert(loc.String(), Equals, "UTC")
 
 	os.Setenv("TZ", "")
 	// reset systemTZ
 	systemTZ = InferSystemTZ()
+	systemLoc = &dummyLoc
 	loc = SystemLocation()
 	c.Assert(loc.String(), Equals, "UTC")
 	os.Unsetenv("TZ")
