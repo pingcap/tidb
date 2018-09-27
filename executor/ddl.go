@@ -23,7 +23,9 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -90,7 +92,12 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		err = e.executeRenameTable(x)
 	}
 	if err != nil {
-		return errors.Trace(e.toErr(err))
+		err1 := e.toErr(err)
+		if !terror.ErrorEqual(err1, err) {
+			query, _ := e.ctx.Value(sessionctx.QueryString).(string)
+			log.Errorf("run query %s , error: %v\nInfo schema changed.", query, errors.ErrorStack(err))
+		}
+		return errors.Trace(err1)
 	}
 
 	dom := domain.GetDomain(e.ctx)
