@@ -30,7 +30,7 @@ import (
 func init() {
 	// We need set systemTZ when it is in testing process.
 	if systemTZ == "" {
-		systemTZ = "System"
+		systemTZ = "Asia/Shanghai"
 	}
 	locCa = &locCache{}
 	locCa.locMap = make(map[string]*time.Location)
@@ -112,7 +112,7 @@ func inferTZNameFromFileName(path string) (string, error) {
 func SystemLocation() *time.Location {
 	loc, err := LoadLocation(systemTZ)
 	if err != nil {
-		return time.Local
+		return nil
 	}
 	return loc
 }
@@ -126,9 +126,6 @@ func SetSystemTZ(name string) {
 // `time.LoadLocation` to get a timezone location. After trying both way, an error will be returned
 //  if valid Location is not found.
 func (lm *locCache) getLoc(name string) (*time.Location, error) {
-	if name == "System" {
-		return time.Local, nil
-	}
 	lm.RLock()
 	v, ok := lm.locMap[name]
 	lm.RUnlock()
@@ -153,16 +150,11 @@ func LoadLocation(name string) (*time.Location, error) {
 }
 
 // Zone returns the current timezone name and timezone offset in seconds.
-// In compatible with MySQL, we change `SystemLocation` to `System`.
+// In compatible with MySQL, we change `Local` to `System`.
 func Zone(loc *time.Location) (string, int64) {
 	_, offset := Now().In(loc).Zone()
 	var name string
 	name = loc.String()
-	// when we found name is "System", we have no chice but push down
-	// "System" to tikv side.
-	if name == "Local" {
-		name = "System"
-	}
 
 	return name, int64(offset)
 }

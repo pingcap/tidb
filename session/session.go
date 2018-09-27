@@ -1084,8 +1084,6 @@ func loadSystemTZ(se *session) (string, error) {
 	return chk.GetRow(0).GetString(0), nil
 }
 
-var mu sync.Mutex
-
 // BootstrapSession runs the first time when the TiDB server start.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersion(store)
@@ -1105,9 +1103,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		return nil, errors.Trace(err)
 	}
 
-	mu.Lock()
 	timeutil.SetSystemTZ(tz)
-	mu.Unlock()
 
 	dom := domain.GetDomain(se)
 	err = dom.LoadPrivilegeLoop(se)
