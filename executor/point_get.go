@@ -153,8 +153,8 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 			chk.AppendInt64(offset, e.handle)
 			continue
 		}
-		colVal := colVals[offset]
-		if len(colVal) == 0 {
+
+		if offset >= len(colVals) || len(colVals[offset]) == 0 {
 			colInfo := getColInfoByID(e.tblInfo, id)
 			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
 			if err1 != nil {
