@@ -96,23 +96,23 @@ func (s *Server) startHTTPServer() {
 	err = router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		pathTemplate, err = route.GetPathTemplate()
 		if err != nil {
-			log.Error("Get http router path err", err)
+			log.Error("Get http router path error ", err)
 		}
-		name := route.GetName() //if not set name attribute,GetName return ""
+		name := route.GetName() //If the name attribute is not set, GetName returns ""
 		if name != "" && err == nil {
 			httpRouterPage.WriteString("<tr><td><a href='" + pathTemplate + "'>" + name + "</a><td></tr>")
 		}
 		return nil
 	})
 	if err != nil {
-		fmt.Println(err)
+		log.Error("Generate root error ", err)
 	}
 	httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
 	httpRouterPage.WriteString("</table></body></html>")
 	router.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
 		_, err = responseWriter.Write([]byte(httpRouterPage.String()))
 		if err != nil {
-			log.Error("Http index page error", err)
+			log.Error("Http index page error ", err)
 		}
 	})
 
