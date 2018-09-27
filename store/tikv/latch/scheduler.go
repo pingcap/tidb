@@ -44,8 +44,9 @@ func NewScheduler(size uint) *LatchesScheduler {
 	return scheduler
 }
 
-const checkInterval = 10 * time.Minute
-const expireDuration = 2 * time.Hour
+// A transaction can last for at most 10 minutes, see also gcworker.
+const expireDuration = 10 * time.Minute
+const checkInterval = 5 * time.Minute
 const checkCounter = 50000
 const latchListCount = 5
 
