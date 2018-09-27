@@ -116,6 +116,12 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	return true
 }
 
+func (p *UserPrivileges) ConnectionMatchIdentity(user, host string) (string, string) {
+  mysqlPriv := p.Handle.Get()
+  record := mysqlPriv.connectionVerification(user, host)
+  return record.User, record.Host
+}
+
 // DBIsVisible implements the Manager interface.
 func (p *UserPrivileges) DBIsVisible(db string) bool {
 	if SkipWithGrant {

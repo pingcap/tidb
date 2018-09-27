@@ -40,6 +40,10 @@ type Manager interface {
 	// ConnectionVerification verifies user privilege for connection.
 	ConnectionVerification(user, host string, auth, salt []byte) bool
 
+	// Returns the actual user+host from the privileges table,
+	// including any wildcard characters.
+	ConnectionMatchIdentity(user, host string) (string, string)
+
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(db string) bool
 

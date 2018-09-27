@@ -999,6 +999,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 
 	// Check IP.
 	if pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt) {
+		user.MatchedUsername, user.MatchedHostname = pm.ConnectionMatchIdentity(user.Username, user.Hostname)
 		s.sessionVars.User = user
 		return true
 	}
@@ -1006,9 +1007,12 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 	// Check Hostname.
 	for _, addr := range getHostByIP(user.Hostname) {
 		if pm.ConnectionVerification(user.Username, addr, authentication, salt) {
+			u, h := pm.ConnectionMatchIdentity(user.Username, addr)
 			s.sessionVars.User = &auth.UserIdentity{
-				Username: user.Username,
-				Hostname: addr,
+				Username:        user.Username,
+				Hostname:        addr,
+				MatchedUsername: u,
+				MatchedHostname: h,
 			}
 			return true
 		}

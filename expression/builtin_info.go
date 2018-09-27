@@ -154,8 +154,7 @@ func (b *builtinCurrentUserSig) evalString(row chunk.Row) (string, bool, error) 
 	if data == nil || data.User == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-
-	return data.User.String(), false, nil
+	return data.User.MatchedIdentityString(), false, nil
 }
 
 type userFunctionClass struct {
