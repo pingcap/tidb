@@ -89,7 +89,6 @@ func InferSystemTZ() string {
 }
 
 // inferTZNameFromFileName gets IANA timezone name from zoneinfo path.
-// TODO: It will be refined later. This is just a quick fix.
 func inferTZNameFromFileName(path string) (string, error) {
 	// phase1 only support read /etc/localtime which is a softlink to zoneinfo file
 	substr := "zoneinfo"
@@ -117,9 +116,13 @@ func SystemLocation() *time.Location {
 	return loc
 }
 
+var mu sync.Mutex
+
 // SetSystemTZ sets systemTZ by the value loaded from mysql.tidb.
 func SetSystemTZ(name string) {
+	mu.Lock()
 	systemTZ = name
+	mu.Unlock()
 }
 
 // getLoc first trying to load location from a cache map. If nothing found in such map, then call
@@ -150,7 +153,6 @@ func LoadLocation(name string) (*time.Location, error) {
 }
 
 // Zone returns the current timezone name and timezone offset in seconds.
-// In compatible with MySQL, we change `Local` to `System`.
 func Zone(loc *time.Location) (string, int64) {
 	_, offset := Now().In(loc).Zone()
 	var name string
