@@ -562,7 +562,7 @@ func ParseDateFormat(format string) []string {
 	format = strings.TrimSpace(format)
 
 	start := 0
-	var seps = make([]string, 0, 7)
+	var seps = make([]string, 0, MaxSqlTimeParts)
 	for i := 0; i < len(format); i++ {
 		if len(seps) > 7 { //max len is 7,'Y-M-D H-M-S.ms'
 			break
@@ -602,7 +602,7 @@ func ParseDateFormatV1(format string) []string {
 	format = strings.TrimSpace(format)
 
 	start := 0
-	var seps = make([]string, 0, 7)
+	var seps = make([]string, 0, MaxSqlTimeParts)
 	for i := 0; i < len(format); i++ {
 		// Date format must start and end with number.
 		if i == 0 || i == len(format)-1 {
@@ -719,7 +719,7 @@ func splitDateTimeV2(format string, fsp int, selfDecideFsp bool) ([]string, int,
 	var lastSepChar uint8 = 0
 	var currentSepChar uint8 = 0
 	var totalPartCount = 0
-	var seps = make([]string, 0, 7)
+	var seps = make([]string, 0, MaxSqlTimeParts)
 	if 0 == len(format) {
 		return seps, realFsp, nil
 	}
