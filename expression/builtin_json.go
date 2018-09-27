@@ -61,6 +61,7 @@ var (
 	_ builtinFunc = &builtinJSONRemoveSig{}
 	_ builtinFunc = &builtinJSONMergeSig{}
 	_ builtinFunc = &builtinJSONContainsSig{}
+	_ builtinFunc = &builtinJSONLengthSig{}
 )
 
 type jsonTypeFunctionClass struct {
@@ -772,6 +773,65 @@ type jsonLengthFunctionClass struct {
 	baseFunctionClass
 }
 
+type builtinJSONLengthSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinJSONLengthSig) Clone() builtinFunc {
+	newSig := &builtinJSONLengthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (c *jsonLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "JSON_LENGTH")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETJson)
+	if len(args) == 2 {
+		argTps = append(argTps, types.ETString)
+	}
+
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
+	sig := &builtinJSONLengthSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_JsonLengthSig)
+	return sig, nil
+}
+
+func (b *builtinJSONLengthSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
+	obj, isNull, err := b.args[0].EvalJSON(b.ctx, row)
+	if isNull || err != nil {
+		return res, isNull, errors.Trace(err)
+	}
+
+	if obj.TypeCode != json.TypeCodeObject && obj.TypeCode != json.TypeCodeArray {
+		return 1, false, nil
+	}
+
+	if len(b.args) == 2 {
+		path, isNull, err := b.args[1].EvalString(b.ctx, row)
+		if isNull || err != nil {
+			return res, isNull, errors.Trace(err)
+		}
+
+		pathExpr, err := json.ParseJSONPathExpr(path)
+		if err != nil {
+			return res, true, errors.Trace(err)
+		}
+		if pathExpr.ContainsAnyAsterisk() {
+			return res, true, json.ErrInvalidJSONPathWildcard
+		}
+
+		var exists bool
+		obj, exists = obj.Extract([]json.PathExpression{pathExpr})
+		if !exists {
+			return res, true, nil
+		}
+		if obj.TypeCode != json.TypeCodeObject && obj.TypeCode != json.TypeCodeArray {
+			return 1, false, nil
+		}
+	}
+	return int64(obj.GetElemCount()), false, nil
 }
