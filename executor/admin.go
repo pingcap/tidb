@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -102,7 +102,7 @@ func (e *CheckIndexRangeExec) Open(ctx context.Context) error {
 		FieldType: *colTypeForHandle,
 	})
 
-	e.srcChunk = e.newChunk()
+	e.srcChunk = e.newFirstChunk()
 	dagPB, err := e.buildDAGPB()
 	if err != nil {
 		return errors.Trace(err)
@@ -135,7 +135,7 @@ func (e *CheckIndexRangeExec) buildDAGPB() (*tipb.DAGRequest, error) {
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
 
-	err := plan.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
+	err := plannercore.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.cols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -197,7 +197,7 @@ func (e *RecoverIndexExec) Open(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	e.srcChunk = chunk.NewChunkWithCapacity(e.columnsTypes(), e.maxChunkSize)
+	e.srcChunk = chunk.New(e.columnsTypes(), e.initCap, e.maxChunkSize)
 	e.batchSize = 2048
 	e.recoverRows = make([]recoverRows, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
@@ -233,7 +233,7 @@ func (e *RecoverIndexExec) buildDAGPB(txn kv.Transaction, limitCnt uint64) (*tip
 
 	tblInfo := e.table.Meta()
 	pbColumnInfos := model.ColumnsToProto(e.columns, tblInfo.PKIsHandle)
-	err := plan.SetPBColumnsDefaultValue(e.ctx, pbColumnInfos, e.columns)
+	err := plannercore.SetPBColumnsDefaultValue(e.ctx, pbColumnInfos, e.columns)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -636,7 +636,7 @@ func (e *CleanupIndexExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	e.idxChunk = chunk.NewChunkWithCapacity(e.getIdxColTypes(), e.maxChunkSize)
+	e.idxChunk = chunk.New(e.getIdxColTypes(), e.initCap, e.maxChunkSize)
 	e.idxValues = make(map[int64][][]types.Datum, e.batchSize)
 	e.batchKeys = make([]kv.Key, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
@@ -661,7 +661,7 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
-	err := plan.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.idxCols)
+	err := plannercore.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.idxCols)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

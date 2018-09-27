@@ -19,7 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -54,7 +54,7 @@ type HashJoinExec struct {
 	workerWaitGroup sync.WaitGroup // workerWaitGroup is for sync multiple join workers.
 	finished        atomic.Value
 	closeCh         chan struct{} // closeCh add a lock for closing executor.
-	joinType        plan.JoinType
+	joinType        plannercore.JoinType
 	innerIdx        int
 
 	// We build individual joiner for each join worker when use chunk-based execution,
@@ -240,7 +240,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 			return false, errors.Trace(err)
 		}
 	}
-	if e.hashTable.Len() == 0 && e.joinType == plan.InnerJoin {
+	if e.hashTable.Len() == 0 && e.joinType == plannercore.InnerJoin {
 		return true, nil
 	}
 	return false, nil
@@ -250,7 +250,7 @@ func (e *HashJoinExec) wait4Inner() (finished bool, err error) {
 // and append them to e.innerResult.
 func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.Chunk, doneCh chan struct{}) {
 	defer close(chkCh)
-	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	e.innerResult = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 	e.innerResult.GetMemTracker().AttachTo(e.memTracker)
 	e.innerResult.GetMemTracker().SetLabel("innerResult")
 	var err error
@@ -262,7 +262,7 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 			if e.finished.Load().(bool) {
 				return
 			}
-			chk := e.children[e.innerIdx].newChunk()
+			chk := e.children[e.innerIdx].newFirstChunk()
 			err = e.innerExec.Next(ctx, chk)
 			if err != nil {
 				e.innerFinished <- errors.Trace(err)
@@ -289,7 +289,7 @@ func (e *HashJoinExec) initializeForProbe() {
 	e.outerChkResourceCh = make(chan *outerChkResource, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.outerChkResourceCh <- &outerChkResource{
-			chk:  e.outerExec.newChunk(),
+			chk:  e.outerExec.newFirstChunk(),
 			dest: e.outerResultChs[i],
 		}
 	}
@@ -299,7 +299,7 @@ func (e *HashJoinExec) initializeForProbe() {
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
-		e.joinChkResourceCh[i] <- e.newChunk()
+		e.joinChkResourceCh[i] <- e.newFirstChunk()
 	}
 
 	// e.joinResultCh is for transmitting the join result chunks to the main thread.
@@ -620,9 +620,9 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	}
 	e.cursor = 0
 	e.innerRows = e.innerRows[:0]
-	e.outerChunk = e.outerExec.newChunk()
-	e.innerChunk = e.innerExec.newChunk()
-	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.maxChunkSize)
+	e.outerChunk = e.outerExec.newFirstChunk()
+	e.innerChunk = e.innerExec.newFirstChunk()
+	e.innerList = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
 
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaNestedLoopApply)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
