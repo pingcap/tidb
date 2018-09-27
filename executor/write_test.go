@@ -1055,6 +1055,13 @@ func (s *testSuite) TestUpdate(c *C) {
 	c.Assert(err.Error(), Equals, "cannot convert datum from bigint to type year.")
 
 	tk.MustExec("update (select * from t) t set c1 = 1111111")
+
+	// issue 7237, update subquery table should be forbidden
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (k int, v int)")
+	_, err = tk.Exec("update t, (select * from t) as b set b.k = t.k")
+	c.Assert(err.Error(), Equals, "[planner:1288]The target table b of the UPDATE is not updatable")
+	tk.MustExec("update t, (select * from t) as b set t.k = b.k")
 }
 
 func (s *testSuite) TestPartitionedTableUpdate(c *C) {

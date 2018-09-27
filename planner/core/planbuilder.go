@@ -501,6 +501,10 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 		p := &ShowDDLJobQueries{JobIDs: as.JobIDs}
 		p.SetSchema(buildShowDDLJobQueriesFields())
 		ret = p
+	case ast.AdminShowSlow:
+		p := &ShowSlow{ShowSlow: as.ShowSlow}
+		p.SetSchema(buildShowSlowSchema())
+		ret = p
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -743,6 +747,28 @@ func buildShowDDLJobsFields() *expression.Schema {
 func buildShowDDLJobQueriesFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
 	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
+	return schema
+}
+
+func buildShowSlowSchema() *expression.Schema {
+	longlongSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	tinySize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeTiny)
+	timestampSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeTimestamp)
+	durationSize, _ := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeDuration)
+
+	schema := expression.NewSchema(make([]*expression.Column, 0, 11)...)
+	schema.Append(buildColumn("", "SQL", mysql.TypeVarchar, 4096))
+	schema.Append(buildColumn("", "START", mysql.TypeTimestamp, timestampSize))
+	schema.Append(buildColumn("", "DURATION", mysql.TypeDuration, durationSize))
+	schema.Append(buildColumn("", "DETAILS", mysql.TypeVarchar, 256))
+	schema.Append(buildColumn("", "SUCC", mysql.TypeTiny, tinySize))
+	schema.Append(buildColumn("", "CONN_ID", mysql.TypeLonglong, longlongSize))
+	schema.Append(buildColumn("", "TRANSACTION_TS", mysql.TypeLonglong, longlongSize))
+	schema.Append(buildColumn("", "USER", mysql.TypeVarchar, 32))
+	schema.Append(buildColumn("", "DB", mysql.TypeVarchar, 64))
+	schema.Append(buildColumn("", "TABLE_IDS", mysql.TypeVarchar, 256))
+	schema.Append(buildColumn("", "INDEX_IDS", mysql.TypeVarchar, 256))
+	schema.Append(buildColumn("", "INTERNAL", mysql.TypeTiny, tinySize))
 	return schema
 }
 
