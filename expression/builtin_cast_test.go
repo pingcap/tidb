@@ -212,6 +212,26 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 	sc = origSc
 
+	// create table tt(a bigint unsigned);
+	// insert into tt values(18446744073709551615);
+	// select cast(a as decimal(65, 0)) from tt;
+	ft = &types.FieldType{
+		Tp:      mysql.TypeNewDecimal,
+		Flag:    mysql.BinaryFlag,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+		Flen:    65,
+		Decimal: 0,
+	}
+	rt := types.NewFieldType(mysql.TypeLonglong)
+	rt.Flag = mysql.BinaryFlag | mysql.UnsignedFlag
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewUintDatum(18446744073709551615), RetType: rt}, ft)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	u, err := res.GetMysqlDecimal().ToUint()
+	c.Assert(err, IsNil)
+	c.Assert(u == 18446744073709551615, IsTrue)
+
 	// cast(bad_string as decimal)
 	for _, s := range []string{"hello", ""} {
 		f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum(s), RetType: types.NewFieldType(mysql.TypeDecimal)}, tp)
