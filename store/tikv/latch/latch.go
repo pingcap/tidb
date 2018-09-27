@@ -259,7 +259,6 @@ func (l *latch) recycle(currentTS uint64) {
 
 	prev := l.queue
 	curr := l.queue.next
-
 	// Handle list nodes.
 	for curr != nil {
 		if tsoSub(currentTS, curr.maxCommitTS) >= expireDuration && curr.value == nil {
@@ -272,7 +271,7 @@ func (l *latch) recycle(currentTS uint64) {
 	}
 
 	// Handle the head node.
-	if tsoSub(currentTS, l.queue.maxCommitTS) >= expireDuration {
+	if tsoSub(currentTS, l.queue.maxCommitTS) >= expireDuration && l.queue.value == nil {
 		l.queue = nil
 	}
 	return
