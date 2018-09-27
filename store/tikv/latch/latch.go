@@ -185,22 +185,27 @@ func (latches *Latches) releaseSlot(lock *Lock) (nextLock *Lock) {
 		return nil
 	}
 
-	idx := 0
-	for i := 0; i < len(latch.waiting); i++ {
-		waiting := latch.waiting[i]
+	var idx int
+	for idx = 0; idx < len(latch.waiting); idx++ {
+		waiting := latch.waiting[idx]
 		if bytes.Compare(waiting.keys[waiting.acquiredCount], key) == 0 {
-			nextLock = waiting
-		} else {
-			idx++
-			latch.waiting[idx] = waiting
+			break
 		}
 	}
-	latch.waiting = latch.waiting[:idx]
+	// Wake up the first one in waiting queue.
+	if idx < len(latch.waiting) {
+		nextLock = latch.waiting[idx]
+		// Delete element latch.waiting[idx] from the array.
+		copy(latch.waiting[idx:], latch.waiting[idx+1:])
+		latch.waiting[len(latch.waiting)-1] = nil
+		latch.waiting = latch.waiting[:len(latch.waiting)-1]
 
-	if nextLock != nil && find.maxCommitTS > nextLock.startTS {
-		nextLock.isStale = true
+		if find.maxCommitTS > nextLock.startTS {
+			nextLock.isStale = true
+		}
 	}
-	return nextLock
+
+	return
 }
 
 func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
@@ -209,6 +214,11 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 	latch := &latches.slots[slotID]
 	latch.Lock()
 	defer latch.Unlock()
+
+	// Try to recycle to limit the memory usage.
+	if latch.count >= latchListCount {
+		latch.recycle(lock.startTS)
+	}
 
 	find := findNode(latch.queue, key)
 	if find == nil {
@@ -223,11 +233,6 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 
 		lock.acquiredCount++
 		return acquireSuccess
-	}
-
-	// Try to limits the memory usage.
-	if latch.count > latchListCount {
-		latch.recycle(lock.startTS)
 	}
 
 	if find.maxCommitTS > lock.startTS {
