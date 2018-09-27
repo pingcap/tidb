@@ -598,7 +598,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 	// Displayed if the compression typed is set.
 	if len(tb.Meta().Compression) != 0 {
-		buf.WriteString(fmt.Sprintf(" COMPRESSION=`%s`", tb.Meta().Compression))
+		buf.WriteString(fmt.Sprintf(" COMPRESSION='%s'", tb.Meta().Compression))
 	}
 
 	// add partition info here.

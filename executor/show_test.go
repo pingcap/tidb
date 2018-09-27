@@ -397,8 +397,13 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery("show create table t1").Check(testutil.RowsWithSep("|",
 		"t1 CREATE TABLE `t1` (\n"+
 			"  `c1` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMPRESSION=`zlib`",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMPRESSION='zlib'",
 	))
+
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`CREATE TABLE t1 (
+  	  c1 int(11) DEFAULT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMPRESSION='zlib';`)
 
 	// Test show create table year type
 	tk.MustExec(`drop table if exists t`)
