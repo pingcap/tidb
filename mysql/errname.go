@@ -275,7 +275,7 @@ var MySQLErrName = map[uint16]string{
 	ErrZlibZMem:                                 "ZLIB: Not enough memory",
 	ErrZlibZBuf:                                 "ZLIB: Not enough room in the output buffer (probably, length of uncompressed data was corrupted)",
 	ErrZlibZData:                                "ZLIB: Input data corrupted",
-	ErrCutValueGroupConcat:                      "Row %d was cut by GROUPCONCAT()",
+	ErrCutValueGroupConcat:                      "Some row was cut by GROUPCONCAT()",
 	ErrWarnTooFewRecords:                        "Row %d doesn't contain data for all columns",
 	ErrWarnTooManyRecords:                       "Row %d was truncated; it contained more data than there were input columns",
 	ErrWarnNullToNotnull:                        "Column set to default value; NULL supplied to NOT NULL column '%s' at row %d",
