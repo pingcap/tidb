@@ -361,7 +361,8 @@ func (e *InsertValues) fillColValue(datum types.Datum, idx int, column *table.Co
 			return types.Datum{}, errors.Trace(err)
 		}
 		return d, nil
-	} else if !hasValue {
+	}
+	if !hasValue {
 		d, err := e.getColDefaultValue(idx, column)
 		if e.filterErr(err) != nil {
 			return types.Datum{}, errors.Trace(err)
