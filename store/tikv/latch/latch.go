@@ -253,28 +253,17 @@ func (latches *Latches) acquireSlot(lock *Lock) acquireResult {
 
 // recycle is not thread safe, the latch should acquire its lock before executing this function.
 func (l *latch) recycle(currentTS uint64) {
-	if l.queue == nil {
-		return
-	}
-
-	prev := l.queue
-	curr := l.queue.next
-	// Handle list nodes.
-	for curr != nil {
+	fakeHead := node{next: l.queue}
+	prev := &fakeHead
+	for curr := prev.next; curr != nil; curr = curr.next {
 		if tsoSub(currentTS, curr.maxCommitTS) >= expireDuration && curr.value == nil {
 			l.count--
 			prev.next = curr.next
 		} else {
 			prev = curr
 		}
-		curr = curr.next
 	}
-
-	// Handle the head node.
-	if tsoSub(currentTS, l.queue.maxCommitTS) >= expireDuration && l.queue.value == nil {
-		l.queue = nil
-	}
-	return
+	l.queue = fakeHead.next
 }
 
 func (latches *Latches) recycle(currentTS uint64) {
