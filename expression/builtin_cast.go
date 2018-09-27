@@ -227,6 +227,9 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []
 	} else {
 		argTp = args[0].GetType().EvalType()
 	}
+	if mysql.HasUnsignedFlag(args[0].GetType().Flag) {
+		bf.tp.Flag = bf.tp.Flag | mysql.UnsignedFlag
+	}
 	switch argTp {
 	case types.ETInt:
 		sig = &builtinCastIntAsDecimalSig{bf}

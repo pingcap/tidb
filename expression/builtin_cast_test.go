@@ -109,6 +109,15 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	c.Assert(terror.ErrorEqual(types.ErrCastNegIntAsUnsigned, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 	tp1.Flag = originFlag
 
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("18446744073709551615"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.GetUint64() == 18446744073709551615, IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrCastNegIntAsUnsigned, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+
 	previousWarnings := len(sc.GetWarnings())
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(chunk.Row{})
