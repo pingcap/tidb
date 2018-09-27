@@ -61,6 +61,7 @@ type StatementContext struct {
 	PadCharToFullLength    bool
 	BatchCheck             bool
 	InNullRejectCheck      bool
+	GroupConcatTruncated   int32
 
 	// mu struct holds variables that change during execution.
 	mu struct {
