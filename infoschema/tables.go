@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 )
 
@@ -803,7 +804,7 @@ func (c *statsCache) setLoading(loading bool) {
 
 func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
 	c.mu.Lock()
-	if time.Now().Sub(c.modifyTime) < TableStatsCacheExpiry || c.loading {
+	if timeutil.Now().Sub(c.modifyTime) < TableStatsCacheExpiry || c.loading {
 		tableRows, colLength := c.tableRows, c.colLength
 		c.mu.Unlock()
 		return tableRows, colLength, nil
@@ -826,7 +827,7 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 	c.loading = false
 	c.tableRows = tableRows
 	c.colLength = colLength
-	c.modifyTime = time.Now()
+	c.modifyTime = timeutil.Now()
 	c.mu.Unlock()
 	return tableRows, colLength, nil
 }

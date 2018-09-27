@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -267,7 +268,7 @@ func (c *RegionCache) insertRegionToCache(r *Region) {
 	}
 	c.mu.regions[r.VerID()] = &CachedRegion{
 		region:     r,
-		lastAccess: time.Now().Unix(),
+		lastAccess: timeutil.Now().Unix(),
 	}
 }
 
@@ -282,7 +283,7 @@ func (c *RegionCache) getCachedRegion(id RegionVerID) *Region {
 		return nil
 	}
 	if cachedRegion.isValid() {
-		atomic.StoreInt64(&cachedRegion.lastAccess, time.Now().Unix())
+		atomic.StoreInt64(&cachedRegion.lastAccess, timeutil.Now().Unix())
 		return cachedRegion.region
 	}
 	return nil

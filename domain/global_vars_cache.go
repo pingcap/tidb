@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 // GlobalVariableCache caches global variables.
@@ -34,7 +35,7 @@ const globalVariableCacheExpiry time.Duration = 2 * time.Second
 // Update updates the global variable cache.
 func (gvc *GlobalVariableCache) Update(rows []chunk.Row, fields []*ast.ResultField) {
 	gvc.Lock()
-	gvc.lastModify = time.Now()
+	gvc.lastModify = timeutil.Now()
 	gvc.rows = rows
 	gvc.fields = fields
 	gvc.Unlock()
@@ -44,7 +45,7 @@ func (gvc *GlobalVariableCache) Update(rows []chunk.Row, fields []*ast.ResultFie
 func (gvc *GlobalVariableCache) Get() (succ bool, rows []chunk.Row, fields []*ast.ResultField) {
 	gvc.RLock()
 	defer gvc.RUnlock()
-	if time.Now().Sub(gvc.lastModify) < globalVariableCacheExpiry {
+	if timeutil.Now().Sub(gvc.lastModify) < globalVariableCacheExpiry {
 		succ, rows, fields = true, gvc.rows, gvc.fields
 		return
 	}

@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -35,7 +36,7 @@ const (
 )
 
 func init() {
-	rand.Seed(time.Now().UnixNano())
+	rand.Seed(timeutil.Now().UnixNano())
 }
 
 func randInt(min int, max int) int {
@@ -77,7 +78,7 @@ func randDate(col *column) string {
 
 	min, max := col.min, col.max
 	if len(min) == 0 {
-		year := time.Now().Year()
+		year := timeutil.Now().Year()
 		month := randInt(1, 12)
 		day := randInt(1, 28)
 		return fmt.Sprintf("%04d-%02d-%02d", year, month, day)
@@ -132,7 +133,7 @@ func randTimestamp(col *column) string {
 	}
 	min, max := col.min, col.max
 	if len(min) == 0 {
-		year := time.Now().Year()
+		year := timeutil.Now().Year()
 		month := randInt(1, 12)
 		day := randInt(1, 28)
 		hour := randInt(0, 23)
@@ -165,7 +166,7 @@ func randYear(col *column) string {
 	}
 	min, max := col.min, col.max
 	if len(min) == 0 || len(max) == 0 {
-		return fmt.Sprintf("%04d", time.Now().Year()-randInt(0, 10))
+		return fmt.Sprintf("%04d", timeutil.Now().Year()-randInt(0, 10))
 	}
 
 	minTime, err := time.Parse(yearFormat, min)

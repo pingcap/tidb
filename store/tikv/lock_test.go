@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/timeutil"
 	"golang.org/x/net/context"
 )
 
@@ -250,7 +251,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 
 	// Huge txn has a greater TTL.
 	txn, err = s.store.Begin()
-	start := time.Now()
+	start := timeutil.Now()
 	c.Assert(err, IsNil)
 	txn.Set(kv.Key("key"), []byte("value"))
 	for i := 0; i < 2048; i++ {
@@ -262,7 +263,7 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 	s.ttlEquals(c, l.TTL, uint64(ttlFactor*2)+uint64(time.Since(start)/time.Millisecond))
 
 	// Txn with long read time.
-	start = time.Now()
+	start = timeutil.Now()
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
 	time.Sleep(time.Millisecond * 50)

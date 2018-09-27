@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 func TestSystimeMonitor(t *testing.T) {
@@ -27,10 +29,10 @@ func TestSystimeMonitor(t *testing.T) {
 		func() time.Time {
 			if !trigged {
 				trigged = true
-				return time.Now()
+				return timeutil.Now()
 			}
 
-			return time.Now().Add(-2 * time.Second)
+			return timeutil.Now().Add(-2 * time.Second)
 		}, func() {
 			atomic.StoreInt32(&jumpForward, 1)
 		}, func() {})

@@ -35,6 +35,7 @@ import (
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -188,7 +189,7 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	notBefore := time.Now().Add(-10 * time.Minute).UTC()
+	notBefore := timeutil.Now().Add(-10 * time.Minute).UTC()
 	notAfter := notBefore.Add(1 * time.Hour).UTC()
 
 	template := x509.Certificate{

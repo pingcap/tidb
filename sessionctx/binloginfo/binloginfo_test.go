@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/timeutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -92,7 +93,7 @@ func (s *testBinlogSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	session.SetSchemaLease(0)
-	s.unixFile = "/tmp/mock-binlog-pump" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	s.unixFile = "/tmp/mock-binlog-pump" + strconv.FormatInt(timeutil.Now().UnixNano(), 10)
 	l, err := net.Listen("unix", s.unixFile)
 	c.Assert(err, IsNil)
 	s.serv = grpc.NewServer(grpc.MaxRecvMsgSize(maxRecvMsgSize))

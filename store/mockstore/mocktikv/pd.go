@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/tidb/util/timeutil"
 	"golang.org/x/net/context"
 )
 
@@ -49,7 +50,7 @@ func (c *pdClient) GetTS(context.Context) (int64, int64, error) {
 	tsMu.Lock()
 	defer tsMu.Unlock()
 
-	ts := time.Now().UnixNano() / int64(time.Millisecond)
+	ts := timeutil.Now().UnixNano() / int64(time.Millisecond)
 	if tsMu.physicalTS >= ts {
 		tsMu.logicalTS++
 	} else {

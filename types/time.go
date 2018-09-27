@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -192,7 +193,7 @@ func MaxMySQLTime(fsp int) Time {
 
 // CurrentTime returns current time with type tp.
 func CurrentTime(tp uint8) Time {
-	return Time{Time: FromGoTime(gotime.Now()), Type: tp, Fsp: 0}
+	return Time{Time: FromGoTime(timeutil.Now()), Type: tp, Fsp: 0}
 }
 
 // ConvertTimeZone converts the time value from one timezone to another.
@@ -878,7 +879,7 @@ func (d Duration) ToNumber() *MyDecimal {
 // ConvertToTime converts duration to Time.
 // Tp is TypeDatetime, TypeTimestamp and TypeDate.
 func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, error) {
-	year, month, day := gotime.Now().In(sc.TimeZone).Date()
+	year, month, day := timeutil.Now().Date()
 	sign, hour, minute, second, frac := splitDuration(d.Duration)
 	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
 	timePart := FromDate(0, 0, 0, hour, minute, second, frac)

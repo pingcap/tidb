@@ -25,15 +25,17 @@ import (
 	"strings"
 
 	"flag"
+	"time"
+
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
-	"time"
 )
 
 const dbName = "test"
@@ -596,7 +598,7 @@ func resultExists(name string) bool {
 // openDBWithRetry opens a database specified by its database driver name and a
 // driver-specific data source name. And it will do some retries if the connection fails.
 func openDBWithRetry(driverName, dataSourceName string) (mdb *sql.DB, err error) {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	sleepTime := time.Millisecond * 500
 	retryCnt := 60
 	// The max retry interval is 30 s.

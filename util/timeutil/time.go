@@ -89,7 +89,6 @@ func InferSystemTZ() string {
 }
 
 // inferTZNameFromFileName gets IANA timezone name from zoneinfo path.
-// TODO: It will be refined later. This is just a quick fix.
 func inferTZNameFromFileName(path string) (string, error) {
 	// phase1 only support read /etc/localtime which is a softlink to zoneinfo file
 	substr := "zoneinfo"
@@ -108,27 +107,33 @@ func inferTZNameFromFileName(path string) (string, error) {
 	return "", errors.New(fmt.Sprintf("path %s is not supported", path))
 }
 
-// SystemLocation returns time.SystemLocation's IANA timezone location. It is TiDB's global timezone location.
+var mu sync.Mutex
+var systemLoc *time.Location = &dummyLoc
+var dummyLoc time.Location
+
+// SystemLocation returns time.Location's IANA timezone location. It is TiDB's global timezone location.
 func SystemLocation() *time.Location {
-	loc, err := LoadLocation(systemTZ)
-	if err != nil {
-		return time.Local
+	if systemLoc == &dummyLoc {
+		loc, err := LoadLocation(systemTZ)
+		if err != nil {
+			return time.Local
+		}
+		systemLoc = loc
 	}
-	return loc
+	return systemLoc
 }
 
 // SetSystemTZ sets systemTZ by the value loaded from mysql.tidb.
 func SetSystemTZ(name string) {
+	mu.Lock()
 	systemTZ = name
+	mu.Unlock()
 }
 
-// getLoc first trying to load location from a cache map. If nothing found in such map, then call
+// getLoc first tries to load location from a cache map. If nothing found in such map, then call
 // `time.LoadLocation` to get a timezone location. After trying both way, an error will be returned
-//  if valid Location is not found.
+//  if valid Location cannot be found.
 func (lm *locCache) getLoc(name string) (*time.Location, error) {
-	if name == "System" {
-		return time.Local, nil
-	}
 	lm.RLock()
 	v, ok := lm.locMap[name]
 	lm.RUnlock()
@@ -153,16 +158,15 @@ func LoadLocation(name string) (*time.Location, error) {
 }
 
 // Zone returns the current timezone name and timezone offset in seconds.
-// In compatible with MySQL, we change `SystemLocation` to `System`.
 func Zone(loc *time.Location) (string, int64) {
-	_, offset := time.Now().In(loc).Zone()
+	_, offset := Now().In(loc).Zone()
 	var name string
 	name = loc.String()
-	// when we found name is "System", we have no chice but push down
-	// "System" to tikv side.
-	if name == "Local" {
-		name = "System"
-	}
 
 	return name, int64(offset)
+}
+
+// Now returns current time of TiDB's global timezone.
+func Now() time.Time {
+	return time.Now().In(SystemLocation())
 }

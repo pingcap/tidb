@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -952,7 +953,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 	}{
 		// table was never analyzed and has reach the limit
 		{
-			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(timeutil.Now()))},
 			limit:  0,
 			ratio:  0,
 			start:  "00:00 +0800",
@@ -962,7 +963,7 @@ func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
 		},
 		// table was never analyzed but has not reach the limit
 		{
-			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(timeutil.Now()))},
 			limit:  time.Hour,
 			ratio:  0,
 			start:  "00:00 +0800",

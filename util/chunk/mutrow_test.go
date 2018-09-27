@@ -15,13 +15,13 @@ package chunk
 
 import (
 	"testing"
-	"time"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 func (s *testChunkSuite) TestMutRow(c *check.C) {
@@ -154,7 +154,7 @@ func (s *testChunkSuite) TestMutRowShallowCopyPartialRow(c *check.C) {
 	row.c.AppendDatum(0, &d)
 	d = types.NewIntDatum(567)
 	row.c.AppendDatum(1, &d)
-	d = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeTimestamp})
+	d = types.NewTimeDatum(types.Time{Time: types.FromGoTime(timeutil.Now()), Fsp: 6, Type: mysql.TypeTimestamp})
 	row.c.AppendDatum(2, &d)
 
 	c.Assert(d.GetMysqlTime(), check.DeepEquals, mutRow.ToRow().GetTime(2))

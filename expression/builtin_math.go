@@ -24,13 +24,13 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 )
@@ -987,7 +987,7 @@ func (b *builtinRandSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func (b *builtinRandSig) evalReal(row chunk.Row) (float64, bool, error) {
 	if b.randGen == nil {
-		b.randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
+		b.randGen = rand.New(rand.NewSource(timeutil.Now().UnixNano()))
 	}
 	return b.randGen.Float64(), false, nil
 }
@@ -1013,7 +1013,7 @@ func (b *builtinRandWithSeedSig) evalReal(row chunk.Row) (float64, bool, error) 
 	if b.randGen == nil {
 		if isNull {
 			// When seed is NULL, it is equal to RAND().
-			b.randGen = rand.New(rand.NewSource(time.Now().UnixNano()))
+			b.randGen = rand.New(rand.NewSource(timeutil.Now().UnixNano()))
 		} else {
 			b.randGen = rand.New(rand.NewSource(seed))
 		}

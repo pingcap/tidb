@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/filesort"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -200,7 +201,7 @@ func export() error {
 
 	outputBytes = encodeMeta(outputBytes, scale, keySize, valSize)
 
-	seed := rand.NewSource(time.Now().UnixNano())
+	seed := rand.NewSource(timeutil.Now().UnixNano())
 	r := rand.New(seed)
 
 	for i := 1; i <= scale; i++ {
@@ -280,7 +281,7 @@ func driveGenCmd() {
 	}
 
 	cLog("Generating...")
-	start := time.Now()
+	start := timeutil.Now()
 	err = export()
 	terror.MustNil(err)
 	cLog("Done!")
@@ -318,7 +319,7 @@ func driveRunCmd() {
 		fs      *filesort.FileSorter
 	)
 	cLog("Loading...")
-	start := time.Now()
+	start := timeutil.Now()
 	data, err := load(inputRatio)
 	terror.MustNil(err)
 	cLog("Done!")
@@ -343,7 +344,7 @@ func driveRunCmd() {
 	}
 
 	cLog("Inputing...")
-	start = time.Now()
+	start = timeutil.Now()
 	for _, r := range data {
 		err = fs.Input(r.key, r.val, r.handle)
 		terror.MustNil(err)
@@ -355,7 +356,7 @@ func driveRunCmd() {
 
 	cLog("Outputing...")
 	totalRows := int(float64(len(data)) * (float64(outputRatio) / 100.0))
-	start = time.Now()
+	start = timeutil.Now()
 	if cpuprofile != "" {
 		err = pprof.StartCPUProfile(profile)
 		terror.MustNil(err)
@@ -373,7 +374,7 @@ func driveRunCmd() {
 	cLog("=================================")
 
 	cLog("Closing...")
-	start = time.Now()
+	start = timeutil.Now()
 	err = fs.Close()
 	terror.MustNil(err)
 	cLog("Done!")

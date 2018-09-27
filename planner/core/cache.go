@@ -15,13 +15,13 @@ package core
 
 import (
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 var (
@@ -91,7 +91,7 @@ func (key *pstmtPlanCacheKey) Hash() []byte {
 func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
-		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
+		_, timezoneOffset = timeutil.Now().In(sessionVars.TimeZone).Zone()
 	}
 	return &pstmtPlanCacheKey{
 		database:       sessionVars.CurrentDB,

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 )
 
@@ -273,7 +274,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	v, err = Convert(dt, ft)
 	c.Assert(v, Equals, int64(2015))
 	v, err = Convert(ZeroDuration, ft)
-	c.Assert(v, Equals, int64(time.Now().Year()))
+	c.Assert(v, Equals, int64(timeutil.Now().Year()))
 
 	// For enum
 	ft = NewFieldType(mysql.TypeEnum)

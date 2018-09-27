@@ -18,13 +18,13 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -60,7 +60,7 @@ func NewServer(cfg *Config) (s *Server, err error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	rand.Seed(time.Now().UTC().UnixNano())
+	rand.Seed(timeutil.Now().UTC().UnixNano())
 	log.Infof("Server run MySQL Protocol Listen at [%s]", s.cfg.Addr)
 	return s, nil
 }

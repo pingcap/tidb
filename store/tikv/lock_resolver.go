@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -174,7 +175,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		return false, nil
 	}
 
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	txnInfos := make(map[uint64]uint64)
 	for _, l := range expiredLocks {
 		if _, ok := txnInfos[l.TxnID]; ok {
@@ -203,7 +204,7 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 			TxnInfos: listTxnInfos,
 		},
 	}
-	startTime = time.Now()
+	startTime = timeutil.Now()
 	resp, err := lr.store.SendReq(bo, req, loc, readTimeoutShort)
 	if err != nil {
 		return false, errors.Trace(err)

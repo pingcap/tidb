@@ -16,12 +16,12 @@ package chunk
 import (
 	"math"
 	"testing"
-	"time"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 func (s *testChunkSuite) TestList(c *check.C) {
@@ -89,7 +89,7 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 
 	jsonObj, err := json.ParseBinaryFromString("1")
 	c.Assert(err, check.IsNil)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.Time{Time: types.FromGoTime(timeutil.Now()), Fsp: 0, Type: mysql.TypeDatetime}
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	maxChunkSize := 2
@@ -122,7 +122,7 @@ func BenchmarkListMemoryUsage(b *testing.B) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeDuration})
 
 	chk := NewChunkWithCapacity(fieldTypes, 2)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.Time{Time: types.FromGoTime(timeutil.Now()), Fsp: 0, Type: mysql.TypeDatetime}
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 	chk.AppendFloat64(0, 123.123)
 	chk.AppendString(1, "123")

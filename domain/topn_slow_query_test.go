@@ -17,6 +17,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 var _ = Suite(&testTopNSlowQuerySuite{})
@@ -69,8 +70,8 @@ func (t *testTopNSlowQuerySuite) TestPush(c *C) {
 	c.Assert(slowQuery.user.data[0].Duration, Equals, 1300*time.Millisecond)
 }
 
-func (t *testTopNSlowQuerySuite) TestRemoveExpired(c *C) {
-	now := time.Now()
+func (t *testTopNSlowQuerySuite) TestRefresh(c *C) {
+	now := timeutil.Now()
 	slowQuery := newTopNSlowQueries(6, 3*time.Second, 10)
 
 	slowQuery.Append(&SlowQueryInfo{Start: now, Duration: 6})

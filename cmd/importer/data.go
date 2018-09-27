@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 var defaultStep int64 = 1
@@ -115,7 +117,7 @@ func (d *datum) uniqTime() string {
 	defer d.Unlock()
 
 	if d.timeValue.IsZero() {
-		d.timeValue = time.Now()
+		d.timeValue = timeutil.Now()
 	} else {
 		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
 	}
@@ -128,7 +130,7 @@ func (d *datum) uniqDate() string {
 	defer d.Unlock()
 
 	if d.timeValue.IsZero() {
-		d.timeValue = time.Now()
+		d.timeValue = timeutil.Now()
 	} else {
 		d.timeValue = d.timeValue.AddDate(0, 0, int(d.step))
 	}
@@ -141,7 +143,7 @@ func (d *datum) uniqTimestamp() string {
 	defer d.Unlock()
 
 	if d.timeValue.IsZero() {
-		d.timeValue = time.Now()
+		d.timeValue = timeutil.Now()
 	} else {
 		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
 	}
@@ -156,7 +158,7 @@ func (d *datum) uniqYear() string {
 	defer d.Unlock()
 
 	if d.timeValue.IsZero() {
-		d.timeValue = time.Now()
+		d.timeValue = timeutil.Now()
 	} else {
 		d.timeValue = d.timeValue.AddDate(int(d.step), 0, 0)
 	}

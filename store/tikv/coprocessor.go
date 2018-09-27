@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -236,7 +237,7 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 const rangesPerTask = 25000
 
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bool, streaming bool) ([]*copTask, error) {
-	start := time.Now()
+	start := timeutil.Now()
 	rangesLen := ranges.len()
 	cmdType := tikvrpc.CmdCop
 	if streaming {
@@ -602,7 +603,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			ScanDetail:     true,
 		},
 	}
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	resp, err := sender.SendReq(bo, req, task.region, ReadTimeoutMedium)
 	if err != nil {
 		return nil, errors.Trace(err)

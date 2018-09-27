@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -64,7 +65,7 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 		us:        kv.NewUnionStore(snapshot),
 		store:     store,
 		startTS:   startTS,
-		startTime: time.Now(),
+		startTime: timeutil.Now(),
 		valid:     true,
 		vars:      kv.DefaultVars,
 	}, nil
@@ -88,7 +89,7 @@ func (txn *tikvTxn) Reset() {
 // Get implements transaction interface.
 func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("get").Inc()
-	start := time.Now()
+	start := timeutil.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
 
 	ret, err := txn.us.Get(k)
@@ -117,7 +118,7 @@ func (txn *tikvTxn) String() string {
 
 func (txn *tikvTxn) Seek(k kv.Key) (kv.Iterator, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("seek").Inc()
-	start := time.Now()
+	start := timeutil.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("seek").Observe(time.Since(start).Seconds()) }()
 
 	return txn.us.Seek(k)
@@ -126,7 +127,7 @@ func (txn *tikvTxn) Seek(k kv.Key) (kv.Iterator, error) {
 // SeekReverse creates a reversed Iterator positioned on the first entry which key is less than k.
 func (txn *tikvTxn) SeekReverse(k kv.Key) (kv.Iterator, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("seek_reverse").Inc()
-	start := time.Now()
+	start := timeutil.Now()
 	defer func() {
 		metrics.TiKVTxnCmdHistogram.WithLabelValues("seek_reverse").Observe(time.Since(start).Seconds())
 	}()
@@ -167,7 +168,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 	metrics.TiKVTxnCmdCounter.WithLabelValues("set").Add(float64(txn.setCnt))
 	metrics.TiKVTxnCmdCounter.WithLabelValues("commit").Inc()
-	start := time.Now()
+	start := timeutil.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds()) }()
 
 	if err := txn.us.CheckLazyConditionPairs(); err != nil {

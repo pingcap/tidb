@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -75,7 +76,7 @@ func (r *selectResult) Fetch(ctx context.Context) {
 }
 
 func (r *selectResult) fetch(ctx context.Context) {
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	defer func() {
 		close(r.results)
 		duration := time.Since(startTime)

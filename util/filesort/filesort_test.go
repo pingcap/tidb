@@ -18,12 +18,12 @@ import (
 	"math/rand"
 	"os"
 	"testing"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 func TestT(t *testing.T) {
@@ -106,7 +106,7 @@ func (s *testFileSortSuite) TestLessThan(c *C) {
 func (s *testFileSortSuite) TestInMemory(c *C) {
 	defer testleak.AfterTest(c)()
 
-	seed := rand.NewSource(time.Now().UnixNano())
+	seed := rand.NewSource(timeutil.Now().UnixNano())
 	r := rand.New(seed)
 
 	sc := new(stmtctx.StatementContext)
@@ -156,7 +156,7 @@ func (s *testFileSortSuite) TestInMemory(c *C) {
 func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 	defer testleak.AfterTest(c)()
 
-	seed := rand.NewSource(time.Now().UnixNano())
+	seed := rand.NewSource(timeutil.Now().UnixNano())
 	r := rand.New(seed)
 
 	sc := new(stmtctx.StatementContext)
@@ -206,7 +206,7 @@ func (s *testFileSortSuite) TestMultipleFiles(c *C) {
 func (s *testFileSortSuite) TestMultipleWorkers(c *C) {
 	defer testleak.AfterTest(c)()
 
-	seed := rand.NewSource(time.Now().UnixNano())
+	seed := rand.NewSource(timeutil.Now().UnixNano())
 	r := rand.New(seed)
 
 	sc := new(stmtctx.StatementContext)
@@ -256,7 +256,7 @@ func (s *testFileSortSuite) TestMultipleWorkers(c *C) {
 func (s *testFileSortSuite) TestClose(c *C) {
 	defer testleak.AfterTest(c)()
 
-	seed := rand.NewSource(time.Now().UnixNano())
+	seed := rand.NewSource(timeutil.Now().UnixNano())
 	r := rand.New(seed)
 
 	sc := new(stmtctx.StatementContext)
@@ -335,7 +335,7 @@ func (s *testFileSortSuite) TestClose(c *C) {
 func (s *testFileSortSuite) TestMismatchedUsage(c *C) {
 	defer testleak.AfterTest(c)()
 
-	seed := rand.NewSource(time.Now().UnixNano())
+	seed := rand.NewSource(timeutil.Now().UnixNano())
 	r := rand.New(seed)
 
 	sc := new(stmtctx.StatementContext)

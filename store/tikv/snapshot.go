@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -68,7 +69,7 @@ func (s *tikvSnapshot) SetPriority(priority int) {
 // The map will not contain nonexistent keys.
 func (s *tikvSnapshot) BatchGet(keys []kv.Key) (map[string][]byte, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("batch_get").Inc()
-	start := time.Now()
+	start := timeutil.Now()
 	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("batch_get").Observe(time.Since(start).Seconds()) }()
 
 	// We want [][]byte instead of []kv.Key, use some magic to save memory.

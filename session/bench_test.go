@@ -17,12 +17,12 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -62,7 +62,7 @@ func prepareSortBenchData(se Session, colType string, valueFormat string, valueC
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
 	mustExecute(se, "begin")
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	r := rand.New(rand.NewSource(timeutil.Now().UnixNano()))
 	for i := 0; i < valueCount; i++ {
 		if i%1000 == 0 {
 			mustExecute(se, "commit")

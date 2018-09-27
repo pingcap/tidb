@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 
 	"fmt"
+
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"

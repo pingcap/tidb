@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 func (s *testSuite) TestSchemaCheckerSimple(c *C) {
@@ -26,7 +27,7 @@ func (s *testSuite) TestSchemaCheckerSimple(c *C) {
 	checker := &SchemaChecker{SchemaValidator: validator}
 
 	// Add some schema versions and delta table IDs.
-	ts := uint64(time.Now().UnixNano())
+	ts := uint64(timeutil.Now().UnixNano())
 	validator.Update(ts, 0, 2, []int64{1})
 	validator.Update(ts, 2, 4, []int64{2})
 
@@ -57,7 +58,7 @@ func (s *testSuite) TestSchemaCheckerSimple(c *C) {
 	checker.relatedTableIDs = []int64{3}
 	err = checker.Check(ts)
 	c.Assert(err, IsNil)
-	nowTS := uint64(time.Now().UnixNano())
+	nowTS := uint64(timeutil.Now().UnixNano())
 	// Use checker.SchemaValidator.Check instead of checker.Check here because backoff make CI slow.
 	result := checker.SchemaValidator.Check(nowTS, checker.schemaVer, checker.relatedTableIDs)
 	c.Assert(result, Equals, ResultUnknown)

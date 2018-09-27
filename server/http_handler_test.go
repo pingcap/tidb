@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/timeutil"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -401,7 +402,7 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
 	row[2] = types.NewDecimalDatum(types.NewDecFromInt(1))
-	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeTimestamp})
+	row[3] = types.NewTimeDatum(types.Time{Time: types.FromGoTime(timeutil.Now()), Fsp: 6, Type: mysql.TypeTimestamp})
 
 	// Encode the row.
 	colIDs := make([]int64, 0, 3)

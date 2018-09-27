@@ -16,6 +16,7 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
+
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"

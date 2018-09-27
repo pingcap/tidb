@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -1166,7 +1167,7 @@ func (d *Datum) convertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	case KindMysqlTime:
 		y = int64(d.GetMysqlTime().Time.Year())
 	case KindMysqlDuration:
-		y = int64(time.Now().Year())
+		y = int64(timeutil.Now().Year())
 	default:
 		ret, err = d.convertToInt(sc, NewFieldType(mysql.TypeLonglong))
 		if err != nil {

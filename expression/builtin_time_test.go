@@ -775,8 +775,8 @@ func (s *testEvaluatorSuite) TestNowAndUTCTimestamp(c *C) {
 		fc  functionClass
 		now func() time.Time
 	}{
-		{funcs[ast.Now], func() time.Time { return time.Now() }},
-		{funcs[ast.UTCTimestamp], func() time.Time { return time.Now().UTC() }},
+		{funcs[ast.Now], func() time.Time { return timeutil.Now() }},
+		{funcs[ast.UTCTimestamp], func() time.Time { return timeutil.Now().UTC() }},
 	} {
 		f, err := x.fc.getFunction(s.ctx, s.datumsToConstants(nil))
 		c.Assert(err, IsNil)
@@ -1006,13 +1006,13 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 		f, err := fc.getFunction(ctx, s.datumsToConstants(nil))
 		c.Assert(err, IsNil)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
-		last := time.Now()
+		last := timeutil.Now()
 		c.Assert(err, IsNil)
 		n := v.GetMysqlTime()
 		c.Assert(n.String(), GreaterEqual, last.Format(types.TimeFormat))
 	}
 
-	last := time.Now()
+	last := timeutil.Now()
 	f, err := fc.getFunction(ctx, s.datumsToConstants(types.MakeDatums(6)))
 	c.Assert(err, IsNil)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
@@ -1143,7 +1143,7 @@ func (s *testEvaluatorSuite) TestFromUnixTime(c *C) {
 
 func (s *testEvaluatorSuite) TestCurrentDate(c *C) {
 	defer testleak.AfterTest(c)()
-	last := time.Now()
+	last := timeutil.Now()
 	fc := funcs[ast.CurrentDate]
 	f, err := fc.getFunction(mock.NewContext(), s.datumsToConstants(nil))
 	c.Assert(err, IsNil)
@@ -1157,7 +1157,7 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 	defer testleak.AfterTest(c)()
 	tfStr := "15:04:05"
 
-	last := time.Now()
+	last := timeutil.Now()
 	fc := funcs[ast.CurrentTime]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(nil)))
 	c.Assert(err, IsNil)
@@ -1193,7 +1193,7 @@ func (s *testEvaluatorSuite) TestCurrentTime(c *C) {
 func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 	defer testleak.AfterTest(c)()
 
-	last := time.Now().UTC()
+	last := timeutil.Now().UTC()
 	tfStr := "00:00:00"
 	fc := funcs[ast.UTCTime]
 
@@ -1227,7 +1227,7 @@ func (s *testEvaluatorSuite) TestUTCTime(c *C) {
 
 func (s *testEvaluatorSuite) TestUTCDate(c *C) {
 	defer testleak.AfterTest(c)()
-	last := time.Now().UTC()
+	last := timeutil.Now().UTC()
 	fc := funcs[ast.UTCDate]
 	f, err := fc.getFunction(mock.NewContext(), s.datumsToConstants(nil))
 	c.Assert(err, IsNil)
@@ -1531,8 +1531,8 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	c.Assert(err, IsNil)
 	d, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
-	c.Assert(d.GetInt64()-time.Now().Unix(), GreaterEqual, int64(-1))
-	c.Assert(d.GetInt64()-time.Now().Unix(), LessEqual, int64(1))
+	c.Assert(d.GetInt64()-timeutil.Now().Unix(), GreaterEqual, int64(-1))
+	c.Assert(d.GetInt64()-timeutil.Now().Unix(), LessEqual, int64(1))
 
 	// https://github.com/pingcap/tidb/issues/2496
 	// Test UNIX_TIMESTAMP(NOW()).
@@ -1547,8 +1547,8 @@ func (s *testEvaluatorSuite) TestUnixTimestamp(c *C) {
 	d, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	val, _ := d.GetMysqlDecimal().ToInt()
-	c.Assert(val-time.Now().Unix(), GreaterEqual, int64(-1))
-	c.Assert(val-time.Now().Unix(), LessEqual, int64(1))
+	c.Assert(val-timeutil.Now().Unix(), GreaterEqual, int64(-1))
+	c.Assert(val-timeutil.Now().Unix(), LessEqual, int64(1))
 
 	// https://github.com/pingcap/tidb/issues/2852
 	// Test UNIX_TIMESTAMP(NULL).
@@ -2355,7 +2355,7 @@ func (s *testEvaluatorSuite) TestWithTimeZone(c *C) {
 	}
 
 	for _, t := range tests {
-		now := time.Now().In(sv.TimeZone)
+		now := timeutil.Now().In(sv.TimeZone)
 		f, err := funcs[t.method].getFunction(s.ctx, s.datumsToConstants(t.Input))
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)

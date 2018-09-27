@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 func TestT(t *testing.T) {
@@ -444,7 +445,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 
 	jsonObj, err := json.ParseBinaryFromString("1")
 	c.Assert(err, check.IsNil)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.Time{Time: types.FromGoTime(timeutil.Now()), Fsp: 0, Type: mysql.TypeDatetime}
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	chk.AppendFloat32(0, 12.4)
@@ -642,7 +643,7 @@ func BenchmarkChunkMemoryUsage(b *testing.B) {
 
 	initCap := 10
 	chk := NewChunkWithCapacity(fieldTypes, initCap)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.Time{Time: types.FromGoTime(timeutil.Now()), Fsp: 0, Type: mysql.TypeDatetime}
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	for i := 0; i < initCap; i++ {

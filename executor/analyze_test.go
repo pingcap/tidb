@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"

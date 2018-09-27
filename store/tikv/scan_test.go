@@ -15,10 +15,10 @@ package tikv
 
 import (
 	"fmt"
-	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/timeutil"
 	"golang.org/x/net/context"
 )
 
@@ -34,7 +34,7 @@ var _ = Suite(&testScanSuite{})
 func (s *testScanSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	s.store = NewTestStore(c).(*tikvStore)
-	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
+	s.prefix = fmt.Sprintf("seek_%d", timeutil.Now().Unix())
 	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1)
 }
 

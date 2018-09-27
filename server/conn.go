@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -466,7 +467,7 @@ func (cc *clientConn) Run() {
 			return
 		}
 
-		startTime := time.Now()
+		startTime := timeutil.Now()
 		if err = cc.dispatch(data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)

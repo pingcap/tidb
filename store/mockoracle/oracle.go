@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 
 	"golang.org/x/net/context"
@@ -70,7 +71,7 @@ func (o *MockOracle) GetTimestamp(context.Context) (uint64, error) {
 	if o.stop {
 		return 0, errors.Trace(errStopped)
 	}
-	physical := oracle.GetPhysical(time.Now().Add(o.offset))
+	physical := oracle.GetPhysical(timeutil.Now().Add(o.offset))
 	ts := oracle.ComposeTS(physical, 0)
 	if oracle.ExtractPhysical(o.lastTS) == physical {
 		ts = o.lastTS + 1
@@ -98,7 +99,7 @@ func (o *MockOracle) IsExpired(lockTimestamp uint64, TTL uint64) bool {
 	o.RLock()
 	defer o.RUnlock()
 
-	return oracle.GetPhysical(time.Now().Add(o.offset)) >= oracle.ExtractPhysical(lockTimestamp)+int64(TTL)
+	return oracle.GetPhysical(timeutil.Now().Add(o.offset)) >= oracle.ExtractPhysical(lockTimestamp)+int64(TTL)
 }
 
 // Close implements oracle.Oracle interface.

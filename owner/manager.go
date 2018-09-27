@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -147,7 +148,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 		//	if closeGrpc {
 		//		etcdCli.ActiveConnection().Close()
 		//	}
-		startTime := time.Now()
+		startTime := timeutil.Now()
 		etcdSession, err = concurrency.NewSession(etcdCli,
 			concurrency.WithTTL(ttl), concurrency.WithContext(ctx))
 		metrics.NewSessionHistogram.WithLabelValues(logPrefix, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())

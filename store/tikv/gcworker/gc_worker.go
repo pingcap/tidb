@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/terror"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -68,11 +69,11 @@ func NewGCWorker(store tikv.Storage, pdClient pd.Client) (tikv.GCHandler, error)
 	}
 	worker := &GCWorker{
 		uuid:        strconv.FormatUint(ver.Ver, 16),
-		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), timeutil.Now()),
 		store:       store,
 		pdClient:    pdClient,
 		gcIsRunning: false,
-		lastFinish:  time.Now(),
+		lastFinish:  timeutil.Now(),
 		done:        make(chan error),
 	}
 	return worker, nil
@@ -156,7 +157,7 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 			w.tick(ctx)
 		case err := <-w.done:
 			w.gcIsRunning = false
-			w.lastFinish = time.Now()
+			w.lastFinish = timeutil.Now()
 			if err != nil {
 				log.Errorf("[gc worker] runGCJob error: %v", err)
 				break
@@ -368,7 +369,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64) error {
 	}
 
 	log.Infof("[gc worker] %s start delete %v ranges", w.uuid, len(ranges))
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
 
@@ -404,7 +405,7 @@ func (w *GCWorker) redoDeleteRanges(ctx context.Context, safePoint uint64) error
 	}
 
 	log.Infof("[gc worker] %s start redo-delete %v ranges", w.uuid, len(ranges))
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	for _, r := range ranges {
 		startKey, endKey := r.Range()
 
@@ -510,7 +511,7 @@ func (w *GCWorker) resolveLocks(ctx context.Context, safePoint uint64) error {
 	}
 
 	log.Infof("[gc worker] %s start resolve locks, safePoint: %v.", w.uuid, safePoint)
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	regions, totalResolvedLocks := 0, 0
 
 	var key []byte
@@ -738,7 +739,7 @@ func (w *GCWorker) doGCInternal(ctx context.Context, safePoint uint64, concurren
 	time.Sleep(gcSafePointCacheInterval)
 
 	log.Infof("[gc worker] %s start gc, concurrency %v, safePoint: %v.", w.uuid, concurrency, safePoint)
-	startTime := time.Now()
+	startTime := timeutil.Now()
 	var successRegions int32
 	var failedRegions int32
 
@@ -808,7 +809,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	}
 	log.Debugf("[gc worker] got leader: %s", leader)
 	if leader == w.uuid {
-		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
+		err = w.saveTime(gcLeaderLeaseKey, timeutil.Now().Add(gcWorkerLease))
 		if err != nil {
 			_, err1 := se.Execute(ctx, "ROLLBACK")
 			terror.Log(errors.Trace(err1))
@@ -832,7 +833,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if lease == nil || lease.Before(time.Now()) {
+	if lease == nil || lease.Before(timeutil.Now()) {
 		log.Debugf("[gc worker] register %s as leader", w.uuid)
 		metrics.GCWorkerCounter.WithLabelValues("register_leader").Inc()
 
@@ -848,7 +849,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 			terror.Log(errors.Trace(err1))
 			return false, errors.Trace(err)
 		}
-		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
+		err = w.saveTime(gcLeaderLeaseKey, timeutil.Now().Add(gcWorkerLease))
 		if err != nil {
 			_, err1 := se.Execute(ctx, "ROLLBACK")
 			terror.Log(errors.Trace(err1))
@@ -1006,10 +1007,10 @@ func NewMockGCWorker(store tikv.Storage) (*MockGCWorker, error) {
 	}
 	worker := &GCWorker{
 		uuid:        strconv.FormatUint(ver.Ver, 16),
-		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		desc:        fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), timeutil.Now()),
 		store:       store,
 		gcIsRunning: false,
-		lastFinish:  time.Now(),
+		lastFinish:  timeutil.Now(),
 		done:        make(chan error),
 	}
 	worker.session, err = session.CreateSession(worker.store)

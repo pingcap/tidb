@@ -348,7 +348,7 @@ func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
 		types.NewFloat64Datum(123.45),
 		// MysqlTime is not supported.
 		// types.NewTimeDatum(types.Time{
-		// 	Time: types.FromGoTime(time.Now()),
+		// 	Time: types.FromGoTime(timeutil.Now()),
 		// 	Fsp:  6,
 		// 	Type: mysql.TypeTimestamp,
 		// }),
