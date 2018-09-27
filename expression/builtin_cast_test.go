@@ -102,7 +102,8 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
-	c.Assert(res.GetUint64() == 18446744073709551615, IsTrue)
+	u, err := res.GetMysqlDecimal().ToUint()
+	c.Assert(u == 18446744073709551615, IsTrue)
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
