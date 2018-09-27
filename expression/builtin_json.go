@@ -704,19 +704,37 @@ func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, errors.Trace(err)
 	}
 
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETJson)
+	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, args[0].GetType().EvalType())
 	sig := &builtinJSONValidSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonValidSig)
 	return sig, nil
 }
 
 func (b *builtinJSONValidSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
-	_, isNull, err = b.args[0].EvalJSON(b.ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, nil
+
+	switch b.args[0].GetType().Tp {
+	case mysql.TypeNull:
+		return 1, true, nil
+	case mysql.TypeJSON:
+		_, isNull, err = b.args[0].EvalJSON(b.ctx, row)
+		if isNull || err != nil {
+			return 0, isNull, nil
+		}
+		return 1, false, nil
+	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBlob,
+		mysql.TypeLongBlob, mysql.TypeMediumBlob, mysql.TypeTinyBlob:
+		str, isNull, err := b.args[0].EvalString(b.ctx, row)
+		if isNull || err != nil {
+			return 0, isNull, nil
+		}
+		_, err = json.ParseBinaryFromString(str)
+		if err != nil {
+			return 0, false, nil
+		}
+		return 1, false, nil
 	}
 
-	return 1, false, nil
+	return 0, false, nil
 }
 
 type jsonArrayAppendFunctionClass struct {

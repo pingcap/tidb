@@ -3417,6 +3417,12 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r.Check(testkit.Rows("1"))
 	r = tk.MustQuery(`select json_valid('{"a": 1')`)
 	r.Check(testkit.Rows("0"))
+	r = tk.MustQuery(`select json_valid(2), json_valid(2.5)`)
+	r.Check(testkit.Rows("0 0"))
+	r = tk.MustQuery(`select json_valid('2'), json_valid("2"), json_valid('"2"')`)
+	r.Check(testkit.Rows("1 1 1"))
+	r = tk.MustQuery(`select json_valid(json_object('key', 'value'))`)
+	r.Check(testkit.Rows("1"))
 }
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
