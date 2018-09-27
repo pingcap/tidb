@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -39,8 +38,7 @@ func loadStats(tblInfo *model.TableInfo, path string) (*stats.Table, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	handle := stats.NewHandle(mock.NewContext(), 0)
-	return handle.LoadStatsFromJSONToTable(tblInfo, jsTable)
+	return stats.TableStatsFromJSON(tblInfo, tblInfo.ID, jsTable)
 }
 
 type histogram struct {
