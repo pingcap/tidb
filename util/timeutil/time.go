@@ -116,7 +116,7 @@ func SystemLocation() *time.Location {
 	if systemLoc == &dummyLoc {
 		loc, err := LoadLocation(systemTZ)
 		if err != nil {
-			return nil
+			return time.Local
 		}
 		systemLoc = loc
 	}
