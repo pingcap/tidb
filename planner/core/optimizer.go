@@ -32,8 +32,8 @@ const (
 	flagPrunColumns uint64 = 1 << iota
 	flagEliminateProjection
 	flagBuildKeyInfo
-	flagEliminateAgg
 	flagDecorrelate
+	flagEliminateAgg
 	flagMaxMinEliminate
 	flagPredicatePushDown
 	flagPartitionProcessor
@@ -45,8 +45,8 @@ var optRuleList = []logicalOptRule{
 	&columnPruner{},
 	&projectionEliminater{},
 	&buildKeySolver{},
-	&aggregationEliminator{},
 	&decorrelateSolver{},
+	&aggregationEliminator{},
 	&maxMinEliminator{},
 	&ppdSolver{},
 	&partitionProcessor{},
