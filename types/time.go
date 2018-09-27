@@ -74,6 +74,7 @@ const (
 	TimeMaxValue = TimeMaxHour*10000 + TimeMaxMinute*100 + TimeMaxSecond
 	// TimeMaxValueSeconds is the maximum second value for mysql time type.
 	TimeMaxValueSeconds = TimeMaxHour*3600 + TimeMaxMinute*60 + TimeMaxSecond
+	MaxSqlTimeParts     = 7
 )
 
 // Zero values for different types.
@@ -561,7 +562,7 @@ func ParseDateFormat(format string) []string {
 	format = strings.TrimSpace(format)
 
 	start := 0
-	var seps = make([]string, 0)
+	var seps = make([]string, 0, 7)
 	for i := 0; i < len(format); i++ {
 		if len(seps) > 7 { //max len is 7,'Y-M-D H-M-S.ms'
 			break
@@ -601,7 +602,7 @@ func ParseDateFormatV1(format string) []string {
 	format = strings.TrimSpace(format)
 
 	start := 0
-	var seps = make([]string, 0)
+	var seps = make([]string, 0, 7)
 	for i := 0; i < len(format); i++ {
 		// Date format must start and end with number.
 		if i == 0 || i == len(format)-1 {
@@ -640,144 +641,136 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 	return
 }
 
-func splitDateTimeV2(format string, fsp int, selfDecideFsp bool) ([]string, int, error) {
-	format = strings.TrimSpace(format)
-	var err = errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(format))
-	var maxPartCount = 7
-	var realFsp = fsp
-	start := 0
-	var lastSepChar uint8 = 0
-	var currentSepChar uint8 = 0
-	totalPartCount := 0
-	var seps = make([]string, 0)
-	for i := 0; i < len(format) && len(seps) < maxPartCount; i++ {
-		var sepsLen = len(seps)
+func parseWhenLen0(lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, currentPart string, totalPartCount *int, seps *[]string) error {
+	if '-' == lastSepChar || '-' == currentSepChar {
+		*seps = append(*seps, currentPart)
+		*totalPartCount = *totalPartCount + 1
+	} else {
 
-		// Date format must start with number.
-		if i == 0 {
-			if !unicode.IsNumber(rune(format[i])) {
-				return nil, realFsp, err
-			}
-		}
-
-		if i > 0 {
-			var isNumberI_1 = unicode.IsNumber(rune(format[i-1]))
-			var isNumberI = unicode.IsNumber(rune(format[i]))
-
-			//if i-1 is not number,i is number,meaning the beginning of one sep
-			if !isNumberI_1 && isNumberI {
-				start = i
-				lastSepChar = format[i-1]
-			}
-
-			//if i - 1 is number,i is not number,meaning the ending of one sep
-			if isNumberI_1 && !isNumberI {
-				var currentPart = format[start:i]
-				start = -1
-				currentSepChar = format[i]
-
-				if sepsLen == 0 {
-					if '-' == lastSepChar || '-' == currentSepChar {
-						seps = append(seps, currentPart)
-						totalPartCount++
-					} else {
-
-						var partsWithYear, validLen, err = ParseNoDelimiterHavingYear(currentPart)
-						if err != nil {
-							return nil, realFsp, err
-						}
-
-						for j := 0; j < validLen; j++ {
-							seps = append(seps, partsWithYear[j])
-						}
-						totalPartCount = validLen
-					}
-				} else {
-					if sepsLen == 6 {
-						if '.' == lastSepChar {
-							if selfDecideFsp {
-								if '0' == currentPart[0] {
-									realFsp = len(currentPart)
-									if realFsp > MaxFsp {
-										realFsp = MaxFsp
-									}
-								} else {
-									realFsp = MaxFsp
-								}
-							}
-							seps = append(seps, currentPart)
-						}
-						return seps, realFsp, nil
-					} else {
-						if '-' == lastSepChar || '-' == currentSepChar {
-							seps = append(seps, currentPart)
-							totalPartCount++
-						} else {
-							var partsNoYear, validLen, err = ParseNoDelimiterNoYear(currentPart)
-							if err != nil {
-								return nil, realFsp, err
-							}
-							for j := 0; j < maxPartCount-sepsLen && j < validLen; j++ {
-								seps = append(seps, partsNoYear[j])
-								totalPartCount++
-							}
-						}
-					}
-				}
-
-				if totalPartCount >= maxPartCount {
-					return seps, realFsp, nil
-				}
-			}
-		}
-	}
-
-	var lastPart = ""
-	if start >= 0{
-		lastPart = format[start:]
-	}
-
-	if 0 == len(lastPart){
-		return seps, realFsp, nil
-	}
-
-	var sepsLen = len(seps)
-	if sepsLen == 0 {
-		var partsWithYear, validLen, err = ParseNoDelimiterHavingYear(lastPart)
+		var partsWithYear, validLen, err = ParseNoDelimiterHavingYear(currentPart)
 		if err != nil {
-			return nil, realFsp, err
+			return err
 		}
 
 		for j := 0; j < validLen; j++ {
-			seps = append(seps, partsWithYear[j])
+			*seps = append(*seps, partsWithYear[j])
 		}
-		totalPartCount = validLen
-	} else if 6 == sepsLen {
-		if '.' == lastSepChar {
-			if selfDecideFsp {
-				if '0' == lastPart[0] {
-					realFsp = len(lastPart)
-					if realFsp > MaxFsp {
-						realFsp = MaxFsp
-					}
-				} else {
-					realFsp = MaxFsp
+		*totalPartCount = validLen
+	}
+	return nil
+}
+
+func parseWhenLen6(lastSepChar uint8, selfDecideFsp bool, currentPart string, realFsp *int, seps *[]string) {
+	if '.' == lastSepChar {
+		if selfDecideFsp {
+			if '0' == currentPart[0] {
+				*realFsp = len(currentPart)
+				if *realFsp > MaxFsp {
+					*realFsp = MaxFsp
 				}
+			} else {
+				*realFsp = MaxFsp
+			}
+		}
+		*seps = append(*seps, currentPart)
+	}
+}
+
+func parseWhenLenLess6(lastSepChar uint8, currentSepChar uint8, currentPart string, totalPartCount *int, seps *[]string) error {
+	if '-' == lastSepChar || '-' == currentSepChar {
+		*seps = append(*seps, currentPart)
+		*totalPartCount = *totalPartCount + 1
+	} else {
+		var partsNoYear, validLen, err = ParseNoDelimiterNoYear(currentPart)
+		if err != nil {
+			return err
+		}
+		for j := 0; j < MaxSqlTimeParts-len(*seps) && j < validLen; j++ {
+			*seps = append(*seps, partsNoYear[j])
+			*totalPartCount = *totalPartCount + 1
+		}
+	}
+	return nil
+}
+
+func parseOnePart(lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, currentPart string, realFsp *int, totalPartCount *int, seps *[]string) error {
+	if len(*seps) == 0 {
+		var err = parseWhenLen0(lastSepChar, currentSepChar, selfDecideFsp, currentPart, totalPartCount, seps)
+		if err != nil {
+			return err
+		}
+	} else if len(*seps) == 6 {
+		parseWhenLen6(lastSepChar, selfDecideFsp, currentPart, realFsp, seps)
+		return nil
+	} else {
+		var err = parseWhenLenLess6(lastSepChar, currentSepChar, currentPart, totalPartCount, seps)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func splitDateTimeV2(format string, fsp int, selfDecideFsp bool) ([]string, int, error) {
+	format = strings.TrimSpace(format)
+	var err error = nil
+	var realFsp = fsp
+	var start = 0
+	var lastSepChar uint8 = 0
+	var currentSepChar uint8 = 0
+	var totalPartCount = 0
+	var seps = make([]string, 0, 7)
+	if 0 == len(format) {
+		return seps, realFsp, nil
+	}
+
+	if !unicode.IsNumber(rune(format[0])) {
+		// Date format must start with number.
+		return nil, realFsp, err
+	}
+
+	for i := 1; i < len(format) && len(seps) < MaxSqlTimeParts; i++ {
+		var isNumberI_1 = unicode.IsNumber(rune(format[i-1]))
+		var isNumberI = unicode.IsNumber(rune(format[i]))
+
+		//if i-1 is not number,i is number,meaning the beginning of one sep
+		if !isNumberI_1 && isNumberI {
+			start = i
+			lastSepChar = format[i-1]
+			currentSepChar = 0
+			continue
+		}
+
+		//if i - 1 is number,i is not number,meaning the ending of one sep
+		if isNumberI_1 && !isNumberI {
+			var currentPart = format[start:i]
+			start = -1
+			currentSepChar = format[i]
+
+			err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, currentPart, &realFsp, &totalPartCount, &seps)
+			if err != nil {
+				return nil, realFsp, err
 			}
 
-			seps = append(seps, lastPart)
+			if totalPartCount >= MaxSqlTimeParts {
+				return seps, realFsp, nil
+			}
 		}
 
+	}
+
+	var lastPart = ""
+	if start >= 0 {
+		lastPart = format[start:]
+	}
+
+	if 0 == len(lastPart) {
 		return seps, realFsp, nil
-	} else {
-		var partsNoYear, validLen, err = ParseNoDelimiterNoYear(lastPart)
-		if err != nil {
-			return nil, realFsp, err
-		}
-		for j := 0; j < maxPartCount-sepsLen && j < validLen; j++ {
-			seps = append(seps, partsNoYear[j])
-			totalPartCount++
-		}
+	}
+
+	err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, lastPart, &realFsp, &totalPartCount, &seps)
+	if err != nil {
+		return nil, realFsp, err
 	}
 
 	return seps, realFsp, nil
