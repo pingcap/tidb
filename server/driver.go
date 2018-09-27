@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"fmt"
 
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
@@ -81,6 +82,9 @@ type QueryCtx interface {
 
 	// ShowProcess shows the information about the session.
 	ShowProcess() util.ProcessInfo
+
+	// GetSessionVars return SessionVars.
+	GetSessionVars() *variable.SessionVars
 
 	SetSessionManager(util.SessionManager)
 }
