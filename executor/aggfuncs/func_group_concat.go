@@ -129,8 +129,7 @@ func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	}
 	p2.buffer.WriteString(e.sep)
 	p2.buffer.WriteString(p1.buffer.String())
-	e.truncatePartialResultIfNeed(sctx, p2.buffer)
-	return nil
+	return e.truncatePartialResultIfNeed(sctx, p2.buffer)
 }
 
 type partialResult4GroupConcatDistinct struct {
