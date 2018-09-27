@@ -1831,24 +1831,24 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 }
 
 // DropTable will proceed even if some table in the list does not exists.
-func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident, tableId int64) (err error) {
+func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident, tableID int64) (err error) {
 	is := d.GetInformationSchema(ctx)
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
 	}
 
-	if tableId == 0 {
-		tb, err := is.TableByName(ti.Schema, ti.Name)
-		if err != nil {
+	if tableID == 0 {
+		tb, e := is.TableByName(ti.Schema, ti.Name)
+		if e != nil {
 			return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 		}
-		tableId = tb.Meta().ID
+		tableID = tb.Meta().ID
 	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
-		TableID:    tableId,
+		TableID:    tableID,
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
