@@ -169,7 +169,8 @@ func (bj BinaryJSON) GetString() []byte {
 	return bj.Value[lenLen : lenLen+int(strLen)]
 }
 
-func (bj BinaryJSON) getElemCount() int {
+// GetElemCount gets the count of Object or Array.
+func (bj BinaryJSON) GetElemCount() int {
 	return int(endian.Uint32(bj.Value))
 }
 
@@ -184,7 +185,7 @@ func (bj BinaryJSON) objectGetKey(i int) []byte {
 }
 
 func (bj BinaryJSON) objectGetVal(i int) BinaryJSON {
-	elemCount := bj.getElemCount()
+	elemCount := bj.GetElemCount()
 	return bj.valEntryGet(headerSize + elemCount*keyEntrySize + i*valEntrySize)
 }
 
