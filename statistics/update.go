@@ -707,29 +707,50 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
-			statsTbl := h.GetTableStats(tblInfo)
-			if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
+			pi := tblInfo.GetPartitionInfo()
+			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
+			if pi == nil {
+				statsTbl := h.GetTableStats(tblInfo)
+				sql := fmt.Sprintf("analyze table %s", tblName)
+				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				if analyzed {
+					return err
+				}
 				continue
 			}
-			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
-			if NeedAnalyzeTable(statsTbl, 20*h.Lease, autoAnalyzeRatio, start, end, time.Now()) {
-				sql := fmt.Sprintf("analyze table %s", tblName)
-				log.Infof("[stats] auto analyze table %s now", tblName)
-				return errors.Trace(h.execAutoAnalyze(sql))
-			}
-			for _, idx := range tblInfo.Indices {
-				if idx.State != model.StatePublic {
-					continue
+			for _, def := range pi.Definitions {
+				sql := fmt.Sprintf("alter table %s analyze partition `%s`", tblName, def.Name.O)
+				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
+				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				if analyzed {
+					return err
 				}
-				if _, ok := statsTbl.Indices[idx.ID]; !ok {
-					sql := fmt.Sprintf("analyze table %s index `%s`", tblName, idx.Name.O)
-					log.Infof("[stats] auto analyze index `%s` for table %s now", idx.Name.O, tblName)
-					return errors.Trace(h.execAutoAnalyze(sql))
-				}
+				continue
 			}
 		}
 	}
 	return nil
+}
+
+func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, start, end time.Time, ratio float64, sql string) (bool, error) {
+	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
+		return false, nil
+	}
+	if NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()) {
+		log.Infof("[stats] auto %s now", sql)
+		return true, h.execAutoAnalyze(sql)
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		if _, ok := statsTbl.Indices[idx.ID]; !ok {
+			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
+			log.Infof("[stats] auto %s now", sql)
+			return true, h.execAutoAnalyze(sql)
+		}
+	}
+	return false, nil
 }
 
 func (h *Handle) execAutoAnalyze(sql string) error {
