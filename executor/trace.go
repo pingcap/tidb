@@ -72,7 +72,7 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stmtExecChk := stmtExec.newChunk()
+	stmtExecChk := stmtExec.newFirstChunk()
 
 	// store span into context
 	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)

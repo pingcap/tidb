@@ -143,6 +143,9 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if colVals == nil {
+		colVals = make([][]byte, len(colIDs))
+	}
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for id, offset := range colIDs {
 		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(e.schema.Columns[offset].RetType.Flag) {
@@ -153,8 +156,7 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 			chk.AppendInt64(offset, e.handle)
 			continue
 		}
-		colVal := colVals[offset]
-		if len(colVal) == 0 {
+		if len(colVals[offset]) == 0 {
 			colInfo := getColInfoByID(e.tblInfo, id)
 			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
 			if err1 != nil {
@@ -195,6 +197,6 @@ func (e *PointGetExecutor) retTypes() []*types.FieldType {
 	return e.tps
 }
 
-func (e *PointGetExecutor) newChunk() *chunk.Chunk {
-	return chunk.NewChunkWithCapacity(e.retTypes(), 1)
+func (e *PointGetExecutor) newFirstChunk() *chunk.Chunk {
+	return chunk.New(e.retTypes(), 1, 1)
 }

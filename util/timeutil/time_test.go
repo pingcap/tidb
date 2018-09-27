@@ -34,6 +34,12 @@ type testTimeSuite struct{}
 
 func (s *testTimeSuite) TestgetTZNameFromFileName(c *C) {
 	tz, err := inferTZNameFromFileName("/user/share/zoneinfo/Asia/Shanghai")
+
+	c.Assert(err, IsNil)
+	c.Assert(tz, Equals, "Asia/Shanghai")
+
+	tz, err = inferTZNameFromFileName("/usr/share/zoneinfo.default/Asia/Shanghai")
+
 	c.Assert(err, IsNil)
 	c.Assert(tz, Equals, "Asia/Shanghai")
 }

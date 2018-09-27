@@ -89,7 +89,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	err := e.Open(ctx)
 	c.Assert(err, IsNil)
 
-	chk := e.newChunk()
+	chk := e.newFirstChunk()
 	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
