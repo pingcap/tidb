@@ -711,7 +711,6 @@ func (c *jsonValidFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 }
 
 func (b *builtinJSONValidSig) evalInt(row chunk.Row) (res int64, isNull bool, err error) {
-
 	switch b.args[0].GetType().Tp {
 	case mysql.TypeNull:
 		return 1, true, nil
