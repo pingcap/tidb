@@ -637,6 +637,9 @@ func (s *testEvaluatorSuite) TestJSONValid(c *C) {
 		{[]interface{}{`"hello"`}, 1},
 		{[]interface{}{`{"a": 1}`}, 1},
 		{[]interface{}{`{"a": 1`}, 0},
+		{[]interface{}{1}, 0},
+		{[]interface{}{`1`}, 1},
+		{[]interface{}{`"1"`}, 1},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.input...)
