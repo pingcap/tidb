@@ -38,7 +38,7 @@ func (user *UserIdentity) String() string {
 	return fmt.Sprintf("%s@%s", user.Username, user.Hostname)
 }
 
-// MatchedIdentityString retyrbs matched identity in user@host format
+// MatchedIdentityString returns matched identity in user@host format
 func (user *UserIdentity) MatchedIdentityString() string {
 	// TODO: Escape username and hostname.
 	return fmt.Sprintf("%s@%s", user.MatchedUsername, user.MatchedHostname)
