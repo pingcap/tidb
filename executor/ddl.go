@@ -96,7 +96,8 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 	case *ast.CreateDatabaseStmt:
 		err = e.executeCreateDatabase(x)
 	case *ast.CreateTableStmt:
-		tableID, err := e.executeCreateTable(x)
+		var tableID int64
+		tableID, err = e.executeCreateTable(x)
 		if err != nil {
 			return errors.Trace(e.toErr(err))
 		}

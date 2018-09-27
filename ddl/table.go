@@ -68,7 +68,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 			// TODO: Add restrictions to this operation.
 			go splitTableRegion(d.store, tbInfo.ID)
 		}
-		ver, err := updateVersionAndTableInfo(t, job, tbInfo, originalState != tbInfo.State)
+		ver, err = updateVersionAndTableInfo(t, job, tbInfo, originalState != tbInfo.State)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
@@ -83,9 +83,9 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 }
 
-func onRevealTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRevealTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	tbInfo := &model.TableInfo{}
-	if err := job.DecodeArgs(tbInfo); err != nil {
+	if err = job.DecodeArgs(tbInfo); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -98,7 +98,7 @@ func onRevealTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
 		// Finish this job.
-		ver, err := updateVersionAndTableInfo(t, job, tbInfo, originalState != tbInfo.State)
+		ver, err = updateVersionAndTableInfo(t, job, tbInfo, originalState != tbInfo.State)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
