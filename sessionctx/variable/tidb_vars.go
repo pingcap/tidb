@@ -226,7 +226,7 @@ const (
 	DefTiDBDisableTxnAutoRetry       = false
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
-	DefTiDBOptimizerSelectivityLevel = 0
+	DefTiDBOptimizerSelectivityLevel = TiDBoptStatsDataSourceHist
 	DefTiDBDDLReorgWorkerCount       = 16
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4

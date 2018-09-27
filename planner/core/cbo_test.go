@@ -696,7 +696,7 @@ func (s *testAnalyzeSuite) TestHistogramInPlan(c *C) {
 		store.Close()
 	}()
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_optimizer_selectivity_level=1")
+	tk.MustExec("set @@session.tidb_optimizer_selectivity_level=2")
 	tk.MustExec(`create table t(a enum("a", "b", "c"), index idx(a))`)
 	tk.MustExec(`insert into t values("a"), ("a"), ("a"), ("a"), ("b"), ("b"), ("b"), ("C")`)
 	tk.MustExec("analyze table t")

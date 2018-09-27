@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -127,7 +128,7 @@ func (p *LogicalSelection) deriveStats() (*property.StatsInfo, error) {
 		return nil, errors.Trace(err)
 	}
 	selectivity := selectionFactor
-	if p.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && childProfile.HistColl != nil {
+	if p.ctx.GetSessionVars().OptimizerSelectivityLevel == variable.TiDBoptStatsAllWithUnchangedHist && childProfile.HistColl != nil {
 		selectivity, err = childProfile.HistColl.Selectivity(p.ctx, p.Conditions)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
@@ -224,7 +225,7 @@ func (p *LogicalProjection) deriveStats() (*property.StatsInfo, error) {
 		p.stats.Cardinality[i] = getCardinality(cols, p.children[0].Schema(), childProfile)
 	}
 	// If we enables the enhance selectivity we'll try to maintain the histogram.
-	if p.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && childProfile.HistColl != nil && !childProfile.HistColl.Pseudo {
+	if p.ctx.GetSessionVars().OptimizerSelectivityLevel >= variable.TiDBoptStatsAllWithUnchangedHist && childProfile.HistColl != nil && !childProfile.HistColl.Pseudo {
 		p.deriveHistStats(childProfile)
 	}
 	return p.stats, nil

@@ -32,6 +32,12 @@ import (
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
 const secondsPerYear = 60 * 60 * 24 * 365
 
+const (
+	TiDBoptStatsOnlyPseudo int = iota
+	TiDBoptStatsDataSourceHist
+	TiDBoptStatsAllWithUnchangedHist
+)
+
 // SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
 // Max worker count is maxDDLReorgWorkerCount.
 func SetDDLReorgWorkerCounter(cnt int32) {
@@ -334,6 +340,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", errors.Trace(err)
 		}
 		return v, nil
+	case TiDBOptimizerSelectivityLevel:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v < TiDBoptStatsOnlyPseudo || v > TiDBoptStatsAllWithUnchangedHist {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name)
+		}
+		return value, nil
 	}
 	return value, nil
 }
