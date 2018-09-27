@@ -148,7 +148,6 @@ func (b *builtinCurrentUserSig) Clone() builtinFunc {
 
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
-// TODO: The value of CURRENT_USER() can differ from the value of USER(). We will finish this after we support grant tables.
 func (b *builtinCurrentUserSig) evalString(row chunk.Row) (string, bool, error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil || data.User == nil {
