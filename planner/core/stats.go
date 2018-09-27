@@ -126,14 +126,15 @@ func (p *LogicalSelection) deriveStats() (*property.StatsInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	factor := selectionFactor
+	selectivity := selectionFactor
 	if p.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && childProfile.HistColl != nil {
-		factor, err = childProfile.HistColl.Selectivity(p.ctx, p.Conditions)
+		selectivity, err = childProfile.HistColl.Selectivity(p.ctx, p.Conditions)
 		if err != nil {
-			return nil, errors.Trace(err)
+			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
+			selectivity = selectionFactor
 		}
 	}
-	p.stats = childProfile.Scale(factor)
+	p.stats = childProfile.Scale(selectivity)
 	if childProfile.HistColl != nil {
 		p.stats.HistColl = &statistics.HistColl{
 			Count:         int64(p.stats.RowCount),
