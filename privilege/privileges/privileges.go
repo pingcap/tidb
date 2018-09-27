@@ -116,10 +116,17 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	return true
 }
 
+// ConnectionMatchIdentity return the user+host that matched in the priv cache
 func (p *UserPrivileges) ConnectionMatchIdentity(user, host string) (string, string) {
-  mysqlPriv := p.Handle.Get()
-  record := mysqlPriv.connectionVerification(user, host)
-  return record.User, record.Host
+	if SkipWithGrant {
+		// This is MySQL 5.7 compatible behavior
+		return "skip-grants user", "skip-grants host"
+	}
+
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	return record.User, record.Host
+
 }
 
 // DBIsVisible implements the Manager interface.
