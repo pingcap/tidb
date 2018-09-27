@@ -392,6 +392,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
 				break
 			}
+			log.Info("[ddl] schema syncer restarted.")
 		case <-do.info.Done():
 			log.Info("[ddl] reload schema in loop, server info syncer need restart")
 			do.info.Restart(context.Background())
