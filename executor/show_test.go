@@ -646,11 +646,24 @@ func (s *testSuite) TestShowTableStatus(c *C) {
  		partition by range(a)
  		( partition p0 values less than (10),
 		  partition p1 values less than (20),
-    	  partition p2 values less than (maxvalue)
+		  partition p2 values less than (maxvalue)
   		);`)
 	rs, err = tk.Exec("show table status from test like 'tp';")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
+}
+
+func (s *testSuite) TestShowSlow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// The test result is volatile, because
+	// 1. Slow queries is stored in domain, which may be affected by other tests.
+	// 2. Collecting slow queries is a asynchronous process, check immediately may not get the expected result.
+	// 3. Make slow query like "select sleep(1)" would slow the CI.
+	// So, we just cover the code but do not check the result.
+	tk.MustQuery(`admin show slow recent 3`)
+	tk.MustQuery(`admin show slow top 3`)
+	tk.MustQuery(`admin show slow top internal 3`)
+	tk.MustQuery(`admin show slow top all 3`)
 }
