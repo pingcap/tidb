@@ -1008,6 +1008,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.Charset = op.StrValue
 		case ast.TableOptionCollate:
 			tbInfo.Collate = op.StrValue
+		case ast.TableOptionCompression:
+			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
 			if hasAutoIncrementColumn(tbInfo) && op.UintValue != 0 {
 				return errUnsupportedShardRowIDBits

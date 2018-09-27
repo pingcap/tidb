@@ -2025,6 +2025,17 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) (Plan, error) {
 		defer b.popTableHints()
 	}
 
+	// update subquery table should be forbidden
+	var asNameList []string
+	asNameList = extractTableSourceAsNames(update.TableRefs.TableRefs, asNameList, true)
+	for _, asName := range asNameList {
+		for _, assign := range update.List {
+			if assign.Column.Table.L == asName {
+				return nil, ErrNonUpdatableTable.GenWithStackByArgs(asName, "UPDATE")
+			}
+		}
+	}
+
 	b.inUpdateStmt = true
 	sel := &ast.SelectStmt{
 		Fields:  &ast.FieldList{},
@@ -2269,7 +2280,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) (Plan, error) {
 			}
 			if !foundMatch {
 				var asNameList []string
-				asNameList = extractTableSourceAsNames(delete.TableRefs.TableRefs, asNameList)
+				asNameList = extractTableSourceAsNames(delete.TableRefs.TableRefs, asNameList, false)
 				for _, asName := range asNameList {
 					tblName := tn.Name.L
 					if tn.Schema.L != "" {
@@ -2320,13 +2331,17 @@ func extractTableList(node ast.ResultSetNode, input []*ast.TableName) []*ast.Tab
 	return input
 }
 
-// extractTableSourceAsNames extracts all the TableSource.AsNames from node.
-func extractTableSourceAsNames(node ast.ResultSetNode, input []string) []string {
+// extractTableSourceAsNames extracts TableSource.AsNames from node.
+// if onlySelectStmt is set to be true, only extracts AsNames when TableSource.Source.(type) == *ast.SelectStmt
+func extractTableSourceAsNames(node ast.ResultSetNode, input []string, onlySelectStmt bool) []string {
 	switch x := node.(type) {
 	case *ast.Join:
-		input = extractTableSourceAsNames(x.Left, input)
-		input = extractTableSourceAsNames(x.Right, input)
+		input = extractTableSourceAsNames(x.Left, input, onlySelectStmt)
+		input = extractTableSourceAsNames(x.Right, input, onlySelectStmt)
 	case *ast.TableSource:
+		if _, ok := x.Source.(*ast.SelectStmt); !ok && onlySelectStmt {
+			break
+		}
 		if s, ok := x.Source.(*ast.TableName); ok {
 			if x.AsName.L == "" {
 				input = append(input, s.Name.L)
