@@ -24,6 +24,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
@@ -332,12 +333,23 @@ func (do *Domain) Reload() error {
 	return nil
 }
 
-// LogTopNSlowQuery keeps topN recent slow queries in domain.
-func (do *Domain) LogTopNSlowQuery(query *SlowQueryInfo) {
+// LogSlowQuery keeps topN recent slow queries in domain.
+func (do *Domain) LogSlowQuery(query *SlowQueryInfo) {
 	select {
 	case do.slowQuery.ch <- query:
 	default:
 	}
+}
+
+// ShowSlowQuery returns the slow queries.
+func (do *Domain) ShowSlowQuery(showSlow *ast.ShowSlow) []*SlowQueryInfo {
+	msg := &showSlowMessage{
+		request: showSlow,
+	}
+	msg.Add(1)
+	do.slowQuery.msgCh <- msg
+	msg.Wait()
+	return msg.result
 }
 
 func (do *Domain) topNSlowQueryLoop() {
@@ -348,12 +360,20 @@ func (do *Domain) topNSlowQueryLoop() {
 	for {
 		select {
 		case now := <-ticker.C:
-			do.slowQuery.Refresh(now)
+			do.slowQuery.RemoveExpired(now)
 		case info, ok := <-do.slowQuery.ch:
 			if !ok {
 				return
 			}
 			do.slowQuery.Append(info)
+		case msg := <-do.slowQuery.msgCh:
+			req := msg.request
+			if req.Tp == ast.ShowSlowTop {
+				msg.result = do.slowQuery.QueryTop(int(req.Count), req.Kind)
+			} else if req.Tp == ast.ShowSlowRecent {
+				msg.result = do.slowQuery.QueryRecent(int(req.Count))
+			}
+			msg.Done()
 		}
 	}
 }
@@ -500,7 +520,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, resourceIdleTimeout),
 		statsLease:      statsLease,
 		infoHandle:      infoschema.NewHandle(store),
-		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7),
+		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7, 500),
 	}
 }
 
