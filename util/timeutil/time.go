@@ -114,11 +114,13 @@ var systemLocOnce sync.Once
 // SystemLocation returns tidb cluster's global timezone location.
 func SystemLocation() *time.Location {
 	if systemLoc == &dummyLoc {
-		loc, err := LoadLocation(systemTZ)
-		if err != nil {
-			log.Errorf("fail to load location by %s and error is %s\n", systemTZ, err.Error())
-		}
-		systemLoc = loc
+		systemLocOnce.Do(func() {
+			loc, err := LoadLocation(systemTZ)
+			if err != nil {
+				log.Errorf("fail to load location by '%s' because of %s\n", systemTZ, err.Error())
+			}
+			systemLoc = loc
+		})
 	}
 
 	return systemLoc
