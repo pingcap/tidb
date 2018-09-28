@@ -32,9 +32,13 @@ import (
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
 const secondsPerYear = 60 * 60 * 24 * 365
 
+// These constants indicates how we calculate the selectivity in planner.
 const (
+	// TiDBoptStatsOnlyPseudo means we only use pseudo statistics.
 	TiDBoptStatsOnlyPseudo int = iota
+	// TiDBoptStatsDataSourceHist means we only use histogram to calculate the selectivity of data source node.
 	TiDBoptStatsDataSourceHist
+	// TiDBoptStatsAllWithUnchangedHist means we use histogram to calculate all plan operator's selectivity but don't modify the histogram.
 	TiDBoptStatsAllWithUnchangedHist
 )
 
