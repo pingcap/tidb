@@ -28,10 +28,10 @@ import (
 
 // init initializes `locCache`.
 func init() {
+	// We need set systemTZ when it is in testing process.
 	if systemTZ == "" {
 		systemTZ = "System"
 	}
-
 	locCa = &locCache{}
 	locCa.locMap = make(map[string]*time.Location)
 }
