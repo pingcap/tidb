@@ -1208,6 +1208,9 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 			end = count
 		}
 	} else {
+		if count <= -int64(math.Pow(2, 63)) {
+			return "", false, nil
+		}
 		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
 		count = -count
 		if count < end {
