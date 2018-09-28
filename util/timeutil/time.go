@@ -49,6 +49,11 @@ var zoneSources = []string{
 	"/var/db/timezone/zoneinfo/",
 }
 
+// systemLoc represents system location
+var systemLoc *time.Location = &dummyLoc
+var dummyLoc time.Location
+var systemLocOnce sync.Once
+
 // locCache is a simple map with lock. It stores all used timezone during the lifetime of tidb instance.
 // Talked with Golang team about whether they can have some forms of cache policy available for programmer,
 // they suggests that only programmers knows which one is best for their use case.
@@ -106,10 +111,6 @@ func inferTZNameFromFileName(path string) (string, error) {
 	}
 	return "", fmt.Errorf("path %s is not supported", path)
 }
-
-var systemLoc *time.Location = &dummyLoc
-var dummyLoc time.Location
-var systemLocOnce sync.Once
 
 // SystemLocation returns tidb cluster's global timezone location.
 func SystemLocation() *time.Location {
