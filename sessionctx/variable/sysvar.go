@@ -557,7 +557,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "relay_log_recovery", "OFF"},
 	{ScopeNone, "old", "OFF"},
 	{ScopeGlobal | ScopeSession, "innodb_table_locks", "ON"},
-	{ScopeNone, "performance_schema", "ON"},
+	{ScopeNone, "performance_schema", "OFF"},
 	{ScopeNone, "myisam_recover_options", "OFF"},
 	{ScopeGlobal | ScopeSession, "net_buffer_length", "16384"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_for_slave_count", ""},
