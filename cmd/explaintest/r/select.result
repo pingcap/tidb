@@ -320,3 +320,11 @@ HashLeftJoin_10	156250000.00	root	left outer join, inner:HashLeftJoin_16, left c
   │ └─TableScan_17	10000.00	cop	table:t3, range:[-inf,+inf], keep order:false, stats:pseudo
   └─TableReader_20	10000.00	root	data:TableScan_19
     └─TableScan_19	10000.00	cop	table:t4, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a bigint primary key, b bigint);
+desc select * from t where a = 1;
+id	count	task	operator info
+Point_Get_1	1.00	root	table:t, handle:1
+desc select * from t where a = '1';
+id	count	task	operator info
+Point_Get_1	1.00	root	table:t, handle:1
