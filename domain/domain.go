@@ -416,6 +416,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-do.info.Done():
 			log.Info("[ddl] reload schema in loop, server info syncer need restart")
 			do.info.Restart(context.Background())
+			log.Info("[ddl] server info syncer restarted.")
 		case <-do.exit:
 			return
 		}
