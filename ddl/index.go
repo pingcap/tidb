@@ -547,7 +547,8 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	t := w.table
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
-	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, rawRecord, time.UTC, w.rowMap)
+	sysZone := timeutil.SystemLocation()
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, rawRecord, time.UTC, sysZone, w.rowMap)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -576,9 +577,8 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 
 		if idxColumnVal.Kind() == types.KindMysqlTime {
 			t := idxColumnVal.GetMysqlTime()
-			zone := timeutil.SystemLocation()
-			if t.Type == mysql.TypeTimestamp && zone != time.UTC {
-				err := t.ConvertTimeZone(zone, time.UTC)
+			if t.Type == mysql.TypeTimestamp && sysZone != time.UTC {
+				err := t.ConvertTimeZone(sysZone, time.UTC)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}

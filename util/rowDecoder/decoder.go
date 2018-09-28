@@ -14,6 +14,7 @@
 package decoder
 
 import (
+	"github.com/pingcap/tidb/mysql"
 	"time"
 
 	"github.com/pingcap/tidb/expression"
@@ -69,8 +70,8 @@ func NewRowDecoder(cols []*table.Column, decodeColMap map[int64]Column) RowDecod
 }
 
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
-func (rd RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
-	_, err := tablecodec.DecodeRowWithMap(b, rd.colTypes, loc, row)
+func (rd RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	_, err := tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -93,6 +94,17 @@ func (rd RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, l
 		val, err = table.CastValue(ctx, val, col.Info)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+
+		if val.Kind() == types.KindMysqlTime {
+			t := val.GetMysqlTime()
+			if t.Type == mysql.TypeTimestamp && sysLoc != time.UTC {
+				err := t.ConvertTimeZone(sysLoc, time.UTC)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				val.SetMysqlTime(t)
+			}
 		}
 		row[id] = val
 	}
