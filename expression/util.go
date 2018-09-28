@@ -191,7 +191,7 @@ func SubstituteCorCol2Constant(expr Expression) (Expression, error) {
 	case *Constant:
 		if x.DeferredExpr != nil {
 			newExpr := FoldConstant(x)
-			return &Constant{Value: newExpr.(*Constant).Value, RetType: x.GetType()}, nil
+			return &Constant{Value: newExpr.(*Constant).Value, RetType: x.GetType(), DeferredExpr: x.DeferredExpr}, nil
 		}
 	}
 	return expr, nil
