@@ -727,6 +727,7 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 		{"1", "1.000", "1.0000", nil},
 		{"2", "3", "0.6667", nil},
 		{"51", "0.003430", "14868.8047", nil},
+		{"0", "1", "0.0000", nil},
 	}
 	for _, tt := range tests {
 		var a, b, to MyDecimal
