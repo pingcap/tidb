@@ -54,13 +54,12 @@ func (e *hashAggExec) GetSrcExec() executor {
 	return e.src
 }
 
-func (e *hashAggExec) ResetCount() {
-	e.count = 0
-	e.src.ResetCount()
+func (e *hashAggExec) ResetCounts() {
+	e.src.ResetCounts()
 }
 
-func (e *hashAggExec) Count() int64 {
-	return e.count
+func (e *hashAggExec) Counts() []int64 {
+	return e.src.Counts()
 }
 
 func (e *hashAggExec) innerNext(ctx context.Context) (bool, error) {
@@ -214,13 +213,12 @@ func (e *streamAggExec) GetSrcExec() executor {
 	return e.src
 }
 
-func (e *streamAggExec) ResetCount() {
-	e.count = 0
-	e.src.ResetCount()
+func (e *streamAggExec) ResetCounts() {
+	e.src.ResetCounts()
 }
 
-func (e *streamAggExec) Count() int64 {
-	return e.count
+func (e *streamAggExec) Counts() []int64 {
+	return e.src.Counts()
 }
 
 func (e *streamAggExec) getPartialResult() ([][]byte, error) {

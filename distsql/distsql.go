@@ -20,12 +20,13 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/goroutine_pool"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -35,34 +36,20 @@ var (
 )
 
 var (
-	_ SelectResult  = &selectResult{}
-	_ PartialResult = &partialResult{}
+	_ SelectResult = &selectResult{}
 )
 
 // SelectResult is an iterator of coprocessor partial results.
 type SelectResult interface {
-	// Next gets the next partial result.
-	Next(context.Context) (PartialResult, error)
 	// NextRaw gets the next raw result.
 	NextRaw(context.Context) ([]byte, error)
-	// NextChunk reads the data into chunk.
-	NextChunk(context.Context, *chunk.Chunk) error
+	// Next reads the data into chunk.
+	Next(context.Context, *chunk.Chunk) error
 	// Close closes the iterator.
 	Close() error
 	// Fetch fetches partial results from client.
 	// The caller should call SetFields() before call Fetch().
 	Fetch(context.Context)
-	// ScanKeys gets the total scan row count.
-	ScanKeys() int64
-}
-
-// PartialResult is the result from a single region server.
-type PartialResult interface {
-	// Next returns the next rowData of the sub result.
-	// If no more row to return, rowData would be nil.
-	Next(context.Context) (rowData []types.Datum, err error)
-	// Close closes the partial result.
-	Close() error
 }
 
 type selectResult struct {
@@ -79,7 +66,7 @@ type selectResult struct {
 	selectResp *tipb.SelectResponse
 	respChkIdx int
 
-	scanKeys     int64 // number of keys scanned by TiKV.
+	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 }
 
@@ -122,42 +109,19 @@ func (r *selectResult) fetch(ctx context.Context) {
 	}
 }
 
-// Next returns the next row.
-func (r *selectResult) Next(ctx context.Context) (PartialResult, error) {
-	re := <-r.results
-	if re.err != nil {
-		return nil, errors.Trace(re.err)
-	}
-	if re.result == nil {
-		return nil, nil
-	}
-	pr := &partialResult{}
-	pr.rowLen = r.rowLen
-	err := pr.unmarshal(re.result.GetData())
-	if len(pr.resp.OutputCounts) > 0 {
-		scanKeysPartial := pr.resp.OutputCounts[0]
-		metrics.DistSQLScanKeysPartialHistogram.Observe(float64(scanKeysPartial))
-		r.scanKeys += scanKeysPartial
-	} else {
-		r.scanKeys = -1
-	}
-	r.partialCount++
-	return pr, errors.Trace(err)
-}
-
 // NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(ctx context.Context) ([]byte, error) {
 	re := <-r.results
 	r.partialCount++
-	r.scanKeys = -1
+	r.feedback.Invalidate()
 	if re.result == nil || re.err != nil {
 		return nil, errors.Trace(re.err)
 	}
 	return re.result.GetData(), nil
 }
 
-// NextChunk reads data to the chunk.
-func (r *selectResult) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next reads data to the chunk.
+func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for chk.NumRows() < r.ctx.GetSessionVars().MaxChunkSize {
 		if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
@@ -196,17 +160,13 @@ func (r *selectResult) getSelectResp() error {
 		if err := r.selectResp.Error; err != nil {
 			return terror.ClassTiKV.New(terror.ErrCode(err.Code), err.Msg)
 		}
+		sc := r.ctx.GetSessionVars().StmtCtx
 		for _, warning := range r.selectResp.Warnings {
-			r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+			sc.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
 		}
-		if len(r.selectResp.OutputCounts) > 0 {
-			scanCountPartial := r.selectResp.OutputCounts[0]
-			metrics.DistSQLScanKeysPartialHistogram.Observe(float64(scanCountPartial))
-			r.scanKeys += scanCountPartial
-		} else {
-			r.scanKeys = -1
-		}
+		r.feedback.Update(re.result.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
+		sc.MergeExecDetails(re.result.GetExecDetails())
 		if len(r.selectResp.Chunks) == 0 {
 			continue
 		}
@@ -214,17 +174,13 @@ func (r *selectResult) getSelectResp() error {
 	}
 }
 
-func (r *selectResult) ScanKeys() int64 {
-	return r.scanKeys
-}
-
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	timeZone := r.ctx.GetSessionVars().GetTimeZone()
+	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().GetTimeZone())
 	for chk.NumRows() < maxChunkSize && len(rowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
-			rowsData, err = codec.DecodeOneToChunk(rowsData, chk, i, r.fieldTypes[i], timeZone)
+			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -237,42 +193,12 @@ func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 // Close closes selectResult.
 func (r *selectResult) Close() error {
 	// Close this channel tell fetch goroutine to exit.
-	if r.scanKeys >= 0 {
-		metrics.DistSQLScanKeysHistogram.Observe(float64(r.scanKeys))
+	if r.feedback.Actual() >= 0 {
+		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	close(r.closed)
 	return r.resp.Close()
-}
-
-type partialResult struct {
-	resp     *tipb.SelectResponse
-	chunkIdx int
-	rowLen   int
-}
-
-func (pr *partialResult) unmarshal(resultSubset []byte) error {
-	pr.resp = new(tipb.SelectResponse)
-	err := pr.resp.Unmarshal(resultSubset)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if pr.resp.Error != nil {
-		return errInvalidResp.Gen("[%d %s]", pr.resp.Error.GetCode(), pr.resp.Error.GetMsg())
-	}
-
-	return nil
-}
-
-// Next returns the next row of the sub result.
-// If no more row to return, data would be nil.
-func (pr *partialResult) Next(ctx context.Context) (data []types.Datum, err error) {
-	nextChunk := pr.getChunk()
-	if nextChunk == nil {
-		return nil, nil
-	}
-	return readRowFromChunk(nextChunk, pr.rowLen)
 }
 
 func readRowFromChunk(chunk *tipb.Chunk, numCols int) (row []types.Datum, err error) {
@@ -288,27 +214,9 @@ func readRowFromChunk(chunk *tipb.Chunk, numCols int) (row []types.Datum, err er
 	return
 }
 
-func (pr *partialResult) getChunk() *tipb.Chunk {
-	for {
-		if pr.chunkIdx >= len(pr.resp.Chunks) {
-			return nil
-		}
-		currentChunk := &pr.resp.Chunks[pr.chunkIdx]
-		if len(currentChunk.RowsData) > 0 {
-			return currentChunk
-		}
-		pr.chunkIdx++
-	}
-}
-
-// Close closes the sub result.
-func (pr *partialResult) Close() error {
-	return nil
-}
-
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
-func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
+func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType, fb *statistics.QueryFeedback) (SelectResult, error) {
 	// For testing purpose.
 	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {
 		hook.(func(*kv.Request))(kvReq)
@@ -329,6 +237,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 			rowLen:     len(fieldTypes),
 			fieldTypes: fieldTypes,
 			ctx:        sctx,
+			feedback:   fb,
 		}, nil
 	}
 
@@ -340,6 +249,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		rowLen:     len(fieldTypes),
 		fieldTypes: fieldTypes,
 		ctx:        sctx,
+		feedback:   fb,
 	}, nil
 }
 
@@ -350,10 +260,27 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request) (SelectRe
 		return nil, errors.New("client returns nil response")
 	}
 	result := &selectResult{
-		label:   "analyze",
-		resp:    resp,
-		results: make(chan resultWithErr, kvReq.Concurrency),
-		closed:  make(chan struct{}),
+		label:    "analyze",
+		resp:     resp,
+		results:  make(chan resultWithErr, kvReq.Concurrency),
+		closed:   make(chan struct{}),
+		feedback: statistics.NewQueryFeedback(0, nil, 0, false),
+	}
+	return result, nil
+}
+
+// Checksum sends a checksum request.
+func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request) (SelectResult, error) {
+	resp := client.Send(ctx, kvReq)
+	if resp == nil {
+		return nil, errors.New("client returns nil response")
+	}
+	result := &selectResult{
+		label:    "checksum",
+		resp:     resp,
+		results:  make(chan resultWithErr, kvReq.Concurrency),
+		closed:   make(chan struct{}),
+		feedback: statistics.NewQueryFeedback(0, nil, 0, false),
 	}
 	return result, nil
 }

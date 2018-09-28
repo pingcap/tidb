@@ -111,7 +111,6 @@ func (s *Server) releaseToken(token *Token) {
 // It allocates a connection ID and random salt data for authentication.
 func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := newClientConn(s)
-	log.Infof("[%d] new connection %s", cc.connectionID, conn.RemoteAddr().String())
 	if s.cfg.Performance.TCPKeepAlive {
 		if tcpConn, ok := conn.(*net.TCPConn); ok {
 			if err := tcpConn.SetKeepAlive(true); err != nil {
@@ -293,19 +292,18 @@ func (s *Server) Close() {
 // onConn runs in its own goroutine, handles queries from this connection.
 func (s *Server) onConn(c net.Conn) {
 	conn := s.newConn(c)
-	defer func() {
-		log.Infof("[%d] close connection", conn.connectionID)
-	}()
-
 	if err := conn.handshake(); err != nil {
 		// Some keep alive services will send request to TiDB and disconnect immediately.
-		// So we use info log level.
-		log.Infof("handshake error %s", errors.ErrorStack(err))
+		// So we only record metrics.
+		metrics.HandShakeErrorCounter.Inc()
 		err = c.Close()
 		terror.Log(errors.Trace(err))
 		return
 	}
-
+	log.Infof("con:%d new connection %s", conn.connectionID, c.RemoteAddr().String())
+	defer func() {
+		log.Infof("con:%d close connection", conn.connectionID)
+	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
 	connections := len(s.clients)
@@ -316,14 +314,15 @@ func (s *Server) onConn(c net.Conn) {
 }
 
 // ShowProcessList implements the SessionManager interface.
-func (s *Server) ShowProcessList() []util.ProcessInfo {
-	var rs []util.ProcessInfo
+func (s *Server) ShowProcessList() map[uint64]util.ProcessInfo {
 	s.rwlock.RLock()
+	rs := make(map[uint64]util.ProcessInfo, len(s.clients))
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
 		}
-		rs = append(rs, client.ctx.ShowProcess())
+		pi := client.ctx.ShowProcess()
+		rs[pi.ID] = pi
 	}
 	s.rwlock.RUnlock()
 	return rs

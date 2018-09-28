@@ -71,14 +71,9 @@ parserlib: parser/parser.go
 parser/parser.go: parser/parser.y
 	make parser
 
-check: errcheck
-	go get github.com/golang/lint/golint
+check: fmt errcheck lint vet
 
-	@echo "vet"
-	@ go tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
-	@ go tool vet -all -shadow *.go 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
-	@echo "golint"
-	@ golint -set_exit_status $(PACKAGES)
+fmt:
 	@echo "gofmt (simplify)"
 	@ gofmt -s -l -w $(FILES) 2>&1 | grep -v "vendor|parser/parser.go" | awk '{print} END{if(NR>0) {exit 1}}'
 
@@ -89,7 +84,17 @@ goword:
 
 errcheck:
 	go get github.com/kisielk/errcheck
-	@ GOPATH=$(GOPATH) errcheck -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+	@echo "errcheck"
+	@ GOPATH=$(GOPATH) errcheck -exclude errcheck_excludes.txt -blank $(PACKAGES) | grep -v "_test\.go" | awk '{print} END{if(NR>0) {exit 1}}'
+
+lint:
+	go get golang.org/x/lint/golint
+	@echo "golint"
+	@ golint -set_exit_status $(PACKAGES)
+
+vet:
+	@echo "vet"
+	@ go tool vet -all -shadow $(TOPDIRS) 2>&1 | awk '{print} END{if(NR>0) {exit 1}}'
 
 clean:
 	$(GO) clean -i ./...
@@ -104,7 +109,7 @@ todo:
 test: checklist gotest
 
 gotest: parserlib
-	go get github.com/coreos/gofail
+	go get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 ifeq ("$(TRAVIS_COVERAGE)", "1")
 	@echo "Running in TRAVIS_COVERAGE mode."
@@ -121,15 +126,24 @@ endif
 	@$(GOFAIL_DISABLE)
 
 race: parserlib
+	go get github.com/etcd-io/gofail
+	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -check.exclude="TestFail" -race $(PACKAGES)
+	$(GOTEST) -race $(PACKAGES)
+	@$(GOFAIL_DISABLE)
 
 leak: parserlib
+	go get github.com/etcd-io/gofail
+	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
-	$(GOTEST) -check.exclude="TestFail" -tags leak $(PACKAGES)
+	$(GOTEST) -tags leak $(PACKAGES)
+	@$(GOFAIL_DISABLE)
 
 tikv_integration_test: parserlib
-	$(GOTEST) -check.exclude="TestFail" ./store/tikv/. -with-tikv=true
+	go get github.com/etcd-io/gofail
+	@$(GOFAIL_ENABLE)
+	$(GOTEST) ./store/tikv/. -with-tikv=true
+	@$(GOFAIL_DISABLE)
 
 RACE_FLAG = 
 ifeq ("$(WITH_RACE)", "1")

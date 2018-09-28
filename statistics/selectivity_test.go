@@ -14,6 +14,7 @@
 package statistics_test
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"runtime/pprof"
@@ -21,17 +22,18 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -44,23 +46,23 @@ type testSelectivitySuite struct {
 	dom   *domain.Domain
 }
 
-func (suite *testSelectivitySuite) SetUpSuite(c *C) {
+func (s *testSelectivitySuite) SetUpSuite(c *C) {
 	store, dom, err := newStoreWithBootstrap(0)
 	c.Assert(err, IsNil)
-	suite.dom = dom
-	suite.store = store
+	s.dom = dom
+	s.store = store
 }
 
-func (suite *testSelectivitySuite) TearDownSuite(c *C) {
-	suite.dom.Close()
-	suite.store.Close()
+func (s *testSelectivitySuite) TearDownSuite(c *C) {
+	s.dom.Close()
+	s.store.Close()
 }
 
 // generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
 // If dimension is x, num is y, the total number of datum is y^x. And This slice is sorted.
 func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Datum, error) {
-	len := int(math.Pow(float64(num), float64(dimension)))
-	ret := make([]types.Datum, len)
+	length := int(math.Pow(float64(num), float64(dimension)))
+	ret := make([]types.Datum, length)
 	if dimension == 1 {
 		for i := 0; i < num; i++ {
 			ret[i] = types.NewIntDatum(int64(i))
@@ -68,7 +70,7 @@ func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Dat
 	} else {
 		sc := &stmtctx.StatementContext{TimeZone: time.Local}
 		// In this way, we can guarantee the datum is in order.
-		for i := 0; i < len; i++ {
+		for i := 0; i < length; i++ {
 			data := make([]types.Datum, dimension)
 			j := i
 			for k := 0; k < dimension; k++ {
@@ -88,7 +90,7 @@ func (s *testSelectivitySuite) generateIntDatum(dimension, num int) ([]types.Dat
 // mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
 func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldType) *statistics.Histogram {
 	ndv := len(values)
-	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv)
+	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv, 0)
 	for i := 0; i < ndv; i++ {
 		histogram.AppendBucket(&values[i], &values[i], repeat*int64(i+1), repeat)
 	}
@@ -152,7 +154,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "a >= 1 and b > 1 and a < 2",
-			selectivity: 0.01783264746,
+			selectivity: 0.01817558299,
 		},
 		{
 			exprs:       "a >= 1 and c > 1 and a < 2",
@@ -168,18 +170,18 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "b > 1",
-			selectivity: 0.96296296296,
+			selectivity: 0.98148148148,
 		},
 		{
 			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity: 0.00352249826,
+			selectivity: 0,
 		},
 	}
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprs
 		comment := Commentf("for %s", tt.exprs)
 		ctx := testKit.Se.(sessionctx.Context)
-		stmts, err := tidb.Parse(ctx, sql)
+		stmts, err := session.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
 		err = plan.Preprocess(ctx, stmts[0], is, false)
@@ -198,6 +200,75 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 	}
 }
 
+func (s *testSelectivitySuite) TestPseudoSelectivity(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t, t1")
+	testKit.MustExec("create table t(a int, b int, unique key idx(a,b))")
+	testKit.MustQuery("explain select * from t where a = 1 and b = 1").Check(testkit.Rows(
+		"IndexScan_5   cop table:t, index:a, b, range:[1 1,1 1], keep order:false 1.00",
+		"IndexReader_6   root index:IndexScan_5 1.00"))
+
+	testKit.MustExec("create table t1(a int, b int, primary key(a))")
+	testKit.MustQuery("explain select b from t1 where a = 1").Check(testkit.Rows(
+		"TableScan_5   cop table:t1, range:[1,1], keep order:false 1.00",
+		"TableReader_6 Projection_4  root data:TableScan_5 1.00",
+		"Projection_4  TableReader_6 root test.t1.b 1.00"))
+}
+
+func getRange(start, end int64) []*ranger.NewRange {
+	ran := &ranger.NewRange{
+		LowVal:  []types.Datum{types.NewIntDatum(start)},
+		HighVal: []types.Datum{types.NewIntDatum(end)},
+	}
+	return []*ranger.NewRange{ran}
+}
+
+func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
+	testKit.MustExec("analyze table t")
+	for i := 0; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	h := s.dom.StatsHandle()
+	h.DumpStatsDeltaToKV()
+	testKit.MustExec("analyze table t")
+	for i := 0; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
+	}
+	h.DumpStatsDeltaToKV()
+	c.Assert(h.Update(s.dom.InfoSchema()), IsNil)
+	table, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl := h.GetTableStats(table.Meta())
+
+	sc := &stmtctx.StatementContext{}
+	colID := table.Meta().Columns[0].ID
+	count, err := statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(30, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 2.0)
+
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 4.2)
+
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, math.MaxInt64))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 4.2)
+
+	idxID := table.Meta().Indices[0].ID
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(30, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.2)
+
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 2.2)
+}
+
 func BenchmarkSelectivity(b *testing.B) {
 	c := &C{}
 	s := &testSelectivitySuite{}
@@ -211,7 +282,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	sql := "select * from t where " + exprs
 	comment := Commentf("for %s", exprs)
 	ctx := testKit.Se.(sessionctx.Context)
-	stmts, err := tidb.Parse(ctx, sql)
+	stmts, err := session.Parse(ctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
 	err = plan.Preprocess(ctx, stmts[0], is, false)

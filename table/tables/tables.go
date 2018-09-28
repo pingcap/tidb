@@ -74,10 +74,16 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 		return nil, table.ErrTableStateCantNone.Gen("table %s can't be in none state", tblInfo.Name)
 	}
 
-	columns := make([]*table.Column, 0, len(tblInfo.Columns))
-	for _, colInfo := range tblInfo.Columns {
+	colsLen := len(tblInfo.Columns)
+	columns := make([]*table.Column, 0, colsLen)
+	for i, colInfo := range tblInfo.Columns {
 		if colInfo.State == model.StateNone {
 			return nil, table.ErrColumnStateCantNone.Gen("column %s can't be in none state", colInfo.Name)
+		}
+
+		// Print some information when the column's offset isn't equal to i.
+		if colInfo.Offset != i {
+			log.Errorf("[tables] table %#v schema is wrong, no.%d col %#v, cols len %v", tblInfo, i, tblInfo.Columns[i], colsLen)
 		}
 
 		col := table.ToColumn(colInfo)
@@ -228,15 +234,16 @@ func (t *Table) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData [
 	if err != nil {
 		return errors.Trace(err)
 	}
+	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
 
 	var colIDs, binlogColIDs []int64
 	var row, binlogOldRow, binlogNewRow []types.Datum
-	colIDs = make([]int64, 0, len(newData))
-	row = make([]types.Datum, 0, len(newData))
+	colIDs = make([]int64, 0, numColsCap)
+	row = make([]types.Datum, 0, numColsCap)
 	if shouldWriteBinlog(ctx) {
-		binlogColIDs = make([]int64, 0, len(newData))
-		binlogOldRow = make([]types.Datum, 0, len(newData))
-		binlogNewRow = make([]types.Datum, 0, len(newData))
+		binlogColIDs = make([]int64, 0, numColsCap)
+		binlogOldRow = make([]types.Datum, 0, numColsCap)
+		binlogNewRow = make([]types.Datum, 0, numColsCap)
 	}
 
 	for _, col := range t.WritableCols() {
@@ -272,6 +279,11 @@ func (t *Table) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData [
 		return errors.Trace(err)
 	}
 	if shouldWriteBinlog(ctx) {
+		if !t.meta.PKIsHandle {
+			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
+			binlogOldRow = append(binlogOldRow, types.NewIntDatum(h))
+			binlogNewRow = append(binlogNewRow, types.NewIntDatum(h))
+		}
 		err = t.addUpdateBinlog(ctx, binlogOldRow, binlogNewRow, binlogColIDs)
 		if err != nil {
 			return errors.Trace(err)
@@ -344,11 +356,18 @@ func (t *Table) getRollbackableMemStore(ctx sessionctx.Context) kv.RetrieverMuta
 // AddRecord implements table.Table AddRecord interface.
 func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleCheck bool) (recordID int64, err error) {
 	var hasRecordID bool
-	for _, col := range t.Cols() {
-		if col.IsPKHandleColumn(t.meta) {
-			recordID = r[col.Offset].GetInt64()
-			hasRecordID = true
-			break
+	cols := t.Cols()
+	if len(r) > len(cols) {
+		// The last value is _tidb_rowid.
+		recordID = r[len(r)-1].GetInt64()
+		hasRecordID = true
+	} else {
+		for _, col := range cols {
+			if col.IsPKHandleColumn(t.meta) {
+				recordID = r[col.Offset].GetInt64()
+				hasRecordID = true
+				break
+			}
 		}
 	}
 	if !hasRecordID {
@@ -421,7 +440,14 @@ func (t *Table) AddRecord(ctx sessionctx.Context, r []types.Datum, skipHandleChe
 		}
 	}
 	sessVars.StmtCtx.AddAffectedRows(1)
-	sessVars.TxnCtx.UpdateDeltaForTable(t.ID, 1, 1)
+	colSize := make(map[int64]int64)
+	for id, col := range t.Cols() {
+		val := int64(len(r[id].GetBytes()))
+		if val != 0 {
+			colSize[col.ID] = val
+		}
+	}
+	sessVars.TxnCtx.UpdateDeltaForTable(t.ID, 1, 1, colSize)
 	return recordID, nil
 }
 
@@ -493,14 +519,23 @@ func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Colum
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	// Decode raw row data.
+	v, _, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return v, nil
+}
+
+// DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
+func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, cols []*table.Column,
+	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
 	for i, col := range cols {
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(t.meta) {
+		if col.IsPKHandleColumn(meta) {
 			if mysql.HasUnsignedFlag(col.Flag) {
 				v[i].SetUint64(uint64(h))
 			} else {
@@ -512,14 +547,14 @@ func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Colum
 	}
 	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().GetTimeZone())
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, rowMap, errors.Trace(err)
 	}
 	defaultVals := make([]types.Datum, len(cols))
 	for i, col := range cols {
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(t.meta) {
+		if col.IsPKHandleColumn(meta) {
 			continue
 		}
 		ri, ok := rowMap[col.ID]
@@ -529,10 +564,10 @@ func (t *Table) RowWithCols(ctx sessionctx.Context, h int64, cols []*table.Colum
 		}
 		v[i], err = GetColDefaultValue(ctx, col, defaultVals)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, rowMap, errors.Trace(err)
 		}
 	}
-	return v, nil
+	return v, rowMap, nil
 }
 
 // Row implements table.Table Row interface.
@@ -555,11 +590,21 @@ func (t *Table) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) e
 		return errors.Trace(err)
 	}
 	if shouldWriteBinlog(ctx) {
-		colIDs := make([]int64, 0, len(t.Cols()))
-		for _, col := range t.Cols() {
+		cols := t.Cols()
+		colIDs := make([]int64, 0, len(cols)+1)
+		for _, col := range cols {
 			colIDs = append(colIDs, col.ID)
 		}
-		err = t.addDeleteBinlog(ctx, r, colIDs)
+		var binlogRow []types.Datum
+		if !t.meta.PKIsHandle {
+			colIDs = append(colIDs, model.ExtraHandleID)
+			binlogRow = make([]types.Datum, 0, len(r)+1)
+			binlogRow = append(binlogRow, r...)
+			binlogRow = append(binlogRow, types.NewIntDatum(h))
+		} else {
+			binlogRow = r
+		}
+		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
 	}
 	return errors.Trace(err)
 }
@@ -621,14 +666,14 @@ func (t *Table) removeRowIndices(ctx sessionctx.Context, h int64, rec []types.Da
 	for _, v := range t.DeletableIndices() {
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
-			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS, h, rec)
+			log.Infof("remove row index %v failed %v, txn %d, handle %d, data %v", v.Meta(), err, ctx.Txn().StartTS(), h, rec)
 			return errors.Trace(err)
 		}
 		if err = v.Delete(ctx.GetSessionVars().StmtCtx, ctx.Txn(), vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
-				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), ctx.Txn().StartTS, h)
+				log.Debugf("remove row index %v doesn't exist, txn %d, handle %d", v.Meta(), ctx.Txn().StartTS(), h)
 				continue
 			}
 			return errors.Trace(err)
@@ -814,12 +859,16 @@ func (t *Table) getMutation(ctx sessionctx.Context) *binlog.TableMutation {
 	return ctx.StmtGetMutation(t.ID)
 }
 
-// canSkip is for these cases, we can skip the columns in encoded row:
+func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
+	return CanSkip(t.Meta(), col, value)
+}
+
+// CanSkip is for these cases, we can skip the columns in encoded row:
 // 1. the column is included in primary key;
 // 2. the column's default value is null, and the value equals to that;
 // 3. the column is virtual generated.
-func (t *Table) canSkip(col *table.Column, value types.Datum) bool {
-	if col.IsPKHandleColumn(t.meta) {
+func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
+	if col.IsPKHandleColumn(info) {
 		return true
 	}
 	if col.DefaultValue == nil && value.IsNull() {

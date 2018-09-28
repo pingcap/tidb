@@ -44,6 +44,7 @@ type testColumnSuite struct {
 }
 
 func (s *testColumnSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.store = testCreateStore(c, "test_column")
 	s.d = testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 
@@ -57,6 +58,7 @@ func (s *testColumnSuite) TearDownSuite(c *C) {
 
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
 }
 
 func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
@@ -105,7 +107,6 @@ func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 }
 
 func (s *testColumnSuite) TestColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	tblInfo := testTableInfo(c, s.d, "t1", 3)
 	ctx := testNewContext(s.d)
 
@@ -736,7 +737,6 @@ func (s *testColumnSuite) testGetColumn(t table.Table, name string, isExist bool
 }
 
 func (s *testColumnSuite) TestAddColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 3)
 	ctx := testNewContext(d)
@@ -822,7 +822,6 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 }
 
 func (s *testColumnSuite) TestDropColumn(c *C) {
-	defer testleak.AfterTest(c)()
 	d := testNewDDL(context.Background(), nil, s.store, nil, nil, testLease)
 	tblInfo := testTableInfo(c, d, "t", 4)
 	ctx := testNewContext(d)

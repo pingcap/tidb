@@ -21,24 +21,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
+	"net/url"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	log "github.com/sirupsen/logrus"
 )
 
 type HTTPHandlerTestSuite struct {
@@ -51,33 +58,71 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	sTableID := int64(3)
 	sIndex := int64(11)
 	eTableID := int64(9)
+	recordID := int64(133)
+	indexValues := []types.Datum{
+		types.NewIntDatum(100),
+		types.NewBytesDatum([]byte("foobar")),
+		types.NewFloat64Datum(-100.25),
+	}
+	var expectIndexValues []string
+	for _, v := range indexValues {
+		expectIndexValues = append(expectIndexValues, fmt.Sprintf("%d-%v", v.Kind(), v.GetValue()))
+	}
+	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
+	c.Assert(err, IsNil)
 
-	startKey := tablecodec.EncodeTableIndexPrefix(sTableID, sIndex)
-	endKey := tablecodec.GenTableRecordPrefix(eTableID)
+	startKey := tablecodec.EncodeIndexSeekKey(sTableID, sIndex, encodedValue)
+	recordPrefix := tablecodec.GenTableRecordPrefix(eTableID)
+	endKey := tablecodec.EncodeRecordKey(recordPrefix, recordID)
 
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	indexRange, err := NewRegionFrameRange(region)
+	r, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(indexRange.firstTableID(), Equals, sTableID)
-	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.IndexID, Equals, sIndex)
-	c.Assert(indexRange.first.IsRecord, IsFalse)
-	c.Assert(indexRange.last.IsRecord, IsTrue)
-	start, end := indexRange.getIndexRangeForTable(sTableID)
-	c.Assert(start, Equals, sIndex)
-	c.Assert(end, Equals, int64(math.MaxInt64))
-	start, end = indexRange.getIndexRangeForTable(eTableID)
-	c.Assert(start, Equals, int64(math.MinInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
+	c.Assert(r.first.IndexID, Equals, sIndex)
+	c.Assert(r.first.IsRecord, IsFalse)
+	c.Assert(r.first.RecordID, Equals, int64(0))
+	c.Assert(r.first.IndexValues, DeepEquals, expectIndexValues)
+	c.Assert(r.last.IsRecord, IsTrue)
+	c.Assert(r.last.RecordID, Equals, recordID)
+	c.Assert(r.last.IndexValues, IsNil)
+
+	testCases := []struct {
+		tableID int64
+		indexID int64
+		isCover bool
+	}{
+		{2, 0, false},
+		{3, 0, true},
+		{9, 0, true},
+		{10, 0, false},
+		{2, 10, false},
+		{3, 10, false},
+		{3, 11, true},
+		{3, 20, true},
+		{9, 10, true},
+		{10, 1, false},
+	}
+	for _, t := range testCases {
+		var f *FrameItem
+		if t.indexID == 0 {
+			f = r.getRecordFrame(t.tableID, "", "")
+		} else {
+			f = r.getIndexFrame(t.tableID, t.indexID, "", "", "")
+		}
+		if t.isCover {
+			c.Assert(f, NotNil)
+		} else {
+			c.Assert(f, IsNil)
+		}
+	}
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	sTableID := int64(15)
-	eTableID := int64(math.MaxInt64)
 	startKey := tablecodec.GenTableRecordPrefix(sTableID)
 	endKey := []byte("z_aaaaafdfd")
 	region := &tikv.KeyLocation{
@@ -85,23 +130,15 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	indexRange, err := NewRegionFrameRange(region)
+	r, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(indexRange.firstTableID(), Equals, sTableID)
-	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.IsRecord, IsTrue)
-	c.Assert(indexRange.last.IsRecord, IsTrue)
-	start, end := indexRange.getIndexRangeForTable(sTableID)
-	c.Assert(start, Equals, int64(math.MaxInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
-	start, end = indexRange.getIndexRangeForTable(eTableID)
-	c.Assert(start, Equals, int64(math.MinInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
+	c.Assert(r.first.IsRecord, IsTrue)
+	c.Assert(r.last.IsRecord, IsTrue)
+	c.Assert(r.getRecordFrame(300, "", ""), NotNil)
+	c.Assert(r.getIndexFrame(200, 100, "", "", ""), NotNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
-	sTableID := int64(math.MinInt64)
-	sIndexID := int64(math.MinInt64)
 	eTableID := int64(9)
 	startKey := []byte("m_aaaaafdfd")
 	endKey := tablecodec.GenTableRecordPrefix(eTableID)
@@ -110,19 +147,12 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
 		StartKey: startKey,
 		EndKey:   endKey,
 	}
-	indexRange, err := NewRegionFrameRange(region)
+	r, err := NewRegionFrameRange(region)
 	c.Assert(err, IsNil)
-	c.Assert(indexRange.firstTableID(), Equals, sTableID)
-	c.Assert(indexRange.lastTableID(), Equals, eTableID)
-	c.Assert(indexRange.first.IndexID, Equals, sIndexID)
-	c.Assert(indexRange.first.IsRecord, IsFalse)
-	c.Assert(indexRange.last.IsRecord, IsTrue)
-	start, end := indexRange.getIndexRangeForTable(sTableID)
-	c.Assert(start, Equals, sIndexID)
-	c.Assert(end, Equals, int64(math.MaxInt64))
-	start, end = indexRange.getIndexRangeForTable(eTableID)
-	c.Assert(start, Equals, int64(math.MinInt64))
-	c.Assert(end, Equals, int64(math.MaxInt64))
+	c.Assert(r.first.IsRecord, IsFalse)
+	c.Assert(r.last.IsRecord, IsTrue)
+	c.Assert(r.getRecordFrame(3, "", ""), NotNil)
+	c.Assert(r.getIndexFrame(8, 1, "", "", ""), NotNil)
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionsAPI(c *C) {
@@ -199,10 +229,10 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 }
 
 func (ts *HTTPHandlerTestSuite) startServer(c *C) {
-	mvccStore := mocktikv.NewMvccStore()
+	mvccStore := mocktikv.MustNewMVCCStore()
 	store, err := mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	tidbdrv := NewTiDBDriver(store)
 
@@ -268,6 +298,8 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
+
+	c.Skip("MVCCLevelDB doesn't implement MVCCDebugger interface.")
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/key/tidb/test/1"))
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
@@ -299,7 +331,7 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 		c.Assert(bytes.Equal(v2, expect.Value), IsTrue)
 	}
 
-	_, key, err := codec.DecodeBytes(p1.Key)
+	_, key, err := codec.DecodeBytes(p1.Key, nil)
 	c.Assert(err, IsNil)
 	hexKey := hex.EncodeToString(key)
 	resp, err = http.Get("http://127.0.0.1:10090/mvcc/hex/" + hexKey)
@@ -323,6 +355,7 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(data.Info, IsNil)
 
+	c.Skip("MVCCLevelDB doesn't implement MVCCDebugger interface.")
 	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/mvcc/txn/0"))
 	c.Assert(err, IsNil)
 	var p kvrpcpb.MvccGetByStartTsResponse
@@ -373,7 +406,7 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 		var data interface{}
 		err = decoder.Decode(&data)
 		c.Assert(err, IsNil, Commentf("url:%v\ndata%v", url, data))
-		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]})
+		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]}, false)
 		c.Assert(err, IsNil)
 		c.Assert(data, Equals, colVal, Commentf("url:%v", url))
 	}
@@ -400,6 +433,7 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	ts.prepareData(c)
 	defer ts.stopServer(c)
 
+	c.Skip("MVCCLevelDB doesn't implement MVCCDebugger interface.")
 	// tests for normal index key
 	resp, err := http.Get("http://127.0.0.1:10090/mvcc/index/tidb/test/idx1/1?a=1&b=2")
 	c.Assert(err, IsNil)
@@ -520,4 +554,63 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 
 	_, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/schema/tidb/abc"))
 	c.Assert(err, IsNil)
+}
+
+func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=3"))
+	c.Assert(err, IsNil)
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history/?limit=-1"))
+	c.Assert(err, IsNil)
+
+	resp, err = http.Get(fmt.Sprintf("http://127.0.0.1:10090/ddl/history"))
+	c.Assert(err, IsNil)
+	decoder := json.NewDecoder(resp.Body)
+
+	var jobs []*model.Job
+	s, _ := session.CreateSession(ts.server.newTikvHandlerTool().store.(kv.Storage))
+	defer s.Close()
+	store := domain.GetDomain(s.(sessionctx.Context)).Store()
+	txn, _ := store.Begin()
+	txnMeta := meta.NewMeta(txn)
+	txnMeta.GetAllHistoryDDLJobs()
+	data, _ := txnMeta.GetAllHistoryDDLJobs()
+	err = decoder.Decode(&jobs)
+
+	c.Assert(err, IsNil)
+	c.Assert(jobs, DeepEquals, data)
+}
+
+func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
+	ts.startServer(c)
+	ts.prepareData(c)
+	defer ts.stopServer(c)
+	form := make(url.Values)
+	form.Set("log_level", "error")
+	form.Set("tidb_general_log", "1")
+	resp, err := http.PostForm("http://127.0.0.1:10090/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(log.GetLevel(), Equals, log.ErrorLevel)
+	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "error")
+	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(1))
+	form = make(url.Values)
+	form.Set("log_level", "info")
+	form.Set("tidb_general_log", "0")
+	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(atomic.LoadUint32(&variable.ProcessGeneralLog), Equals, uint32(0))
+	c.Assert(log.GetLevel(), Equals, log.InfoLevel)
+	c.Assert(config.GetGlobalConfig().Log.Level, Equals, "info")
+
+	// test ddl_slow_threshold
+	form = make(url.Values)
+	form.Set("ddl_slow_threshold", "200")
+	resp, err = http.PostForm("http://127.0.0.1:10090/settings", form)
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	c.Assert(atomic.LoadUint32(&variable.DDLSlowOprThreshold), Equals, uint32(200))
 }

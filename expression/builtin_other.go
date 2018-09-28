@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -106,6 +106,12 @@ type builtinInIntSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinInIntSig) Clone() builtinFunc {
+	newSig := &builtinInIntSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinInIntSig) evalInt(row types.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull0 || err != nil {
@@ -149,6 +155,12 @@ type builtinInStringSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinInStringSig) Clone() builtinFunc {
+	newSig := &builtinInStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinInStringSig) evalInt(row types.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalString(b.ctx, row)
 	if isNull0 || err != nil {
@@ -174,6 +186,12 @@ func (b *builtinInStringSig) evalInt(row types.Row) (int64, bool, error) {
 // See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInRealSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinInRealSig) Clone() builtinFunc {
+	newSig := &builtinInRealSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinInRealSig) evalInt(row types.Row) (int64, bool, error) {
@@ -203,6 +221,12 @@ type builtinInDecimalSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinInDecimalSig) Clone() builtinFunc {
+	newSig := &builtinInDecimalSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinInDecimalSig) evalInt(row types.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull0 || err != nil {
@@ -228,6 +252,12 @@ func (b *builtinInDecimalSig) evalInt(row types.Row) (int64, bool, error) {
 // See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInTimeSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinInTimeSig) Clone() builtinFunc {
+	newSig := &builtinInTimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinInTimeSig) evalInt(row types.Row) (int64, bool, error) {
@@ -257,6 +287,12 @@ type builtinInDurationSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinInDurationSig) Clone() builtinFunc {
+	newSig := &builtinInDurationSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinInDurationSig) evalInt(row types.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull0 || err != nil {
@@ -282,6 +318,12 @@ func (b *builtinInDurationSig) evalInt(row types.Row) (int64, bool, error) {
 // See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInJSONSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinInJSONSig) Clone() builtinFunc {
+	newSig := &builtinInJSONSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinInJSONSig) evalInt(row types.Row) (int64, bool, error) {
@@ -328,6 +370,12 @@ type builtinRowSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinRowSig) Clone() builtinFunc {
+	newSig := &builtinRowSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString rowFunc should always be flattened in expression rewrite phrase.
 func (b *builtinRowSig) evalString(row types.Row) (string, bool, error) {
 	panic("builtinRowSig.evalString() should never be called.")
@@ -350,6 +398,12 @@ func (c *setVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 type builtinSetVarSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSetVarSig) Clone() builtinFunc {
+	newSig := &builtinSetVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinSetVarSig) evalString(row types.Row) (res string, isNull bool, err error) {
@@ -387,6 +441,12 @@ func (c *getVarFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 type builtinGetVarSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinGetVarSig) Clone() builtinFunc {
+	newSig := &builtinGetVarSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinGetVarSig) evalString(row types.Row) (string, bool, error) {
@@ -442,6 +502,12 @@ type builtinValuesIntSig struct {
 	offset int
 }
 
+func (b *builtinValuesIntSig) Clone() builtinFunc {
+	newSig := &builtinValuesIntSig{offset: b.offset}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a builtinValuesIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesIntSig) evalInt(_ types.Row) (int64, bool, error) {
@@ -463,6 +529,12 @@ type builtinValuesRealSig struct {
 	baseBuiltinFunc
 
 	offset int
+}
+
+func (b *builtinValuesRealSig) Clone() builtinFunc {
+	newSig := &builtinValuesRealSig{offset: b.offset}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalReal evals a builtinValuesRealSig.
@@ -488,6 +560,12 @@ type builtinValuesDecimalSig struct {
 	offset int
 }
 
+func (b *builtinValuesDecimalSig) Clone() builtinFunc {
+	newSig := &builtinValuesDecimalSig{offset: b.offset}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalDecimal evals a builtinValuesDecimalSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesDecimalSig) evalDecimal(_ types.Row) (*types.MyDecimal, bool, error) {
@@ -509,6 +587,12 @@ type builtinValuesStringSig struct {
 	baseBuiltinFunc
 
 	offset int
+}
+
+func (b *builtinValuesStringSig) Clone() builtinFunc {
+	newSig := &builtinValuesStringSig{offset: b.offset}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinValuesStringSig.
@@ -534,6 +618,12 @@ type builtinValuesTimeSig struct {
 	offset int
 }
 
+func (b *builtinValuesTimeSig) Clone() builtinFunc {
+	newSig := &builtinValuesTimeSig{offset: b.offset}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalTime evals a builtinValuesTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesTimeSig) evalTime(_ types.Row) (types.Time, bool, error) {
@@ -557,6 +647,12 @@ type builtinValuesDurationSig struct {
 	offset int
 }
 
+func (b *builtinValuesDurationSig) Clone() builtinFunc {
+	newSig := &builtinValuesDurationSig{offset: b.offset}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalDuration evals a builtinValuesDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesDurationSig) evalDuration(_ types.Row) (types.Duration, bool, error) {
@@ -578,6 +674,12 @@ type builtinValuesJSONSig struct {
 	baseBuiltinFunc
 
 	offset int
+}
+
+func (b *builtinValuesJSONSig) Clone() builtinFunc {
+	newSig := &builtinValuesJSONSig{offset: b.offset}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalJSON evals a builtinValuesJSONSig.
@@ -613,6 +715,12 @@ func (c *bitCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 type builtinBitCountSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinBitCountSig) Clone() builtinFunc {
+	newSig := &builtinBitCountSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals BIT_COUNT(N).
@@ -652,6 +760,12 @@ func (c *getParamFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 type builtinGetParamStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinGetParamStringSig) Clone() builtinFunc {
+	newSig := &builtinGetParamStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinGetParamStringSig) evalString(row types.Row) (string, bool, error) {

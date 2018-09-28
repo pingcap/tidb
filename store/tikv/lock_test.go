@@ -26,13 +26,14 @@ import (
 )
 
 type testLockSuite struct {
+	OneByOneSuite
 	store *tikvStore
 }
 
 var _ = Suite(&testLockSuite{})
 
 func (s *testLockSuite) SetUpTest(c *C) {
-	s.store = newTestStore(c)
+	s.store = NewTestStore(c).(*tikvStore)
 }
 
 func (s *testLockSuite) TearDownTest(c *C) {
@@ -54,7 +55,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 		err = txn.Delete(primaryKey)
 	}
 	c.Assert(err, IsNil)
-	tpc, err := newTwoPhaseCommitter(txn)
+	tpc, err := newTwoPhaseCommitter(txn, 0)
 	c.Assert(err, IsNil)
 	tpc.keys = [][]byte{primaryKey, key}
 
@@ -180,24 +181,8 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	c.Assert(status.IsCommitted(), IsFalse)
 }
 
-func (s *testLockSuite) TestRC(c *C) {
-	s.putKV(c, []byte("key"), []byte("v1"))
-
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	txn.Set([]byte("key"), []byte("v2"))
-	s.prewriteTxn(c, txn.(*tikvTxn))
-
-	txn2, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	txn2.SetOption(kv.IsolationLevel, kv.RC)
-	val, err := txn2.Get([]byte("key"))
-	c.Assert(err, IsNil)
-	c.Assert(string(val), Equals, "v1")
-}
-
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {
-	committer, err := newTwoPhaseCommitter(txn)
+	committer, err := newTwoPhaseCommitter(txn, 0)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(context.Background(), prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)

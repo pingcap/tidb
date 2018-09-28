@@ -15,6 +15,7 @@ package kv
 
 import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/execdetails"
 	"golang.org/x/net/context"
 )
 
@@ -157,10 +158,11 @@ type Client interface {
 
 // ReqTypes.
 const (
-	ReqTypeSelect  = 101
-	ReqTypeIndex   = 102
-	ReqTypeDAG     = 103
-	ReqTypeAnalyze = 104
+	ReqTypeSelect   = 101
+	ReqTypeIndex    = 102
+	ReqTypeDAG      = 103
+	ReqTypeAnalyze  = 104
+	ReqTypeChecksum = 105
 
 	ReqSubTypeBasic      = 0
 	ReqSubTypeDesc       = 10000
@@ -204,6 +206,10 @@ type Request struct {
 type ResultSubset interface {
 	// GetData gets the data.
 	GetData() []byte
+	// GetStartKey gets the start key.
+	GetStartKey() Key
+	// GetExecDetails gets the detail information.
+	GetExecDetails() *execdetails.ExecDetails
 }
 
 // Response represents the response returned from KV layer.

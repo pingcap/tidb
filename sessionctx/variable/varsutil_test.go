@@ -52,6 +52,30 @@ func (s *testVarsutilSuite) TestTiDBOptOn(c *C) {
 	}
 }
 
+func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
+	defer testleak.AfterTest(c)()
+	vars := NewSessionVars()
+
+	c.Assert(vars.BuildStatsConcurrencyVar, Equals, DefBuildStatsConcurrency)
+	c.Assert(vars.IndexJoinBatchSize, Equals, DefIndexJoinBatchSize)
+	c.Assert(vars.IndexLookupSize, Equals, DefIndexLookupSize)
+	c.Assert(vars.IndexLookupConcurrency, Equals, DefIndexLookupConcurrency)
+	c.Assert(vars.IndexSerialScanConcurrency, Equals, DefIndexSerialScanConcurrency)
+	c.Assert(vars.IndexLookupJoinConcurrency, Equals, DefIndexLookupJoinConcurrency)
+	c.Assert(vars.HashJoinConcurrency, Equals, DefTiDBHashJoinConcurrency)
+	c.Assert(vars.DistSQLScanConcurrency, Equals, DefDistSQLScanConcurrency)
+	c.Assert(vars.MaxChunkSize, Equals, DefMaxChunkSize)
+	c.Assert(vars.DMLBatchSize, Equals, DefDMLBatchSize)
+	c.Assert(vars.MemQuotaQuery, Equals, int64(config.GetGlobalConfig().MemQuotaQuery))
+	c.Assert(vars.MemQuotaHashJoin, Equals, int64(DefTiDBMemQuotaHashJoin))
+	c.Assert(vars.MemQuotaMergeJoin, Equals, int64(DefTiDBMemQuotaMergeJoin))
+	c.Assert(vars.MemQuotaSort, Equals, int64(DefTiDBMemQuotaSort))
+	c.Assert(vars.MemQuotaTopn, Equals, int64(DefTiDBMemQuotaTopn))
+	c.Assert(vars.MemQuotaIndexLookupReader, Equals, int64(DefTiDBMemQuotaIndexLookupReader))
+	c.Assert(vars.MemQuotaIndexLookupJoin, Equals, int64(DefTiDBMemQuotaIndexLookupJoin))
+	c.Assert(vars.MemQuotaNestedLoopApply, Equals, int64(DefTiDBMemQuotaNestedLoopApply))
+}
+
 func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	defer testleak.AfterTest(c)()
 	v := NewSessionVars()
@@ -176,6 +200,20 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 	c.Assert(v.EnableStreaming, Equals, false)
+
+	c.Assert(v.OptimizerSelectivityLevel, Equals, DefTiDBOptimizerSelectivityLevel)
+	SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, types.NewIntDatum(1))
+	c.Assert(v.OptimizerSelectivityLevel, Equals, 1)
+
+	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(1))
+	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(1))
+
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(-1))
+	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(DefTiDBDDLReorgWorkerCount))
+
+	SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, types.NewIntDatum(int64(maxDDLReorgWorkerCount)+1))
+	c.Assert(GetDDLReorgWorkerCounter(), Equals, int32(maxDDLReorgWorkerCount))
 }
 
 type mockGlobalAccessor struct {

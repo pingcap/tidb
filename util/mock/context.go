@@ -219,3 +219,7 @@ func NewContext() *Context {
 	sctx.sessionVars.MaxChunkSize = 2
 	return sctx
 }
+
+// HookKeyForTest is as alias, used by context.WithValue.
+// golint forbits using string type as key in context.WithValue.
+type HookKeyForTest string

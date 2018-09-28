@@ -14,6 +14,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -72,7 +73,7 @@ func (*testModelSuite) TestModelBasic(c *C) {
 		ID:          1,
 		Name:        NewCIStr("t"),
 		Charset:     "utf8",
-		Collate:     "utf8",
+		Collate:     "utf8_bin",
 		Columns:     []*ColumnInfo{column},
 		Indices:     []*IndexInfo{index},
 		ForeignKeys: []*FKInfo{fk},
@@ -83,7 +84,7 @@ func (*testModelSuite) TestModelBasic(c *C) {
 		ID:      1,
 		Name:    NewCIStr("test"),
 		Charset: "utf8",
-		Collate: "utf8",
+		Collate: "utf8_bin",
 		Tables:  []*TableInfo{table},
 	}
 
@@ -142,11 +143,43 @@ func (*testModelSuite) TestJobCodec(c *C) {
 	}
 	job := &Job{
 		ID:         1,
+		TableID:    2,
+		SchemaID:   1,
 		BinlogInfo: &HistoryInfo{},
 		Args:       []interface{}{NewCIStr("a"), A{Name: "abc"}},
 	}
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: NewCIStr("test_history_tbl")})
+
+	// Test IsDependentOn.
+	// job: table ID is 2
+	// job1: table ID is 2
+	var err error
+	job1 := &Job{
+		ID:         2,
+		TableID:    2,
+		SchemaID:   1,
+		Type:       ActionRenameTable,
+		BinlogInfo: &HistoryInfo{},
+		Args:       []interface{}{int64(3), NewCIStr("new_table_name")},
+	}
+	job1.RawArgs, err = json.Marshal(job1.Args)
+	c.Assert(err, IsNil)
+	isDependent, err := job.IsDependentOn(job1)
+	c.Assert(err, IsNil)
+	c.Assert(isDependent, IsTrue)
+	// job1: rename table, old schema ID is 3
+	// job2: create schema, schema ID is 3
+	job2 := &Job{
+		ID:         3,
+		TableID:    3,
+		SchemaID:   3,
+		Type:       ActionCreateSchema,
+		BinlogInfo: &HistoryInfo{},
+	}
+	isDependent, err = job2.IsDependentOn(job1)
+	c.Assert(err, IsNil)
+	c.Assert(isDependent, IsTrue)
 
 	c.Assert(job.IsCancelled(), Equals, false)
 	b, err := job.Encode(false)
@@ -195,6 +228,7 @@ func (*testModelSuite) TestJobCodec(c *C) {
 	c.Assert(job.IsFinished(), IsTrue)
 	c.Assert(job.IsRunning(), IsFalse)
 	c.Assert(job.IsSynced(), IsFalse)
+	c.Assert(job.IsRollbackDone(), IsFalse)
 	job.SetRowCount(3)
 	c.Assert(job.GetRowCount(), Equals, int64(3))
 }

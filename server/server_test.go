@@ -123,6 +123,24 @@ func (dbt *DBTest) fail(method, query string, err error) {
 	dbt.Fatalf("Error on %s %s: %s", method, query, err.Error())
 }
 
+func (dbt *DBTest) mustPrepare(query string) *sql.Stmt {
+	stmt, err := dbt.db.Prepare(query)
+	dbt.Assert(err, IsNil, Commentf("Prepare %s", query))
+	return stmt
+}
+
+func (dbt *DBTest) mustExecPrepared(stmt *sql.Stmt, args ...interface{}) sql.Result {
+	res, err := stmt.Exec(args...)
+	dbt.Assert(err, IsNil, Commentf("Execute prepared with args: %s", args))
+	return res
+}
+
+func (dbt *DBTest) mustQueryPrepared(stmt *sql.Stmt, args ...interface{}) *sql.Rows {
+	rows, err := stmt.Query(args...)
+	dbt.Assert(err, IsNil, Commentf("Query prepared with args: %s", args))
+	return rows
+}
+
 func (dbt *DBTest) mustExec(query string, args ...interface{}) (res sql.Result) {
 	res, err := dbt.db.Exec(query, args...)
 	dbt.Assert(err, IsNil, Commentf("Exec %s", query))
@@ -299,6 +317,29 @@ func runTestPreparedString(t *C) {
 		t.Assert(err, IsNil)
 		t.Assert(outA, Equals, "abcdeabcde")
 		t.Assert(outB, Equals, "abcde")
+	})
+}
+
+// This test case does not really cover binary timestamp format, because MySQL driver in golang
+// does not use this format. MySQL driver in golang will convert the timestamp to a string.
+// This case guarantees it could work.
+func runTestPreparedTimestamp(t *C) {
+	runTestsOnNewDB(t, nil, "prepared_timestamp", func(dbt *DBTest) {
+		dbt.mustExec("create table test (a timestamp, b time)")
+		insertStmt := dbt.mustPrepare("insert test values (?, ?)")
+		defer insertStmt.Close()
+		vts := time.Unix(1, 1)
+		vt := time.Unix(-1, 1)
+		dbt.mustExecPrepared(insertStmt, vts, vt)
+		selectStmt := dbt.mustPrepare("select * from test where a = ? and b = ?")
+		defer selectStmt.Close()
+		rows := dbt.mustQueryPrepared(selectStmt, vts, vt)
+		t.Assert(rows.Next(), IsTrue)
+		var outA, outB string
+		err := rows.Scan(&outA, &outB)
+		t.Assert(err, IsNil)
+		t.Assert(outA, Equals, "1970-01-01 00:00:01")
+		t.Assert(outB, Equals, "23:59:59")
 	})
 }
 

@@ -22,25 +22,31 @@ import (
 
 // Error instances.
 var (
+	// All the exported errors are defined here:
 	ErrIncorrectParameterCount = terror.ClassExpression.New(mysql.ErrWrongParamcountToNativeFct, mysql.MySQLErrName[mysql.ErrWrongParamcountToNativeFct])
 	ErrDivisionByZero          = terror.ClassExpression.New(mysql.ErrDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
 
-	errFunctionNotExists   = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
-	errZlibZData           = terror.ClassTypes.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
-	errIncorrectArgs       = terror.ClassExpression.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
-	errUnknownCharacterSet = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
-	errDefaultValue        = terror.ClassExpression.New(mysql.ErrInvalidDefault, "invalid default value")
+	// All the un-exported errors are defined here:
+	errFunctionNotExists             = terror.ClassExpression.New(mysql.ErrSpDoesNotExist, mysql.MySQLErrName[mysql.ErrSpDoesNotExist])
+	errZlibZData                     = terror.ClassTypes.New(mysql.ErrZlibZData, mysql.MySQLErrName[mysql.ErrZlibZData])
+	errIncorrectArgs                 = terror.ClassExpression.New(mysql.ErrWrongArguments, mysql.MySQLErrName[mysql.ErrWrongArguments])
+	errUnknownCharacterSet           = terror.ClassExpression.New(mysql.ErrUnknownCharacterSet, mysql.MySQLErrName[mysql.ErrUnknownCharacterSet])
+	errDefaultValue                  = terror.ClassExpression.New(mysql.ErrInvalidDefault, "invalid default value")
+	errDeprecatedSyntaxNoReplacement = terror.ClassExpression.New(mysql.ErrWarnDeprecatedSyntaxNoReplacement, mysql.MySQLErrName[mysql.ErrWarnDeprecatedSyntaxNoReplacement])
+	errWarnAllowedPacketOverflowed   = terror.ClassExpression.New(mysql.ErrWarnAllowedPacketOverflowed, mysql.MySQLErrName[mysql.ErrWarnAllowedPacketOverflowed])
 )
 
 func init() {
 	expressionMySQLErrCodes := map[terror.ErrCode]uint16{
-		mysql.ErrWrongParamcountToNativeFct: mysql.ErrWrongParamcountToNativeFct,
-		mysql.ErrDivisionByZero:             mysql.ErrDivisionByZero,
-		mysql.ErrSpDoesNotExist:             mysql.ErrSpDoesNotExist,
-		mysql.ErrZlibZData:                  mysql.ErrZlibZData,
-		mysql.ErrWrongArguments:             mysql.ErrWrongArguments,
-		mysql.ErrUnknownCharacterSet:        mysql.ErrUnknownCharacterSet,
-		mysql.ErrInvalidDefault:             mysql.ErrInvalidDefault,
+		mysql.ErrWrongParamcountToNativeFct:        mysql.ErrWrongParamcountToNativeFct,
+		mysql.ErrDivisionByZero:                    mysql.ErrDivisionByZero,
+		mysql.ErrSpDoesNotExist:                    mysql.ErrSpDoesNotExist,
+		mysql.ErrZlibZData:                         mysql.ErrZlibZData,
+		mysql.ErrWrongArguments:                    mysql.ErrWrongArguments,
+		mysql.ErrUnknownCharacterSet:               mysql.ErrUnknownCharacterSet,
+		mysql.ErrInvalidDefault:                    mysql.ErrInvalidDefault,
+		mysql.ErrWarnDeprecatedSyntaxNoReplacement: mysql.ErrWarnDeprecatedSyntaxNoReplacement,
+		mysql.ErrWarnAllowedPacketOverflowed:       mysql.ErrWarnAllowedPacketOverflowed,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExpression] = expressionMySQLErrCodes
 }

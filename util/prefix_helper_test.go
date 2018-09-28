@@ -127,7 +127,7 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 	txn, err = s.s.Begin()
 	c.Assert(err, IsNil)
 	k := []byte("key100jfowi878230")
-	err = txn.Set(k, []byte("val32dfaskli384757^*&%^"))
+	err = txn.Set(k, []byte(`val32dfaskli384757^*&%^`))
 	c.Assert(err, IsNil)
 	err = util.ScanMetaWithPrefix(txn, k, func(kv.Key, []byte) bool {
 		return true
@@ -138,7 +138,7 @@ func (s *testPrefixSuite) TestPrefix(c *C) {
 }
 
 func (s *testPrefixSuite) TestPrefixFilter(c *C) {
-	rowKey := []byte("test@#$%l(le[0]..prefix) 2uio")
+	rowKey := []byte(`test@#$%l(le[0]..prefix) 2uio`)
 	rowKey[8] = 0x00
 	rowKey[9] = 0x00
 	f := util.RowKeyPrefixFilter(rowKey)

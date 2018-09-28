@@ -249,6 +249,7 @@ type ColumnOption struct {
 	node
 
 	Tp ColumnOptionType
+	// Expr is used for ColumnOptionDefaultValue/ColumnOptionOnUpdateColumnOptionGenerated.
 	// For ColumnOptionDefaultValue or ColumnOptionOnUpdate, it's the target value.
 	// For ColumnOptionGenerated, it's the target expression.
 	Expr ExprNode
@@ -402,6 +403,7 @@ type CreateTableStmt struct {
 	Cols        []*ColumnDef
 	Constraints []*Constraint
 	Options     []*TableOption
+	Partition   *PartitionOptions
 }
 
 // Accept implements Node Accept interface.
@@ -473,8 +475,9 @@ type RenameTableStmt struct {
 
 	OldTable *TableName
 	NewTable *TableName
+
+	// TableToTables is only useful for syncer which depends heavily on tidb parser to do some dirty work for now.
 	// TODO: Refactor this when you are going to add full support for multiple schema changes.
-	// Currently it is only useful for syncer which depends heavily on tidb parser to do some dirty work.
 	TableToTables []*TableToTable
 }
 
@@ -713,6 +716,7 @@ const (
 	AlterTableRenameTable
 	AlterTableAlterColumn
 	AlterTableLock
+	AlterTableAlgorithm
 
 // TODO: Add more actions
 )
@@ -742,6 +746,7 @@ type AlterTableSpec struct {
 	OldColumnName *ColumnName
 	Position      *ColumnPosition
 	LockType      LockType
+	Comment       string
 }
 
 // Accept implements Node Accept interface.
@@ -841,4 +846,20 @@ func (n *TruncateTableStmt) Accept(v Visitor) (Node, bool) {
 	}
 	n.Table = node.(*TableName)
 	return v.Leave(n)
+}
+
+// PartitionDefinition defines a single partition.
+type PartitionDefinition struct {
+	Name     string
+	LessThan []ExprNode
+	MaxValue bool
+	Comment  string
+}
+
+// PartitionOptions specifies the partition options.
+type PartitionOptions struct {
+	Tp          model.PartitionType
+	Expr        ExprNode
+	ColumnNames []*ColumnName
+	Definitions []*PartitionDefinition
 }

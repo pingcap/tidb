@@ -94,6 +94,10 @@ func (ran *NewRange) IsPoint(sc *stmtctx.StatementContext) bool {
 		if cmp != 0 {
 			return false
 		}
+
+		if a.IsNull() {
+			return false
+		}
 	}
 	return !ran.LowExclude && !ran.HighExclude
 }

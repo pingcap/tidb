@@ -19,8 +19,22 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 )
+
+const (
+	// WarnLevelWarning represents level "Warning" for 'SHOW WARNINGS' syntax.
+	WarnLevelWarning = "Warning"
+	// WarnLevelNote represents level "Note" for 'SHOW WARNINGS' syntax.
+	WarnLevelNote = "Note"
+)
+
+// SQLWarn relates a sql warning and it's level.
+type SQLWarn struct {
+	Level string
+	Err   error
+}
 
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
@@ -45,8 +59,9 @@ type StatementContext struct {
 		sync.Mutex
 		affectedRows      uint64
 		foundRows         uint64
-		warnings          []error
+		warnings          []SQLWarn
 		histogramsNotLoad bool
+		execDetails       execdetails.ExecDetails
 	}
 
 	// Copied from SessionVars.TimeZone.
@@ -54,6 +69,8 @@ type StatementContext struct {
 	Priority     mysql.PriorityEnum
 	NotFillCache bool
 	MemTracker   *memory.Tracker
+	TableIDs     []int64
+	IndexIDs     []int64
 }
 
 // AddAffectedRows adds affected rows.
@@ -87,9 +104,9 @@ func (sc *StatementContext) AddFoundRows(rows uint64) {
 }
 
 // GetWarnings gets warnings.
-func (sc *StatementContext) GetWarnings() []error {
+func (sc *StatementContext) GetWarnings() []SQLWarn {
 	sc.mu.Lock()
-	warns := make([]error, len(sc.mu.warnings))
+	warns := make([]SQLWarn, len(sc.mu.warnings))
 	copy(warns, sc.mu.warnings)
 	sc.mu.Unlock()
 	return warns
@@ -107,17 +124,26 @@ func (sc *StatementContext) WarningCount() uint16 {
 }
 
 // SetWarnings sets warnings.
-func (sc *StatementContext) SetWarnings(warns []error) {
+func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Lock()
 	sc.mu.warnings = warns
 	sc.mu.Unlock()
 }
 
-// AppendWarning appends a warning.
+// AppendWarning appends a warning with level 'Warning'.
 func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
 	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, warn)
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelWarning, warn})
+	}
+	sc.mu.Unlock()
+}
+
+// AppendNote appends a warning with level 'Note'.
+func (sc *StatementContext) AppendNote(warn error) {
+	sc.mu.Lock()
+	if len(sc.mu.warnings) < math.MaxUint16 {
+		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelNote, warn})
 	}
 	sc.mu.Unlock()
 }
@@ -174,4 +200,26 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.foundRows = 0
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
+}
+
+// MergeExecDetails merges a single region execution details into self, used to print
+// the information in slow query log.
+func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails) {
+	sc.mu.Lock()
+	sc.mu.execDetails.ProcessTime += details.ProcessTime
+	sc.mu.execDetails.WaitTime += details.WaitTime
+	sc.mu.execDetails.BackoffTime += details.BackoffTime
+	sc.mu.execDetails.RequestCount++
+	sc.mu.execDetails.TotalKeys += details.TotalKeys
+	sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
+	sc.mu.Unlock()
+}
+
+// GetExecDetails gets the execution details for the statement.
+func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
+	var details execdetails.ExecDetails
+	sc.mu.Lock()
+	details = sc.mu.execDetails
+	sc.mu.Unlock()
+	return details
 }

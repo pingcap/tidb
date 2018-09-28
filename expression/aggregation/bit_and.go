@@ -31,6 +31,10 @@ func (bf *bitAndFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvalua
 	return evalCtx
 }
 
+func (bf bitAndFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+	evalCtx.Value.SetUint64(math.MaxUint64)
+}
+
 // Update implements Aggregation interface.
 func (bf *bitAndFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
 	a := bf.Args[0]

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
 	log "github.com/sirupsen/logrus"
 )
@@ -77,11 +78,17 @@ func ToColumn(col *model.ColumnInfo) *Column {
 }
 
 // FindCols finds columns in cols by names.
-func FindCols(cols []*Column, names []string) ([]*Column, error) {
+// If pkIsHandle is false and name is ExtraHandleName, the extra handle column will be added.
+func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, error) {
 	var rcols []*Column
 	for _, name := range names {
 		col := FindCol(cols, name)
 		if col != nil {
+			rcols = append(rcols, col)
+		} else if name == model.ExtraHandleName.L && !pkIsHandle {
+			col := &Column{}
+			col.ColumnInfo = model.NewExtraHandleColInfo()
+			col.ColumnInfo.Offset = len(cols)
 			rcols = append(rcols, col)
 		} else {
 			return nil, errUnknownColumn.Gen("unknown column %s", name)
@@ -164,7 +171,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo) (
 				continue
 			}
 			err = ErrTruncateWrongValue.FastGen("incorrect utf8 value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
-			log.Errorf("[%d] %v", ctx.GetSessionVars().ConnectionID, err)
+			log.Errorf("con:%d %v", ctx.GetSessionVars().ConnectionID, err)
 			// Truncate to valid utf8 string.
 			casted = types.NewStringDatum(str[:i])
 			err = sc.HandleTruncate(err)
@@ -364,7 +371,13 @@ func GetZeroValue(col *model.ColumnInfo) types.Datum {
 		d.SetFloat64(0)
 	case mysql.TypeNewDecimal:
 		d.SetMysqlDecimal(new(types.MyDecimal))
-	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
+	case mysql.TypeString:
+		if col.Flen > 0 && col.Charset == charset.CharsetBin {
+			d.SetBytes(make([]byte, col.Flen))
+		} else {
+			d.SetString("")
+		}
+	case mysql.TypeVarString, mysql.TypeVarchar:
 		d.SetString("")
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		d.SetBytes([]byte{})

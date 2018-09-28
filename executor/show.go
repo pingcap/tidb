@@ -57,48 +57,15 @@ type ShowExec struct {
 
 	is infoschema.InfoSchema
 
-	forChunk bool
-	fetched  bool
-	rows     []Row
-	result   *chunk.Chunk
-	cursor   int
+	result *chunk.Chunk
+	cursor int
 }
 
-// Next implements Execution Next interface.
-func (e *ShowExec) Next(ctx context.Context) (Row, error) {
-	if e.rows == nil {
-		e.forChunk = false
-		err := e.fetchAll()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for i := 0; e.rows != nil && i < len(e.rows); i++ {
-			for j, row := 0, e.rows[i]; j < len(row); j++ {
-				if row[j].Kind() != types.KindString {
-					continue
-				}
-				val := row[j].GetString()
-				retType := e.Schema().Columns[j].RetType
-				if valLen := len(val); retType.Flen < valLen {
-					retType.Flen = valLen
-				}
-			}
-		}
-	}
-	if e.cursor >= len(e.rows) {
-		return nil, nil
-	}
-	row := e.rows[e.cursor]
-	e.cursor++
-	return row, nil
-}
-
-// NextChunk implements the Executor NextChunk interface.
-func (e *ShowExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+// Next implements the Executor Next interface.
+func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.result == nil {
 		e.result = e.newChunk()
-		e.forChunk = true
 		err := e.fetchAll()
 		if err != nil {
 			return errors.Trace(err)
@@ -176,6 +143,8 @@ func (e *ShowExec) fetchAll() error {
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
 		// empty result
+	case ast.ShowMasterStatus:
+		return e.fetchShowMasterStatus()
 	}
 	return nil
 }
@@ -237,6 +206,7 @@ func (e *ShowExec) fetchShowProcessList() error {
 			t,
 			fmt.Sprintf("%d", pi.State),
 			info,
+			pi.Mem,
 		})
 	}
 	return nil
@@ -328,6 +298,7 @@ func (e *ShowExec) fetchShowColumns() error {
 	return nil
 }
 
+// fetchShowIndex fetches data for ShowIndex statement.
 // TODO: index collation can have values A (ascending) or NULL (not sorted).
 // see: https://dev.mysql.com/doc/refman/5.7/en/show-index.html
 func (e *ShowExec) fetchShowIndex() error {
@@ -405,6 +376,12 @@ func (e *ShowExec) fetchShowCharset() error {
 			desc.Maxlen,
 		})
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMasterStatus() error {
+	tso := e.ctx.GetSessionVars().TxnCtx.StartTS
+	e.appendRow([]interface{}{"tidb-binlog", tso, "", "", ""})
 	return nil
 }
 
@@ -497,9 +474,6 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	var pkCol *table.Column
 	var hasAutoIncID bool
 	for i, col := range tb.Cols() {
-		if col.State != model.StatePublic {
-			continue
-		}
 		buf.WriteString(fmt.Sprintf("  `%s` %s", col.Name.O, col.GetTypeDesc()))
 		if col.IsGenerated() {
 			// It's a generated column.
@@ -521,7 +495,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 				switch col.DefaultValue {
 				case nil:
 					if !mysql.HasNotNullFlag(col.Flag) {
-						if mysql.HasTimestampFlag(col.Flag) {
+						if col.Tp == mysql.TypeTimestamp {
 							buf.WriteString(" NULL")
 						}
 						buf.WriteString(" DEFAULT NULL")
@@ -559,15 +533,18 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf("  PRIMARY KEY (`%s`)", pkCol.Name.O))
 	}
 
-	if len(tb.Indices()) > 0 || len(tb.Meta().ForeignKeys) > 0 {
+	if len(tb.Indices()) > 0 {
 		buf.WriteString(",\n")
 	}
 
-	for i, idx := range tb.Indices() {
-		idxInfo := idx.Meta()
-		if idxInfo.State != model.StatePublic {
-			continue
+	publicIndices := make([]table.Index, 0, len(tb.Indices()))
+	for _, idx := range tb.Indices() {
+		if idx.Meta().State == model.StatePublic {
+			publicIndices = append(publicIndices, idx)
 		}
+	}
+	for i, idx := range publicIndices {
+		idxInfo := idx.Meta()
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
@@ -585,45 +562,11 @@ func (e *ShowExec) fetchShowCreateTable() error {
 			cols = append(cols, colInfo)
 		}
 		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(cols, ",")))
-		if i != len(tb.Indices())-1 {
+		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
 		}
 	}
 
-	if len(tb.Indices()) > 0 && len(tb.Meta().ForeignKeys) > 0 {
-		buf.WriteString(",\n")
-	}
-
-	firstFK := true
-	for _, fk := range tb.Meta().ForeignKeys {
-		if fk.State != model.StatePublic {
-			continue
-		}
-		if !firstFK {
-			buf.WriteString(",\n")
-		}
-		firstFK = false
-		cols := make([]string, 0, len(fk.Cols))
-		for _, c := range fk.Cols {
-			cols = append(cols, c.O)
-		}
-
-		refCols := make([]string, 0, len(fk.RefCols))
-		for _, c := range fk.RefCols {
-			refCols = append(refCols, c.O)
-		}
-
-		buf.WriteString(fmt.Sprintf("  CONSTRAINT `%s` FOREIGN KEY (`%s`)", fk.Name.O, strings.Join(cols, "`,`")))
-		buf.WriteString(fmt.Sprintf(" REFERENCES `%s` (`%s`)", fk.RefTable.O, strings.Join(refCols, "`,`")))
-
-		if ast.ReferOptionType(fk.OnDelete) != ast.ReferOptionNoOption {
-			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete)))
-		}
-
-		if ast.ReferOptionType(fk.OnUpdate) != ast.ReferOptionNoOption {
-			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate)))
-		}
-	}
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
@@ -645,6 +588,10 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	} else {
 		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
 	}
+
+	// Partition info is truncated in release-2.0 branch.
+	// create table t (id int) partition by ... will become
+	// create table t (id int)
 
 	if hasAutoIncID {
 		autoIncID, err := tb.Allocator(e.ctx).NextGlobalAutoID(tb.Meta().ID)
@@ -735,14 +682,14 @@ func (e *ShowExec) fetchShowPlugins() error {
 
 func (e *ShowExec) fetchShowWarnings() error {
 	warns := e.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	for _, warn := range warns {
-		warn = errors.Cause(warn)
+	for _, w := range warns {
+		warn := errors.Cause(w.Err)
 		switch x := warn.(type) {
 		case *terror.Error:
 			sqlErr := x.ToSQLError()
-			e.appendRow([]interface{}{"Warning", int64(sqlErr.Code), sqlErr.Message})
+			e.appendRow([]interface{}{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
-			e.appendRow([]interface{}{"Warning", int64(mysql.ErrUnknown), warn.Error()})
+			e.appendRow([]interface{}{w.Level, int64(mysql.ErrUnknown), warn.Error()})
 		}
 	}
 	return nil
@@ -760,10 +707,6 @@ func (e *ShowExec) getTable() (table.Table, error) {
 }
 
 func (e *ShowExec) appendRow(row []interface{}) {
-	if !e.forChunk {
-		e.rows = append(e.rows, types.MakeDatums(row...))
-		return
-	}
 	for i, col := range row {
 		if col == nil {
 			e.result.AppendNull(i)

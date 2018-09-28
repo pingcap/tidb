@@ -27,11 +27,13 @@ type ProcessInfo struct {
 	Time    time.Time
 	State   uint16
 	Info    string
+	Mem     int64
 }
 
 // SessionManager is an interface for session manage. Show processlist and
 // kill statement rely on this interface.
 type SessionManager interface {
-	ShowProcessList() []ProcessInfo
+	// ShowProcessList returns map[connectionID]ProcessInfo.
+	ShowProcessList() map[uint64]ProcessInfo
 	Kill(connectionID uint64, query bool)
 }

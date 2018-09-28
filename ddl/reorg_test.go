@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
 
@@ -34,7 +33,6 @@ func (k testCtxKeyType) String() string {
 const testCtxKey testCtxKeyType = 0
 
 func (s *testDDLSuite) TestReorg(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_reorg")
 	defer store.Close()
 
@@ -64,24 +62,28 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	rowCount := int64(10)
 	handle := int64(100)
 	f := func() error {
-		d.reorgCtx.setRowCountAndHandle(rowCount, handle)
-		time.Sleep(20 * testLease)
+		d.reorgCtx.setRowCount(rowCount)
+		d.reorgCtx.setNextHandle(handle)
+		time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
 		return nil
 	}
 	job := &model.Job{
 		ID:          1,
-		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's frist is false.
+		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
 	}
 	err = ctx.NewTxn()
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(ctx.Txn())
-	err = d.runReorgJob(m, job, f)
+	rInfo := &reorgInfo{
+		Job: job,
+	}
+	err = d.runReorgJob(m, rInfo, f)
 	c.Assert(err, NotNil)
 
 	// The longest to wait for 5 seconds to make sure the function of f is returned.
 	for i := 0; i < 1000; i++ {
 		time.Sleep(5 * time.Millisecond)
-		err = d.runReorgJob(m, job, f)
+		err = d.runReorgJob(m, rInfo, f)
 		if err == nil {
 			c.Assert(job.RowCount, Equals, rowCount)
 			c.Assert(d.reorgCtx.rowCount, Equals, int64(0))
@@ -91,8 +93,9 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(err, IsNil)
 			err = ctx.NewTxn()
 			c.Assert(err, IsNil)
+
 			m = meta.NewMeta(ctx.Txn())
-			info, err1 := d.getReorgInfo(m, job)
+			info, err1 := d.getReorgInfo(m, job, nil)
 			c.Assert(err1, IsNil)
 			c.Assert(info.Handle, Equals, handle)
 			c.Assert(d.reorgCtx.doneHandle, Equals, int64(0))
@@ -102,7 +105,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	c.Assert(err, IsNil)
 
 	d.Stop()
-	err = d.runReorgJob(m, job, func() error {
+	err = d.runReorgJob(m, rInfo, func() error {
 		time.Sleep(4 * testLease)
 		return nil
 	})
@@ -112,17 +115,18 @@ func (s *testDDLSuite) TestReorg(c *C) {
 
 	d.start(context.Background())
 	job = &model.Job{
-		ID:       2,
-		SchemaID: 1,
-		Type:     model.ActionCreateSchema,
-		Args:     []interface{}{model.NewCIStr("test")},
+		ID:          2,
+		SchemaID:    1,
+		Type:        model.ActionCreateSchema,
+		Args:        []interface{}{model.NewCIStr("test")},
+		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
 	}
 
 	var info *reorgInfo
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
-		info, err1 = d.getReorgInfo(t, job)
+		info, err1 = d.getReorgInfo(t, job, nil)
 		c.Assert(err1, IsNil)
 		err1 = info.UpdateHandle(txn, 1)
 		c.Assert(err1, IsNil)
@@ -133,7 +137,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
-		info, err1 = d.getReorgInfo(t, job)
+		info, err1 = d.getReorgInfo(t, job, nil)
 		c.Assert(err1, IsNil)
 		c.Assert(info.Handle, Greater, int64(0))
 		return nil
@@ -142,7 +146,6 @@ func (s *testDDLSuite) TestReorg(c *C) {
 }
 
 func (s *testDDLSuite) TestReorgOwner(c *C) {
-	defer testleak.AfterTest(c)()
 	store := testCreateStore(c, "test_reorg_owner")
 	defer store.Close()
 

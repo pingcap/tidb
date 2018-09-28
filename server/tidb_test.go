@@ -29,9 +29,9 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"golang.org/x/net/context"
 )
@@ -46,9 +46,9 @@ var _ = Suite(suite)
 
 func (ts *TidbTestSuite) SetUpSuite(c *C) {
 	store, err := mockstore.NewMockTikvStore()
-	tidb.SetStatsLease(0)
+	session.SetStatsLease(0)
 	c.Assert(err, IsNil)
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(store)
 	cfg := config.NewConfig()
@@ -93,6 +93,11 @@ func (ts *TidbTestSuite) TestSpecialType(c *C) {
 func (ts *TidbTestSuite) TestPreparedString(c *C) {
 	c.Parallel()
 	runTestPreparedString(c)
+}
+
+func (ts *TidbTestSuite) TestPreparedTimestamp(c *C) {
+	c.Parallel()
+	runTestPreparedTimestamp(c)
 }
 
 func (ts *TidbTestSuite) TestLoadData(c *C) {
@@ -254,11 +259,11 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 	// Generate valid TLS certificates.
 	caCert, caKey, err := generateCert(0, "TiDB CA", nil, nil, "/tmp/ca-key.pem", "/tmp/ca-cert.pem")
 	c.Assert(err, IsNil)
-	_, _, err = generateCert(1, "TiDB Server Certificate", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
+	_, _, err = generateCert(1, "tidb-server", caCert, caKey, "/tmp/server-key.pem", "/tmp/server-cert.pem")
 	c.Assert(err, IsNil)
 	_, _, err = generateCert(2, "SQL Client Certificate", caCert, caKey, "/tmp/client-key.pem", "/tmp/client-cert.pem")
 	c.Assert(err, IsNil)
-	err = registerTLSConfig("client-certificate", "/tmp/ca-cert.pem", "/tmp/client-cert.pem", "/tmp/client-key.pem", "TiDB Server Certificate", true)
+	err = registerTLSConfig("client-certificate", "/tmp/ca-cert.pem", "/tmp/client-cert.pem", "/tmp/client-key.pem", "tidb-server", true)
 	c.Assert(err, IsNil)
 
 	defer func() {
@@ -314,7 +319,7 @@ func (ts *TidbTestSuite) TestTLS(c *C) {
 		config.Addr = "localhost:4003"
 	}
 	err = runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
-	c.Assert(err, IsNil)
+	c.Assert(err, IsNil, Commentf("%v", errors.ErrorStack(err)))
 	runTestRegression(c, connOverrider, "TLSRegression")
 	server.Close()
 
@@ -399,13 +404,14 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	_, err = qctx.Execute(ctx, testSQL)
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show create table t1")
-	row, err := rs[0].Next(ctx)
+	chk := rs[0].NewChunk()
+	err = rs[0].Next(ctx, chk)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
 	c.Assert(err, IsNil)
 	c.Assert(len(cols), Equals, 2)
 	c.Assert(int(cols[0].ColumnLength), Equals, 5*tmysql.MaxBytesOfCharacter)
-	c.Assert(int(cols[1].ColumnLength), Equals, len(row.GetString(1))*tmysql.MaxBytesOfCharacter)
+	c.Assert(int(cols[1].ColumnLength), Equals, len(chk.GetRow(0).GetString(1))*tmysql.MaxBytesOfCharacter)
 
 	// for issue#5246
 	rs, err = qctx.Execute(ctx, "select y, z from t1")
@@ -428,7 +434,7 @@ func (ts *TidbTestSuite) TestShowTablesFlen(c *C) {
 	c.Assert(err, IsNil)
 	rs, err := qctx.Execute(ctx, "show tables")
 	chk := rs[0].NewChunk()
-	err = rs[0].NextChunk(ctx, chk)
+	err = rs[0].Next(ctx, chk)
 	c.Assert(err, IsNil)
 	cols := rs[0].Columns()
 	c.Assert(err, IsNil)

@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"fmt"
+	"runtime"
 	"sort"
 	"sync"
 	"unsafe"
@@ -27,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -52,16 +56,17 @@ type IndexLookUpJoin struct {
 	outerCtx outerCtx
 	innerCtx innerCtx
 
-	task             *lookUpJoinTask
-	joinResult       *chunk.Chunk
-	joinResultCursor int
-	innerIter        chunk.Iterator
+	task       *lookUpJoinTask
+	joinResult *chunk.Chunk
+	innerIter  chunk.Iterator
 
 	resultGenerator joinResultGenerator
 
 	indexRanges   []*ranger.NewRange
 	keyOff2IdxOff []int
 	innerPtrBytes [][]byte
+
+	memTracker *memory.Tracker // track memory usage.
 }
 
 type outerCtx struct {
@@ -85,8 +90,11 @@ type lookUpJoinTask struct {
 	lookupMap         *mvmap.MVMap
 	matchedInners     []chunk.Row
 
-	doneCh chan error
-	cursor int
+	doneCh   chan error
+	cursor   int
+	hasMatch bool
+
+	memTracker *memory.Tracker // track memory usage.
 }
 
 type outerWorker struct {
@@ -102,6 +110,8 @@ type outerWorker struct {
 
 	resultCh chan<- *lookUpJoinTask
 	innerCh  chan<- *lookUpJoinTask
+
+	parentMemTracker *memory.Tracker
 }
 
 type innerWorker struct {
@@ -122,13 +132,15 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupJoin)
+	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	e.startWorkers(ctx)
 	return nil
 }
 
 func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
-	concurrency := e.ctx.GetSessionVars().IndexLookupConcurrency
+	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
 	resultCh := make(chan *lookUpJoinTask, concurrency)
 	e.resultCh = resultCh
 	workerCtx, cancelFunc := context.WithCancel(ctx)
@@ -144,14 +156,15 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexLookUpJoin) newOuterWorker(resultCh, innerCh chan *lookUpJoinTask) *outerWorker {
 	ow := &outerWorker{
-		outerCtx:     e.outerCtx,
-		ctx:          e.ctx,
-		executor:     e.children[0],
-		executorChk:  chunk.NewChunk(e.outerCtx.rowTypes),
-		resultCh:     resultCh,
-		innerCh:      innerCh,
-		batchSize:    32,
-		maxBatchSize: e.ctx.GetSessionVars().IndexJoinBatchSize,
+		outerCtx:         e.outerCtx,
+		ctx:              e.ctx,
+		executor:         e.children[0],
+		executorChk:      chunk.NewChunk(e.outerCtx.rowTypes),
+		resultCh:         resultCh,
+		innerCh:          innerCh,
+		batchSize:        32,
+		maxBatchSize:     e.ctx.GetSessionVars().IndexJoinBatchSize,
+		parentMemTracker: e.memTracker,
 	}
 	return ow
 }
@@ -174,43 +187,9 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 	return iw
 }
 
-// NextChunk implements the Executor interface.
-func (e *IndexLookUpJoin) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
-	err := e.prepareJoinResult(ctx, chk, true)
-	return errors.Trace(err)
-}
-
 // Next implements the Executor interface.
-// Even though we only support read children in chunk mode, but we are not sure if our parents
-// support chunk, so we have to implement Next.
-func (e *IndexLookUpJoin) Next(ctx context.Context) (Row, error) {
-	for {
-		err := e.prepareJoinResult(ctx, e.joinResult, false)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if e.joinResult.NumRows() == 0 {
-			return nil, nil
-		}
-		row := e.joinResult.GetRow(e.joinResultCursor)
-		datumRow := make(types.DatumRow, row.Len())
-		for i := 0; i < row.Len(); i++ {
-			// Here if some datum is KindBytes/KindString and we don't copy it, the datums' data could be in the same space
-			// since row.GetDatum() and datum.SetBytes() don't alloc new space thus causing wrong result.
-			d := row.GetDatum(i, e.schema.Columns[i].RetType)
-			datumRow[i] = *d.Copy()
-		}
-		e.joinResultCursor++
-		return datumRow, nil
-	}
-}
-
-func (e *IndexLookUpJoin) prepareJoinResult(ctx context.Context, chk *chunk.Chunk, forChunk bool) error {
-	if !forChunk && e.joinResultCursor < chk.NumRows() {
-		return nil
-	}
-	e.joinResultCursor = 0
+func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
+	chk.Reset()
 	e.joinResult.Reset()
 	for {
 		task, err := e.getFinishedTask(ctx)
@@ -227,16 +206,19 @@ func (e *IndexLookUpJoin) prepareJoinResult(ctx context.Context, chk *chunk.Chun
 		}
 
 		outerRow := task.outerResult.GetRow(task.cursor)
-		if e.innerIter.Len() == 0 {
-			err = e.resultGenerator.emitToChunk(outerRow, nil, chk)
-		} else if e.innerIter.Current() != e.innerIter.End() {
-			err = e.resultGenerator.emitToChunk(outerRow, e.innerIter, chk)
-		}
-		if err != nil {
-			return errors.Trace(err)
+		if e.innerIter.Current() != e.innerIter.End() {
+			matched, err := e.resultGenerator.tryToMatch(outerRow, e.innerIter, chk)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			task.hasMatch = task.hasMatch || matched
 		}
 		if e.innerIter.Current() == e.innerIter.End() {
+			if !task.hasMatch {
+				e.resultGenerator.onMissMatch(outerRow, chk)
+			}
 			task.cursor++
+			task.hasMatch = false
 		}
 		if chk.NumRows() == e.maxChunkSize {
 			return nil
@@ -249,6 +231,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	if task != nil && task.cursor < task.outerResult.NumRows() {
 		return task, nil
 	}
+
 	select {
 	case task = <-e.resultCh:
 	case <-ctx.Done():
@@ -266,6 +249,10 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	case <-ctx.Done():
 		return nil, nil
 	}
+
+	if e.task != nil {
+		e.task.memTracker.Detach()
+	}
 	e.task = task
 	return task, nil
 }
@@ -274,6 +261,7 @@ func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowIdx int) 
 	outerKey := task.encodedLookUpKeys.GetRow(rowIdx).GetBytes(0)
 	e.innerPtrBytes = task.lookupMap.Get(outerKey, e.innerPtrBytes[:0])
 	task.matchedInners = task.matchedInners[:0]
+
 	for _, b := range e.innerPtrBytes {
 		ptr := *(*chunk.RowPtr)(unsafe.Pointer(&b[0]))
 		matchedInner := task.innerResult.GetRow(ptr)
@@ -284,6 +272,10 @@ func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowIdx int) 
 func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("outerWorker panic stack is:\n%s", buf)
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
 			task.doneCh <- errors.Errorf("%v", r)
 			ow.pushToChan(ctx, task, ow.resultCh)
@@ -326,22 +318,32 @@ func (ow *outerWorker) pushToChan(ctx context.Context, task *lookUpJoinTask, dst
 // When err is not nil, task must not be nil to send the error to the main thread via task.
 func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	ow.executor.newChunk()
-	task := new(lookUpJoinTask)
-	task.doneCh = make(chan error, 1)
-	task.outerResult = ow.executor.newChunk()
-	task.encodedLookUpKeys = chunk.NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)})
-	task.lookupMap = mvmap.NewMVMap()
+
+	task := &lookUpJoinTask{
+		doneCh:            make(chan error, 1),
+		outerResult:       ow.executor.newChunk(),
+		encodedLookUpKeys: chunk.NewChunk([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}),
+		lookupMap:         mvmap.NewMVMap(),
+	}
+	task.memTracker = memory.NewTracker(fmt.Sprintf("lookup join task %p", task), -1)
+	task.memTracker.AttachTo(ow.parentMemTracker)
+
 	ow.increaseBatchSize()
 
+	task.memTracker.Consume(task.outerResult.MemoryUsage())
 	for task.outerResult.NumRows() < ow.batchSize {
-		err := ow.executor.NextChunk(ctx, ow.executorChk)
+		err := ow.executor.Next(ctx, ow.executorChk)
 		if err != nil {
 			return task, errors.Trace(err)
 		}
 		if ow.executorChk.NumRows() == 0 {
 			break
 		}
+
+		oldMemUsage := task.outerResult.MemoryUsage()
 		task.outerResult.Append(ow.executorChk, 0, ow.executorChk.NumRows())
+		newMemUsage := task.outerResult.MemoryUsage()
+		task.memTracker.Consume(newMemUsage - oldMemUsage)
 	}
 	if task.outerResult.NumRows() == 0 {
 		return nil, nil
@@ -354,6 +356,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		if err != nil {
 			return task, errors.Trace(err)
 		}
+		task.memTracker.Consume(int64(cap(task.outerMatch)))
 	}
 	return task, nil
 }
@@ -371,6 +374,10 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 	var task *lookUpJoinTask
 	defer func() {
 		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("innerWorker panic stack is:\n%s", buf)
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- errors.Errorf("%v", r)
 		}
@@ -389,9 +396,6 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 
 		err := iw.handleTask(ctx, task)
 		task.doneCh <- errors.Trace(err)
-		if err != nil {
-			return
-		}
 	}
 }
 
@@ -434,6 +438,8 @@ func (iw *innerWorker) constructDatumLookupKeys(task *lookUpJoinTask) ([][]types
 		task.encodedLookUpKeys.AppendBytes(0, keyBuf)
 		dLookUpKeys = append(dLookUpKeys, dLookUpKey)
 	}
+
+	task.memTracker.Consume(task.encodedLookUpKeys.MemoryUsage())
 	return dLookUpKeys, nil
 }
 
@@ -506,8 +512,10 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	}
 	defer terror.Call(innerExec.Close)
 	innerResult := chunk.NewList(innerExec.retTypes(), iw.ctx.GetSessionVars().MaxChunkSize)
+	innerResult.GetMemTracker().SetLabel("inner result")
+	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
-		err := innerExec.NextChunk(ctx, iw.executorChk)
+		err := innerExec.Next(ctx, iw.executorChk)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -528,6 +536,10 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 		chk := task.innerResult.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
 			innerRow := chk.GetRow(j)
+			if iw.hasNullInJoinKey(innerRow) {
+				continue
+			}
+
 			keyBuf = keyBuf[:0]
 			for _, keyCol := range iw.keyCols {
 				d := innerRow.GetDatum(keyCol, iw.rowTypes[keyCol])
@@ -545,11 +557,22 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 	return nil
 }
 
+func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
+	for _, ordinal := range iw.keyCols {
+		if row.IsNull(ordinal) {
+			return true
+		}
+	}
+	return false
+}
+
 // Close implements the Executor interface.
 func (e *IndexLookUpJoin) Close() error {
 	if e.cancelFunc != nil {
 		e.cancelFunc()
 	}
 	e.workerWg.Wait()
-	return e.children[0].Close()
+	e.memTracker.Detach()
+	e.memTracker = nil
+	return errors.Trace(e.children[0].Close())
 }

@@ -45,6 +45,10 @@ func (ff *firstRowFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
 	return evalCtx.Value
 }
 
+func (ff *firstRowFunction) ResetContext(_ *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+	evalCtx.GotFirstRow = false
+}
+
 // GetPartialResult implements Aggregation interface.
 func (ff *firstRowFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{ff.GetResult(evalCtx)}

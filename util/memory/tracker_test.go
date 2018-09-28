@@ -120,8 +120,7 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(child.parent, DeepEquals, newParent)
 	c.Assert(len(newParent.children), Equals, 1)
 	c.Assert(newParent.children[0], DeepEquals, child)
-	c.Assert(len(oldParent.children), Equals, 1)
-	c.Assert(oldParent.children[0], IsNil)
+	c.Assert(len(oldParent.children), Equals, 0)
 }
 
 func (s *testSuite) TestReplaceChild(c *C) {
@@ -150,8 +149,7 @@ func (s *testSuite) TestReplaceChild(c *C) {
 
 	parent.ReplaceChild(newChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(0))
-	c.Assert(len(parent.children), Equals, 1)
-	c.Assert(parent.children[0], IsNil)
+	c.Assert(len(parent.children), Equals, 0)
 	c.Assert(newChild.parent, IsNil)
 	c.Assert(oldChild.parent, IsNil)
 }

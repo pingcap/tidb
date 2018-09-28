@@ -34,7 +34,8 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tipb/go-tipb"
+	mockpkg "github.com/pingcap/tidb/util/mock"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -81,13 +82,8 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		chunks = appendRow(chunks, data, rowCnt)
 		rowCnt++
 	}
-	counts := make([]int64, len(dagReq.Executors))
-	for offset := len(dagReq.Executors) - 1; e != nil; e, offset = e.GetSrcExec(), offset-1 {
-		// Because the last call to `executor.Next` always returns a `nil`, so the actual count should be `Count - 1`
-		counts[offset] = e.Count() - 1
-	}
 	warnings := dagCtx.evalCtx.sc.GetWarnings()
-	return buildResp(chunks, counts, err, warnings)
+	return buildResp(chunks, e.Counts(), err, warnings)
 }
 
 func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
@@ -117,7 +113,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	return ctx, e, dagReq, err
 }
 
-func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
+func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
 	_, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -126,7 +122,7 @@ func (h *rpcHandler) handleCopStream(req *coprocessor.Request) (tikvpb.Tikv_Copr
 	return &mockCopStreamClient{
 		exec: e,
 		req:  dagReq,
-		ctx:  context.TODO(),
+		ctx:  ctx,
 	}, nil
 }
 
@@ -177,14 +173,18 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
-	return &tableScanExec{
+	e := &tableScanExec{
 		TableScan:      executor.TblScan,
 		kvRanges:       ranges,
 		colIDs:         ctx.evalCtx.colIDs,
 		startTS:        ctx.dagReq.GetStartTs(),
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
-	}, nil
+	}
+	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
+		e.counts = make([]int64, len(ranges))
+	}
+	return e, nil
 }
 
 func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*indexScanExec, error) {
@@ -210,7 +210,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		return nil, errors.Trace(err)
 	}
 
-	return &indexScanExec{
+	e := &indexScanExec{
 		IndexScan:      executor.IdxScan,
 		kvRanges:       ranges,
 		colsLen:        len(columns),
@@ -218,7 +218,11 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		isolationLevel: h.isolationLevel,
 		mvccStore:      h.mvccStore,
 		pkStatus:       pkStatus,
-	}, nil
+	}
+	if ctx.dagReq.CollectRangeCounts != nil && *ctx.dagReq.CollectRangeCounts {
+		e.counts = make([]int64, len(ranges))
+	}
+	return e, nil
 }
 
 func (h *rpcHandler) buildSelection(ctx *dagContext, executor *tipb.Executor) (*selectionExec, error) {
@@ -439,13 +443,23 @@ func (mock *mockCopStreamErrClient) Recv() (*coprocessor.Response, error) {
 }
 
 func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
+	select {
+	case <-mock.ctx.Done():
+		return nil, mock.ctx.Err()
+	default:
+	}
+
 	if mock.finished {
 		return nil, io.EOF
 	}
 
+	if hook := mock.ctx.Value(mockpkg.HookKeyForTest("mockTiKVStreamRecvHook")); hook != nil {
+		hook.(func(context.Context))(mock.ctx)
+	}
+
 	var resp coprocessor.Response
 	counts := make([]int64, len(mock.req.Executors))
-	chunk, finish, ran, err := mock.readBlockFromExecutor(counts)
+	chunk, finish, ran, counts, err := mock.readBlockFromExecutor()
 	resp.Range = ran
 	if err != nil {
 		if locked, ok := errors.Cause(err).(*ErrLocked); ok {
@@ -471,10 +485,16 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 		return &resp, nil
 	}
 	streamResponse := tipb.StreamResponse{
-		Error:        toPBError(err),
-		EncodeType:   tipb.EncodeType_TypeDefault,
-		Data:         data,
-		OutputCounts: counts,
+		Error:      toPBError(err),
+		EncodeType: tipb.EncodeType_TypeDefault,
+		Data:       data,
+	}
+	// The counts was the output count of each executor, but now it is the scan count of each range,
+	// so we need a flag to tell them apart.
+	if counts != nil {
+		streamResponse.OutputCounts = make([]int64, 1+len(counts))
+		copy(streamResponse.OutputCounts, counts)
+		streamResponse.OutputCounts[len(counts)] = -1
 	}
 	resp.Data, err = proto.Marshal(&streamResponse)
 	if err != nil {
@@ -483,17 +503,18 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 	return &resp, nil
 }
 
-func (mock *mockCopStreamClient) readBlockFromExecutor(counts []int64) (tipb.Chunk, bool, *coprocessor.KeyRange, error) {
+func (mock *mockCopStreamClient) readBlockFromExecutor() (tipb.Chunk, bool, *coprocessor.KeyRange, []int64, error) {
 	var chunk tipb.Chunk
 	var ran coprocessor.KeyRange
 	var finish bool
 	var desc bool
-	mock.exec.ResetCount()
+	mock.exec.ResetCounts()
 	ran.Start, desc = mock.exec.Cursor()
 	for count := 0; count < rowsPerChunk; count++ {
 		row, err := mock.exec.Next(mock.ctx)
 		if err != nil {
-			return chunk, false, nil, errors.Trace(err)
+			ran.End, _ = mock.exec.Cursor()
+			return chunk, false, &ran, nil, errors.Trace(err)
 		}
 		if row == nil {
 			finish = true
@@ -508,19 +529,10 @@ func (mock *mockCopStreamClient) readBlockFromExecutor(counts []int64) (tipb.Chu
 	if desc {
 		ran.Start, ran.End = ran.End, ran.Start
 	}
-	e := mock.exec
-	for offset := len(mock.req.Executors) - 1; e != nil; e, offset = e.GetSrcExec(), offset-1 {
-		count := e.Count()
-		// Because the last call to `executor.Next` always returns a `nil`, so the actual count should be `Count - 1`
-		if finish {
-			count--
-		}
-		counts[offset] = count
-	}
-	return chunk, finish, &ran, nil
+	return chunk, finish, &ran, mock.exec.Counts(), nil
 }
 
-func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []error) *coprocessor.Response {
+func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []stmtctx.SQLWarn) *coprocessor.Response {
 	resp := &coprocessor.Response{}
 	selResp := &tipb.SelectResponse{
 		Error:        toPBError(err),
@@ -530,7 +542,7 @@ func buildResp(chunks []tipb.Chunk, counts []int64, err error, warnings []error)
 	if len(warnings) > 0 {
 		selResp.Warnings = make([]*tipb.Error, 0, len(warnings))
 		for i := range warnings {
-			selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i]))
+			selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i].Err))
 		}
 	}
 	if err != nil {

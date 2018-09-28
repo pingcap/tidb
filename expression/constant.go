@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/juju/errors"
@@ -71,14 +70,16 @@ func (c *Constant) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (c *Constant) MarshalJSON() ([]byte, error) {
-	buffer := bytes.NewBufferString(fmt.Sprintf("\"%s\"", c))
-	return buffer.Bytes(), nil
+	return []byte(fmt.Sprintf("\"%s\"", c)), nil
 }
 
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
-	con := *c
-	return &con
+	if c.DeferredExpr != nil {
+		con := *c
+		return &con
+	}
+	return c
 }
 
 // GetType implements Expression interface.

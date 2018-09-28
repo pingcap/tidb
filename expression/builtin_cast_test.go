@@ -25,11 +25,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
 
 	// Test `cast as char[(N)]` and `cast as binary[(N)]`.
@@ -96,7 +94,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings := sc.GetWarnings()
 	lastWarn := warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue)
 
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(nil)
@@ -105,7 +103,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrCastNegIntAsUnsigned, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrCastNegIntAsUnsigned, lastWarn.Err), IsTrue)
 
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
 	res, err = f.Eval(nil)
@@ -116,7 +114,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue)
 
 	// cast('18446744073709551616' as signed);
 	mask := ^mysql.UnsignedFlag
@@ -128,7 +126,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue)
 
 	// cast('18446744073709551614' as signed);
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("18446744073709551614"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
@@ -138,7 +136,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrCastAsSignedOverflow, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrCastAsSignedOverflow, lastWarn.Err), IsTrue)
 
 	// create table t1(s1 time);
 	// insert into t1 values('11:11:11');
@@ -160,7 +158,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue)
 	sc = origSc
 
 	// cast(bad_string as decimal)
@@ -225,7 +223,6 @@ var (
 )
 
 func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx, sc := s.ctx, s.ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate
 	originTZ := sc.TimeZone
@@ -1012,7 +1009,6 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 
 // TestWrapWithCastAsTypesClasses tests WrapWithCastAsInt/Real/String/Decimal.
 func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := s.ctx
 
 	cases := []struct {
@@ -1151,7 +1147,12 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
-	defer testleak.AfterTest(c)()
+	sc := s.ctx.GetSessionVars().StmtCtx
+	save := sc.TimeZone
+	sc.TimeZone = time.UTC
+	defer func() {
+		sc.TimeZone = save
+	}()
 	cases := []struct {
 		expr Expression
 		tp   *types.FieldType
@@ -1188,18 +1189,17 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
 			tm,
 		},
 	}
-	for _, t := range cases {
+	for d, t := range cases {
 		expr := WrapWithCastAsTime(s.ctx, t.expr, t.tp)
 		res, isNull, err := expr.EvalTime(s.ctx, nil)
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
 		c.Assert(res.Type, Equals, t.tp.Tp)
-		c.Assert(res.Compare(t.res), Equals, 0)
+		c.Assert(res.Compare(t.res), Equals, 0, Commentf("case %d res = %s, expect = %s", d, res, t.res))
 	}
 }
 
 func (s *testEvaluatorSuite) TestWrapWithCastAsDuration(c *C) {
-	defer testleak.AfterTest(c)()
 	cases := []struct {
 		expr Expression
 	}{
@@ -1229,4 +1229,13 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsDuration(c *C) {
 		c.Assert(isNull, Equals, false)
 		c.Assert(res.Compare(duration), Equals, 0)
 	}
+}
+
+func (s *testEvaluatorSuite) TestWrapWithCastAsJSON(c *C) {
+	input := &Column{RetType: &types.FieldType{Tp: mysql.TypeJSON}}
+	expr := WrapWithCastAsJSON(s.ctx, input)
+
+	output, ok := expr.(*Column)
+	c.Assert(ok, IsTrue)
+	c.Assert(output, Equals, input)
 }

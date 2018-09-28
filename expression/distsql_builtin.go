@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 var distFuncs = map[tipb.ExprType]string{
@@ -659,7 +659,7 @@ func convertUint(val []byte) (*Constant, error) {
 		return nil, errors.Errorf("invalid uint % x", val)
 	}
 	d.SetUint64(u)
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeLonglong)}, nil
+	return &Constant{Value: d, RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}}, nil
 }
 
 func convertString(val []byte) (*Constant, error) {
@@ -683,9 +683,8 @@ func convertFloat(val []byte, f32 bool) (*Constant, error) {
 }
 
 func convertDecimal(val []byte) (*Constant, error) {
-	_, dec, err := codec.DecodeDecimal(val)
+	_, dec, precision, frac, err := codec.DecodeDecimal(val)
 	var d types.Datum
-	precision, frac := dec.PrecisionAndFrac()
 	d.SetMysqlDecimal(dec)
 	d.SetLength(precision)
 	d.SetFrac(frac)

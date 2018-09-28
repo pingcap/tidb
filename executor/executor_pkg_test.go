@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"golang.org/x/net/context"
@@ -40,8 +41,12 @@ type mockSessionManager struct {
 }
 
 // ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager) ShowProcessList() []util.ProcessInfo {
-	return msm.PS
+func (msm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
+	ret := make(map[uint64]util.ProcessInfo)
+	for _, item := range msm.PS {
+		ret[item.ID] = item
+	}
+	return ret
 }
 
 // Kill implements the SessionManager.Kill interface.
@@ -51,9 +56,9 @@ func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 
 func (s *testExecSuite) TestShowProcessList(c *C) {
 	// Compose schema.
-	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info", "Mem"}
 	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeLonglong}
 	schema := buildSchema(names, ftypes)
 
 	// Compose a mocked session manager.
@@ -81,16 +86,24 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	}
 
 	ctx := context.Background()
+	err := e.Open(ctx)
+	c.Assert(err, IsNil)
+
+	chk := e.newChunk()
+	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {
-		r, err := e.Next(ctx)
+		err = e.Next(context.Background(), chk)
 		c.Assert(err, IsNil)
-		c.Assert(r, NotNil)
-		c.Assert(r[0].GetUint64(), Equals, p.ID)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			c.Assert(row.GetUint64(0), Equals, p.ID)
+		}
 	}
-	r, err := e.Next(ctx)
+	err = e.Next(context.Background(), chk)
 	c.Assert(err, IsNil)
-	c.Assert(r, IsNil)
+	c.Assert(chk.NumRows(), Equals, 0)
+	err = e.Close()
+	c.Assert(err, IsNil)
 }
 
 func buildSchema(names []string, ftypes []byte) *expression.Schema {
@@ -155,4 +168,56 @@ func generateDatumSlice(vals ...int64) []types.Datum {
 		datums[i].SetInt64(val)
 	}
 	return datums
+}
+
+func (s *testExecSuite) TestGetFieldsFromLine(c *C) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{
+			`"1","a string","100.20"`,
+			[]string{"1", "a string", "100.20"},
+		},
+		{
+			`"2","a string containing a , comma","102.20"`,
+			[]string{"2", "a string containing a , comma", "102.20"},
+		},
+		{
+			`"3","a string containing a \" quote","102.20"`,
+			[]string{"3", "a string containing a \" quote", "102.20"},
+		},
+		{
+			`"4","a string containing a \", quote and comma","102.20"`,
+			[]string{"4", "a string containing a \", quote and comma", "102.20"},
+		},
+		// Test some escape char.
+		{
+			`"\0\b\n\r\t\Z\\\  \c\'\""`,
+			[]string{string([]byte{0, '\b', '\n', '\r', '\t', 26, '\\', ' ', ' ', 'c', '\'', '"'})},
+		},
+	}
+
+	ldInfo := LoadDataInfo{
+		FieldsInfo: &ast.FieldsClause{
+			Enclosed:   '"',
+			Terminated: ",",
+		},
+	}
+
+	for _, test := range tests {
+		got, err := ldInfo.getFieldsFromLine([]byte(test.input))
+		c.Assert(err, IsNil, Commentf("failed: %s", test.input))
+		assertEqualStrings(c, got, test.expected)
+	}
+
+	_, err := ldInfo.getFieldsFromLine([]byte(`1,a string,100.20`))
+	c.Assert(err, NotNil)
+}
+
+func assertEqualStrings(c *C, got []field, expect []string) {
+	c.Assert(len(got), Equals, len(expect))
+	for i := 0; i < len(got); i++ {
+		c.Assert(string(got[i].str), Equals, expect[i])
+	}
 }

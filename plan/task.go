@@ -282,9 +282,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		}
 		t = finishCopTask(p.ctx, cop)
 	}
-	if !p.partial {
-		t = attachPlan2Task(p, t)
-	}
+	t = attachPlan2Task(p, t)
 	return t
 }
 
@@ -367,10 +365,8 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		copTask.addCost(pushedDownTopN.getCost(t.count()))
 	}
 	t = finishCopTask(p.ctx, t)
-	if !p.partial {
-		t = attachPlan2Task(p, t)
-		t.addCost(p.getCost(t.count()))
-	}
+	t = attachPlan2Task(p, t)
+	t.addCost(p.getCost(t.count()))
 	return t
 }
 

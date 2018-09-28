@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
-func (p *LogicalUnionScan) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	us := PhysicalUnionScan{Conditions: p.conditions}.init(p.ctx, p.stats, prop)
 	return []PhysicalPlan{us}
 }
@@ -63,11 +63,8 @@ func findMaxPrefixLen(candidates [][]*expression.Column, keys []*expression.Colu
 	return maxLen
 }
 
-func (p *LogicalJoin) getEqAndOtherCondsByOffsets(offsets []int) ([]*expression.ScalarFunction, []expression.Expression) {
-	var (
-		eqConds    = make([]*expression.ScalarFunction, 0, len(p.EqualConditions))
-		otherConds = make([]expression.Expression, len(p.OtherConditions))
-	)
+func (p *LogicalJoin) moveEqualToOtherConditions(offsets []int) []expression.Expression {
+	otherConds := make([]expression.Expression, len(p.OtherConditions))
 	copy(otherConds, p.OtherConditions)
 	for i, eqCond := range p.EqualConditions {
 		match := false
@@ -79,17 +76,15 @@ func (p *LogicalJoin) getEqAndOtherCondsByOffsets(offsets []int) ([]*expression.
 		}
 		if !match {
 			otherConds = append(otherConds, eqCond)
-		} else {
-			eqConds = append(eqConds, eqCond)
 		}
 	}
-	return eqConds, otherConds
+	return otherConds
 }
 
 // Only if the input required prop is the prefix fo join keys, we can pass through this property.
 func (p *PhysicalMergeJoin) tryToGetChildReqProp(prop *requiredProp) ([]*requiredProp, bool) {
-	lProp := &requiredProp{taskTp: rootTaskType, cols: p.leftKeys, expectedCnt: math.MaxFloat64}
-	rProp := &requiredProp{taskTp: rootTaskType, cols: p.rightKeys, expectedCnt: math.MaxFloat64}
+	lProp := &requiredProp{taskTp: rootTaskType, cols: p.LeftKeys, expectedCnt: math.MaxFloat64}
+	rProp := &requiredProp{taskTp: rootTaskType, cols: p.RightKeys, expectedCnt: math.MaxFloat64}
 	if !prop.isEmpty() {
 		// sort merge join fits the cases of massive ordered data, so desc scan is always expensive.
 		if prop.desc {
@@ -130,11 +125,11 @@ func (p *LogicalJoin) getMergeJoin(prop *requiredProp) []PhysicalPlan {
 			LeftConditions:  p.LeftConditions,
 			RightConditions: p.RightConditions,
 			DefaultValues:   p.DefaultValues,
-			leftKeys:        leftKeys,
-			rightKeys:       rightKeys,
+			LeftKeys:        leftKeys,
+			RightKeys:       rightKeys,
 		}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt))
 		mergeJoin.SetSchema(p.schema)
-		mergeJoin.EqualConditions, mergeJoin.OtherConditions = p.getEqAndOtherCondsByOffsets(offsets)
+		mergeJoin.OtherConditions = p.moveEqualToOtherConditions(offsets)
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop); ok {
 			mergeJoin.childrenReqProps = reqProps
 			joins = append(joins, mergeJoin)
@@ -170,7 +165,7 @@ func (p *LogicalJoin) getHashJoin(prop *requiredProp, innerIdx int) *PhysicalHas
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		JoinType:        p.JoinType,
-		Concurrency:     JoinConcurrency,
+		Concurrency:     uint(p.ctx.GetSessionVars().HashJoinConcurrency),
 		DefaultValues:   p.DefaultValues,
 		InnerChildIdx:   innerIdx,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), chReqProps...)
@@ -256,9 +251,14 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 	if !ok {
 		return nil
 	}
-	indices := x.availableIndices.indices
-	includeTableScan := x.availableIndices.includeTableScan
-	if includeTableScan && len(innerJoinKeys) == 1 {
+	var tblPath *accessPath
+	for _, path := range x.possibleAccessPaths {
+		if path.isTablePath {
+			tblPath = path
+			break
+		}
+	}
+	if tblPath != nil && len(innerJoinKeys) == 1 {
 		pkCol := x.getPKIsHandleCol()
 		if pkCol != nil && innerJoinKeys[0].Equal(nil, pkCol) {
 			innerPlan := x.forceToTableScan(pkCol)
@@ -272,7 +272,11 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *requiredProp, outerIdx int) [
 		remainedOfBest []expression.Expression
 		keyOff2IdxOff  []int
 	)
-	for _, indexInfo := range indices {
+	for _, path := range x.possibleAccessPaths {
+		if path.isTablePath {
+			continue
+		}
+		indexInfo := path.index
 		ranges, remained, tmpKeyOff2IdxOff := p.buildRangeForIndexJoin(indexInfo, x, innerJoinKeys)
 		// We choose the index by the number of used columns of the range, the much the better.
 		// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
@@ -310,7 +314,7 @@ func (p *LogicalJoin) buildRangeForIndexJoin(indexInfo *model.IndexInfo, innerPl
 	// After constant propagation, there won'be cases that t1.a=t2.a and t2.a=1 occur in the same time.
 	// And if there're cases like t1.a=t2.a and t1.a > 1, we can also guarantee that t1.a > 1 won't be chosen as access condition.
 	// So DetachCondAndBuildRangeForIndex won't miss the equal conditions we generate.
-	ranges, accesses, remained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx.GetSessionVars().StmtCtx, conds, idxCols, colLengths)
+	ranges, accesses, remained, _, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conds, idxCols, colLengths)
 	if err != nil {
 		terror.Log(errors.Trace(err))
 		return nil, nil, nil
@@ -381,22 +385,29 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) ([]PhysicalPlan, boo
 			plans = append(plans, join...)
 		}
 	case InnerJoin:
-		join := p.getIndexJoinByOuterIdx(prop, 0)
-		if join != nil {
-			// If the plan is not nil and matches the hint, return it directly.
-			if leftOuter {
-				return join, true
-			}
-			plans = append(plans, join...)
+		lhsCardinality := p.Children()[0].StatsInfo().Count()
+		rhsCardinality := p.Children()[1].StatsInfo().Count()
+
+		leftJoins := p.getIndexJoinByOuterIdx(prop, 0)
+		if leftOuter && leftJoins != nil {
+			return leftJoins, true
 		}
-		join = p.getIndexJoinByOuterIdx(prop, 1)
-		if join != nil {
-			// If the plan is not nil and matches the hint, return it directly.
-			if rightOuter {
-				return join, true
-			}
-			plans = append(plans, join...)
+
+		rightJoins := p.getIndexJoinByOuterIdx(prop, 1)
+		if rightOuter && rightJoins != nil {
+			return rightJoins, true
 		}
+
+		if leftJoins != nil && lhsCardinality < rhsCardinality {
+			return leftJoins, leftOuter
+		}
+
+		if rightJoins != nil && rhsCardinality < lhsCardinality {
+			return rightJoins, rightOuter
+		}
+
+		plans = append(plans, leftJoins...)
+		plans = append(plans, rightJoins...)
 	}
 	return plans, false
 }
@@ -405,7 +416,7 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *requiredProp) ([]PhysicalPlan, boo
 // Firstly we check the hint, if hint is figured by user, we force to choose the corresponding physical plan.
 // If the hint is not matched, it will get other candidates.
 // If the hint is not figured, we will pick all candidates.
-func (p *LogicalJoin) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (p *LogicalJoin) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	mergeJoins := p.getMergeJoin(prop)
 	if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
 		return mergeJoins
@@ -447,7 +458,7 @@ func (p *LogicalProjection) tryToGetChildProp(prop *requiredProp) (*requiredProp
 	return newProp, true
 }
 
-func (p *LogicalProjection) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (p *LogicalProjection) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	newProp, ok := p.tryToGetChildProp(prop)
 	if !ok {
 		return nil
@@ -468,7 +479,6 @@ func (lt *LogicalTopN) getPhysTopN() []PhysicalPlan {
 			ByItems: lt.ByItems,
 			Count:   lt.Count,
 			Offset:  lt.Offset,
-			partial: lt.partial,
 		}.init(lt.ctx, lt.stats, resultProp)
 		ret = append(ret, topN)
 	}
@@ -484,23 +494,22 @@ func (lt *LogicalTopN) getPhysLimits() []PhysicalPlan {
 	for _, tp := range wholeTaskTypes {
 		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(lt.Count + lt.Offset), cols: prop.cols, desc: prop.desc}
 		limit := PhysicalLimit{
-			Count:   lt.Count,
-			Offset:  lt.Offset,
-			partial: lt.partial,
+			Count:  lt.Count,
+			Offset: lt.Offset,
 		}.init(lt.ctx, lt.stats, resultProp)
 		ret = append(ret, limit)
 	}
 	return ret
 }
 
-func (lt *LogicalTopN) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (lt *LogicalTopN) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	if prop.matchItems(lt.ByItems) {
 		return append(lt.getPhysTopN(), lt.getPhysLimits()...)
 	}
 	return nil
 }
 
-func (la *LogicalApply) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (la *LogicalApply) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	if !prop.allColsFromSchema(la.children[0].Schema()) { // for convenient, we don't pass through any prop
 		return nil
 	}
@@ -516,8 +525,8 @@ func (la *LogicalApply) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan
 	return []PhysicalPlan{apply}
 }
 
-// genPhysPlansByReqProp is only for implementing interface. DataSource and Dual generate task in `convert2PhysicalPlan` directly.
-func (p *baseLogicalPlan) genPhysPlansByReqProp(_ *requiredProp) []PhysicalPlan {
+// exhaustPhysicalPlans is only for implementing interface. DataSource and Dual generate task in `findBestTask` directly.
+func (p *baseLogicalPlan) exhaustPhysicalPlans(_ *requiredProp) []PhysicalPlan {
 	panic("This function should not be called")
 }
 
@@ -584,7 +593,7 @@ func (la *LogicalAggregation) getHashAggs(prop *requiredProp) []PhysicalPlan {
 	return hashAggs
 }
 
-func (la *LogicalAggregation) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (la *LogicalAggregation) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	aggs := make([]PhysicalPlan, 0, len(la.possibleProperties)+1)
 	aggs = append(aggs, la.getHashAggs(prop)...)
 
@@ -594,14 +603,14 @@ func (la *LogicalAggregation) genPhysPlansByReqProp(prop *requiredProp) []Physic
 	return aggs
 }
 
-func (p *LogicalSelection) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (p *LogicalSelection) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	sel := PhysicalSelection{
 		Conditions: p.Conditions,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), prop)
 	return []PhysicalPlan{sel}
 }
 
-func (p *LogicalLimit) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (p *LogicalLimit) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	if !prop.isEmpty() {
 		return nil
 	}
@@ -609,23 +618,22 @@ func (p *LogicalLimit) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 	for _, tp := range wholeTaskTypes {
 		resultProp := &requiredProp{taskTp: tp, expectedCnt: float64(p.Count + p.Offset)}
 		limit := PhysicalLimit{
-			Offset:  p.Offset,
-			Count:   p.Count,
-			partial: p.partial,
+			Offset: p.Offset,
+			Count:  p.Count,
 		}.init(p.ctx, p.stats, resultProp)
 		ret = append(ret, limit)
 	}
 	return ret
 }
 
-func (p *LogicalLock) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (p *LogicalLock) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	lock := PhysicalLock{
 		Lock: p.Lock,
 	}.init(p.ctx, p.stats.scaleByExpectCnt(prop.expectedCnt), prop)
 	return []PhysicalPlan{lock}
 }
 
-func (p *LogicalUnionAll) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	// TODO: UnionAll can not pass any order, but we can change it to sort merge to keep order.
 	if !prop.isEmpty() {
 		return nil
@@ -653,7 +661,7 @@ func (ls *LogicalSort) getNominalSort(reqProp *requiredProp) *NominalSort {
 	return ps
 }
 
-func (ls *LogicalSort) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (ls *LogicalSort) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	if prop.matchItems(ls.ByItems) {
 		ret := make([]PhysicalPlan, 0, 2)
 		ret = append(ret, ls.getPhysicalSort(prop))
@@ -666,7 +674,7 @@ func (ls *LogicalSort) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan 
 	return nil
 }
 
-func (p *LogicalExists) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (p *LogicalExists) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	if !prop.isEmpty() {
 		return nil
 	}
@@ -675,7 +683,7 @@ func (p *LogicalExists) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan
 	return []PhysicalPlan{exists}
 }
 
-func (p *LogicalMaxOneRow) genPhysPlansByReqProp(prop *requiredProp) []PhysicalPlan {
+func (p *LogicalMaxOneRow) exhaustPhysicalPlans(prop *requiredProp) []PhysicalPlan {
 	if !prop.isEmpty() {
 		return nil
 	}

@@ -311,6 +311,16 @@ func (s *testSuite) TestDDL(c *C) {
 		lastID = job.ID
 	}
 
+	// Test GetAllDDLJobs.
+	err = t.EnQueueDDLJob(job)
+	job1 := &model.Job{ID: 2}
+	err = t.EnQueueDDLJob(job1)
+	c.Assert(err, IsNil)
+	jobs, err := t.GetAllDDLJobs()
+	c.Assert(err, IsNil)
+	expectJobs := []*model.Job{job, job1}
+	c.Assert(jobs, DeepEquals, expectJobs)
+
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 }

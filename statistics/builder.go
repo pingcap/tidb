@@ -37,7 +37,7 @@ func NewSortedBuilder(sc *stmtctx.StatementContext, numBuckets, id int64, tp *ty
 		sc:              sc,
 		numBuckets:      numBuckets,
 		valuesPerBucket: 1,
-		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets)),
+		hist:            NewHistogram(id, 0, 0, 0, tp, int(numBuckets), 0),
 	}
 }
 
@@ -109,8 +109,9 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	if ndv > count {
 		ndv = count
 	}
-	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets))
+	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets), collector.TotalSize)
 
+	sampleNum := int64(len(samples))
 	// As we use samples to build the histogram, the bucket number and repeat should multiply a factor.
 	sampleFactor := float64(count) / float64(len(samples))
 	// Since bucket count is increased by sampleFactor, so the actual max values per bucket is
@@ -124,7 +125,7 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	bucketIdx := 0
 	var lastCount int64
 	hg.AppendBucket(&samples[0], &samples[0], int64(sampleFactor), int64(ndvFactor))
-	for i := int64(1); i < int64(len(samples)); i++ {
+	for i := int64(1); i < sampleNum; i++ {
 		cmp, err := hg.GetUpper(bucketIdx).CompareDatum(sc, &samples[i])
 		if err != nil {
 			return nil, errors.Trace(err)

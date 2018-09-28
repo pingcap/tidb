@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -44,9 +45,19 @@ func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
+}
+
+func (s *testEvaluatorSuite) SetUpTest(c *C) {
+	testleak.BeforeTest()
+}
+
+func (s *testEvaluatorSuite) TearDownTest(c *C) {
+	s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
+	testleak.AfterTest(c)()
 }
 
 func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
@@ -85,6 +96,8 @@ func (s *testEvaluatorSuite) kindToFieldType(kind byte) types.FieldType {
 		ft.Tp = mysql.TypeDatetime
 	case types.KindBinaryLiteral:
 		ft.Tp = mysql.TypeVarString
+		ft.Charset = charset.CharsetBin
+		ft.Collate = charset.CollationBin
 	case types.KindMysqlBit:
 		ft.Tp = mysql.TypeBit
 	}
@@ -110,7 +123,6 @@ func (s *testEvaluatorSuite) primitiveValsToConstants(args []interface{}) []Expr
 }
 
 func (s *testEvaluatorSuite) TestSleep(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessVars := ctx.GetSessionVars()
 
@@ -179,7 +191,6 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs    interface{}
 		op     string
@@ -257,7 +268,6 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		lhs interface{}
 		op  string
@@ -541,7 +551,7 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		{"a", "a", 1},
 		{"a", "b", 0},
 		{"aA", "Aa", 0},
-		{"aAb", "Aa%", 0},
+		{"aAb", `Aa%`, 0},
 		{"aAb", "aA_", 1},
 	}
 	for _, tt := range tests {

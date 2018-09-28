@@ -51,6 +51,7 @@ type testKVSuite struct {
 }
 
 func (s *testKVSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 	s.s = store
@@ -59,6 +60,7 @@ func (s *testKVSuite) SetUpSuite(c *C) {
 func (s *testKVSuite) TearDownSuite(c *C) {
 	err := s.s.Close()
 	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
 }
 
 func insertData(c *C, txn kv.Transaction) {
@@ -155,7 +157,6 @@ func mustGet(c *C, txn kv.Transaction) {
 }
 
 func (s *testKVSuite) TestGetSet(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -176,7 +177,6 @@ func (s *testKVSuite) TestGetSet(c *C) {
 }
 
 func (s *testKVSuite) TestSeek(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -196,7 +196,6 @@ func (s *testKVSuite) TestSeek(c *C) {
 }
 
 func (s *testKVSuite) TestInc(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -231,7 +230,6 @@ func (s *testKVSuite) TestInc(c *C) {
 }
 
 func (s *testKVSuite) TestDelete(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -267,7 +265,6 @@ func (s *testKVSuite) TestDelete(c *C) {
 }
 
 func (s *testKVSuite) TestDelete2(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	val := []byte("test")
@@ -299,7 +296,6 @@ func (s *testKVSuite) TestDelete2(c *C) {
 }
 
 func (s *testKVSuite) TestSetNil(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	defer txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -308,7 +304,6 @@ func (s *testKVSuite) TestSetNil(c *C) {
 }
 
 func (s *testKVSuite) TestBasicSeek(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	txn.Set([]byte("1"), []byte("1"))
@@ -324,7 +319,6 @@ func (s *testKVSuite) TestBasicSeek(c *C) {
 }
 
 func (s *testKVSuite) TestBasicTable(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	for i := 1; i < 5; i++ {
@@ -372,7 +366,6 @@ func (s *testKVSuite) TestBasicTable(c *C) {
 }
 
 func (s *testKVSuite) TestRollback(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 
@@ -400,7 +393,6 @@ func (s *testKVSuite) TestRollback(c *C) {
 }
 
 func (s *testKVSuite) TestSeekMin(c *C) {
-	defer testleak.AfterTest(c)()
 	rows := []struct {
 		key   string
 		value string
@@ -435,7 +427,6 @@ func (s *testKVSuite) TestSeekMin(c *C) {
 }
 
 func (s *testKVSuite) TestConditionIfNotExist(c *C) {
-	defer testleak.AfterTest(c)()
 	var success int64
 	cnt := 100
 	b := []byte("1")
@@ -470,7 +461,6 @@ func (s *testKVSuite) TestConditionIfNotExist(c *C) {
 }
 
 func (s *testKVSuite) TestConditionIfEqual(c *C) {
-	defer testleak.AfterTest(c)()
 	var success int64
 	cnt := 100
 	b := []byte("1")
@@ -510,7 +500,6 @@ func (s *testKVSuite) TestConditionIfEqual(c *C) {
 }
 
 func (s *testKVSuite) TestConditionUpdate(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.s.Begin()
 	c.Assert(err, IsNil)
 	txn.Delete([]byte("b"))
@@ -521,7 +510,6 @@ func (s *testKVSuite) TestConditionUpdate(c *C) {
 
 func (s *testKVSuite) TestDBClose(c *C) {
 	c.Skip("don't know why it fails.")
-	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
 
@@ -564,7 +552,6 @@ func (s *testKVSuite) TestDBClose(c *C) {
 }
 
 func (s *testKVSuite) TestIsolationInc(c *C) {
-	defer testleak.AfterTest(c)()
 	threadCnt := 4
 
 	ids := make(map[int64]struct{}, threadCnt*100)
@@ -603,7 +590,6 @@ func (s *testKVSuite) TestIsolationInc(c *C) {
 }
 
 func (s *testKVSuite) TestIsolationMultiInc(c *C) {
-	defer testleak.AfterTest(c)()
 	threadCnt := 4
 	incCnt := 100
 	keyCnt := 4

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/hack"
@@ -167,7 +168,7 @@ func reverseRunes(origin []rune) []rune {
 func SetBinFlagOrBinStr(argTp *types.FieldType, resTp *types.FieldType) {
 	if types.IsBinaryStr(argTp) {
 		types.SetBinChsClnFlag(resTp)
-	} else if mysql.HasBinaryFlag(argTp.Flag) {
+	} else if mysql.HasBinaryFlag(argTp.Flag) || !types.IsNonBinaryStr(argTp) {
 		resTp.Flag |= mysql.BinaryFlag
 	}
 }
@@ -188,6 +189,12 @@ func (c *lengthFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 type builtinLengthSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinLengthSig) Clone() builtinFunc {
+	newSig := &builtinLengthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evaluates a builtinLengthSig.
@@ -218,7 +225,13 @@ type builtinASCIISig struct {
 	baseBuiltinFunc
 }
 
-// eval evals a builtinASCIISig.
+func (b *builtinASCIISig) Clone() builtinFunc {
+	newSig := &builtinASCIISig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinASCIISig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ascii
 func (b *builtinASCIISig) evalInt(row types.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
@@ -265,6 +278,13 @@ type builtinConcatSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinConcatSig) Clone() builtinFunc {
+	newSig := &builtinConcatSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinConcatSig
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_concat
 func (b *builtinConcatSig) evalString(row types.Row) (d string, isNull bool, err error) {
 	var s []byte
@@ -321,6 +341,12 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 type builtinConcatWSSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinConcatWSSig) Clone() builtinFunc {
+	newSig := &builtinConcatWSSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinConcatWSSig.
@@ -380,6 +406,12 @@ type builtinLeftBinarySig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinLeftBinarySig) Clone() builtinFunc {
+	newSig := &builtinLeftBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals LEFT(str,len).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_left
 func (b *builtinLeftBinarySig) evalString(row types.Row) (string, bool, error) {
@@ -402,6 +434,12 @@ func (b *builtinLeftBinarySig) evalString(row types.Row) (string, bool, error) {
 
 type builtinLeftSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinLeftSig) Clone() builtinFunc {
+	newSig := &builtinLeftSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals LEFT(str,len).
@@ -448,6 +486,12 @@ type builtinRightBinarySig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinRightBinarySig) Clone() builtinFunc {
+	newSig := &builtinRightBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals RIGHT(str,len).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_right
 func (b *builtinRightBinarySig) evalString(row types.Row) (string, bool, error) {
@@ -470,6 +514,12 @@ func (b *builtinRightBinarySig) evalString(row types.Row) (string, bool, error) 
 
 type builtinRightSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinRightSig) Clone() builtinFunc {
+	newSig := &builtinRightSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals RIGHT(str,len).
@@ -504,21 +554,35 @@ func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString, types.ETInt)
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
-	sig := &builtinRepeatSig{bf}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinRepeatSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinRepeatSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
-// eval evals a builtinRepeatSig.
+func (b *builtinRepeatSig) Clone() builtinFunc {
+	newSig := &builtinRepeatSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
+	return newSig
+}
+
+// evalString evals a builtinRepeatSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_repeat
 func (b *builtinRepeatSig) evalString(row types.Row) (d string, isNull bool, err error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
+	byteLength := len(str)
 
 	num, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
@@ -531,7 +595,12 @@ func (b *builtinRepeatSig) evalString(row types.Row) (d string, isNull bool, err
 		num = math.MaxInt32
 	}
 
-	if int64(len(str)) > int64(b.tp.Flen)/num {
+	if uint64(byteLength)*uint64(num) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("repeat", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
+	if int64(byteLength) > int64(b.tp.Flen)/num {
 		return "", true, nil
 	}
 	return strings.Repeat(str, int(num)), false, nil
@@ -555,6 +624,12 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinLowerSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinLowerSig) Clone() builtinFunc {
+	newSig := &builtinLowerSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinLowerSig.
@@ -598,6 +673,12 @@ type builtinReverseBinarySig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinReverseBinarySig) Clone() builtinFunc {
+	newSig := &builtinReverseBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a REVERSE(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_reverse
 func (b *builtinReverseBinarySig) evalString(row types.Row) (string, bool, error) {
@@ -611,6 +692,12 @@ func (b *builtinReverseBinarySig) evalString(row types.Row) (string, bool, error
 
 type builtinReverseSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinReverseSig) Clone() builtinFunc {
+	newSig := &builtinReverseSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a REVERSE(str).
@@ -634,12 +721,25 @@ func (c *spaceFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETInt)
 	bf.tp.Flen = mysql.MaxBlobWidth
-	sig := &builtinSpaceSig{bf}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	sig := &builtinSpaceSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinSpaceSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
+}
+
+func (b *builtinSpaceSig) Clone() builtinFunc {
+	newSig := &builtinSpaceSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
+	return newSig
 }
 
 // evalString evals a builtinSpaceSig.
@@ -651,11 +751,15 @@ func (b *builtinSpaceSig) evalString(row types.Row) (d string, isNull bool, err 
 	if isNull || err != nil {
 		return d, isNull, errors.Trace(err)
 	}
-	if x > mysql.MaxBlobWidth {
-		return d, true, nil
-	}
 	if x < 0 {
 		x = 0
+	}
+	if uint64(x) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("space", b.maxAllowedPacket))
+		return d, true, nil
+	}
+	if x > mysql.MaxBlobWidth {
+		return d, true, nil
 	}
 	return strings.Repeat(" ", int(x)), false, nil
 }
@@ -678,6 +782,12 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinUpperSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinUpperSig) Clone() builtinFunc {
+	newSig := &builtinUpperSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinUpperSig.
@@ -712,6 +822,12 @@ func (c *strcmpFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 type builtinStrcmpSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinStrcmpSig) Clone() builtinFunc {
+	newSig := &builtinStrcmpSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals a builtinStrcmpSig.
@@ -767,6 +883,12 @@ type builtinReplaceSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinReplaceSig) Clone() builtinFunc {
+	newSig := &builtinReplaceSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinReplaceSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_replace
 func (b *builtinReplaceSig) evalString(row types.Row) (d string, isNull bool, err error) {
@@ -809,6 +931,12 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 
 type builtinConvertSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinConvertSig) Clone() builtinFunc {
+	newSig := &builtinConvertSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals CONVERT(expr USING transcoding_name).
@@ -872,6 +1000,12 @@ type builtinSubstringBinary2ArgsSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinSubstringBinary2ArgsSig) Clone() builtinFunc {
+	newSig := &builtinSubstringBinary2ArgsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals SUBSTR(str,pos), SUBSTR(str FROM pos), SUBSTR() is a synonym for SUBSTRING().
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_substr
 func (b *builtinSubstringBinary2ArgsSig) evalString(row types.Row) (string, bool, error) {
@@ -897,6 +1031,12 @@ func (b *builtinSubstringBinary2ArgsSig) evalString(row types.Row) (string, bool
 
 type builtinSubstring2ArgsSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSubstring2ArgsSig) Clone() builtinFunc {
+	newSig := &builtinSubstring2ArgsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals SUBSTR(str,pos), SUBSTR(str FROM pos), SUBSTR() is a synonym for SUBSTRING().
@@ -925,6 +1065,12 @@ func (b *builtinSubstring2ArgsSig) evalString(row types.Row) (string, bool, erro
 
 type builtinSubstringBinary3ArgsSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSubstringBinary3ArgsSig) Clone() builtinFunc {
+	newSig := &builtinSubstringBinary3ArgsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
@@ -962,6 +1108,12 @@ func (b *builtinSubstringBinary3ArgsSig) evalString(row types.Row) (string, bool
 
 type builtinSubstring3ArgsSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSubstring3ArgsSig) Clone() builtinFunc {
+	newSig := &builtinSubstring3ArgsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals SUBSTR(str,pos,len), SUBSTR(str FROM pos FOR len), SUBSTR() is a synonym for SUBSTRING().
@@ -1016,6 +1168,12 @@ func (c *substringIndexFunctionClass) getFunction(ctx sessionctx.Context, args [
 
 type builtinSubstringIndexSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSubstringIndexSig) Clone() builtinFunc {
+	newSig := &builtinSubstringIndexSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinSubstringIndexSig.
@@ -1092,6 +1250,12 @@ type builtinLocateBinary2ArgsSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinLocateBinary2ArgsSig) Clone() builtinFunc {
+	newSig := &builtinLocateBinary2ArgsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals LOCATE(substr,str), case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocateBinary2ArgsSig) evalInt(row types.Row) (int64, bool, error) {
@@ -1118,6 +1282,12 @@ type builtinLocate2ArgsSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinLocate2ArgsSig) Clone() builtinFunc {
+	newSig := &builtinLocate2ArgsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals LOCATE(substr,str), non case-sensitive.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsSig) evalInt(row types.Row) (int64, bool, error) {
@@ -1142,6 +1312,12 @@ func (b *builtinLocate2ArgsSig) evalInt(row types.Row) (int64, bool, error) {
 
 type builtinLocateBinary3ArgsSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinLocateBinary3ArgsSig) Clone() builtinFunc {
+	newSig := &builtinLocateBinary3ArgsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals LOCATE(substr,str,pos), case-sensitive.
@@ -1177,6 +1353,12 @@ func (b *builtinLocateBinary3ArgsSig) evalInt(row types.Row) (int64, bool, error
 
 type builtinLocate3ArgsSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinLocate3ArgsSig) Clone() builtinFunc {
+	newSig := &builtinLocate3ArgsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals LOCATE(substr,str,pos), non case-sensitive.
@@ -1241,6 +1423,12 @@ type builtinHexStrArgSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinHexStrArgSig) Clone() builtinFunc {
+	newSig := &builtinHexStrArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinHexStrArgSig, corresponding to hex(str)
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_hex
 func (b *builtinHexStrArgSig) evalString(row types.Row) (string, bool, error) {
@@ -1253,6 +1441,12 @@ func (b *builtinHexStrArgSig) evalString(row types.Row) (string, bool, error) {
 
 type builtinHexIntArgSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinHexIntArgSig) Clone() builtinFunc {
+	newSig := &builtinHexIntArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinHexIntArgSig, corresponding to hex(N)
@@ -1302,6 +1496,12 @@ type builtinUnHexSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinUnHexSig) Clone() builtinFunc {
+	newSig := &builtinUnHexSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinUnHexSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_unhex
 func (b *builtinUnHexSig) evalString(row types.Row) (string, bool, error) {
@@ -1328,6 +1528,7 @@ type trimFunctionClass struct {
 	baseFunctionClass
 }
 
+// getFunction sets trim built-in function signature.
 // The syntax of trim in mysql is 'TRIM([{BOTH | LEADING | TRAILING} [remstr] FROM] str), TRIM([remstr FROM] str)',
 // but we wil convert it into trim(str), trim(str, remstr) and trim(str, remstr, direction) in AST.
 func (c *trimFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
@@ -1368,6 +1569,12 @@ type builtinTrim1ArgSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinTrim1ArgSig) Clone() builtinFunc {
+	newSig := &builtinTrim1ArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinTrim1ArgSig, corresponding to trim(str)
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_trim
 func (b *builtinTrim1ArgSig) evalString(row types.Row) (d string, isNull bool, err error) {
@@ -1380,6 +1587,12 @@ func (b *builtinTrim1ArgSig) evalString(row types.Row) (d string, isNull bool, e
 
 type builtinTrim2ArgsSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinTrim2ArgsSig) Clone() builtinFunc {
+	newSig := &builtinTrim2ArgsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinTrim2ArgsSig, corresponding to trim(str, remstr)
@@ -1402,6 +1615,12 @@ func (b *builtinTrim2ArgsSig) evalString(row types.Row) (d string, isNull bool, 
 
 type builtinTrim3ArgsSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinTrim3ArgsSig) Clone() builtinFunc {
+	newSig := &builtinTrim3ArgsSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinTrim3ArgsSig, corresponding to trim(str, remstr, direction)
@@ -1469,6 +1688,12 @@ type builtinLTrimSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinLTrimSig) Clone() builtinFunc {
+	newSig := &builtinLTrimSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinLTrimSig
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ltrim
 func (b *builtinLTrimSig) evalString(row types.Row) (d string, isNull bool, err error) {
@@ -1497,6 +1722,12 @@ func (c *rTrimFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinRTrimSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinRTrimSig) Clone() builtinFunc {
+	newSig := &builtinRTrimSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinRTrimSig
@@ -1555,19 +1786,34 @@ func (c *lpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx, args[1])
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
-		sig := &builtinLpadBinarySig{bf}
+		sig := &builtinLpadBinarySig{bf, maxAllowedPacket}
 		return sig, nil
 	}
 	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	sig := &builtinLpadSig{bf}
+	sig := &builtinLpadSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinLpadBinarySig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
+}
+
+func (b *builtinLpadBinarySig) Clone() builtinFunc {
+	newSig := &builtinLpadBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
+	return newSig
 }
 
 // evalString evals LPAD(str,len,padstr).
@@ -1584,6 +1830,11 @@ func (b *builtinLpadBinarySig) evalString(row types.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 	targetLength := int(length)
+
+	if uint64(targetLength) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("lpad", b.maxAllowedPacket))
+		return "", true, nil
+	}
 
 	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -1604,6 +1855,14 @@ func (b *builtinLpadBinarySig) evalString(row types.Row) (string, bool, error) {
 
 type builtinLpadSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
+}
+
+func (b *builtinLpadSig) Clone() builtinFunc {
+	newSig := &builtinLpadSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
+	return newSig
 }
 
 // evalString evals LPAD(str,len,padstr).
@@ -1620,6 +1879,11 @@ func (b *builtinLpadSig) evalString(row types.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 	targetLength := int(length)
+
+	if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("lpad", b.maxAllowedPacket))
+		return "", true, nil
+	}
 
 	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -1650,19 +1914,34 @@ func (c *rpadFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	bf.tp.Flen = getFlen4LpadAndRpad(bf.ctx, args[1])
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[2].GetType(), bf.tp)
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	if types.IsBinaryStr(args[0].GetType()) || types.IsBinaryStr(args[2].GetType()) {
-		sig := &builtinRpadBinarySig{bf}
+		sig := &builtinRpadBinarySig{bf, maxAllowedPacket}
 		return sig, nil
 	}
 	if bf.tp.Flen *= 4; bf.tp.Flen > mysql.MaxBlobWidth {
 		bf.tp.Flen = mysql.MaxBlobWidth
 	}
-	sig := &builtinRpadSig{bf}
+	sig := &builtinRpadSig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinRpadBinarySig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
+}
+
+func (b *builtinRpadBinarySig) Clone() builtinFunc {
+	newSig := &builtinRpadBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
+	return newSig
 }
 
 // evalString evals RPAD(str,len,padstr).
@@ -1679,6 +1958,10 @@ func (b *builtinRpadBinarySig) evalString(row types.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 	targetLength := int(length)
+	if uint64(targetLength) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("rpad", b.maxAllowedPacket))
+		return "", true, nil
+	}
 
 	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -1699,6 +1982,14 @@ func (b *builtinRpadBinarySig) evalString(row types.Row) (string, bool, error) {
 
 type builtinRpadSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
+}
+
+func (b *builtinRpadSig) Clone() builtinFunc {
+	newSig := &builtinRpadSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
+	return newSig
 }
 
 // evalString evals RPAD(str,len,padstr).
@@ -1715,6 +2006,11 @@ func (b *builtinRpadSig) evalString(row types.Row) (string, bool, error) {
 		return "", true, errors.Trace(err)
 	}
 	targetLength := int(length)
+
+	if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("rpad", b.maxAllowedPacket))
+		return "", true, nil
+	}
 
 	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -1751,6 +2047,12 @@ type builtinBitLengthSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinBitLengthSig) Clone() builtinFunc {
+	newSig := &builtinBitLengthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evaluates a builtinBitLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bit-length
 func (b *builtinBitLengthSig) evalInt(row types.Row) (int64, bool, error) {
@@ -1785,6 +2087,12 @@ func (c *charFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinCharSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinCharSig) Clone() builtinFunc {
+	newSig := &builtinCharSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 func (b *builtinCharSig) convertToBytes(ints []int64) []byte {
@@ -1859,6 +2167,12 @@ type builtinCharLengthSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinCharLengthSig) Clone() builtinFunc {
+	newSig := &builtinCharLengthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a builtinCharLengthSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_char-length
 func (b *builtinCharLengthSig) evalInt(row types.Row) (int64, bool, error) {
@@ -1885,6 +2199,12 @@ func (c *findInSetFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 
 type builtinFindInSetSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinFindInSetSig) Clone() builtinFunc {
+	newSig := &builtinFindInSetSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals FIND_IN_SET(str,strlist).
@@ -1957,6 +2277,12 @@ type builtinFieldIntSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinFieldIntSig) Clone() builtinFunc {
+	newSig := &builtinFieldIntSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals FIELD(str,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
 func (b *builtinFieldIntSig) evalInt(row types.Row) (int64, bool, error) {
@@ -1980,6 +2306,12 @@ type builtinFieldRealSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinFieldRealSig) Clone() builtinFunc {
+	newSig := &builtinFieldRealSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals FIELD(str,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
 func (b *builtinFieldRealSig) evalInt(row types.Row) (int64, bool, error) {
@@ -2001,6 +2333,12 @@ func (b *builtinFieldRealSig) evalInt(row types.Row) (int64, bool, error) {
 
 type builtinFieldStringSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinFieldStringSig) Clone() builtinFunc {
+	newSig := &builtinFieldStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals FIELD(str,str1,str2,str3,...).
@@ -2074,6 +2412,12 @@ type builtinMakeSetSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinMakeSetSig) Clone() builtinFunc {
+	newSig := &builtinMakeSetSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals MAKE_SET(bits,str1,str2,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_make-set
 func (b *builtinMakeSetSig) evalString(row types.Row) (string, bool, error) {
@@ -2125,6 +2469,12 @@ type builtinOctIntSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinOctIntSig) Clone() builtinFunc {
+	newSig := &builtinOctIntSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals OCT(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
 func (b *builtinOctIntSig) evalString(row types.Row) (string, bool, error) {
@@ -2140,8 +2490,14 @@ type builtinOctStringSig struct {
 	baseBuiltinFunc
 }
 
-// // evalString evals OCT(N).
-// // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
+func (b *builtinOctStringSig) Clone() builtinFunc {
+	newSig := &builtinOctStringSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals OCT(N).
+// See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_oct
 func (b *builtinOctStringSig) evalString(row types.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -2189,6 +2545,12 @@ type builtinOrdSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinOrdSig) Clone() builtinFunc {
+	newSig := &builtinOrdSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a builtinOrdSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_ord
 func (b *builtinOrdSig) evalInt(row types.Row) (int64, bool, error) {
@@ -2232,6 +2594,12 @@ func (c *quoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinQuoteSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinQuoteSig) Clone() builtinFunc {
+	newSig := &builtinQuoteSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals QUOTE(str).
@@ -2283,6 +2651,12 @@ type builtinBinSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinBinSig) Clone() builtinFunc {
+	newSig := &builtinBinSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals BIN(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_bin
 func (b *builtinBinSig) evalString(row types.Row) (string, bool, error) {
@@ -2322,6 +2696,12 @@ func (c *eltFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 
 type builtinEltSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinEltSig) Clone() builtinFunc {
+	newSig := &builtinEltSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinEltSig.
@@ -2391,6 +2771,12 @@ type builtinExportSet3ArgSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinExportSet3ArgSig) Clone() builtinFunc {
+	newSig := &builtinExportSet3ArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals EXPORT_SET(bits,on,off).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func (b *builtinExportSet3ArgSig) evalString(row types.Row) (string, bool, error) {
@@ -2414,6 +2800,12 @@ func (b *builtinExportSet3ArgSig) evalString(row types.Row) (string, bool, error
 
 type builtinExportSet4ArgSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinExportSet4ArgSig) Clone() builtinFunc {
+	newSig := &builtinExportSet4ArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals EXPORT_SET(bits,on,off,separator).
@@ -2444,6 +2836,12 @@ func (b *builtinExportSet4ArgSig) evalString(row types.Row) (string, bool, error
 
 type builtinExportSet5ArgSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinExportSet5ArgSig) Clone() builtinFunc {
+	newSig := &builtinExportSet5ArgSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals EXPORT_SET(bits,on,off,separator,number_of_bits).
@@ -2508,6 +2906,12 @@ type builtinFormatWithLocaleSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinFormatWithLocaleSig) Clone() builtinFunc {
+	newSig := &builtinFormatWithLocaleSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals FORMAT(X,D,locale).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_format
 func (b *builtinFormatWithLocaleSig) evalString(row types.Row) (string, bool, error) {
@@ -2532,6 +2936,12 @@ func (b *builtinFormatWithLocaleSig) evalString(row types.Row) (string, bool, er
 
 type builtinFormatSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinFormatSig) Clone() builtinFunc {
+	newSig := &builtinFormatSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals FORMAT(X,D).
@@ -2561,13 +2971,40 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = mysql.MaxBlobWidth
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	types.SetBinChsClnFlag(bf.tp)
-	sig := &builtinFromBase64Sig{bf}
+	sig := &builtinFromBase64Sig{bf, maxAllowedPacket}
 	return sig, nil
+}
+
+// base64NeededDecodedLength return the base64 decoded string length.
+func base64NeededDecodedLength(n int) int {
+	// Returns -1 indicate the result will overflow.
+	if strconv.IntSize == 64 && n > math.MaxInt64/3 {
+		return -1
+	}
+	if strconv.IntSize == 32 && n > math.MaxInt32/3 {
+		return -1
+	}
+	return n * 3 / 4
 }
 
 type builtinFromBase64Sig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
+}
+
+func (b *builtinFromBase64Sig) Clone() builtinFunc {
+	newSig := &builtinFromBase64Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
+	return newSig
 }
 
 // evalString evals FROM_BASE64(str).
@@ -2577,6 +3014,16 @@ func (b *builtinFromBase64Sig) evalString(row types.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, errors.Trace(err)
 	}
+
+	needDecodeLen := base64NeededDecodedLength(len(str))
+	if needDecodeLen == -1 {
+		return "", true, nil
+	}
+	if needDecodeLen > int(b.maxAllowedPacket) {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("from_base64", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
 	str = strings.Replace(str, "\t", "", -1)
 	str = strings.Replace(str, " ", "", -1)
 	result, err := base64.StdEncoding.DecodeString(str)
@@ -2597,12 +3044,27 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
 	bf.tp.Flen = base64NeededEncodedLength(bf.args[0].GetType().Flen)
-	sig := &builtinToBase64Sig{bf}
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	sig := &builtinToBase64Sig{bf, maxAllowedPacket}
 	return sig, nil
 }
 
 type builtinToBase64Sig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
+}
+
+func (b *builtinToBase64Sig) Clone() builtinFunc {
+	newSig := &builtinToBase64Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
+	return newSig
 }
 
 // base64NeededEncodedLength return the base64 encoded string length.
@@ -2635,7 +3097,14 @@ func (b *builtinToBase64Sig) evalString(row types.Row) (d string, isNull bool, e
 	if isNull || err != nil {
 		return "", isNull, errors.Trace(err)
 	}
-
+	needEncodeLen := base64NeededEncodedLength(len(str))
+	if needEncodeLen == -1 {
+		return "", true, nil
+	}
+	if needEncodeLen > int(b.maxAllowedPacket) {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("to_base64", b.maxAllowedPacket))
+		return "", true, nil
+	}
 	if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
 		return "", true, nil
 	}
@@ -2676,16 +3145,31 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[3].GetType(), bf.tp)
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	if types.IsBinaryStr(args[0].GetType()) {
-		sig = &builtinInsertBinarySig{bf}
+		sig = &builtinInsertBinarySig{bf, maxAllowedPacket}
 	} else {
-		sig = &builtinInsertSig{bf}
+		sig = &builtinInsertSig{bf, maxAllowedPacket}
 	}
 	return sig, nil
 }
 
 type builtinInsertBinarySig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
+}
+
+func (b *builtinInsertBinarySig) Clone() builtinFunc {
+	newSig := &builtinInsertBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
+	return newSig
 }
 
 // evalString evals INSERT(str,pos,len,newstr).
@@ -2716,13 +3200,27 @@ func (b *builtinInsertBinarySig) evalString(row types.Row) (string, bool, error)
 	}
 
 	if length > strLength-pos+1 || length < 0 {
-		return str[0:pos-1] + newstr, false, nil
+		length = strLength - pos + 1
 	}
+
+	if uint64(strLength-length+int64(len(newstr))) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("insert", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
 	return str[0:pos-1] + newstr + str[pos+length-1:], false, nil
 }
 
 type builtinInsertSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
+}
+
+func (b *builtinInsertSig) Clone() builtinFunc {
+	newSig := &builtinInsertSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
+	return newSig
 }
 
 // evalString evals INSERT(str,pos,len,newstr).
@@ -2754,9 +3252,16 @@ func (b *builtinInsertSig) evalString(row types.Row) (string, bool, error) {
 	}
 
 	if length > runeLength-pos+1 || length < 0 {
-		return string(runes[0:pos-1]) + newstr, false, nil
+		length = runeLength - pos + 1
 	}
-	return string(runes[0:pos-1]) + newstr + string(runes[pos+length-1:]), false, nil
+
+	strHead := string(runes[0 : pos-1])
+	strTail := string(runes[pos+length-1:])
+	if uint64(len(strHead)+len(newstr)+len(strTail)) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("insert", b.maxAllowedPacket))
+		return "", true, nil
+	}
+	return strHead + newstr + strTail, false, nil
 }
 
 type instrFunctionClass struct {
@@ -2778,7 +3283,20 @@ func (c *instrFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 }
 
 type builtinInstrSig struct{ baseBuiltinFunc }
+
+func (b *builtinInstrSig) Clone() builtinFunc {
+	newSig := &builtinInstrSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 type builtinInstrBinarySig struct{ baseBuiltinFunc }
+
+func (b *builtinInstrBinarySig) Clone() builtinFunc {
+	newSig := &builtinInstrBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
 
 // evalInt evals INSTR(str,substr), case insensitive
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr

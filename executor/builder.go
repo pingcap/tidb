@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -38,9 +40,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -71,6 +72,14 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildCheckTable(v)
 	case *plan.CheckIndex:
 		return b.buildCheckIndex(v)
+	case *plan.RecoverIndex:
+		return b.buildRecoverIndex(v)
+	case *plan.CleanupIndex:
+		return b.buildCleanupIndex(v)
+	case *plan.CheckIndexRange:
+		return b.buildCheckIndexRange(v)
+	case *plan.ChecksumTable:
+		return b.buildChecksumTable(v)
 	case *plan.DDL:
 		return b.buildDDL(v)
 	case *plan.Deallocate:
@@ -99,6 +108,8 @@ func (b *executorBuilder) build(p plan.Plan) Executor {
 		return b.buildShowDDL(v)
 	case *plan.ShowDDLJobs:
 		return b.buildShowDDLJobs(v)
+	case *plan.ShowDDLJobQueries:
+		return b.buildShowDDLJobQueries(v)
 	case *plan.Show:
 		return b.buildShow(v)
 	case *plan.Simple:
@@ -201,6 +212,14 @@ func (b *executorBuilder) buildShowDDLJobs(v *plan.ShowDDLJobs) Executor {
 	return e
 }
 
+func (b *executorBuilder) buildShowDDLJobQueries(v *plan.ShowDDLJobQueries) Executor {
+	e := &ShowDDLJobQueriesExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		jobIDs:       v.JobIDs,
+	}
+	return e
+}
+
 func (b *executorBuilder) buildCheckIndex(v *plan.CheckIndex) Executor {
 	readerExec, err := buildNoRangeIndexLookUpReader(b, v.IndexLookUpReader)
 	if err != nil {
@@ -226,6 +245,137 @@ func (b *executorBuilder) buildCheckTable(v *plan.CheckTable) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		tables:       v.Tables,
 		is:           b.is,
+	}
+	return e
+}
+
+func buildRecoverIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
+	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
+	for _, idxCol := range indexInfo.Columns {
+		columns = append(columns, tblInfo.Columns[idxCol.Offset])
+	}
+
+	handleOffset := len(columns)
+	handleColsInfo := &model.ColumnInfo{
+		ID:     model.ExtraHandleID,
+		Name:   model.ExtraHandleName,
+		Offset: handleOffset,
+	}
+	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	columns = append(columns, handleColsInfo)
+	return columns
+}
+
+func (b *executorBuilder) buildRecoverIndex(v *plan.RecoverIndex) Executor {
+	tblInfo := v.Table.TableInfo
+	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	idxName := strings.ToLower(v.IndexName)
+	indices := t.WritableIndices()
+	var index table.Index
+	for _, idx := range indices {
+		if idxName == idx.Meta().Name.L {
+			index = idx
+			break
+		}
+	}
+
+	if index == nil {
+		b.err = errors.Errorf("index `%v` is not found in table `%v`.", v.IndexName, v.Table.Name.O)
+		return nil
+	}
+	e := &RecoverIndexExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		columns:      buildRecoverIndexCols(tblInfo, index.Meta()),
+		index:        index,
+		table:        t,
+	}
+	return e
+}
+
+func buildCleanupIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
+	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+1)
+	for _, idxCol := range indexInfo.Columns {
+		columns = append(columns, tblInfo.Columns[idxCol.Offset])
+	}
+	handleColsInfo := &model.ColumnInfo{
+		ID:     model.ExtraHandleID,
+		Name:   model.ExtraHandleName,
+		Offset: len(tblInfo.Columns),
+	}
+	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	columns = append(columns, handleColsInfo)
+	return columns
+}
+
+func (b *executorBuilder) buildCleanupIndex(v *plan.CleanupIndex) Executor {
+	tblInfo := v.Table.TableInfo
+	t, err := b.is.TableByName(v.Table.Schema, tblInfo.Name)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	idxName := strings.ToLower(v.IndexName)
+	var index table.Index
+	for _, idx := range t.Indices() {
+		if idx.Meta().State != model.StatePublic {
+			continue
+		}
+		if idxName == idx.Meta().Name.L {
+			index = idx
+			break
+		}
+	}
+
+	if index == nil {
+		b.err = errors.Errorf("index `%v` is not found in table `%v`.", v.IndexName, v.Table.Name.O)
+		return nil
+	}
+	e := &CleanupIndexExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		idxCols:      buildCleanupIndexCols(tblInfo, index.Meta()),
+		index:        index,
+		table:        t,
+		batchSize:    20000,
+	}
+	return e
+}
+
+func (b *executorBuilder) buildCheckIndexRange(v *plan.CheckIndexRange) Executor {
+	tb, err := b.is.TableByName(v.Table.Schema, v.Table.Name)
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+	e := &CheckIndexRangeExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		handleRanges: v.HandleRanges,
+		table:        tb.Meta(),
+		is:           b.is,
+	}
+	idxName := strings.ToLower(v.IndexName)
+	for _, idx := range tb.Indices() {
+		if idx.Meta().Name.L == idxName {
+			e.index = idx.Meta()
+			e.startKey = make([]types.Datum, len(e.index.Columns))
+			break
+		}
+	}
+	return e
+}
+
+func (b *executorBuilder) buildChecksumTable(v *plan.ChecksumTable) Executor {
+	e := &ChecksumTableExec{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		tables:       make(map[int64]*checksumContext),
+		done:         false,
+	}
+	startTs := b.getStartTS()
+	for _, t := range v.Tables {
+		e.tables[t.TableInfo.ID] = newChecksumContext(t.DBInfo, t.TableInfo, startTs)
 	}
 	return e
 }
@@ -550,41 +700,6 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 		return nil
 	}
 
-	leftKeys := make([]*expression.Column, 0, len(v.EqualConditions))
-	rightKeys := make([]*expression.Column, 0, len(v.EqualConditions))
-	for _, eqCond := range v.EqualConditions {
-		if len(eqCond.GetArgs()) != 2 {
-			b.err = errors.Annotate(ErrBuildExecutor, "invalid join key for equal condition")
-			return nil
-		}
-		leftKey, ok := eqCond.GetArgs()[0].(*expression.Column)
-		if !ok {
-			b.err = errors.Annotate(ErrBuildExecutor, "left side of join key must be column for merge join")
-			return nil
-		}
-		rightKey, ok := eqCond.GetArgs()[1].(*expression.Column)
-		if !ok {
-			b.err = errors.Annotate(ErrBuildExecutor, "right side of join key must be column for merge join")
-			return nil
-		}
-		leftKeys = append(leftKeys, leftKey)
-		rightKeys = append(rightKeys, rightKey)
-	}
-
-	lhsIter := &readerIterator{
-		sctx:     b.ctx,
-		reader:   leftExec,
-		filter:   v.LeftConditions,
-		joinKeys: leftKeys,
-	}
-
-	rhsIter := &readerIterator{
-		sctx:     b.ctx,
-		reader:   rightExec,
-		filter:   v.RightConditions,
-		joinKeys: rightKeys,
-	}
-
 	defaultValues := v.DefaultValues
 	if defaultValues == nil {
 		if v.JoinType == plan.RightOuterJoin {
@@ -593,30 +708,50 @@ func (b *executorBuilder) buildMergeJoin(v *plan.PhysicalMergeJoin) Executor {
 			defaultValues = make([]types.Datum, rightExec.Schema().Len())
 		}
 	}
-	lhsColTypes := leftExec.retTypes()
-	rhsColTypes := rightExec.retTypes()
+
 	e := &MergeJoinExec{
-		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.JoinType == plan.RightOuterJoin, defaultValues, v.OtherConditions, lhsColTypes, rhsColTypes),
-		stmtCtx:         b.ctx.GetSessionVars().StmtCtx,
-		// left is the outer side by default.
-		outerIdx:  0,
-		outerKeys: leftKeys,
-		innerKeys: rightKeys,
-		outerIter: lhsIter,
-		innerIter: rhsIter,
+		stmtCtx:      b.ctx.GetSessionVars().StmtCtx,
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
+		resultGenerator: newJoinResultGenerator(b.ctx, v.JoinType, v.JoinType == plan.RightOuterJoin,
+			defaultValues, v.OtherConditions,
+			leftExec.retTypes(), rightExec.retTypes()),
+	}
+
+	leftKeys := v.LeftKeys
+	rightKeys := v.RightKeys
+
+	e.outerIdx = 0
+	innerFilter := v.RightConditions
+
+	e.innerTable = &mergeJoinInnerTable{
+		reader:   rightExec,
+		joinKeys: rightKeys,
+	}
+
+	e.outerTable = &mergeJoinOuterTable{
+		reader: leftExec,
+		filter: v.LeftConditions,
+		keys:   leftKeys,
 	}
 
 	if v.JoinType == plan.RightOuterJoin {
-		e.outerKeys, e.innerKeys = e.innerKeys, e.outerKeys
-		e.outerIter, e.innerIter = e.innerIter, e.outerIter
 		e.outerIdx = 1
+		e.outerTable.reader = rightExec
+		e.outerTable.filter = v.RightConditions
+		e.outerTable.keys = rightKeys
+
+		innerFilter = v.LeftConditions
+		e.innerTable.reader = leftExec
+		e.innerTable.joinKeys = leftKeys
 	}
 
-	if v.JoinType != plan.InnerJoin {
-		e.outerFilter = e.outerIter.filter
-		e.outerIter.filter = nil
+	// optimizer should guarantee that filters on inner table are pushed down
+	// to tikv or extracted to a Selection.
+	if len(innerFilter) != 0 {
+		b.err = errors.Annotate(ErrBuildExecutor, "merge join's inner filter should be empty.")
+		return nil
 	}
+
 	metrics.ExecutorCounter.WithLabelValues("MergeJoinExec").Inc()
 	return e
 }
@@ -747,7 +882,6 @@ func (b *executorBuilder) buildProjection(v *plan.PhysicalProjection) Executor {
 	}
 	e := &ProjectionExec{
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
-		exprs:            v.Exprs,
 		evaluatorSuit:    expression.NewEvaluatorSuit(v.Exprs),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
@@ -763,6 +897,8 @@ func (b *executorBuilder) buildTableDual(v *plan.PhysicalTableDual) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		numDualRows:  v.RowCount,
 	}
+	// Init the startTS for later use.
+	b.getStartTS()
 	return e
 }
 
@@ -773,7 +909,7 @@ func (b *executorBuilder) getStartTS() uint64 {
 	}
 
 	startTS := b.ctx.GetSessionVars().SnapshotTS
-	if startTS == 0 {
+	if startTS == 0 && b.ctx.Txn() != nil {
 		startTS = b.ctx.Txn().StartTS()
 	}
 	b.startTS = startTS
@@ -867,10 +1003,7 @@ func (b *executorBuilder) buildApply(apply *plan.PhysicalApply) *NestedLoopApply
 		outer:           v.JoinType != plan.InnerJoin,
 		resultGenerator: generator,
 		outerSchema:     apply.OuterSchema,
-		outerChunk:      outerExec.newChunk(),
-		innerChunk:      innerExec.newChunk(),
 	}
-	e.innerList = chunk.NewList(innerExec.retTypes(), e.maxChunkSize)
 	metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec").Inc()
 	return e
 }
@@ -1150,12 +1283,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 	}
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	table, _ := b.is.TableByID(ts.Table.ID)
-	pkID := int64(-1)
-	if ts.Table.PKIsHandle {
-		if pk := ts.Table.GetPkColInfo(); pk != nil {
-			pkID = pk.ID
-		}
-	}
 	e := &TableReaderExecutor{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPB:        dagReq,
@@ -1168,10 +1295,12 @@ func buildNoRangeTableReader(b *executorBuilder, v *plan.PhysicalTableReader) (*
 		streaming:    streaming,
 	}
 	if containsLimit(dagReq.Executors) {
-		e.feedback = statistics.NewQueryFeedback(0, 0, false, 0, 0)
+		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, pkID, false, ts.HistVersion, ts.StatsInfo().Count())
+		e.feedback = statistics.NewQueryFeedback(ts.Table.ID, ts.Hist, ts.StatsInfo().Count(), ts.Desc)
 	}
+	collect := e.feedback.CollectFeedback(len(ts.Ranges))
+	e.dagPB.CollectRangeCounts = &collect
 
 	for i := range v.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
@@ -1189,6 +1318,8 @@ func (b *executorBuilder) buildTableReader(v *plan.PhysicalTableReader) *TableRe
 
 	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
 	ret.ranges = ts.Ranges
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	return ret
 }
 
@@ -1212,10 +1343,12 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plan.PhysicalIndexReader) (*
 		streaming:    streaming,
 	}
 	if containsLimit(dagReq.Executors) {
-		e.feedback = statistics.NewQueryFeedback(0, 0, false, 0, 0)
+		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Index.ID, true, is.HistVersion, is.StatsInfo().Count())
+		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
 	}
+	collect := e.feedback.CollectFeedback(len(is.Ranges))
+	e.dagPB.CollectRangeCounts = &collect
 
 	for _, col := range v.OutputColumns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(col.Index))
@@ -1233,6 +1366,8 @@ func (b *executorBuilder) buildIndexReader(v *plan.PhysicalIndexReader) *IndexRe
 
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
 	ret.ranges = is.Ranges
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
 	return ret
 }
 
@@ -1269,10 +1404,15 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plan.PhysicalIndexLook
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 	}
 	if containsLimit(indexReq.Executors) {
-		e.feedback = statistics.NewQueryFeedback(0, 0, false, 0, 0)
+		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
 	} else {
-		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Index.ID, true, is.HistVersion, is.StatsInfo().Count())
+		e.feedback = statistics.NewQueryFeedback(is.Table.ID, is.Hist, is.StatsInfo().Count(), is.Desc)
 	}
+	// do not collect the feedback for table request.
+	collectTable := false
+	e.tableRequest.CollectRangeCounts = &collectTable
+	collectIndex := e.feedback.CollectFeedback(len(is.Ranges))
+	e.dagPB.CollectRangeCounts = &collectIndex
 	if cols, ok := v.Schema().TblID2Handle[is.Table.ID]; ok {
 		e.handleIdx = cols[0].Index
 	}
@@ -1287,8 +1427,13 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plan.PhysicalIndexLookUpRead
 	}
 
 	is := v.IndexPlans[0].(*plan.PhysicalIndexScan)
+	ts := v.TablePlans[0].(*plan.PhysicalTableScan)
+
 	ret.ranges = is.Ranges
 	metrics.ExecutorCounter.WithLabelValues("IndexLookUpExecutor").Inc()
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	sctx.IndexIDs = append(sctx.IndexIDs, is.Index.ID)
+	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	return ret
 }
 
@@ -1342,7 +1487,7 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		return nil, errors.Trace(err)
 	}
 	e.resultHandler = &tableResultHandler{}
-	result, err := distsql.Select(ctx, builder.ctx, kvReq, e.retTypes())
+	result, err := distsql.Select(ctx, builder.ctx, kvReq, e.retTypes(), e.feedback)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1389,7 +1534,8 @@ func buildKvRangesForIndexJoin(sc *stmtctx.StatementContext, tableID, indexID in
 				ran.HighVal[idxOff] = val[keyOff]
 			}
 		}
-		tmpKvRanges, err := distsql.IndexRangesToKVRanges(sc, tableID, indexID, indexRanges)
+
+		tmpKvRanges, err := distsql.IndexRangesToKVRanges(sc, tableID, indexID, indexRanges, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

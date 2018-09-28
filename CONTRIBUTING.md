@@ -148,7 +148,8 @@ ln -s ../../hooks/pre-commit .
 Sometime, pre-commit hook can not be executable. In such case, you have to make it executable manually.
 
 ```sh
-chmod +x hooks/pre-commit
+cd $working_dir/tidb/.git/hooks
+chmod +x pre-commit
 ```
 
 ### Step 3: Branch

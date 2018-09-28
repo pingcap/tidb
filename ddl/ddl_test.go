@@ -91,10 +91,10 @@ func checkHistoryJob(c *C, job *model.Job) {
 }
 
 func checkHistoryJobArgs(c *C, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	c.Assert(ctx.NewTxn(), IsNil)
 	t := meta.NewMeta(ctx.Txn())
 	historyJob, err := t.GetHistoryDDLJob(id)
 	c.Assert(err, IsNil)
+	c.Assert(historyJob.BinlogInfo.FinishedTS, Greater, uint64(0))
 
 	if args.tbl != nil {
 		c.Assert(historyJob.BinlogInfo.SchemaVersion, Equals, args.ver)

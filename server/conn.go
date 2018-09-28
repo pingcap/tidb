@@ -124,7 +124,9 @@ func (cc *clientConn) handshake() error {
 	}
 	if err := cc.readOptionalSSLRequestAndHandshakeResponse(); err != nil {
 		err1 := cc.writeError(err)
-		terror.Log(errors.Trace(err1))
+		if err1 != nil {
+			log.Debug(err1)
+		}
 		return errors.Trace(err)
 	}
 	data := cc.alloc.AllocWithLen(4, 32)
@@ -373,13 +375,17 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 	cc.dbname = resp.DBName
 	cc.collation = resp.Collation
 	cc.attrs = resp.Attrs
+	err = cc.openSessionAndDoAuth(resp.Auth)
+	return errors.Trace(err)
+}
 
-	// Open session and do auth.
+func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 	var tlsStatePtr *tls.ConnectionState
 	if cc.tlsConn != nil {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
+	var err error
 	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, cc.collation, cc.dbname, tlsStatePtr)
 	if err != nil {
 		return errors.Trace(err)
@@ -391,7 +397,7 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse() error {
 		if err1 != nil {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
 		}
-		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, resp.Auth, cc.salt) {
+		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
 			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
 		}
 	}
@@ -445,7 +451,7 @@ func (cc *clientConn) Run() {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				errStack := errors.ErrorStack(err)
 				if !strings.Contains(errStack, "use of closed network connection") {
-					log.Errorf("[%d] read packet error, close this connection %s",
+					log.Errorf("con:%d read packet error, close this connection %s",
 						cc.connectionID, errStack)
 				}
 			}
@@ -465,11 +471,11 @@ func (cc *clientConn) Run() {
 				cc.addMetrics(data[0], startTime, nil)
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
-				log.Errorf("[%d] result undetermined error, close this connection %s",
+				log.Errorf("con:%d result undetermined error, close this connection %s",
 					cc.connectionID, errors.ErrorStack(err))
 				return
 			} else if terror.ErrCritical.Equal(err) {
-				log.Errorf("[%d] critical error, stop the server listener %s",
+				log.Errorf("con:%d critical error, stop the server listener %s",
 					cc.connectionID, errors.ErrorStack(err))
 				metrics.CriticalErrorCounter.Add(1)
 				select {
@@ -478,7 +484,7 @@ func (cc *clientConn) Run() {
 				}
 				return
 			}
-			log.Warnf("[%d] dispatch error:\n%s\n%q\n%s",
+			log.Warnf("con:%d dispatch error:\n%s\n%q\n%s",
 				cc.connectionID, cc, queryStrForLog(string(data[1:])), errStrForLog(err))
 			err1 := cc.writeError(err)
 			terror.Log(errors.Trace(err1))
@@ -622,6 +628,8 @@ func (cc *clientConn) dispatch(data []byte) error {
 		return cc.handleStmtReset(data)
 	case mysql.ComSetOption:
 		return cc.handleSetOption(data)
+	case mysql.ComChangeUser:
+		return cc.handleChangeUser(data)
 	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)
 	}
@@ -806,7 +814,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		}
 		return errors.Trace(err)
 	}
-	return errors.Trace(txn.Commit(ctx))
+	return errors.Trace(cc.ctx.CommitTxn(sessionctx.SetConnID2Ctx(ctx, loadDataInfo.Ctx)))
 }
 
 // handleLoadStats does the additional work after processing the 'load stats' query.
@@ -887,9 +895,15 @@ func (cc *clientConn) handleFieldList(sql string) (err error) {
 		return errors.Trace(err)
 	}
 	data := make([]byte, 4, 1024)
-	for _, v := range columns {
+	for _, column := range columns {
+		// Current we doesn't output defaultValue but reserve defaultValue length byte to make mariadb client happy.
+		// https://dev.mysql.com/doc/internals/en/com-query-response.html#column-definition
+		// TODO: fill the right DefaultValues.
+		column.DefaultValueLength = 0
+		column.DefaultValue = []byte{}
+
 		data = data[0:4]
-		data = v.Dump(data)
+		data = column.Dump(data)
 		if err := cc.writePacket(data); err != nil {
 			return errors.Trace(err)
 		}
@@ -955,13 +969,13 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs ResultSet, binary bool
 	chk := rs.NewChunk()
 	gotColumnInfo := false
 	for {
-		// Here server.tidbResultSet implements NextChunk method.
-		err := rs.NextChunk(ctx, chk)
+		// Here server.tidbResultSet implements Next method.
+		err := rs.Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if !gotColumnInfo {
-			// We need to call NextChunk before we get columns.
+			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
 			err = cc.writeColumnInfo(columns)
@@ -1020,4 +1034,30 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 	cc.setConn(tlsConn)
 	cc.tlsConn = tlsConn
 	return nil
+}
+
+func (cc *clientConn) handleChangeUser(data []byte) error {
+	user, data := parseNullTermString(data)
+	cc.user = hack.String(user)
+	if len(data) < 1 {
+		return mysql.ErrMalformPacket
+	}
+	passLen := int(data[0])
+	data = data[1:]
+	if passLen > len(data) {
+		return mysql.ErrMalformPacket
+	}
+	pass := data[:passLen]
+	data = data[passLen:]
+	dbName, data := parseNullTermString(data)
+	cc.dbname = hack.String(dbName)
+	err := cc.ctx.Close()
+	if err != nil {
+		log.Debug(err)
+	}
+	err = cc.openSessionAndDoAuth(pass)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return cc.writeOK()
 }

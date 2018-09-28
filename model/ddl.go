@@ -28,42 +28,44 @@ type ActionType byte
 
 // List DDL actions.
 const (
-	ActionNone            ActionType = 0
-	ActionCreateSchema    ActionType = 1
-	ActionDropSchema      ActionType = 2
-	ActionCreateTable     ActionType = 3
-	ActionDropTable       ActionType = 4
-	ActionAddColumn       ActionType = 5
-	ActionDropColumn      ActionType = 6
-	ActionAddIndex        ActionType = 7
-	ActionDropIndex       ActionType = 8
-	ActionAddForeignKey   ActionType = 9
-	ActionDropForeignKey  ActionType = 10
-	ActionTruncateTable   ActionType = 11
-	ActionModifyColumn    ActionType = 12
-	ActionRebaseAutoID    ActionType = 13
-	ActionRenameTable     ActionType = 14
-	ActionSetDefaultValue ActionType = 15
-	ActionShardRowID      ActionType = 16
+	ActionNone               ActionType = 0
+	ActionCreateSchema       ActionType = 1
+	ActionDropSchema         ActionType = 2
+	ActionCreateTable        ActionType = 3
+	ActionDropTable          ActionType = 4
+	ActionAddColumn          ActionType = 5
+	ActionDropColumn         ActionType = 6
+	ActionAddIndex           ActionType = 7
+	ActionDropIndex          ActionType = 8
+	ActionAddForeignKey      ActionType = 9
+	ActionDropForeignKey     ActionType = 10
+	ActionTruncateTable      ActionType = 11
+	ActionModifyColumn       ActionType = 12
+	ActionRebaseAutoID       ActionType = 13
+	ActionRenameTable        ActionType = 14
+	ActionSetDefaultValue    ActionType = 15
+	ActionShardRowID         ActionType = 16
+	ActionModifyTableComment ActionType = 17
 )
 
 var actionMap = map[ActionType]string{
-	ActionCreateSchema:    "create schema",
-	ActionDropSchema:      "drop schema",
-	ActionCreateTable:     "create table",
-	ActionDropTable:       "drop table",
-	ActionAddColumn:       "add column",
-	ActionDropColumn:      "drop column",
-	ActionAddIndex:        "add index",
-	ActionDropIndex:       "drop index",
-	ActionAddForeignKey:   "add foreign key",
-	ActionDropForeignKey:  "drop foreign key",
-	ActionTruncateTable:   "truncate table",
-	ActionModifyColumn:    "modify column",
-	ActionRebaseAutoID:    "rebase auto_increment ID",
-	ActionRenameTable:     "rename table",
-	ActionSetDefaultValue: "set default value",
-	ActionShardRowID:      "shard row ID",
+	ActionCreateSchema:       "create schema",
+	ActionDropSchema:         "drop schema",
+	ActionCreateTable:        "create table",
+	ActionDropTable:          "drop table",
+	ActionAddColumn:          "add column",
+	ActionDropColumn:         "drop column",
+	ActionAddIndex:           "add index",
+	ActionDropIndex:          "drop index",
+	ActionAddForeignKey:      "add foreign key",
+	ActionDropForeignKey:     "drop foreign key",
+	ActionTruncateTable:      "truncate table",
+	ActionModifyColumn:       "modify column",
+	ActionRebaseAutoID:       "rebase auto_increment ID",
+	ActionRenameTable:        "rename table",
+	ActionSetDefaultValue:    "set default value",
+	ActionShardRowID:         "shard row ID",
+	ActionModifyTableComment: "modify table comment",
 }
 
 // String return current ddl action in string
@@ -79,6 +81,7 @@ type HistoryInfo struct {
 	SchemaVersion int64
 	DBInfo        *DBInfo
 	TableInfo     *TableInfo
+	FinishedTS    uint64
 }
 
 // AddDBInfo adds schema version and schema information that are used for binlog.
@@ -124,6 +127,8 @@ type Job struct {
 	// StartTS uses timestamp allocated by TSO.
 	// Now it's the TS when we put the job to TiKV queue.
 	StartTS uint64 `json:"start_ts"`
+	// DependencyID is the job's ID that the current job depends on.
+	DependencyID int64 `json:"dependency_id"`
 	// Query string of the ddl job.
 	Query      string       `json:"query"`
 	BinlogInfo *HistoryInfo `json:"binlog"`
@@ -206,8 +211,46 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), tsConvert2Time(job.StartTS))
+	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), tsConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+}
+
+func (job *Job) hasDependentSchema(other *Job) (bool, error) {
+	if other.Type == ActionDropSchema || other.Type == ActionCreateSchema {
+		if other.SchemaID == job.SchemaID {
+			return true, nil
+		}
+		if job.Type == ActionRenameTable {
+			var oldSchemaID int64
+			if err := job.DecodeArgs(&oldSchemaID); err != nil {
+				return false, errors.Trace(err)
+			}
+			if other.SchemaID == oldSchemaID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// IsDependentOn returns whether the job depends on "other".
+// How to check the job depends on "other"?
+// 1. The two jobs handle the same database when one of the two jobs is an ActionDropSchema or ActionCreateSchema type.
+// 2. Or the two jobs handle the same table.
+func (job *Job) IsDependentOn(other *Job) (bool, error) {
+	isDependent, err := job.hasDependentSchema(other)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
+	}
+	isDependent, err = other.hasDependentSchema(job)
+	if err != nil || isDependent {
+		return isDependent, errors.Trace(err)
+	}
+
+	if other.TableID == job.TableID {
+		return true, nil
+	}
+	return false, nil
 }
 
 // IsFinished returns whether job is finished or not.
@@ -218,7 +261,12 @@ func (job *Job) IsFinished() bool {
 
 // IsCancelled returns whether the job is cancelled or not.
 func (job *Job) IsCancelled() bool {
-	return job.State == JobStateCancelled || job.State == JobStateRollbackDone
+	return job.State == JobStateCancelled
+}
+
+// IsRollbackDone returns whether the job is rolled back or not.
+func (job *Job) IsRollbackDone() bool {
+	return job.State == JobStateRollbackDone
 }
 
 // IsRollingback returns whether the job is rolling back or not.

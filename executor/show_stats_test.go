@@ -15,7 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -73,7 +73,7 @@ func (s *testSuite) TestShowStatsHealthy(c *C) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 100"))
 	tk.MustExec("insert into t values (1), (2)")
-	do, _ := tidb.GetDomain(s.store)
+	do, _ := session.GetDomain(s.store)
 	do.StatsHandle().DumpStatsDeltaToKV()
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 100"))
@@ -87,4 +87,13 @@ func (s *testSuite) TestShowStatsHealthy(c *C) {
 	do.StatsHandle().DumpStatsDeltaToKV()
 	do.StatsHandle().Update(do.InfoSchema())
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t 0"))
+}
+
+func (s *testSuite) TestShowStatsHasNullValue(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, index idx(a))")
+	tk.MustExec("insert into t values(NULL)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t idx 1 0 1 1 NULL NULL"))
 }

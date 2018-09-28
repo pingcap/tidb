@@ -31,21 +31,17 @@ func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 		p.Children()[i] = child.pushDownTopN(nil)
 	}
 	if topN != nil {
-		return topN.setChild(p, false)
+		return topN.setChild(p)
 	}
 	return p
 }
 
-// setChild set p as topn's child. If eliminable is true, this topn plan can be removed.
-func (lt *LogicalTopN) setChild(p LogicalPlan, eliminable bool) LogicalPlan {
-	if lt.partial && eliminable {
-		return p
-	}
+// setChild set p as topn's child.
+func (lt *LogicalTopN) setChild(p LogicalPlan) LogicalPlan {
 	if lt.isLimit() {
 		limit := LogicalLimit{
-			Count:   lt.Count,
-			Offset:  lt.Offset,
-			partial: lt.partial,
+			Count:  lt.Count,
+			Offset: lt.Offset,
 		}.init(lt.ctx)
 		limit.SetChildren(p)
 		return limit
@@ -60,7 +56,6 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 		return ls.baseLogicalPlan.pushDownTopN(nil)
 	} else if topN.isLimit() {
 		topN.ByItems = ls.ByItems
-		// If a Limit is pushed down, the LogicalSort should be converted to topN and be pushed again.
 		return ls.children[0].pushDownTopN(topN)
 	}
 	// If a TopN is pushed down, this sort is useless.
@@ -74,7 +69,7 @@ func (p *LogicalLimit) convertToTopN() *LogicalTopN {
 func (p *LogicalLimit) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	child := p.children[0].pushDownTopN(p.convertToTopN())
 	if topN != nil {
-		return topN.setChild(child, false)
+		return topN.setChild(child)
 	}
 	return child
 }
@@ -83,7 +78,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	for i, child := range p.children {
 		var newTopN *LogicalTopN
 		if topN != nil {
-			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, partial: true}.init(p.ctx)
+			newTopN = LogicalTopN{Count: topN.Count + topN.Offset}.init(p.ctx)
 			for _, by := range topN.ByItems {
 				newTopN.ByItems = append(newTopN.ByItems, &ByItems{by.Expr.Clone(), by.Desc})
 			}
@@ -91,7 +86,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 		p.children[i] = child.pushDownTopN(newTopN)
 	}
 	if topN != nil {
-		return topN.setChild(p, true)
+		return topN.setChild(p)
 	}
 	return p
 }
@@ -108,28 +103,25 @@ func (p *LogicalProjection) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
 func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPlan {
-	var newTopN *LogicalTopN
-	if topN != nil {
-		canPush := true
-		for _, by := range topN.ByItems {
-			cols := expression.ExtractColumns(by.Expr)
-			if len(p.children[1-idx].Schema().ColumnsIndices(cols)) != 0 {
-				canPush = false
-				break
+	if topN == nil {
+		return p.children[idx].pushDownTopN(nil)
+	}
+
+	for _, by := range topN.ByItems {
+		cols := expression.ExtractColumns(by.Expr)
+		for _, col := range cols {
+			if p.children[1-idx].Schema().Contains(col) {
+				return p.children[idx].pushDownTopN(nil)
 			}
 		}
-		if canPush {
-			newTopN = LogicalTopN{
-				Count:   topN.Count + topN.Offset,
-				ByItems: make([]*ByItems, len(topN.ByItems)),
-				partial: true,
-			}.init(topN.ctx)
-			// The old topN should be maintained upon Join,
-			// so we clone TopN here and push down a newTopN.
-			for i := range topN.ByItems {
-				newTopN.ByItems[i] = topN.ByItems[i].Clone()
-			}
-		}
+	}
+
+	newTopN := LogicalTopN{
+		Count:   topN.Count + topN.Offset,
+		ByItems: make([]*ByItems, len(topN.ByItems)),
+	}.init(topN.ctx)
+	for i := range topN.ByItems {
+		newTopN.ByItems[i] = topN.ByItems[i].Clone()
 	}
 	return p.children[idx].pushDownTopN(newTopN)
 }
@@ -140,14 +132,15 @@ func (p *LogicalJoin) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 		p.children[0] = p.pushDownTopNToChild(topN, 0)
 		p.children[1] = p.children[1].pushDownTopN(nil)
 	case RightOuterJoin:
-		p.children[0] = p.children[0].pushDownTopN(nil)
 		p.children[1] = p.pushDownTopNToChild(topN, 1)
+		p.children[0] = p.children[0].pushDownTopN(nil)
 	default:
 		return p.baseLogicalPlan.pushDownTopN(topN)
 	}
+
 	// The LogicalJoin may be also a LogicalApply. So we must use self to set parents.
 	if topN != nil {
-		return topN.setChild(p.self, true)
+		return topN.setChild(p.self)
 	}
 	return p.self
 }

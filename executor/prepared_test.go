@@ -14,9 +14,11 @@
 package executor_test
 
 import (
+	"math"
+	"strings"
+
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/terror"
@@ -25,14 +27,17 @@ import (
 )
 
 func (s *testSuite) TestPrepared(c *C) {
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	orgEnable := plan.PreparedPlanCacheEnabled
+	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		plan.PreparedPlanCacheEnabled = flag
+		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -104,7 +109,8 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 		rs, err = stmt.Exec(ctx)
 		c.Assert(err, IsNil)
-		_, err = rs.Next(ctx)
+		chk := rs.NewChunk()
+		err = rs.Next(ctx, chk)
 		c.Assert(err, IsNil)
 		c.Assert(rs.Close(), IsNil)
 
@@ -175,22 +181,23 @@ func (s *testSuite) TestPrepared(c *C) {
 
 		// Coverage.
 		exec := &executor.ExecuteExec{}
-		exec.Next(ctx)
+		exec.Next(ctx, nil)
 		exec.Close()
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testSuite) TestPreparedLimitOffset(c *C) {
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	orgEnable := plan.PreparedPlanCacheEnabled
+	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
 	flags := []bool{false, true}
 	ctx := context.Background()
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		plan.PreparedPlanCacheEnabled = flag
+		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists prepare_test")
@@ -213,18 +220,19 @@ func (s *testSuite) TestPreparedLimitOffset(c *C) {
 		_, err = tk.Se.ExecutePreparedStmt(ctx, stmtID, 1)
 		c.Assert(err, IsNil)
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testSuite) TestPreparedNullParam(c *C) {
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	orgEnable := plan.PreparedPlanCacheEnabled
+	orgCapacity := plan.PreparedPlanCacheCapacity
+	defer func() {
+		plan.PreparedPlanCacheEnabled = orgEnable
+		plan.PreparedPlanCacheCapacity = orgCapacity
+	}()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		plan.PreparedPlanCacheEnabled = flag
+		plan.PreparedPlanCacheCapacity = 100
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
@@ -248,8 +256,6 @@ func (s *testSuite) TestPreparedNullParam(c *C) {
 		r = tk.MustQuery(`execute stmt using @id;`)
 		r.Check(testkit.Rows("1"))
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testSuite) TestPreparedNameResolver(c *C) {
@@ -259,5 +265,33 @@ func (s *testSuite) TestPreparedNameResolver(c *C) {
 	tk.MustExec("create table t (id int, KEY id (id))")
 	tk.MustExec("prepare stmt from 'select * from t limit ? offset ?'")
 	_, err := tk.Exec("prepare stmt from 'select b from t'")
-	c.Assert(err.Error(), Equals, "[plan:1054]Unknown column 'b' in 'field list'")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'field list'")
+
+	_, err = tk.Exec("prepare stmt from '(select * FROM t) union all (select * FROM t) order by a limit ?'")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'order clause'")
+}
+
+func (s *testSuite) TestPrepareMaxParamCountCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v int)")
+	normalSQL, normalParams := generateBatchSQL(math.MaxUint16)
+	_, err := tk.Exec(normalSQL, normalParams...)
+	c.Assert(err, IsNil)
+
+	bigSQL, bigParams := generateBatchSQL(math.MaxUint16 + 2)
+	_, err = tk.Exec(bigSQL, bigParams...)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[executor:1390]Prepared statement contains too many placeholders")
+}
+
+func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
+	params := make([]interface{}, 0, paramCount)
+	placeholders := make([]string, 0, paramCount)
+	for i := 0; i < paramCount; i++ {
+		params = append(params, i)
+		placeholders = append(placeholders, "(?)")
+	}
+	return "insert into t values " + strings.Join(placeholders, ","), params
 }

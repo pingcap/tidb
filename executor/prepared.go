@@ -94,17 +94,7 @@ func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt str
 }
 
 // Next implements the Executor Next interface.
-func (e *PrepareExec) Next(ctx context.Context) (Row, error) {
-	return nil, errors.Trace(e.DoPrepare())
-}
-
-// NextChunk implements the Executor NextChunk interface.
-func (e *PrepareExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.DoPrepare())
-}
-
-// DoPrepare prepares the statement, it can be called multiple times without side effect.
-func (e *PrepareExec) DoPrepare() error {
+func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
@@ -136,6 +126,13 @@ func (e *PrepareExec) DoPrepare() error {
 	}
 	var extractor paramMarkerExtractor
 	stmt.Accept(&extractor)
+
+	// Prepare parameters should NOT over 2 bytes(MaxUint16)
+	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
+	if len(extractor.markers) > math.MaxUint16 {
+		return ErrPsManyParam
+	}
+
 	err = plan.Preprocess(e.ctx, stmt, e.is, true)
 	if err != nil {
 		return errors.Trace(err)
@@ -195,13 +192,7 @@ type ExecuteExec struct {
 }
 
 // Next implements the Executor Next interface.
-// It will never be called.
-func (e *ExecuteExec) Next(ctx context.Context) (Row, error) {
-	return nil, nil
-}
-
-// NextChunk implements the Executor NextChunk interface.
-func (e *ExecuteExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+func (e *ExecuteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -237,16 +228,7 @@ type DeallocateExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *DeallocateExec) Next(ctx context.Context) (Row, error) {
-	return nil, errors.Trace(e.run(ctx))
-}
-
-// NextChunk implements the Executor NextChunk interface.
-func (e *DeallocateExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.run(ctx))
-}
-
-func (e *DeallocateExec) run(ctx context.Context) error {
+func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
@@ -306,6 +288,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.InUpdateOrDeleteStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.Priority = stmt.Priority
 	case *ast.DeleteStmt:
 		sc.IgnoreTruncate = false
 		sc.OverflowAsWarning = false
@@ -313,6 +296,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) {
 		sc.InUpdateOrDeleteStmt = true
 		sc.DividedByZeroAsWarning = stmt.IgnoreErr
 		sc.IgnoreZeroInDate = !sessVars.StrictSQLMode || stmt.IgnoreErr
+		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
 		sc.IgnoreTruncate = false
 		sc.TruncateAsWarning = !sessVars.StrictSQLMode || stmt.IgnoreErr

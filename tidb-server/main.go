@@ -27,7 +27,6 @@ import (
 
 	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -36,7 +35,10 @@ import (
 	"github.com/pingcap/tidb/plan"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/gcworker"
@@ -91,7 +93,7 @@ var (
 	socket       = flag.String(nmSocket, "", "The socket file to use for connection.")
 	binlogSocket = flag.String(nmBinlogSocket, "", "socket file to write binlog")
 	runDDL       = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
-	ddlLease     = flag.String(nmDdlLease, "10s", "schema lease duration, very dangerous to change only if you know what you do")
+	ddlLease     = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 	tokenLimit   = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
 
 	// Log
@@ -135,44 +137,48 @@ func main() {
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
+	setupMetrics()
 	createStoreAndDomain()
 	createServer()
 	setupSignalHandler()
-	setupMetrics()
 	runServer()
 	cleanup()
 	os.Exit(0)
 }
 
 func registerStores() {
-	err := tidb.RegisterStore("tikv", tikv.Driver{})
+	err := session.RegisterStore("tikv", tikv.Driver{})
 	terror.MustNil(err)
 	tikv.NewGCHandlerFunc = gcworker.NewGCWorker
-	err = tidb.RegisterStore("mocktikv", mockstore.MockDriver{})
+	err = session.RegisterStore("mocktikv", mockstore.MockDriver{})
 	terror.MustNil(err)
 }
 
 func createStoreAndDomain() {
 	fullPath := fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
 	var err error
-	storage, err = tidb.NewStore(fullPath)
+	storage, err = session.NewStore(fullPath)
 	terror.MustNil(err)
 	// Bootstrap a session to load information schema.
-	dom, err = tidb.BootstrapSession(storage)
+	dom, err = session.BootstrapSession(storage)
 	terror.MustNil(err)
 }
 
 func setupBinlogClient() {
-	if cfg.BinlogSocket == "" {
+	if cfg.Binlog.BinlogSocket == "" {
 		return
 	}
 	dialerOpt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 		return net.DialTimeout("unix", addr, timeout)
 	})
-	clientConn, err := tidb.DialPumpClientWithRetry(cfg.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
+	clientConn, err := session.DialPumpClientWithRetry(cfg.Binlog.BinlogSocket, util.DefaultMaxRetries, dialerOpt)
 	terror.MustNil(err)
+	if cfg.Binlog.IgnoreError {
+		binloginfo.SetIgnoreError(true)
+	}
+	binloginfo.SetGRPCTimeout(parseDuration(cfg.Binlog.WriteTimeout))
 	binloginfo.SetPumpClient(binlog.NewPumpClient(clientConn))
-	log.Infof("created binlog client at %s", cfg.BinlogSocket)
+	log.Infof("created binlog client at %s, ignore error %v", cfg.Binlog.BinlogSocket, cfg.Binlog.IgnoreError)
 }
 
 // Prometheus push.
@@ -274,7 +280,7 @@ func overrideConfig() {
 		cfg.Socket = *socket
 	}
 	if actualFlags[nmBinlogSocket] {
-		cfg.BinlogSocket = *binlogSocket
+		cfg.Binlog.BinlogSocket = *binlogSocket
 	}
 	if actualFlags[nmRunDDL] {
 		cfg.RunDDL = *runDDL
@@ -347,27 +353,35 @@ func validateConfig() {
 		os.Exit(-1)
 	}
 	cfg.OOMAction = strings.ToLower(cfg.OOMAction)
+
+	// lower_case_table_names is allowed to be 0, 1, 2
+	if cfg.LowerCaseTableNames < 0 || cfg.LowerCaseTableNames > 2 {
+		log.Errorf("lower-case-table-names should be 0 or 1 or 2.")
+		os.Exit(-1)
+	}
 }
 
 func setGlobalVars() {
 	ddlLeaseDuration := parseDuration(cfg.Lease)
-	tidb.SetSchemaLease(ddlLeaseDuration)
+	session.SetSchemaLease(ddlLeaseDuration)
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
-	tidb.SetStatsLease(statsLeaseDuration)
+	session.SetStatsLease(statsLeaseDuration)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
+	statistics.FeedbackProbability = cfg.Performance.FeedbackProbability
+	statistics.MaxQueryFeedbackCount = int(cfg.Performance.QueryFeedbackLimit)
+	plan.RatioOfPseudoEstimate = cfg.Performance.PseudoEstimateRatio
 	ddl.RunWorker = cfg.RunDDL
 	ddl.EnableSplitTableRegion = cfg.SplitTable
-	tidb.SetCommitRetryLimit(cfg.Performance.RetryLimit)
-	plan.JoinConcurrency = cfg.Performance.JoinConcurrency
+	session.SetCommitRetryLimit(cfg.Performance.RetryLimit)
 	plan.AllowCartesianProduct = cfg.Performance.CrossJoin
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 
-	plan.PlanCacheEnabled = cfg.PlanCache.Enabled
-	if plan.PlanCacheEnabled {
-		plan.PlanCacheCapacity = cfg.PlanCache.Capacity
-		plan.PlanCacheShards = cfg.PlanCache.Shards
-		plan.GlobalPlanCache = kvcache.NewShardedLRUCache(plan.PlanCacheCapacity, plan.PlanCacheShards)
+	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
+	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
+
+	if cfg.PlanCache.Enabled {
+		plan.GlobalPlanCache = kvcache.NewShardedLRUCache(cfg.PlanCache.Capacity, cfg.PlanCache.Shards)
 	}
 
 	plan.PreparedPlanCacheEnabled = cfg.PreparedPlanCache.Enabled
@@ -378,6 +392,8 @@ func setGlobalVars() {
 	if cfg.TiKVClient.GrpcConnectionCount > 0 {
 		tikv.MaxConnectionCount = cfg.TiKVClient.GrpcConnectionCount
 	}
+	tikv.GrpcKeepAliveTime = time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
+	tikv.GrpcKeepAliveTimeout = time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 }
@@ -400,7 +416,8 @@ func createServer() {
 	driver = server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)
-	terror.MustNil(err)
+	// Both domain and storage have started, so we have to clean them before exiting.
+	terror.MustNil(err, closeDomainAndStorage)
 	if cfg.XProtocol.XServer {
 		xcfg := &xserver.Config{
 			Addr:       fmt.Sprintf("%s:%d", cfg.XProtocol.XHost, cfg.XProtocol.XPort),
@@ -408,7 +425,7 @@ func createServer() {
 			TokenLimit: cfg.TokenLimit,
 		}
 		xsvr, err = xserver.NewServer(xcfg)
-		terror.MustNil(err)
+		terror.MustNil(err, closeDomainAndStorage)
 	}
 }
 
@@ -423,7 +440,7 @@ func setupSignalHandler() {
 	go func() {
 		sig := <-sc
 		log.Infof("Got signal [%s] to exit.", sig)
-		if sig == syscall.SIGTERM {
+		if sig == syscall.SIGQUIT {
 			graceful = true
 		}
 
@@ -470,11 +487,15 @@ func runServer() {
 	}
 }
 
+func closeDomainAndStorage() {
+	dom.Close()
+	err := storage.Close()
+	terror.Log(errors.Trace(err))
+}
+
 func cleanup() {
 	if graceful {
 		svr.GracefulDown()
 	}
-	dom.Close()
-	err := storage.Close()
-	terror.Log(errors.Trace(err))
+	closeDomainAndStorage()
 }

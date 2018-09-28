@@ -126,13 +126,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
-	if timeout > 0 {
-		context, cancel := context.WithTimeout(bo, timeout)
-		defer cancel()
-		resp, err = s.client.SendReq(context, ctx.Addr, req)
-	} else {
-		resp, err = s.client.SendReq(bo, ctx.Addr, req)
-	}
+	resp, err = s.client.SendRequest(bo, ctx.Addr, req, timeout)
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
@@ -195,12 +189,18 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		// Retry if error is `NotLeader`.
 		log.Debugf("tikv reports `NotLeader`: %s, ctx: %v, retry later", notLeader, ctx)
 		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId())
-		if notLeader.GetLeader() == nil {
-			err = bo.Backoff(BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx))
-			if err != nil {
-				return false, errors.Trace(err)
-			}
+
+		var boType backoffType
+		if notLeader.GetLeader() != nil {
+			boType = BoUpdateLeader
+		} else {
+			boType = BoRegionMiss
 		}
+
+		if err = bo.Backoff(boType, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
+			return false, errors.Trace(err)
+		}
+
 		return true, nil
 	}
 

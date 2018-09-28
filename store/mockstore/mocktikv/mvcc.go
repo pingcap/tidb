@@ -18,7 +18,6 @@ import (
 	"encoding/binary"
 	"io"
 	"sort"
-	"sync"
 
 	"github.com/google/btree"
 	"github.com/juju/errors"
@@ -27,8 +26,6 @@ import (
 )
 
 type mvccValueType int
-
-const btreeDegree = 32
 
 const (
 	typePut mvccValueType = iota
@@ -364,16 +361,16 @@ func (e *mvccEntry) containsStartTS(startTS uint64) bool {
 func (e *mvccEntry) dumpMvccInfo() *kvrpcpb.MvccInfo {
 	info := &kvrpcpb.MvccInfo{}
 	if e.lock != nil {
-		info.Lock = &kvrpcpb.LockInfo{
-			Key:         e.key,
-			PrimaryLock: e.lock.primary,
-			LockVersion: e.lock.startTS,
-			LockTtl:     e.lock.ttl,
+		info.Lock = &kvrpcpb.MvccLock{
+			Type:       e.lock.op,
+			StartTs:    e.lock.startTS,
+			Primary:    e.lock.primary,
+			ShortValue: e.lock.value,
 		}
 	}
 
-	info.Writes = make([]*kvrpcpb.WriteInfo, len(e.values))
-	info.Values = make([]*kvrpcpb.ValueInfo, len(e.values))
+	info.Writes = make([]*kvrpcpb.MvccWrite, len(e.values))
+	info.Values = make([]*kvrpcpb.MvccValue, len(e.values))
 
 	for id, item := range e.values {
 		var tp kvrpcpb.Op
@@ -385,15 +382,15 @@ func (e *mvccEntry) dumpMvccInfo() *kvrpcpb.MvccInfo {
 		case typeRollback:
 			tp = kvrpcpb.Op_Rollback
 		}
-		info.Writes[id] = &kvrpcpb.WriteInfo{
-			StartTs:  item.startTS,
+		info.Writes[id] = &kvrpcpb.MvccWrite{
 			Type:     tp,
+			StartTs:  item.startTS,
 			CommitTs: item.commitTS,
 		}
 
-		info.Values[id] = &kvrpcpb.ValueInfo{
-			Value: item.value,
-			Ts:    item.startTS,
+		info.Values[id] = &kvrpcpb.MvccValue{
+			Value:   item.value,
+			StartTs: item.startTS,
 		}
 	}
 	return info
@@ -427,6 +424,8 @@ type MVCCStore interface {
 	ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error)
 	ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error
 	BatchResolveLock(startKey, endKey []byte, txnInfos map[uint64]uint64) error
+	DeleteRange(startKey, endKey []byte) error
+	Close() error
 }
 
 // RawKV is a key-value storage. MVCCStore can be implemented upon it with timestamp encoded into key.
@@ -435,43 +434,13 @@ type RawKV interface {
 	RawScan(startKey, endKey []byte, limit int) []Pair
 	RawPut(key, value []byte)
 	RawDelete(key []byte)
+	RawDeleteRange(startKey, endKey []byte)
 }
 
 // MVCCDebugger is for debugging.
 type MVCCDebugger interface {
 	MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte)
 	MvccGetByKey(key []byte) *kvrpcpb.MvccInfo
-}
-
-// MvccStore is an in-memory, multi-versioned, transaction-supported kv storage.
-type MvccStore struct {
-	sync.RWMutex
-	tree  *btree.BTree
-	rawkv *btree.BTree
-}
-
-// NewMvccStore creates a MvccStore.
-func NewMvccStore() *MvccStore {
-	return &MvccStore{
-		tree:  btree.New(btreeDegree),
-		rawkv: btree.New(btreeDegree),
-	}
-}
-
-// Get reads a key by ts.
-func (s *MvccStore) Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
-	s.RLock()
-	defer s.RUnlock()
-
-	return s.get(NewMvccKey(key), startTS, isoLevel)
-}
-
-func (s *MvccStore) get(key MvccKey, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
-	entry := s.tree.Get(newEntry(key))
-	if entry == nil {
-		return nil, nil
-	}
-	return entry.(*mvccEntry).Get(startTS, isoLevel)
 }
 
 // Pair is a KV pair read from MvccStore or an error if any occurs.
@@ -481,363 +450,9 @@ type Pair struct {
 	Err   error
 }
 
-// BatchGet gets values with keys and ts.
-func (s *MvccStore) BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
-	s.RLock()
-	defer s.RUnlock()
-
-	var pairs []Pair
-	for _, k := range ks {
-		val, err := s.get(NewMvccKey(k), startTS, isoLevel)
-		if val == nil && err == nil {
-			continue
-		}
-		pairs = append(pairs, Pair{
-			Key:   k,
-			Value: val,
-			Err:   err,
-		})
-	}
-	return pairs
-}
-
 func regionContains(startKey []byte, endKey []byte, key []byte) bool {
 	return bytes.Compare(startKey, key) <= 0 &&
 		(bytes.Compare(key, endKey) < 0 || len(endKey) == 0)
-}
-
-// Scan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey.
-func (s *MvccStore) Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
-	s.RLock()
-	defer s.RUnlock()
-
-	startKey = NewMvccKey(startKey)
-	endKey = NewMvccKey(endKey)
-
-	var pairs []Pair
-	iterator := func(item btree.Item) bool {
-		if len(pairs) >= limit {
-			return false
-		}
-		k := item.(*mvccEntry).key
-		if !regionContains(startKey, endKey, k) {
-			return false
-		}
-		val, err := s.get(k, startTS, isoLevel)
-		if val != nil || err != nil {
-			pairs = append(pairs, Pair{
-				Key:   k.Raw(),
-				Value: val,
-				Err:   err,
-			})
-		}
-		return true
-	}
-	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
-	return pairs
-}
-
-// ReverseScan reads up to a limited number of Pairs that greater than or equal to startKey and less than endKey
-// in descending order.
-func (s *MvccStore) ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair {
-	s.RLock()
-	defer s.RUnlock()
-
-	startKey = NewMvccKey(startKey)
-	endKey = NewMvccKey(endKey)
-
-	var pairs []Pair
-	iterator := func(item btree.Item) bool {
-		if len(pairs) >= limit {
-			return false
-		}
-		k := item.(*mvccEntry).key
-		if bytes.Equal(k, endKey) {
-			return true
-		}
-		if bytes.Compare(k, startKey) < 0 {
-			return false
-		}
-		val, err := s.get(k, startTS, isoLevel)
-		if val != nil || err != nil {
-			pairs = append(pairs, Pair{
-				Key:   k.Raw(),
-				Value: val,
-				Err:   err,
-			})
-		}
-		return true
-	}
-	s.tree.DescendLessOrEqual(newEntry(endKey), iterator)
-	return pairs
-}
-
-func (s *MvccStore) getOrNewEntry(key []byte) *mvccEntry {
-	if item := s.tree.Get(newEntry(key)); item != nil {
-		return item.(*mvccEntry).Clone()
-	}
-	return newEntry(key)
-}
-
-// submit writes entries into the rbtree.
-func (s *MvccStore) submit(ents ...*mvccEntry) {
-	for _, ent := range ents {
-		s.tree.ReplaceOrInsert(ent)
-	}
-}
-
-// Prewrite acquires a lock on a key. (1st phase of 2PC).
-func (s *MvccStore) Prewrite(mutations []*kvrpcpb.Mutation, primary []byte, startTS uint64, ttl uint64) []error {
-	s.Lock()
-	defer s.Unlock()
-
-	errs := make([]error, 0, len(mutations))
-	for _, m := range mutations {
-		entry := s.getOrNewEntry(NewMvccKey(m.Key))
-		err := entry.Prewrite(m, startTS, primary, ttl)
-		s.submit(entry)
-		errs = append(errs, err)
-	}
-	return errs
-}
-
-// Commit commits the lock on a key. (2nd phase of 2PC).
-func (s *MvccStore) Commit(keys [][]byte, startTS, commitTS uint64) error {
-	s.Lock()
-	defer s.Unlock()
-
-	var ents []*mvccEntry
-	for _, k := range keys {
-		entry := s.getOrNewEntry(NewMvccKey(k))
-		err := entry.Commit(startTS, commitTS)
-		if err != nil {
-			return err
-		}
-		ents = append(ents, entry)
-	}
-	s.submit(ents...)
-	return nil
-}
-
-// Cleanup cleanups a lock, often used when resolving a expired lock.
-func (s *MvccStore) Cleanup(key []byte, startTS uint64) error {
-	s.Lock()
-	defer s.Unlock()
-
-	entry := s.getOrNewEntry(NewMvccKey(key))
-	err := entry.Rollback(startTS)
-	if err != nil {
-		return err
-	}
-	s.submit(entry)
-	return nil
-}
-
-// Rollback cleanups multiple locks, often used when rolling back a conflict txn.
-func (s *MvccStore) Rollback(keys [][]byte, startTS uint64) error {
-	s.Lock()
-	defer s.Unlock()
-
-	var ents []*mvccEntry
-	for _, k := range keys {
-		entry := s.getOrNewEntry(NewMvccKey(k))
-		err := entry.Rollback(startTS)
-		if err != nil {
-			return err
-		}
-		ents = append(ents, entry)
-	}
-	s.submit(ents...)
-	return nil
-}
-
-// ScanLock scans all orphan locks in a Region.
-func (s *MvccStore) ScanLock(startKey, endKey []byte, maxTS uint64) ([]*kvrpcpb.LockInfo, error) {
-	s.RLock()
-	defer s.RUnlock()
-
-	var locks []*kvrpcpb.LockInfo
-	iterator := func(item btree.Item) bool {
-		ent := item.(*mvccEntry)
-		if !regionContains(startKey, endKey, ent.key) {
-			return false
-		}
-		if ent.lock != nil && ent.lock.startTS <= maxTS {
-			locks = append(locks, &kvrpcpb.LockInfo{
-				PrimaryLock: ent.lock.primary,
-				LockVersion: ent.lock.startTS,
-				Key:         ent.key.Raw(),
-			})
-		}
-		return true
-	}
-	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
-	return locks, nil
-}
-
-// ResolveLock resolves all orphan locks belong to a transaction.
-func (s *MvccStore) ResolveLock(startKey, endKey []byte, startTS, commitTS uint64) error {
-	s.Lock()
-	defer s.Unlock()
-
-	var ents []*mvccEntry
-	var err error
-	iterator := func(item btree.Item) bool {
-		ent := item.(*mvccEntry)
-		if !regionContains(startKey, endKey, ent.key) {
-			return false
-		}
-		if ent.lock != nil && ent.lock.startTS == startTS {
-			if commitTS > 0 {
-				err = ent.Commit(startTS, commitTS)
-			} else {
-				err = ent.Rollback(startTS)
-			}
-			if err != nil {
-				return false
-			}
-			ents = append(ents, ent)
-		}
-		return true
-	}
-	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.submit(ents...)
-	return nil
-}
-
-// BatchResolveLock resolves all orphan locks belong to a transaction.
-func (s *MvccStore) BatchResolveLock(startKey, endKey []byte, txnInfos map[uint64]uint64) error {
-	s.Lock()
-	defer s.Unlock()
-
-	var ents []*mvccEntry
-	var err error
-	iterator := func(item btree.Item) bool {
-		ent := item.(*mvccEntry)
-		if !regionContains(startKey, endKey, ent.key) {
-			return false
-		}
-		if ent.lock != nil {
-			if commitTS, ok := txnInfos[ent.lock.startTS]; ok {
-				if commitTS > 0 {
-					err = ent.Commit(ent.lock.startTS, commitTS)
-				} else {
-					err = ent.Rollback(ent.lock.startTS)
-				}
-				if err != nil {
-					return false
-				}
-				ents = append(ents, ent)
-			}
-		}
-		return true
-	}
-	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	s.submit(ents...)
-	return nil
-}
-
-// RawGet queries value with the key.
-func (s *MvccStore) RawGet(key []byte) []byte {
-	s.RLock()
-	defer s.RUnlock()
-
-	entry := s.rawkv.Get(newRawEntry(key))
-	if entry == nil {
-		return nil
-	}
-	return entry.(*rawEntry).value
-}
-
-// RawPut stores a key-value pair.
-func (s *MvccStore) RawPut(key, value []byte) {
-	s.Lock()
-	defer s.Unlock()
-	if value == nil {
-		value = []byte{}
-	}
-	entry := s.rawkv.Get(newRawEntry(key))
-	if entry != nil {
-		entry.(*rawEntry).value = value
-	} else {
-		s.rawkv.ReplaceOrInsert(&rawEntry{
-			key:   key,
-			value: value,
-		})
-	}
-}
-
-// RawDelete deletes a key-value pair.
-func (s *MvccStore) RawDelete(key []byte) {
-	s.Lock()
-	defer s.Unlock()
-	s.rawkv.Delete(newRawEntry(key))
-}
-
-// RawScan reads up to a limited number of rawkv Pairs.
-func (s *MvccStore) RawScan(startKey, endKey []byte, limit int) []Pair {
-	s.RLock()
-	defer s.RUnlock()
-
-	var pairs []Pair
-	iterator := func(item btree.Item) bool {
-		if len(pairs) >= limit {
-			return false
-		}
-		k := item.(*rawEntry).key
-		if !regionContains(startKey, endKey, k) {
-			return false
-		}
-		pairs = append(pairs, Pair{
-			Key:   k,
-			Value: item.(*rawEntry).value,
-		})
-		return true
-	}
-	s.rawkv.AscendGreaterOrEqual(newRawEntry(startKey), iterator)
-	return pairs
-}
-
-// MvccGetByStartTS gets mvcc info for the primary key with startTS
-func (s *MvccStore) MvccGetByStartTS(startKey, endKey []byte, starTS uint64) (*kvrpcpb.MvccInfo, []byte) {
-	s.RLock()
-	defer s.RUnlock()
-
-	var info *kvrpcpb.MvccInfo
-	var key []byte
-	iterator := func(item btree.Item) bool {
-		k := item.(*mvccEntry)
-		if !regionContains(startKey, endKey, k.key) {
-			return false
-		}
-		if k.containsStartTS(starTS) {
-			info = k.dumpMvccInfo()
-			key = k.key
-			return false
-		}
-		return true
-	}
-	s.tree.AscendGreaterOrEqual(newEntry(startKey), iterator)
-	return info, key
-}
-
-// MvccGetByKey gets mvcc info for the key
-func (s *MvccStore) MvccGetByKey(key []byte) *kvrpcpb.MvccInfo {
-	s.RLock()
-	defer s.RUnlock()
-
-	resp := s.tree.Get(newEntry(NewMvccKey(key)))
-	if resp == nil {
-		return nil
-	}
-	entry := resp.(*mvccEntry)
-	return entry.dumpMvccInfo()
 }
 
 // MvccKey is the encoded key type.
@@ -857,7 +472,7 @@ func (key MvccKey) Raw() []byte {
 	if len(key) == 0 {
 		return nil
 	}
-	_, k, err := codec.DecodeBytes(key)
+	_, k, err := codec.DecodeBytes(key, nil)
 	if err != nil {
 		panic(err)
 	}

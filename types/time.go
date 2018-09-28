@@ -32,7 +32,7 @@ import (
 
 // Portable analogs of some common call errors.
 var (
-	ErrInvalidTimeFormat      = errors.New("invalid time format")
+	ErrInvalidTimeFormat      = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, "invalid time format: '%v'")
 	ErrInvalidYearFormat      = errors.New("invalid year format")
 	ErrInvalidYear            = errors.New("invalid year")
 	ErrZeroDate               = errors.New("datetime zero in date")
@@ -369,12 +369,23 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 		// TODO: when hh:mm:ss overflow one day after rounding, it should be add to yy:mm:dd part,
 		// but mm:dd may contain 0, it makes the code complex, so we ignore it here.
 		if t2.Day()-1 > 0 {
-			return t, errors.Trace(ErrInvalidTimeFormat)
+			return t, errors.Trace(ErrInvalidTimeFormat.GenByArgs(t.String()))
 		}
 		nt = FromDate(t.Time.Year(), t.Time.Month(), t.Time.Day(), hour, minute, second, microsecond)
 	}
 
 	return Time{Time: nt, Type: t.Type, Fsp: fsp}, nil
+}
+
+// GetFsp gets the fsp of a string.
+func GetFsp(s string) (fsp int) {
+	fsp = len(s) - strings.LastIndex(s, ".") - 1
+	if fsp == len(s) {
+		fsp = 0
+	} else if fsp > 6 {
+		fsp = 6
+	}
+	return
 }
 
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
@@ -578,48 +589,39 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 	// TODO: only punctuation can be the delimiter for date parts or time parts.
 	// But only space and T can be the delimiter between the date and time part.
 	var (
-		year    int
-		month   int
-		day     int
-		hour    int
-		minute  int
-		second  int
-		fracStr string
-
-		err error
+		year, month, day, hour, minute, second int
+		fracStr                                string
+		hhmmss                                 bool
+		err                                    error
 	)
 
-	var hhmmss bool
 	seps, fracStr := splitDateTime(str)
 	switch len(seps) {
 	case 1:
-		sep := seps[0]
-		// No delimiter.
-		if len(sep) == 14 {
+		len := len(seps[0])
+		switch len {
+		case 14: // No delimiter.
 			// YYYYMMDDHHMMSS
-			_, err = fmt.Sscanf(sep, "%4d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
+			_, err = fmt.Sscanf(seps[0], "%4d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
 			hhmmss = true
-		} else if len(sep) == 12 {
-			// YYMMDDHHMMSS
-			_, err = fmt.Sscanf(sep, "%2d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
+		case 12: // YYMMDDHHMMSS
+			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d%2d%2d%2d", &year, &month, &day, &hour, &minute, &second)
 			year = adjustYear(year)
 			hhmmss = true
-		} else if len(sep) == 11 {
-			// YYMMDDHHMMS
-			_, err = fmt.Sscanf(sep, "%2d%2d%2d%2d%2d%1d", &year, &month, &day, &hour, &minute, &second)
+		case 11: // YYMMDDHHMMS
+			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d%2d%2d%1d", &year, &month, &day, &hour, &minute, &second)
 			year = adjustYear(year)
 			hhmmss = true
-		} else if len(sep) == 8 {
-			// YYYYMMDD
-			_, err = fmt.Sscanf(sep, "%4d%2d%2d", &year, &month, &day)
-		} else if len(sep) == 6 {
+		case 8: // YYYYMMDD
+			_, err = fmt.Sscanf(seps[0], "%4d%2d%2d", &year, &month, &day)
+		case 6:
 			// YYMMDD
-			_, err = fmt.Sscanf(sep, "%2d%2d%2d", &year, &month, &day)
+			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d", &year, &month, &day)
 			year = adjustYear(year)
-		} else {
-			return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
+		default:
+			return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenByArgs(str))
 		}
-		if len(sep) == 6 || len(sep) == 8 {
+		if len == 6 || len == 8 {
 			// YYMMDD or YYYYMMDD
 			// We must handle float => string => datetime, the difference is that fractional
 			// part of float type is discarded directly, while fractional part of string type
@@ -628,7 +630,8 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 				// 20170118.123423 => 2017-01-18 00:00:00
 			} else {
 				// '20170118.123423' => 2017-01-18 12:34:23.234
-				fmt.Sscanf(fracStr, "%2d%2d%2d", &hour, &minute, &second)
+				_, err1 := fmt.Sscanf(fracStr, "%2d%2d%2d", &hour, &minute, &second)
+				terror.Log(err1)
 			}
 		}
 	case 3:
@@ -643,7 +646,7 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 		err = scanTimeArgs(seps, &year, &month, &day, &hour, &minute, &second)
 		hhmmss = true
 	default:
-		return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat)
+		return ZeroDatetime, errors.Trace(ErrInvalidTimeFormat.GenByArgs(str))
 	}
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
@@ -690,7 +693,7 @@ func parseDatetime(str string, fsp int, isFloat bool) (Time, error) {
 
 func scanTimeArgs(seps []string, args ...*int) error {
 	if len(seps) != len(args) {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(seps))
 	}
 
 	var err error
@@ -930,16 +933,11 @@ func (d Duration) MicroSecond() int {
 // See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
 func ParseDuration(str string, fsp int) (Duration, error) {
 	var (
-		day    int
-		hour   int
-		minute int
-		second int
-		frac   int
-
-		err       error
-		sign      = 0
-		dayExists = false
-		origStr   = str
+		day, hour, minute, second int
+		err                       error
+		sign                      = 0
+		dayExists                 = false
+		origStr                   = str
 	)
 
 	fsp, err = CheckFsp(fsp)
@@ -962,19 +960,23 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 		str = str[n+1:]
 	}
 
-	var overflow bool
+	var (
+		integeralPart = str
+		fracPart      int
+		overflow      bool
+	)
 	if n := strings.IndexByte(str, '.'); n >= 0 {
 		// It has fractional precision parts.
 		fracStr := str[n+1:]
-		frac, overflow, err = ParseFrac(fracStr, fsp)
+		fracPart, overflow, err = ParseFrac(fracStr, fsp)
 		if err != nil {
 			return ZeroDuration, errors.Trace(err)
 		}
-		str = str[0:n]
+		integeralPart = str[0:n]
 	}
 
-	// It tries to split str with delimiter, time delimiter must be :
-	seps := strings.Split(str, ":")
+	// It tries to split integeralPart with delimiter, time delimiter must be :
+	seps := strings.Split(integeralPart, ":")
 
 	switch len(seps) {
 	case 1:
@@ -982,46 +984,44 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 			hour, err = strconv.Atoi(seps[0])
 		} else {
 			// No delimiter.
-			if len(str) == 7 {
-				// HHHMMSS
-				_, err = fmt.Sscanf(str, "%3d%2d%2d", &hour, &minute, &second)
-			} else if len(str) == 6 {
-				// HHMMSS
-				_, err = fmt.Sscanf(str, "%2d%2d%2d", &hour, &minute, &second)
-			} else if len(str) == 5 {
-				// HMMSS
-				_, err = fmt.Sscanf(str, "%1d%2d%2d", &hour, &minute, &second)
-			} else if len(str) == 4 {
-				// MMSS
-				_, err = fmt.Sscanf(str, "%2d%2d", &minute, &second)
-			} else if len(str) == 3 {
-				// MSS
-				_, err = fmt.Sscanf(str, "%1d%2d", &minute, &second)
-			} else if len(str) == 2 {
-				// SS
-				_, err = fmt.Sscanf(str, "%2d", &second)
-			} else if len(str) == 1 {
-				// 0S
-				_, err = fmt.Sscanf(str, "%1d", &second)
-			} else {
-				// Maybe only contains date.
+			switch len(integeralPart) {
+			case 7: // HHHMMSS
+				_, err = fmt.Sscanf(integeralPart, "%3d%2d%2d", &hour, &minute, &second)
+			case 6: // HHMMSS
+				_, err = fmt.Sscanf(integeralPart, "%2d%2d%2d", &hour, &minute, &second)
+			case 5: // HMMSS
+				_, err = fmt.Sscanf(integeralPart, "%1d%2d%2d", &hour, &minute, &second)
+			case 4: // MMSS
+				_, err = fmt.Sscanf(integeralPart, "%2d%2d", &minute, &second)
+			case 3: // MSS
+				_, err = fmt.Sscanf(integeralPart, "%1d%2d", &minute, &second)
+			case 2: // SS
+				_, err = fmt.Sscanf(integeralPart, "%2d", &second)
+			case 1: // 0S
+				_, err = fmt.Sscanf(integeralPart, "%1d", &second)
+			default: // Maybe contains date.
 				t, err1 := ParseDatetime(nil, str)
-				if err1 == nil {
-					return t.ConvertToDuration()
+				if err1 != nil {
+					return ZeroDuration, ErrTruncatedWrongVal.GenByArgs("time", origStr)
 				}
-				return ZeroDuration, ErrTruncatedWrongVal.GenByArgs("time", origStr)
+				var dur Duration
+				dur, err1 = t.ConvertToDuration()
+				if err1 != nil {
+					return ZeroDuration, errors.Trace(err)
+				}
+				return dur.RoundFrac(fsp)
 			}
 		}
 	case 2:
 		// HH:MM
-		_, err = fmt.Sscanf(str, "%2d:%2d", &hour, &minute)
+		_, err = fmt.Sscanf(integeralPart, "%2d:%2d", &hour, &minute)
 	case 3:
 		// Time format maybe HH:MM:SS or HHH:MM:SS.
 		// See https://dev.mysql.com/doc/refman/5.7/en/time.html
 		if len(seps[0]) == 3 {
-			_, err = fmt.Sscanf(str, "%3d:%2d:%2d", &hour, &minute, &second)
+			_, err = fmt.Sscanf(integeralPart, "%3d:%2d:%2d", &hour, &minute, &second)
 		} else {
-			_, err = fmt.Sscanf(str, "%2d:%2d:%2d", &hour, &minute, &second)
+			_, err = fmt.Sscanf(integeralPart, "%2d:%2d:%2d", &hour, &minute, &second)
 		}
 	default:
 		return ZeroDuration, ErrTruncatedWrongVal.GenByArgs("time", origStr)
@@ -1033,14 +1033,14 @@ func ParseDuration(str string, fsp int) (Duration, error) {
 
 	if overflow {
 		second++
-		frac = 0
+		fracPart = 0
 	}
 	// Invalid TIME values are converted to '00:00:00'.
 	// See https://dev.mysql.com/doc/refman/5.7/en/time.html
 	if minute >= 60 || second > 60 || (!overflow && second == 60) {
 		return ZeroDuration, ErrTruncatedWrongVal.GenByArgs("time", origStr)
 	}
-	d := gotime.Duration(day*24*3600+hour*3600+minute*60+second)*gotime.Second + gotime.Duration(frac)*gotime.Microsecond
+	d := gotime.Duration(day*24*3600+hour*3600+minute*60+second)*gotime.Second + gotime.Duration(fracPart)*gotime.Microsecond
 	if sign == -1 {
 		d = -d
 	}
@@ -1121,7 +1121,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check MMDD.
 	if num < 101 {
-		return t, errors.Trace(ErrInvalidTimeFormat)
+		return t, errors.Trace(ErrInvalidTimeFormat.GenByArgs(num))
 	}
 
 	// Adjust year
@@ -1133,7 +1133,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check YYMMDD.
 	if num < 70*10000+101 {
-		return t, errors.Trace(ErrInvalidTimeFormat)
+		return t, errors.Trace(ErrInvalidTimeFormat.GenByArgs(num))
 	}
 
 	// Adjust year
@@ -1145,7 +1145,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check YYYYMMDD.
 	if num < 10000101 {
-		return t, errors.Trace(ErrInvalidTimeFormat)
+		return t, errors.Trace(ErrInvalidTimeFormat.GenByArgs(num))
 	}
 
 	// Adjust hour/min/second.
@@ -1156,7 +1156,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check MMDDHHMMSS.
 	if num < 101000000 {
-		return t, errors.Trace(ErrInvalidTimeFormat)
+		return t, errors.Trace(ErrInvalidTimeFormat.GenByArgs(num))
 	}
 
 	// Set TypeDatetime type.
@@ -1171,7 +1171,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 
 	// Check YYYYMMDDHHMMSS.
 	if num < 70*10000000000+101000000 {
-		return t, errors.Trace(ErrInvalidTimeFormat)
+		return t, errors.Trace(ErrInvalidTimeFormat.GenByArgs(num))
 	}
 
 	// Adjust year
@@ -1187,7 +1187,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 // ParseTime parses a formatted string with type tp and specific fsp.
 // Type is TypeDatetime, TypeTimestamp and TypeDate.
 // Fsp is in range [0, 6].
-// MySQL supports many valid datatime format, but still has some limitation.
+// MySQL supports many valid datetime format, but still has some limitation.
 // If delimiter exists, the date part and time part is separated by a space or T,
 // other punctuation character can be used as the delimiter between date parts or time parts.
 // If no delimiter, the format must be YYYYMMDDHHMMSS or YYMMDDHHMMSS
@@ -1195,13 +1195,13 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 // The valid datetime range is from '1000-01-01 00:00:00.000000' to '9999-12-31 23:59:59.999999'.
 // The valid timestamp range is from '1970-01-01 00:00:01.000000' to '2038-01-19 03:14:07.999999'.
 // The valid date range is from '1000-01-01' to '9999-12-31'
-func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fst int) (Time, error) {
-	return parseTime(sc, str, tp, fst, false)
+func ParseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int) (Time, error) {
+	return parseTime(sc, str, tp, fsp, false)
 }
 
 // ParseTimeFromFloatString is similar to ParseTime, except that it's used to parse a float converted string.
-func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fst int) (Time, error) {
-	return parseTime(sc, str, tp, fst, true)
+func ParseTimeFromFloatString(sc *stmtctx.StatementContext, str string, tp byte, fsp int) (Time, error) {
+	return parseTime(sc, str, tp, fsp, true)
 }
 
 func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFloat bool) (Time, error) {
@@ -1224,12 +1224,12 @@ func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFlo
 
 // ParseDatetime is a helper function wrapping ParseTime with datetime type and default fsp.
 func ParseDatetime(sc *stmtctx.StatementContext, str string) (Time, error) {
-	return ParseTime(sc, str, mysql.TypeDatetime, DefaultFsp)
+	return ParseTime(sc, str, mysql.TypeDatetime, GetFsp(str))
 }
 
 // ParseTimestamp is a helper function wrapping ParseTime with timestamp type and default fsp.
 func ParseTimestamp(sc *stmtctx.StatementContext, str string) (Time, error) {
-	return ParseTime(sc, str, mysql.TypeTimestamp, DefaultFsp)
+	return ParseTime(sc, str, mysql.TypeTimestamp, GetFsp(str))
 }
 
 // ParseDate is a helper function wrapping ParseTime with date type.
@@ -1318,17 +1318,17 @@ func checkDateRange(t MysqlTime) error {
 	// Oddly enough, MySQL document says date range should larger than '1000-01-01',
 	// but we can insert '0001-01-01' actually.
 	if t.Year() < 0 || t.Month() < 0 || t.Day() < 0 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(t))
 	}
 	if compareTime(t, MaxDatetime) > 0 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(t))
 	}
 	return nil
 }
 
 func checkMonthDay(year, month, day int) error {
 	if month < 0 || month > 12 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(month))
 	}
 
 	maxDay := 31
@@ -1340,7 +1340,7 @@ func checkMonthDay(year, month, day int) error {
 	}
 
 	if day < 0 || day > maxDay {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(day))
 	}
 	return nil
 }
@@ -1351,7 +1351,7 @@ func checkTimestampType(t MysqlTime) error {
 	}
 
 	if compareTime(t, maxTimestamp) > 0 || compareTime(t, MinTimestamp) < 0 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(t))
 	}
 
 	if _, err := t.GoTime(gotime.Local); err != nil {
@@ -1368,13 +1368,13 @@ func checkDatetimeType(t MysqlTime, allowZeroInDate bool) error {
 
 	hour, minute, second := t.Hour(), t.Minute(), t.Second()
 	if hour < 0 || hour >= 24 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(hour))
 	}
 	if minute < 0 || minute >= 60 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(minute))
 	}
 	if second < 0 || second >= 60 {
-		return errors.Trace(ErrInvalidTimeFormat)
+		return errors.Trace(ErrInvalidTimeFormat.GenByArgs(second))
 	}
 
 	return nil
@@ -1818,13 +1818,13 @@ func (t Time) convertDateFormat(b rune, buf *bytes.Buffer) error {
 	case 'b':
 		m := t.Time.Month()
 		if m == 0 || m > 12 {
-			return errors.Trace(ErrInvalidTimeFormat)
+			return errors.Trace(ErrInvalidTimeFormat.GenByArgs(m))
 		}
 		buf.WriteString(MonthNames[m-1][:3])
 	case 'M':
 		m := t.Time.Month()
 		if m == 0 || m > 12 {
-			return errors.Trace(ErrInvalidTimeFormat)
+			return errors.Trace(ErrInvalidTimeFormat.GenByArgs(m))
 		}
 		buf.WriteString(MonthNames[m-1])
 	case 'm':
@@ -1976,7 +1976,7 @@ func mysqlTimeFix(t *MysqlTime, ctx map[string]int) error {
 	}
 	if valueAMorPm, ok := ctx["%p"]; ok {
 		if t.hour == 0 {
-			return ErrInvalidTimeFormat
+			return ErrInvalidTimeFormat.GenByArgs(t)
 		}
 		if t.hour == 12 {
 			// 12 is a special hour.

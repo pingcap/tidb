@@ -93,6 +93,12 @@ type builtinSleepSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinSleepSig) Clone() builtinFunc {
+	newSig := &builtinSleepSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a builtinSleepSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
 func (b *builtinSleepSig) evalInt(row types.Row) (int64, bool, error) {
@@ -145,6 +151,12 @@ type builtinLockSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinLockSig) Clone() builtinFunc {
+	newSig := &builtinLockSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a builtinLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
 // The lock function will do nothing.
@@ -171,6 +183,12 @@ type builtinReleaseLockSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinReleaseLockSig) Clone() builtinFunc {
+	newSig := &builtinReleaseLockSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a builtinReleaseLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
 // The release lock function will do nothing.
@@ -189,6 +207,7 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	argTp := args[0].GetType().EvalType()
 	bf := newBaseBuiltinFuncWithTp(ctx, args, argTp, argTp)
+	args[0].GetType().Flag |= bf.tp.Flag
 	*bf.tp = *args[0].GetType()
 	var sig builtinFunc
 	switch argTp {
@@ -219,6 +238,12 @@ type builtinDecimalAnyValueSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinDecimalAnyValueSig) Clone() builtinFunc {
+	newSig := &builtinDecimalAnyValueSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalDecimal evals a builtinDecimalAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinDecimalAnyValueSig) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
@@ -227,6 +252,12 @@ func (b *builtinDecimalAnyValueSig) evalDecimal(row types.Row) (*types.MyDecimal
 
 type builtinDurationAnyValueSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinDurationAnyValueSig) Clone() builtinFunc {
+	newSig := &builtinDurationAnyValueSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalDuration evals a builtinDurationAnyValueSig.
@@ -239,6 +270,12 @@ type builtinIntAnyValueSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinIntAnyValueSig) Clone() builtinFunc {
+	newSig := &builtinIntAnyValueSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals a builtinIntAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinIntAnyValueSig) evalInt(row types.Row) (int64, bool, error) {
@@ -247,6 +284,12 @@ func (b *builtinIntAnyValueSig) evalInt(row types.Row) (int64, bool, error) {
 
 type builtinJSONAnyValueSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinJSONAnyValueSig) Clone() builtinFunc {
+	newSig := &builtinJSONAnyValueSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalJSON evals a builtinJSONAnyValueSig.
@@ -259,6 +302,12 @@ type builtinRealAnyValueSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinRealAnyValueSig) Clone() builtinFunc {
+	newSig := &builtinRealAnyValueSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalReal evals a builtinRealAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinRealAnyValueSig) evalReal(row types.Row) (float64, bool, error) {
@@ -269,6 +318,12 @@ type builtinStringAnyValueSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinStringAnyValueSig) Clone() builtinFunc {
+	newSig := &builtinStringAnyValueSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinStringAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
 func (b *builtinStringAnyValueSig) evalString(row types.Row) (string, bool, error) {
@@ -277,6 +332,12 @@ func (b *builtinStringAnyValueSig) evalString(row types.Row) (string, bool, erro
 
 type builtinTimeAnyValueSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinTimeAnyValueSig) Clone() builtinFunc {
+	newSig := &builtinTimeAnyValueSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalTime evals a builtinTimeAnyValueSig.
@@ -310,6 +371,12 @@ func (c *inetAtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 type builtinInetAtonSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinInetAtonSig) Clone() builtinFunc {
+	newSig := &builtinInetAtonSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals a builtinInetAtonSig.
@@ -379,6 +446,12 @@ type builtinInetNtoaSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinInetNtoaSig) Clone() builtinFunc {
+	newSig := &builtinInetNtoaSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinInetNtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-ntoa
 func (b *builtinInetNtoaSig) evalString(row types.Row) (string, bool, error) {
@@ -420,6 +493,12 @@ func (c *inet6AtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 
 type builtinInet6AtonSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinInet6AtonSig) Clone() builtinFunc {
+	newSig := &builtinInet6AtonSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinInet6AtonSig.
@@ -484,6 +563,12 @@ type builtinInet6NtoaSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinInet6NtoaSig) Clone() builtinFunc {
+	newSig := &builtinInet6NtoaSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinInet6NtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
 func (b *builtinInet6NtoaSig) evalString(row types.Row) (string, bool, error) {
@@ -527,6 +612,12 @@ func (c *isIPv4FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 type builtinIsIPv4Sig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinIsIPv4Sig) Clone() builtinFunc {
+	newSig := &builtinIsIPv4Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals a builtinIsIPv4Sig.
@@ -587,6 +678,12 @@ type builtinIsIPv4CompatSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinIsIPv4CompatSig) Clone() builtinFunc {
+	newSig := &builtinIsIPv4CompatSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals Is_IPv4_Compat
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
 func (b *builtinIsIPv4CompatSig) evalInt(row types.Row) (int64, bool, error) {
@@ -626,6 +723,12 @@ type builtinIsIPv4MappedSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinIsIPv4MappedSig) Clone() builtinFunc {
+	newSig := &builtinIsIPv4MappedSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalInt evals Is_IPv4_Mapped
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
 func (b *builtinIsIPv4MappedSig) evalInt(row types.Row) (int64, bool, error) {
@@ -663,6 +766,12 @@ func (c *isIPv6FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 type builtinIsIPv6Sig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinIsIPv6Sig) Clone() builtinFunc {
+	newSig := &builtinIsIPv6Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals a builtinIsIPv6Sig.
@@ -727,6 +836,12 @@ func (c *uuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinUUIDSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinUUIDSig) Clone() builtinFunc {
+	newSig := &builtinUUIDSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals a builtinUUIDSig.

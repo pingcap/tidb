@@ -288,15 +288,16 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	newSchemaID := job.SchemaID
+	err = checkTableNotExists(t, job, newSchemaID, tableName.L)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	var baseID int64
 	shouldDelAutoID := false
-	newSchemaID := job.SchemaID
 	if newSchemaID != oldSchemaID {
 		shouldDelAutoID = true
-		err = checkTableNotExists(t, job, newSchemaID, tblInfo.Name.L)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 		baseID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -328,6 +329,27 @@ func (d *ddl) onRenameTable(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func (d *ddl) onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	var comment string
+	if err := job.DecodeArgs(&comment); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfo(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo.Comment = comment
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

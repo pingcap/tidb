@@ -21,6 +21,7 @@ import (
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -28,7 +29,7 @@ import (
 
 // Error instances.
 var (
-	ErrUnsupportedType = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type")
+	ErrUnsupportedType = terror.ClassOptimizer.New(CodeUnsupportedType, "Unsupported type")
 )
 
 // Error codes.
@@ -426,11 +427,27 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
+		var (
+			isUnsignedIntCol bool
+			nonNegativePos   int
+		)
 		rangePoints, hasNull := r.buildFromIn(expr)
 		if hasNull {
 			return nil
 		}
-		retRangePoints := make([]point, 0, len(rangePoints)+2)
+		if x, ok := expr.GetArgs()[0].(*expression.Column); ok {
+			isUnsignedIntCol = mysql.HasUnsignedFlag(x.RetType.Flag) && mysql.IsIntegerType(x.RetType.Tp)
+		}
+		// negative ranges can be directly ignored for unsigned int columns.
+		if isUnsignedIntCol {
+			for nonNegativePos = 0; nonNegativePos < len(rangePoints); nonNegativePos += 2 {
+				if rangePoints[nonNegativePos].value.Kind() == types.KindUint64 || rangePoints[nonNegativePos].value.GetInt64() >= 0 {
+					break
+				}
+			}
+			rangePoints = rangePoints[nonNegativePos:]
+		}
+		retRangePoints := make([]point, 0, 2+len(rangePoints))
 		previousValue := types.Datum{}
 		for i := 0; i < len(rangePoints); i += 2 {
 			retRangePoints = append(retRangePoints, point{value: previousValue, start: true, excl: true})

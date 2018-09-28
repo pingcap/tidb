@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 // Plan is the description of an execution flow.
@@ -38,6 +38,9 @@ type Plan interface {
 	replaceExprColumns(replace map[string]*expression.Column)
 
 	context() sessionctx.Context
+
+	// StatsInfo will return the StatsInfo for this plan.
+	StatsInfo() *StatsInfo
 }
 
 // taskType is the type of execution task.
@@ -148,11 +151,11 @@ type LogicalPlan interface {
 	// PruneColumns prunes the unused columns.
 	PruneColumns([]*expression.Column)
 
-	// convert2PhysicalPlan converts the logical plan to the physical plan. It's a new interface.
+	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
 	// Some logical plans will convert the children to the physical plans in different ways, and return the one
 	// with the lowest cost.
-	convert2PhysicalPlan(prop *requiredProp) (task, error)
+	findBestTask(prop *requiredProp) (task, error)
 
 	// buildKeyInfo will collect the information of unique keys into schema.
 	buildKeyInfo()
@@ -161,14 +164,16 @@ type LogicalPlan interface {
 	pushDownTopN(topN *LogicalTopN) LogicalPlan
 
 	// deriveStats derives statistic info between plans.
-	deriveStats() *statsInfo
+	deriveStats() (*StatsInfo, error)
 
 	// preparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
+	// Please make sure that children's method is called though we may not need its return value,
+	// so we can prepare possible properties for every LogicalPlan node.
 	preparePossibleProperties() [][]*expression.Column
 
-	// genPhysPlansByReqProp generates all possible plans that can match the required property.
-	genPhysPlansByReqProp(*requiredProp) []PhysicalPlan
+	// exhaustPhysicalPlans generates all possible plans that can match the required property.
+	exhaustPhysicalPlans(*requiredProp) []PhysicalPlan
 
 	extractCorrelatedCols() []*expression.CorrelatedColumn
 
@@ -202,9 +207,6 @@ type PhysicalPlan interface {
 
 	// getChildReqProps gets the required property by child index.
 	getChildReqProps(idx int) *requiredProp
-
-	// StatsInfo will return the statsInfo for this plan.
-	StatsInfo() *statsInfo
 
 	// Get all the children.
 	Children() []PhysicalPlan
@@ -268,6 +270,11 @@ func (p *baseLogicalPlan) buildKeyInfo() {
 	}
 }
 
+// StatsInfo implements the Plan.StatsInfo interface.
+func (p *DataSource) StatsInfo() *StatsInfo {
+	return p.statsAfterSelect
+}
+
 func newBasePlan(ctx sessionctx.Context, tp string) basePlan {
 	ctx.GetSessionVars().PlanID++
 	id := ctx.GetSessionVars().PlanID
@@ -315,7 +322,7 @@ type basePlan struct {
 	tp    string
 	id    int
 	ctx   sessionctx.Context
-	stats *statsInfo
+	stats *StatsInfo
 }
 
 func (p *basePlan) replaceExprColumns(replace map[string]*expression.Column) {

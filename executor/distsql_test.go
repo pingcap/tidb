@@ -54,7 +54,9 @@ func (s *testSuite) TestIndexDoubleReadClose(c *C) {
 
 	rs, err := tk.Exec("select * from dist where c_idx between 0 and 100")
 	c.Assert(err, IsNil)
-	_, err = rs.Next(context.Background())
+	chk := rs.NewChunk()
+	err = rs.Next(context.Background(), chk)
+	c.Assert(err, IsNil)
 	c.Assert(err, IsNil)
 	keyword := "pickAndExecTask"
 	rs.Close()
@@ -103,9 +105,10 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	rs, err := tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
 	defer rs.Close()
-	row, err := rs.Next(ctx)
+	chk := rs.NewChunk()
+	err = rs.Next(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
+	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
 
 	// Split one region.
 	key := tablecodec.EncodeRowKeyWithHandle(tblID, 500)
@@ -116,15 +119,17 @@ func (s *testSuite) TestCopClientSend(c *C) {
 	// Check again.
 	rs, err = tk.Exec("select sum(id) from copclient")
 	c.Assert(err, IsNil)
-	row, err = rs.Next(ctx)
+	chk = rs.NewChunk()
+	err = rs.Next(ctx, chk)
 	c.Assert(err, IsNil)
-	c.Assert(row.GetMyDecimal(0).String(), Equals, "499500")
+	c.Assert(chk.GetRow(0).GetMyDecimal(0).String(), Equals, "499500")
 	rs.Close()
 
 	// Check there is no goroutine leak.
 	rs, err = tk.Exec("select * from copclient order by id")
 	c.Assert(err, IsNil)
-	_, err = rs.Next(ctx)
+	chk = rs.NewChunk()
+	err = rs.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	rs.Close()
 	keyword := "(*copIterator).work"
@@ -153,4 +158,37 @@ func (s *testSuite) TestGetLackHandles(c *C) {
 	handlesMap[10] = struct{}{}
 	diffHandles = executor.GetLackHandles(expectedHandles, handlesMap)
 	c.Assert(retHandles, DeepEquals, diffHandles)
+}
+
+func (s *testSuite) TestBigIntPK(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b))")
+	tk.MustExec("insert into t values(1, 1, 1), (9223372036854775807, 2, 2)")
+	tk.MustQuery("select * from t use index(idx) order by a").Check(testkit.Rows("1 1 1", "9223372036854775807 2 2"))
+}
+
+func (s *testSuite) TestUniqueKeyNullValueSelect(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	// test null in unique-key
+	tk.MustExec("create table t (id int default null, c varchar(20), unique id (id));")
+	tk.MustExec("insert t (c) values ('a'), ('b'), ('c');")
+	res := tk.MustQuery("select * from t where id is null;")
+	res.Check(testkit.Rows("<nil> a", "<nil> b", "<nil> c"))
+
+	// test null in mul unique-key
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (id int default null, b int default 1, c varchar(20), unique id_c(id, b));")
+	tk.MustExec("insert t (c) values ('a'), ('b'), ('c');")
+	res = tk.MustQuery("select * from t where id is null and b = 1;")
+	res.Check(testkit.Rows("<nil> 1 a", "<nil> 1 b", "<nil> 1 c"))
+
+	tk.MustExec("drop table t")
+	// test null in non-unique-key
+	tk.MustExec("create table t (id int default null, c varchar(20), key id (id));")
+	tk.MustExec("insert t (c) values ('a'), ('b'), ('c');")
+	res = tk.MustQuery("select * from t where id is null;")
+	res.Check(testkit.Rows("<nil> a", "<nil> b", "<nil> c"))
 }

@@ -15,14 +15,11 @@ path = "/tmp/tidb"
 # The socket file to use for connection.
 socket = ""
 
-# Socket file to write binlog.
-binlog-socket = ""
-
 # Run ddl worker on this tidb-server.
 run-ddl = true
 
 # Schema lease duration, very dangerous to change only if you know what you do.
-lease = "10s"
+lease = "45s"
 
 # When create table, split a separated region for it. It is recommended to
 # turn off this option if there will be a large number of tables created.
@@ -31,15 +28,18 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Enable chunk executors.
-enable-chunk = true
-
 # Only print a log when out of memory quota.
 # Valid options: ["log", "cancel"]
 oom-action = "log"
 
+# Set the memory quota for a query in bytes. Default: 32GB
+mem-quota-query = 34359738368
+
 # Enable coprocessor streaming.
 enable-streaming = false
+
+# Set system variable 'lower_case_table_names'
+lower-case-table-names = 2
 
 [log]
 # Log level: debug, info, warn, error, fatal.
@@ -124,9 +124,6 @@ tcp-keep-alive = true
 # The maximum number of retries when commit a transaction.
 retry-limit = 10
 
-# The number of goroutines that participate joining.
-join-concurrency = 5
-
 # Whether support cartesian product.
 cross-join = true
 
@@ -135,6 +132,16 @@ stats-lease = "3s"
 
 # Run auto analyze worker on this tidb-server.
 run-auto-analyze = true
+
+# Probability to use the query feedback to update stats, 0 or 1 for always false/true.
+feedback-probability = 0.0
+
+# The max number of query feedback that cache in memory.
+query-feedback-limit = 1024
+
+# Pseudo stats will be used if the ratio between the modify count and
+# row count in statistics of a table is greater than it.
+pseudo-estimate-ratio = 0.7
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -208,5 +215,25 @@ local-agent-host-port = ""
 # Max gRPC connections that will be established with each tikv-server.
 grpc-connection-count = 16
 
+# After a duration of this time in seconds if the client doesn't see any activity it pings
+# the server to see if the transport is still alive.
+grpc-keepalive-time = 10
+
+# After having pinged for keepalive check, the client waits for a duration of Timeout in seconds
+# and if no activity is seen even after that the connection is closed.
+grpc-keepalive-timeout = 3
+
 # max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
+
+[binlog]
+
+# Socket file to write binlog.
+binlog-socket = ""
+
+# WriteTimeout specifies how long it will wait for writing binlog to pump.
+write-timeout = "15s"
+
+# If IgnoreError is true, when writting binlog meets error, TiDB would stop writting binlog,
+# but still provide service.
+ignore-error = false

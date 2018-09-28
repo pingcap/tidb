@@ -27,6 +27,20 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
+// SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
+// Max worker count is maxDDLReorgWorkerCount.
+func SetDDLReorgWorkerCounter(cnt int32) {
+	if cnt > maxDDLReorgWorkerCount {
+		cnt = maxDDLReorgWorkerCount
+	}
+	atomic.StoreInt32(&ddlReorgWorkerCounter, cnt)
+}
+
+// GetDDLReorgWorkerCounter gets ddlReorgWorkerCounter.
+func GetDDLReorgWorkerCounter() int32 {
+	return atomic.LoadInt32(&ddlReorgWorkerCounter)
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -128,7 +142,7 @@ func TiDBOptOn(opt string) bool {
 	return strings.EqualFold(opt, "ON") || opt == "1"
 }
 
-func tidbOptPositiveInt(opt string, defaultVal int) int {
+func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	val, err := strconv.Atoi(opt)
 	if err != nil || val <= 0 {
 		return defaultVal
@@ -175,10 +189,17 @@ func setSnapshotTS(s *SessionVars, sVal string) error {
 		s.SnapshotTS = 0
 		return nil
 	}
+
+	if tso, err := strconv.ParseUint(sVal, 10, 64); err == nil {
+		s.SnapshotTS = tso
+		return nil
+	}
+
 	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	// TODO: Consider time_zone variable.
 	t1, err := t.Time.GoTime(time.Local)
 	s.SnapshotTS = GoTimeToTS(t1)

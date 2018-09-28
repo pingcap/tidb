@@ -19,11 +19,11 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -51,6 +51,7 @@ type testSuite struct {
 }
 
 func (s *testSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
@@ -61,10 +62,10 @@ func (s *testSuite) SetUpSuite(c *C) {
 func (s *testSuite) TearDownSuite(c *C) {
 	err := s.store.Close()
 	c.Assert(err, IsNil)
+	testleak.AfterTest(c)()
 }
 
 func (s *testSuite) TestGetDDLInfo(c *C) {
-	defer testleak.AfterTest(c)()
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -90,8 +91,6 @@ func (s *testSuite) TestGetDDLInfo(c *C) {
 }
 
 func (s *testSuite) TestGetDDLJobs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -123,8 +122,6 @@ func (s *testSuite) TestGetDDLJobs(c *C) {
 }
 
 func (s *testSuite) TestCancelJobs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -162,8 +159,6 @@ func (s *testSuite) TestCancelJobs(c *C) {
 }
 
 func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
-	defer testleak.AfterTest(c)()
-
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	t := meta.NewMeta(txn)
@@ -202,10 +197,9 @@ func (s *testSuite) TestGetHistoryDDLJobs(c *C) {
 }
 
 func (s *testSuite) TestScan(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, err := tidb.BootstrapSession(s.store)
+	dom, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	se, err := tidb.CreateSession4Test(s.store)
+	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	defer func() {
 		dom.Close()
@@ -240,7 +234,7 @@ func (s *testSuite) TestScan(c *C) {
 	record2 := &RecordData{Handle: int64(2), Values: types.MakeDatums(int64(2), int64(20), int64(21))}
 	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
-	records, _, err := ScanSnapshotTableRecord(s.store, ver, tb, int64(1), 1)
+	records, _, err := ScanSnapshotTableRecord(se, s.store, ver, tb, int64(1), 1)
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record1})
 
@@ -251,14 +245,14 @@ func (s *testSuite) TestScan(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
-	records, nextHandle, err := ScanTableRecord(txn, tb, int64(1), 1)
+	records, nextHandle, err := ScanTableRecord(se, txn, tb, int64(1), 1)
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record1})
-	records, nextHandle, err = ScanTableRecord(txn, tb, nextHandle, 1)
+	records, nextHandle, err = ScanTableRecord(se, txn, tb, nextHandle, 1)
 	c.Assert(err, IsNil)
 	c.Assert(records, DeepEquals, []*RecordData{record2})
 	startHandle := nextHandle
-	records, nextHandle, err = ScanTableRecord(txn, tb, startHandle, 1)
+	records, nextHandle, err = ScanTableRecord(se, txn, tb, startHandle, 1)
 	c.Assert(err, IsNil)
 	c.Assert(records, IsNil)
 	c.Assert(nextHandle, Equals, startHandle)
@@ -302,45 +296,45 @@ func (s *testSuite) testTableData(c *C, tb table.Table, rs []*RecordData) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 
-	err = CompareTableRecord(txn, tb, rs, true)
+	err = CompareTableRecord(s.ctx, txn, tb, rs, true)
 	c.Assert(err, IsNil)
 
 	records := []*RecordData{
 		{Handle: rs[0].Handle},
 		{Handle: rs[1].Handle},
 	}
-	err = CompareTableRecord(txn, tb, records, false)
+	err = CompareTableRecord(s.ctx, txn, tb, records, false)
 	c.Assert(err, IsNil)
 
 	record := &RecordData{Handle: rs[1].Handle, Values: types.MakeDatums(int64(30))}
-	err = CompareTableRecord(txn, tb, []*RecordData{rs[0], record}, true)
+	err = CompareTableRecord(s.ctx, txn, tb, []*RecordData{rs[0], record}, true)
 	c.Assert(err, NotNil)
 	diffMsg := newDiffRetError("data", record, rs[1])
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	record.Handle = 3
-	err = CompareTableRecord(txn, tb, []*RecordData{rs[0], record, rs[1]}, true)
+	err = CompareTableRecord(s.ctx, txn, tb, []*RecordData{rs[0], record, rs[1]}, true)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", record, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CompareTableRecord(txn, tb, []*RecordData{rs[0], rs[1], record}, true)
+	err = CompareTableRecord(s.ctx, txn, tb, []*RecordData{rs[0], rs[1], record}, true)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", record, nil)
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CompareTableRecord(txn, tb, []*RecordData{rs[0]}, true)
+	err = CompareTableRecord(s.ctx, txn, tb, []*RecordData{rs[0]}, true)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", nil, rs[1])
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
-	err = CompareTableRecord(txn, tb, nil, true)
+	err = CompareTableRecord(s.ctx, txn, tb, nil, true)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("data", nil, rs[0])
 	c.Assert(err.Error(), DeepEquals, diffMsg)
 
 	errRs := append(rs, &RecordData{Handle: int64(1), Values: types.MakeDatums(int64(3))})
-	err = CompareTableRecord(txn, tb, errRs, false)
+	err = CompareTableRecord(s.ctx, txn, tb, errRs, false)
 	c.Assert(err.Error(), DeepEquals, "[admin:2]handle:1 is repeated in data")
 }
 
@@ -348,7 +342,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, IsNil)
 
 	idxNames := []string{idx.Meta().Name.L}
@@ -368,7 +362,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(30))}
 	diffMsg := newDiffRetError("index", record1, nil)
@@ -389,7 +383,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record2 := &RecordData{Handle: int64(3), Values: types.MakeDatums(int64(31))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -407,7 +401,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CheckRecordAndIndex(sc, txn, tb, idx)
+	err = CheckRecordAndIndex(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record2 = &RecordData{Handle: int64(5), Values: types.MakeDatums(int64(30))}
 	diffMsg = newDiffRetError("index", record1, record2)
@@ -427,7 +421,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	record1 = &RecordData{Handle: int64(4), Values: types.MakeDatums(int64(40))}
 	diffMsg = newDiffRetError("index", record1, nil)
@@ -448,7 +442,7 @@ func (s *testSuite) testIndex(c *C, ctx sessionctx.Context, dbName string, tb ta
 
 	txn, err = s.store.Begin()
 	c.Assert(err, IsNil)
-	err = CompareIndexData(sc, txn, tb, idx)
+	err = CompareIndexData(ctx, txn, tb, idx)
 	c.Assert(err, NotNil)
 	diffMsg = newDiffRetError("index", nil, record1)
 	c.Assert(err.Error(), DeepEquals, diffMsg)

@@ -24,20 +24,24 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
@@ -66,6 +70,7 @@ const (
 
 // For query string
 const qTableID = "table_id"
+const qLimit = "limit"
 
 const (
 	headerContentType = "Content-Type"
@@ -258,7 +263,7 @@ func (t *tikvHandlerTool) getTableID(dbName, tableName string) (int64, error) {
 }
 
 func (t *tikvHandlerTool) schema() (infoschema.InfoSchema, error) {
-	session, err := tidb.CreateSession(t.store.(kv.Storage))
+	session, err := session.CreateSession(t.store.(kv.Storage))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -273,9 +278,39 @@ func (t *tikvHandlerTool) handleMvccGetByHex(params map[string]string) (interfac
 	return t.getMvccByEncodedKey(encodedKey)
 }
 
+func (t *tikvHandlerTool) getAllHistoryDDL() ([]*model.Job, error) {
+	s, err := session.CreateSession(t.store.(kv.Storage))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if s != nil {
+		defer s.Close()
+	}
+
+	store := domain.GetDomain(s.(sessionctx.Context)).Store()
+	txn, err := store.Begin()
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	txnMeta := meta.NewMeta(txn)
+
+	jobs, err := txnMeta.GetAllHistoryDDLJobs()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return jobs, nil
+}
+
 // settingsHandler is the handler for list tidb server settings.
 type settingsHandler struct {
 }
+
+// binlogRecover is used to recover binlog service.
+// When config binlog IgnoreError, binlog service will stop after meeting the first error.
+// It can be recovered using HTTP API.
+type binlogRecover struct{}
 
 // schemaHandler is the handler for list database or table schemas.
 type schemaHandler struct {
@@ -292,6 +327,11 @@ type regionHandler struct {
 type tableHandler struct {
 	*tikvHandlerTool
 	op string
+}
+
+// ddlHistoryJobHandler is the handler for list job history.
+type ddlHistoryJobHandler struct {
+	*tikvHandlerTool
 }
 
 // valueHandle is the handler for get value.
@@ -421,64 +461,38 @@ type IndexRegions struct {
 // RegionDetail is the response data for get region by ID
 // it includes indices and records detail in current region.
 type RegionDetail struct {
-	RegionID uint64      `json:"region_id"`
-	StartKey []byte      `json:"start_key"`
-	EndKey   []byte      `json:"end_key"`
-	Frames   []FrameItem `json:"frames"`
-}
-
-// addIndex insert a index into RegionDetail.
-func (rt *RegionDetail) addIndex(dbName, tName string, tID int64, indexName string, indexID int64) {
-	rt.Frames = append(rt.Frames, FrameItem{
-		DBName:    dbName,
-		TableName: tName,
-		TableID:   tID,
-		IndexName: indexName,
-		IndexID:   indexID,
-		IsRecord:  false,
-	})
-}
-
-// addRecord insert a table's record into RegionDetail.
-func (rt *RegionDetail) addRecord(dbName, tName string, tID int64) {
-	rt.Frames = append(rt.Frames, FrameItem{
-		DBName:    dbName,
-		TableName: tName,
-		TableID:   tID,
-		IsRecord:  true,
-	})
+	RegionID uint64       `json:"region_id"`
+	StartKey []byte       `json:"start_key"`
+	EndKey   []byte       `json:"end_key"`
+	Frames   []*FrameItem `json:"frames"`
 }
 
 // addTableInRange insert a table into RegionDetail
-// with index's id in range [startID,endID]. Table's
-// record would be included when endID is MaxInt64.
-func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo, startID, endID int64) {
+// with index's id or record in the range if r.
+func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo, r *RegionFrameRange) {
 	tName := curTable.Name.String()
 	tID := curTable.ID
 
 	for _, index := range curTable.Indices {
-		if index.ID >= startID && index.ID <= endID {
-			rt.addIndex(
-				dbName,
-				tName,
-				tID,
-				index.Name.String(),
-				index.ID)
+		if f := r.getIndexFrame(tID, index.ID, dbName, tName, index.Name.String()); f != nil {
+			rt.Frames = append(rt.Frames, f)
 		}
 	}
-	if endID == math.MaxInt64 {
-		rt.addRecord(dbName, tName, tID)
+	if f := r.getRecordFrame(tID, dbName, tName); f != nil {
+		rt.Frames = append(rt.Frames, f)
 	}
 }
 
 // FrameItem includes a index's or record's meta data with table's info.
 type FrameItem struct {
-	DBName    string `json:"db_name"`
-	TableName string `json:"table_name"`
-	TableID   int64  `json:"table_id"`
-	IsRecord  bool   `json:"is_record"`
-	IndexName string `json:"index_name,omitempty"`
-	IndexID   int64  `json:"index_id,omitempty"`
+	DBName      string   `json:"db_name"`
+	TableName   string   `json:"table_name"`
+	TableID     int64    `json:"table_id"`
+	IsRecord    bool     `json:"is_record"`
+	RecordID    int64    `json:"record_id,omitempty"`
+	IndexName   string   `json:"index_name,omitempty"`
+	IndexID     int64    `json:"index_id,omitempty"`
+	IndexValues []string `json:"index_values,omitempty"`
 }
 
 // RegionFrameRange contains a frame range info which the region covered.
@@ -508,8 +522,52 @@ func (t *tikvHandlerTool) getRegionsMeta(regionIDs []uint64) ([]RegionMeta, erro
 
 // ServeHTTP handles request of list tidb server settings.
 func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	writeData(w, config.GetGlobalConfig())
+	if req.Method == "POST" {
+		err := req.ParseForm()
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if levelStr := req.Form.Get("log_level"); levelStr != "" {
+			l, err1 := log.ParseLevel(levelStr)
+			if err1 != nil {
+				writeError(w, err1)
+				return
+			}
+			log.SetLevel(l)
+			config.GetGlobalConfig().Log.Level = levelStr
+		}
+		if generalLog := req.Form.Get("tidb_general_log"); generalLog != "" {
+			switch generalLog {
+			case "0":
+				atomic.StoreUint32(&variable.ProcessGeneralLog, 0)
+			case "1":
+				atomic.StoreUint32(&variable.ProcessGeneralLog, 1)
+			default:
+				writeError(w, errors.New("illegal argument"))
+				return
+			}
+		}
+		if ddlSlowThreshold := req.Form.Get("ddl_slow_threshold"); ddlSlowThreshold != "" {
+			threshold, err1 := strconv.Atoi(ddlSlowThreshold)
+			if err1 != nil {
+				writeError(w, err1)
+				return
+			}
+			if threshold > 0 {
+				atomic.StoreUint32(&variable.DDLSlowOprThreshold, uint32(threshold))
+			}
+		}
+
+	} else {
+		writeData(w, config.GetGlobalConfig())
+	}
 	return
+}
+
+// ServeHTTP recovers binlog service.
+func (h binlogRecover) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	binloginfo.DisableSkipBinlogFlag()
 }
 
 // ServeHTTP handles request of list a database or table's schemas.
@@ -600,6 +658,45 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	default:
 		writeError(w, errors.New("method not found"))
 	}
+}
+
+// ServeHTTP handles request of ddl jobs history.
+func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if limitID := req.FormValue(qLimit); len(limitID) > 0 {
+		lid, err := strconv.Atoi(limitID)
+
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+
+		if lid < 1 {
+			writeError(w, errors.New("ddl history limit must be greater than 1"))
+			return
+		}
+
+		jobs, err := h.getAllHistoryDDL()
+		if err != nil {
+			writeError(w, errors.New("ddl history not found"))
+			return
+		}
+
+		jobsLen := len(jobs)
+		if jobsLen > lid {
+			start := jobsLen - lid
+			jobs = jobs[start:]
+		}
+
+		writeData(w, jobs)
+		return
+	}
+	jobs, err := h.getAllHistoryDDL()
+	if err != nil {
+		writeError(w, errors.New("ddl history not found"))
+		return
+	}
+	writeData(w, jobs)
+	return
 }
 
 func (h tableHandler) handleRegionRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
@@ -760,8 +857,7 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// on [frameRange.firstTableID,frameRange.endTableID] is small enough.
 	for _, db := range schema.AllSchemas() {
 		for _, tableVal := range db.Tables {
-			start, end := frameRange.getIndexRangeForTable(tableVal.ID)
-			regionDetail.addTableInRange(db.Name.String(), tableVal, start, end)
+			regionDetail.addTableInRange(db.Name.String(), tableVal, frameRange)
 		}
 	}
 	writeData(w, regionDetail)
@@ -773,6 +869,14 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 	frame = &FrameItem{}
 	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
 	if err == nil {
+		if frame.IsRecord {
+			_, frame.RecordID, err = tablecodec.DecodeRecordKey(key)
+		} else {
+			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
+		}
+		log.Warnf("decode region key %q fail: %v", key, err)
+		// Ignore decode errors.
+		err = nil
 		return
 	}
 	if bytes.HasPrefix(key, tablecodec.TablePrefix()) {
@@ -842,61 +946,54 @@ func NewRegionFrameRange(region *tikv.KeyLocation) (idxRange *RegionFrameRange, 
 	return idxRange, nil
 }
 
-// getFirstIdxIdRange return the first table's index range.
-// 1. [start,end] means index id in [start,end] are needed,while record key is not in.
-// 2. [start,~) means index's id in [start,~) are needed including record key index.
-// 3. (~,~) means only record key index is needed
-func (r *RegionFrameRange) getFirstIdxIDRange() (start, end int64) {
-	start = int64(math.MinInt64)
-	end = int64(math.MaxInt64)
-	if r.first.IsRecord {
-		start = end // need record key only,
-		return
+// getRecordFrame returns the record frame of a table. If the table's records
+// are not covered by this frame range, it returns nil.
+func (r *RegionFrameRange) getRecordFrame(tableID int64, dbName, tableName string) *FrameItem {
+	if tableID == r.first.TableID && r.first.IsRecord {
+		r.first.DBName, r.first.TableName = dbName, tableName
+		return r.first
+	}
+	if tableID == r.last.TableID && r.last.IsRecord {
+		r.last.DBName, r.last.TableName = dbName, tableName
+		return r.last
 	}
 
-	start = r.first.IndexID
-	if r.first.TableID != r.last.TableID || r.last.IsRecord {
-		return // [start,~)
-	}
-	end = r.last.IndexID // [start,end]
-	return
-}
-
-// getLastInxIdRange return the last table's index range.
-// (~,end] means index's id in (~,end] are legal, record key index not included.
-// (~,~) means all indexes are legal include record key index.
-func (r *RegionFrameRange) getLastInxIDRange() (start, end int64) {
-	start = int64(math.MinInt64)
-	end = int64(math.MaxInt64)
-	if r.last.IsRecord {
-		return
-	}
-	end = r.last.IndexID
-	return
-}
-
-// getIndexRangeForTable return the legal index range for table with tableID.
-// end=math.MaxInt64 means record key index is included.
-func (r *RegionFrameRange) getIndexRangeForTable(tableID int64) (start, end int64) {
-	switch tableID {
-	case r.firstTableID():
-		return r.getFirstIdxIDRange()
-	case r.lastTableID():
-		return r.getLastInxIDRange()
-	default:
-		if tableID < r.lastTableID() && tableID > r.firstTableID() {
-			return int64(math.MinInt64), int64(math.MaxInt64)
+	if tableID >= r.first.TableID && tableID < r.last.TableID {
+		return &FrameItem{
+			DBName:    dbName,
+			TableName: tableName,
+			TableID:   tableID,
+			IsRecord:  true,
 		}
 	}
-	return int64(math.MaxInt64), int64(math.MinInt64)
+	return nil
 }
 
-func (r RegionFrameRange) firstTableID() int64 {
-	return r.first.TableID
-}
+// getIndexFrame returns the indnex frame of a table. If the table's indices are
+// not covered by this frame range, it returns nil.
+func (r *RegionFrameRange) getIndexFrame(tableID, indexID int64, dbName, tableName, indexName string) *FrameItem {
+	if tableID == r.first.TableID && !r.first.IsRecord && indexID == r.first.IndexID {
+		r.first.DBName, r.first.TableName, r.first.IndexName = dbName, tableName, indexName
+		return r.first
+	}
+	if tableID == r.last.TableID && indexID == r.last.IndexID {
+		r.last.DBName, r.last.TableName, r.last.IndexName = dbName, tableName, indexName
+		return r.last
+	}
 
-func (r RegionFrameRange) lastTableID() int64 {
-	return r.last.TableID
+	greaterThanFirst := tableID > r.first.TableID || (tableID == r.first.TableID && !r.first.IsRecord && indexID > r.first.IndexID)
+	lessThanLast := tableID < r.last.TableID || (tableID == r.last.TableID && (r.last.IsRecord || indexID < r.last.IndexID))
+	if greaterThanFirst && lessThanLast {
+		return &FrameItem{
+			DBName:    dbName,
+			TableName: tableName,
+			TableID:   tableID,
+			IsRecord:  false,
+			IndexName: indexName,
+			IndexID:   indexID,
+		}
+	}
+	return nil
 }
 
 // parseQuery is used to parse query string in URL with shouldUnescape, due to golang http package can not distinguish

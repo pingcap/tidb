@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 var (
@@ -52,6 +52,12 @@ func (c *likeFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinLikeSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinLikeSig) Clone() builtinFunc {
+	newSig := &builtinLikeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals a builtinLikeSig.
@@ -101,6 +107,12 @@ type builtinRegexpBinarySig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinRegexpBinarySig) Clone() builtinFunc {
+	newSig := &builtinRegexpBinarySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 func (b *builtinRegexpBinarySig) evalInt(row types.Row) (int64, bool, error) {
 	expr, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -122,6 +134,12 @@ func (b *builtinRegexpBinarySig) evalInt(row types.Row) (int64, bool, error) {
 
 type builtinRegexpSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinRegexpSig) Clone() builtinFunc {
+	newSig := &builtinRegexpSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals `expr REGEXP pat`, or `expr RLIKE pat`.

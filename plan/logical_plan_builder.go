@@ -143,6 +143,7 @@ func (b *planBuilder) buildResultSetNode(node ast.ResultSetNode) LogicalPlan {
 			b.err = ErrUnsupportedType.GenByArgs(v)
 		}
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 		if v, ok := p.(*DataSource); ok {
@@ -237,24 +238,68 @@ func extractTableAlias(p LogicalPlan) *model.CIStr {
 	return nil
 }
 
-func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
-	if join.Right == nil {
-		return b.buildResultSetNode(join.Left)
-	}
-	b.optFlag = b.optFlag | flagPredicatePushDown
-	leftPlan := b.buildResultSetNode(join.Left)
-	if b.err != nil {
-		return nil
-	}
-	rightPlan := b.buildResultSetNode(join.Right)
-	if b.err != nil {
+func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) error {
+	if hintInfo == nil {
 		return nil
 	}
 
-	newSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
-	joinPlan := LogicalJoin{}.init(b.ctx)
+	lhsAlias := extractTableAlias(p.children[0])
+	rhsAlias := extractTableAlias(p.children[1])
+	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
+		p.preferJoinType |= preferMergeJoin
+	}
+	if hintInfo.ifPreferHashJoin(lhsAlias, rhsAlias) {
+		p.preferJoinType |= preferHashJoin
+	}
+	if hintInfo.ifPreferINLJ(lhsAlias) {
+		p.preferJoinType |= preferLeftAsIndexOuter
+	}
+	if hintInfo.ifPreferINLJ(rhsAlias) {
+		p.preferJoinType |= preferRightAsIndexOuter
+	}
+
+	// If there're multiple join types and one of them is not index join hint,
+	// then there is a conflict of join types.
+	if bits.OnesCount(p.preferJoinType) > 1 && (p.preferJoinType^preferRightAsIndexOuter^preferLeftAsIndexOuter) > 0 {
+		return errors.New("Join hints are conflict, you can only specify one type of join")
+	}
+	return nil
+}
+
+func (b *planBuilder) buildJoin(joinNode *ast.Join) LogicalPlan {
+	// We will construct a "Join" node for some statements like "INSERT",
+	// "DELETE", "UPDATE", "REPLACE". For this scenario "joinNode.Right" is nil
+	// and we only build the left "ResultSetNode".
+	if joinNode.Right == nil {
+		return b.buildResultSetNode(joinNode.Left)
+	}
+
+	b.optFlag = b.optFlag | flagPredicatePushDown
+
+	leftPlan := b.buildResultSetNode(joinNode.Left)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+
+	rightPlan := b.buildResultSetNode(joinNode.Right)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+	joinPlan := LogicalJoin{StraightJoin: joinNode.StraightJoin || b.inStraightJoin}.init(b.ctx)
 	joinPlan.SetChildren(leftPlan, rightPlan)
-	joinPlan.SetSchema(newSchema)
+	joinPlan.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
+
+	// Set join type.
+	switch joinNode.Tp {
+	case ast.LeftJoin:
+		joinPlan.JoinType = LeftOuterJoin
+	case ast.RightJoin:
+		joinPlan.JoinType = RightOuterJoin
+	default:
+		joinPlan.JoinType = InnerJoin
+	}
 
 	// Merge sub join's redundantSchema into this join plan. When handle query like
 	// select t2.a from (t1 join t2 using (a)) join t3 using (a);
@@ -268,43 +313,35 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 	}
 	joinPlan.redundantSchema = expression.MergeSchema(lRedundant, rRedundant)
 
-	if b.TableHints() != nil {
-		leftAlias := extractTableAlias(leftPlan)
-		rightAlias := extractTableAlias(rightPlan)
-		if b.TableHints().ifPreferMergeJoin(leftAlias, rightAlias) {
-			joinPlan.preferJoinType |= preferMergeJoin
-		}
-		if b.TableHints().ifPreferHashJoin(leftAlias, rightAlias) {
-			joinPlan.preferJoinType |= preferHashJoin
-		}
-		if b.TableHints().ifPreferINLJ(leftAlias) {
-			joinPlan.preferJoinType |= preferLeftAsIndexOuter
-		}
-		if b.TableHints().ifPreferINLJ(rightAlias) {
-			joinPlan.preferJoinType |= preferRightAsIndexOuter
-		}
-		// If there're multiple join type and one of them is not the index join hints, then is conflict.
-		if bits.OnesCount(joinPlan.preferJoinType) > 1 && (joinPlan.preferJoinType^preferRightAsIndexOuter^preferLeftAsIndexOuter) > 0 {
-			b.err = errors.New("Join hints are conflict, you can only specify one type of join")
-			return nil
-		}
+	// Set preferred join algorithm if some join hints is specified by user.
+	err := joinPlan.setPreferredJoinType(b.TableHints())
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
 	}
 
-	if join.NaturalJoin {
-		if err := b.buildNaturalJoin(joinPlan, leftPlan, rightPlan, join); err != nil {
-			b.err = err
+	// "NATURAL JOIN" doesn't have "ON" or "USING" conditions.
+	//
+	// The "NATURAL [LEFT] JOIN" of two tables is defined to be semantically
+	// equivalent to an "INNER JOIN" or a "LEFT JOIN" with a "USING" clause
+	// that names all columns that exist in both tables.
+	//
+	// See https://dev.mysql.com/doc/refman/5.7/en/join.html for more detail.
+	if joinNode.NaturalJoin {
+		if err = b.buildNaturalJoin(joinPlan, leftPlan, rightPlan, joinNode); err != nil {
+			b.err = errors.Trace(err)
 			return nil
 		}
-	} else if join.Using != nil {
-		if err := b.buildUsingClause(joinPlan, leftPlan, rightPlan, join); err != nil {
-			b.err = err
+	} else if joinNode.Using != nil {
+		if err = b.buildUsingClause(joinPlan, leftPlan, rightPlan, joinNode); err != nil {
+			b.err = errors.Trace(err)
 			return nil
 		}
-	} else if join.On != nil {
+	} else if joinNode.On != nil {
 		b.curClause = onClause
-		onExpr, newPlan, err := b.rewrite(join.On.Expr, joinPlan, nil, false)
+		onExpr, newPlan, err := b.rewrite(joinNode.On.Expr, joinPlan, nil, false)
 		if err != nil {
-			b.err = err
+			b.err = errors.Trace(err)
 			return nil
 		}
 		if newPlan != joinPlan {
@@ -314,23 +351,22 @@ func (b *planBuilder) buildJoin(join *ast.Join) LogicalPlan {
 		onCondition := expression.SplitCNFItems(onExpr)
 		joinPlan.attachOnConds(onCondition)
 	} else if joinPlan.JoinType == InnerJoin {
+		// If a inner join without "ON" or "USING" clause, it's a cartesian
+		// product over the join tables.
 		joinPlan.cartesianJoin = true
 	}
-	if join.Tp == ast.LeftJoin {
-		joinPlan.JoinType = LeftOuterJoin
-	} else if join.Tp == ast.RightJoin {
-		joinPlan.JoinType = RightOuterJoin
-	} else {
-		joinPlan.JoinType = InnerJoin
-	}
+
 	return joinPlan
 }
 
-// buildUsingClause do redundant column elimination and column ordering based on using clause.
-// According to standard SQL, producing this display order:
-// First, coalesced common columns of the two joined tables, in the order in which they occur in the first table.
-// Second, columns unique to the first table, in order in which they occur in that table.
-// Third, columns unique to the second table, in order in which they occur in that table.
+// buildUsingClause eliminate the redundant columns and ordering columns based
+// on the "USING" clause.
+//
+// According to the standard SQL, columns are ordered in the following way:
+// 1. coalesced common columns of "leftPlan" and "rightPlan", in the order they
+//    appears in "leftPlan".
+// 2. the rest columns in "leftPlan", in the order they appears in "leftPlan".
+// 3. the rest columns in "rightPlan", in the order they appears in "rightPlan".
 func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan LogicalPlan, join *ast.Join) error {
 	filter := make(map[string]bool, len(join.Using))
 	for _, col := range join.Using {
@@ -339,7 +375,7 @@ func (b *planBuilder) buildUsingClause(p *LogicalJoin, leftPlan, rightPlan Logic
 	return b.coalesceCommonColumns(p, leftPlan, rightPlan, join.Tp == ast.RightJoin, filter)
 }
 
-// buildNaturalJoin build natural join output schema. It find out all the common columns
+// buildNaturalJoin builds natural join output schema. It finds out all the common columns
 // then using the same mechanism as buildUsingClause to eliminate redundant columns and build join conditions.
 // According to standard SQL, producing this display order:
 // 	All the common columns
@@ -582,7 +618,7 @@ func (b *planBuilder) buildDistinct(child LogicalPlan, length int) LogicalPlan {
 	}
 	plan4Agg.SetChildren(child)
 	plan4Agg.SetSchema(child.Schema().Clone())
-	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scala functions.
+	// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
 	// plan4Agg.buildProjectionIfNecessary()
 	// b.optFlag = b.optFlag | flagEliminateProjection
 	return plan4Agg
@@ -647,31 +683,91 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 }
 
 func (b *planBuilder) buildUnion(union *ast.UnionStmt) LogicalPlan {
-	u := LogicalUnionAll{}.init(b.ctx)
-	u.children = make([]LogicalPlan, len(union.SelectList.Selects))
-	for i, sel := range union.SelectList.Selects {
-		u.children[i] = b.buildSelect(sel)
-		if b.err != nil {
-			return nil
-		}
-		if u.children[i].Schema().Len() != u.children[0].Schema().Len() {
-			b.err = errors.New("The used SELECT statements have a different number of columns")
-			return nil
+	distinctSelectPlans, allSelectPlans := b.divideUnionSelectPlans(union.SelectList.Selects)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+
+	unionDistinctPlan := b.buildSubUnion(distinctSelectPlans)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
+
+	if unionDistinctPlan != nil {
+		unionDistinctPlan = b.buildDistinct(unionDistinctPlan, unionDistinctPlan.Schema().Len())
+		if len(allSelectPlans) > 0 {
+			allSelectPlans = append(allSelectPlans, unionDistinctPlan)
 		}
 	}
 
-	b.buildProjection4Union(u)
-	var p LogicalPlan = u
-	if union.Distinct {
-		p = b.buildDistinct(u, u.Schema().Len())
+	unionAllPlan := b.buildSubUnion(allSelectPlans)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
 	}
+
+	unionPlan := unionDistinctPlan
+	if unionAllPlan != nil {
+		unionPlan = unionAllPlan
+	}
+
 	if union.OrderBy != nil {
-		p = b.buildSort(p, union.OrderBy.Items, nil)
+		unionPlan = b.buildSort(unionPlan, union.OrderBy.Items, nil)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
 	if union.Limit != nil {
-		p = b.buildLimit(p, union.Limit)
+		unionPlan = b.buildLimit(unionPlan, union.Limit)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil
+		}
 	}
-	return p
+	return unionPlan
+}
+
+// divideUnionSelectPlans resolves union's select stmts to logical plans.
+// and divide result plans into "union-distinct" and "union-all" parts.
+// divide rule ref: https://dev.mysql.com/doc/refman/5.7/en/union.html
+// "Mixed UNION types are treated such that a DISTINCT union overrides any ALL union to its left."
+func (b *planBuilder) divideUnionSelectPlans(selects []*ast.SelectStmt) (distinctSelects []LogicalPlan, allSelects []LogicalPlan) {
+	firstUnionAllIdx, columnNums := 0, -1
+	// The last slot is reserved for appending distinct union outside this function.
+	children := make([]LogicalPlan, len(selects), len(selects)+1)
+	for i := len(selects) - 1; i >= 0; i-- {
+		stmt := selects[i]
+		if firstUnionAllIdx == 0 && stmt.IsAfterUnionDistinct {
+			firstUnionAllIdx = i + 1
+		}
+		selectPlan := b.buildSelect(stmt)
+		if b.err != nil {
+			b.err = errors.Trace(b.err)
+			return nil, nil
+		}
+		if columnNums == -1 {
+			columnNums = selectPlan.Schema().Len()
+		}
+		if selectPlan.Schema().Len() != columnNums {
+			b.err = ErrWrongNumberOfColumnsInSelect.GenByArgs()
+			return nil, nil
+		}
+		children[i] = selectPlan
+	}
+	return children[:firstUnionAllIdx], children[firstUnionAllIdx:]
+}
+
+func (b *planBuilder) buildSubUnion(subPlan []LogicalPlan) LogicalPlan {
+	if len(subPlan) == 0 {
+		return nil
+	}
+	u := LogicalUnionAll{}.init(b.ctx)
+	u.children = subPlan
+	b.buildProjection4Union(u)
+	return u
 }
 
 // ByItems wraps a "by" item.
@@ -739,19 +835,24 @@ func (b *planBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) LogicalPlan 
 	if limit.Offset != nil {
 		offset, err = getUintForLimitOffset(sc, limit.Offset.GetValue())
 		if err != nil {
-			b.err = ErrWrongArguments
+			b.err = ErrWrongArguments.GenByArgs("LIMIT")
 			return nil
 		}
 	}
 	if limit.Count != nil {
 		count, err = getUintForLimitOffset(sc, limit.Count.GetValue())
 		if err != nil {
-			b.err = ErrWrongArguments
+			b.err = ErrWrongArguments.GenByArgs("LIMIT")
 			return nil
 		}
 	}
 	if count > math.MaxUint64-offset {
 		count = math.MaxUint64 - offset
+	}
+	if offset+count == 0 {
+		tableDual := LogicalTableDual{RowCount: 0}.init(b.ctx)
+		tableDual.schema = src.Schema()
+		return tableDual
 	}
 	li := LogicalLimit{
 		Offset: offset,
@@ -804,7 +905,7 @@ func resolveFromSelectFields(v *ast.ColumnNameExpr, fields []*ast.SelectField, i
 				index = i
 			} else if !colMatch(matchedExpr.(*ast.ColumnNameExpr).Name, curCol.Name) &&
 				!colMatch(curCol.Name, matchedExpr.(*ast.ColumnNameExpr).Name) {
-				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L)
+				return -1, ErrAmbiguous.GenByArgs(curCol.Name.Name.L, clauseMsg[fieldList])
 			}
 		}
 	}
@@ -1443,7 +1544,7 @@ func (b *planBuilder) popTableHints() {
 
 // TableHints returns the *tableHintInfo of PlanBuilder.
 func (b *planBuilder) TableHints() *tableHintInfo {
-	if b.tableHintInfo == nil || len(b.tableHintInfo) == 0 {
+	if len(b.tableHintInfo) == 0 {
 		return nil
 	}
 	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
@@ -1455,6 +1556,11 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		if b.pushTableHints(sel.TableHints) {
 			defer b.popTableHints()
 		}
+	}
+	if sel.SelectStmtOpts != nil {
+		origin := b.inStraightJoin
+		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
+		defer func() { b.inStraightJoin = origin }()
 	}
 
 	var (
@@ -1469,16 +1575,19 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 		p = b.buildTableDual()
 	}
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	originalFields := sel.Fields.Fields
 	sel.Fields.Fields = b.unfoldWildStar(p, sel.Fields.Fields)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	if sel.GroupBy != nil {
 		p, gbyCols = b.resolveGbyExprs(p, sel.GroupBy, sel.Fields.Fields)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
@@ -1492,6 +1601,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
@@ -1502,6 +1612,7 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 	if hasAgg {
 		aggFuncs, totalMap = b.extractAggFuncs(sel.Fields.Fields)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 		var aggIndexMap map[int]int
@@ -1510,36 +1621,42 @@ func (b *planBuilder) buildSelect(sel *ast.SelectStmt) LogicalPlan {
 			totalMap[k] = aggIndexMap[v]
 		}
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	var oldLen int
 	p, oldLen = b.buildProjection(p, sel.Fields.Fields, totalMap)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	if sel.Having != nil {
 		b.curClause = havingClause
 		p = b.buildSelection(p, sel.Having.Expr, havingMap)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.Distinct {
 		p = b.buildDistinct(p, oldLen)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.OrderBy != nil {
 		p = b.buildSort(p, sel.OrderBy.Items, orderMap)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.Limit != nil {
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
@@ -1579,43 +1696,58 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 // and use pseudo estimation.
 var RatioOfPseudoEstimate = 0.7
 
+// getStatsTable gets statistics information for a table specified by "tableID".
+// A pseudo statistics table is returned in any of the following scenario:
+// 1. tidb-server started and statistics handle has not been initialized.
+// 2. table row count from statistics is zero.
+// 3. statistics is outdated.
+func (b *planBuilder) getStatsTable(tblInfo *model.TableInfo) *statistics.Table {
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+
+	// 1. tidb-server started and statistics handle has not been initialized.
+	if statsHandle == nil {
+		return statistics.PseudoTable(tblInfo)
+	}
+
+	statsTbl := statsHandle.GetTableStats(tblInfo)
+
+	// 2. table row count from statistics is zero.
+	if statsTbl.Count == 0 {
+		return statistics.PseudoTable(tblInfo)
+	}
+
+	// 3. statistics is outdated.
+	if float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
+		countFromStats := statsTbl.Count
+		statsTbl = statistics.PseudoTable(tblInfo)
+		// Table row count from statistics is more meaningful than the
+		// pseudo row count in most cases.
+		statsTbl.Count = countFromStats
+		metrics.PseudoEstimation.Inc()
+	}
+	return statsTbl
+}
+
 func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
-	schemaName := tn.Schema
-	if schemaName.L == "" {
-		schemaName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	dbName := tn.Schema
+	if dbName.L == "" {
+		dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
-	tbl, err := b.is.TableByName(schemaName, tn.Name)
+
+	tbl, err := b.is.TableByName(dbName, tn.Name)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
 	}
+
 	tableInfo := tbl.Meta()
-	handle := domain.GetDomain(b.ctx).StatsHandle()
-	var statsTbl *statistics.Table
-	if handle == nil {
-		// When the first session is created, the handle hasn't been initialized.
-		statsTbl = statistics.PseudoTable(tableInfo.ID)
-	} else {
-		statsTbl = handle.GetTableStats(tableInfo.ID)
-		if statsTbl.Count == 0 || float64(statsTbl.ModifyCount)/float64(statsTbl.Count) > RatioOfPseudoEstimate {
-			originCnt := statsTbl.Count
-			statsTbl = statistics.PseudoTable(tableInfo.ID)
-			if originCnt > 0 {
-				// The count of stats table is always proper.
-				statsTbl.Count = originCnt
-			} else {
-				// Zero count always brings some strange problem.
-				statsTbl.Count = 100
-			}
-			metrics.PseudoEstimation.Inc()
-		}
-	}
-	indices, includeTableScan, err := availableIndices(tn.IndexHints, tableInfo)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
+
+	possiblePaths, err := getPossibleAccessPaths(tn.IndexHints, tableInfo)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
 	}
-	avalableIndices := avalableIndices{indices: indices, includeTableScan: includeTableScan}
 
 	var columns []*table.Column
 	if b.inUpdateStmt {
@@ -1623,15 +1755,15 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	} else {
 		columns = tbl.Cols()
 	}
+
 	ds := DataSource{
-		indexHints:       tn.IndexHints,
-		tableInfo:        tableInfo,
-		statisticTable:   statsTbl,
-		DBName:           schemaName,
-		Columns:          make([]*model.ColumnInfo, 0, len(columns)),
-		availableIndices: &avalableIndices,
+		DBName:              dbName,
+		tableInfo:           tableInfo,
+		statisticTable:      b.getStatsTable(tableInfo),
+		indexHints:          tn.IndexHints,
+		possibleAccessPaths: possiblePaths,
+		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
 	}.init(b.ctx)
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, schemaName.L, tableInfo.Name.L, "")
 
 	var handleCol *expression.Column
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
@@ -1639,21 +1771,24 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		schema.Append(&expression.Column{
 			FromID:   ds.id,
-			ColName:  col.Name,
-			TblName:  tableInfo.Name,
-			DBName:   schemaName,
-			RetType:  &col.FieldType,
 			Position: i,
-			ID:       col.ID})
+			DBName:   dbName,
+			TblName:  tableInfo.Name,
+			ColName:  col.Name,
+			ID:       col.ID,
+			RetType:  &col.FieldType,
+		})
+
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			handleCol = schema.Columns[schema.Len()-1]
+			handleCol = schema.Columns[i]
 		}
 	}
 	ds.SetSchema(schema)
-	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
+
 	// We append an extra handle column to the schema when "ds" is not a memory
 	// table e.g. table in the "INFORMATION_SCHEMA" database, and the handle
 	// column is not the primary key of "ds".
+	isMemDB := infoschema.IsMemoryDB(ds.DBName.L)
 	if !isMemDB && handleCol == nil {
 		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 		handleCol = ds.newExtraHandleSchemaCol()
@@ -1662,13 +1797,20 @@ func (b *planBuilder) buildDataSource(tn *ast.TableName) LogicalPlan {
 	if handleCol != nil {
 		schema.TblID2Handle[tableInfo.ID] = []*expression.Column{handleCol}
 	}
-	// make plan as DS -> US -> Proj
+
 	var result LogicalPlan = ds
+
+	// If this SQL is executed in a non-readonly transaction, we need a
+	// "UnionScan" operator to read the modifications of former SQLs, which is
+	// buffered in tidb-server memory.
 	if b.ctx.Txn() != nil && !b.ctx.Txn().IsReadOnly() {
 		us := LogicalUnionScan{}.init(b.ctx)
-		us.SetChildren(result)
+		us.SetChildren(ds)
 		result = us
 	}
+
+	// If this table contains any virtual generated columns, we need a
+	// "Projection" to calculate these columns.
 	proj := b.projectVirtualColumns(ds, columns)
 	if proj != nil {
 		proj.SetChildren(result)
@@ -1836,10 +1978,17 @@ func (b *planBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 }
 
 func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
+	if update.TableHints != nil {
+		// table hints without query block support only visible in current SELECT
+		if b.pushTableHints(update.TableHints) {
+			defer b.popTableHints()
+		}
+	}
 	b.inUpdateStmt = true
 	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: update.TableRefs, Where: update.Where, OrderBy: update.Order, Limit: update.Limit}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 
@@ -1856,23 +2005,27 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.OrderBy != nil {
 		p = b.buildSort(p, sel.OrderBy.Items, nil)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.Limit != nil {
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	orderedList, np := b.buildUpdateLists(tableList, update.List, p)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	p = np
@@ -1883,6 +2036,10 @@ func (b *planBuilder) buildUpdate(update *ast.UpdateStmt) Plan {
 	}.init(b.ctx)
 	updt.SetSchema(p.Schema())
 	updt.SelectPlan, b.err = doOptimize(b.optFlag, p)
+	if b.err != nil {
+		b.err = errors.Trace(b.err)
+		return nil
+	}
 	updt.ResolveIndices()
 	return updt
 }
@@ -1999,27 +2156,43 @@ func extractTableAsNameForUpdate(p LogicalPlan, asNames map[*model.TableInfo][]*
 }
 
 func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) Plan {
-	sel := &ast.SelectStmt{Fields: &ast.FieldList{}, From: delete.TableRefs, Where: delete.Where, OrderBy: delete.Order, Limit: delete.Limit}
+	if delete.TableHints != nil {
+		// table hints without query block support only visible in current DELETE
+		if b.pushTableHints(delete.TableHints) {
+			defer b.popTableHints()
+		}
+	}
+	sel := &ast.SelectStmt{
+		Fields:  &ast.FieldList{},
+		From:    delete.TableRefs,
+		Where:   delete.Where,
+		OrderBy: delete.Order,
+		Limit:   delete.Limit,
+	}
 	p := b.buildResultSetNode(sel.From.TableRefs)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 
 	if sel.Where != nil {
 		p = b.buildSelection(p, sel.Where, nil)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.OrderBy != nil {
 		p = b.buildSort(p, sel.OrderBy.Items, nil)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
 	if sel.Limit != nil {
 		p = b.buildLimit(p, sel.Limit)
 		if b.err != nil {
+			b.err = errors.Trace(b.err)
 			return nil
 		}
 	}
@@ -2035,6 +2208,7 @@ func (b *planBuilder) buildDelete(delete *ast.DeleteStmt) Plan {
 	}.init(b.ctx)
 	del.SelectPlan, b.err = doOptimize(b.optFlag, p)
 	if b.err != nil {
+		b.err = errors.Trace(b.err)
 		return nil
 	}
 	del.SetSchema(expression.NewSchema())

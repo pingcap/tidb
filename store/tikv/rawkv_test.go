@@ -14,12 +14,15 @@
 package tikv
 
 import (
+	"bytes"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"golang.org/x/net/context"
 )
 
 type testRawKVSuite struct {
+	OneByOneSuite
 	cluster *mocktikv.Cluster
 	client  *RawKVClient
 	bo      *Backoffer
@@ -31,11 +34,12 @@ func (s *testRawKVSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithSingleStore(s.cluster)
 	pdClient := mocktikv.NewPDClient(s.cluster)
+	mvccStore := mocktikv.MustNewMVCCStore()
 	s.client = &RawKVClient{
 		clusterID:   0,
 		regionCache: NewRegionCache(pdClient),
 		pdClient:    pdClient,
-		rpcClient:   mocktikv.NewRPCClient(s.cluster, mocktikv.NewMvccStore()),
+		rpcClient:   mocktikv.NewRPCClient(s.cluster, mvccStore),
 	}
 	s.bo = NewBackoffer(context.Background(), 5000)
 }
@@ -77,6 +81,41 @@ func (s *testRawKVSuite) mustScan(c *C, startKey string, limit int, expect ...st
 	}
 }
 
+func (s *testRawKVSuite) mustDeleteRange(c *C, startKey, endKey []byte, expected map[string]string) {
+	err := s.client.DeleteRange(startKey, endKey)
+	c.Assert(err, IsNil)
+
+	for keyStr := range expected {
+		key := []byte(keyStr)
+		if bytes.Compare(startKey, key) <= 0 && bytes.Compare(key, endKey) < 0 {
+			delete(expected, keyStr)
+		}
+	}
+
+	s.checkData(c, expected)
+}
+
+func (s *testRawKVSuite) checkData(c *C, expected map[string]string) {
+	keys, values, err := s.client.Scan([]byte(""), len(expected)+1)
+	c.Assert(err, IsNil)
+
+	c.Assert(len(expected), Equals, len(keys))
+	for i, key := range keys {
+		c.Assert(expected[string(key)], Equals, string(values[i]))
+	}
+}
+
+func (s *testRawKVSuite) split(c *C, regionKey, splitKey string) error {
+	loc, err := s.client.regionCache.LocateKey(s.bo, []byte(regionKey))
+	if err != nil {
+		return err
+	}
+
+	newRegionID, peerID := s.cluster.AllocID(), s.cluster.AllocID()
+	s.cluster.SplitRaw(loc.Region.id, newRegionID, []byte(splitKey), []uint64{peerID}, peerID)
+	return nil
+}
+
 func (s *testRawKVSuite) TestSimple(c *C) {
 	s.mustNotExist(c, []byte("key"))
 	s.mustPut(c, []byte("key"), []byte("value"))
@@ -88,13 +127,11 @@ func (s *testRawKVSuite) TestSimple(c *C) {
 }
 
 func (s *testRawKVSuite) TestSplit(c *C) {
-	loc, err := s.client.regionCache.LocateKey(s.bo, []byte("k"))
-	c.Assert(err, IsNil)
 	s.mustPut(c, []byte("k1"), []byte("v1"))
 	s.mustPut(c, []byte("k3"), []byte("v3"))
 
-	newRegionID, peerID := s.cluster.AllocID(), s.cluster.AllocID()
-	s.cluster.SplitRaw(loc.Region.id, newRegionID, []byte("k2"), []uint64{peerID}, peerID)
+	err := s.split(c, "k", "k2")
+	c.Assert(err, IsNil)
 
 	s.mustGet(c, []byte("k1"), []byte("v1"))
 	s.mustGet(c, []byte("k3"), []byte("v3"))
@@ -114,16 +151,41 @@ func (s *testRawKVSuite) TestScan(c *C) {
 		s.mustScan(c, "k2", 3, "k3", "v3", "k5", "v5", "k7", "v7")
 	}
 
-	split := func(regionKey, splitKey string) {
-		loc, err := s.client.regionCache.LocateKey(s.bo, []byte(regionKey))
-		c.Assert(err, IsNil)
-		newRegionID, peerID := s.cluster.AllocID(), s.cluster.AllocID()
-		s.cluster.SplitRaw(loc.Region.id, newRegionID, []byte(splitKey), []uint64{peerID}, peerID)
+	check()
+
+	err := s.split(c, "k", "k2")
+	c.Assert(err, IsNil)
+	check()
+
+	err = s.split(c, "k2", "k5")
+	c.Assert(err, IsNil)
+	check()
+}
+
+func (s *testRawKVSuite) TestDeleteRange(c *C) {
+	// Init data
+	testData := map[string]string{}
+	for _, i := range []byte("abcd") {
+		for j := byte('0'); j <= byte('9'); j++ {
+			key := []byte{i, j}
+			value := []byte{'v', i, j}
+			s.mustPut(c, key, value)
+
+			testData[string(key)] = string(value)
+		}
 	}
 
-	check()
-	split("k", "k2")
-	check()
-	split("k2", "k5")
-	check()
+	err := s.split(c, "b", "b")
+	c.Assert(err, IsNil)
+	err = s.split(c, "c", "c")
+	c.Assert(err, IsNil)
+	err = s.split(c, "d", "d")
+	c.Assert(err, IsNil)
+
+	s.checkData(c, testData)
+	s.mustDeleteRange(c, []byte("b"), []byte("c0"), testData)
+	s.mustDeleteRange(c, []byte("c11"), []byte("c12"), testData)
+	s.mustDeleteRange(c, []byte("d0"), []byte("d0"), testData)
+	s.mustDeleteRange(c, []byte("c5"), []byte("d5"), testData)
+	s.mustDeleteRange(c, []byte("a"), []byte("z"), testData)
 }

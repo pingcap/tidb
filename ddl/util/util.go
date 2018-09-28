@@ -21,14 +21,16 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"golang.org/x/net/context"
 )
 
 const (
-	loadDeleteRangeSQL     = `SELECT job_id, element_id, start_key, end_key FROM mysql.gc_delete_range WHERE ts < %v ORDER BY ts`
-	completeDeleteRangeSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
-	updateDeleteRangeSQL   = `UPDATE mysql.gc_delete_range SET start_key = "%s" WHERE job_id = %d AND element_id = %d AND start_key = "%s"`
+	loadDeleteRangeSQL        = `SELECT HIGH_PRIORITY job_id, element_id, start_key, end_key FROM mysql.gc_delete_range WHERE ts < %v`
+	recordDoneDeletedRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range_done SELECT * FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
+	completeDeleteRangeSQL    = `DELETE FROM mysql.gc_delete_range WHERE job_id = %d AND element_id = %d`
+	updateDeleteRangeSQL      = `UPDATE mysql.gc_delete_range SET start_key = "%s" WHERE job_id = %d AND element_id = %d AND start_key = "%s"`
 )
 
 // DelRangeTask is for run delete-range command in gc_worker.
@@ -54,37 +56,48 @@ func LoadDeleteRanges(ctx sessionctx.Context, safePoint uint64) (ranges []DelRan
 	}
 
 	rs := rss[0]
+	chk := rs.NewChunk()
+	it := chunk.NewIterator4Chunk(chk)
 	for {
-		row, err := rs.Next(context.TODO())
+		err = rs.Next(context.TODO(), chk)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if row == nil {
+		if chk.NumRows() == 0 {
 			break
 		}
-		startKey, err := hex.DecodeString(row.GetString(2))
-		if err != nil {
-			return nil, errors.Trace(err)
+
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			startKey, err := hex.DecodeString(row.GetString(2))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			endKey, err := hex.DecodeString(row.GetString(3))
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			ranges = append(ranges, DelRangeTask{
+				JobID:     row.GetInt64(0),
+				ElementID: row.GetInt64(1),
+				StartKey:  startKey,
+				EndKey:    endKey,
+			})
 		}
-		endKey, err := hex.DecodeString(row.GetString(3))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		ranges = append(ranges, DelRangeTask{
-			JobID:     row.GetInt64(0),
-			ElementID: row.GetInt64(1),
-			StartKey:  startKey,
-			EndKey:    endKey,
-		})
 	}
 	return ranges, nil
 }
 
-// CompleteDeleteRange deletes a record from gc_delete_range table.
+// CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
 // NOTE: This function WILL NOT start and run in a new transaction internally.
 func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
-	sql := fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
+	sql := fmt.Sprintf(recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
 	_, err := ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	sql = fmt.Sprintf(completeDeleteRangeSQL, dr.JobID, dr.ElementID)
+	_, err = ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	return errors.Trace(err)
 }
 

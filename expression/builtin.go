@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 )
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
@@ -45,6 +45,9 @@ func (b *baseBuiltinFunc) setPbCode(c tipb.ScalarFuncSig) {
 }
 
 func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFunc {
+	if ctx == nil {
+		panic("ctx should not be nil")
+	}
 	return baseBuiltinFunc{
 		args: args,
 		ctx:  ctx,
@@ -58,6 +61,9 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType types.EvalType, argTps ...types.EvalType) (bf baseBuiltinFunc) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
+	}
+	if ctx == nil {
+		panic("ctx should not be nil")
 	}
 	for i := range args {
 		switch argTps[i] {
@@ -215,6 +221,20 @@ func (b *baseBuiltinFunc) getCtx() sessionctx.Context {
 	return b.ctx
 }
 
+func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
+	b.args = make([]Expression, 0, len(b.args))
+	for _, arg := range from.args {
+		b.args = append(b.args, arg.Clone())
+	}
+	b.ctx = from.ctx
+	b.tp = from.tp
+	b.pbCode = from.pbCode
+}
+
+func (b *baseBuiltinFunc) Clone() builtinFunc {
+	panic("you should not call this method.")
+}
+
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	// evalInt evaluates int result of builtinFunc by given row.
@@ -243,6 +263,8 @@ type builtinFunc interface {
 	setPbCode(tipb.ScalarFuncSig)
 	// PbCode returns PbCode of this signature.
 	PbCode() tipb.ScalarFuncSig
+	// Clone returns a copy of itself.
+	Clone() builtinFunc
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.

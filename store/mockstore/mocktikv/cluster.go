@@ -297,7 +297,7 @@ func (c *Cluster) Merge(regionID1, regionID2 uint64) {
 
 // SplitTable evenly splits the data in table into count regions.
 // Only works for single store.
-func (c *Cluster) SplitTable(mvccStore *MvccStore, tableID int64, count int) {
+func (c *Cluster) SplitTable(mvccStore MVCCStore, tableID int64, count int) {
 	tableStart := tablecodec.GenTableRecordPrefix(tableID)
 	tableEnd := tableStart.PrefixNext()
 	c.splitRange(mvccStore, NewMvccKey(tableStart), NewMvccKey(tableEnd), count)
@@ -305,13 +305,13 @@ func (c *Cluster) SplitTable(mvccStore *MvccStore, tableID int64, count int) {
 
 // SplitIndex evenly splits the data in index into count regions.
 // Only works for single store.
-func (c *Cluster) SplitIndex(mvccStore *MvccStore, tableID, indexID int64, count int) {
+func (c *Cluster) SplitIndex(mvccStore MVCCStore, tableID, indexID int64, count int) {
 	indexStart := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 	indexEnd := indexStart.PrefixNext()
 	c.splitRange(mvccStore, NewMvccKey(indexStart), NewMvccKey(indexEnd), count)
 }
 
-func (c *Cluster) splitRange(mvccStore *MvccStore, start, end MvccKey, count int) {
+func (c *Cluster) splitRange(mvccStore MVCCStore, start, end MvccKey, count int) {
 	c.Lock()
 	defer c.Unlock()
 	c.evacuateOldRegionRanges(start, end)
@@ -320,7 +320,7 @@ func (c *Cluster) splitRange(mvccStore *MvccStore, start, end MvccKey, count int
 }
 
 // getPairsGroupByRegions groups the key value pairs into splitted regions.
-func (c *Cluster) getEntriesGroupByRegions(mvccStore *MvccStore, start, end MvccKey, count int) [][]Pair {
+func (c *Cluster) getEntriesGroupByRegions(mvccStore MVCCStore, start, end MvccKey, count int) [][]Pair {
 	startTS := uint64(math.MaxUint64)
 	limit := int(math.MaxInt32)
 	pairs := mvccStore.Scan(start.Raw(), end.Raw(), limit, startTS, kvrpcpb.IsolationLevel_SI)

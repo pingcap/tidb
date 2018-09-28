@@ -101,13 +101,19 @@ type TransactionContext struct {
 }
 
 // UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64) {
+func (tc *TransactionContext) UpdateDeltaForTable(tableID int64, delta int64, count int64, colSize map[int64]int64) {
 	if tc.TableDeltaMap == nil {
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
 	item := tc.TableDeltaMap[tableID]
+	if item.ColSize == nil {
+		item.ColSize = make(map[int64]int64)
+	}
 	item.Delta += delta
 	item.Count += count
+	for key, val := range colSize {
+		item.ColSize[key] += val
+	}
 	tc.TableDeltaMap[tableID] = item
 }
 
@@ -162,6 +168,15 @@ type SessionVars struct {
 	// Should be reset on transaction finished.
 	TxnCtx *TransactionContext
 
+	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
+	TxnIsolationLevelOneShot struct {
+		// state 0 means default
+		// state 1 means it's set in current transaction.
+		// state 2 means it should be used in current transaction.
+		State int
+		Value string
+	}
+
 	// Following variables are special for current session.
 
 	Status           uint16
@@ -182,6 +197,9 @@ type SessionVars struct {
 
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
+
+	// PlanCacheEnabled stores the global config "plan-cache-enabled", and it will be only updated in tests.
+	PlanCacheEnabled bool
 
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
@@ -253,8 +271,14 @@ type SessionVars struct {
 	// IndexLookupConcurrency is the number of concurrent index lookup worker.
 	IndexLookupConcurrency int
 
+	// IndexLookupJoinConcurrency is the number of concurrent index lookup join inner worker.
+	IndexLookupJoinConcurrency int
+
 	// DistSQLScanConcurrency is the number of concurrent dist SQL scan worker.
 	DistSQLScanConcurrency int
+
+	// HashJoinConcurrency is the number of concurrent hash join outer worker.
+	HashJoinConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
@@ -283,16 +307,28 @@ type SessionVars struct {
 	MemQuotaQuery int64
 	// MemQuotaHashJoin defines the memory quota for a hash join executor.
 	MemQuotaHashJoin int64
+	// MemQuotaMergeJoin defines the memory quota for a merge join executor.
+	MemQuotaMergeJoin int64
 	// MemQuotaSort defines the memory quota for a sort executor.
 	MemQuotaSort int64
 	// MemQuotaTopn defines the memory quota for a top n executor.
 	MemQuotaTopn int64
+	// MemQuotaIndexLookupReader defines the memory quota for a index lookup reader executor.
+	MemQuotaIndexLookupReader int64
+	// MemQuotaIndexLookupJoin defines the memory quota for a index lookup join executor.
+	MemQuotaIndexLookupJoin int64
+	// MemQuotaNestedLoopApply defines the memory quota for a nested loop apply executor.
+	MemQuotaNestedLoopApply int64
+	// OptimizerSelectivityLevel defines the level of the selectivity estimation in planner.
+	OptimizerSelectivityLevel int
 
 	// EnableStreaming indicates whether the coprocessor request can use streaming API.
 	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
 	EnableStreaming bool
 
 	writeStmtBufs WriteStmtBufs
+
+	DisableTxnAutoRetry bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -314,13 +350,21 @@ func NewSessionVars() *SessionVars {
 		IndexLookupSize:            DefIndexLookupSize,
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
 		IndexSerialScanConcurrency: DefIndexSerialScanConcurrency,
+		IndexLookupJoinConcurrency: DefIndexLookupJoinConcurrency,
+		HashJoinConcurrency:        DefTiDBHashJoinConcurrency,
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		MaxChunkSize:               DefMaxChunkSize,
 		DMLBatchSize:               DefDMLBatchSize,
-		MemQuotaQuery:              DefTiDBMemQuotaQuery,
+		MemQuotaQuery:              config.GetGlobalConfig().MemQuotaQuery,
 		MemQuotaHashJoin:           DefTiDBMemQuotaHashJoin,
+		MemQuotaMergeJoin:          DefTiDBMemQuotaMergeJoin,
 		MemQuotaSort:               DefTiDBMemQuotaSort,
 		MemQuotaTopn:               DefTiDBMemQuotaTopn,
+		MemQuotaIndexLookupReader:  DefTiDBMemQuotaIndexLookupReader,
+		MemQuotaIndexLookupJoin:    DefTiDBMemQuotaIndexLookupJoin,
+		MemQuotaNestedLoopApply:    DefTiDBMemQuotaNestedLoopApply,
+		OptimizerSelectivityLevel:  DefTiDBOptimizerSelectivityLevel,
+		DisableTxnAutoRetry:        DefTiDBDisableTxnAutoRetry,
 	}
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
@@ -328,6 +372,7 @@ func NewSessionVars() *SessionVars {
 	} else {
 		enableStreaming = "0"
 	}
+	vars.PlanCacheEnabled = config.GetGlobalConfig().PlanCache.Enabled
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 	return vars
 }
@@ -436,6 +481,9 @@ func (s *SessionVars) deleteSystemVar(name string) error {
 // SetSystemVar sets the value of a system variable.
 func (s *SessionVars) SetSystemVar(name string, val string) error {
 	switch name {
+	case TxnIsolationOneShot:
+		s.TxnIsolationLevelOneShot.State = 1
+		s.TxnIsolationLevelOneShot.Value = val
 	case TimeZone:
 		tz, err := parseTimeZone(val)
 		if err != nil {
@@ -472,37 +520,56 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBOptInSubqUnFolding:
 		s.AllowInSubqueryUnFolding = TiDBOptOn(val)
 	case TiDBIndexLookupConcurrency:
-		s.IndexLookupConcurrency = tidbOptPositiveInt(val, DefIndexLookupConcurrency)
+		s.IndexLookupConcurrency = tidbOptPositiveInt32(val, DefIndexLookupConcurrency)
+	case TiDBIndexLookupJoinConcurrency:
+		s.IndexLookupJoinConcurrency = tidbOptPositiveInt32(val, DefIndexLookupJoinConcurrency)
 	case TiDBIndexJoinBatchSize:
-		s.IndexJoinBatchSize = tidbOptPositiveInt(val, DefIndexJoinBatchSize)
+		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
 	case TiDBIndexLookupSize:
-		s.IndexLookupSize = tidbOptPositiveInt(val, DefIndexLookupSize)
+		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
+	case TiDBHashJoinConcurrency:
+		s.HashJoinConcurrency = tidbOptPositiveInt32(val, DefTiDBHashJoinConcurrency)
 	case TiDBDistSQLScanConcurrency:
-		s.DistSQLScanConcurrency = tidbOptPositiveInt(val, DefDistSQLScanConcurrency)
+		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
-		s.IndexSerialScanConcurrency = tidbOptPositiveInt(val, DefIndexSerialScanConcurrency)
+		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBBatchInsert:
 		s.BatchInsert = TiDBOptOn(val)
 	case TiDBBatchDelete:
 		s.BatchDelete = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
-		s.DMLBatchSize = tidbOptPositiveInt(val, DefDMLBatchSize)
+		s.DMLBatchSize = tidbOptPositiveInt32(val, DefDMLBatchSize)
 	case TiDBCurrentTS, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
-		s.MaxChunkSize = tidbOptPositiveInt(val, DefMaxChunkSize)
+		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
 	case TIDBMemQuotaQuery:
-		s.MemQuotaQuery = tidbOptInt64(val, DefTiDBMemQuotaQuery)
+		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 	case TIDBMemQuotaHashJoin:
 		s.MemQuotaHashJoin = tidbOptInt64(val, DefTiDBMemQuotaHashJoin)
+	case TIDBMemQuotaMergeJoin:
+		s.MemQuotaMergeJoin = tidbOptInt64(val, DefTiDBMemQuotaMergeJoin)
 	case TIDBMemQuotaSort:
 		s.MemQuotaSort = tidbOptInt64(val, DefTiDBMemQuotaSort)
 	case TIDBMemQuotaTopn:
 		s.MemQuotaTopn = tidbOptInt64(val, DefTiDBMemQuotaTopn)
+	case TIDBMemQuotaIndexLookupReader:
+		s.MemQuotaIndexLookupReader = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
+	case TIDBMemQuotaIndexLookupJoin:
+		s.MemQuotaIndexLookupJoin = tidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
+	case TIDBMemQuotaNestedLoopApply:
+		s.MemQuotaNestedLoopApply = tidbOptInt64(val, DefTiDBMemQuotaNestedLoopApply)
 	case TiDBGeneralLog:
-		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt(val, DefTiDBGeneralLog)))
+		atomic.StoreUint32(&ProcessGeneralLog, uint32(tidbOptPositiveInt32(val, DefTiDBGeneralLog)))
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
+	case TiDBOptimizerSelectivityLevel:
+		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
+	case TiDBDisableTxnAutoRetry:
+		s.DisableTxnAutoRetry = TiDBOptOn(val)
+	case TiDBDDLReorgWorkerCount:
+		workerCnt := tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)
+		SetDDLReorgWorkerCounter(int32(workerCnt))
 	}
 	s.systems[name] = val
 	return nil
@@ -516,10 +583,12 @@ const (
 	MaxAllowedPacket    = "max_allowed_packet"
 	TimeZone            = "time_zone"
 	TxnIsolation        = "tx_isolation"
+	TxnIsolationOneShot = "tx_isolation_one_shot"
 )
 
 // TableDelta stands for the changed count for one table.
 type TableDelta struct {
-	Delta int64
-	Count int64
+	Delta   int64
+	Count   int64
+	ColSize map[int64]int64
 }

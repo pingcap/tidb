@@ -25,12 +25,6 @@ import (
 )
 
 var (
-	// PlanCacheEnabled stores the global config "plan-cache-enabled".
-	PlanCacheEnabled bool
-	// PlanCacheShards stores the global config "plan-cache-shards".
-	PlanCacheShards uint
-	// PlanCacheCapacity stores the global config "plan-cache-capacity".
-	PlanCacheCapacity uint
 	// GlobalPlanCache stores the global plan cache for every session in a tidb-server.
 	GlobalPlanCache *kvcache.ShardedLRUCache
 

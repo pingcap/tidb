@@ -209,21 +209,21 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 
 	c.Assert(src.columns[0].length, check.Equals, 12)
 	c.Assert(src.columns[0].nullCount, check.Equals, 6)
-	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x55}))
+	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
 	c.Assert(len(src.columns[0].offsets), check.Equals, 0)
 	c.Assert(len(src.columns[0].data), check.Equals, 4*12)
 	c.Assert(len(src.columns[0].elemBuf), check.Equals, 4)
 
 	c.Assert(src.columns[1].length, check.Equals, 12)
 	c.Assert(src.columns[1].nullCount, check.Equals, 6)
-	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x55}))
+	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
 	c.Assert(string(src.columns[1].offsets), check.Equals, string([]int32{0, 3, 3, 6, 6, 9, 9, 12, 12, 15, 15, 18, 18}))
 	c.Assert(string(src.columns[1].data), check.Equals, "abcabcabcabcabcabc")
 	c.Assert(len(src.columns[1].elemBuf), check.Equals, 0)
 
 	c.Assert(src.columns[2].length, check.Equals, 12)
 	c.Assert(src.columns[2].nullCount, check.Equals, 6)
-	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x55}))
+	c.Assert(string(src.columns[0].nullBitmap), check.Equals, string([]byte{0x55, 0x05}))
 	c.Assert(len(src.columns[2].offsets), check.Equals, 13)
 	c.Assert(len(src.columns[2].data), check.Equals, 150)
 	c.Assert(len(src.columns[2].elemBuf), check.Equals, 0)
@@ -233,6 +233,12 @@ func (s *testChunkSuite) TestTruncateTo(c *check.C) {
 		cmpRes := json.CompareBinary(jsonElem, jsonObj)
 		c.Assert(cmpRes, check.Equals, 0)
 	}
+	chk := NewChunkWithCapacity(fieldTypes[:1], 1)
+	chk.AppendFloat32(0, 1.0)
+	chk.AppendFloat32(0, 1.0)
+	chk.TruncateTo(1)
+	chk.AppendNull(0)
+	c.Assert(chk.GetRow(1).IsNull(0), check.IsTrue)
 }
 
 // newChunk creates a new chunk and initialize columns with element length.

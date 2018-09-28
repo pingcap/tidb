@@ -183,7 +183,7 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 	case *ast.PrepareStmt:
 		return "Prepare"
 	case *ast.UseStmt:
-		return "IGNORE"
+		return "Use"
 	}
 	return "other"
 }
@@ -195,7 +195,7 @@ func GetInfoSchema(ctx sessionctx.Context) infoschema.InfoSchema {
 	var is infoschema.InfoSchema
 	if snap := sessVar.SnapshotInfoschema; snap != nil {
 		is = snap.(infoschema.InfoSchema)
-		log.Infof("[%d] use snapshot schema %d", sessVar.ConnectionID, is.SchemaMetaVersion())
+		log.Infof("con:%d use snapshot schema %d", sessVar.ConnectionID, is.SchemaMetaVersion())
 	} else {
 		is = sessVar.TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}

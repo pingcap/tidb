@@ -16,18 +16,20 @@ package ddl_test
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/terror"
@@ -42,19 +44,20 @@ type testStateChangeSuite struct {
 	lease time.Duration
 	store kv.Storage
 	dom   *domain.Domain
-	se    tidb.Session
+	se    session.Session
 	p     *parser.Parser
 }
 
 func (s *testStateChangeSuite) SetUpSuite(c *C) {
+	testleak.BeforeTest()
 	s.lease = 200 * time.Millisecond
 	var err error
 	s.store, err = mockstore.NewMockTikvStore()
 	c.Assert(err, IsNil)
-	tidb.SetSchemaLease(s.lease)
-	s.dom, err = tidb.BootstrapSession(s.store)
+	session.SetSchemaLease(s.lease)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	s.se, err = tidb.CreateSession4Test(s.store)
+	s.se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	_, err = s.se.Execute(context.Background(), "create database test_db_state")
 	c.Assert(err, IsNil)
@@ -68,6 +71,42 @@ func (s *testStateChangeSuite) TearDownSuite(c *C) {
 	s.se.Close()
 	s.dom.Close()
 	s.store.Close()
+	testleak.AfterTest(c)()
+}
+
+// TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
+func (s *testStateChangeSuite) TestShowCreateTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int, index idx (id))")
+
+	var checkErr error
+	prevState := model.StateNone
+	callback := &ddl.TestDDLCallback{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState == prevState || checkErr != nil {
+			return
+		}
+		if job.SchemaState != model.StatePublic {
+			result := tk.MustQuery("show create table t")
+			got := result.Rows()[0][1]
+			var expected string
+			if job.Type == model.ActionAddIndex {
+				expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+			} else if job.Type == model.ActionAddColumn {
+				expected = "CREATE TABLE `t` (\n  `id` int(11) DEFAULT NULL,\n  KEY `idx` (`id`),\n  KEY `idx1` (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"
+			}
+			if got != expected {
+				checkErr = errors.Errorf("got %s, expected %s", got, expected)
+			}
+		}
+	}
+	d := s.dom.DDL()
+	d.SetHook(callback)
+	tk.MustExec("alter table t add index idx1(id)")
+	c.Assert(checkErr, IsNil)
+	tk.MustExec("alter table t add column c int")
+	c.Assert(checkErr, IsNil)
 }
 
 func (s *testStateChangeSuite) TestTwoStates(c *C) {
@@ -103,7 +142,6 @@ func (s *testStateChangeSuite) TestTwoStates(c *C) {
 }
 
 func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testInfo *testExecInfo) {
-	defer testleak.AfterTest(c)()
 	_, err := s.se.Execute(context.Background(), `create table t (
 		c1 int,
 		c2 varchar(64),
@@ -186,7 +224,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 }
 
 type stateCase struct {
-	session     tidb.Session
+	session     session.Session
 	rawStmt     ast.StmtNode
 	stmt        ast.Statement
 	expectedErr error
@@ -213,7 +251,7 @@ func (t *testExecInfo) createSessions(store kv.Storage, useDB string) error {
 	var err error
 	for i, info := range t.sqlInfos {
 		for j, c := range info.cases {
-			c.session, err = tidb.CreateSession4Test(store)
+			c.session, err = session.CreateSession4Test(store)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -312,7 +350,6 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 
 func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaState, tableName, alterTableSQL string,
 	sqlWithErrs []sqlWithErr) {
-	defer testleak.AfterTest(c)()
 	_, err := s.se.Execute(context.Background(), `create table t (
 		c1 varchar(64),
 		c2 enum('N','Y') not null default 'N',
@@ -331,7 +368,7 @@ func (s *testStateChangeSuite) runTestInSchemaState(c *C, state model.SchemaStat
 	prevState := model.StateNone
 	var checkErr error
 	times := 0
-	se, err := tidb.CreateSession(s.store)
+	se, err := session.CreateSession(s.store)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
@@ -390,7 +427,6 @@ func (s *testStateChangeSuite) CheckResult(tk *testkit.TestKit, sql string, args
 }
 
 func (s *testStateChangeSuite) TestShowIndex(c *C) {
-	defer testleak.AfterTest(c)()
 	_, err := s.se.Execute(context.Background(), `create table t(c1 int primary key, c2 int)`)
 	c.Assert(err, IsNil)
 	defer s.se.Execute(context.Background(), "drop table t")
@@ -429,4 +465,165 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	callback = &ddl.TestDDLCallback{}
 	d.SetHook(callback)
+}
+
+func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
+	sql := "ALTER TABLE t MODIFY COLUMN b int FIRST;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+		_, err := s.se.Execute(context.Background(), "select * from t")
+		c.Assert(err, IsNil)
+	}
+	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
+func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
+	sql1 := "ALTER TABLE t CHANGE a aa int;"
+	sql2 := "ALTER TABLE t CHANGE b aa int;"
+	f := func(c *C, err1, err2 error) {
+		// Make sure only a DDL encounters the error of 'duplicate column name'.
+		var oneErr error
+		if (err1 != nil && err2 == nil) || (err1 == nil && err2 != nil) {
+			if err1 != nil {
+				oneErr = err1
+			} else {
+				oneErr = err2
+			}
+		}
+		c.Assert(oneErr.Error(), Equals, "[schema:1060]Duplicate column name 'aa'")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
+	sql1 := "create table t_exists(c int);"
+	sql2 := "alter table t rename to t_exists;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_exists' already exists")
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+type checkRet func(c *C, err1, err2 error)
+
+func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 string, f checkRet) {
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "create table t(a int, b int, c int)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table t")
+
+	callback := &ddl.TestDDLCallback{}
+	times := 0
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		if times != 0 {
+			return
+		}
+		var qLen int64
+		var err1 error
+		for {
+			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+				m := meta.NewMeta(txn)
+				qLen, err1 = m.DDLJobQueueLen()
+				if err1 != nil {
+					return err1
+				}
+				return nil
+			})
+			if qLen == 2 {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		times++
+	}
+	d := s.dom.DDL()
+	d.SetHook(callback)
+
+	wg := sync.WaitGroup{}
+	var err1 error
+	var err2 error
+	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	se1, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se1.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	wg.Add(2)
+	ch := make(chan struct{})
+	go func() {
+		defer wg.Done()
+		close(ch)
+		_, err1 = se.Execute(context.Background(), sql1)
+	}()
+	go func() {
+		defer wg.Done()
+		<-ch
+		// Make sure sql2 is executed after the sql1.
+		time.Sleep(time.Millisecond * 10)
+		_, err2 = se1.Execute(context.Background(), sql2)
+	}()
+
+	wg.Wait()
+	f(c, err1, err2)
+
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
+}
+
+func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
+	se, err := session.CreateSession(s.store)
+	_, err = se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+
+	se1, err1 := session.CreateSession(s.store)
+	_, err = se1.Execute(context.Background(), "use test_db_state")
+	c.Assert(err1, IsNil)
+
+	var err2, err3 error
+	wg := sync.WaitGroup{}
+
+	callback := &ddl.TestDDLCallback{}
+	once := sync.Once{}
+	callback.OnJobUpdatedExported = func(job *model.Job) {
+		// sleep a while, let other job enqueue.
+		once.Do(func() {
+			time.Sleep(time.Millisecond * 10)
+		})
+	}
+
+	d := s.dom.DDL()
+	d.SetHook(callback)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, err2 = se.Execute(context.Background(), sql)
+	}()
+
+	go func() {
+		defer wg.Done()
+		_, err3 = se1.Execute(context.Background(), sql)
+	}()
+	wg.Wait()
+	c.Assert(err2, IsNil)
+	c.Assert(err3, IsNil)
+	callback = &ddl.TestDDLCallback{}
+	d.SetHook(callback)
+}
+
+// TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
+func (s *testStateChangeSuite) TestCreateTableIfNotExists(c *C) {
+	defer s.se.Execute(context.Background(), "drop table test_not_exists")
+	s.testParallelExecSQL(c, "create table if not exists test_not_exists(a int);")
+}
+
+// TestCreateDBIfNotExists parallel exec create database if not exists xxx. No error returns is expected.
+func (s *testStateChangeSuite) TestCreateDBIfNotExists(c *C) {
+	defer s.se.Execute(context.Background(), "drop database test_not_exists")
+	s.testParallelExecSQL(c, "create database if not exists test_not_exists;")
 }

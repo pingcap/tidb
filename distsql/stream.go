@@ -18,10 +18,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
 )
 
@@ -34,27 +35,13 @@ type streamResult struct {
 
 	// NOTE: curr == nil means stream finish, while len(curr.RowsData) == 0 doesn't.
 	curr         *tipb.Chunk
-	scanKeys     int64
 	partialCount int64
-}
-
-func (r *streamResult) ScanKeys() int64 {
-	return r.scanKeys
+	feedback     *statistics.QueryFeedback
 }
 
 func (r *streamResult) Fetch(context.Context) {}
 
-func (r *streamResult) Next(ctx context.Context) (PartialResult, error) {
-	var ret streamPartialResult
-	ret.rowLen = r.rowLen
-	finished, err := r.readDataFromResponse(ctx, r.resp, &ret.Chunk)
-	if err != nil || finished {
-		return nil, errors.Trace(err)
-	}
-	return &ret, nil
-}
-
-func (r *streamResult) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
+func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
 	for chk.NumRows() < maxChunkSize {
@@ -99,11 +86,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if len(stream.OutputCounts) > 0 {
-		partialScanKeys := stream.OutputCounts[0]
-		metrics.DistSQLScanKeysPartialHistogram.Observe(float64(partialScanKeys))
-		r.scanKeys += partialScanKeys
-	}
+	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
 	r.partialCount++
 	return false, nil
 }
@@ -130,10 +113,10 @@ func (r *streamResult) readDataIfNecessary(ctx context.Context) error {
 func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 	remainRowsData := r.curr.RowsData
 	maxChunkSize := r.ctx.GetSessionVars().MaxChunkSize
-	timeZone := r.ctx.GetSessionVars().GetTimeZone()
+	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().GetTimeZone())
 	for chk.NumRows() < maxChunkSize && len(remainRowsData) > 0 {
 		for i := 0; i < r.rowLen; i++ {
-			remainRowsData, err = codec.DecodeOneToChunk(remainRowsData, chk, i, r.fieldTypes[i], timeZone)
+			remainRowsData, err = decoder.DecodeOne(remainRowsData, i, r.fieldTypes[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -149,7 +132,7 @@ func (r *streamResult) flushToChunk(chk *chunk.Chunk) (err error) {
 
 func (r *streamResult) NextRaw(ctx context.Context) ([]byte, error) {
 	r.partialCount++
-	r.scanKeys = -1
+	r.feedback.Invalidate()
 	resultSubset, err := r.resp.Next(ctx)
 	if resultSubset == nil || err != nil {
 		return nil, errors.Trace(err)
@@ -158,26 +141,9 @@ func (r *streamResult) NextRaw(ctx context.Context) ([]byte, error) {
 }
 
 func (r *streamResult) Close() error {
-	if r.scanKeys >= 0 {
-		metrics.DistSQLScanKeysHistogram.Observe(float64(r.scanKeys))
+	if r.feedback.Actual() > 0 {
+		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
-	return nil
-}
-
-// streamPartialResult implements PartialResult.
-type streamPartialResult struct {
-	tipb.Chunk
-	rowLen int
-}
-
-func (pr *streamPartialResult) Next(ctx context.Context) (data []types.Datum, err error) {
-	if len(pr.Chunk.RowsData) == 0 {
-		return nil, nil // partial result finished.
-	}
-	return readRowFromChunk(&pr.Chunk, pr.rowLen)
-}
-
-func (pr *streamPartialResult) Close() error {
 	return nil
 }

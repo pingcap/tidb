@@ -14,23 +14,23 @@
 package executor
 
 import (
+	"runtime"
 	"strconv"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tipb/go-tipb"
+	tipb "github.com/pingcap/tipb/go-tipb"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -53,16 +53,7 @@ const (
 )
 
 // Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next(ctx context.Context) (Row, error) {
-	return nil, errors.Trace(e.run(ctx))
-}
-
-// NextChunk implements the Executor NextChunk interface.
-func (e *AnalyzeExec) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	return errors.Trace(e.run(ctx))
-}
-
-func (e *AnalyzeExec) run(ctx context.Context) error {
+func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -95,10 +86,13 @@ func (e *AnalyzeExec) run(ctx context.Context) error {
 	}
 	results := make([]statistics.AnalyzeResult, 0, len(e.tasks))
 	var err1 error
-	for i := 0; i < len(e.tasks); i++ {
+	for i, panicCnt := 0, 0; i < len(e.tasks) && panicCnt < concurrency; i++ {
 		result := <-resultCh
 		if result.Err != nil {
 			err1 = result.Err
+			if errors.Trace(err1) == errAnalyzeWorkerPanic {
+				panicCnt++
+			}
 			log.Error(errors.ErrorStack(err1))
 			continue
 		}
@@ -145,7 +139,21 @@ type analyzeTask struct {
 	colExec  *AnalyzeColumnsExec
 }
 
+var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
+
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("analyzeWorker panic stack is:\n%s", buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			resultCh <- statistics.AnalyzeResult{
+				Err: errAnalyzeWorkerPanic,
+			}
+		}
+	}()
 	for task := range taskCh {
 		switch task.taskType {
 		case colTask:
@@ -185,15 +193,12 @@ type AnalyzeIndexExec struct {
 }
 
 func (e *AnalyzeIndexExec) open() error {
-	idxRange := &ranger.NewRange{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: []types.Datum{types.MaxValueDatum()}}
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, []*ranger.NewRange{idxRange}).
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, ranger.FullNewRange()).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
-		SetPriority(e.priority).
+		SetConcurrency(e.concurrency).
 		Build()
-	kvReq.Concurrency = e.concurrency
-	kvReq.IsolationLevel = kv.RC
 	ctx := context.TODO()
 	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq)
 	if err != nil {
@@ -304,13 +309,11 @@ func (e *AnalyzeColumnsExec) open() error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.NewRange) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges).
+	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
-		SetPriority(e.priority).
+		SetConcurrency(e.concurrency).
 		Build()
-	kvReq.IsolationLevel = kv.RC
-	kvReq.Concurrency = e.concurrency
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

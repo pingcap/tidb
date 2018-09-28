@@ -28,6 +28,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 22),
 		}, []string{LblType, LblResult})
 
+	WatcherClosed     = "watcher_closed"
 	Cancelled         = "cancelled"
 	Deleted           = "deleted"
 	SessionDone       = "session_done"

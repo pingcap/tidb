@@ -24,9 +24,6 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
   source = "https://github.com/grpc/grpc-go.git"
   version = "=1.7.5"
 
-[[constraint]]
-  branch = "master"
-  name = "github.com/coreos/gofail"
 
 [[constraint]]
   branch = "master"
@@ -71,3 +68,12 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
 [[constraint]]
   name = "gopkg.in/natefinch/lumberjack.v2"
   version = "2.0.0"
+
+[[constraint]]
+  name = "github.com/sirupsen/logrus"
+  revision = "3bcb09397d6d88e7676a9bc8433ca11ba5304837"
+
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/etcd-io/gofail"

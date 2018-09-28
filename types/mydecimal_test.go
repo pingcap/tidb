@@ -161,7 +161,7 @@ func (s *testMyDecimalSuite) TestShift(c *C) {
 			err = dec.Shift(ca.shift)
 			c.Check(err, Equals, ca.err)
 			result := dec.ToString()
-			c.Check(string(result), Equals, ca.output, Commentf("origin:%s\ndec:%s", origin.String(), origin.String()))
+			c.Check(string(result), Equals, ca.output, Commentf("origin:%s\ndec:%s", origin.String(), string(result)))
 		}
 	}
 	wordBufLen = maxWordBufLen
@@ -619,6 +619,8 @@ func (s *testMyDecimalSuite) TestMul(c *C) {
 		{"123", "0.01", "1.23", nil},
 		{"123", "0", "0", nil},
 		{"1" + strings.Repeat("0", 60), "1" + strings.Repeat("0", 60), "0", ErrOverflow},
+		{"0.5999991229316", "0.918755041726043", "0.5512522192246113614062276588", nil},
+		{"0.5999991229317", "0.918755041726042", "0.5512522192247026369112773314", nil},
 	}
 	for _, tt := range tests {
 		var a, b, product MyDecimal
@@ -675,6 +677,7 @@ func (s *testMyDecimalSuite) TestDivMod(c *C) {
 		{"234.567", "-10.555", "2.357", nil},
 		{"99999999999999999999999999999999999999", "3", "0", nil},
 		{"51", "0.003430", "0.002760", nil},
+		{"0.0000000001", "1.0", "0.0000000001", nil},
 	}
 	for _, tt := range tests {
 		var a, b, to MyDecimal

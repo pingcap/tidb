@@ -18,11 +18,11 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/auth"
@@ -62,7 +62,7 @@ func (s *testPrivilegeSuite) SetUpTest(c *C) {
 	s.dbName = "test"
 	s.store = newStore(c, s.dbName)
 	se := newSession(c, s.store, s.dbName)
-	_, err := tidb.BootstrapSession(s.store)
+	_, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.createDBSQL = fmt.Sprintf("create database if not exists %s;", s.dbName)
 	s.createDB1SQL = fmt.Sprintf("create database if not exists %s1;", s.dbName)
@@ -76,10 +76,10 @@ func (s *testPrivilegeSuite) SetUpTest(c *C) {
 	mustExec(c, se, s.createTableSQL)
 
 	s.createSystemDBSQL = fmt.Sprintf("create database if not exists %s;", mysql.SystemDB)
-	s.createUserTableSQL = tidb.CreateUserTable
-	s.createDBPrivTableSQL = tidb.CreateDBPrivTable
-	s.createTablePrivTableSQL = tidb.CreateTablePrivTable
-	s.createColumnPrivTableSQL = tidb.CreateColumnPrivTable
+	s.createUserTableSQL = session.CreateUserTable
+	s.createDBPrivTableSQL = session.CreateDBPrivTable
+	s.createTablePrivTableSQL = session.CreateTablePrivTable
+	s.createColumnPrivTableSQL = session.CreateColumnPrivTable
 
 	mustExec(c, se, s.createSystemDBSQL)
 	mustExec(c, se, s.createUserTableSQL)
@@ -223,8 +223,8 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	mustExec(c, se, "TRUNCATE TABLE mysql.db")
 	mustExec(c, se, "TRUNCATE TABLE mysql.user")
 	mustExec(c, se, "TRUNCATE TABLE mysql.tables_priv")
-	mustExec(c, se, "GRANT ALL PRIVILEGES ON `te%`.* TO 'show'@'localhost'")
-	mustExec(c, se, "REVOKE ALL PRIVILEGES ON `te%`.* FROM 'show'@'localhost'")
+	mustExec(c, se, `GRANT ALL PRIVILEGES ON `+"`"+`te%`+"`"+`.* TO 'show'@'localhost'`)
+	mustExec(c, se, `REVOKE ALL PRIVILEGES ON `+"`"+`te%`+"`"+`.* FROM 'show'@'localhost'`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(err, IsNil)
@@ -302,23 +302,23 @@ func (s *testPrivilegeSuite) TestInformationSchema(c *C) {
 	mustExec(c, se, `select * from information_schema.key_column_usage`)
 }
 
-func mustExec(c *C, se tidb.Session, sql string) {
+func mustExec(c *C, se session.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)
 }
 
 func newStore(c *C, dbPath string) kv.Storage {
 	store, err := mockstore.NewMockTikvStore()
-	tidb.SetSchemaLease(0)
-	tidb.SetStatsLease(0)
+	session.SetSchemaLease(0)
+	session.SetStatsLease(0)
 	c.Assert(err, IsNil)
-	_, err = tidb.BootstrapSession(store)
+	_, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
 	return store
 }
 
-func newSession(c *C, store kv.Storage, dbName string) tidb.Session {
-	se, err := tidb.CreateSession4Test(store)
+func newSession(c *C, store kv.Storage, dbName string) session.Session {
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	mustExec(c, se, "create database if not exists "+dbName)
 	mustExec(c, se, "use "+dbName)

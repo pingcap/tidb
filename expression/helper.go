@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"math"
 	"strings"
 	"time"
 
@@ -57,8 +58,8 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d ty
 	case string:
 		upperX := strings.ToUpper(x)
 		if upperX == strings.ToUpper(ast.CurrentTimestamp) {
-			value.Time = types.FromGoTime(defaultTime)
-			if tp == mysql.TypeTimestamp {
+			value.Time = types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond))
+			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().GetTimeZone())
 				if err != nil {
 					return d, errors.Trace(err)

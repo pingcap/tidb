@@ -26,56 +26,9 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 )
-
-// Error instances.
-var (
-	ErrUnsupportedType      = terror.ClassOptimizerPlan.New(CodeUnsupportedType, "Unsupported type %T")
-	SystemInternalErrorType = terror.ClassOptimizerPlan.New(SystemInternalError, "System internal error")
-	ErrUnknownColumn        = terror.ClassOptimizerPlan.New(CodeUnknownColumn, mysql.MySQLErrName[mysql.ErrBadField])
-	ErrUnknownTable         = terror.ClassOptimizerPlan.New(CodeUnknownTable, mysql.MySQLErrName[mysql.ErrUnknownTable])
-	ErrWrongArguments       = terror.ClassOptimizerPlan.New(CodeWrongArguments, "Incorrect arguments to EXECUTE")
-	ErrAmbiguous            = terror.ClassOptimizerPlan.New(CodeAmbiguous, "Column '%s' in field list is ambiguous")
-	ErrAnalyzeMissIndex     = terror.ClassOptimizerPlan.New(CodeAnalyzeMissIndex, "Index '%s' in field list does not exist in table '%s'")
-	ErrAlterAutoID          = terror.ClassAutoid.New(CodeAlterAutoID, "No support for setting auto_increment using alter_table")
-	ErrBadGeneratedColumn   = terror.ClassOptimizerPlan.New(CodeBadGeneratedColumn, mysql.MySQLErrName[mysql.ErrBadGeneratedColumn])
-	ErrFieldNotInGroupBy    = terror.ClassOptimizerPlan.New(CodeFieldNotInGroupBy, mysql.MySQLErrName[mysql.ErrFieldNotInGroupBy])
-	ErrBadTable             = terror.ClassOptimizerPlan.New(CodeBadTable, mysql.MySQLErrName[mysql.ErrBadTable])
-	ErrKeyDoesNotExist      = terror.ClassOptimizerPlan.New(CodeKeyDoesNotExist, mysql.MySQLErrName[mysql.ErrKeyDoesNotExist])
-)
-
-// Error codes.
-const (
-	CodeUnsupportedType    terror.ErrCode = 1
-	SystemInternalError                   = 2
-	CodeAlterAutoID                       = 3
-	CodeAnalyzeMissIndex                  = 4
-	CodeAmbiguous                         = 1052
-	CodeUnknownColumn                     = mysql.ErrBadField
-	CodeUnknownTable                      = mysql.ErrUnknownTable
-	CodeWrongArguments                    = 1210
-	CodeBadGeneratedColumn                = mysql.ErrBadGeneratedColumn
-	CodeFieldNotInGroupBy                 = mysql.ErrFieldNotInGroupBy
-	CodeBadTable                          = mysql.ErrBadTable
-	CodeKeyDoesNotExist                   = mysql.ErrKeyDoesNotExist
-)
-
-func init() {
-	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		CodeUnknownColumn:      mysql.ErrBadField,
-		CodeUnknownTable:       mysql.ErrBadTable,
-		CodeAmbiguous:          mysql.ErrNonUniq,
-		CodeWrongArguments:     mysql.ErrWrongArguments,
-		CodeBadGeneratedColumn: mysql.ErrBadGeneratedColumn,
-		CodeFieldNotInGroupBy:  mysql.ErrFieldNotInGroupBy,
-		CodeBadTable:           mysql.ErrBadTable,
-		CodeKeyDoesNotExist:    mysql.ErrKeyDoesNotExist,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassOptimizerPlan] = tableMySQLErrCodes
-}
 
 type visitInfo struct {
 	privilege mysql.PrivilegeType
@@ -159,7 +112,7 @@ type planBuilder struct {
 	inUpdateStmt bool
 	// colMapper stores the column that must be pre-resolved.
 	colMapper map[*ast.ColumnNameExpr]int
-	// Collect the visit information for privilege check.
+	// visitInfo stores the collected visit information for privilege check.
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
 	optFlag       uint64
@@ -170,6 +123,10 @@ type planBuilder struct {
 	// rewriterCounter counts how many rewriter is being used.
 	rewriterPool    []*expressionRewriter
 	rewriterCounter int
+
+	// inStraightJoin represents whether the current "SELECT" statement has
+	// "STRAIGHT_JOIN" option.
+	inStraightJoin bool
 }
 
 func (b *planBuilder) build(node ast.Node) Plan {
@@ -288,7 +245,7 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) Plan {
 	return p
 }
 
-// Detect aggregate function or groupby clause.
+// detectSelectAgg Detects aggregate function or groupby clause.
 func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	if sel.GroupBy != nil {
 		return true
@@ -313,72 +270,88 @@ func (b *planBuilder) detectSelectAgg(sel *ast.SelectStmt) bool {
 	return false
 }
 
-func availableIndices(hints []*ast.IndexHint, tableInfo *model.TableInfo) (indices []*model.IndexInfo, includeTableScan bool, err error) {
-	var usableHints []*ast.IndexHint
-	for _, hint := range hints {
-		if hint.HintScope == ast.HintForScan {
-			usableHints = append(usableHints, hint)
+func getPathByIndexName(paths []*accessPath, idxName model.CIStr, tblInfo *model.TableInfo) *accessPath {
+	var tablePath *accessPath
+	for _, path := range paths {
+		if path.isTablePath {
+			tablePath = path
+			continue
+		}
+		if path.index.Name.L == idxName.L {
+			return path
 		}
 	}
-	publicIndices := make([]*model.IndexInfo, 0, len(tableInfo.Indices))
-	for _, index := range tableInfo.Indices {
-		if index.State == model.StatePublic {
-			publicIndices = append(publicIndices, index)
-		}
+	if isPrimaryIndexHint(idxName) && tblInfo.PKIsHandle {
+		return tablePath
 	}
-	if len(usableHints) == 0 {
-		return publicIndices, true, nil
-	}
-	var hasUse bool
-	var ignores []*model.IndexInfo
-	for _, hint := range usableHints {
-		switch hint.HintType {
-		case ast.HintUse, ast.HintForce:
-			// Currently we don't distinguish between Force and Use because our cost estimation is not reliable.
-			hasUse = true
-			for _, idxName := range hint.IndexNames {
-				idx := findIndexByName(publicIndices, idxName)
-				if idx != nil {
-					indices = append(indices, idx)
-				} else {
-					return nil, true, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
-				}
-			}
-		case ast.HintIgnore:
-			// Collect all the ignore index hints.
-			for _, idxName := range hint.IndexNames {
-				idx := findIndexByName(publicIndices, idxName)
-				if idx != nil {
-					ignores = append(ignores, idx)
-				} else {
-					return nil, true, ErrKeyDoesNotExist.GenByArgs(idxName, tableInfo.Name)
-				}
-			}
-		}
-	}
-	indices = removeIgnores(indices, ignores)
-	// If we have got FORCE or USE index hint, table scan is excluded.
-	if len(indices) != 0 {
-		return indices, false, nil
-	}
-	if hasUse {
-		// Empty use hint means don't use any index.
-		return nil, true, nil
-	}
-	return removeIgnores(publicIndices, ignores), true, nil
+	return nil
 }
 
-func removeIgnores(indices, ignores []*model.IndexInfo) []*model.IndexInfo {
-	if len(ignores) == 0 {
-		return indices
-	}
-	var remainedIndices []*model.IndexInfo
-	for _, index := range indices {
-		if findIndexByName(ignores, index.Name) == nil {
-			remainedIndices = append(remainedIndices, index)
+func isPrimaryIndexHint(indexName model.CIStr) bool {
+	return indexName.L == "primary"
+}
+
+func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInfo) ([]*accessPath, error) {
+	publicPaths := make([]*accessPath, 0, len(tblInfo.Indices)+1)
+	publicPaths = append(publicPaths, &accessPath{isTablePath: true})
+	for _, index := range tblInfo.Indices {
+		if index.State == model.StatePublic {
+			publicPaths = append(publicPaths, &accessPath{index: index})
 		}
 	}
-	return remainedIndices
+
+	hasScanHint, hasUseOrForce := false, false
+	available := make([]*accessPath, 0, len(publicPaths))
+	ignored := make([]*accessPath, 0, len(publicPaths))
+	for _, hint := range indexHints {
+		if hint.HintScope != ast.HintForScan {
+			continue
+		}
+
+		hasScanHint = true
+		for _, idxName := range hint.IndexNames {
+			path := getPathByIndexName(publicPaths, idxName, tblInfo)
+			if path == nil {
+				return nil, ErrKeyDoesNotExist.GenByArgs(idxName, tblInfo.Name)
+			}
+			if hint.HintType == ast.HintIgnore {
+				// Collect all the ignored index hints.
+				ignored = append(ignored, path)
+				continue
+			}
+			// Currently we don't distinguish between "FORCE" and "USE" because
+			// our cost estimation is not reliable.
+			hasUseOrForce = true
+			path.forced = true
+			available = append(available, path)
+		}
+	}
+
+	if !hasScanHint || !hasUseOrForce {
+		available = publicPaths
+	}
+
+	available = removeIgnoredPaths(available, ignored, tblInfo)
+
+	// If we have got "FORCE" or "USE" index hint but got no available index,
+	// we have to use table scan.
+	if len(available) == 0 {
+		available = append(available, &accessPath{isTablePath: true})
+	}
+	return available, nil
+}
+
+func removeIgnoredPaths(paths, ignoredPaths []*accessPath, tblInfo *model.TableInfo) []*accessPath {
+	if len(ignoredPaths) == 0 {
+		return paths
+	}
+	remainedPaths := make([]*accessPath, 0, len(paths))
+	for _, path := range paths {
+		if path.isTablePath || getPathByIndexName(ignoredPaths, path.index.Name, tblInfo) == nil {
+			remainedPaths = append(remainedPaths, path)
+		}
+	}
+	return remainedPaths
 }
 
 func findIndexByName(indices []*model.IndexInfo, name model.CIStr) *model.IndexInfo {
@@ -420,7 +393,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 	// get index information
 	var idx *model.IndexInfo
 	for _, index := range tblInfo.Indices {
-		if index.Name.L == as.Index {
+		if index.Name.L == strings.ToLower(as.Index) {
 			idx = index
 			break
 		}
@@ -459,7 +432,7 @@ func (b *planBuilder) buildCheckIndex(dbName model.CIStr, as *ast.AdminStmt) Pla
 		Ranges:           ranger.FullNewRange(),
 		KeepOrder:        false,
 	}.init(b.ctx)
-	is.stats = &statsInfo{}
+	is.stats = &StatsInfo{}
 	cop := &copTask{indexPlan: is}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: columns, Table: is.Table}.init(b.ctx)
@@ -482,11 +455,26 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 	case ast.AdminCheckIndex:
 		dbName := as.Tables[0].Schema
 		readerPlan := b.buildCheckIndex(dbName, as)
+		if b.err != nil {
+			return ret
+		}
 		ret = &CheckIndex{
 			DBName:            dbName.L,
 			IdxName:           as.Index,
 			IndexLookUpReader: readerPlan.(*PhysicalIndexLookUpReader),
 		}
+	case ast.AdminRecoverIndex:
+		p := &RecoverIndex{Table: as.Tables[0], IndexName: as.Index}
+		p.SetSchema(buildRecoverIndexFields())
+		ret = p
+	case ast.AdminCleanupIndex:
+		p := &CleanupIndex{Table: as.Tables[0], IndexName: as.Index}
+		p.SetSchema(buildCleanupIndexFields())
+		ret = p
+	case ast.AdminChecksumTable:
+		p := &ChecksumTable{Tables: as.Tables}
+		p.SetSchema(buildChecksumTableSchema())
+		ret = p
 	case ast.AdminShowDDL:
 		p := &ShowDDL{}
 		p.SetSchema(buildShowDDLFields())
@@ -499,10 +487,59 @@ func (b *planBuilder) buildAdmin(as *ast.AdminStmt) Plan {
 		p := &CancelDDLJobs{JobIDs: as.JobIDs}
 		p.SetSchema(buildCancelDDLJobsFields())
 		ret = p
+	case ast.AdminCheckIndexRange:
+		p := &CheckIndexRange{Table: as.Tables[0], IndexName: as.Index, HandleRanges: as.HandleRanges}
+		schema, err := buildCheckIndexSchema(as.Tables[0], as.Index)
+		if err != nil {
+			b.err = errors.Trace(err)
+			break
+		}
+		p.SetSchema(schema)
+		ret = p
+	case ast.AdminShowDDLJobQueries:
+		p := &ShowDDLJobQueries{JobIDs: as.JobIDs}
+		p.SetSchema(buildShowDDLJobQueriesFields())
+		ret = p
 	default:
 		b.err = ErrUnsupportedType.Gen("Unsupported type %T", as)
 	}
 	return ret
+}
+
+func buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, error) {
+	schema := expression.NewSchema()
+	indexName = strings.ToLower(indexName)
+	indicesInfo := tn.TableInfo.Indices
+	cols := tn.TableInfo.Cols()
+	for _, idxInfo := range indicesInfo {
+		if idxInfo.Name.L != indexName {
+			continue
+		}
+		for i, idxCol := range idxInfo.Columns {
+			col := cols[idxCol.Offset]
+			schema.Append(&expression.Column{
+				FromID:   1,
+				ColName:  idxCol.Name,
+				TblName:  tn.Name,
+				DBName:   tn.Schema,
+				RetType:  &col.FieldType,
+				Position: i,
+				ID:       col.ID})
+		}
+		schema.Append(&expression.Column{
+			FromID:   1,
+			ColName:  model.NewCIStr("extra_handle"),
+			TblName:  tn.Name,
+			DBName:   tn.Schema,
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			Position: len(idxInfo.Columns),
+			ID:       -1,
+		})
+	}
+	if schema.Len() == 0 {
+		return nil, errors.Errorf("index %s not found", indexName)
+	}
+	return schema, nil
 }
 
 // getColsInfo returns the info of index columns, normal columns and primary key.
@@ -601,11 +638,29 @@ func buildShowDDLFields() *expression.Schema {
 	return schema
 }
 
+func buildRecoverIndexFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
+	schema.Append(buildColumn("", "ADDED_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumn("", "SCAN_COUNT", mysql.TypeLonglong, 4))
+	return schema
+}
+
+func buildCleanupIndexFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
+	schema.Append(buildColumn("", "REMOVED_COUNT", mysql.TypeLonglong, 4))
+	return schema
+}
+
 func buildShowDDLJobsFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 2)...)
 	schema.Append(buildColumn("", "JOBS", mysql.TypeVarchar, 128))
 	schema.Append(buildColumn("", "STATE", mysql.TypeVarchar, 64))
+	return schema
+}
 
+func buildShowDDLJobQueriesFields() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 1)...)
+	schema.Append(buildColumn("", "QUERY", mysql.TypeVarchar, 256))
 	return schema
 }
 
@@ -730,8 +785,21 @@ func (b *planBuilder) buildSimple(node ast.StmtNode) Plan {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "")
 	case *ast.GrantStmt:
 		b.visitInfo = collectVisitInfoFromGrantStmt(b.visitInfo, raw)
-	case *ast.SetPwdStmt, *ast.RevokeStmt, *ast.KillStmt:
+	case *ast.SetPwdStmt, *ast.RevokeStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
+	case *ast.KillStmt:
+		// If you have the SUPER privilege, you can kill all threads and statements.
+		// Otherwise, you can kill only your own threads and statements.
+		sm := b.ctx.GetSessionManager()
+		if sm != nil {
+			processList := sm.ShowProcessList()
+			if pi, ok := processList[raw.ConnectionID]; ok {
+				loginUser := b.ctx.GetSessionVars().User
+				if pi.User != loginUser.Username {
+					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "")
+				}
+			}
+		}
 	}
 	return p
 }
@@ -1298,16 +1366,16 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar,
 		}
 	case ast.ShowProcessList:
-		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+		names = []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info", "Mem"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
-			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
+			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeLonglong}
 	case ast.ShowStatsMeta:
 		names = []string{"Db_name", "Table_name", "Update_time", "Modify_count", "Row_count"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
 	case ast.ShowStatsHistograms:
-		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count"}
+		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeDatetime,
-			mysql.TypeLonglong, mysql.TypeLonglong}
+			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble}
 	case ast.ShowStatsBuckets:
 		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Bucket_id", "Count",
 			"Repeats", "Lower_Bound", "Upper_Bound"}
@@ -1319,6 +1387,9 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 	case ast.ShowProfiles: // ShowProfiles is deprecated.
 		names = []string{"Query_ID", "Duration", "Query"}
 		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
+	case ast.ShowMasterStatus:
+		names = []string{"File", "Position", "Binlog_Do_DB", "Binlog_Ignore_DB", "Executed_Gtid_Set"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	}
 
 	schema = expression.NewSchema(make([]*expression.Column, 0, len(names))...)
@@ -1337,5 +1408,15 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		col.RetType = fieldType
 		schema.Append(col)
 	}
+	return schema
+}
+
+func buildChecksumTableSchema() *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, 5)...)
+	schema.Append(buildColumn("", "Db_name", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn("", "Table_name", mysql.TypeVarchar, 128))
+	schema.Append(buildColumn("", "Checksum_crc64_xor", mysql.TypeLonglong, 22))
+	schema.Append(buildColumn("", "Total_kvs", mysql.TypeLonglong, 22))
+	schema.Append(buildColumn("", "Total_bytes", mysql.TypeLonglong, 22))
 	return schema
 }

@@ -43,10 +43,10 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 		})
 
-	SyncerInit    = "init"
-	SyncerRestart = "restart"
-	SyncerClear   = "clear"
-
+	SyncerInit            = "init"
+	SyncerRestart         = "restart"
+	SyncerClear           = "clear"
+	SyncerRewatch         = "rewatch"
 	DeploySyncerHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -100,6 +100,15 @@ var (
 			Name:      "worker_operation_total",
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{LblType})
+
+	// DDLJobErrCounter is the counter of error occured in ddl job.
+	DDLJobErrCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "ddl",
+			Name:      "job_error_total",
+			Help:      "Counter of error occured in ddl job.",
+		})
 )
 
 func init() {
@@ -111,4 +120,5 @@ func init() {
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)
 	prometheus.MustRegister(DDLWorkerHistogram)
 	prometheus.MustRegister(DDLCounter)
+	prometheus.MustRegister(DDLJobErrCounter)
 }

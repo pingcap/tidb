@@ -241,8 +241,8 @@ func (ps *PerfSchema) buildModel(tbName string, colNames []string, cols []column
 
 	ps.tables[tbName] = &model.TableInfo{
 		Name:    model.NewCIStr(tbName),
-		Charset: "utf8",
-		Collate: "utf8",
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
 		Columns: rcols,
 	}
 }

@@ -28,6 +28,7 @@ import (
 )
 
 type testCommitterSuite struct {
+	OneByOneSuite
 	cluster *mocktikv.Cluster
 	store   *tikvStore
 }
@@ -37,7 +38,8 @@ var _ = Suite(&testCommitterSuite{})
 func (s *testCommitterSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
-	mvccStore := mocktikv.NewMvccStore()
+	mvccStore, err := mocktikv.NewMVCCLevelDB("")
+	c.Assert(err, IsNil)
 	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	spkv := NewMockSafePointKV()
@@ -49,6 +51,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
 	CommitMaxBackoff = 20000
+	s.OneByOneSuite.TearDownSuite(c)
 }
 
 func (s *testCommitterSuite) begin(c *C) *tikvTxn {
@@ -128,7 +131,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitter(txn1)
+	committer, err := newTwoPhaseCommitter(txn1, 0)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
@@ -146,7 +149,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 		c.Assert(err, IsNil)
 		err = txn1.Set([]byte("b"), []byte("b1"))
 		c.Assert(err, IsNil)
-		committer, err = newTwoPhaseCommitter(txn1)
+		committer, err = newTwoPhaseCommitter(txn1, 0)
 		c.Assert(err, IsNil)
 		err = committer.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff), committer.keys)
 		c.Assert(err, IsNil)
@@ -168,7 +171,7 @@ func (s *testCommitterSuite) TestContextCancel(c *C) {
 	c.Assert(err, IsNil)
 	err = txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitter(txn1)
+	committer, err := newTwoPhaseCommitter(txn1, 0)
 	c.Assert(err, IsNil)
 
 	bo := NewBackoffer(context.Background(), prewriteMaxBackoff)
@@ -183,7 +186,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	// txn1 locks "b"
 	err := txn1.Set([]byte("b"), []byte("b1"))
 	c.Assert(err, IsNil)
-	committer, err := newTwoPhaseCommitter(txn1)
+	committer, err := newTwoPhaseCommitter(txn1, 0)
 	c.Assert(err, IsNil)
 	err = committer.prewriteKeys(NewBackoffer(context.Background(), prewriteMaxBackoff), committer.keys)
 	c.Assert(err, IsNil)
@@ -275,14 +278,14 @@ type slowClient struct {
 	regionDelays map[uint64]time.Duration
 }
 
-func (c *slowClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+func (c *slowClient) SendReq(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	for id, delay := range c.regionDelays {
 		reqCtx := &req.Context
 		if reqCtx.GetRegionId() == id {
 			time.Sleep(delay)
 		}
 	}
-	return c.Client.SendReq(ctx, addr, req)
+	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
 func (s *testCommitterSuite) TestIllegalTso(c *C) {
@@ -309,7 +312,7 @@ func (s *testCommitterSuite) TestCommitBeforePrewrite(c *C) {
 	txn := s.begin(c)
 	err := txn.Set([]byte("a"), []byte("a1"))
 	c.Assert(err, IsNil)
-	commiter, err := newTwoPhaseCommitter(txn)
+	commiter, err := newTwoPhaseCommitter(txn, 0)
 	c.Assert(err, IsNil)
 	ctx := context.Background()
 	err = commiter.cleanupKeys(NewBackoffer(ctx, cleanupMaxBackoff), commiter.keys)
@@ -354,7 +357,7 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 
 	// clean again, shouldn't be failed when a rollback already exist.
 	ctx := context.Background()
-	commiter, err := newTwoPhaseCommitter(txn2)
+	commiter, err := newTwoPhaseCommitter(txn2, 0)
 	c.Assert(err, IsNil)
 	err = commiter.cleanupKeys(NewBackoffer(ctx, cleanupMaxBackoff), commiter.keys)
 	c.Assert(err, IsNil)
@@ -375,4 +378,36 @@ func (s *testCommitterSuite) TestPrewritePrimaryKeyFailed(c *C) {
 	v, err = txn.Get([]byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(v, BytesEquals, []byte("a3"))
+}
+
+func (s *testCommitterSuite) TestWrittenKeysOnConflict(c *C) {
+	// This test checks that when there is a write conflict, written keys is collected,
+	// so we can use it to clean up keys.
+	region, _ := s.cluster.GetRegionByKey([]byte("x"))
+	newRegionID := s.cluster.AllocID()
+	newPeerID := s.cluster.AllocID()
+	s.cluster.Split(region.Id, newRegionID, []byte("y"), []uint64{newPeerID}, newPeerID)
+	var totalTime time.Duration
+	for i := 0; i < 10; i++ {
+		txn1 := s.begin(c)
+		txn2 := s.begin(c)
+		txn2.Set([]byte("x1"), []byte("1"))
+		commiter2, err := newTwoPhaseCommitter(txn2, 2)
+		c.Assert(err, IsNil)
+		err = commiter2.execute(context.Background())
+		c.Assert(err, IsNil)
+		txn1.Set([]byte("x1"), []byte("1"))
+		txn1.Set([]byte("y1"), []byte("2"))
+		commiter1, err := newTwoPhaseCommitter(txn1, 2)
+		c.Assert(err, IsNil)
+		err = commiter1.execute(context.Background())
+		c.Assert(err, NotNil)
+		commiter1.cleanWg.Wait()
+		txn3 := s.begin(c)
+		start := time.Now()
+		txn3.Get([]byte("y1"))
+		totalTime += time.Since(start)
+		txn3.Commit(context.Background())
+	}
+	c.Assert(totalTime, Less, time.Millisecond*200)
 }

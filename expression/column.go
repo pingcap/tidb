@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 
@@ -181,8 +180,7 @@ func (col *Column) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (col *Column) MarshalJSON() ([]byte, error) {
-	buffer := bytes.NewBufferString(fmt.Sprintf("\"%s\"", col))
-	return buffer.Bytes(), nil
+	return []byte(fmt.Sprintf("\"%s\"", col)), nil
 }
 
 // GetType implements Expression interface.

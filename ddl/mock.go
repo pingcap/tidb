@@ -50,6 +50,9 @@ func (s *mockSchemaSyncer) GlobalVersionCh() clientv3.WatchChan {
 	return s.globalVerCh
 }
 
+// WatchGlobalSchemaVer implements SchemaSyncer.WatchGlobalSchemaVer interface.
+func (s *mockSchemaSyncer) WatchGlobalSchemaVer(context.Context) {}
+
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
 func (s *mockSchemaSyncer) UpdateSelfVersion(ctx context.Context, version int64) error {
 	atomic.StoreInt64(&s.selfSchemaVersion, version)

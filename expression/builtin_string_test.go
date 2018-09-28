@@ -23,8 +23,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -185,9 +188,9 @@ func (s *testEvaluatorSuite) TestConcatWS(c *C) {
 			true, false, "",
 		},
 		{
-			[]interface{}{",", "a", "b", "hello", "$^%"},
+			[]interface{}{",", "a", "b", "hello", `$^%`},
 			false, false,
-			"a,b,hello,$^%",
+			`a,b,hello,$^%`,
 		},
 		{
 			[]interface{}{"|", "a", nil, "b", "c"},
@@ -396,6 +399,51 @@ func (s *testEvaluatorSuite) TestRepeat(c *C) {
 	c.Assert(v.GetString(), Equals, "")
 }
 
+func (s *testEvaluatorSuite) TestRepeatSig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeLonglong},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	repeat := &builtinRepeatSig{base, 1000}
+
+	cases := []struct {
+		args    []interface{}
+		warning int
+		res     string
+	}{
+		{[]interface{}{"a", int64(6)}, 0, "aaaaaa"},
+		{[]interface{}{"a", int64(10001)}, 1, ""},
+		{[]interface{}{"毅", int64(6)}, 0, "毅毅毅毅毅毅"},
+		{[]interface{}{"毅", int64(334)}, 2, ""},
+	}
+
+	for _, t := range cases {
+		input := chunk.NewChunkWithCapacity(colTypes, 10)
+		input.AppendString(0, t.args[0].(string))
+		input.AppendInt64(1, t.args[1].(int64))
+
+		res, isNull, err := repeat.evalString(input.GetRow(0))
+		c.Assert(res, Equals, t.res)
+		c.Assert(err, IsNil)
+		if t.warning == 0 {
+			c.Assert(isNull, IsFalse)
+		} else {
+			c.Assert(isNull, IsTrue)
+			c.Assert(err, IsNil)
+			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(len(warnings), Equals, t.warning)
+			lastWarn := warnings[len(warnings)-1]
+			c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+		}
+	}
+}
+
 func (s *testEvaluatorSuite) TestLower(c *C) {
 	defer testleak.AfterTest(c)()
 	cases := []struct {
@@ -545,8 +593,8 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 		flen   int
 	}{
 		{[]interface{}{"www.mysql.com", "mysql", "pingcap"}, false, false, "www.pingcap.com", 17},
-		{[]interface{}{"www.mysql.com", "w", 1}, false, false, "111.mysql.com", 13},
-		{[]interface{}{1234, 2, 55}, false, false, "15534", 8},
+		{[]interface{}{"www.mysql.com", "w", 1}, false, false, "111.mysql.com", 260},
+		{[]interface{}{1234, 2, 55}, false, false, "15534", 20},
 		{[]interface{}{"", "a", "b"}, false, false, "", 0},
 		{[]interface{}{"abc", "", "d"}, false, false, "abc", 3},
 		{[]interface{}{"aaa", "a", ""}, false, false, "", 3},
@@ -555,19 +603,19 @@ func (s *testEvaluatorSuite) TestReplace(c *C) {
 		{[]interface{}{"a", "b", nil}, true, false, "", 1},
 		{[]interface{}{errors.New("must err"), "a", "b"}, false, true, "", -1},
 	}
-	for _, t := range cases {
+	for i, t := range cases {
 		f, err := newFunctionForTest(s.ctx, ast.Replace, s.primitiveValsToConstants(t.args)...)
-		c.Assert(err, IsNil)
-		c.Assert(f.GetType().Flen, Equals, t.flen)
+		c.Assert(err, IsNil, Commentf("test %v", i))
+		c.Assert(f.GetType().Flen, Equals, t.flen, Commentf("test %v", i))
 		d, err := f.Eval(nil)
 		if t.getErr {
-			c.Assert(err, NotNil)
+			c.Assert(err, NotNil, Commentf("test %v", i))
 		} else {
-			c.Assert(err, IsNil)
+			c.Assert(err, IsNil, Commentf("test %v", i))
 			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+				c.Assert(d.Kind(), Equals, types.KindNull, Commentf("test %v", i))
 			} else {
-				c.Assert(d.GetString(), Equals, t.res)
+				c.Assert(d.GetString(), Equals, t.res, Commentf("test %v", i))
 			}
 		}
 	}
@@ -757,6 +805,33 @@ func (s *testEvaluatorSuite) TestSpace(c *C) {
 
 	_, err := funcs[ast.Space].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
+}
+
+func (s *testEvaluatorSuite) TestSpaceSig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeLonglong},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+	}
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	space := &builtinSpaceSig{base, 1000}
+	input := chunk.NewChunkWithCapacity(colTypes, 10)
+	input.AppendInt64(0, 6)
+	input.AppendInt64(0, 1001)
+	res, isNull, err := space.evalString(input.GetRow(0))
+	c.Assert(res, Equals, "      ")
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
+	res, isNull, err = space.evalString(input.GetRow(1))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 1)
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestLocate(c *C) {
@@ -1265,6 +1340,92 @@ func (s *testEvaluatorSuite) TestRpad(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestRpadSig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeLonglong},
+		{Tp: mysql.TypeVarchar},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 1000}
+
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+		&Column{Index: 2, RetType: colTypes[2]},
+	}
+
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	rpad := &builtinRpadSig{base, 1000}
+
+	input := chunk.NewChunkWithCapacity(colTypes, 10)
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendInt64(1, 6)
+	input.AppendInt64(1, 10000)
+	input.AppendString(2, "123")
+	input.AppendString(2, "123")
+
+	res, isNull, err := rpad.evalString(input.GetRow(0))
+	c.Assert(res, Equals, "abc123")
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = rpad.evalString(input.GetRow(1))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 1)
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+}
+
+func (s *testEvaluatorSuite) TestInsertBinarySig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeLonglong},
+		{Tp: mysql.TypeLonglong},
+		{Tp: mysql.TypeVarchar},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 3}
+
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+		&Column{Index: 2, RetType: colTypes[2]},
+		&Column{Index: 3, RetType: colTypes[3]},
+	}
+
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	insert := &builtinInsertBinarySig{base, 3}
+
+	input := chunk.NewChunkWithCapacity(colTypes, 2)
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendInt64(1, 3)
+	input.AppendInt64(1, 3)
+	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendString(3, "d")
+	input.AppendString(3, "de")
+
+	res, isNull, err := insert.evalString(input.GetRow(0))
+	c.Assert(res, Equals, "abd")
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = insert.evalString(input.GetRow(1))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 1)
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+}
+
 func (s *testEvaluatorSuite) TestInstr(c *C) {
 	defer testleak.AfterTest(c)()
 	tbl := []struct {
@@ -1518,6 +1679,58 @@ func (s *testEvaluatorSuite) TestFromBase64(c *C) {
 			expect, _ := test.expect.(string)
 			c.Assert(result.GetString(), Equals, expect)
 		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestFromBase64Sig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+	}
+
+	tests := []struct {
+		args           string
+		expect         string
+		isNil          bool
+		maxAllowPacket uint64
+	}{
+		{string("YWJj"), string("abc"), false, 3},
+		{string("YWJj"), "", true, 2},
+		{
+			string("QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
+			string("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"),
+			false,
+			70,
+		},
+		{
+			string("QUJDREVGR0hJSkt\tMTU5PUFFSU1RVVld\nYWVphYmNkZ\rWZnaGlqa2xt   bm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw=="),
+			"",
+			true,
+			69,
+		},
+	}
+
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+	}
+
+	for _, test := range tests {
+		resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: mysql.MaxBlobWidth}
+		base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+		fromBase64 := &builtinFromBase64Sig{base, test.maxAllowPacket}
+
+		input := chunk.NewChunkWithCapacity(colTypes, 1)
+		input.AppendString(0, test.args)
+		res, isNull, err := fromBase64.evalString(input.GetRow(0))
+		c.Assert(err, IsNil)
+		c.Assert(isNull, Equals, test.isNil)
+		if isNull {
+			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(len(warnings), Equals, 1)
+			lastWarn := warnings[len(warnings)-1]
+			c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+			s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+		}
+		c.Assert(res, Equals, test.expect)
 	}
 }
 
@@ -1790,6 +2003,74 @@ func (s *testEvaluatorSuite) TestToBase64(c *C) {
 
 	_, err := funcs[ast.ToBase64].getFunction(s.ctx, []Expression{Zero})
 	c.Assert(err, IsNil)
+}
+
+func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+	}
+
+	tests := []struct {
+		args           string
+		expect         string
+		isNil          bool
+		maxAllowPacket uint64
+	}{
+		{"abc", "YWJj", false, 4},
+		{"abc", "", true, 3},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrLw==",
+			false,
+			89,
+		},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"",
+			true,
+			88,
+		},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0\nNTY3ODkrL0FCQ0RFRkdISUpLTE1OT1BRUlNUVVZXWFlaYWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4\neXowMTIzNDU2Nzg5Ky9BQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWmFiY2RlZmdoaWprbG1ub3Bx\ncnN0dXZ3eHl6MDEyMzQ1Njc4OSsv",
+			false,
+			259,
+		},
+		{
+			"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+			"",
+			true,
+			258,
+		},
+	}
+
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+	}
+
+	for _, test := range tests {
+		resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: base64NeededEncodedLength(len(test.args))}
+		base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+		toBase64 := &builtinToBase64Sig{base, test.maxAllowPacket}
+
+		input := chunk.NewChunkWithCapacity(colTypes, 1)
+		input.AppendString(0, test.args)
+		res, isNull, err := toBase64.evalString(input.GetRow(0))
+		c.Assert(err, IsNil)
+		if test.isNil {
+			c.Assert(isNull, IsTrue)
+
+			warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+			c.Assert(len(warnings), Equals, 1)
+			lastWarn := warnings[len(warnings)-1]
+			c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue)
+			s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+
+		} else {
+			c.Assert(isNull, IsFalse)
+		}
+		c.Assert(res, Equals, test.expect)
+	}
 }
 
 func (s *testEvaluatorSuite) TestStringRight(c *C) {

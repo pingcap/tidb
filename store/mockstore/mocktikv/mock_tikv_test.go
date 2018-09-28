@@ -33,25 +33,15 @@ type testMockTiKVSuite struct {
 
 type testMarshal struct{}
 
-var (
-	_ = Suite(&testMvccStore{})
-	_ = Suite(&testMVCCLevelDB{})
-	_ = Suite(testMarshal{})
-)
-
-// testMvccStore is used to test MvccStore implementation.
-type testMvccStore struct {
-	testMockTiKVSuite
-}
-
-func (s *testMvccStore) SetUpTest(c *C) {
-	s.store = NewMvccStore()
-}
-
 // testMVCCLevelDB is used to test MVCCLevelDB implementation.
 type testMVCCLevelDB struct {
 	testMockTiKVSuite
 }
+
+var (
+	_ = Suite(&testMVCCLevelDB{})
+	_ = Suite(testMarshal{})
+)
 
 func (s *testMockTiKVSuite) SetUpTest(c *C) {
 	var err error
@@ -186,6 +176,11 @@ func (s *testMockTiKVSuite) mustResolveLock(c *C, startTS, commitTS uint64) {
 
 func (s *testMockTiKVSuite) mustBatchResolveLock(c *C, txnInfos map[uint64]uint64) {
 	c.Assert(s.store.BatchResolveLock(nil, nil, txnInfos), IsNil)
+}
+
+func (s *testMockTiKVSuite) mustDeleteRange(c *C, startKey, endKey string) {
+	err := s.store.DeleteRange([]byte(startKey), []byte(endKey))
+	c.Assert(err, IsNil)
 }
 
 func (s *testMockTiKVSuite) TestGet(c *C) {
@@ -354,6 +349,14 @@ func (s *testMockTiKVSuite) TestScanLock(c *C) {
 	s.mustPrewriteOK(c, putMutations("p1", "v5", "s1", "v5"), "p1", 5)
 	s.mustPrewriteOK(c, putMutations("p2", "v10", "s2", "v10"), "p2", 10)
 	s.mustPrewriteOK(c, putMutations("p3", "v20", "s3", "v20"), "p3", 20)
+
+	locks, err := s.store.ScanLock([]byte("a"), []byte("r"), 12)
+	c.Assert(err, IsNil)
+	c.Assert(locks, DeepEquals, []*kvrpcpb.LockInfo{
+		lock("p1", "p1", 5),
+		lock("p2", "p2", 10),
+	})
+
 	s.mustScanLock(c, 10, []*kvrpcpb.LockInfo{
 		lock("p1", "p1", 5),
 		lock("p2", "p2", 10),
@@ -438,6 +441,31 @@ func (s *testMockTiKVSuite) TestRollbackAndWriteConflict(c *C) {
 
 	errs = s.store.Prewrite(putMutations("test", "test3"), []byte("test"), 6, 1)
 	s.mustWriteWriteConflict(c, errs, 0)
+}
+
+func (s *testMockTiKVSuite) TestDeleteRange(c *C) {
+	for i := 1; i <= 5; i++ {
+		key := string(byte(i) + byte('0'))
+		value := "v" + key
+		s.mustPutOK(c, key, value, uint64(1+2*i), uint64(2+2*i))
+	}
+
+	s.mustScanOK(c, "0", 10, 20, "1", "v1", "2", "v2", "3", "v3", "4", "v4", "5", "v5")
+
+	s.mustDeleteRange(c, "2", "4")
+	s.mustScanOK(c, "0", 10, 30, "1", "v1", "4", "v4", "5", "v5")
+
+	s.mustDeleteRange(c, "5", "5")
+	s.mustScanOK(c, "0", 10, 40, "1", "v1", "4", "v4", "5", "v5")
+
+	s.mustDeleteRange(c, "41", "42")
+	s.mustScanOK(c, "0", 10, 50, "1", "v1", "4", "v4", "5", "v5")
+
+	s.mustDeleteRange(c, "4\x00", "5\x00")
+	s.mustScanOK(c, "0", 10, 60, "1", "v1", "4", "v4")
+
+	s.mustDeleteRange(c, "0", "9")
+	s.mustScanOK(c, "0", 10, 70)
 }
 
 func (s *testMockTiKVSuite) mustWriteWriteConflict(c *C, errs []error, i int) {

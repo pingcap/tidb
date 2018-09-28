@@ -22,7 +22,8 @@ import (
 
 // ExplainInfo implements the Expression interface.
 func (expr *ScalarFunction) ExplainInfo() string {
-	buffer := bytes.NewBufferString(fmt.Sprintf("%s(", expr.FuncName.L))
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
 	for i, arg := range expr.GetArgs() {
 		buffer.WriteString(arg.ExplainInfo())
 		if i+1 < len(expr.GetArgs()) {

@@ -43,7 +43,7 @@ type preprocessor struct {
 	ctx       sessionctx.Context
 	err       error
 	inPrepare bool
-	// When visiting create/drop table statement.
+	// inCreateOrDropTable is true when visiting create/drop table statement.
 	inCreateOrDropTable bool
 }
 
@@ -57,6 +57,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropTableGrammar(node)
 	case *ast.RenameTableStmt:
 		p.inCreateOrDropTable = true
+		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
@@ -68,6 +69,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
+	case *ast.UnionSelectList:
+		p.checkUnionSelectList(node)
 	case *ast.DeleteTableList:
 		return in, true
 	}
@@ -205,6 +208,25 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 	}
 }
 
+// checkUnionSelectList checks union's selectList.
+// refer: https://dev.mysql.com/doc/refman/5.7/en/union.html
+// "To apply ORDER BY or LIMIT to an individual SELECT, place the clause inside the parentheses that enclose the SELECT."
+func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
+	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
+		if sel.IsInBraces {
+			continue
+		}
+		if sel.Limit != nil {
+			p.err = ErrWrongUsage.GenByArgs("UNION", "LIMIT")
+			return
+		}
+		if sel.OrderBy != nil {
+			p.err = ErrWrongUsage.GenByArgs("UNION", "ORDER BY")
+			return
+		}
+	}
+}
+
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
 		p.err = ddl.ErrWrongDBName.GenByArgs(stmt.Name)
@@ -218,11 +240,6 @@ func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 }
 
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
-	if stmt.Table == nil {
-		p.err = ddl.ErrWrongTableName.GenByArgs("")
-		return
-	}
-
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
@@ -265,10 +282,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 }
 
 func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
-	if stmt.Tables == nil {
-		p.err = ddl.ErrWrongTableName.GenByArgs("")
-		return
-	}
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
 			p.err = ddl.ErrWrongTableName.GenByArgs(t.Name.String())
@@ -295,12 +308,22 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexColNames)
 }
 
-func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
-	if stmt.Table == nil {
-		p.err = ddl.ErrWrongTableName.GenByArgs("")
+func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
+	oldTable := stmt.OldTable.Name.String()
+	newTable := stmt.NewTable.Name.String()
+
+	if isIncorrectName(oldTable) {
+		p.err = ddl.ErrWrongTableName.GenByArgs(oldTable)
 		return
 	}
 
+	if isIncorrectName(newTable) {
+		p.err = ddl.ErrWrongTableName.GenByArgs(newTable)
+		return
+	}
+}
+
+func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
 		p.err = ddl.ErrWrongTableName.GenByArgs(tName)
@@ -315,9 +338,8 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				return
 			}
 		}
-		if len(spec.NewColumns) > 0 && spec.NewColumns[0] != nil {
-			if err := checkColumn(spec.NewColumns[0]); err != nil {
-				p.err = err
+		for _, colDef := range spec.NewColumns {
+			if p.err = checkColumn(colDef); p.err != nil {
 				return
 			}
 		}
@@ -341,14 +363,13 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 
 // checkDuplicateColumnName checks if index exists duplicated columns.
 func checkDuplicateColumnName(indexColNames []*ast.IndexColName) error {
-	for i := 0; i < len(indexColNames); i++ {
-		name1 := indexColNames[i].Column.Name
-		for j := i + 1; j < len(indexColNames); j++ {
-			name2 := indexColNames[j].Column.Name
-			if name1.L == name2.L {
-				return infoschema.ErrColumnExists.GenByArgs(name2)
-			}
+	colNames := make(map[string]struct{}, len(indexColNames))
+	for _, indexColName := range indexColNames {
+		name := indexColName.Column.Name
+		if _, ok := colNames[name.L]; ok {
+			return infoschema.ErrColumnExists.GenByArgs(name)
 		}
+		colNames[name.L] = struct{}{}
 	}
 	return nil
 }
@@ -408,9 +429,12 @@ func checkColumn(colDef *ast.ColumnDef) error {
 		if tp.Flen != types.UnspecifiedLength && tp.Flen > maxFlen {
 			return types.ErrTooBigFieldLength.Gen("Column length too big for column '%s' (max = %d); use BLOB or TEXT instead", colDef.Name.Name.O, maxFlen)
 		}
-	case mysql.TypeDouble:
-		if tp.Flen != types.UnspecifiedLength && tp.Flen > mysql.PrecisionForDouble {
-			return types.ErrWrongFieldSpec.Gen("Incorrect column specifier for column '%s'", colDef.Name.Name.O)
+	case mysql.TypeFloat, mysql.TypeDouble:
+		if tp.Decimal > mysql.MaxFloatingTypeScale {
+			return types.ErrTooBigScale.GenByArgs(tp.Decimal, colDef.Name.Name.O, mysql.MaxFloatingTypeScale)
+		}
+		if tp.Flen > mysql.MaxFloatingTypeWidth {
+			return types.ErrTooBigPrecision.GenByArgs(tp.Flen, colDef.Name.Name.O, mysql.MaxFloatingTypeWidth)
 		}
 	case mysql.TypeSet:
 		if len(tp.Elems) > mysql.MaxTypeSetMembers {
@@ -436,7 +460,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	return nil
 }
 
-// isNowSymFunc checks whether defaul value is a NOW() builtin function.
+// isDefaultValNowSymFunc checks whether defaul value is a NOW() builtin function.
 func isDefaultValNowSymFunc(expr ast.ExprNode) bool {
 	if funcCall, ok := expr.(*ast.FuncCallExpr); ok {
 		// Default value NOW() is transformed to CURRENT_TIMESTAMP() in parser.
@@ -463,6 +487,7 @@ func isInvalidDefaultValue(colDef *ast.ColumnDef) bool {
 	return false
 }
 
+// isIncorrectName checks if the identifier is incorrect.
 // See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
 func isIncorrectName(name string) bool {
 	if len(name) == 0 {
@@ -507,6 +532,14 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 		}
 	} else if node.Table != nil && node.Table.Schema.L == "" {
 		node.Table.Schema = model.NewCIStr(node.DBName)
+	}
+	if node.User != nil && node.User.CurrentUser {
+		// Fill the Username and Hostname with the current user.
+		currentUser := p.ctx.GetSessionVars().User
+		if currentUser != nil {
+			node.User.Username = currentUser.Username
+			node.User.Hostname = currentUser.Hostname
+		}
 	}
 }
 

@@ -18,10 +18,10 @@ import (
 	"fmt"
 
 	"github.com/juju/errors"
-	"github.com/pingcap/tidb"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
@@ -44,7 +44,7 @@ func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 
 // TiDBContext implements QueryCtx.
 type TiDBContext struct {
-	session   tidb.Session
+	session   session.Session
 	currentDB string
 	stmts     map[int]*TiDBStatement
 }
@@ -83,7 +83,12 @@ func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	if paramID >= len(ts.boundParams) {
 		return mysql.NewErr(mysql.ErrWrongArguments, "stmt_send_longdata")
 	}
-	ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
+	// If len(data) is 0, append an empty byte slice to the end to distinguish no data and no parameter.
+	if len(data) == 0 {
+		ts.boundParams[paramID] = []byte{}
+	} else {
+		ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
+	}
 	return nil
 }
 
@@ -127,19 +132,19 @@ func (ts *TiDBStatement) Close() error {
 
 // OpenCtx implements IDriver.
 func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (QueryCtx, error) {
-	session, err := tidb.CreateSession(qd.store)
+	se, err := session.CreateSession(qd.store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	session.SetTLSState(tlsState)
-	err = session.SetCollation(int(collation))
+	se.SetTLSState(tlsState)
+	err = se.SetCollation(int(collation))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	session.SetClientCapability(capability)
-	session.SetConnectionID(connID)
+	se.SetClientCapability(capability)
+	se.SetConnectionID(connID)
 	tc := &TiDBContext{
-		session:   session,
+		session:   se,
 		currentDB: dbname,
 		stmts:     make(map[int]*TiDBStatement),
 	}
@@ -289,16 +294,12 @@ type tidbResultSet struct {
 	columns   []*ColumnInfo
 }
 
-func (trs *tidbResultSet) Next(ctx context.Context) (types.Row, error) {
-	return trs.recordSet.Next(ctx)
-}
-
 func (trs *tidbResultSet) NewChunk() *chunk.Chunk {
 	return trs.recordSet.NewChunk()
 }
 
-func (trs *tidbResultSet) NextChunk(ctx context.Context, chk *chunk.Chunk) error {
-	return trs.recordSet.NextChunk(ctx, chk)
+func (trs *tidbResultSet) Next(ctx context.Context, chk *chunk.Chunk) error {
+	return trs.recordSet.Next(ctx, chk)
 }
 
 func (trs *tidbResultSet) Close() error {
@@ -338,10 +339,10 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 			// Consider the decimal point.
 			ci.ColumnLength++
 		}
-	} else if fld.Column.Tp != mysql.TypeBit {
+	} else if fld.Column.Tp != mysql.TypeBit && fld.Column.Tp != mysql.TypeTiny {
 		// Fix issue #4540.
 		// The flen is a hint, not a precise value, so most client will not use the value.
-		// But we found in race MySQL client, like Navicat for MySQL(version before 12) will truncate
+		// But we found in rare MySQL client, like Navicat for MySQL(version before 12) will truncate
 		// the `show create table` result. To fix this case, we must use a large enough flen to prevent
 		// the truncation, in MySQL, it will multiply bytes length by a multiple based on character set.
 		// For examples:

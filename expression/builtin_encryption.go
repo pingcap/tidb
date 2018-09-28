@@ -91,6 +91,12 @@ type builtinAesDecryptSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinAesDecryptSig) Clone() builtinFunc {
+	newSig := &builtinAesDecryptSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals AES_DECRYPT(crypt_str, key_key).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
 func (b *builtinAesDecryptSig) evalString(row types.Row) (string, bool, error) {
@@ -131,6 +137,12 @@ func (c *aesEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 
 type builtinAesEncryptSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinAesEncryptSig) Clone() builtinFunc {
+	newSig := &builtinAesEncryptSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals AES_ENCRYPT(str, key_str).
@@ -222,6 +234,12 @@ type builtinPasswordSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinPasswordSig) Clone() builtinFunc {
+	newSig := &builtinPasswordSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinPasswordSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 func (b *builtinPasswordSig) evalString(row types.Row) (d string, isNull bool, err error) {
@@ -233,6 +251,10 @@ func (b *builtinPasswordSig) evalString(row types.Row) (d string, isNull bool, e
 	if len(pass) == 0 {
 		return "", false, nil
 	}
+
+	// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
+	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenByArgs("PASSWORD"))
 
 	return auth.EncodePassword(pass), false, nil
 }
@@ -254,6 +276,12 @@ func (c *randomBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 
 type builtinRandomBytesSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinRandomBytesSig) Clone() builtinFunc {
+	newSig := &builtinRandomBytesSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals RANDOM_BYTES(len).
@@ -293,6 +321,12 @@ type builtinMD5Sig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinMD5Sig) Clone() builtinFunc {
+	newSig := &builtinMD5Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals a builtinMD5Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_md5
 func (b *builtinMD5Sig) evalString(row types.Row) (string, bool, error) {
@@ -321,6 +355,12 @@ func (c *sha1FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinSHA1Sig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSHA1Sig) Clone() builtinFunc {
+	newSig := &builtinSHA1Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalString evals SHA1(str).
@@ -355,6 +395,12 @@ func (c *sha2FunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 
 type builtinSHA2Sig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinSHA2Sig) Clone() builtinFunc {
+	newSig := &builtinSHA2Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // Supported hash length of SHA-2 family
@@ -451,6 +497,12 @@ type builtinCompressSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinCompressSig) Clone() builtinFunc {
+	newSig := &builtinCompressSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals COMPRESS(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
 func (b *builtinCompressSig) evalString(row types.Row) (string, bool, error) {
@@ -507,6 +559,12 @@ type builtinUncompressSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinUncompressSig) Clone() builtinFunc {
+	newSig := &builtinUncompressSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalString evals UNCOMPRESS(compressed_string).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) evalString(row types.Row) (string, bool, error) {
@@ -547,6 +605,12 @@ func (c *uncompressedLengthFunctionClass) getFunction(ctx sessionctx.Context, ar
 
 type builtinUncompressedLengthSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinUncompressedLengthSig) Clone() builtinFunc {
+	newSig := &builtinUncompressedLengthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalInt evals UNCOMPRESSED_LENGTH(str).

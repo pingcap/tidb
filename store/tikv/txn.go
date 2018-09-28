@@ -15,11 +15,13 @@ package tikv
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/sessionctx"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -39,6 +41,7 @@ type tikvTxn struct {
 	commitTS  uint64
 	valid     bool
 	lockKeys  [][]byte
+	mu        sync.Mutex // For thread-safe LockKeys function.
 	dirty     bool
 	setCnt    int64
 }
@@ -135,8 +138,6 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
 	switch opt {
-	case kv.IsolationLevel:
-		txn.snapshot.isolationLevel = val.(kv.IsoLevel)
 	case kv.Priority:
 		txn.snapshot.priority = kvPriorityToCommandPri(val.(int))
 	case kv.NotFillCache:
@@ -148,9 +149,6 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 
 func (txn *tikvTxn) DelOption(opt kv.Option) {
 	txn.us.DelOption(opt)
-	if opt == kv.IsolationLevel {
-		txn.snapshot.isolationLevel = kv.SI
-	}
 }
 
 func (txn *tikvTxn) Commit(ctx context.Context) error {
@@ -168,7 +166,13 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	committer, err := newTwoPhaseCommitter(txn)
+	// connID is used for log.
+	var connID uint64
+	val := ctx.Value(sessionctx.ConnID)
+	if val != nil {
+		connID = val.(uint64)
+	}
+	committer, err := newTwoPhaseCommitter(txn, connID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -194,12 +198,7 @@ func (txn *tikvTxn) Rollback() error {
 		return kv.ErrInvalidTxn
 	}
 	txn.close()
-	logMsg := fmt.Sprintf("[kv] Rollback txn %d", txn.StartTS())
-	if txn.store.mock {
-		log.Debug(logMsg)
-	} else {
-		log.Info(logMsg)
-	}
+	log.Debugf("[kv] Rollback txn %d", txn.StartTS())
 	metrics.TiKVTxnCmdCounter.WithLabelValues("rollback").Inc()
 
 	return nil
@@ -207,9 +206,11 @@ func (txn *tikvTxn) Rollback() error {
 
 func (txn *tikvTxn) LockKeys(keys ...kv.Key) error {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("lock_keys").Inc()
+	txn.mu.Lock()
 	for _, key := range keys {
 		txn.lockKeys = append(txn.lockKeys, key)
 	}
+	txn.mu.Unlock()
 	return nil
 }
 

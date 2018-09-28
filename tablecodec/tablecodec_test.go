@@ -14,10 +14,12 @@
 package tablecodec
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
 
+	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -277,6 +279,16 @@ func (s *testTableCodecSuite) TestCutKey(c *C) {
 	c.Assert(handleVal, DeepEquals, types.NewIntDatum(100))
 }
 
+func (s *testTableCodecSuite) TestDecodeBadDecical(c *C) {
+	gofail.Enable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal", `return(true)`)
+	defer gofail.Disable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal")
+	dec := types.NewDecFromStringForTest("0.111")
+	b := codec.EncodeDecimal(nil, dec, 0, 0)
+	// Expect no panic.
+	_, _, err := codec.DecodeOne(b)
+	c.Assert(err, NotNil)
+}
+
 func (s *testTableCodecSuite) TestIndexKey(c *C) {
 	tableID := int64(4)
 	indexID := int64(5)
@@ -322,4 +334,34 @@ func (s *testTableCodecSuite) TestReplaceRecordKeyTableID(c *C) {
 	tTableID, _, _, err = DecodeKeyHead(tableKey)
 	c.Assert(err, IsNil)
 	c.Assert(tTableID, Equals, tableID)
+}
+
+func (s *testTableCodecSuite) TestDecodeIndexKey(c *C) {
+	tableID := int64(4)
+	indexID := int64(5)
+	values := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewBytesDatum([]byte("abc")),
+		types.NewFloat64Datum(123.45),
+		// MysqlTime is not supported.
+		// types.NewTimeDatum(types.Time{
+		// 	Time: types.FromGoTime(time.Now()),
+		// 	Fsp:  6,
+		// 	Type: mysql.TypeTimestamp,
+		// }),
+	}
+	var valueStrs []string
+	for _, v := range values {
+		valueStrs = append(valueStrs, fmt.Sprintf("%d-%v", v.Kind(), v.GetValue()))
+	}
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	encodedValue, err := codec.EncodeKey(sc, nil, values...)
+	c.Assert(err, IsNil)
+	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
+
+	decodeTableID, decodeIndexID, decodeValues, err := DecodeIndexKey(indexKey)
+	c.Assert(err, IsNil)
+	c.Assert(decodeTableID, Equals, tableID)
+	c.Assert(decodeIndexID, Equals, indexID)
+	c.Assert(decodeValues, DeepEquals, valueStrs)
 }

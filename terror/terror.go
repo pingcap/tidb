@@ -68,7 +68,6 @@ const (
 	ClassKV
 	ClassMeta
 	ClassOptimizer
-	ClassOptimizerPlan
 	ClassParser
 	ClassPerfSchema
 	ClassPrivilege
@@ -87,29 +86,28 @@ const (
 )
 
 var errClz2Str = map[ErrClass]string{
-	ClassAutoid:        "autoid",
-	ClassDDL:           "ddl",
-	ClassDomain:        "domain",
-	ClassExecutor:      "executor",
-	ClassExpression:    "expression",
-	ClassAdmin:         "admin",
-	ClassMeta:          "meta",
-	ClassKV:            "kv",
-	ClassOptimizer:     "optimizer",
-	ClassOptimizerPlan: "plan",
-	ClassParser:        "parser",
-	ClassPerfSchema:    "perfschema",
-	ClassPrivilege:     "privilege",
-	ClassSchema:        "schema",
-	ClassServer:        "server",
-	ClassStructure:     "structure",
-	ClassVariable:      "variable",
-	ClassTable:         "table",
-	ClassTypes:         "types",
-	ClassGlobal:        "global",
-	ClassMockTikv:      "mocktikv",
-	ClassJSON:          "json",
-	ClassTiKV:          "tikv",
+	ClassAutoid:     "autoid",
+	ClassDDL:        "ddl",
+	ClassDomain:     "domain",
+	ClassExecutor:   "executor",
+	ClassExpression: "expression",
+	ClassAdmin:      "admin",
+	ClassMeta:       "meta",
+	ClassKV:         "kv",
+	ClassOptimizer:  "planner",
+	ClassParser:     "parser",
+	ClassPerfSchema: "perfschema",
+	ClassPrivilege:  "privilege",
+	ClassSchema:     "schema",
+	ClassServer:     "server",
+	ClassStructure:  "structure",
+	ClassVariable:   "variable",
+	ClassTable:      "table",
+	ClassTypes:      "types",
+	ClassGlobal:     "global",
+	ClassMockTikv:   "mocktikv",
+	ClassJSON:       "json",
+	ClassTiKV:       "tikv",
 }
 
 // String implements fmt.Stringer interface.
@@ -278,7 +276,7 @@ func (e *Error) getMySQLErrorCode() uint16 {
 	}
 	code, ok := codeMap[e.code]
 	if !ok {
-		log.Warnf("Unknown error class: %v code: %v", e.class, e.code)
+		log.Debugf("Unknown error class: %v code: %v", e.class, e.code)
 		return defaultMySQLErrorCode
 	}
 	return code
@@ -321,9 +319,12 @@ func ErrorNotEqual(err1, err2 error) bool {
 	return !ErrorEqual(err1, err2)
 }
 
-// MustNil fatals if err is not nil.
-func MustNil(err error) {
+// MustNil cleans up and fatals if err is not nil.
+func MustNil(err error, closeFuns ...func()) {
 	if err != nil {
+		for _, f := range closeFuns {
+			f()
+		}
 		log.Fatalf(errors.ErrorStack(err))
 	}
 }

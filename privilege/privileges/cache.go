@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
 	log "github.com/sirupsen/logrus"
@@ -183,20 +184,25 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 
 	fs := rs.Fields()
 	for {
-		row, err := rs.Next(context.TODO())
+		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
+		// The result will reference memory in the chunk, so the chunk must not be reused
+		// here, otherwise some werid bug will happen!
+		chk := rs.NewChunk()
+		err = rs.Next(context.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if row == nil {
-			break
+		if chk.NumRows() == 0 {
+			return nil
 		}
-
-		err = decodeTableRow(row, fs)
-		if err != nil {
-			return errors.Trace(err)
+		it := chunk.NewIterator4Chunk(chk)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			err = decodeTableRow(row, fs)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
-	return nil
 }
 
 func (p *MySQLPrivilege) decodeUserTableRow(row types.Row, fs []*ast.ResultField) error {

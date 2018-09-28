@@ -94,6 +94,7 @@ func (s *Scanner) reset(sql string) {
 	s.buf.Reset()
 	s.errs = s.errs[:0]
 	s.stmtStartPos = 0
+	s.specialComment = nil
 }
 
 func (s *Scanner) stmtText() string {
@@ -306,12 +307,14 @@ func startWithSharp(s *Scanner) (tok int, pos Pos, lit string) {
 
 func startWithDash(s *Scanner) (tok int, pos Pos, lit string) {
 	pos = s.r.pos()
-	if strings.HasPrefix(s.r.s[pos.Offset:], "-- ") {
-		s.r.incN(3)
-		s.r.incAsLongAs(func(ch rune) bool {
-			return ch != '\n'
-		})
-		return s.scan()
+	if strings.HasPrefix(s.r.s[pos.Offset:], "--") {
+		remainLen := len(s.r.s[pos.Offset:])
+		if remainLen == 2 || (remainLen > 2 && unicode.IsSpace(rune(s.r.s[pos.Offset+2]))) {
+			s.r.incAsLongAs(func(ch rune) bool {
+				return ch != '\n'
+			})
+			return s.scan()
+		}
 	}
 	if strings.HasPrefix(s.r.s[pos.Offset:], "->>") {
 		tok = juss
@@ -334,16 +337,24 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 	ch0 := s.r.peek()
 	if ch0 == '*' {
 		s.r.inc()
+		startWithAsterisk := false
 		for {
 			ch0 = s.r.readByte()
+			if startWithAsterisk && ch0 == '/' {
+				// Meets */, means comment end.
+				break
+			} else if ch0 == '*' {
+				startWithAsterisk = true
+			} else {
+				startWithAsterisk = false
+			}
+
 			if ch0 == unicode.ReplacementChar && s.r.eof() {
 				// unclosed comment
 				s.errs = append(s.errs, ParseErrorWith(s.r.data(&pos), s.r.p.Line))
 				return
 			}
-			if ch0 == '*' && s.r.readByte() == '/' {
-				break
-			}
+
 		}
 
 		comment := s.r.data(&pos)
