@@ -2369,7 +2369,6 @@ func (s *testSuite) TestTimezonePushDown(c *C) {
 
 	systemTZ := timeutil.SystemLocation()
 	c.Assert(systemTZ.String(), Not(Equals), "System")
-	c.Assert(systemTZ.String(), Not(Equals), "Local")
 	ctx := context.Background()
 	count := 0
 	ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {
