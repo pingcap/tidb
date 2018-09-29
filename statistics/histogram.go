@@ -682,8 +682,17 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 	if hg.Bounds == nil {
 		return true
 	}
-	return chunk.CompareOpt(hg.Bounds.GetRow(0), 0, &val, true) > 0 ||
+	return chunk.Compare(hg.Bounds.GetRow(0), 0, &val) > 0 ||
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
+
+}
+
+func (hg *Histogram) canCMSketch(val types.Datum, partialCover bool) bool {
+	if hg.Bounds == nil {
+		return false
+	}
+	return chunk.CompareOpt(hg.Bounds.GetRow(0), 0, &val, partialCover) <= 0 &&
+		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) >= 0
 }
 
 // ErrorRate is the error rate of estimate row count by bucket and cm sketch.

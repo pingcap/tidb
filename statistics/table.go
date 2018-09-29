@@ -546,7 +546,9 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			return 0, errors.Trace(err)
 		}
 		val := types.NewBytesDatum(bytes)
-		if idx.outOfRange(val) {
+		if idx.canCMSketch(val, len(idx.Info.Columns) > rangePosition) {
+			selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.totalRowCount())
+		} else {
 			// When the value is out of range, we could not found this value in the CM Sketch,
 			// so we use heuristic methods to estimate the selectivity.
 			if idx.NDV > 0 && len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal) {
@@ -556,8 +558,6 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 				// for range queries
 				selectivity = float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.totalRowCount()
 			}
-		} else {
-			selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.totalRowCount())
 		}
 		// use histogram to estimate the range condition
 		if rangePosition != len(ran.LowVal) {
