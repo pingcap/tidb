@@ -86,6 +86,41 @@ type connArray struct {
 	v     []*grpc.ClientConn
 	// Bind with a background goroutine to process coprocessor streaming timeout.
 	streamTimeout chan *tikvrpc.Lease
+
+	// For super batch requests.
+	superBatchCh      chan *superBatchEntry
+	superBatchClients []*superBatchClient
+}
+
+type superBatchClient struct {
+	client  tikvpb.Tikv_SuperBatchClient
+	batched sync.Map
+	idAlloc uint64
+}
+
+func (c *superBatchClient) batchRecvLoop() {
+	for {
+		resp, err := c.client.Recv()
+		if err != nil {
+			c.batched.Range(func(key, value interface{}) bool {
+				id, _ := key.(uint64)
+				entry, _ := value.(*superBatchEntry)
+				entry.err = err
+				close(entry.res)
+				c.batched.Delete(id)
+				return true
+			})
+			continue
+		}
+
+		responses := resp.GetResponses()
+		for i, requestId := range resp.GetRequestIds() {
+			value, _ := c.batched.Load(requestId)
+			entry, _ := value.(*superBatchEntry)
+			entry.res <- responses[i]
+			c.batched.Delete(requestId)
+		}
+	}
 }
 
 func newConnArray(maxSize uint, addr string, security config.Security) (*connArray, error) {
@@ -93,6 +128,9 @@ func newConnArray(maxSize uint, addr string, security config.Security) (*connArr
 		index:         0,
 		v:             make([]*grpc.ClientConn, maxSize),
 		streamTimeout: make(chan *tikvrpc.Lease, 1024),
+
+		superBatchCh:      make(chan *superBatchEntry, 1024),
+		superBatchClients: make([]*superBatchClient, 0, maxSize),
 	}
 	if err := a.Init(addr, security); err != nil {
 		return nil, err
@@ -150,8 +188,23 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			return errors.Trace(err)
 		}
 		a.v[i] = conn
+
+		// Initialize super batch streaming clients.
+		tikvClient := tikvpb.NewTikvClient(conn)
+		streamClient, err := tikvClient.SuperBatch(context.TODO())
+		if err != nil {
+			a.Close()
+			return errors.Trace(err)
+		}
+		batchClient := &superBatchClient{
+			client:  streamClient,
+			idAlloc: 0,
+		}
+		a.superBatchClients = append(a.superBatchClients, batchClient)
+		go batchClient.batchRecvLoop()
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
+	go a.batchSendLoop()
 
 	return nil
 }
@@ -170,6 +223,52 @@ func (a *connArray) Close() {
 		}
 	}
 	close(a.streamTimeout)
+	close(a.superBatchCh)
+}
+
+type superBatchEntry struct {
+	req *tikvpb.SuperBatchRequest_Request
+	res chan *tikvpb.SuperBatchResponse_Response
+	err error
+}
+
+func (a *connArray) batchSendLoop() {
+	for {
+		length := len(a.superBatchCh)
+		if length > 1000 {
+			length = 1000
+		} else if length == 0 {
+			length = 1
+		}
+
+		// Choose a connection by round-robbin.
+		next := atomic.AddUint32(&a.index, 1) % uint32(len(a.v))
+		superBatchClient := a.superBatchClients[next]
+
+		entries := make([]*superBatchEntry, 0, length)
+		requests := make([]*tikvpb.SuperBatchRequest_Request, 0, length)
+		requestIds := make([]uint64, 0, length)
+		maxBatchId := atomic.AddUint64(&superBatchClient.idAlloc, uint64(length))
+		for i := 0; i < length; i++ {
+			entry := <-a.superBatchCh
+			entries = append(entries, entry)
+
+			requestId := uint64(i) + maxBatchId - uint64(length)
+			superBatchClient.batched.Store(requestId, entry)
+
+			requests = append(requests, entry.req)
+			requestIds = append(requestIds, requestId)
+		}
+
+		request := &tikvpb.SuperBatchRequest{
+			Requests:   requests,
+			RequestIds: requestIds,
+		}
+		if err := superBatchClient.client.Send(request); err != nil {
+			log.Errorf("super batch send error: %v", err)
+			return
+		}
+	}
 }
 
 // rpcClient is RPC client struct.
@@ -250,6 +349,22 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	if superBatchReq := req.ToSuperBatchRequest(); superBatchReq != nil {
+		entry := &superBatchEntry{
+			req: superBatchReq,
+			res: make(chan *tikvpb.SuperBatchResponse_Response),
+			err: nil,
+		}
+		connArray.superBatchCh <- entry
+
+		res, ok := <-entry.res
+		if !ok {
+			return nil, errors.Trace(entry.err)
+		}
+		return tikvrpc.FromSuperBatchResponse(res), nil
+	}
+
 	client := tikvpb.NewTikvClient(connArray.Get())
 
 	if req.Type != tikvrpc.CmdCopStream {

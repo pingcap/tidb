@@ -149,6 +149,53 @@ type Request struct {
 	SplitRegion        *kvrpcpb.SplitRegionRequest
 }
 
+// ToSuperBatchRequest converts the request to an entry in SuperBatch request.
+func (req *Request) ToSuperBatchRequest() *tikvpb.SuperBatchRequest_Request {
+	switch req.Type {
+	case CmdGet:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_Get{Get: req.Get}}
+	case CmdScan:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_Scan{Scan: req.Scan}}
+	case CmdPrewrite:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_Prewrite{Prewrite: req.Prewrite}}
+	case CmdCommit:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_Commit{Commit: req.Commit}}
+	case CmdCleanup:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_Cleanup{Cleanup: req.Cleanup}}
+	case CmdBatchGet:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_BatchGet{BatchGet: req.BatchGet}}
+	case CmdBatchRollback:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_BatchRollback{BatchRollback: req.BatchRollback}}
+	case CmdScanLock:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_ScanLock{ScanLock: req.ScanLock}}
+	case CmdResolveLock:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_ResolveLock{ResolveLock: req.ResolveLock}}
+	case CmdGC:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_GC{GC: req.GC}}
+	case CmdDeleteRange:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_DeleteRange{DeleteRange: req.DeleteRange}}
+	case CmdRawGet:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_RawGet{RawGet: req.RawGet}}
+	case CmdRawBatchGet:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_RawBatchGet{RawBatchGet: req.RawBatchGet}}
+	case CmdRawPut:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_RawPut{RawPut: req.RawPut}}
+	case CmdRawBatchPut:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_RawBatchPut{RawBatchPut: req.RawBatchPut}}
+	case CmdRawDelete:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_RawDelete{RawDelete: req.RawDelete}}
+	case CmdRawBatchDelete:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_RawBatchDelete{RawBatchDelete: req.RawBatchDelete}}
+	case CmdRawDeleteRange:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_RawDeleteRange{RawDeleteRange: req.RawDeleteRange}}
+	case CmdRawScan:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_RawScan{RawScan: req.RawScan}}
+	case CmdCop:
+		return &tikvpb.SuperBatchRequest_Request{Cmd: &tikvpb.SuperBatchRequest_Request_Coprocessor{Coprocessor: req.Cop}}
+	}
+	return nil
+}
+
 // Response wraps all kv/coprocessor responses.
 type Response struct {
 	Type               CmdType
@@ -177,6 +224,53 @@ type Response struct {
 	MvccGetByKey       *kvrpcpb.MvccGetByKeyResponse
 	MvccGetByStartTS   *kvrpcpb.MvccGetByStartTsResponse
 	SplitRegion        *kvrpcpb.SplitRegionResponse
+}
+
+// FromSuperBatchResponse converts a SuperBatch response to Response.
+func FromSuperBatchResponse(res *tikvpb.SuperBatchResponse_Response) *Response {
+	switch res := res.GetCmd().(type) {
+	case *tikvpb.SuperBatchResponse_Response_Get:
+		return &Response{Type: CmdGet, Get: res.Get}
+	case *tikvpb.SuperBatchResponse_Response_Scan:
+		return &Response{Type: CmdScan, Scan: res.Scan}
+	case *tikvpb.SuperBatchResponse_Response_Prewrite:
+		return &Response{Type: CmdPrewrite, Prewrite: res.Prewrite}
+	case *tikvpb.SuperBatchResponse_Response_Commit:
+		return &Response{Type: CmdCommit, Commit: res.Commit}
+	case *tikvpb.SuperBatchResponse_Response_Cleanup:
+		return &Response{Type: CmdCleanup, Cleanup: res.Cleanup}
+	case *tikvpb.SuperBatchResponse_Response_BatchGet:
+		return &Response{Type: CmdBatchGet, BatchGet: res.BatchGet}
+	case *tikvpb.SuperBatchResponse_Response_BatchRollback:
+		return &Response{Type: CmdBatchRollback, BatchRollback: res.BatchRollback}
+	case *tikvpb.SuperBatchResponse_Response_ScanLock:
+		return &Response{Type: CmdScanLock, ScanLock: res.ScanLock}
+	case *tikvpb.SuperBatchResponse_Response_ResolveLock:
+		return &Response{Type: CmdResolveLock, ResolveLock: res.ResolveLock}
+	case *tikvpb.SuperBatchResponse_Response_GC:
+		return &Response{Type: CmdGC, GC: res.GC}
+	case *tikvpb.SuperBatchResponse_Response_DeleteRange:
+		return &Response{Type: CmdDeleteRange, DeleteRange: res.DeleteRange}
+	case *tikvpb.SuperBatchResponse_Response_RawGet:
+		return &Response{Type: CmdRawGet, RawGet: res.RawGet}
+	case *tikvpb.SuperBatchResponse_Response_RawBatchGet:
+		return &Response{Type: CmdRawBatchGet, RawBatchGet: res.RawBatchGet}
+	case *tikvpb.SuperBatchResponse_Response_RawPut:
+		return &Response{Type: CmdRawPut, RawPut: res.RawPut}
+	case *tikvpb.SuperBatchResponse_Response_RawBatchPut:
+		return &Response{Type: CmdRawBatchPut, RawBatchPut: res.RawBatchPut}
+	case *tikvpb.SuperBatchResponse_Response_RawDelete:
+		return &Response{Type: CmdRawDelete, RawDelete: res.RawDelete}
+	case *tikvpb.SuperBatchResponse_Response_RawBatchDelete:
+		return &Response{Type: CmdRawBatchDelete, RawBatchDelete: res.RawBatchDelete}
+	case *tikvpb.SuperBatchResponse_Response_RawDeleteRange:
+		return &Response{Type: CmdRawDeleteRange, RawDeleteRange: res.RawDeleteRange}
+	case *tikvpb.SuperBatchResponse_Response_RawScan:
+		return &Response{Type: CmdRawScan, RawScan: res.RawScan}
+	case *tikvpb.SuperBatchResponse_Response_Coprocessor:
+		return &Response{Type: CmdCop, Cop: res.Coprocessor}
+	}
+	return nil
 }
 
 // CopStreamResponse combinates tikvpb.Tikv_CoprocessorStreamClient and the first Recv() result together.
