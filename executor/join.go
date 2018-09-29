@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -71,6 +72,17 @@ type HashJoinExec struct {
 	hashTableValBufs   [][][]byte
 
 	memTracker *memory.Tracker // track memory usage.
+
+	// useRadixPartition indicates whether to use radix-based cluster algorithm
+	// to partitioning.
+	// Note: Only used for testing now, we'll check whether to use radix
+	// partition according to the the skew of inner data when radix partition is
+	// totally supported.
+	UseRadixPartition bool
+	// radixBits indicates the bit number using for radix partitioning. Inner
+	// relation will be split to 2^radixBits sub-relations before building the
+	// hash tables.
+	radixBits int
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -274,6 +286,13 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 			chkCh <- chk
 			e.innerResult.Add(chk)
 		}
+	}
+
+	// Calculate the bit number needed when using radix partition.
+	if e.UseRadixPartition {
+		innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed() / 1024)
+		l2CacheSize := float64(e.ctx.GetSessionVars().L2CacheSize)
+		e.radixBits = int(math.Log2(innerResultSize / l2CacheSize))
 	}
 }
 

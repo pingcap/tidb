@@ -824,6 +824,8 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		concurrency:  v.Concurrency,
 		joinType:     v.JoinType,
 		innerIdx:     v.InnerChildIdx,
+		// If L2CacheSize is set to 0, we do not use radix partition.
+		UseRadixPartition: b.ctx.GetSessionVars().L2CacheSize != 0,
 	}
 
 	defaultValues := v.DefaultValues

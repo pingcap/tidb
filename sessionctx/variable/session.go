@@ -294,6 +294,9 @@ type SessionVars struct {
 	EnableStreaming bool
 
 	writeStmtBufs WriteStmtBufs
+
+	// L2CacheSize indicates the size of CPU L2 cache, using byte as unit.
+	L2CacheSize int
 }
 
 // NewSessionVars creates a session vars object.
