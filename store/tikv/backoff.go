@@ -107,7 +107,8 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
 	case boPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case BoRegionMiss:
-		return NewBackoffFn(100, 500, NoJitter)
+		// change base time to 2ms, because it may recover soon.
+		return NewBackoffFn(2, 500, NoJitter)
 	case BoUpdateLeader:
 		return NewBackoffFn(1, 10, NoJitter)
 	case boServerBusy:
