@@ -26,13 +26,14 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -97,11 +98,15 @@ func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.
 }
 
 func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
+	histColl := statistics.HistColl{
+		PhysicalID:     tbl.ID,
+		HavePhysicalID: true,
+		Count:          rowCount,
+		Columns:        make(map[int64]*statistics.Column, len(tbl.Columns)),
+		Indices:        make(map[int64]*statistics.Index, len(tbl.Indices)),
+	}
 	statsTbl := &statistics.Table{
-		TableID: tbl.ID,
-		Count:   rowCount,
-		Columns: make(map[int64]*statistics.Column, len(tbl.Columns)),
-		Indices: make(map[int64]*statistics.Index, len(tbl.Indices)),
+		HistColl: histColl,
 	}
 	return statsTbl
 }
@@ -153,7 +158,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "a >= 1 and b > 1 and a < 2",
-			selectivity: 0.01783264746,
+			selectivity: 0.01817558299,
 		},
 		{
 			exprs:       "a >= 1 and c > 1 and a < 2",
@@ -169,7 +174,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "b > 1",
-			selectivity: 0.96296296296,
+			selectivity: 0.98148148148,
 		},
 		{
 			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
@@ -183,36 +188,26 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		stmts, err := session.Parse(ctx, sql)
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprs))
 		c.Assert(stmts, HasLen, 1)
-		err = plan.Preprocess(ctx, stmts[0], is, false)
+
+		err = plannercore.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, comment)
-		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, tt.exprs))
-		ratio, err := statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
+
+		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		ds := sel.Children()[0].(*plannercore.DataSource)
+
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.Columns, ds.Schema().Columns)
+
+		ratio, err := histColl.Selectivity(ctx, sel.Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 
-		statsTbl.Count *= 10
-		ratio, err = statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
+		histColl.Count *= 10
+		ratio, err = histColl.Selectivity(ctx, sel.Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
-		statsTbl.Count /= 10
 	}
-}
-
-func (s *testSelectivitySuite) TestPseudoSelectivity(c *C) {
-	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t, t1")
-	testKit.MustExec("create table t(a int, b int, unique key idx(a,b))")
-	testKit.MustQuery("explain select * from t where a = 1 and b = 1").Check(testkit.Rows(
-		"IndexReader_6 1.00 root index:IndexScan_5",
-		"└─IndexScan_5 1.00 cop table:t, index:a, b, range:[1 1,1 1], keep order:false"))
-
-	testKit.MustExec("create table t1(a int, b int, primary key(a))")
-	testKit.MustQuery("explain select b from t1 where a = 1").Check(testkit.Rows(
-		"Projection_4 1.00 root test.t1.b",
-		"└─TableReader_6 1.00 root data:TableScan_5",
-		"  └─TableScan_5 1.00 cop table:t1, range:[1,1], keep order:false"))
 }
 
 // TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
@@ -231,7 +226,60 @@ func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from t where a = 'tw' and b < 0").Check(testkit.Rows(
 		"IndexReader_9 0.00 root index:IndexScan_8",
-		"└─IndexScan_8 0.00 cop table:t, index:a, b, range:[tw -inf,tw 0), keep order:false"))
+		"└─IndexScan_8 0.00 cop table:t, index:a, b, range:[\"tw\" -inf,\"tw\" 0), keep order:false"))
+}
+
+func getRange(start, end int64) []*ranger.Range {
+	ran := &ranger.Range{
+		LowVal:  []types.Datum{types.NewIntDatum(start)},
+		HighVal: []types.Datum{types.NewIntDatum(end)},
+	}
+	return []*ranger.Range{ran}
+}
+
+func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
+	testKit.MustExec("analyze table t")
+	for i := 0; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	h := s.dom.StatsHandle()
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	testKit.MustExec("analyze table t")
+	for i := 0; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
+	}
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	c.Assert(h.Update(s.dom.InfoSchema()), IsNil)
+	table, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl := h.GetTableStats(table.Meta())
+
+	sc := &stmtctx.StatementContext{}
+	colID := table.Meta().Columns[0].ID
+	count, err := statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(30, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 2.0)
+
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 4.2)
+
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, math.MaxInt64))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 4.2)
+
+	idxID := table.Meta().Indices[0].ID
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(30, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.2)
+
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(9, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 2.2)
 }
 
 func BenchmarkSelectivity(b *testing.B) {
@@ -250,9 +298,9 @@ func BenchmarkSelectivity(b *testing.B) {
 	stmts, err := session.Parse(ctx, sql)
 	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
 	c.Assert(stmts, HasLen, 1)
-	err = plan.Preprocess(ctx, stmts[0], is, false)
+	err = plannercore.Preprocess(ctx, stmts[0], is, false)
 	c.Assert(err, IsNil, comment)
-	p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
+	p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
 
 	file, _ := os.Create("cpu.profile")
@@ -262,7 +310,7 @@ func BenchmarkSelectivity(b *testing.B) {
 	b.Run("selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
+			_, err := statsTbl.Selectivity(ctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions)
 			c.Assert(err, IsNil)
 		}
 		b.ReportAllocs()

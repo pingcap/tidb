@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -35,7 +34,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -99,8 +100,13 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
+
 	sc := flagsToStatementContext(dagReq.Flags)
-	sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+	sc.TimeZone, err = constructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
+	if err != nil {
+		return nil, nil, nil, errors.Trace(err)
+	}
+
 	ctx := &dagContext{
 		dagReq:    dagReq,
 		keyRanges: req.Ranges,
@@ -111,6 +117,17 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		return nil, nil, nil, errors.Trace(err)
 	}
 	return ctx, e, dagReq, err
+}
+
+// constructTimeZone constructs timezone by name first. When the timezone name
+// is set, the daylight saving problem must be considered. Otherwise the
+// timezone offset in seconds east of UTC is used to constructed the timezone.
+func constructTimeZone(name string, offset int) (*time.Location, error) {
+	if name != "" {
+		return timeutil.LoadLocation(name)
+	}
+
+	return time.FixedZone("", offset), nil
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
@@ -480,10 +497,9 @@ func (mock *mockCopStreamClient) Recv() (*coprocessor.Response, error) {
 		}
 	}
 	streamResponse := tipb.StreamResponse{
-		Error:      toPBError(err),
-		EncodeType: tipb.EncodeType_TypeDefault,
-		Data:       data,
-		Warnings:   Warnings,
+		Error:    toPBError(err),
+		Data:     data,
+		Warnings: Warnings,
 	}
 	// The counts was the output count of each executor, but now it is the scan count of each range,
 	// so we need a flag to tell them apart.

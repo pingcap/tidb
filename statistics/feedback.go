@@ -16,13 +16,13 @@ package statistics
 import (
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"math"
 	"math/rand"
 	"sort"
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 )
@@ -49,6 +50,7 @@ type feedback struct {
 type QueryFeedback struct {
 	tableID  int64
 	hist     *Histogram
+	tp       int
 	feedback []feedback
 	expected int64 // expected is the expected scan count of corresponding query.
 	actual   int64 // actual is the actual scan count of corresponding query.
@@ -61,9 +63,14 @@ func NewQueryFeedback(tableID int64, hist *Histogram, expected int64, desc bool)
 	if hist != nil && hist.Len() == 0 {
 		hist = nil
 	}
+	tp := pkType
+	if hist != nil && hist.isIndexHist() {
+		tp = indexType
+	}
 	return &QueryFeedback{
 		tableID:  tableID,
 		valid:    true,
+		tp:       tp,
 		hist:     hist,
 		expected: expected,
 		desc:     desc,
@@ -102,11 +109,11 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 		if isIndex {
 			var err error
 			// As we do not know the origin length, just use a custom value here.
-			lowVal, err = codec.Decode(low.GetBytes(), 4)
+			lowVal, err = codec.DecodeRange(low.GetBytes(), 4)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			highVal, err = codec.Decode(high.GetBytes(), 4)
+			highVal, err = codec.DecodeRange(high.GetBytes(), 4)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -129,6 +136,26 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 		}))
 	}
 	return ranges, nil
+}
+
+func (q *QueryFeedback) decodeIntValues() *QueryFeedback {
+	nq := &QueryFeedback{}
+	nq.feedback = make([]feedback, 0, len(q.feedback))
+	for _, fb := range q.feedback {
+		_, lowInt, err := codec.DecodeInt(fb.lower.GetBytes())
+		if err != nil {
+			log.Debugf("decode feedback lower bound \"%v\" to integer failed: %v", fb.lower.GetBytes(), err)
+			continue
+		}
+		_, highInt, err := codec.DecodeInt(fb.upper.GetBytes())
+		if err != nil {
+			log.Debugf("decode feedback upper bound \"%v\" to integer failed: %v", fb.upper.GetBytes(), err)
+			continue
+		}
+		low, high := types.NewIntDatum(lowInt), types.NewIntDatum(highInt)
+		nq.feedback = append(nq.feedback, feedback{lower: &low, upper: &high, count: fb.count})
+	}
+	return nq
 }
 
 // StoreRanges stores the ranges for update.
@@ -178,7 +205,7 @@ func (q *QueryFeedback) Update(startKey kv.Key, counts []int64) {
 		return
 	}
 
-	if q.hist.tp.Tp == mysql.TypeBlob {
+	if q.tp == indexType {
 		startKey = tablecodec.CutIndexPrefix(startKey)
 	} else {
 		startKey = tablecodec.CutRowKeyPrefix(startKey)
@@ -327,30 +354,9 @@ func (b *BucketFeedback) splitBucket(newNumBkts int, totalCount float64, originB
 		newBkt.count = int64(countInNewBkt)
 		bkts = append(bkts, newBkt)
 		// To guarantee that each bucket's range will not overlap.
-		if bounds[i].Kind() == types.KindBytes {
-			bounds[i].SetBytes(kv.Key(bounds[i].GetBytes()).PrefixNext())
-		} else if bounds[i].Kind() == types.KindInt64 {
-			bounds[i].SetInt64(bounds[i].GetInt64() + 1)
-		} else if bounds[i].Kind() == types.KindUint64 {
-			bounds[i].SetUint64(bounds[i].GetUint64() + 1)
-		}
+		setNextValue(&bounds[i])
 	}
 	return bkts
-}
-
-func getFraction4PK(minValue, maxValue, lower, upper *types.Datum) (float64, float64) {
-	if minValue.Kind() == types.KindInt64 {
-		l, r := float64(minValue.GetInt64()), float64(maxValue.GetInt64())
-		return calcFraction(l, r, float64(lower.GetInt64())), calcFraction(l, r, float64(upper.GetInt64()))
-	}
-	l, r := float64(minValue.GetUint64()), float64(maxValue.GetUint64())
-	return calcFraction(l, r, float64(lower.GetUint64())), calcFraction(l, r, float64(upper.GetUint64()))
-}
-
-func getFraction4Index(minValue, maxValue, lower, upper *types.Datum, prefixLen int) (float64, float64) {
-	l, r := convertBytesToScalar(minValue.GetBytes()[prefixLen:]), convertBytesToScalar(maxValue.GetBytes()[prefixLen:])
-	return calcFraction(l, r, convertBytesToScalar(lower.GetBytes()[prefixLen:])),
-		calcFraction(l, r, convertBytesToScalar(upper.GetBytes()[prefixLen:]))
 }
 
 // getOverlapFraction gets the overlap fraction of feedback and bucket range. In order to get the bucket count, it also
@@ -363,16 +369,11 @@ func getOverlapFraction(fb feedback, bkt bucket) (float64, float64) {
 	if err != nil {
 		return 0, 0
 	}
-	var fbLower, fbUpper, bktLower, bktUpper float64
 	minValue, maxValue := &datums[0], &datums[3]
-	if datums[0].Kind() == types.KindBytes {
-		prefixLen := commonPrefixLength(minValue.GetBytes(), maxValue.GetBytes())
-		fbLower, fbUpper = getFraction4Index(minValue, maxValue, fb.lower, fb.upper, prefixLen)
-		bktLower, bktUpper = getFraction4Index(minValue, maxValue, bkt.lower, bkt.upper, prefixLen)
-	} else {
-		fbLower, fbUpper = getFraction4PK(minValue, maxValue, fb.lower, fb.upper)
-		bktLower, bktUpper = getFraction4PK(minValue, maxValue, bkt.lower, bkt.upper)
-	}
+	fbLower := calcFraction4Datums(minValue, maxValue, fb.lower)
+	fbUpper := calcFraction4Datums(minValue, maxValue, fb.upper)
+	bktLower := calcFraction4Datums(minValue, maxValue, bkt.lower)
+	bktUpper := calcFraction4Datums(minValue, maxValue, bkt.upper)
 	ratio := (bktUpper - bktLower) / (fbUpper - fbLower)
 	// full overlap
 	if fbLower <= bktLower && bktUpper <= fbUpper {
@@ -447,17 +448,8 @@ func getBucketScore(bkts []bucket, totalCount float64, id int) bucketScore {
 		return bucketScore{id, 0}
 	}
 	low, mid, high := bkts[id-1].lower, bkts[id-1].upper, bkts[id].upper
-	var lowVal, midVal, highVal float64
-	if low.Kind() == types.KindBytes {
-		common := commonPrefixLength(low.GetBytes(), high.GetBytes())
-		lowVal = convertBytesToScalar(low.GetBytes()[common:])
-		midVal = convertBytesToScalar(mid.GetBytes()[common:])
-		highVal = convertBytesToScalar(high.GetBytes()[common:])
-	} else {
-		lowVal, midVal, highVal = float64(low.GetInt64()), float64(mid.GetInt64()), float64(high.GetInt64())
-	}
 	// If we choose to merge, err is the absolute estimate error for the previous bucket.
-	err := calcFraction(lowVal, highVal, midVal)*(preCount+count) - preCount
+	err := calcFraction4Datums(low, high, mid)*(preCount+count) - preCount
 	return bucketScore{id, math.Abs(err / (preCount + count))}
 }
 
@@ -539,6 +531,19 @@ func UpdateHistogram(h *Histogram, feedback *QueryFeedback) *Histogram {
 	return buildNewHistogram(h, buckets)
 }
 
+// UpdateCMSketch updates the CMSketch by feedback.
+func UpdateCMSketch(c *CMSketch, eqFeedbacks []feedback) *CMSketch {
+	if c == nil || len(eqFeedbacks) == 0 {
+		return c
+	}
+	newCMSketch := c.copy()
+	for _, fb := range eqFeedbacks {
+		h1, h2 := murmur3.Sum128(fb.lower.GetBytes())
+		newCMSketch.setValue(h1, h2, uint32(fb.count))
+	}
+	return newCMSketch
+}
+
 func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.tp, len(buckets), h.TotColSize)
 	preCount := int64(0)
@@ -551,10 +556,14 @@ func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
 
 // queryFeedback is used to serialize the QueryFeedback.
 type queryFeedback struct {
-	IntRanges   []int64
-	HashValues  []uint64 // HashValues is the murmur hash values for each index point.
+	IntRanges []int64
+	// HashValues is the murmur hash values for each index point.
+	HashValues  []uint64
 	IndexRanges [][]byte
-	Counts      []int64 // Counts is the number of scan keys in each range.
+	// Counts is the number of scan keys in each range. It first stores the count for `IntRanges`, `IndexRanges` or `ColumnRanges`.
+	// After that, it stores the ranges for `HashValues`.
+	Counts       []int64
+	ColumnRanges [][]byte
 }
 
 func encodePKFeedback(q *QueryFeedback) (*queryFeedback, error) {
@@ -582,7 +591,7 @@ func encodeIndexFeedback(q *QueryFeedback) *queryFeedback {
 	pb := &queryFeedback{}
 	var pointCounts []int64
 	for _, fb := range q.feedback {
-		if bytes.Equal(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) {
+		if bytes.Compare(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) >= 0 {
 			h1, h2 := murmur3.Sum128(fb.lower.GetBytes())
 			pb.HashValues = append(pb.HashValues, h1, h2)
 			pointCounts = append(pointCounts, fb.count)
@@ -595,16 +604,37 @@ func encodeIndexFeedback(q *QueryFeedback) *queryFeedback {
 	return pb
 }
 
-func encodeFeedback(q *QueryFeedback) ([]byte, error) {
-	var pb *queryFeedback
-	var err error
-	if q.hist.tp.Tp == mysql.TypeBlob {
-		pb = encodeIndexFeedback(q)
-	} else {
-		pb, err = encodePKFeedback(q)
+func encodeColumnFeedback(q *QueryFeedback) (*queryFeedback, error) {
+	pb := &queryFeedback{}
+	sc := stmtctx.StatementContext{TimeZone: time.UTC}
+	for _, fb := range q.feedback {
+		lowerBytes, err := codec.EncodeKey(&sc, nil, *fb.lower)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		upperBytes, err := codec.EncodeKey(&sc, nil, *fb.upper)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		pb.ColumnRanges = append(pb.ColumnRanges, lowerBytes, upperBytes)
+		pb.Counts = append(pb.Counts, fb.count)
+	}
+	return pb, nil
+}
+
+func encodeFeedback(q *QueryFeedback) ([]byte, error) {
+	var pb *queryFeedback
+	var err error
+	switch q.tp {
+	case pkType:
+		pb, err = encodePKFeedback(q)
+	case indexType:
+		pb = encodeIndexFeedback(q)
+	case colType:
+		pb, err = encodeColumnFeedback(q)
+	}
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -615,14 +645,8 @@ func encodeFeedback(q *QueryFeedback) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
-	buf := bytes.NewBuffer(val)
-	dec := gob.NewDecoder(buf)
-	pb := &queryFeedback{}
-	err := dec.Decode(pb)
-	if err != nil {
-		return errors.Trace(err)
-	}
+func decodeFeedbackForIndex(q *QueryFeedback, pb *queryFeedback, c *CMSketch) {
+	q.tp = indexType
 	// decode the index range feedback
 	for i := 0; i < len(pb.IndexRanges); i += 2 {
 		lower, upper := types.NewBytesDatum(pb.IndexRanges[i]), types.NewBytesDatum(pb.IndexRanges[i+1])
@@ -635,10 +659,50 @@ func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
 			c.setValue(pb.HashValues[i], pb.HashValues[i+1], uint32(pb.Counts[start+i/2]))
 		}
 	}
+}
+
+func decodeFeedbackForPK(q *QueryFeedback, pb *queryFeedback) {
+	q.tp = pkType
 	// decode feedback for primary key
 	for i := 0; i < len(pb.IntRanges); i += 2 {
 		lower, upper := types.NewIntDatum(pb.IntRanges[i]), types.NewIntDatum(pb.IntRanges[i+1])
 		q.feedback = append(q.feedback, feedback{&lower, &upper, pb.Counts[i/2], 0})
+	}
+}
+
+func decodeFeedbackForColumn(q *QueryFeedback, pb *queryFeedback) error {
+	q.tp = colType
+	for i := 0; i < len(pb.ColumnRanges); i += 2 {
+		low, err := codec.DecodeRange(pb.ColumnRanges[i], 1)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		high, err := codec.DecodeRange(pb.ColumnRanges[i+1], 1)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		q.feedback = append(q.feedback, feedback{&low[0], &high[0], pb.Counts[i/2], 0})
+	}
+	return nil
+}
+
+func decodeFeedback(val []byte, q *QueryFeedback, c *CMSketch) error {
+	buf := bytes.NewBuffer(val)
+	dec := gob.NewDecoder(buf)
+	pb := &queryFeedback{}
+	err := dec.Decode(pb)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(pb.IndexRanges) > 0 || len(pb.HashValues) > 0 {
+		decodeFeedbackForIndex(q, pb, c)
+	} else if len(pb.IntRanges) > 0 {
+		decodeFeedbackForPK(q, pb)
+	} else {
+		err := decodeFeedbackForColumn(q, pb)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }
@@ -684,10 +748,10 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	}
 	isIndex := q.hist.tp.Tp == mysql.TypeBlob
 	id := q.hist.ID
-	if isIndex && (t.Indices[id] == nil || t.Indices[id].IsPseudo() == false) {
+	if isIndex && (t.Indices[id] == nil || t.Indices[id].NotAccurate() == false) {
 		return nil
 	}
-	if !isIndex && (t.Columns[id] == nil || t.Columns[id].IsPseudo() == false) {
+	if !isIndex && (t.Columns[id] == nil || t.Columns[id].NotAccurate() == false) {
 		return nil
 	}
 
@@ -699,11 +763,11 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	expected := 0.0
 	if isIndex {
 		idx := t.Indices[id]
-		expected, err = idx.getRowCount(sc, ranges)
+		expected, err = idx.getRowCount(sc, ranges, t.ModifyCount)
 		expected *= idx.getIncreaseFactor(t.Count)
 	} else {
 		c := t.Columns[id]
-		expected, err = c.getColumnRowCount(sc, ranges)
+		expected, err = c.getColumnRowCount(sc, ranges, t.ModifyCount)
 		expected *= c.getIncreaseFactor(t.Count)
 	}
 	if err != nil {
@@ -711,4 +775,365 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	}
 	q.expected = int64(expected)
 	return nil
+}
+
+// splitFeedback splits the feedbacks into equality feedbacks and range feedbacks.
+func splitFeedbackByQueryType(feedbacks []feedback) ([]feedback, []feedback) {
+	var eqFB, ranFB []feedback
+	for _, fb := range feedbacks {
+		// Use `>=` here because sometimes the lower is equal to upper.
+		if bytes.Compare(kv.Key(fb.lower.GetBytes()).PrefixNext(), fb.upper.GetBytes()) >= 0 {
+			eqFB = append(eqFB, fb)
+		} else {
+			ranFB = append(ranFB, fb)
+		}
+	}
+	return eqFB, ranFB
+}
+
+// formatBuckets formats bucket from lowBkt to highBkt.
+func formatBuckets(hg *Histogram, lowBkt, highBkt, idxCols int) string {
+	if lowBkt == highBkt {
+		return hg.bucketToString(lowBkt, idxCols)
+	}
+	if lowBkt+1 == highBkt {
+		return fmt.Sprintf("%s, %s", hg.bucketToString(lowBkt, 0), hg.bucketToString(highBkt, 0))
+	}
+	// do not care the middle buckets
+	return fmt.Sprintf("%s, (%d buckets, total count %d), %s", hg.bucketToString(lowBkt, 0),
+		highBkt-lowBkt-1, hg.Buckets[highBkt-1].Count-hg.Buckets[lowBkt].Count, hg.bucketToString(highBkt, 0))
+}
+
+func colRangeToStr(c *Column, ran *ranger.Range, actual int64, factor float64) string {
+	lowCount, lowBkt := c.lessRowCountWithBktIdx(ran.LowVal[0])
+	highCount, highBkt := c.lessRowCountWithBktIdx(ran.HighVal[0])
+	return fmt.Sprintf("range: %s, actual: %d, expected: %d, buckets: {%s}", ran.String(), actual,
+		int64((highCount-lowCount)*factor), formatBuckets(&c.Histogram, lowBkt, highBkt, 0))
+}
+
+func logForPK(prefix string, c *Column, ranges []*ranger.Range, actual []int64, factor float64) {
+	for i, ran := range ranges {
+		if ran.LowVal[0].GetInt64()+1 >= ran.HighVal[0].GetInt64() {
+			continue
+		}
+		log.Debugf("%s column: %s, %s", prefix, c.Info.Name, colRangeToStr(c, ran, actual[i], factor))
+	}
+}
+
+func logForIndexRange(idx *Index, ran *ranger.Range, actual int64, factor float64) string {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	lb, err := codec.EncodeKey(sc, nil, ran.LowVal...)
+	if err != nil {
+		return ""
+	}
+	rb, err := codec.EncodeKey(sc, nil, ran.HighVal...)
+	if err != nil {
+		return ""
+	}
+	if idx.CMSketch != nil && bytes.Compare(kv.Key(lb).PrefixNext(), rb) >= 0 {
+		str, err := types.DatumsToString(ran.LowVal, true)
+		if err != nil {
+			return ""
+		}
+		return fmt.Sprintf("value: %s, actual: %d, expected: %d", str, actual, int64(float64(idx.QueryBytes(lb))*factor))
+	}
+	l, r := types.NewBytesDatum(lb), types.NewBytesDatum(rb)
+	lowCount, lowBkt := idx.lessRowCountWithBktIdx(l)
+	highCount, highBkt := idx.lessRowCountWithBktIdx(r)
+	return fmt.Sprintf("range: %s, actual: %d, expected: %d, histogram: {%s}", ran.String(), actual,
+		int64((highCount-lowCount)*factor), formatBuckets(&idx.Histogram, lowBkt, highBkt, len(idx.Info.Columns)))
+}
+
+func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, actual []int64, factor float64) {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	if idx.CMSketch == nil || idx.statsVer != version1 {
+		for i, ran := range ranges {
+			log.Debugf("%s index: %s, %s", prefix, idx.Info.Name.O, logForIndexRange(idx, ran, actual[i], factor))
+		}
+		return
+	}
+	for i, ran := range ranges {
+		rangePosition := getOrdinalOfRangeCond(sc, ran)
+		// only contains range or equality query
+		if rangePosition == 0 || rangePosition == len(ran.LowVal) {
+			log.Debugf("%s index: %s, %s", prefix, idx.Info.Name.O, logForIndexRange(idx, ran, actual[i], factor))
+			continue
+		}
+		equalityString, err := types.DatumsToString(ran.LowVal[:rangePosition], true)
+		if err != nil {
+			continue
+		}
+		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
+		if err != nil {
+			continue
+		}
+		equalityCount := idx.CMSketch.QueryBytes(bytes)
+		rang := ranger.Range{
+			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
+			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+		}
+		colName := idx.Info.Columns[rangePosition].Name.L
+		// prefer index stats over column stats
+		if idxHist := t.indexStartWithColumn(colName); idxHist != nil && idxHist.Histogram.Len() > 0 {
+			rangeString := logForIndexRange(idxHist, &rang, -1, factor)
+			log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
+				actual[i], equalityString, equalityCount, rangeString)
+		} else if colHist := t.columnByName(colName); colHist != nil && colHist.Histogram.Len() > 0 {
+			rangeString := colRangeToStr(colHist, &rang, -1, factor)
+			log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, %s", prefix, idx.Info.Name.O,
+				actual[i], equalityString, equalityCount, rangeString)
+		} else {
+			count, err := getPseudoRowCountByColumnRanges(sc, float64(t.Count), []*ranger.Range{&rang}, 0)
+			if err == nil {
+				log.Debugf("%s index: %s, actual: %d, equality: %s, expected equality: %d, range: %s, pseudo count: %.0f", prefix, idx.Info.Name.O,
+					actual[i], equalityString, equalityCount, rang.String(), count)
+			}
+		}
+	}
+}
+
+func (q *QueryFeedback) logDetailedInfo(h *Handle) {
+	t, ok := h.statsCache.Load().(statsCache)[q.tableID]
+	if !ok {
+		return
+	}
+	isIndex := q.hist.isIndexHist()
+	ranges, err := q.DecodeToRanges(isIndex)
+	if err != nil {
+		log.Debug(err)
+		return
+	}
+	actual := make([]int64, 0, len(q.feedback))
+	for _, fb := range q.feedback {
+		actual = append(actual, fb.count)
+	}
+	logPrefix := fmt.Sprintf("[stats-feedback] %s,", t.name)
+	if isIndex {
+		idx := t.Indices[q.hist.ID]
+		if idx == nil || idx.Histogram.Len() == 0 {
+			return
+		}
+		logForIndex(logPrefix, t, idx, ranges, actual, idx.getIncreaseFactor(t.Count))
+	} else {
+		c := t.Columns[q.hist.ID]
+		if c == nil || c.Histogram.Len() == 0 {
+			return
+		}
+		logForPK(logPrefix, c, ranges, actual, c.getIncreaseFactor(t.Count))
+	}
+}
+
+// getNewCount adjust the estimated `eqCount` and `rangeCount` according to the real count.
+// We assumes that `eqCount` and `rangeCount` contribute the same error rate.
+func getNewCountForIndex(eqCount, rangeCount, totalCount, realCount float64) (float64, float64) {
+	estimate := (eqCount / totalCount) * (rangeCount / totalCount) * totalCount
+	if estimate <= 1 {
+		return eqCount, rangeCount
+	}
+	adjustFactor := math.Sqrt(realCount / estimate)
+	return eqCount * adjustFactor, rangeCount * adjustFactor
+}
+
+// dumpFeedbackForIndex dumps the feedback for index.
+// For queries that contains both equality and range query, we will split them and update accordingly.
+func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
+	idx, ok := t.Indices[q.hist.ID]
+	if !ok {
+		return nil
+	}
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	if idx.CMSketch == nil || idx.statsVer != version1 {
+		return h.dumpFeedbackToKV(q)
+	}
+	ranges, err := q.DecodeToRanges(true)
+	if err != nil {
+		log.Debug("decode feedback ranges failed: ", err)
+		return nil
+	}
+	for i, ran := range ranges {
+		rangePosition := getOrdinalOfRangeCond(sc, ran)
+		// only contains range or equality query
+		if rangePosition == 0 || rangePosition == len(ran.LowVal) {
+			continue
+		}
+
+		bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
+		if err != nil {
+			log.Debug("encode keys failed: err", err)
+			continue
+		}
+		equalityCount := float64(idx.CMSketch.QueryBytes(bytes)) * idx.getIncreaseFactor(t.Count)
+		rang := ranger.Range{
+			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
+			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+		}
+		colName := idx.Info.Columns[rangePosition].Name.L
+		var rangeCount float64
+		rangeFB := &QueryFeedback{tableID: q.tableID}
+		// prefer index stats over column stats
+		if idx := t.indexStartWithColumn(colName); idx != nil && idx.Histogram.Len() != 0 {
+			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{&rang})
+			rangeFB.tp, rangeFB.hist = indexType, &idx.Histogram
+		} else if col := t.columnByName(colName); col != nil && col.Histogram.Len() != 0 {
+			rangeCount, err = t.GetRowCountByColumnRanges(sc, col.ID, []*ranger.Range{&rang})
+			rangeFB.tp, rangeFB.hist = colType, &col.Histogram
+		} else {
+			continue
+		}
+		if err != nil {
+			log.Debug("get row count by ranges failed: ", err)
+			continue
+		}
+
+		equalityCount, rangeCount = getNewCountForIndex(equalityCount, rangeCount, float64(t.Count), float64(q.feedback[i].count))
+		value := types.NewBytesDatum(bytes)
+		q.feedback[i] = feedback{lower: &value, upper: &value, count: int64(equalityCount)}
+		err = rangeFB.dumpRangeFeedback(h, &rang, rangeCount)
+		if err != nil {
+			log.Debug("dump range feedback failed:", err)
+			continue
+		}
+	}
+	return errors.Trace(h.dumpFeedbackToKV(q))
+}
+
+func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCount float64) error {
+	if q.tp == indexType {
+		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+		lower, err := codec.EncodeKey(sc, nil, ran.LowVal[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		upper, err := codec.EncodeKey(sc, nil, ran.HighVal[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ran.LowVal[0].SetBytes(lower)
+		ran.HighVal[0].SetBytes(upper)
+	} else {
+		k := q.hist.GetLower(0).Kind()
+		if !supportColumnType(k) {
+			return nil
+		}
+		if ran.LowVal[0].Kind() == types.KindMinNotNull {
+			ran.LowVal[0] = getMinValue(k, q.hist.tp)
+		}
+		if ran.HighVal[0].Kind() == types.KindMaxValue {
+			ran.HighVal[0] = getMaxValue(k, q.hist.tp)
+		}
+	}
+	ranges := q.hist.SplitRange([]*ranger.Range{ran})
+	counts := make([]float64, 0, len(ranges))
+	sum := 0.0
+	for _, r := range ranges {
+		count := q.hist.betweenRowCount(r.LowVal[0], r.HighVal[0])
+		sum += count
+		counts = append(counts, count)
+	}
+	if sum <= 1 {
+		return nil
+	}
+	// We assume that each part contributes the same error rate.
+	adjustFactor := rangeCount / sum
+	for i, r := range ranges {
+		q.feedback = append(q.feedback, feedback{lower: &r.LowVal[0], upper: &r.HighVal[0], count: int64(counts[i] * adjustFactor)})
+	}
+	return errors.Trace(h.dumpFeedbackToKV(q))
+}
+
+// setNextValue sets the next value for the given datum. For types like float,
+// we do not set because it is not discrete and does not matter too much when estimating the scalar info.
+func setNextValue(d *types.Datum) {
+	switch d.Kind() {
+	case types.KindBytes, types.KindString:
+		d.SetBytes(kv.Key(d.GetBytes()).PrefixNext())
+	case types.KindInt64:
+		d.SetInt64(d.GetInt64() + 1)
+	case types.KindUint64:
+		d.SetUint64(d.GetUint64() + 1)
+	case types.KindMysqlDuration:
+		duration := d.GetMysqlDuration()
+		duration.Duration = duration.Duration + 1
+		d.SetMysqlDuration(duration)
+	case types.KindMysqlTime:
+		t := d.GetMysqlTime()
+		sc := &stmtctx.StatementContext{TimeZone: types.BoundTimezone}
+		t.Add(sc, types.Duration{Duration: 1, Fsp: 0})
+		d.SetMysqlTime(t)
+	}
+}
+
+// supportColumnType checks if the type of the column can be updated by feedback.
+func supportColumnType(k byte) bool {
+	switch k {
+	case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64, types.KindString, types.KindBytes,
+		types.KindMysqlDecimal, types.KindMysqlDuration, types.KindMysqlTime:
+		return true
+	default:
+		return false
+	}
+}
+
+func getMaxValue(k byte, ft *types.FieldType) (max types.Datum) {
+	switch k {
+	case types.KindInt64:
+		max.SetInt64(math.MaxInt64)
+	case types.KindUint64:
+		max.SetUint64(math.MaxUint64)
+	case types.KindFloat32:
+		max.SetFloat32(math.MaxFloat32)
+	case types.KindFloat64:
+		max.SetFloat64(math.MaxFloat64)
+	case types.KindString, types.KindBytes:
+		val := types.MaxValueDatum()
+		bytes, err := codec.EncodeKey(nil, nil, val)
+		// should not happen
+		if err != nil {
+			log.Error(err)
+		}
+		max.SetBytes(bytes)
+	case types.KindMysqlDecimal:
+		max.SetMysqlDecimal(types.NewMaxOrMinDec(false, mysql.MaxDecimalWidth, 0))
+	case types.KindMysqlDuration:
+		max.SetMysqlDuration(types.Duration{Duration: math.MaxInt64})
+	case types.KindMysqlTime:
+		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
+			max.SetMysqlTime(types.Time{Time: types.MaxDatetime, Type: ft.Tp})
+		} else {
+			max.SetMysqlTime(types.MaxTimestamp)
+		}
+	}
+	return
+}
+
+func getMinValue(k byte, ft *types.FieldType) (min types.Datum) {
+	switch k {
+	case types.KindInt64:
+		min.SetInt64(math.MinInt64)
+	case types.KindUint64:
+		min.SetUint64(0)
+	case types.KindFloat32:
+		min.SetFloat32(-math.MaxFloat32)
+	case types.KindFloat64:
+		min.SetFloat64(-math.MaxFloat64)
+	case types.KindString, types.KindBytes:
+		val := types.MinNotNullDatum()
+		bytes, err := codec.EncodeKey(nil, nil, val)
+		// should not happen
+		if err != nil {
+			log.Error(err)
+		}
+		min.SetBytes(bytes)
+	case types.KindMysqlDecimal:
+		min.SetMysqlDecimal(types.NewMaxOrMinDec(true, mysql.MaxDecimalWidth, 0))
+	case types.KindMysqlDuration:
+		min.SetMysqlDuration(types.Duration{Duration: math.MinInt64})
+	case types.KindMysqlTime:
+		if ft.Tp == mysql.TypeDate || ft.Tp == mysql.TypeDatetime {
+			min.SetMysqlTime(types.Time{Time: types.MinDatetime, Type: ft.Tp})
+		} else {
+			min.SetMysqlTime(types.MinTimestamp)
+		}
+	}
+	return
 }

@@ -14,9 +14,10 @@
 package aggregation
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 type bitOrFunction struct {
@@ -34,7 +35,7 @@ func (bf *bitOrFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *Agg
 }
 
 // Update implements Aggregation interface.
-func (bf *bitOrFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error {
+func (bf *bitOrFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	a := bf.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {

@@ -24,7 +24,6 @@ import (
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
-	"github.com/juju/errors"
 	"github.com/pingcap/pd/pd-client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -161,11 +161,13 @@ func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	diff := time.Since(cachedTime)
 
 	if diff > (GcSafePointCacheInterval - gcCPUTimeInaccuracyBound) {
-		return ErrPDServerTimeout.GenByArgs("start timestamp may fall behind safe point")
+		return ErrPDServerTimeout.GenWithStackByArgs("start timestamp may fall behind safe point")
 	}
 
 	if startTime < cachedSafePoint {
-		return ErrGCTooEarly
+		t1 := oracle.GetTimeFromTS(startTime)
+		t2 := oracle.GetTimeFromTS(cachedSafePoint)
+		return ErrGCTooEarly.GenWithStackByArgs(t1, t2)
 	}
 
 	return nil
@@ -219,7 +221,7 @@ func (s *tikvStore) StartGCWorker() error {
 		return nil
 	}
 
-	gcWorker, err := NewGCHandlerFunc(s)
+	gcWorker, err := NewGCHandlerFunc(s, s.pdClient)
 	if err != nil {
 		return errors.Trace(err)
 	}

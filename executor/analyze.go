@@ -14,12 +14,12 @@
 package executor
 
 import (
+	"runtime"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -45,7 +46,6 @@ const (
 	maxSampleSize        = 10000
 	maxRegionSampleSize  = 1000
 	maxSketchSize        = 10000
-	maxBucketSize        = 256
 	defaultCMSketchDepth = 5
 	defaultCMSketchWidth = 2048
 )
@@ -66,15 +66,18 @@ func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	close(taskCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	for i := 0; i < len(e.tasks); i++ {
+	for i, panicCnt := 0, 0; i < len(e.tasks) && panicCnt < concurrency; i++ {
 		result := <-resultCh
 		if result.Err != nil {
 			err = result.Err
+			if errors.Trace(err) == errAnalyzeWorkerPanic {
+				panicCnt++
+			}
 			log.Error(errors.ErrorStack(err))
 			continue
 		}
 		for i, hg := range result.Hist {
-			err1 := statsHandle.SaveStatsToStorage(result.TableID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
+			err1 := statsHandle.SaveStatsToStorage(result.PhysicalTableID, result.Count, result.IsIndex, hg, result.Cms[i], 1)
 			if err1 != nil {
 				err = err1
 				log.Error(errors.ErrorStack(err))
@@ -111,7 +114,21 @@ type analyzeTask struct {
 	colExec  *AnalyzeColumnsExec
 }
 
+var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
+
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultCh chan<- statistics.AnalyzeResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			buf := make([]byte, 4096)
+			stackSize := runtime.Stack(buf, false)
+			buf = buf[:stackSize]
+			log.Errorf("analyzeWorker panic stack is:\n%s", buf)
+			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			resultCh <- statistics.AnalyzeResult{
+				Err: errAnalyzeWorkerPanic,
+			}
+		}
+	}()
 	for task := range taskCh {
 		switch task.taskType {
 		case colTask:
@@ -128,10 +145,10 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 		return statistics.AnalyzeResult{Err: err}
 	}
 	result := statistics.AnalyzeResult{
-		TableID: idxExec.tblInfo.ID,
-		Hist:    []*statistics.Histogram{hist},
-		Cms:     []*statistics.CMSketch{cms},
-		IsIndex: 1,
+		PhysicalTableID: idxExec.physicalTableID,
+		Hist:            []*statistics.Histogram{hist},
+		Cms:             []*statistics.CMSketch{cms},
+		IsIndex:         1,
 	}
 	if hist.Len() > 0 {
 		result.Count = hist.Buckets[hist.Len()-1].Count
@@ -141,25 +158,25 @@ func analyzeIndexPushdown(idxExec *AnalyzeIndexExec) statistics.AnalyzeResult {
 
 // AnalyzeIndexExec represents analyze index push down executor.
 type AnalyzeIndexExec struct {
-	ctx         sessionctx.Context
-	tblInfo     *model.TableInfo
-	idxInfo     *model.IndexInfo
-	concurrency int
-	priority    int
-	analyzePB   *tipb.AnalyzeReq
-	result      distsql.SelectResult
+	ctx             sessionctx.Context
+	physicalTableID int64
+	idxInfo         *model.IndexInfo
+	concurrency     int
+	priority        int
+	analyzePB       *tipb.AnalyzeReq
+	result          distsql.SelectResult
+	maxNumBuckets   uint64
 }
 
 func (e *AnalyzeIndexExec) open() error {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.tblInfo.ID, e.idxInfo.ID, ranger.FullRange()).
+	kvReq, err := builder.SetIndexRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, e.idxInfo.ID, ranger.FullRange()).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(true).
+		SetConcurrency(e.concurrency).
 		Build()
-	kvReq.Concurrency = e.concurrency
-	kvReq.IsolationLevel = kv.RC
 	ctx := context.TODO()
-	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
+	e.result, err = distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -193,7 +210,7 @@ func (e *AnalyzeIndexExec) buildStats() (hist *statistics.Histogram, cms *statis
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), maxBucketSize)
+		hist, err = statistics.MergeHistograms(e.ctx.GetSessionVars().StmtCtx, hist, statistics.HistogramFromProto(resp.Hist), int(e.maxNumBuckets))
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -214,9 +231,9 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 		return statistics.AnalyzeResult{Err: err}
 	}
 	result := statistics.AnalyzeResult{
-		TableID: colExec.tblInfo.ID,
-		Hist:    hists,
-		Cms:     cms,
+		PhysicalTableID: colExec.physicalTableID,
+		Hist:            hists,
+		Cms:             cms,
 	}
 	hist := hists[0]
 	result.Count = hist.NullCount
@@ -228,15 +245,16 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) statistics.AnalyzeResul
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
 type AnalyzeColumnsExec struct {
-	ctx           sessionctx.Context
-	tblInfo       *model.TableInfo
-	colsInfo      []*model.ColumnInfo
-	pkInfo        *model.ColumnInfo
-	concurrency   int
-	priority      int
-	keepOrder     bool
-	analyzePB     *tipb.AnalyzeReq
-	resultHandler *tableResultHandler
+	ctx             sessionctx.Context
+	physicalTableID int64
+	colsInfo        []*model.ColumnInfo
+	pkInfo          *model.ColumnInfo
+	concurrency     int
+	priority        int
+	keepOrder       bool
+	analyzePB       *tipb.AnalyzeReq
+	resultHandler   *tableResultHandler
+	maxNumBuckets   uint64
 }
 
 func (e *AnalyzeColumnsExec) open() error {
@@ -268,17 +286,16 @@ func (e *AnalyzeColumnsExec) open() error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(e.tblInfo.ID, ranges, nil).
+	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, nil).
 		SetAnalyzeRequest(e.analyzePB).
 		SetKeepOrder(e.keepOrder).
+		SetConcurrency(e.concurrency).
 		Build()
-	kvReq.IsolationLevel = kv.RC
-	kvReq.Concurrency = e.concurrency
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars)
+	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -322,7 +339,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 		}
 		sc := e.ctx.GetSessionVars().StmtCtx
 		if e.pkInfo != nil {
-			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), maxBucketSize)
+			pkHist, err = statistics.MergeHistograms(sc, pkHist, statistics.HistogramFromProto(resp.PkHist), int(e.maxNumBuckets))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -331,7 +348,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 			collectors[i].MergeSampleCollector(sc, statistics.SampleCollectorFromProto(rc))
 		}
 	}
-	timeZone := e.ctx.GetSessionVars().GetTimeZone()
+	timeZone := e.ctx.GetSessionVars().Location()
 	if e.pkInfo != nil {
 		pkHist.ID = e.pkInfo.ID
 		err = pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
@@ -348,7 +365,7 @@ func (e *AnalyzeColumnsExec) buildStats() (hists []*statistics.Histogram, cms []
 				return nil, nil, errors.Trace(err)
 			}
 		}
-		hg, err := statistics.BuildColumn(e.ctx, maxBucketSize, col.ID, collectors[i], &col.FieldType)
+		hg, err := statistics.BuildColumn(e.ctx, int64(e.maxNumBuckets), col.ID, collectors[i], &col.FieldType)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}

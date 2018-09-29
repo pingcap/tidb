@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -38,10 +38,10 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
@@ -110,18 +110,11 @@ func (p *mockBinlogPump) PullBinlogs(ctx context.Context, in *binlog.PullBinlogR
 }
 
 func (s *testSessionSuite) TestForCoverage(c *C) {
-	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
-
 	// Just for test coverage.
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	planCache := tk.Se.GetSessionVars().PlanCacheEnabled
-	defer func() {
-		tk.Se.GetSessionVars().PlanCacheEnabled = planCache
-	}()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int auto_increment, v int, index (id))")
 	tk.MustExec("insert t values ()")
-	tk.Se.GetSessionVars().PlanCacheEnabled = true
 	tk.MustExec("insert t values ()")
 	tk.MustExec("insert t values ()")
 
@@ -379,23 +372,23 @@ func (s *testSessionSuite) TestGetSysVariables(c *C) {
 	tk.MustExec("select @@session.warning_count")
 	tk.MustExec("select @@local.warning_count")
 	_, err := tk.Exec("select @@global.warning_count")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 
 	// Test ScopeGlobal
 	tk.MustExec("select @@max_connections")
 	tk.MustExec("select @@global.max_connections")
 	_, err = tk.Exec("select @@session.max_connections")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select @@local.max_connections")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 
 	// Test ScopeNone
 	tk.MustExec("select @@performance_schema_max_mutex_classes")
 	tk.MustExec("select @@global.performance_schema_max_mutex_classes")
 	_, err = tk.Exec("select @@session.performance_schema_max_mutex_classes")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select @@local.performance_schema_max_mutex_classes")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue)
+	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
@@ -635,6 +628,19 @@ func (s *testSessionSuite) TestLastInsertID(c *C) {
 	currLastInsertID := tk.Se.GetSessionVars().PrevLastInsertID
 	tk.MustQuery("select c1 from t where c2 = 20").Check(testkit.Rows(fmt.Sprint(currLastInsertID)))
 	c.Assert(lastInsertID+2, Equals, currLastInsertID)
+}
+
+func (s *testSessionSuite) TestPrepareZero(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(v timestamp)")
+	tk.MustExec("prepare s1 from 'insert into t (v) values (?)'")
+	tk.MustExec("set @v1='0'")
+	_, rs := tk.Exec("execute s1 using @v1")
+	c.Assert(rs, NotNil)
+	tk.MustExec("set @v2='" + types.ZeroDatetimeStr + "'")
+	tk.MustExec("execute s1 using @v2")
+	tk.MustQuery("select v from t").Check(testkit.Rows("0000-00-00 00:00:00"))
 }
 
 func (s *testSessionSuite) TestPrimaryKeyAutoIncrement(c *C) {
@@ -1266,12 +1272,12 @@ func (s *testSessionSuite) TestUnique(c *C) {
 	_, err := tk.Exec("commit")
 	c.Assert(err, NotNil)
 	// Check error type and error message
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
 	_, err = tk1.Exec("commit")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue, Commentf("err %v", err))
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'val'")
 
 	// Test for https://github.com/pingcap/tidb/issues/463
@@ -1587,7 +1593,7 @@ func (s *testSchemaSuite) TestPrepareStmtCommitWhenSchemaChanged(c *C) {
 	tk.MustExec("alter table t drop column b")
 	tk1.MustExec("execute stmt using @a, @a")
 	_, err := tk1.Exec("commit")
-	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
@@ -1603,7 +1609,7 @@ func (s *testSchemaSuite) TestCommitWhenSchemaChanged(c *C) {
 	// When tk1 commit, it will find schema already changed.
 	tk1.MustExec("insert into t values (4, 4)")
 	_, err := tk1.Exec("commit")
-	c.Assert(terror.ErrorEqual(err, executor.ErrWrongValueCountOnRow), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSchemaSuite) TestRetrySchemaChange(c *C) {
@@ -1944,11 +1950,11 @@ func (s *testSessionSuite) TestStatementCountLimit(c *C) {
 func (s *testSessionSuite) TestCastTimeToDate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set time_zone = '-8:00'")
-	date := time.Now().In(time.FixedZone("UTC", -8*int(time.Hour/time.Second)))
+	date := time.Now().In(time.FixedZone("", -8*int(time.Hour/time.Second)))
 	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format("2006-01-02")))
 
 	tk.MustExec("set time_zone = '+08:00'")
-	date = time.Now().In(time.FixedZone("UTC", 8*int(time.Hour/time.Second)))
+	date = time.Now().In(time.FixedZone("", 8*int(time.Hour/time.Second)))
 	tk.MustQuery("select cast(time('12:23:34') as date)").Check(testkit.Rows(date.Format("2006-01-02")))
 }
 
@@ -1962,7 +1968,7 @@ func (s *testSessionSuite) TestSetGlobalTZ(c *C) {
 
 	tk.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +08:00"))
 
-	// With the existance of global variable cache, it have to sleep a while here.
+	// With the existence of global variable cache, it have to sleep a while here.
 	time.Sleep(3 * time.Second)
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk1.MustQuery("show variables like 'time_zone'").Check(testkit.Rows("time_zone +00:00"))
@@ -2007,7 +2013,7 @@ func (s *testSessionSuite) TestSetTransactionIsolationOneShot(c *C) {
 
 	// Check isolation level is set to read committed.
 	ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
-		c.Assert(req.IsolationLevel, Equals, kv.RC)
+		c.Assert(req.IsolationLevel, Equals, kv.SI)
 	})
 	tk.Se.Execute(ctx, "select * from t where k = 1")
 
@@ -2119,4 +2125,51 @@ func (s *testSessionSuite) TestDisableTxnAutoRetry(c *C) {
 
 	tk1.MustExec("update no_retry set id = 7")
 	tk1.MustExec("commit")
+}
+
+// For issue #7034
+func (s *testSessionSuite) TestSetGroupConcatMaxLen(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// Normal case
+	tk.MustExec("set global group_concat_max_len = 100")
+	tk.MustExec("set @@session.group_concat_max_len = 50")
+	result := tk.MustQuery("show global variables  where variable_name='group_concat_max_len';")
+	result.Check(testkit.Rows("group_concat_max_len 100"))
+
+	result = tk.MustQuery("show session variables  where variable_name='group_concat_max_len';")
+	result.Check(testkit.Rows("group_concat_max_len 50"))
+
+	result = tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("50"))
+
+	result = tk.MustQuery("select @@global.group_concat_max_len;")
+	result.Check(testkit.Rows("100"))
+
+	result = tk.MustQuery("select @@session.group_concat_max_len;")
+	result.Check(testkit.Rows("50"))
+
+	tk.MustExec("set @@group_concat_max_len = 1024")
+
+	result = tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("1024"))
+
+	result = tk.MustQuery("select @@global.group_concat_max_len;")
+	result.Check(testkit.Rows("100"))
+
+	result = tk.MustQuery("select @@session.group_concat_max_len;")
+	result.Check(testkit.Rows("1024"))
+
+	// Test value out of range
+	tk.MustExec("set @@group_concat_max_len=1")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
+	result = tk.MustQuery("select @@group_concat_max_len;")
+	result.Check(testkit.Rows("4"))
+
+	_, err := tk.Exec("set @@group_concat_max_len = 18446744073709551616")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
+
+	// Test illegal type
+	_, err = tk.Exec("set @@group_concat_max_len='hello'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 }

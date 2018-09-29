@@ -16,12 +16,13 @@ package expression
 import (
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -101,7 +102,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInIntSig struct {
 	baseBuiltinFunc
 }
@@ -112,7 +113,7 @@ func (b *builtinInIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinInIntSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -150,7 +151,7 @@ func (b *builtinInIntSig) evalInt(row types.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInStringSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInStringSig struct {
 	baseBuiltinFunc
 }
@@ -161,7 +162,7 @@ func (b *builtinInStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinInStringSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalString(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -183,7 +184,7 @@ func (b *builtinInStringSig) evalInt(row types.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInRealSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInRealSig struct {
 	baseBuiltinFunc
 }
@@ -194,7 +195,7 @@ func (b *builtinInRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinInRealSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalReal(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -216,7 +217,7 @@ func (b *builtinInRealSig) evalInt(row types.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInDecimalSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInDecimalSig struct {
 	baseBuiltinFunc
 }
@@ -227,7 +228,7 @@ func (b *builtinInDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinInDecimalSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalDecimal(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -249,7 +250,7 @@ func (b *builtinInDecimalSig) evalInt(row types.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInTimeSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInTimeSig struct {
 	baseBuiltinFunc
 }
@@ -260,7 +261,7 @@ func (b *builtinInTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinInTimeSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalTime(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -282,7 +283,7 @@ func (b *builtinInTimeSig) evalInt(row types.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInDurationSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInDurationSig struct {
 	baseBuiltinFunc
 }
@@ -293,7 +294,7 @@ func (b *builtinInDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinInDurationSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalDuration(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -315,7 +316,7 @@ func (b *builtinInDurationSig) evalInt(row types.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInJSONSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInJSONSig struct {
 	baseBuiltinFunc
 }
@@ -326,7 +327,7 @@ func (b *builtinInJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinInJSONSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinInJSONSig) evalInt(row chunk.Row) (int64, bool, error) {
 	arg0, isNull0, err := b.args[0].EvalJSON(b.ctx, row)
 	if isNull0 || err != nil {
 		return 0, isNull0, errors.Trace(err)
@@ -377,7 +378,7 @@ func (b *builtinRowSig) Clone() builtinFunc {
 }
 
 // evalString rowFunc should always be flattened in expression rewrite phrase.
-func (b *builtinRowSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinRowSig) evalString(row chunk.Row) (string, bool, error) {
 	panic("builtinRowSig.evalString() should never be called.")
 }
 
@@ -406,7 +407,7 @@ func (b *builtinSetVarSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinSetVarSig) evalString(row types.Row) (res string, isNull bool, err error) {
+func (b *builtinSetVarSig) evalString(row chunk.Row) (res string, isNull bool, err error) {
 	var varName string
 	sessionVars := b.ctx.GetSessionVars()
 	varName, isNull, err = b.args[0].EvalString(b.ctx, row)
@@ -449,7 +450,7 @@ func (b *builtinGetVarSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetVarSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinGetVarSig) evalString(row chunk.Row) (string, bool, error) {
 	sessionVars := b.ctx.GetSessionVars()
 	varName, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -510,12 +511,11 @@ func (b *builtinValuesIntSig) Clone() builtinFunc {
 
 // evalInt evals a builtinValuesIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-func (b *builtinValuesIntSig) evalInt(_ types.Row) (int64, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+func (b *builtinValuesIntSig) evalInt(_ chunk.Row) (int64, bool, error) {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return 0, true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return 0, true, nil
@@ -539,12 +539,11 @@ func (b *builtinValuesRealSig) Clone() builtinFunc {
 
 // evalReal evals a builtinValuesRealSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-func (b *builtinValuesRealSig) evalReal(_ types.Row) (float64, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+func (b *builtinValuesRealSig) evalReal(_ chunk.Row) (float64, bool, error) {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return 0, true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return 0, true, nil
@@ -568,12 +567,11 @@ func (b *builtinValuesDecimalSig) Clone() builtinFunc {
 
 // evalDecimal evals a builtinValuesDecimalSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-func (b *builtinValuesDecimalSig) evalDecimal(_ types.Row) (*types.MyDecimal, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+func (b *builtinValuesDecimalSig) evalDecimal(_ chunk.Row) (*types.MyDecimal, bool, error) {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return nil, true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return nil, true, nil
@@ -597,12 +595,11 @@ func (b *builtinValuesStringSig) Clone() builtinFunc {
 
 // evalString evals a builtinValuesStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-func (b *builtinValuesStringSig) evalString(_ types.Row) (string, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+func (b *builtinValuesStringSig) evalString(_ chunk.Row) (string, bool, error) {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return "", true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return "", true, nil
@@ -626,12 +623,11 @@ func (b *builtinValuesTimeSig) Clone() builtinFunc {
 
 // evalTime evals a builtinValuesTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-func (b *builtinValuesTimeSig) evalTime(_ types.Row) (types.Time, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+func (b *builtinValuesTimeSig) evalTime(_ chunk.Row) (types.Time, bool, error) {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return types.Time{}, true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return types.Time{}, true, nil
@@ -655,17 +651,17 @@ func (b *builtinValuesDurationSig) Clone() builtinFunc {
 
 // evalDuration evals a builtinValuesDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-func (b *builtinValuesDurationSig) evalDuration(_ types.Row) (types.Duration, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+func (b *builtinValuesDurationSig) evalDuration(_ chunk.Row) (types.Duration, bool, error) {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return types.Duration{}, true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return types.Duration{}, true, nil
 		}
-		return row.GetDuration(b.offset), false, nil
+		duration := row.GetDuration(b.offset, b.getRetTp().Decimal)
+		return duration, false, nil
 	}
 	return types.Duration{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
@@ -684,12 +680,11 @@ func (b *builtinValuesJSONSig) Clone() builtinFunc {
 
 // evalJSON evals a builtinValuesJSONSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
-func (b *builtinValuesJSONSig) evalJSON(_ types.Row) (json.BinaryJSON, bool, error) {
-	values := b.ctx.GetSessionVars().CurrInsertValues
-	if values == nil {
+func (b *builtinValuesJSONSig) evalJSON(_ chunk.Row) (json.BinaryJSON, bool, error) {
+	row := b.ctx.GetSessionVars().CurrInsertValues
+	if row.IsEmpty() {
 		return json.BinaryJSON{}, true, errors.New("Session current insert values is nil")
 	}
-	row := values.(types.Row)
 	if b.offset < row.Len() {
 		if row.IsNull(b.offset) {
 			return json.BinaryJSON{}, true, nil
@@ -725,7 +720,7 @@ func (b *builtinBitCountSig) Clone() builtinFunc {
 
 // evalInt evals BIT_COUNT(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-functions.html#function_bit-count
-func (b *builtinBitCountSig) evalInt(row types.Row) (int64, bool, error) {
+func (b *builtinBitCountSig) evalInt(row chunk.Row) (int64, bool, error) {
 	n, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil || isNull {
 		if err != nil && types.ErrOverflow.Equal(err) {
@@ -768,7 +763,7 @@ func (b *builtinGetParamStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetParamStringSig) evalString(row types.Row) (string, bool, error) {
+func (b *builtinGetParamStringSig) evalString(row chunk.Row) (string, bool, error) {
 	sessionVars := b.ctx.GetSessionVars()
 	idx, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {

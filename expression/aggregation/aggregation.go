@@ -16,23 +16,23 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
-	"math"
-
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // Aggregation stands for aggregate functions.
 type Aggregation interface {
 	// Update during executing.
-	Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) error
+	Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error
 
 	// GetPartialResult will called by coprocessor to get partial results. For avg function, partial results will return
 	// sum and count values at the same time.
@@ -41,23 +41,20 @@ type Aggregation interface {
 	// GetResult will be called when all data have been processed.
 	GetResult(evalCtx *AggEvaluateContext) types.Datum
 
-	// Create a new AggEvaluateContext for the aggregation function.
+	// CreateContext creates a new AggEvaluateContext for the aggregation function.
 	CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext
 
-	// Reset the content of the evaluate context.
+	// ResetContext resets the content of the evaluate context.
 	ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext)
 
 	// GetFinalAggFunc constructs the final agg functions, only used in parallel execution.
-	GetFinalAggFunc(idx int) (int, Aggregation)
+	GetFinalAggFunc(ctx sessionctx.Context, idx int) (int, Aggregation)
 
 	// GetArgs gets the args of the aggregate function.
 	GetArgs() []expression.Expression
 
 	// Clone deep copy the Aggregation.
-	Clone() Aggregation
-
-	// GetDefaultValue gets the default value when the aggregation function's input is null.
-	GetDefaultValue() types.Datum
+	Clone(ctx sessionctx.Context) Aggregation
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
@@ -152,7 +149,7 @@ func (af *aggFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEv
 	evalCtx.Value.SetNull()
 }
 
-func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row types.Row) error {
+func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	a := af.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
@@ -178,7 +175,7 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 	return nil
 }
 
-func (af *aggFunction) GetFinalAggFunc(idx int) (_ int, newAggFunc Aggregation) {
+func (af *aggFunction) GetFinalAggFunc(ctx sessionctx.Context, idx int) (_ int, newAggFunc Aggregation) {
 	switch af.Mode {
 	case DedupMode:
 		panic("DedupMode is not supported now.")
@@ -207,12 +204,12 @@ func (af *aggFunction) GetFinalAggFunc(idx int) (_ int, newAggFunc Aggregation) 
 		desc := af.AggFuncDesc.Clone()
 		desc.Mode = FinalMode
 		desc.Args = args
-		newAggFunc = desc.GetAggFunc()
+		newAggFunc = desc.GetAggFunc(ctx)
 	case Partial2Mode:
 		desc := af.AggFuncDesc.Clone()
 		desc.Mode = FinalMode
 		idx += len(desc.Args)
-		newAggFunc = desc.GetAggFunc()
+		newAggFunc = desc.GetAggFunc(ctx)
 	case FinalMode, CompleteMode:
 		panic("GetFinalAggFunc should not be called when aggMode is FinalMode/CompleteMode.")
 	}
@@ -223,38 +220,9 @@ func (af *aggFunction) GetArgs() []expression.Expression {
 	return af.Args
 }
 
-func (af *aggFunction) Clone() Aggregation {
+func (af *aggFunction) Clone(ctx sessionctx.Context) Aggregation {
 	desc := af.AggFuncDesc.Clone()
-	return desc.GetAggFunc()
-}
-
-// GetDefaultValue gets the default value when the aggregation function's input is null.
-// According to MySQL, default values of the aggregation function are listed as follows:
-// e.g.
-// Table t which is empty:
-// +-------+---------+---------+
-// | Table | Field   | Type    |
-// +-------+---------+---------+
-// | t     | a       | int(11) |
-// +-------+---------+---------+
-//
-// Query: `select a, avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a) from t;`
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
-// | a    | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) |
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
-// | NULL |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
-func (af *aggFunction) GetDefaultValue() (v types.Datum) {
-	switch af.Name {
-	case ast.AggFuncCount, ast.AggFuncBitOr, ast.AggFuncBitXor:
-		v = types.NewIntDatum(0)
-	case ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMax,
-		ast.AggFuncMin, ast.AggFuncGroupConcat:
-		v = types.Datum{}
-	case ast.AggFuncBitAnd:
-		v = types.NewUintDatum(uint64(math.MaxUint64))
-	}
-	return v
+	return desc.GetAggFunc(ctx)
 }
 
 // NeedCount indicates whether the aggregate function should record count.

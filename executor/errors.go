@@ -39,9 +39,10 @@ var (
 
 	ErrPasswordNoMatch             = terror.ClassExecutor.New(mysql.ErrPasswordNoMatch, mysql.MySQLErrName[mysql.ErrPasswordNoMatch])
 	ErrCannotUser                  = terror.ClassExecutor.New(mysql.ErrCannotUser, mysql.MySQLErrName[mysql.ErrCannotUser])
-	ErrWrongValueCountOnRow        = terror.ClassExecutor.New(mysql.ErrWrongValueCountOnRow, mysql.MySQLErrName[mysql.ErrWrongValueCountOnRow])
 	ErrPasswordFormat              = terror.ClassExecutor.New(mysql.ErrPasswordFormat, mysql.MySQLErrName[mysql.ErrPasswordFormat])
 	ErrCantChangeTxCharacteristics = terror.ClassExecutor.New(mysql.ErrCantChangeTxCharacteristics, mysql.MySQLErrName[mysql.ErrCantChangeTxCharacteristics])
+	ErrPsManyParam                 = terror.ClassExecutor.New(mysql.ErrPsManyParam, mysql.MySQLErrName[mysql.ErrPsManyParam])
+	ErrAdminCheckTable             = terror.ClassExecutor.New(mysql.ErrAdminCheckTable, mysql.MySQLErrName[mysql.ErrAdminCheckTable])
 )
 
 func init() {
@@ -52,6 +53,8 @@ func init() {
 		mysql.ErrWrongValueCountOnRow:        mysql.ErrWrongValueCountOnRow,
 		mysql.ErrPasswordFormat:              mysql.ErrPasswordFormat,
 		mysql.ErrCantChangeTxCharacteristics: mysql.ErrCantChangeTxCharacteristics,
+		mysql.ErrPsManyParam:                 mysql.ErrPsManyParam,
+		mysql.ErrAdminCheckTable:             mysql.ErrAdminCheckTable,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassExecutor] = tableMySQLErrCodes
 }

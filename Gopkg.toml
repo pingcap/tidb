@@ -19,7 +19,6 @@ required = ["github.com/golang/protobuf/jsonpb"]
   name = "github.com/coreos/etcd"
   version = "=3.2.18"
 
-# lock grpc version at 1.7.5 because etcd depdens on this version
 [[constraint]]
   name = "google.golang.org/grpc"
   source = "https://github.com/grpc/grpc-go.git"
@@ -28,10 +27,6 @@ required = ["github.com/golang/protobuf/jsonpb"]
 [[constraint]]
   version = "1.1.0"
   name = "github.com/golang/protobuf"
-
-[[constraint]]
-  branch = "master"
-  name = "github.com/coreos/gofail"
 
 [[constraint]]
   branch = "master"
@@ -88,4 +83,22 @@ required = ["github.com/golang/protobuf/jsonpb"]
 [[constraint]]
   name = "github.com/sirupsen/logrus"
   revision = "3bcb09397d6d88e7676a9bc8433ca11ba5304837"
+
+
+[[constraint]]
+  name = "github.com/opentracing/basictracer-go"
+  version = "1.0.0"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/etcd-io/gofail"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/pingcap/tipb"
+
+[[constraint]]
+  name = "github.com/pkg/errors"
+  version = "0.9.0"
+  source = "https://github.com/pingcap/errors.git"
 

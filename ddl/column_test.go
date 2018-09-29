@@ -17,7 +17,6 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -61,8 +61,8 @@ func (s *testColumnSuite) TearDownSuite(c *C) {
 	testleak.AfterTest(c)()
 }
 
-func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	colName string, pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
+func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string,
+	pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
 	col := &model.ColumnInfo{
 		Name:               model.NewCIStr(colName),
 		Offset:             len(tblInfo.Columns),
@@ -79,7 +79,12 @@ func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col, pos, 0},
 	}
+	return job
+}
 
+func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
+	colName string, pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
+	job := buildCreateColumnJob(dbInfo, tblInfo, colName, pos, defaultValue)
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
 	v := getSchemaVer(c, ctx)
@@ -87,14 +92,18 @@ func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo
 	return job
 }
 
-func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
-	job := &model.Job{
+func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
+	return &model.Job{
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionDropColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{model.NewCIStr(colName)},
 	}
+}
+
+func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
+	job := buildDropColumnJob(dbInfo, tblInfo, colName)
 	err := d.doDDLJob(ctx, job)
 	if isError {
 		c.Assert(err, NotNil)
@@ -275,7 +284,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 	}
 	colMap := make(map[int64]*types.FieldType)
 	colMap[col.ID] = &col.FieldType
-	rowMap, err := tablecodec.DecodeRow(data, colMap, ctx.GetSessionVars().GetTimeZone())
+	rowMap, err := tablecodec.DecodeRow(data, colMap, ctx.GetSessionVars().Location())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -903,11 +912,11 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		err    error
 	}{
 		{"int", "bigint", nil},
-		{"int", "int unsigned", errUnsupportedModifyColumn.GenByArgs("length 10 is less than origin 11")},
+		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("length 10 is less than origin 11")},
 		{"varchar(10)", "text", nil},
 		{"varbinary(10)", "blob", nil},
-		{"text", "blob", errUnsupportedModifyColumn.GenByArgs("charset binary not match origin utf8")},
-		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenByArgs("length 8 is less than origin 10")},
+		{"text", "blob", errUnsupportedModifyColumn.GenWithStackByArgs("charset binary not match origin utf8")},
+		{"varchar(10)", "varchar(8)", errUnsupportedModifyColumn.GenWithStackByArgs("length 8 is less than origin 10")},
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
 	}
@@ -928,7 +937,7 @@ func (s *testColumnSuite) colDefStrToFieldType(c *C, str string) *types.FieldTyp
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	c.Assert(err, IsNil)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
-	col, _, err := buildColumnAndConstraint(nil, 0, colDef)
+	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil)
 	c.Assert(err, IsNil)
 	return &col.FieldType
 }

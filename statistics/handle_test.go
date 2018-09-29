@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testStatsCacheSuite{})
@@ -60,10 +60,10 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 		tableName := tb[0]
 		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
 	}
-	do.StatsHandle().Clear()
 	tk.MustExec("truncate table mysql.stats_meta")
 	tk.MustExec("truncate table mysql.stats_histograms")
 	tk.MustExec("truncate table mysql.stats_buckets")
+	do.StatsHandle().Clear()
 }
 
 func (s *testStatsCacheSuite) TestStatsCache(c *C) {
@@ -398,6 +398,7 @@ func (s *testStatsCacheSuite) TestInitStats(c *C) {
 }
 
 func (s *testStatsUpdateSuite) TestLoadStats(c *C) {
+	defer cleanEnv(c, s.store, s.do)
 	store, do, err := newStoreWithBootstrap(10 * time.Millisecond)
 	c.Assert(err, IsNil)
 	defer store.Close()

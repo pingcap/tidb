@@ -370,16 +370,20 @@ import (
 	shared		"SHARED"
 	signed		"SIGNED"
 	slave		"SLAVE"
+	slow		"SLOW"
 	snapshot	"SNAPSHOT"
 	sqlCache	"SQL_CACHE"
 	sqlNoCache	"SQL_NO_CACHE"
 	start		"START"
 	statsPersistent	"STATS_PERSISTENT"
 	status		"STATUS"
+	subpartition	"SUBPARTITION"
+	subpartitions	"SUBPARTITIONS"
 	super		"SUPER"
 	some 		"SOME"
 	global		"GLOBAL"
 	tables		"TABLES"
+	tablespace	"TABLESPACE"
 	temporary	"TEMPORARY"
 	temptable	"TEMPTABLE"
 	textType	"TEXT"
@@ -417,20 +421,24 @@ import (
 	getFormat		"GET_FORMAT"
 	groupConcat		"GROUP_CONCAT"
 	inplace 		"INPLACE"
+	internal		"INTERNAL"
 	min			"MIN"
 	max			"MAX"
 	maxExecutionTime	"MAX_EXECUTION_TIME"
 	now			"NOW"
 	position		"POSITION"
+	recent			"RECENT"
 	subDate			"SUBDATE"
 	sum			"SUM"
 	substring		"SUBSTRING"
 	timestampAdd		"TIMESTAMPADD"
 	timestampDiff		"TIMESTAMPDIFF"
+	top			"TOP"
 	trim			"TRIM"
 
 	/* The following tokens belong to TiDBKeyword. */
 	admin		"ADMIN"
+	buckets		"BUCKETS"
 	cancel		"CANCEL"
 	ddl		"DDL"
 	jobs		"JOBS"
@@ -571,6 +579,7 @@ import (
 	UseStmt				"USE statement"
 
 %type   <item>
+	AdminShowSlow			"Admin Show Slow statement"
 	AlterTableOptionListOpt		"alter table option list opt"
 	AlterTableSpec			"Alter table specification"
 	AlterTableSpecList		"Alter table specification list"
@@ -663,6 +672,7 @@ import (
 	LinesTerminated			"Lines terminated by"
 	LocalOpt			"Local opt"
 	LockClause         		"Alter table lock clause"
+	MaxNumBuckets			"Max number of buckets"
 	NumLiteral			"Num/Int/Float/Decimal Literal"
 	NoWriteToBinLogAliasOpt 	"NO_WRITE_TO_BINLOG alias LOCAL or empty"
 	ObjectType			"Grant statement object type"
@@ -681,9 +691,10 @@ import (
 	PartitionDefinitionListOpt	"Partition definition list option"
 	PartitionOpt			"Partition option"
 	PartitionNumOpt			"PARTITION NUM option"
-	PartDefCommentOpt		"Partition comment"
 	PartDefValuesOpt		"VALUES {LESS THAN {(expr | value_list) | MAXVALUE} | IN {value_list}"
-	PartDefStorageOpt		"ENGINE = xxx or empty"
+	PartDefOptionsOpt		"PartDefOptionList option"
+	PartDefOptionList		"PartDefOption list"
+	PartDefOption			"COMMENT [=] xxx | TABLESPACE [=] tablespace_name | ENGINE [=] xxx"
 	PasswordOpt			"Password option"
 	ColumnPosition			"Column position [First|After ColumnName]"
 	PrepareSQL			"Prepare statement sql string"
@@ -719,6 +730,8 @@ import (
 	StatsPersistentVal		"stats_persistent value"
 	StringName			"string literal or identifier"
 	StringList 			"string list"
+	SubPartitionOpt			"SubPartition option"
+	SubPartitionNumOpt		"SubPartition NUM option"
 	Symbol				"Constraint Symbol"
 	TableAsName			"table alias name"
 	TableAsNameOpt 			"table alias name optional"
@@ -796,6 +809,7 @@ import (
 	OptBinMod		"Optional BINARY mode"
 	OptCharset		"Optional Character setting"
 	OptCollate		"Optional Collate setting"
+	IgnoreLines		"Ignore num(int) lines"
 	NUM			"A number"
 	NumList			"Some numbers"
 	LengthNum		"Field length num(uint64)"
@@ -1219,14 +1233,23 @@ TableToTable:
 /*******************************************************************************************/
 
 AnalyzeTableStmt:
-	"ANALYZE" "TABLE" TableNameList
+	"ANALYZE" "TABLE" TableNameList MaxNumBuckets
 	 {
-		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), MaxNumBuckets: $4.(uint64)}
 	 }
-|   "ANALYZE" "TABLE" TableName "INDEX" IndexNameList
-    {
-        $$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr), IndexFlag: true}
-    }
+|	"ANALYZE" "TABLE" TableName "INDEX" IndexNameList MaxNumBuckets
+	{
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr), IndexFlag: true, MaxNumBuckets: $6.(uint64)}
+	}
+
+MaxNumBuckets:
+	{
+		$$ = uint64(0)
+	}
+|	"WITH" NUM "BUCKETS"
+	{
+		$$ = getUint64FromNUM($2)
+	}
 
 /*******************************************************************************************/
 Assignment:
@@ -1794,11 +1817,11 @@ PartitionOpt:
 	{
 		$$ = nil
 	}
-|	"PARTITION" "BY" "RANGE" '(' Expression ')' PartitionNumOpt  PartitionDefinitionListOpt
+|	"PARTITION" "BY" "RANGE" '(' Expression ')' PartitionNumOpt SubPartitionOpt PartitionDefinitionListOpt
 	{
 		var defs []*ast.PartitionDefinition
-		if $8 != nil {
-			defs = $8.([]*ast.PartitionDefinition)
+		if $9 != nil {
+			defs = $9.([]*ast.PartitionDefinition)
 		}
 		$$ = &ast.PartitionOptions{
 			Tp:		model.PartitionTypeRange,
@@ -1818,6 +1841,18 @@ PartitionOpt:
 			Definitions:	defs,
 		}
 	}
+
+SubPartitionOpt:
+	{}
+|	"SUBPARTITION" "BY" "HASH" '(' Expression ')' SubPartitionNumOpt
+	{}
+|	"SUBPARTITION" "BY" "KEY" '(' ColumnNameList ')' SubPartitionNumOpt
+	{}
+
+SubPartitionNumOpt:
+	{}
+|	"SUBPARTITIONS" NUM
+	{}
 
 PartitionNumOpt:
 	{}
@@ -1845,11 +1880,10 @@ PartitionDefinitionList:
 	}
 
 PartitionDefinition:
-	"PARTITION" Identifier PartDefValuesOpt PartDefCommentOpt PartDefStorageOpt
+	"PARTITION" Identifier PartDefValuesOpt PartDefOptionsOpt
 	{
 		partDef := &ast.PartitionDefinition{
 			Name: model.NewCIStr($2),
-			Comment: $4.(string),
 		}
 		switch $3.(type) {
 		case []ast.ExprNode:
@@ -1858,17 +1892,50 @@ PartitionDefinition:
 			partDef.LessThan = make([]ast.ExprNode, 1)
 			partDef.LessThan[0] = $3.(ast.ExprNode)
 		}
+
+		if comment, ok := $4.(string); ok {
+			partDef.Comment = comment
+		}
 		$$ = partDef
 	}
 
-PartDefCommentOpt:
+PartDefOptionsOpt:
 	{
-		$$ = ""
+		$$ = nil
 	}
-|	"COMMENT" eq stringLit
+|	PartDefOptionList
+	{
+		$$ = $1
+	}
+
+PartDefOptionList:
+	PartDefOption
+	{
+		$$ = $1
+	}
+|	PartDefOptionList PartDefOption
+	{
+		if $1 != nil {
+			$$ = $1
+		} else {
+			$$ = $2
+		}
+	}
+
+PartDefOption:
+	"COMMENT" EqOpt stringLit
 	{
 		$$ = $3
 	}
+|	"ENGINE" EqOpt Identifier
+	{
+		$$ = nil
+	}
+|	"TABLESPACE" EqOpt Identifier
+	{
+		$$ =  nil
+	}
+
 
 PartDefValuesOpt:
 	{
@@ -1882,11 +1949,6 @@ PartDefValuesOpt:
 	{
 		$$ = $5
 	}
-
-PartDefStorageOpt:
-	{}
-|	"ENGINE" eq Identifier
-	{}
 
 DuplicateOpt:
 	{
@@ -2751,24 +2813,24 @@ UnReservedKeyword:
 | "COLUMNS" | "COMMIT" | "COMPACT" | "COMPRESSED" | "CONSISTENT" | "DATA" | "DATE" %prec lowerThanStringLitToken| "DATETIME" | "DAY" | "DEALLOCATE" | "DO" | "DUPLICATE"
 | "DYNAMIC"| "END" | "ENGINE" | "ENGINES" | "ENUM" | "ERRORS" | "ESCAPE" | "EXECUTE" | "FIELDS" | "FIRST" | "FIXED" | "FLUSH" | "FORMAT" | "FULL" |"GLOBAL"
 | "HASH" | "HOUR" | "LESS" | "LOCAL" | "NAMES" | "OFFSET" | "PASSWORD" %prec lowerThanEq | "PREPARE" | "QUICK" | "REDUNDANT"
-| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "TABLES" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken | "TIMESTAMP" %prec lowerThanStringLitToken
-| "TRACE" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
+| "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "SUBPARTITIONS" | "SUBPARTITION" | "TABLES" | "TABLESPACE" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken 
+| "TIMESTAMP" %prec lowerThanStringLitToken | "TRACE" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MASTER" | "MAX_ROWS"
 | "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
-| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
+| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "SLOW" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED" | "RECOVER"
 
 
 
 TiDBKeyword:
-"ADMIN" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
+"ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
- "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
-| "INPLACE" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
+ "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "INPLACE" | "INTERNAL" 
+|"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOP" | "TRIM"
 
 /************************************************************************************
  *
@@ -5096,6 +5158,13 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{Tp: ast.AdminShowDDLJobs}
 	}
+|	"ADMIN" "SHOW" "DDL" "JOBS" NUM
+	{
+		$$ = &ast.AdminStmt{
+		    Tp: ast.AdminShowDDLJobs,
+		    JobNumber: $5.(int64),
+		}
+	}
 |	"ADMIN" "CHECK" "TABLE" TableNameList
 	{
 		$$ = &ast.AdminStmt{
@@ -5155,6 +5224,46 @@ AdminStmt:
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminShowDDLJobQueries,
 			JobIDs: $6.([]int64),
+		}
+	}
+|	"ADMIN" "SHOW" "SLOW" AdminShowSlow
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminShowSlow,
+			ShowSlow: $4.(*ast.ShowSlow),
+		}
+	}
+
+AdminShowSlow:
+	"RECENT" NUM
+	{
+		$$ = &ast.ShowSlow{
+			Tp: ast.ShowSlowRecent,
+			Count: getUint64FromNUM($2),
+		}
+	}
+|	"TOP" NUM
+	{
+		$$ = &ast.ShowSlow{
+			Tp: ast.ShowSlowTop,
+			Kind: ast.ShowSlowKindDefault,
+			Count: getUint64FromNUM($2),
+		}
+	}
+|	"TOP" "INTERNAL" NUM
+	{
+		$$ = &ast.ShowSlow{
+			Tp: ast.ShowSlowTop,
+			Kind: ast.ShowSlowKindInternal,
+			Count: getUint64FromNUM($3),
+		}
+	}
+|	"TOP" "ALL" NUM
+	{
+		$$ = &ast.ShowSlow{
+			Tp: ast.ShowSlowTop,
+			Kind: ast.ShowSlowKindAll,
+			Count: getUint64FromNUM($3),
 		}
 	}
 
@@ -5509,6 +5618,12 @@ FlushOption:
 	{
 		$$ = &ast.FlushStmt{
 			Tp: ast.FlushPrivileges,
+		}
+	}
+|	"STATUS"
+	{
+		$$ = &ast.FlushStmt{
+			Tp: ast.FlushStatus,
 		}
 	}
 |	TableOrTables TableNameListOpt WithReadLockOpt
@@ -6081,6 +6196,17 @@ StringType:
 		}
 		$$ = x
 	}
+|	"NATIONAL" "CHARACTER" FieldLen OptBinary OptCollate
+	{
+		x := types.NewFieldType(mysql.TypeString)
+		x.Flen = $3.(int)
+		x.Charset = $4.(*ast.OptBinary).Charset
+		x.Collate = $5.(string)
+		if $4.(*ast.OptBinary).IsBinary {
+			x.Flag |= mysql.BinaryFlag
+		}
+		$$ = x
+	}
 |	Varchar FieldLen OptBinary OptCollate
 	{
 		x := types.NewFieldType(mysql.TypeVarchar)
@@ -6252,7 +6378,7 @@ DateAndTimeType:
 		}
 		$$ = x
 	}
-|	"YEAR" OptFieldLen
+|	"YEAR" OptFieldLen FieldOpts
 	{
 		x := types.NewFieldType(mysql.TypeYear)
 		x.Flen = $2.(int)
@@ -6537,6 +6663,23 @@ AuthOption:
 			ByAuthString: true,
 		}
 	}
+|	"IDENTIFIED" "WITH" StringName
+	{
+		$$ = nil
+	}
+|	"IDENTIFIED" "WITH" StringName "BY" AuthString
+	{
+		$$ = &ast.AuthOption {
+			AuthString: $5.(string),
+			ByAuthString: true,
+		}
+	}
+|	"IDENTIFIED" "WITH" StringName "AS" HashString
+	{
+		$$ = &ast.AuthOption{
+			HashString: $5.(string),
+		}
+	}
 |	"IDENTIFIED" "BY" "PASSWORD" HashString
 	{
 		$$ = &ast.AuthOption{
@@ -6797,24 +6940,38 @@ RevokeStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/load-data.html
  *******************************************************************************************/
 LoadDataStmt:
-	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName Fields Lines ColumnNameListOptWithBrackets
+	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnNameListOptWithBrackets
 	{
 		x := &ast.LoadDataStmt{
 			Path:       $5,
 			Table:      $8.(*ast.TableName),
-			Columns:    $11.([]*ast.ColumnName),
+			Columns:    $13.([]*ast.ColumnName),
+			IgnoreLines:$12.(uint64),
 		}
 		if $3 != nil {
 			x.IsLocal = true
 		}
-		if $9 != nil {
-			x.FieldsInfo = $9.(*ast.FieldsClause)
-		}
 		if $10 != nil {
-			x.LinesInfo = $10.(*ast.LinesClause)
+			x.FieldsInfo = $10.(*ast.FieldsClause)
+		}
+		if $11 != nil {
+			x.LinesInfo = $11.(*ast.LinesClause)
 		}
 		$$ = x
 	}
+
+IgnoreLines:
+    {
+        $$ = uint64(0)
+    }
+|   "IGNORE" NUM "LINES"
+    {
+        $$ = getUint64FromNUM($2)
+    }
+
+CharsetOpt:
+	{}
+|	"CHARACTER" "SET" CharsetName
 
 LocalOpt:
 	{

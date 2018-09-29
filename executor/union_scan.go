@@ -16,12 +16,12 @@ package executor
 import (
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -53,7 +53,7 @@ func (udb *DirtyDB) DeleteRow(tid int64, handle int64) {
 // TruncateTable truncates a table.
 func (udb *DirtyDB) TruncateTable(tid int64) {
 	dt := udb.GetDirtyTable(tid)
-	dt.addedRows = make(map[int64]types.DatumRow)
+	dt.addedRows = make(map[int64][]types.Datum)
 	dt.truncated = true
 }
 
@@ -62,7 +62,7 @@ func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 	dt, ok := udb.tables[tid]
 	if !ok {
 		dt = &DirtyTable{
-			addedRows:   make(map[int64]types.DatumRow),
+			addedRows:   make(map[int64][]types.Datum),
 			deletedRows: make(map[int64]struct{}),
 		}
 		udb.tables[tid] = dt
@@ -74,7 +74,7 @@ func (udb *DirtyDB) GetDirtyTable(tid int64) *DirtyTable {
 type DirtyTable struct {
 	// addedRows ...
 	// the key is handle.
-	addedRows   map[int64]types.DatumRow
+	addedRows   map[int64][]types.Datum
 	deletedRows map[int64]struct{}
 	truncated   bool
 }
@@ -92,7 +92,7 @@ func GetDirtyDB(ctx sessionctx.Context) *DirtyDB {
 	return udb
 }
 
-// UnionScanExec merges the rows from dirty table and the rows from XAPI request.
+// UnionScanExec merges the rows from dirty table and the rows from distsql request.
 type UnionScanExec struct {
 	baseExecutor
 
@@ -106,10 +106,10 @@ type UnionScanExec struct {
 	// belowHandleIndex is the handle's position of the below scan plan.
 	belowHandleIndex int
 
-	addedRows           []types.DatumRow
+	addedRows           [][]types.Datum
 	cursor4AddRows      int
 	sortErr             error
-	snapshotRows        []types.DatumRow
+	snapshotRows        [][]types.Datum
 	cursor4SnapshotRows int
 	snapshotChunkBuffer *chunk.Chunk
 }
@@ -119,15 +119,15 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 	if err := us.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	us.snapshotChunkBuffer = us.newChunk()
+	us.snapshotChunkBuffer = us.newFirstChunk()
 	return nil
 }
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+	chk.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
-	for i, batchSize := 0, us.ctx.GetSessionVars().MaxChunkSize; i < batchSize; i++ {
+	for i, batchSize := 0, chk.Capacity(); i < batchSize; i++ {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -143,14 +143,14 @@ func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 }
 
 // getOneRow gets one result row from dirty table or child.
-func (us *UnionScanExec) getOneRow(ctx context.Context) (types.DatumRow, error) {
+func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	for {
 		snapshotRow, err := us.getSnapshotRow(ctx)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		addedRow := us.getAddedRow()
-		var row types.DatumRow
+		var row []types.Datum
 		var isSnapshotRow bool
 		if addedRow == nil {
 			row = snapshotRow
@@ -181,7 +181,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) (types.DatumRow, error) 
 	}
 }
 
-func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (types.DatumRow, error) {
+func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, error) {
 	if us.dirty.truncated {
 		return nil, nil
 	}
@@ -213,8 +213,8 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) (types.DatumRow, er
 	return us.snapshotRows[0], nil
 }
 
-func (us *UnionScanExec) getAddedRow() types.DatumRow {
-	var addedRow types.DatumRow
+func (us *UnionScanExec) getAddedRow() []types.Datum {
+	var addedRow []types.Datum
 	if us.cursor4AddRows < len(us.addedRows) {
 		addedRow = us.addedRows[us.cursor4AddRows]
 	}
@@ -223,7 +223,7 @@ func (us *UnionScanExec) getAddedRow() types.DatumRow {
 
 // shouldPickFirstRow picks the suitable row in order.
 // The value returned is used to determine whether to pick the first input row.
-func (us *UnionScanExec) shouldPickFirstRow(a, b types.DatumRow) (bool, error) {
+func (us *UnionScanExec) shouldPickFirstRow(a, b []types.Datum) (bool, error) {
 	var isFirstRow bool
 	addedCmpSrc, err := us.compare(a, b)
 	if err != nil {
@@ -242,7 +242,7 @@ func (us *UnionScanExec) shouldPickFirstRow(a, b types.DatumRow) (bool, error) {
 	return isFirstRow, nil
 }
 
-func (us *UnionScanExec) compare(a, b types.DatumRow) (int, error) {
+func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 	sc := us.ctx.GetSessionVars().StmtCtx
 	for _, colOff := range us.usedIndex {
 		aColumn := a[colOff]
@@ -269,9 +269,10 @@ func (us *UnionScanExec) compare(a, b types.DatumRow) (int, error) {
 }
 
 func (us *UnionScanExec) buildAndSortAddedRows() error {
-	us.addedRows = make([]types.DatumRow, 0, len(us.dirty.addedRows))
+	us.addedRows = make([][]types.Datum, 0, len(us.dirty.addedRows))
+	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	for h, data := range us.dirty.addedRows {
-		newData := make(types.DatumRow, 0, us.schema.Len())
+		newData := make([]types.Datum, 0, us.schema.Len())
 		for _, col := range us.columns {
 			if col.ID == model.ExtraHandleID {
 				newData = append(newData, types.NewIntDatum(h))
@@ -279,7 +280,8 @@ func (us *UnionScanExec) buildAndSortAddedRows() error {
 				newData = append(newData, data[col.Offset])
 			}
 		}
-		matched, err := expression.EvalBool(us.ctx, us.conditions, newData)
+		mutableRow.SetDatums(newData...)
+		matched, err := expression.EvalBool(us.ctx, us.conditions, mutableRow.ToRow())
 		if err != nil {
 			return errors.Trace(err)
 		}

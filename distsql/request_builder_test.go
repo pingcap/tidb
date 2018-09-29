@@ -19,7 +19,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -490,13 +489,10 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		},
 	}
 
-	sv := variable.NewSessionVars()
-	sv.StmtCtx.Priority = mysql.LowPriority
-	sv.StmtCtx.NotFillCache = true
 	actual, err := (&RequestBuilder{}).SetKeyRanges(keyRanges).
 		SetAnalyzeRequest(&tipb.AnalyzeReq{}).
 		SetKeepOrder(true).
-		SetFromSessionVars(sv).
+		SetConcurrency(15).
 		Build()
 	c.Assert(err, IsNil)
 	expect := &kv.Request{
@@ -507,7 +503,7 @@ func (s *testSuite) TestRequestBuilder5(c *C) {
 		KeepOrder:      true,
 		Desc:           false,
 		Concurrency:    15,
-		IsolationLevel: 0,
+		IsolationLevel: kv.RC,
 		Priority:       1,
 		NotFillCache:   true,
 		SyncLog:        false,

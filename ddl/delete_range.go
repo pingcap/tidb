@@ -20,17 +20,14 @@ import (
 	"math"
 	"sync"
 
-	"github.com/juju/errors"
-	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -51,7 +48,7 @@ type delRangeManager interface {
 
 type delRange struct {
 	store        kv.Storage
-	ctxPool      *pools.ResourcePool
+	sessPool     *sessionPool
 	storeSupport bool
 	emulatorCh   chan struct{}
 	keys         []kv.Key
@@ -61,10 +58,10 @@ type delRange struct {
 }
 
 // newDelRangeManager returns a delRangeManager.
-func newDelRangeManager(store kv.Storage, ctxPool *pools.ResourcePool) delRangeManager {
+func newDelRangeManager(store kv.Storage, sessPool *sessionPool) delRangeManager {
 	dr := &delRange{
 		store:        store,
-		ctxPool:      ctxPool,
+		sessPool:     sessPool,
 		storeSupport: store.SupportDeleteRange(),
 		quitCh:       make(chan struct{}),
 	}
@@ -77,14 +74,11 @@ func newDelRangeManager(store kv.Storage, ctxPool *pools.ResourcePool) delRangeM
 
 // addDelRangeJob implements delRangeManager interface.
 func (dr *delRange) addDelRangeJob(job *model.Job) error {
-	resource, err := dr.ctxPool.Get()
+	ctx, err := dr.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer dr.ctxPool.Put(resource)
-	ctx := resource.(sessionctx.Context)
-	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
-	ctx.GetSessionVars().InRestrictedSQL = true
+	defer dr.sessPool.put(ctx)
 
 	err = insertJobIntoDeleteRangeTable(ctx, job)
 	if err != nil {
@@ -110,7 +104,7 @@ func (dr *delRange) clear() {
 	log.Infof("[ddl] closing delRange session pool")
 	close(dr.quitCh)
 	dr.wait.Wait()
-	dr.ctxPool.Close()
+	dr.sessPool.close()
 }
 
 // startEmulator is only used for those storage engines which don't support
@@ -131,15 +125,12 @@ func (dr *delRange) startEmulator() {
 }
 
 func (dr *delRange) doDelRangeWork() error {
-	resource, err := dr.ctxPool.Get()
+	ctx, err := dr.sessPool.get()
 	if err != nil {
 		log.Errorf("[ddl] delRange emulator get session fail: %s", err)
 		return errors.Trace(err)
 	}
-	defer dr.ctxPool.Put(resource)
-	ctx := resource.(sessionctx.Context)
-	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
-	ctx.GetSessionVars().InRestrictedSQL = true
+	defer dr.sessPool.put(ctx)
 
 	ranges, err := util.LoadDeleteRanges(ctx, math.MaxInt64)
 	if err != nil {
@@ -203,12 +194,11 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 			}
 			log.Infof("[ddl] delRange emulator complete task: (%d, %d)", r.JobID, r.ElementID)
 			break
-		} else {
-			if err := util.UpdateDeleteRange(ctx, r, newStartKey, oldStartKey); err != nil {
-				log.Errorf("[ddl] delRange emulator update task fail: %s", err)
-			}
-			oldStartKey = newStartKey
 		}
+		if err := util.UpdateDeleteRange(ctx, r, newStartKey, oldStartKey); err != nil {
+			log.Errorf("[ddl] delRange emulator update task fail: %s", err)
+		}
+		oldStartKey = newStartKey
 	}
 	return nil
 }
@@ -217,7 +207,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 // and inserts a new record into gc_delete_range table. The primary key is
 // job ID, so we ignore key conflict error.
 func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error {
-	now, err := getNowTS(ctx)
+	now, err := getNowTSO(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -238,42 +228,80 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		}
 	case model.ActionDropTable, model.ActionTruncateTable:
 		tableID := job.TableID
-		startKey := tablecodec.EncodeTablePrefix(tableID)
+		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
+		var startKey kv.Key
+		var physicalTableIDs []int64
+		if err := job.DecodeArgs(startKey, &physicalTableIDs); err != nil {
+			return errors.Trace(err)
+		}
+		if len(physicalTableIDs) > 0 {
+			for _, pid := range physicalTableIDs {
+				startKey = tablecodec.EncodeTablePrefix(pid)
+				endKey := tablecodec.EncodeTablePrefix(pid + 1)
+				if err := doInsert(s, job.ID, pid, startKey, endKey, now); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			return nil
+		}
+		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
 	case model.ActionDropTablePartition:
-		var partitionID int64
-		if err := job.DecodeArgs(&partitionID); err != nil {
+		var physicalTableID int64
+		if err := job.DecodeArgs(&physicalTableID); err != nil {
 			return errors.Trace(err)
 		}
-		startKey := tablecodec.EncodeTablePrefix(partitionID)
-		endKey := tablecodec.EncodeTablePrefix(partitionID + 1)
-		return doInsert(s, job.ID, partitionID, startKey, endKey, now)
+		startKey := tablecodec.EncodeTablePrefix(physicalTableID)
+		endKey := tablecodec.EncodeTablePrefix(physicalTableID + 1)
+		return doInsert(s, job.ID, physicalTableID, startKey, endKey, now)
 	// ActionAddIndex needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex:
 		tableID := job.TableID
 		var indexID int64
-		if err := job.DecodeArgs(&indexID); err != nil {
+		var partitionIDs []int64
+		if err := job.DecodeArgs(&indexID, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
-		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-		return doInsert(s, job.ID, indexID, startKey, endKey, now)
+		if len(partitionIDs) > 0 {
+			for _, pid := range partitionIDs {
+				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
+				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
+				if err := doInsert(s, job.ID, indexID, startKey, endKey, now); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		} else {
+			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+			return doInsert(s, job.ID, indexID, startKey, endKey, now)
+		}
 	case model.ActionDropIndex:
 		tableID := job.TableID
 		var indexName interface{}
 		var indexID int64
-		if err := job.DecodeArgs(&indexName, &indexID); err != nil {
+		var partitionIDs []int64
+		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
-		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-		return doInsert(s, job.ID, indexID, startKey, endKey, now)
+		if len(partitionIDs) > 0 {
+			for _, pid := range partitionIDs {
+				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
+				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
+				if err := doInsert(s, job.ID, indexID, startKey, endKey, now); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		} else {
+			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+			return doInsert(s, job.ID, indexID, startKey, endKey, now)
+		}
 	}
 	return nil
 }
 
-func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, endKey kv.Key, ts int64) error {
+func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, endKey kv.Key, ts uint64) error {
 	log.Infof("[ddl] insert into delete-range table with key: (%d,%d)", jobID, elementID)
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
@@ -282,12 +310,11 @@ func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, end
 	return errors.Trace(err)
 }
 
-// getNowTS gets the current timestamp, in second.
-func getNowTS(ctx sessionctx.Context) (int64, error) {
+// getNowTS gets the current timestamp, in TSO.
+func getNowTSO(ctx sessionctx.Context) (uint64, error) {
 	currVer, err := ctx.GetStore().CurrentVersion()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	physical := oracle.ExtractPhysical(currVer.Ver)
-	return physical / 1e3, nil
+	return currVer.Ver, nil
 }

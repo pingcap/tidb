@@ -13,6 +13,12 @@
 
 package variable
 
+import (
+	"os"
+
+	"github.com/pingcap/tidb/mysql"
+)
+
 /*
 	Steps to add a new TiDB specific system variable:
 
@@ -32,15 +38,15 @@ const (
 	// The value can be a datetime string like '2017-11-11 20:20:20' or a tso string. When this variable is set, the session reads history data of that time.
 	TiDBSnapshot = "tidb_snapshot"
 
-	// tidb_import_data is used for loading data from a dump file, to speed up the loading process.
-	// When the value is set to true, unique index constraint is not checked.
-	TiDBImportingData = "tidb_import_data"
-
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
 	// Auto analyze will run if (table modify count)/(table row count) is greater than this value.
 	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
+
+	// Auto analyze will run if current time is within start time and end time.
+	TiDBAutoAnalyzeStartTime = "tidb_auto_analyze_start_time"
+	TiDBAutoAnalyzeEndTime   = "tidb_auto_analyze_end_time"
 
 	// tidb_checksum_table_concurrency is used to speed up the ADMIN CHECKSUM TABLE
 	// statement, when a table has multiple indices, those indices can be
@@ -177,6 +183,14 @@ const (
 
 	// tidb_ddl_reorg_worker_cnt defines the count of ddl reorg workers.
 	TiDBDDLReorgWorkerCount = "tidb_ddl_reorg_worker_cnt"
+
+	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
+	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
+	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
+
+	// tidb_force_priority defines the operations priority of all statements.
+	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
+	TiDBForcePriority = "tidb_force_priority"
 )
 
 // Default TiDB system variable values.
@@ -189,6 +203,8 @@ const (
 	DefDistSQLScanConcurrency        = 15
 	DefBuildStatsConcurrency         = 4
 	DefAutoAnalyzeRatio              = 0.5
+	DefAutoAnalyzeStartTime          = "00:00 +0000"
+	DefAutoAnalyzeEndTime            = "23:59 +0000"
 	DefChecksumTableConcurrency      = 4
 	DefSkipUTF8Check                 = false
 	DefOptAggPushDown                = false
@@ -196,7 +212,7 @@ const (
 	DefBatchInsert                   = false
 	DefBatchDelete                   = false
 	DefCurretTS                      = 0
-	DefMaxChunkSize                  = 1024
+	DefMaxChunkSize                  = 32
 	DefDMLBatchSize                  = 20000
 	DefTiDBMemQuotaHashJoin          = 32 << 30 // 32GB.
 	DefTiDBMemQuotaMergeJoin         = 32 << 30 // 32GB.
@@ -214,11 +230,15 @@ const (
 	DefTiDBDDLReorgWorkerCount       = 16
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4
+	DefTiDBForcePriority             = mysql.NoPriority
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog      uint32
-	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
-	maxDDLReorgWorkerCount int32 = 128
+	ddlReorgWorkerCounter  int32  = DefTiDBDDLReorgWorkerCount
+	maxDDLReorgWorkerCount int32  = 128
+	DDLSlowOprThreshold    uint32 = 300 // DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
+	ForcePriority                 = int32(DefTiDBForcePriority)
+	ServerHostname, _             = os.Hostname()
 )

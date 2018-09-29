@@ -17,7 +17,6 @@ import (
 	goJSON "encoding/json"
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -26,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 // These are byte flags used for `HashCode()`.
@@ -44,28 +45,28 @@ type Expression interface {
 	goJSON.Marshaler
 
 	// Eval evaluates an expression through a row.
-	Eval(row types.Row) (types.Datum, error)
+	Eval(row chunk.Row) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
-	EvalInt(ctx sessionctx.Context, row types.Row) (val int64, isNull bool, err error)
+	EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error)
 
 	// EvalReal returns the float64 representation of expression.
-	EvalReal(ctx sessionctx.Context, row types.Row) (val float64, isNull bool, err error)
+	EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error)
 
 	// EvalString returns the string representation of expression.
-	EvalString(ctx sessionctx.Context, row types.Row) (val string, isNull bool, err error)
+	EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error)
 
 	// EvalDecimal returns the decimal representation of expression.
-	EvalDecimal(ctx sessionctx.Context, row types.Row) (val *types.MyDecimal, isNull bool, err error)
+	EvalDecimal(ctx sessionctx.Context, row chunk.Row) (val *types.MyDecimal, isNull bool, err error)
 
 	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
-	EvalTime(ctx sessionctx.Context, row types.Row) (val types.Time, isNull bool, err error)
+	EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error)
 
 	// EvalDuration returns the duration representation of expression.
-	EvalDuration(ctx sessionctx.Context, row types.Row) (val types.Duration, isNull bool, err error)
+	EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(ctx sessionctx.Context, row types.Row) (val json.BinaryJSON, isNull bool, err error)
+	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -112,7 +113,7 @@ func (e CNFExprs) Clone() CNFExprs {
 }
 
 // EvalBool evaluates expression list to a boolean value.
-func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row types.Row) (bool, error) {
+func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, error) {
 	for _, expr := range exprList {
 		data, err := expr.Eval(row)
 		if err != nil {
@@ -251,13 +252,13 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 }
 
 // TableInfo2Schema converts table info to schema with empty DBName.
-func TableInfo2Schema(tbl *model.TableInfo) *Schema {
-	return TableInfo2SchemaWithDBName(model.CIStr{}, tbl)
+func TableInfo2Schema(ctx sessionctx.Context, tbl *model.TableInfo) *Schema {
+	return TableInfo2SchemaWithDBName(ctx, model.CIStr{}, tbl)
 }
 
 // TableInfo2SchemaWithDBName converts table info to schema.
-func TableInfo2SchemaWithDBName(dbName model.CIStr, tbl *model.TableInfo) *Schema {
-	cols := ColumnInfos2ColumnsWithDBName(dbName, tbl.Name, tbl.Columns)
+func TableInfo2SchemaWithDBName(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) *Schema {
+	cols := ColumnInfos2ColumnsWithDBName(ctx, dbName, tbl.Name, tbl.Columns)
 	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for _, idx := range tbl.Indices {
 		if !idx.Unique || idx.State != model.StatePublic {
@@ -300,9 +301,9 @@ func TableInfo2SchemaWithDBName(dbName model.CIStr, tbl *model.TableInfo) *Schem
 }
 
 // ColumnInfos2ColumnsWithDBName converts a slice of ColumnInfo to a slice of Column.
-func ColumnInfos2ColumnsWithDBName(dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
+func ColumnInfos2ColumnsWithDBName(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) []*Column {
 	columns := make([]*Column, 0, len(colInfos))
-	for i, col := range colInfos {
+	for _, col := range colInfos {
 		if col.State != model.StatePublic {
 			continue
 		}
@@ -311,7 +312,8 @@ func ColumnInfos2ColumnsWithDBName(dbName, tblName model.CIStr, colInfos []*mode
 			TblName:  tblName,
 			DBName:   dbName,
 			RetType:  &col.FieldType,
-			Position: i,
+			ID:       col.ID,
+			UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 			Index:    col.Offset,
 		}
 		columns = append(columns, newCol)

@@ -126,6 +126,22 @@ func (s *testLockSuite) TestScanLockResolveWithSeek(c *C) {
 	}
 }
 
+func (s *testLockSuite) TestScanLockResolveWithSeekKeyOnly(c *C) {
+	s.putAlphabets(c)
+	s.prepareAlphabetLocks(c)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.SetOption(kv.KeyOnly, true)
+	iter, err := txn.Seek([]byte("a"))
+	c.Assert(err, IsNil)
+	for ch := byte('a'); ch <= byte('z'); ch++ {
+		c.Assert(iter.Valid(), IsTrue)
+		c.Assert([]byte(iter.Key()), BytesEquals, []byte{ch})
+		c.Assert(iter.Next(), IsNil)
+	}
+}
+
 func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 	s.putAlphabets(c)
 	s.prepareAlphabetLocks(c)
@@ -179,22 +195,6 @@ func (s *testLockSuite) TestGetTxnStatus(c *C) {
 	status, err = s.store.lockResolver.GetTxnStatus(startTS, []byte("a"))
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsFalse)
-}
-
-func (s *testLockSuite) TestRC(c *C) {
-	s.putKV(c, []byte("key"), []byte("v1"))
-
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	txn.Set([]byte("key"), []byte("v2"))
-	s.prewriteTxn(c, txn.(*tikvTxn))
-
-	txn2, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	txn2.SetOption(kv.IsolationLevel, kv.RC)
-	val, err := txn2.Get([]byte("key"))
-	c.Assert(err, IsNil)
-	c.Assert(string(val), Equals, "v1")
 }
 
 func (s *testLockSuite) prewriteTxn(c *C, txn *tikvTxn) {

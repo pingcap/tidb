@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -46,16 +47,19 @@ func (s *testEvaluatorSuite) SetUpSuite(c *C) {
 	s.Parser = parser.New()
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	s.ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864")
 }
 
 func (s *testEvaluatorSuite) TearDownSuite(c *C) {
 }
 
 func (s *testEvaluatorSuite) SetUpTest(c *C) {
+	s.ctx.GetSessionVars().PlanColumnID = 0
 	testleak.BeforeTest()
 }
 
 func (s *testEvaluatorSuite) TearDownTest(c *C) {
+	s.ctx.GetSessionVars().StmtCtx.SetWarnings(nil)
 	testleak.AfterTest(c)()
 }
 
@@ -131,14 +135,14 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
-	ret, isNull, err := f.evalInt(nil)
+	ret, isNull, err := f.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsTrue)
 	c.Assert(ret, Equals, int64(0))
 	d[0].SetInt64(-1)
 	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
-	ret, isNull, err = f.evalInt(nil)
+	ret, isNull, err = f.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsFalse)
 	c.Assert(ret, Equals, int64(0))
@@ -148,13 +152,13 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
-	ret, isNull, err = f.evalInt(nil)
+	ret, isNull, err = f.evalInt(chunk.Row{})
 	c.Assert(err, NotNil)
 	c.Assert(isNull, IsFalse)
 	d[0].SetFloat64(-2.5)
 	_, err = fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
-	ret, isNull, err = f.evalInt(nil)
+	ret, isNull, err = f.evalInt(chunk.Row{})
 	c.Assert(err, NotNil)
 	c.Assert(isNull, IsFalse)
 
@@ -163,7 +167,7 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	start := time.Now()
 	f, err = fc.getFunction(ctx, s.datumsToConstants(d))
 	c.Assert(err, IsNil)
-	ret, isNull, err = f.evalInt(nil)
+	ret, isNull, err = f.evalInt(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(isNull, IsFalse)
 	c.Assert(ret, Equals, int64(0))
@@ -180,7 +184,7 @@ func (s *testEvaluatorSuite) TestSleep(c *C) {
 	// 	time.Sleep(1 * time.Second)
 	// 	ctx.Cancel()
 	// }()
-	// ret, isNull, err = f.evalInt(nil)
+	// ret, isNull, err = f.evalInt(chunk.Row{})
 	// sub = time.Since(start)
 	// c.Assert(err, IsNil)
 	// c.Assert(isNull, IsFalse)
@@ -229,7 +233,7 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		val, err := v.ToBool(s.ctx.GetSessionVars().StmtCtx)
 		c.Assert(err, IsNil)
@@ -260,7 +264,7 @@ func (s *testEvaluatorSuite) TestBinopComparison(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
@@ -293,7 +297,7 @@ func (s *testEvaluatorSuite) TestBinopLogic(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		switch x := t.ret.(type) {
 		case nil:
@@ -329,7 +333,7 @@ func (s *testEvaluatorSuite) TestBinopBitop(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 
 		switch x := t.ret.(type) {
@@ -423,7 +427,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		switch v.Kind() {
 		case types.KindNull:
@@ -472,7 +476,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		_, err = evalBuiltinFunc(f, nil)
+		_, err = evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, NotNil)
 	}
 
@@ -482,7 +486,7 @@ func (s *testEvaluatorSuite) TestBinopNumeric(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.lhs, t.rhs)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v.Kind(), Equals, types.KindNull)
 	}
@@ -525,7 +529,7 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 		fc := funcs[ast.Extract]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Unit, str)))
 		c.Assert(err, IsNil)
-		v, err := evalBuiltinFunc(f, nil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(v, testutil.DatumEquals, types.NewDatum(t.Expect))
 	}
@@ -534,7 +538,7 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 	fc := funcs[ast.Extract]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("SECOND", nil)))
 	c.Assert(err, IsNil)
-	v, err := evalBuiltinFunc(f, nil)
+	v, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(v.Kind(), Equals, types.KindNull)
 }
@@ -557,7 +561,7 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		fc := funcs[ast.Like]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
 		c.Assert(err, IsNil)
-		r, err := evalBuiltinFunc(f, nil)
+		r, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
 	}
@@ -589,7 +593,7 @@ func (s *testEvaluatorSuite) TestRegexp(c *C) {
 		fc := funcs[ast.Regexp]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
 		c.Assert(err, IsNil)
-		match, err := evalBuiltinFunc(f, nil)
+		match, err := evalBuiltinFunc(f, chunk.Row{})
 		if tt.err == nil {
 			c.Assert(err, IsNil)
 			c.Assert(match, testutil.DatumEquals, types.NewDatum(tt.match), Commentf("%v", tt))
@@ -637,7 +641,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		fc := funcs[t.op]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.arg)))
 		c.Assert(err, IsNil)
-		result, err := evalBuiltinFunc(f, nil)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(result, testutil.DatumEquals, types.NewDatum(t.result), Commentf("%d", i))
 	}
@@ -657,7 +661,7 @@ func (s *testEvaluatorSuite) TestUnaryOp(c *C) {
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.arg)))
 		c.Assert(err, IsNil)
 		c.Assert(f, NotNil)
-		result, err := evalBuiltinFunc(f, nil)
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
 
 		expect := types.NewDatum(t.result)
@@ -671,17 +675,17 @@ func (s *testEvaluatorSuite) TestMod(c *C) {
 	fc := funcs[ast.Mod]
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(234, 10)))
 	c.Assert(err, IsNil)
-	r, err := evalBuiltinFunc(f, nil)
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(4))
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(29, 9)))
 	c.Assert(err, IsNil)
-	r, err = evalBuiltinFunc(f, nil)
+	r, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewIntDatum(2))
 	f, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(34.5, 3)))
 	c.Assert(err, IsNil)
-	r, err = evalBuiltinFunc(f, nil)
+	r, err = evalBuiltinFunc(f, chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(r, testutil.DatumEquals, types.NewDatum(1.5))
 }

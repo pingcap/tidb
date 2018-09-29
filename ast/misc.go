@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/auth"
 )
 
@@ -339,6 +338,7 @@ const (
 	FlushNone FlushStmtType = iota
 	FlushTables
 	FlushPrivileges
+	FlushStatus
 )
 
 // FlushStmt is a statement to flush tables/privileges/optimizer costs and so on.
@@ -618,6 +618,7 @@ const (
 	AdminCheckIndexRange
 	AdminShowDDLJobQueries
 	AdminChecksumTable
+	AdminShowSlow
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -626,16 +627,49 @@ type HandleRange struct {
 	End   int64
 }
 
+// ShowSlowType defines the type for SlowSlow statement.
+type ShowSlowType int
+
+const (
+	// ShowSlowTop is a ShowSlowType constant.
+	ShowSlowTop ShowSlowType = iota
+	// ShowSlowRecent is a ShowSlowType constant.
+	ShowSlowRecent
+)
+
+// ShowSlowKind defines the kind for SlowSlow statement when the type is ShowSlowTop.
+type ShowSlowKind int
+
+const (
+	// ShowSlowKindDefault is a ShowSlowKind constant.
+	ShowSlowKindDefault ShowSlowKind = iota
+	// ShowSlowKindInternal is a ShowSlowKind constant.
+	ShowSlowKindInternal
+	// ShowSlowKindAll is a ShowSlowKind constant.
+	ShowSlowKindAll
+)
+
+// ShowSlow is used for the following command:
+//	admin show slow top [ internal | all] N
+//	admin show slow recent N
+type ShowSlow struct {
+	Tp    ShowSlowType
+	Count uint64
+	Kind  ShowSlowKind
+}
+
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
 
-	Tp     AdminStmtType
-	Index  string
-	Tables []*TableName
-	JobIDs []int64
+	Tp        AdminStmtType
+	Index     string
+	Tables    []*TableName
+	JobIDs    []int64
+	JobNumber int64
 
 	HandleRanges []HandleRange
+	ShowSlow     *ShowSlow
 }
 
 // Accept implements Node Accept interface.
@@ -783,17 +817,6 @@ func (n *GrantStmt) Accept(v Visitor) (Node, bool) {
 type Ident struct {
 	Schema model.CIStr
 	Name   model.CIStr
-}
-
-// Full returns an Ident which set schema to the current schema if it is empty.
-func (i Ident) Full(ctx sessionctx.Context) (full Ident) {
-	full.Name = i.Name
-	if i.Schema.O != "" {
-		full.Schema = i.Schema
-	} else {
-		full.Schema = model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	}
-	return
 }
 
 // String implements fmt.Stringer interface.

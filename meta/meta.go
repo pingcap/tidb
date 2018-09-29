@@ -17,19 +17,21 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -86,11 +88,19 @@ type Meta struct {
 }
 
 // NewMeta creates a Meta in transaction txn.
-func NewMeta(txn kv.Transaction) *Meta {
+// If the current Meta needs to handle a job, jobListKey is the type of the job's list.
+func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
 	txn.SetOption(kv.SyncLog, true)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
-	return &Meta{txn: t, StartTS: txn.StartTS(), jobListKey: DefaultJobListKey}
+	listKey := DefaultJobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+	return &Meta{txn: t,
+		StartTS:    txn.StartTS(),
+		jobListKey: listKey,
+	}
 }
 
 // NewSnapshotMeta creates a Meta with snapshot.
@@ -453,16 +463,11 @@ var (
 type JobListKeyType []byte
 
 var (
-	// DefaultJobListKey keeps all actions of DDL jobs.
+	// DefaultJobListKey keeps all actions of DDL jobs except "add index".
 	DefaultJobListKey JobListKeyType = mDDLJobListKey
 	// AddIndexJobListKey only keeps the action of adding index.
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
 )
-
-// SetJobListKey sets the job list key.
-func (m *Meta) SetJobListKey(key []byte) {
-	m.jobListKey = key
-}
 
 func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
 	b, err := job.Encode(true)
@@ -499,16 +504,32 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 		return nil, errors.Trace(err)
 	}
 
-	job := &model.Job{}
+	job := &model.Job{
+		// For compability, if the job is enqueued by old version TiDB and Priority field is omitted,
+		// set the default priority to kv.PriorityLow.
+		Priority: kv.PriorityLow,
+	}
 	err = job.Decode(value)
+	// Check if the job.Priority is valid.
+	if job.Priority < kv.PriorityNormal || job.Priority > kv.PriorityHigh {
+		job.Priority = kv.PriorityLow
+	}
 	return job, errors.Trace(err)
 }
 
-// GetDDLJob returns the DDL job with index.
-func (m *Meta) GetDDLJob(index int64) (*model.Job, error) {
+// GetDDLJobByIdx returns the corresponding DDL job by the index.
+// The length of jobListKeys can only be 1 or 0.
+// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
+// Otherwise, we use m.jobListKey directly.
+func (m *Meta) GetDDLJobByIdx(index int64, jobListKeys ...JobListKeyType) (*model.Job, error) {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+
 	startTime := time.Now()
-	job, err := m.getDDLJob(m.jobListKey, index)
-	metrics.MetaHistogram.WithLabelValues(metrics.GetDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	job, err := m.getDDLJob(listKey, index)
+	metrics.MetaHistogram.WithLabelValues(metrics.GetDDLJobByIdx, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return job, errors.Trace(err)
 }
 
@@ -524,21 +545,44 @@ func (m *Meta) updateDDLJob(index int64, job *model.Job, key []byte, updateRawAr
 
 // UpdateDDLJob updates the DDL job with index.
 // updateRawArgs is used to determine whether to update the raw args when encode the job.
-func (m *Meta) UpdateDDLJob(index int64, job *model.Job, updateRawArgs bool) error {
+// The length of jobListKeys can only be 1 or 0.
+// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
+// Otherwise, we use m.jobListKey directly.
+func (m *Meta) UpdateDDLJob(index int64, job *model.Job, updateRawArgs bool, jobListKeys ...JobListKeyType) error {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+
 	startTime := time.Now()
-	err := m.updateDDLJob(index, job, m.jobListKey, updateRawArgs)
+	err := m.updateDDLJob(index, job, listKey, updateRawArgs)
 	metrics.MetaHistogram.WithLabelValues(metrics.UpdateDDLJob, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
 
 // DDLJobQueueLen returns the DDL job queue length.
-func (m *Meta) DDLJobQueueLen() (int64, error) {
-	return m.txn.LLen(m.jobListKey)
+// The length of jobListKeys can only be 1 or 0.
+// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
+// Otherwise, we use m.jobListKey directly.
+func (m *Meta) DDLJobQueueLen(jobListKeys ...JobListKeyType) (int64, error) {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+	return m.txn.LLen(listKey)
 }
 
-// GetAllDDLJobs gets all DDL Jobs.
-func (m *Meta) GetAllDDLJobs() ([]*model.Job, error) {
-	values, err := m.txn.LGetAll(mDDLJobListKey)
+// GetAllDDLJobsInQueue gets all DDL Jobs in the current queue.
+// The length of jobListKeys can only be 1 or 0.
+// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
+// Otherwise, we use m.jobListKey directly.
+func (m *Meta) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job, error) {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+
+	values, err := m.txn.LGetAll(listKey)
 	if err != nil || values == nil {
 		return nil, errors.Trace(err)
 	}
@@ -559,6 +603,25 @@ func (m *Meta) GetAllDDLJobs() ([]*model.Job, error) {
 func (m *Meta) jobIDKey(id int64) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(id))
+	return b
+}
+
+func (m *Meta) reorgJobStartHandle(id int64) []byte {
+	// There is no "_start", to make it compatible with the older TiDB versions.
+	return m.jobIDKey(id)
+}
+
+func (m *Meta) reorgJobEndHandle(id int64) []byte {
+	b := make([]byte, 8, 12)
+	binary.BigEndian.PutUint64(b, uint64(id))
+	b = append(b, "_end"...)
+	return b
+}
+
+func (m *Meta) reorgJobPhysicalTableID(id int64) []byte {
+	b := make([]byte, 8, 12)
+	binary.BigEndian.PutUint64(b, uint64(id))
+	b = append(b, "_pid"...)
 	return b
 }
 
@@ -645,22 +708,70 @@ func (m *Meta) FinishBootstrap(version int64) error {
 	return errors.Trace(err)
 }
 
-// UpdateDDLReorgHandle saves the job reorganization latest processed handle for later resuming.
-func (m *Meta) UpdateDDLReorgHandle(job *model.Job, handle int64) error {
-	err := m.txn.HSet(mDDLJobReorgKey, m.jobIDKey(job.ID), []byte(strconv.FormatInt(handle, 10)))
+// UpdateDDLReorgStartHandle saves the job reorganization latest processed start handle for later resuming.
+func (m *Meta) UpdateDDLReorgStartHandle(job *model.Job, startHandle int64) error {
+	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID), []byte(strconv.FormatInt(startHandle, 10)))
 	return errors.Trace(err)
 }
 
-// RemoveDDLReorgHandle removes the job reorganization handle.
+// UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
+func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle, physicalTableID int64) error {
+	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID), []byte(strconv.FormatInt(startHandle, 10)))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID), []byte(strconv.FormatInt(endHandle, 10)))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = m.txn.HSet(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID), []byte(strconv.FormatInt(physicalTableID, 10)))
+	return errors.Trace(err)
+}
+
+// RemoveDDLReorgHandle removes the job reorganization related handles.
 func (m *Meta) RemoveDDLReorgHandle(job *model.Job) error {
-	err := m.txn.HDel(mDDLJobReorgKey, m.jobIDKey(job.ID))
-	return errors.Trace(err)
+	err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID)); err != nil {
+		log.Warn("remove ddl reorg end handle error:", err)
+	}
+	if err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID)); err != nil {
+		log.Warn("remove ddl reorg physical id error:", err)
+	}
+	return nil
 }
 
-// GetDDLReorgHandle gets the latest processed handle.
-func (m *Meta) GetDDLReorgHandle(job *model.Job) (int64, error) {
-	value, err := m.txn.HGetInt64(mDDLJobReorgKey, m.jobIDKey(job.ID))
-	return value, errors.Trace(err)
+// GetDDLReorgHandle gets the latest processed DDL reorganize position.
+func (m *Meta) GetDDLReorgHandle(job *model.Job) (startHandle, endHandle, physicalTableID int64, err error) {
+	startHandle, err = m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID))
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	endHandle, err = m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobEndHandle(job.ID))
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	physicalTableID, err = m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID))
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	// endHandle or physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
+	// update them to table's in this case.
+	if endHandle == 0 || physicalTableID == 0 {
+		if job.ReorgMeta != nil {
+			endHandle = job.ReorgMeta.EndHandle
+		} else {
+			endHandle = math.MaxInt64
+		}
+		physicalTableID = job.TableID
+		log.Warnf("new TiDB binary running on old TiDB ddl reorg data, partition %v [%v %v]", physicalTableID, startHandle, endHandle)
+	}
+	return
 }
 
 func (m *Meta) tableStatsKey(tableID int64) []byte {

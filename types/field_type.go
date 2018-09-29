@@ -54,12 +54,14 @@ func NewFieldType(tp byte) *FieldType {
 
 // Equal checks whether two FieldType objects are equal.
 func (ft *FieldType) Equal(other *FieldType) bool {
-	// We do not need to compare `ft.Flag == other.Flag` when wrapping cast upon an Expression.
+	// We do not need to compare whole `ft.Flag == other.Flag` when wrapping cast upon an Expression.
+	// but need compare unsigned_flag of ft.Flag.
 	partialEqual := ft.Tp == other.Tp &&
 		ft.Flen == other.Flen &&
 		ft.Decimal == other.Decimal &&
 		ft.Charset == other.Charset &&
-		ft.Collate == other.Collate
+		ft.Collate == other.Collate &&
+		mysql.HasUnsignedFlag(ft.Flag) == mysql.HasUnsignedFlag(other.Flag)
 	if !partialEqual || len(ft.Elems) != len(other.Elems) {
 		return false
 	}
@@ -191,7 +193,6 @@ func (ft *FieldType) CompactStr() string {
 	suffix := ""
 
 	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.Tp)
-	isFlenNotDefault := ft.Flen != defaultFlen && ft.Flen != 0 && ft.Flen != UnspecifiedLength
 	isDecimalNotDefault := ft.Decimal != defaultDecimal && ft.Decimal != 0 && ft.Decimal != UnspecifiedLength
 
 	// displayFlen and displayDecimal are flen and decimal values with `-1` substituted with default value.
@@ -225,13 +226,7 @@ func (ft *FieldType) CompactStr() string {
 			suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
 		}
 	case mysql.TypeNewDecimal:
-		if isFlenNotDefault || isDecimalNotDefault {
-			suffix = fmt.Sprintf("(%d", displayFlen)
-			if isDecimalNotDefault {
-				suffix += fmt.Sprintf(",%d", displayDecimal)
-			}
-			suffix += ")"
-		}
+		suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
 	case mysql.TypeBit, mysql.TypeShort, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
 		// Flen is always shown.
 		suffix = fmt.Sprintf("(%d)", displayFlen)
@@ -1418,4 +1413,24 @@ func SetBinChsClnFlag(ft *FieldType) {
 	ft.Charset = charset.CharsetBin
 	ft.Collate = charset.CollationBin
 	ft.Flag |= mysql.BinaryFlag
+}
+
+// VarStorageLen indicates this column is a variable length column.
+const VarStorageLen = -1
+
+// StorageLength is the length of stored value for the type.
+func (ft *FieldType) StorageLength() int {
+	switch ft.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong,
+		mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeYear, mysql.TypeDuration,
+		mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeEnum, mysql.TypeSet,
+		mysql.TypeBit:
+		// This may not be the accurate length, because we may encode them as varint.
+		return 8
+	case mysql.TypeNewDecimal:
+		precision, frac := ft.Flen-ft.Decimal, ft.Decimal
+		return precision/digitsPerWord*wordSize + dig2bytes[precision%digitsPerWord] + frac/digitsPerWord*wordSize + dig2bytes[frac%digitsPerWord]
+	default:
+		return VarStorageLen
+	}
 }

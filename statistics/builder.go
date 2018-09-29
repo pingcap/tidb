@@ -14,10 +14,10 @@
 package statistics
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pkg/errors"
 )
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -156,10 +156,11 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 
 // AnalyzeResult is used to represent analyze result.
 type AnalyzeResult struct {
-	TableID int64
-	Hist    []*Histogram
-	Cms     []*CMSketch
-	Count   int64
-	IsIndex int
-	Err     error
+	// PhysicalTableID is the id of a partition or a table.
+	PhysicalTableID int64
+	Hist            []*Histogram
+	Cms             []*CMSketch
+	Count           int64
+	IsIndex         int
+	Err             error
 }

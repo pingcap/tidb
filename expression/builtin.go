@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -161,31 +162,31 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
-func (b *baseBuiltinFunc) evalInt(row types.Row) (int64, bool, error) {
+func (b *baseBuiltinFunc) evalInt(row chunk.Row) (int64, bool, error) {
 	panic("baseBuiltinFunc.evalInt() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalReal(row types.Row) (float64, bool, error) {
+func (b *baseBuiltinFunc) evalReal(row chunk.Row) (float64, bool, error) {
 	panic("baseBuiltinFunc.evalReal() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalString(row types.Row) (string, bool, error) {
+func (b *baseBuiltinFunc) evalString(row chunk.Row) (string, bool, error) {
 	panic("baseBuiltinFunc.evalString() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalDecimal(row types.Row) (*types.MyDecimal, bool, error) {
+func (b *baseBuiltinFunc) evalDecimal(row chunk.Row) (*types.MyDecimal, bool, error) {
 	panic("baseBuiltinFunc.evalDecimal() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalTime(row types.Row) (types.Time, bool, error) {
+func (b *baseBuiltinFunc) evalTime(row chunk.Row) (types.Time, bool, error) {
 	panic("baseBuiltinFunc.evalTime() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalDuration(row types.Row) (types.Duration, bool, error) {
+func (b *baseBuiltinFunc) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	panic("baseBuiltinFunc.evalDuration() should never be called.")
 }
 
-func (b *baseBuiltinFunc) evalJSON(row types.Row) (json.BinaryJSON, bool, error) {
+func (b *baseBuiltinFunc) evalJSON(row chunk.Row) (json.BinaryJSON, bool, error) {
 	panic("baseBuiltinFunc.evalJSON() should never be called.")
 }
 
@@ -235,22 +236,42 @@ func (b *baseBuiltinFunc) Clone() builtinFunc {
 	panic("you should not call this method.")
 }
 
+// baseBuiltinCastFunc will be contained in every struct that implement cast builtinFunc.
+type baseBuiltinCastFunc struct {
+	baseBuiltinFunc
+
+	// inUnion indicates whether cast is in union context.
+	inUnion bool
+}
+
+func (b *baseBuiltinCastFunc) cloneFrom(from *baseBuiltinCastFunc) {
+	b.baseBuiltinFunc.cloneFrom(&from.baseBuiltinFunc)
+	b.inUnion = from.inUnion
+}
+
+func newBaseBuiltinCastFunc(builtinFunc baseBuiltinFunc, inUnion bool) baseBuiltinCastFunc {
+	return baseBuiltinCastFunc{
+		baseBuiltinFunc: builtinFunc,
+		inUnion:         inUnion,
+	}
+}
+
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	// evalInt evaluates int result of builtinFunc by given row.
-	evalInt(row types.Row) (val int64, isNull bool, err error)
+	evalInt(row chunk.Row) (val int64, isNull bool, err error)
 	// evalReal evaluates real representation of builtinFunc by given row.
-	evalReal(row types.Row) (val float64, isNull bool, err error)
+	evalReal(row chunk.Row) (val float64, isNull bool, err error)
 	// evalString evaluates string representation of builtinFunc by given row.
-	evalString(row types.Row) (val string, isNull bool, err error)
+	evalString(row chunk.Row) (val string, isNull bool, err error)
 	// evalDecimal evaluates decimal representation of builtinFunc by given row.
-	evalDecimal(row types.Row) (val *types.MyDecimal, isNull bool, err error)
+	evalDecimal(row chunk.Row) (val *types.MyDecimal, isNull bool, err error)
 	// evalTime evaluates DATE/DATETIME/TIMESTAMP representation of builtinFunc by given row.
-	evalTime(row types.Row) (val types.Time, isNull bool, err error)
+	evalTime(row chunk.Row) (val types.Time, isNull bool, err error)
 	// evalDuration evaluates duration representation of builtinFunc by given row.
-	evalDuration(row types.Row) (val types.Duration, isNull bool, err error)
+	evalDuration(row chunk.Row) (val types.Duration, isNull bool, err error)
 	// evalJSON evaluates JSON representation of builtinFunc by given row.
-	evalJSON(row types.Row) (val json.BinaryJSON, isNull bool, err error)
+	evalJSON(row chunk.Row) (val json.BinaryJSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// equal check if this function equals to another function.
@@ -277,7 +298,7 @@ type baseFunctionClass struct {
 func (b *baseFunctionClass) verifyArgs(args []Expression) error {
 	l := len(args)
 	if l < b.minArgs || (b.maxArgs != -1 && l > b.maxArgs) {
-		return ErrIncorrectParameterCount.GenByArgs(b.funcName)
+		return ErrIncorrectParameterCount.GenWithStackByArgs(b.funcName)
 	}
 	return nil
 }
@@ -551,14 +572,28 @@ var funcs = map[string]functionClass{
 	ast.ValidatePasswordStrength: &validatePasswordStrengthFunctionClass{baseFunctionClass{ast.ValidatePasswordStrength, 1, 1}},
 
 	// json functions
-	ast.JSONType:    &jsonTypeFunctionClass{baseFunctionClass{ast.JSONType, 1, 1}},
-	ast.JSONExtract: &jsonExtractFunctionClass{baseFunctionClass{ast.JSONExtract, 2, -1}},
-	ast.JSONUnquote: &jsonUnquoteFunctionClass{baseFunctionClass{ast.JSONUnquote, 1, 1}},
-	ast.JSONSet:     &jsonSetFunctionClass{baseFunctionClass{ast.JSONSet, 3, -1}},
-	ast.JSONInsert:  &jsonInsertFunctionClass{baseFunctionClass{ast.JSONInsert, 3, -1}},
-	ast.JSONReplace: &jsonReplaceFunctionClass{baseFunctionClass{ast.JSONReplace, 3, -1}},
-	ast.JSONRemove:  &jsonRemoveFunctionClass{baseFunctionClass{ast.JSONRemove, 2, -1}},
-	ast.JSONMerge:   &jsonMergeFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
-	ast.JSONObject:  &jsonObjectFunctionClass{baseFunctionClass{ast.JSONObject, 0, -1}},
-	ast.JSONArray:   &jsonArrayFunctionClass{baseFunctionClass{ast.JSONArray, 0, -1}},
+	ast.JSONType:          &jsonTypeFunctionClass{baseFunctionClass{ast.JSONType, 1, 1}},
+	ast.JSONExtract:       &jsonExtractFunctionClass{baseFunctionClass{ast.JSONExtract, 2, -1}},
+	ast.JSONUnquote:       &jsonUnquoteFunctionClass{baseFunctionClass{ast.JSONUnquote, 1, 1}},
+	ast.JSONSet:           &jsonSetFunctionClass{baseFunctionClass{ast.JSONSet, 3, -1}},
+	ast.JSONInsert:        &jsonInsertFunctionClass{baseFunctionClass{ast.JSONInsert, 3, -1}},
+	ast.JSONReplace:       &jsonReplaceFunctionClass{baseFunctionClass{ast.JSONReplace, 3, -1}},
+	ast.JSONRemove:        &jsonRemoveFunctionClass{baseFunctionClass{ast.JSONRemove, 2, -1}},
+	ast.JSONMerge:         &jsonMergeFunctionClass{baseFunctionClass{ast.JSONMerge, 2, -1}},
+	ast.JSONObject:        &jsonObjectFunctionClass{baseFunctionClass{ast.JSONObject, 0, -1}},
+	ast.JSONArray:         &jsonArrayFunctionClass{baseFunctionClass{ast.JSONArray, 0, -1}},
+	ast.JSONContains:      &jsonContainsFunctionClass{baseFunctionClass{ast.JSONContains, 2, 3}},
+	ast.JSONContainsPath:  &jsonContainsPathFunctionClass{baseFunctionClass{ast.JSONContainsPath, 3, -1}},
+	ast.JSONValid:         &jsonValidFunctionClass{baseFunctionClass{ast.JSONValid, 1, 1}},
+	ast.JSONArrayAppend:   &jsonArrayAppendFunctionClass{baseFunctionClass{ast.JSONArrayAppend, 3, -1}},
+	ast.JSONArrayInsert:   &jsonArrayInsertFunctionClass{baseFunctionClass{ast.JSONArrayInsert, 3, -1}},
+	ast.JSONMergePatch:    &jsonMergePatchFunctionClass{baseFunctionClass{ast.JSONMergePatch, 2, -1}},
+	ast.JSONMergePreserve: &jsonMergePreserveFunctionClass{baseFunctionClass{ast.JSONMergePreserve, 2, -1}},
+	ast.JSONPretty:        &jsonPrettyFunctionClass{baseFunctionClass{ast.JSONPretty, 1, 1}},
+	ast.JSONQuote:         &jsonQuoteFunctionClass{baseFunctionClass{ast.JSONQuote, 1, 1}},
+	ast.JSONSearch:        &jsonSearchFunctionClass{baseFunctionClass{ast.JSONSearch, 3, -1}},
+	ast.JSONStorageSize:   &jsonStorageSizeFunctionClass{baseFunctionClass{ast.JSONStorageSize, 1, 1}},
+	ast.JSONDepth:         &jsonDepthFunctionClass{baseFunctionClass{ast.JSONDepth, 1, 1}},
+	ast.JSONKeys:          &jsonKeysFunctionClass{baseFunctionClass{ast.JSONKeys, 1, 2}},
+	ast.JSONLength:        &jsonLengthFunctionClass{baseFunctionClass{ast.JSONLength, 1, 2}},
 }

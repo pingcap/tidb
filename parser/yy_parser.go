@@ -19,12 +19,12 @@ import (
 	"strconv"
 	"unicode"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -131,11 +131,11 @@ func (parser *Parser) SetSQLMode(mode mysql.SQLMode) {
 }
 
 // ParseErrorWith returns "You have a syntax error near..." error message compatible with mysql.
-func ParseErrorWith(errstr string, lineno int) *terror.Error {
+func ParseErrorWith(errstr string, lineno int) error {
 	if len(errstr) > mysql.ErrTextLength {
 		errstr = errstr[:mysql.ErrTextLength]
 	}
-	return ErrParse.GenByArgs(mysql.MySQLErrName[mysql.ErrSyntax], errstr, lineno)
+	return ErrParse.GenWithStackByArgs(mysql.MySQLErrName[mysql.ErrSyntax], errstr, lineno)
 }
 
 // The select statement is not at the end of the whole statement, if the last

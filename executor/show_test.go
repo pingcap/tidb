@@ -18,17 +18,20 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -97,6 +100,37 @@ func (s *testSuite) TestShow(c *C) {
 			"  `c3` mediumint(8) UNSIGNED DEFAULT NULL,\n" +
 			"  `c4` int(10) UNSIGNED DEFAULT NULL,\n" +
 			"  `c5` bigint(20) UNSIGNED DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	// Issue #7665
+	tk.MustExec("drop table if exists `decimalschema`")
+	testSQL = "create table `decimalschema` (`c1` decimal);"
+	tk.MustExec(testSQL)
+	testSQL = "show create table decimalschema"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
+			"  `c1` decimal(11,0) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	tk.MustExec("drop table if exists `decimalschema`")
+	testSQL = "create table `decimalschema` (`c1` decimal(15));"
+	tk.MustExec(testSQL)
+	testSQL = "show create table decimalschema"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
+			"  `c1` decimal(15,0) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
@@ -357,14 +391,33 @@ func (s *testSuite) TestShow(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION p0 VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION p1 VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION p2 VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
 	))
 
+	// Test show create table compression type.
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`CREATE TABLE t1 (c1 INT) COMPRESSION="zlib";`)
+	tk.MustQuery("show create table t1").Check(testutil.RowsWithSep("|",
+		"t1 CREATE TABLE `t1` (\n"+
+			"  `c1` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMPRESSION='zlib'",
+	))
+
 	// Test show create table year type
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t(y year, x int, primary key(y));`)
+	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y));`)
 	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `y` year NOT NULL,\n"+
 			"  `x` int(11) DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`y`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
+
+	// Test show create table with zerofill flag
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(id int primary key, val tinyint(10) zerofill);`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `id` int(11) NOT NULL,\n"+
+			"  `val` tinyint(10) UNSIGNED ZEROFILL DEFAULT NULL,\n"+
+			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 }
 
@@ -503,9 +556,9 @@ func (s *testSuite) TestShowErrors(c *C) {
 func (s *testSuite) TestIssue3641(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("show tables;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 	_, err = tk.Exec("show table status;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 }
 
 // TestShow2 is moved from session_test
@@ -524,15 +577,18 @@ func (s *testSuite) TestShow2(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
 	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-
 	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,,Yes,1"))
 
 	tk.MustQuery("show tables").Check(testkit.Rows("t"))
 	tk.MustQuery("show full tables").Check(testkit.Rows("t BASE TABLE"))
-
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	create_time := model.TSConvert2Time(tblInfo.Meta().UpdateTS).String()
 	r := tk.MustQuery("show table status from test like 't'")
 	timeStr := time.Now().Format("2006-01-02 15:04:05")
-	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", timeStr, timeStr, timeStr)))
+	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", create_time, timeStr, timeStr)))
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
 
@@ -564,6 +620,7 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint);`)
 
@@ -584,4 +641,29 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 		c.Assert(row.GetInt64(2), Equals, int64(10))
 		c.Assert(row.GetString(3), Equals, "Compact")
 	}
+	tk.MustExec(`drop table if exists tp;`)
+	tk.MustExec(`create table tp (a int)
+ 		partition by range(a)
+ 		( partition p0 values less than (10),
+		  partition p1 values less than (20),
+		  partition p2 values less than (maxvalue)
+  		);`)
+	rs, err = tk.Exec("show table status from test like 'tp';")
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(errors.ErrorStack(err), Equals, "")
+	c.Assert(rows[0].GetString(16), Equals, "partitioned")
+}
+
+func (s *testSuite) TestShowSlow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// The test result is volatile, because
+	// 1. Slow queries is stored in domain, which may be affected by other tests.
+	// 2. Collecting slow queries is a asynchronous process, check immediately may not get the expected result.
+	// 3. Make slow query like "select sleep(1)" would slow the CI.
+	// So, we just cover the code but do not check the result.
+	tk.MustQuery(`admin show slow recent 3`)
+	tk.MustQuery(`admin show slow top 3`)
+	tk.MustQuery(`admin show slow top internal 3`)
+	tk.MustQuery(`admin show slow top all 3`)
 }

@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
@@ -28,15 +27,16 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -132,13 +132,13 @@ func (s *testStateChangeSuite) TestTwoStates(c *C) {
 	testInfo.sqlInfos[0].sql = "insert into t (c1, c2, c3, c4) value(2, 'b', 'N', '2017-07-02')"
 	testInfo.sqlInfos[1].sql = "insert into t (c1, c2, c3, d3, c4) value(3, 'b', 'N', 'a', '2017-07-03')"
 	unknownColErr := errors.New("unknown column d3")
-	testInfo.sqlInfos[1].cases[0].expectedErr = unknownColErr
-	testInfo.sqlInfos[1].cases[1].expectedErr = unknownColErr
-	testInfo.sqlInfos[1].cases[2].expectedErr = unknownColErr
-	testInfo.sqlInfos[1].cases[3].expectedErr = unknownColErr
+	testInfo.sqlInfos[1].cases[0].expectedCompileErr = unknownColErr
+	testInfo.sqlInfos[1].cases[1].expectedCompileErr = unknownColErr
+	testInfo.sqlInfos[1].cases[2].expectedCompileErr = unknownColErr
+	testInfo.sqlInfos[1].cases[3].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[2].sql = "update t set c2 = 'c2_update'"
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')'"
-	testInfo.sqlInfos[3].cases[4].expectedErr = errors.New("Column count doesn't match value count at row 1")
+	testInfo.sqlInfos[3].cases[4].expectedCompileErr = errors.New("Column count doesn't match value count at row 1")
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
 	s.test(c, "", alterTableSQL, testInfo)
 	// TODO: Add more DDL statements.
@@ -227,10 +227,11 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 }
 
 type stateCase struct {
-	session     session.Session
-	rawStmt     ast.StmtNode
-	stmt        ast.Statement
-	expectedErr error
+	session            session.Session
+	rawStmt            ast.StmtNode
+	stmt               ast.Statement
+	expectedExecErr    error
+	expectedCompileErr error
 }
 
 type sqlInfo struct {
@@ -299,6 +300,13 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 			return errors.Trace(err)
 		}
 		c.stmt, err = compiler.Compile(ctx, c.rawStmt)
+		if c.expectedCompileErr != nil {
+			if err == nil {
+				err = errors.Errorf("expected error %s but got nil", c.expectedCompileErr)
+			} else if strings.Contains(err.Error(), c.expectedCompileErr.Error()) {
+				err = nil
+			}
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -309,11 +317,14 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 func (t *testExecInfo) execSQL(idx int) error {
 	for _, sqlInfo := range t.sqlInfos {
 		c := sqlInfo.cases[idx]
+		if c.expectedCompileErr != nil {
+			continue
+		}
 		_, err := c.stmt.Exec(context.TODO())
-		if c.expectedErr != nil {
+		if c.expectedExecErr != nil {
 			if err == nil {
-				err = errors.Errorf("expected error %s but got nil", c.expectedErr)
-			} else if strings.Contains(err.Error(), c.expectedErr.Error()) {
+				err = errors.Errorf("expected error %s but got nil", c.expectedExecErr)
+			} else if strings.Contains(err.Error(), c.expectedExecErr.Error()) {
 				err = nil
 			}
 		}
@@ -336,6 +347,56 @@ type sqlWithErr struct {
 type expectQuery struct {
 	sql  string
 	rows []string
+}
+
+func (s *testStateChangeSuite) TestAppendEnum(c *C) {
+	_, err := s.se.Execute(context.Background(), `create table t (
+			c1 varchar(64),
+			c2 enum('N','Y') not null default 'N',
+			c3 timestamp on update current_timestamp,
+			c4 int primary key,
+			unique key idx2 (c2, c3))`)
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table t")
+	_, err = s.se.Execute(context.Background(), "insert into t values('a', 'N', '2017-07-01', 8)")
+	c.Assert(err, IsNil)
+	// Make sure these sqls use the the plan of index scan.
+	_, err = s.se.Execute(context.Background(), "drop stats t")
+	c.Assert(err, IsNil)
+	se, err := session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "insert into t values('a', 'A', '2018-09-19', 9)")
+	c.Assert(err.Error(), Equals, "[table:1366]Incorrect enum value: 'A' for column 'c2' at row 1")
+	failAlterTableSQL1 := "alter table t change c2 c2 enum('N') DEFAULT 'N'"
+	_, err = s.se.Execute(context.Background(), failAlterTableSQL1)
+	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column the number of enum column's elements is less than the original: 2")
+	failAlterTableSQL2 := "alter table t change c2 c2 int default 0"
+	_, err = s.se.Execute(context.Background(), failAlterTableSQL2)
+	c.Assert(err.Error(), Equals, "[ddl:203]unsupported modify column charset binary not match origin utf8")
+	alterTableSQL := "alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'"
+	_, err = s.se.Execute(context.Background(), alterTableSQL)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "insert into t values('a', 'A', '2018-09-20', 10)")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "insert into t (c1, c3, c4) values('a', '2018-09-21', 11)")
+	c.Assert(err, IsNil)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db_state")
+	result, err := s.execQuery(tk, "select c4, c2 from t order by c4 asc")
+	c.Assert(err, IsNil)
+	expected := []string{"8 N", "10 A", "11 A"}
+	checkResult(result, testkit.Rows(expected...))
+
+	_, err = s.se.Execute(context.Background(), "update t set c2='N' where c4 = 10")
+	c.Assert(err, IsNil)
+	result, err = s.execQuery(tk, "select c2 from t where c4 = 10")
+	c.Assert(err, IsNil)
+	expected = []string{"8 N", "10 N", "11 A"}
+	checkResult(result, testkit.Rows(expected...))
 }
 
 // https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
@@ -504,6 +565,29 @@ func (s *testStateChangeSuite) TestShowIndex(c *C) {
 	c.Assert(err, IsNil)
 	callback = &ddl.TestDDLCallback{}
 	d.(ddl.DDLForTest).SetHook(callback)
+
+	_, err = s.se.Execute(context.Background(), "set @@tidb_enable_table_partition = 1")
+	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), `create table tr(
+		id int, name varchar(50), 
+		purchased date
+	)
+	partition by range( year(purchased) ) (
+    	partition p0 values less than (1990),
+    	partition p1 values less than (1995),
+    	partition p2 values less than (2000),
+    	partition p3 values less than (2005),
+    	partition p4 values less than (2010),
+    	partition p5 values less than (2015)
+   	);`)
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table tr")
+	_, err = s.se.Execute(context.Background(), "create index idx1 on tr (purchased);")
+	c.Assert(err, IsNil)
+	result, err = s.execQuery(tk, "show index from tr;")
+	c.Assert(err, IsNil)
+	err = checkResult(result, testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil>  BTREE  ", "t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE  "))
 }
 
 func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
@@ -580,15 +664,14 @@ func (s *testStateChangeSuite) testControlParallelExecSQL(c *C, sql1, sql2 strin
 		if times != 0 {
 			return
 		}
-		var qLen int64
-		var err1 error
+		var qLen int
 		for {
 			kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
-				m := meta.NewMeta(txn)
-				qLen, err1 = m.DDLJobQueueLen()
+				jobs, err1 := admin.GetDDLJobs(txn)
 				if err1 != nil {
 					return err1
 				}
+				qLen = len(jobs)
 				return nil
 			})
 			if qLen == 2 {

@@ -19,13 +19,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 func TestT(t *testing.T) {
@@ -86,8 +86,8 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "first", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
-		"start", "global", "tables", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
-		"value", "warnings", "year", "now", "substr", "substring", "mode", "any", "some", "user", "identified",
+		"start", "global", "tables", "tablespace", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
+		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "row", "quarter", "escape", "grants", "status", "fields", "triggers",
 		"delay_key_write", "isolation", "partitions", "repeatable", "committed", "uncommitted", "only", "serializable", "level",
@@ -198,6 +198,12 @@ func (s *testParserSuite) TestSimple(c *C) {
 
 	// for #4909, support numericType `signed` filedOpt.
 	src = "CREATE TABLE t(_sms smallint signed, _smu smallint unsigned);"
+	_, err = parser.ParseOneStmt(src, "", "")
+	c.Assert(err, IsNil)
+
+	// for #7371, support NATIONAL CHARACTER
+	// reference link: https://dev.mysql.com/doc/refman/5.7/en/charset-national.html
+	src = "CREATE TABLE t(c1 NATIONAL CHARACTER(10));"
 	_, err = parser.ParseOneStmt(src, "", "")
 	c.Assert(err, IsNil)
 
@@ -352,6 +358,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// load data
 		{"load data infile '/tmp/t.csv' into table t", true},
+		{"load data infile '/tmp/t.csv' into table t character set utf8", true},
 		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab'", true},
 		{"load data infile '/tmp/t.csv' into table t columns terminated by 'ab'", true},
 		{"load data infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b'", true},
@@ -365,6 +372,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t columns terminated by 'ab'", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b'", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*'", true},
+		{"load data local infile '/tmp/t.csv' into table t character set utf8 fields terminated by 'ab' enclosed by 'b' escaped by '*'", true},
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab'", true},
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy'", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy'", true},
@@ -375,10 +383,17 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t columns terminated by 'ab' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t character set utf8 fields terminated by 'ab' enclosed by 'b' escaped by '*' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy' (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t character set utf8 fields terminated by 'ab' lines terminated by 'xy' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t (a,b) fields terminated by 'ab'", false},
+		{"load data local infile '/tmp/t.csv' into table t ignore 1 lines", true},
+		{"load data local infile '/tmp/t.csv' into table t ignore -1 lines", false},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' (a,b) ignore 1 lines", false},
+		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy' ignore 1 lines", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*' ignore 1 lines (a,b)", true},
 
 		// select for update
 		{"SELECT * from t for update", true},
@@ -413,6 +428,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// for admin
 		{"admin show ddl;", true},
 		{"admin show ddl jobs;", true},
+		{"admin show ddl jobs 20;", true},
+		{"admin show ddl jobs -1;", false},
 		{"admin show ddl job queries 1", true},
 		{"admin show ddl job queries 1, 2, 3, 4", true},
 		{"admin check table t1, t2;", true},
@@ -423,6 +440,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin cancel ddl jobs 1, 2", true},
 		{"admin recover index t1 idx_a", true},
 		{"admin cleanup index t1 idx_a", true},
+		{"admin show slow top 3", true},
+		{"admin show slow top internal 7", true},
+		{"admin show slow top all 9", true},
+		{"admin show slow recent 11", true},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
@@ -616,6 +637,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"flush tables tbl1, tbl2, tbl3", true},
 		{"flush tables tbl1, tbl2, tbl3 with read lock", true},
 		{"flush privileges", true},
+		{"flush status", true},
 	}
 	s.RunTest(c, table)
 }
@@ -1428,6 +1450,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) PACK_KEYS = 1", true},
 		{"create table t (c int) PACK_KEYS = 0", true},
 		{"create table t (c int) PACK_KEYS = DEFAULT", true},
+		{`create table testTableCompression (c VARCHAR(15000)) compression="ZLIB";`, true},
+		{`create table t1 (c1 int) compression="zlib";`, true},
+
 		// partition option
 		{"create table t (c int) PARTITION BY HASH (c) PARTITIONS 32;", true},
 		{"create table t (c int) PARTITION BY RANGE (Year(VDate)) (PARTITION p1980 VALUES LESS THAN (1980) ENGINE = MyISAM, PARTITION p1990 VALUES LESS THAN (1990) ENGINE = MyISAM, PARTITION pothers VALUES LESS THAN MAXVALUE ENGINE = MyISAM)", true},
@@ -1678,6 +1703,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t FORCE", true},
 		{"ALTER TABLE t DROP INDEX;", false},
 		{"ALTER TABLE t DROP COLUMN a CASCADE", true},
+		{`ALTER TABLE testTableCompression COMPRESSION="LZ4";`, true},
+		{`ALTER TABLE t1 COMPRESSION="zlib";`, true},
 
 		// For #6405
 		{"ALTER TABLE t RENAME KEY a TO b;", true},
@@ -1806,6 +1833,7 @@ func (s *testParserSuite) TestType(c *C) {
 
 		// for year
 		{"create table t (y year(4), y1 year)", true},
+		{"create table t (y year(4) unsigned zerofill zerofill, y1 year signed unsigned zerofill)", true},
 
 		// for national
 		{"create table t (c1 national char(2), c2 national varchar(2))", true},
@@ -1839,6 +1867,9 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"CREATE USER 'uesr1'@'localhost'", true},
 		{"CREATE USER 'uesr1'@`localhost`", true},
 		{"CREATE USER `uesr1`@'localhost'", true},
+		{"create user 'bug19354014user'@'%' identified WITH mysql_native_password", true},
+		{"create user 'bug19354014user'@'%' identified WITH mysql_native_password by 'new-password'", true},
+		{"create user 'bug19354014user'@'%' identified WITH mysql_native_password as 'hashstring'", true},
 		{`CREATE USER IF NOT EXISTS 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY 'new-password'`, true},
 		{`CREATE USER 'root'@'localhost' IDENTIFIED BY PASSWORD 'hashstring'`, true},
@@ -2274,6 +2305,8 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t1 index", true},
 		{"analyze table t1 index a", true},
 		{"analyze table t1 index a,b", true},
+		{"analyze table t with 4 buckets", true},
+		{"analyze table t index a with 4 buckets", true},
 	}
 	s.RunTest(c, table)
 }
@@ -2351,4 +2384,44 @@ func (s *testParserSuite) TestSideEffect(c *C) {
 
 	_, err = parser.ParseOneStmt("show tables;", "", "")
 	c.Assert(err, IsNil)
+}
+
+func (s *testParserSuite) TestTablePartition(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{"ALTER TABLE t1 ADD PARTITION (PARTITION `p5` VALUES LESS THAN (2010) COMMENT 'APSTART \\' APEND')", true},
+		{"ALTER TABLE t1 ADD PARTITION (PARTITION `p5` VALUES LESS THAN (2010) COMMENT = 'xxx')", true},
+		{`CREATE TABLE t1 (a int not null,b int not null,c int not null,primary key(a,b))
+		partition by range (a)
+		partitions 3
+		(partition x1 values less than (5),
+		 partition x2 values less than (10),
+		 partition x3 values less than maxvalue);`, true},
+		{"CREATE TABLE t1 (a int not null) partition by range (a) (partition x1 values less than (5) tablespace ts1)", true},
+		{`create table t (a int) partition by range (a)
+		  (PARTITION p0 VALUES LESS THAN (63340531200) ENGINE = MyISAM,
+		   PARTITION p1 VALUES LESS THAN (63342604800) ENGINE MyISAM)`, true},
+		{`create table t (a int) partition by range (a)
+		  (PARTITION p0 VALUES LESS THAN (63340531200) ENGINE = MyISAM COMMENT 'xxx',
+		   PARTITION p1 VALUES LESS THAN (63342604800) ENGINE = MyISAM)`, true},
+		{`create table t1 (a int) partition by range (a)
+		  (PARTITION p0 VALUES LESS THAN (63340531200) COMMENT 'xxx' ENGINE = MyISAM ,
+		   PARTITION p1 VALUES LESS THAN (63342604800) ENGINE = MyISAM)`, true},
+		{`create table t (id int)
+		    partition by range (id)
+		    subpartition by key (id) subpartitions 2
+		    (partition p0 values less than (42))`, true},
+		{`create table t (id int)
+		    partition by range (id)
+		    subpartition by hash (id)
+		    (partition p0 values less than (42))`, true},
+	}
+	s.RunTest(c, table)
+
+	// Check comment content.
+	parser := New()
+	stmt, err := parser.ParseOneStmt("create table t (id int) partition by range (id) (partition p0 values less than (10) comment 'check')", "", "")
+	c.Assert(err, IsNil)
+	createTable := stmt.(*ast.CreateTableStmt)
+	c.Assert(createTable.Partition.Definitions[0].Comment, Equals, "check")
 }

@@ -20,7 +20,6 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -60,7 +60,7 @@ type IndexLookUpJoin struct {
 	joinResult *chunk.Chunk
 	innerIter  chunk.Iterator
 
-	resultGenerator joinResultGenerator
+	joiner joiner
 
 	indexRanges   []*ranger.Range
 	keyOff2IdxOff []int
@@ -90,8 +90,9 @@ type lookUpJoinTask struct {
 	lookupMap         *mvmap.MVMap
 	matchedInners     []chunk.Row
 
-	doneCh chan error
-	cursor int
+	doneCh   chan error
+	cursor   int
+	hasMatch bool
 
 	memTracker *memory.Tracker // track memory usage.
 }
@@ -205,16 +206,19 @@ func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 
 		outerRow := task.outerResult.GetRow(task.cursor)
-		if e.innerIter.Len() == 0 {
-			err = e.resultGenerator.emit(outerRow, nil, chk)
-		} else if e.innerIter.Current() != e.innerIter.End() {
-			err = e.resultGenerator.emit(outerRow, e.innerIter, chk)
-		}
-		if err != nil {
-			return errors.Trace(err)
+		if e.innerIter.Current() != e.innerIter.End() {
+			matched, err := e.joiner.tryToMatch(outerRow, e.innerIter, chk)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			task.hasMatch = task.hasMatch || matched
 		}
 		if e.innerIter.Current() == e.innerIter.End() {
+			if !task.hasMatch {
+				e.joiner.onMissMatch(outerRow, chk)
+			}
 			task.cursor++
+			task.hasMatch = false
 		}
 		if chk.NumRows() == e.maxChunkSize {
 			return nil
@@ -313,11 +317,11 @@ func (ow *outerWorker) pushToChan(ctx context.Context, task *lookUpJoinTask, dst
 // buildTask builds a lookUpJoinTask and read outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task.
 func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
-	ow.executor.newChunk()
+	ow.executor.newFirstChunk()
 
 	task := &lookUpJoinTask{
 		doneCh:            make(chan error, 1),
-		outerResult:       ow.executor.newChunk(),
+		outerResult:       ow.executor.newFirstChunk(),
 		encodedLookUpKeys: chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, ow.ctx.GetSessionVars().MaxChunkSize),
 		lookupMap:         mvmap.NewMVMap(),
 	}
@@ -507,7 +511,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		return errors.Trace(err)
 	}
 	defer terror.Call(innerExec.Close)
-	innerResult := chunk.NewList(innerExec.retTypes(), iw.ctx.GetSessionVars().MaxChunkSize)
+	innerResult := chunk.NewList(innerExec.retTypes(), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel("inner result")
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
@@ -519,7 +523,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			break
 		}
 		innerResult.Add(iw.executorChk)
-		iw.executorChk = innerExec.newChunk()
+		iw.executorChk = innerExec.newFirstChunk()
 	}
 	task.innerResult = innerResult
 	return nil
@@ -532,6 +536,10 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 		chk := task.innerResult.GetChunk(i)
 		for j := 0; j < chk.NumRows(); j++ {
 			innerRow := chk.GetRow(j)
+			if iw.hasNullInJoinKey(innerRow) {
+				continue
+			}
+
 			keyBuf = keyBuf[:0]
 			for _, keyCol := range iw.keyCols {
 				d := innerRow.GetDatum(keyCol, iw.rowTypes[keyCol])
@@ -547,6 +555,15 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 		}
 	}
 	return nil
+}
+
+func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
+	for _, ordinal := range iw.keyCols {
+		if row.IsNull(ordinal) {
+			return true
+		}
+	}
+	return false
 }
 
 // Close implements the Executor interface.

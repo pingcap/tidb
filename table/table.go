@@ -39,6 +39,15 @@ const (
 	MemoryTable
 )
 
+const (
+	// DirtyTableAddRow is the constant for dirty table operation type.
+	DirtyTableAddRow = iota
+	// DirtyTableDeleteRow is the constant for dirty table operation type.
+	DirtyTableDeleteRow
+	// DirtyTableTruncate is the constant for dirty table operation type.
+	DirtyTableTruncate
+)
+
 var (
 	// ErrColumnCantNull is used for inserting null to a not null column.
 	ErrColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, mysql.MySQLErrName[mysql.ErrBadNull])
@@ -68,6 +77,8 @@ var (
 	ErrInvalidRecordKey = terror.ClassTable.New(codeInvalidRecordKey, "invalid record key")
 	// ErrTruncateWrongValue returns for truncate wrong value for field.
 	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "incorrect value")
+	// ErrTruncatedWrongValueForField returns for truncate wrong value for field.
+	ErrTruncatedWrongValueForField = terror.ClassTable.New(codeTruncateWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
 	// ErrTrgInvalidCreationCtx happens when inserting a value outside the table partitions.
 	ErrTrgInvalidCreationCtx = terror.ClassTable.New(codeTrgInvalidCreationCtx, "locate partition failed")
 )
@@ -145,12 +156,20 @@ type Table interface {
 	Type() Type
 }
 
+// PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
+// PhysicalID is a ID that can be used to construct a key ranges, all the data in the key range belongs to the corresponding PhysicalTable.
+// For a non-partitioned table, its PhysicalID equals to its TableID; For a partition of a partitioned table, its PhysicalID is the partition's ID.
+type PhysicalTable interface {
+	Table
+	GetPhysicalID() int64
+}
+
 // PartitionedTable is a Table, and it has a GetPartition() method.
-// GetPartition() gets the partition from a partition table by partitionID, its
-// return value is a Table because partition implements the Table interface.
+// GetPartition() gets the partition from a partition table by a physical table ID,
 type PartitionedTable interface {
 	Table
-	GetPartition(partitionID int64) Table
+	GetPartition(physicalID int64) PhysicalTable
+	GetPartitionByRow(sessionctx.Context, []types.Datum) (Table, error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

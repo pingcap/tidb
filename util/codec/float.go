@@ -16,7 +16,7 @@ package codec
 import (
 	"math"
 
-	"github.com/juju/errors"
+	"github.com/pkg/errors"
 )
 
 func encodeFloatToCmpUint64(f float64) uint64 {

@@ -18,11 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
@@ -30,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -54,7 +53,7 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		// Variable is case insensitive, we use lower case.
 		if v.Name == ast.SetNames {
 			// This is set charset stmt.
-			dt, err := v.Expr.(*expression.Constant).Eval(nil)
+			dt, err := v.Expr.(*expression.Constant).Eval(chunk.Row{})
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -72,7 +71,7 @@ func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
-			value, err := v.Expr.Eval(nil)
+			value, err := v.Expr.Eval(chunk.Row{})
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -115,7 +114,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 	sessionVars := e.ctx.GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
-		return variable.UnknownSystemVar.GenByArgs(name)
+		return variable.UnknownSystemVar.GenWithStackByArgs(name)
 	}
 	if sysVar.Scope == variable.ScopeNone {
 		return errors.Errorf("Variable '%s' is a read only variable", name)
@@ -181,13 +180,6 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		log.Infof("con:%d %s=%s", sessionVars.ConnectionID, name, valStr)
 	}
 
-	if name == variable.TxnIsolation {
-		isoLevel, _ := sessionVars.GetSystemVar(variable.TxnIsolation)
-		if isoLevel == ast.ReadCommitted {
-			e.ctx.Txn().SetOption(kv.IsolationLevel, kv.RC)
-		}
-	}
-
 	return nil
 }
 
@@ -209,7 +201,7 @@ func validateSnapshot(ctx sessionctx.Context, snapshotTS uint64) error {
 	}
 	safePointTS := variable.GoTimeToTS(safePointTime)
 	if safePointTS > snapshotTS {
-		return variable.ErrSnapshotTooOld.GenByArgs(safePointString)
+		return variable.ErrSnapshotTooOld.GenWithStackByArgs(safePointString)
 	}
 	return nil
 }
@@ -246,7 +238,7 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		}
 		return
 	}
-	value, err = v.Expr.Eval(nil)
+	value, err = v.Expr.Eval(chunk.Row{})
 	return value, errors.Trace(err)
 }
 

@@ -25,11 +25,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 )
 
 type comparableRow struct {
@@ -480,10 +480,11 @@ func (fs *FileSorter) Input(key []types.Datum, val []types.Datum, handle int64) 
 		}
 		if assigned {
 			break
-		} else {
-			// all workers are busy now, cooldown and retry
-			time.Sleep(cooldownTime)
 		}
+
+		// all workers are busy now, cooldown and retry
+		time.Sleep(cooldownTime)
+
 		if time.Since(origin) >= abortTime {
 			// weird: all workers are busy for at least 1 min
 			// choose to abort for safety

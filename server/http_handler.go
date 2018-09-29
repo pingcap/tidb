@@ -28,7 +28,6 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/juju/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/config"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -334,7 +334,20 @@ type ddlHistoryJobHandler struct {
 	*tikvHandlerTool
 }
 
-// valueHandle is the handler for get value.
+// ddlResignOwnerHandler is the handler for resigning ddl owner.
+type ddlResignOwnerHandler struct {
+	store kv.Storage
+}
+
+type serverInfoHandler struct {
+	*tikvHandlerTool
+}
+
+type allServerInfoHandler struct {
+	*tikvHandlerTool
+}
+
+// valueHandler is the handler for get value.
 type valueHandler struct {
 }
 
@@ -345,7 +358,7 @@ const (
 	opStopTableScatter = "stop-scatter-table"
 )
 
-// mvccTxnHandler is the handler for txn debugger
+// mvccTxnHandler is the handler for txn debugger.
 type mvccTxnHandler struct {
 	*tikvHandlerTool
 	op string
@@ -550,6 +563,17 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				return
 			}
 		}
+		if ddlSlowThreshold := req.Form.Get("ddl_slow_threshold"); ddlSlowThreshold != "" {
+			threshold, err1 := strconv.Atoi(ddlSlowThreshold)
+			if err1 != nil {
+				writeError(w, err1)
+				return
+			}
+			if threshold > 0 {
+				atomic.StoreUint32(&variable.DDLSlowOprThreshold, uint32(threshold))
+			}
+		}
+
 	} else {
 		writeData(w, config.GetGlobalConfig())
 	}
@@ -595,7 +619,7 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			writeData(w, tbsInfo)
 			return
 		}
-		writeError(w, infoschema.ErrDatabaseNotExists.GenByArgs(dbName))
+		writeError(w, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName))
 		return
 	}
 
@@ -607,14 +631,14 @@ func (h schemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if tid < 0 {
-			writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 			return
 		}
 		if data, ok := schema.TableByID(int64(tid)); ok {
 			writeData(w, data.Meta())
 			return
 		}
-		writeError(w, infoschema.ErrTableNotExists.Gen("Table which ID = %s does not exist.", tableID))
+		writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 		return
 	}
 
@@ -692,6 +716,37 @@ func (h ddlHistoryJobHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	}
 	writeData(w, jobs)
 	return
+}
+
+func (h ddlResignOwnerHandler) resignDDLOwner() error {
+	dom, err := session.GetDomain(h.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	ownerMgr := dom.DDL().OwnerManager()
+	err = ownerMgr.ResignOwner(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// ServeHTTP handles request of resigning ddl owner.
+func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeError(w, errors.Errorf("This api only support POST method."))
+		return
+	}
+
+	err := h.resignDDLOwner()
+	if err != nil {
+		log.Error(err)
+		writeError(w, err)
+		return
+	}
+
+	writeData(w, "success!")
 }
 
 func (h tableHandler) getPDAddr() ([]string, error) {
@@ -1224,17 +1279,86 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	startKey := []byte("")
-	endKey := []byte("")
-	dbName := params[pDBName]
-	if len(dbName) > 0 {
-		tableID, err := h.getTableID(params[pDBName], params[pTableName])
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		startKey = tablecodec.EncodeTablePrefix(tableID)
-		endKey = tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
+	tableID, err := h.getTableID(params[pDBName], params[pTableName])
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	startKey := tablecodec.EncodeTablePrefix(tableID)
+	endKey := tablecodec.EncodeRowKeyWithHandle(tableID, math.MaxInt64)
 	return h.getMvccByStartTs(uint64(startTS), startKey, endKey)
+}
+
+// serverInfo is used to report the servers info when do http request.
+type serverInfo struct {
+	IsOwner bool `json:"is_owner"`
+	*domain.ServerInfo
+}
+
+// ServeHTTP handles request of ddl server info.
+func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	do, err := session.GetDomain(h.store.(kv.Storage))
+	if err != nil {
+		writeError(w, errors.New("create session error"))
+		log.Error(err)
+		return
+	}
+	info := serverInfo{}
+	info.ServerInfo = do.InfoSyncer().GetServerInfo()
+	info.IsOwner = do.DDL().OwnerManager().IsOwner()
+	writeData(w, info)
+}
+
+// clusterServerInfo is used to report cluster servers info when do http request.
+type clusterServerInfo struct {
+	ServersNum                   int                           `json:"servers_num,omitempty"`
+	OwnerID                      string                        `json:"owner_id"`
+	IsAllServerVersionConsistent bool                          `json:"is_all_server_version_consistent,omitempty"`
+	AllServersDiffVersions       []domain.ServerVersionInfo    `json:"all_servers_diff_versions,omitempty"`
+	AllServersInfo               map[string]*domain.ServerInfo `json:"all_servers_info,omitempty"`
+}
+
+// ServeHTTP handles request of all ddl servers info.
+func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	do, err := session.GetDomain(h.store.(kv.Storage))
+	if err != nil {
+		writeError(w, errors.New("create session error"))
+		log.Error(err)
+		return
+	}
+	ctx := context.Background()
+	allServersInfo, err := do.InfoSyncer().GetAllServerInfo(ctx)
+	if err != nil {
+		writeError(w, errors.New("ddl server information not found"))
+		log.Error(err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	ownerID, err := do.DDL().OwnerManager().GetOwnerID(ctx)
+	cancel()
+	if err != nil {
+		writeError(w, errors.New("ddl server information not found"))
+		log.Error(err)
+		return
+	}
+	allVersionsMap := map[domain.ServerVersionInfo]struct{}{}
+	var allVersions []domain.ServerVersionInfo
+	for _, v := range allServersInfo {
+		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
+			continue
+		}
+		allVersionsMap[v.ServerVersionInfo] = struct{}{}
+		allVersions = append(allVersions, v.ServerVersionInfo)
+	}
+	clusterInfo := clusterServerInfo{
+		ServersNum: len(allServersInfo),
+		OwnerID:    ownerID,
+		// len(allVersions) = 1 indicates there has only 1 tidb version in cluster, so all server versions are consistent.
+		IsAllServerVersionConsistent: len(allVersions) == 1,
+		AllServersInfo:               allServersInfo,
+	}
+	// if IsAllServerVersionConsistent is false, return the all tidb servers version.
+	if !clusterInfo.IsAllServerVersionConsistent {
+		clusterInfo.AllServersDiffVersions = allVersions
+	}
+	writeData(w, clusterInfo)
 }

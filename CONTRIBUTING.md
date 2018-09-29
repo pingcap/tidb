@@ -7,7 +7,7 @@ may be different than many other projects you have been involved in. This docume
 
 A Contributor refers to the person who contributes to the following projects:
 - TiDB: https://github.com/pingcap/tidb 
-- TiKV: https://github.com/pingcap/tikv 
+- TiKV: https://github.com/tikv/tikv 
 - TiSpark: https://github.com/pingcap/tispark 
 - PD: https://github.com/pingcap/pd 
 - Docs: https://github.com/pingcap/docs 
@@ -78,7 +78,7 @@ export PATH=$PATH:$GOPATH/bin
 TiDB uses [`dep`](https://github.com/golang/dep) to manage dependencies.
 
 ```sh
-go get -u  github.com/golang/dep/cmd/dep
+go get -u github.com/golang/dep/cmd/dep
 ```
 
 ## Workflow

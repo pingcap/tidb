@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -59,6 +60,7 @@ type StatementContext struct {
 	UseCache               bool
 	PadCharToFullLength    bool
 	BatchCheck             bool
+	InNullRejectCheck      bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -67,6 +69,7 @@ type StatementContext struct {
 		foundRows         uint64
 		warnings          []SQLWarn
 		histogramsNotLoad bool
+		execDetails       execdetails.ExecDetails
 	}
 
 	// Copied from SessionVars.TimeZone.
@@ -235,4 +238,26 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.foundRows = 0
 	sc.mu.warnings = nil
 	sc.mu.Unlock()
+}
+
+// MergeExecDetails merges a single region execution details into self, used to print
+// the information in slow query log.
+func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails) {
+	sc.mu.Lock()
+	sc.mu.execDetails.ProcessTime += details.ProcessTime
+	sc.mu.execDetails.WaitTime += details.WaitTime
+	sc.mu.execDetails.BackoffTime += details.BackoffTime
+	sc.mu.execDetails.RequestCount++
+	sc.mu.execDetails.TotalKeys += details.TotalKeys
+	sc.mu.execDetails.ProcessedKeys += details.ProcessedKeys
+	sc.mu.Unlock()
+}
+
+// GetExecDetails gets the execution details for the statement.
+func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
+	var details execdetails.ExecDetails
+	sc.mu.Lock()
+	details = sc.mu.execDetails
+	sc.mu.Unlock()
+	return details
 }

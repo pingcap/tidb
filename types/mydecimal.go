@@ -17,9 +17,9 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 )
 
 // RoundMode is the type for round mode.
@@ -83,6 +83,24 @@ func add(a, b, carry int32) (int32, int32) {
 		carry = 0
 	}
 	return sum, carry
+}
+
+// add2 adds a and b and carry, returns the sum and new carry.
+// It is only used in DecimalMul.
+func add2(a, b, carry int32) (int32, int32) {
+	sum := int64(a) + int64(b) + int64(carry)
+	if sum >= wordBase {
+		carry = 1
+		sum -= wordBase
+	} else {
+		carry = 0
+	}
+
+	if sum >= wordBase {
+		sum -= wordBase
+		carry++
+	}
+	return int32(sum), carry
 }
 
 // sub subtracts b and carry from a, returns the diff and new carry.
@@ -1391,6 +1409,8 @@ func DecimalNeg(from *MyDecimal) *MyDecimal {
 }
 
 // DecimalAdd adds two decimals, sets the result to 'to'.
+// Note: DO NOT use `from1` or `from2` as `to` since the metadata
+// of `to` may be changed during evaluating.
 func DecimalAdd(from1, from2, to *MyDecimal) error {
 	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
 	if from1.negative == from2.negative {
@@ -1795,7 +1815,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 			p := int64(from1.wordBuf[idx1]) * int64(from2.wordBuf[idx2])
 			hi = int32(p / wordBase)
 			lo = int32(p - int64(hi)*wordBase)
-			to.wordBuf[idxTo], carry = add(to.wordBuf[idxTo], lo, carry)
+			to.wordBuf[idxTo], carry = add2(to.wordBuf[idxTo], lo, carry)
 			carry += hi
 			idx2--
 			idxTo--
@@ -1804,7 +1824,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 			if idxTo < 0 {
 				return ErrOverflow
 			}
-			to.wordBuf[idxTo], carry = add(to.wordBuf[idxTo], 0, carry)
+			to.wordBuf[idxTo], carry = add2(to.wordBuf[idxTo], 0, carry)
 		}
 		for idxTo--; carry > 0; idxTo-- {
 			if idxTo < 0 {
@@ -2087,7 +2107,14 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 		}
 		idxTo = 0
 
-		wordsIntTo = digitsToWords(prec1-frac1) - start1
+		digitsIntTo = prec1 - frac1 - start1*digitsPerWord
+		if digitsIntTo < 0 {
+			/* If leading zeroes in the fractional part were earlier stripped */
+			wordsIntTo = digitsIntTo / digitsPerWord
+		} else {
+			wordsIntTo = digitsToWords(digitsIntTo)
+		}
+
 		wordsFracTo = digitsToWords(int(to.digitsFrac))
 		err = nil
 		if wordsIntTo == 0 && wordsFracTo == 0 {

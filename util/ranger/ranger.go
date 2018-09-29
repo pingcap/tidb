@@ -17,15 +17,18 @@ import (
 	"bytes"
 	"math"
 	"sort"
+	"unicode/utf8"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 )
 
 func validInterval(sc *stmtctx.StatementContext, low, high point) (bool, error) {
@@ -70,6 +73,7 @@ func points2Ranges(sc *stmtctx.StatementContext, rangePoints []point, tp *types.
 		if mysql.HasNotNullFlag(tp.Flag) && endPoint.value.Kind() == types.KindNull {
 			continue
 		}
+
 		ran := &Range{
 			LowVal:      []types.Datum{startPoint.value},
 			LowExclude:  startPoint.excl,
@@ -326,7 +330,7 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 
 	// Take prefix index into consideration.
 	if hasPrefix(lengths) {
-		fixPrefixColRange(ranges, lengths)
+		fixPrefixColRange(ranges, lengths, newTp)
 	}
 
 	if len(ranges) > 0 && len(ranges[0].LowVal) < len(cols) {
@@ -409,23 +413,37 @@ func hasPrefix(lengths []int) bool {
 	return false
 }
 
-func fixPrefixColRange(ranges []*Range, lengths []int) {
+func fixPrefixColRange(ranges []*Range, lengths []int, tp []*types.FieldType) {
 	for _, ran := range ranges {
 		for i := 0; i < len(ran.LowVal); i++ {
-			fixRangeDatum(&ran.LowVal[i], lengths[i])
+			fixRangeDatum(&ran.LowVal[i], lengths[i], tp[i])
 		}
 		ran.LowExclude = false
 		for i := 0; i < len(ran.HighVal); i++ {
-			fixRangeDatum(&ran.HighVal[i], lengths[i])
+			fixRangeDatum(&ran.HighVal[i], lengths[i], tp[i])
 		}
 		ran.HighExclude = false
 	}
 }
 
-func fixRangeDatum(v *types.Datum, length int) {
+func fixRangeDatum(v *types.Datum, length int, tp *types.FieldType) {
 	// If this column is prefix and the prefix length is smaller than the range, cut it.
-	if length != types.UnspecifiedLength && length < len(v.GetBytes()) {
-		v.SetBytes(v.GetBytes()[:length])
+	// In case of UTF8, prefix should be cut by characters rather than bytes
+	if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+		colCharset := tp.Charset
+		colValue := v.GetBytes()
+		isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+		if isUTF8Charset {
+			if length != types.UnspecifiedLength && utf8.RuneCount(colValue) > length {
+				rs := bytes.Runes(colValue)
+				truncateStr := string(rs[:length])
+				// truncate value and limit its length
+				v.SetString(truncateStr)
+			}
+		} else if length != types.UnspecifiedLength && len(colValue) > length {
+			// truncate value and limit its length
+			v.SetBytes(colValue[:length])
+		}
 	}
 }
 
@@ -437,12 +455,50 @@ func newFieldType(tp *types.FieldType) *types.FieldType {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		newTp := types.NewFieldType(mysql.TypeLonglong)
 		newTp.Flag = tp.Flag
+		newTp.Charset = tp.Charset
 		return newTp
 	// To avoid data truncate error.
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
-		return types.NewFieldType(tp.Tp)
+		newTp := types.NewFieldType(tp.Tp)
+		newTp.Charset = tp.Charset
+		return newTp
 	default:
 		return tp
 	}
+}
+
+// points2EqOrInCond constructs a 'EQUAL' or 'IN' scalar function based on the
+// 'points'. The target column is extracted from the 'expr'.
+// NOTE:
+// 1. 'expr' must be either 'EQUAL' or 'IN' function.
+// 2. 'points' should not be empty.
+func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.Expression) expression.Expression {
+	// len(points) cannot be 0 here, since we impose early termination in extractEqAndInCondition
+	sf, _ := expr.(*expression.ScalarFunction)
+	// Constant and Column args should have same RetType, simply get from first arg
+	retType := sf.GetArgs()[0].GetType()
+	args := make([]expression.Expression, 0, len(points)/2)
+	if sf.FuncName.L == ast.EQ {
+		if c, ok := sf.GetArgs()[0].(*expression.Column); ok {
+			args = append(args, c)
+		} else if c, ok := sf.GetArgs()[1].(*expression.Column); ok {
+			args = append(args, c)
+		}
+	} else {
+		args = append(args, sf.GetArgs()[0])
+	}
+	for i := 0; i < len(points); i = i + 2 {
+		value := &expression.Constant{
+			Value:   points[i].value,
+			RetType: retType,
+		}
+		args = append(args, value)
+	}
+	funcName := ast.EQ
+	if len(args) > 2 {
+		funcName = ast.In
+	}
+	f := expression.NewFunctionInternal(ctx, funcName, sf.GetType(), args...)
+	return f
 }

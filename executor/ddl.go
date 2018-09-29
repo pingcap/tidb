@@ -14,10 +14,11 @@
 package executor
 
 import (
+	"fmt"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -25,6 +26,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -152,12 +156,19 @@ func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 
 func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	dbName := model.NewCIStr(s.Name)
+
+	// Protect important system table from been dropped by a mistake.
+	// I can hardly find a case that a user really need to do this.
+	if dbName.L == "mysql" {
+		return errors.New("Drop 'mysql' database is forbidden")
+	}
+
 	err := domain.GetDomain(e.ctx).DDL().DropSchema(e.ctx, dbName)
 	if infoschema.ErrDatabaseNotExists.Equal(err) {
 		if s.IfExists {
 			err = nil
 		} else {
-			err = infoschema.ErrDatabaseDropExists.GenByArgs(s.Name)
+			err = infoschema.ErrDatabaseDropExists.GenWithStackByArgs(s.Name)
 		}
 	}
 	sessionVars := e.ctx.GetSessionVars()
@@ -173,6 +184,24 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 		}
 	}
 	return errors.Trace(err)
+}
+
+// If one drop those tables by mistake, it's difficult to recover.
+// In the worst case, the whole TiDB cluster fails to bootstrap, so we prevent user from dropping them.
+var systemTables = map[string]struct{}{
+	"tidb":                 {},
+	"gc_delete_range":      {},
+	"gc_delete_range_done": {},
+}
+
+func isSystemTable(schema, table string) bool {
+	if schema != "mysql" {
+		return false
+	}
+	if _, ok := systemTables[table]; ok {
+		return true
+	}
+	return false
 }
 
 func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
@@ -194,6 +223,21 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			return errors.Trace(err)
 		}
 
+		// Protect important system table from been dropped by a mistake.
+		// I can hardly find a case that a user really need to do this.
+		if isSystemTable(tn.Schema.L, tn.Name.L) {
+			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
+		}
+
+		if config.CheckTableBeforeDrop {
+			log.Warnf("admin check table `%s`.`%s` before drop.", fullti.Schema.O, fullti.Name.O)
+			sql := fmt.Sprintf("admin check table `%s`.`%s`", fullti.Schema.O, fullti.Name.O)
+			_, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(e.ctx, sql)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+
 		err = domain.GetDomain(e.ctx).DDL().DropTable(e.ctx, fullti)
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
 			notExistTables = append(notExistTables, fullti.String())
@@ -202,7 +246,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 		}
 	}
 	if len(notExistTables) > 0 && !s.IfExists {
-		return infoschema.ErrTableDropExists.GenByArgs(strings.Join(notExistTables, ","))
+		return infoschema.ErrTableDropExists.GenWithStackByArgs(strings.Join(notExistTables, ","))
 	}
 	return nil
 }

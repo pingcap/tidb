@@ -14,15 +14,15 @@
 package session
 
 import (
-	"github.com/juju/errors"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -218,11 +218,11 @@ func mergeToMutation(m1, m2 *binlog.TableMutation) {
 
 func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 	switch op.kind {
-	case executor.DirtyTableAddRow:
+	case table.DirtyTableAddRow:
 		dirtyDB.AddRow(op.tid, op.handle, op.row)
-	case executor.DirtyTableDeleteRow:
+	case table.DirtyTableDeleteRow:
 		dirtyDB.DeleteRow(op.tid, op.handle)
-	case executor.DirtyTableTruncate:
+	case table.DirtyTableTruncate:
 		dirtyDB.TruncateTable(op.tid)
 	}
 }
@@ -231,12 +231,10 @@ func mergeToDirtyDB(dirtyDB *executor.DirtyDB, op dirtyTableOperation) {
 type txnFuture struct {
 	future oracle.Future
 	store  kv.Storage
-	span   opentracing.Span
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
 	startTS, err := tf.future.Wait()
-	tf.span.Finish()
 	if err == nil {
 		return tf.store.BeginWithStartTS(startTS)
 	}
@@ -246,10 +244,9 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 }
 
 func (s *session) getTxnFuture(ctx context.Context) *txnFuture {
-	span, ctx := opentracing.StartSpanFromContext(ctx, "session.getTxnFuture")
 	oracleStore := s.store.GetOracle()
 	tsFuture := oracleStore.GetTimestampAsync(ctx)
-	return &txnFuture{tsFuture, s.store, span}
+	return &txnFuture{tsFuture, s.store}
 }
 
 // StmtCommit implements the sessionctx.Context interface.

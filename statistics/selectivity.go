@@ -16,12 +16,12 @@ package statistics
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
@@ -35,6 +35,8 @@ type exprSet struct {
 	mask int64
 	// ranges contains all the ranges we got.
 	ranges []*ranger.Range
+	// numCols is the number of columns contained in the index or column(which is always 1).
+	numCols int
 }
 
 // The type of the exprSet.
@@ -65,9 +67,9 @@ func getConstantColumnID(e []expression.Expression) int64 {
 	return unknownColumnID
 }
 
-func pseudoSelectivity(t *Table, exprs []expression.Expression) float64 {
+func pseudoSelectivity(coll *HistColl, exprs []expression.Expression) float64 {
 	minFactor := selectionFactor
-	uniqueCol := make(map[string]bool)
+	colExists := make(map[string]bool)
 	for _, expr := range exprs {
 		fun, ok := expr.(*expression.ScalarFunction)
 		if !ok {
@@ -80,41 +82,36 @@ func pseudoSelectivity(t *Table, exprs []expression.Expression) float64 {
 		switch fun.FuncName.L {
 		case ast.EQ, ast.NullEQ, ast.In:
 			minFactor = math.Min(minFactor, 1.0/pseudoEqualRate)
-			col, ok := t.Columns[colID]
+			col, ok := coll.Columns[colID]
 			if !ok {
 				continue
 			}
+			colExists[col.Info.Name.L] = true
 			if mysql.HasUniKeyFlag(col.Info.Flag) {
-				uniqueCol[col.Info.Name.L] = true
-			}
-			if mysql.HasPriKeyFlag(col.Info.Flag) {
-				if t.PKIsHandle {
-					return 1.0 / float64(t.Count)
-				}
-				uniqueCol[col.Info.Name.L] = true
+				return 1.0 / float64(coll.Count)
 			}
 		case ast.GE, ast.GT, ast.LE, ast.LT:
 			minFactor = math.Min(minFactor, 1.0/pseudoLessRate)
 			// FIXME: To resolve the between case.
 		}
 	}
-	if len(uniqueCol) == 0 {
+	if len(colExists) == 0 {
 		return minFactor
 	}
 	// use the unique key info
-	for _, idx := range t.Indices {
+	for _, idx := range coll.Indices {
 		if !idx.Info.Unique {
 			continue
 		}
 		unique := true
 		for _, col := range idx.Info.Columns {
-			if !uniqueCol[col.Name.L] {
+			if !colExists[col.Name.L] {
 				unique = false
 				break
 			}
 		}
 		if unique {
-			return 1.0 / float64(t.Count)
+			return 1.0 / float64(coll.Count)
 		}
 	}
 	return minFactor
@@ -145,15 +142,15 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]` should be held when you call this.
 // TODO: support expressions that the top layer is a DNF.
 // Currently the time complexity is o(n^2).
-func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expression) (float64, error) {
+func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Expression) (float64, error) {
 	// If table's count is zero or conditions are empty, we should return 100% selectivity.
-	if t.Count == 0 || len(exprs) == 0 {
+	if coll.Count == 0 || len(exprs) == 0 {
 		return 1, nil
 	}
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
-	if len(exprs) > 63 || (len(t.Columns) == 0 && len(t.Indices) == 0) {
-		return pseudoSelectivity(t, exprs), nil
+	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
+		return pseudoSelectivity(coll, exprs), nil
 	}
 	ret := 1.0
 	var sets []*exprSet
@@ -163,8 +160,8 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 
 	// Deal with the correlated column.
 	for _, expr := range exprs {
-		if c := isColEqCorCol(expr); c != nil && !t.ColumnIsInvalid(sc, c.ID) {
-			colHist := t.Columns[c.ID]
+		if c := isColEqCorCol(expr); c != nil && !coll.ColumnIsInvalid(sc, c.UniqueID) {
+			colHist := coll.Columns[c.UniqueID]
 			if colHist.NDV > 0 {
 				ret *= 1 / float64(colHist.NDV)
 			}
@@ -173,29 +170,33 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 		}
 	}
 
-	extractedCols := make([]*expression.Column, 0, len(t.Columns))
+	extractedCols := make([]*expression.Column, 0, len(coll.Columns))
 	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
-	for _, colInfo := range t.Columns {
+	for id, colInfo := range coll.Columns {
 		col := expression.ColInfo2Col(extractedCols, colInfo.Info)
 		if col != nil {
 			maskCovered, ranges, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, col)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			sets = append(sets, &exprSet{tp: colType, ID: col.ID, mask: maskCovered, ranges: ranges})
+			sets = append(sets, &exprSet{tp: colType, ID: id, mask: maskCovered, ranges: ranges, numCols: 1})
 			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
 				sets[len(sets)-1].tp = pkType
 			}
 		}
 	}
-	for _, idxInfo := range t.Indices {
-		idxCols, lengths := expression.IndexInfo2Cols(extractedCols, idxInfo.Info)
+	for id, idxInfo := range coll.Indices {
+		idxCols := expression.FindPrefixOfIndex(extractedCols, coll.Idx2ColumnIDs[id])
 		if len(idxCols) > 0 {
+			lengths := make([]int, 0, len(idxCols))
+			for i := 0; i < len(idxCols); i++ {
+				lengths = append(lengths, idxInfo.Info.Columns[i].Length)
+			}
 			maskCovered, ranges, err := getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, idxCols...)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			sets = append(sets, &exprSet{tp: indexType, ID: idxInfo.ID, mask: maskCovered, ranges: ranges})
+			sets = append(sets, &exprSet{tp: indexType, ID: id, mask: maskCovered, ranges: ranges, numCols: len(idxInfo.Info.Columns)})
 		}
 	}
 	sets = getUsableSetsByGreedy(sets)
@@ -209,16 +210,16 @@ func (t *Table) Selectivity(ctx sessionctx.Context, exprs []expression.Expressio
 		)
 		switch set.tp {
 		case pkType:
-			rowCount, err = t.GetRowCountByIntColumnRanges(sc, set.ID, set.ranges)
+			rowCount, err = coll.GetRowCountByIntColumnRanges(sc, set.ID, set.ranges)
 		case colType:
-			rowCount, err = t.GetRowCountByColumnRanges(sc, set.ID, set.ranges)
+			rowCount, err = coll.GetRowCountByColumnRanges(sc, set.ID, set.ranges)
 		case indexType:
-			rowCount, err = t.GetRowCountByIndexRanges(sc, set.ID, set.ranges)
+			rowCount, err = coll.GetRowCountByIndexRanges(sc, set.ID, set.ranges)
 		}
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		ret *= rowCount / float64(t.Count)
+		ret *= rowCount / float64(coll.Count)
 	}
 	// If there's still conditions which cannot be calculated, we will multiply a selectionFactor.
 	if mask > 0 {
@@ -259,7 +260,7 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
-		bestID, bestCount, bestTp := -1, 0, colType
+		bestID, bestCount, bestTp, bestNumCols := -1, 0, colType, 0
 		for i, set := range sets {
 			set.mask &= mask
 			bits := popCount(set.mask)
@@ -267,20 +268,24 @@ func getUsableSetsByGreedy(sets []*exprSet) (newBlocks []*exprSet) {
 			if bits == 0 {
 				continue
 			}
-			if (bestTp == colType && set.tp < colType) || bestCount < bits {
-				bestID, bestCount, bestTp = i, bits, set.tp
+			// We greedy select the stats info based on:
+			// (1): The stats type, always prefer the primary key or index.
+			// (2): The number of expression that it covers, the more the better.
+			// (3): The number of columns that it contains, the less the better.
+			if (bestTp == colType && set.tp != colType) || bestCount < bits || (bestCount == bits && bestNumCols > set.numCols) {
+				bestID, bestCount, bestTp, bestNumCols = i, bits, set.tp, set.numCols
 			}
 		}
 		if bestCount == 0 {
 			break
-		} else {
-			// update the mask, remove the bit that sets[bestID].mask has.
-			mask &^= sets[bestID].mask
-
-			newBlocks = append(newBlocks, sets[bestID])
-			// remove the chosen one
-			sets = append(sets[:bestID], sets[bestID+1:]...)
 		}
+
+		// update the mask, remove the bit that sets[bestID].mask has.
+		mask &^= sets[bestID].mask
+
+		newBlocks = append(newBlocks, sets[bestID])
+		// remove the chosen one
+		sets = append(sets[:bestID], sets[bestID+1:]...)
 	}
 	return
 }

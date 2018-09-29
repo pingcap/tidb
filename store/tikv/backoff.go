@@ -17,13 +17,14 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -106,7 +107,8 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context) int {
 	case boPDRPC:
 		return NewBackoffFn(500, 3000, EqualJitter)
 	case BoRegionMiss:
-		return NewBackoffFn(100, 500, NoJitter)
+		// change base time to 2ms, because it may recover soon.
+		return NewBackoffFn(2, 500, NoJitter)
 	case BoUpdateLeader:
 		return NewBackoffFn(1, 10, NoJitter)
 	case boServerBusy:
@@ -135,14 +137,14 @@ func (t backoffType) String() string {
 	return ""
 }
 
-func (t backoffType) TError() *terror.Error {
+func (t backoffType) TError() error {
 	switch t {
 	case boTiKVRPC:
 		return ErrTiKVServerTimeout
 	case BoTxnLock, boTxnLockFast:
 		return ErrResolveLockTimeout
 	case boPDRPC:
-		return ErrPDServerTimeout.GenByArgs(txnRetryableMark)
+		return ErrPDServerTimeout.GenWithStackByArgs(txnRetryableMark)
 	case BoRegionMiss, BoUpdateLeader:
 		return ErrRegionUnavailable
 	case boServerBusy:
@@ -154,7 +156,7 @@ func (t backoffType) TError() *terror.Error {
 // Maximum total sleep time(in ms) for kv/cop commands.
 const (
 	copBuildTaskMaxBackoff         = 5000
-	tsoMaxBackoff                  = 5000
+	tsoMaxBackoff                  = 15000
 	scannerNextMaxBackoff          = 20000
 	batchGetMaxBackoff             = 20000
 	copNextMaxBackoff              = 20000
@@ -201,6 +203,9 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	if strings.Contains(err.Error(), mismatchClusterID) {
+		log.Fatalf("critical error %v", err)
+	}
 	select {
 	case <-b.ctx.Done():
 		return errors.Trace(err)
@@ -221,7 +226,7 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 	b.totalSleep += f(b.ctx)
 	b.types = append(b.types, typ)
 
-	log.Debugf("%v, retry later(totalSleep %dms, maxSleep %dms)", err, b.totalSleep, b.maxSleep)
+	log.Debugf("%v, retry later(totalsleep %dms, maxsleep %dms)", err, b.totalSleep, b.maxSleep)
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {
@@ -243,7 +248,7 @@ func (b *Backoffer) String() string {
 	if b.totalSleep == 0 {
 		return ""
 	}
-	return fmt.Sprintf(" backoff(%dms %s)", b.totalSleep, b.types)
+	return fmt.Sprintf(" backoff(%dms %v)", b.totalSleep, b.types)
 }
 
 // Clone creates a new Backoffer which keeps current Backoffer's sleep time and errors, and shares

@@ -15,18 +15,19 @@ package aggregation
 
 import (
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 type avgFunction struct {
 	aggFunction
 }
 
-func (af *avgFunction) updateAvg(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row types.Row) error {
+func (af *avgFunction) updateAvg(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	a := af.Args[1]
 	value, err := a.Eval(row)
 	if err != nil {
@@ -56,7 +57,7 @@ func (af *avgFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEv
 }
 
 // Update implements Aggregation interface.
-func (af *avgFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row types.Row) (err error) {
+func (af *avgFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) (err error) {
 	switch af.Mode {
 	case Partial1Mode, CompleteMode:
 		err = af.updateSum(sc, evalCtx, row)

@@ -15,9 +15,8 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -240,7 +239,7 @@ func (s *testSuite) TestAggregation(c *C) {
 
 	result = tk.MustQuery("select count(*) from information_schema.columns")
 	// When adding new memory columns in information_schema, please update this variable.
-	columnCountOfAllInformationSchemaTables := "749"
+	columnCountOfAllInformationSchemaTables := "757"
 	result.Check(testkit.Rows(columnCountOfAllInformationSchemaTables))
 
 	tk.MustExec("drop table if exists t1")
@@ -262,6 +261,11 @@ func (s *testSuite) TestAggregation(c *C) {
 	tk.MustExec("insert into t values(1, 2, 3), (1, 2, 4)")
 	result = tk.MustQuery("select count(distinct c), count(distinct a,b) from t")
 	result.Check(testkit.Rows("2 1"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a float)")
+	tk.MustExec("insert into t values(966.36), (363.97), (569.99), (453.33), (376.45), (321.93), (12.12), (45.77), (9.66), (612.17)")
+	result = tk.MustQuery("select distinct count(distinct a) from t")
+	result.Check(testkit.Rows("10"))
 
 	tk.MustExec("create table idx_agg (a int, b int, index (b))")
 	tk.MustExec("insert idx_agg values (1, 1), (1, 2), (2, 2)")
@@ -270,6 +274,10 @@ func (s *testSuite) TestAggregation(c *C) {
 	// test without any aggregate function
 	tk.MustQuery("select 10 from idx_agg group by b").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select 11 from idx_agg group by a").Check(testkit.Rows("11", "11"))
+
+	tk.MustExec("set @@tidb_max_chunk_size=1;")
+	tk.MustQuery("select group_concat(b) from idx_agg group by b;").Check(testkit.Rows("1", "2,2"))
+	tk.MustExec("set @@tidb_max_chunk_size=2;")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(11), b decimal(15,2))")
@@ -305,6 +313,31 @@ func (s *testSuite) TestAggregation(c *C) {
 	result = tk.MustQuery("select t.id, count(95), sum(95), avg(95), bit_or(95), bit_and(95), bit_or(95), max(95), min(95), group_concat(95) from t left join s on t.id = s.id")
 	result.Check(testkit.Rows("1 1 95 95.0000 95 95 95 95 95 95"))
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
+
+	// test agg bit col
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE `t` (`a` bit(1) NOT NULL, PRIMARY KEY (`a`))")
+	tk.MustExec("insert into t value(1), (0)")
+	tk.MustQuery("select a from t group by 1")
+	// This result is compatible with MySQL, the readable result is shown in the next case.
+	result = tk.MustQuery("select max(a) from t group by a order by a")
+	result.Check(testkit.Rows(string([]byte{0x0}), string([]byte{0x1})))
+	result = tk.MustQuery("select cast(a as signed) as idx, cast(max(a) as signed),  cast(min(a) as signed) from t group by 1 order by idx")
+	result.Check(testkit.Rows("0 0 0", "1 1 1"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t value(null, null)")
+	tk.MustQuery("select group_concat(a), group_concat(distinct a) from t").Check(testkit.Rows("<nil> <nil>"))
+	tk.MustExec("insert into t value(1, null), (null, 1), (1, 2), (3, 4)")
+	tk.MustQuery("select group_concat(a, b), group_concat(distinct a,b) from t").Check(testkit.Rows("12,34 12,34"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a decimal(10, 4))")
+	tk.MustQuery("select 10 from t group by a").Check(testkit.Rows())
+	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
+	tk.MustQuery("select 10 from t group by a").Check(testkit.Rows("10", "10"))
+	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
 }
 
 func (s *testSuite) TestStreamAggPushDown(c *C) {
@@ -371,6 +404,9 @@ func (s *testSuite) TestGroupConcatAggr(c *C) {
 
 	result = tk.MustQuery("select id, group_concat(name SEPARATOR '') from test group by id order by id")
 	result.Check(testkit.Rows("1 102030", "2 20", "3 200500"))
+
+	result = tk.MustQuery("select id, group_concat(name SEPARATOR '123') from test group by id order by id")
+	result.Check(testkit.Rows("1 101232012330", "2 20", "3 200123500"))
 }
 
 func (s *testSuite) TestSelectDistinct(c *C) {
@@ -410,39 +446,39 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	// test incompatible with sql_mode = ONLY_FULL_GROUP_BY
 	var err error
 	_, err = tk.Exec("select * from t group by d")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select b-c from t group by b+c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select (b-c)*(b+c), min(a) from t group by b+c, b-c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select b between c and d from t group by b,c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select case b when 1 then c when 2 then d else d end from t group by b,c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select c > (select b from t) from t group by b")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select c is null from t group by b")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select c is true from t group by b")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select (c+b)*d from t group by c,d")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select b in (c,d) from t group by b,c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select b like '%a' from t group by c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select c REGEXP '1.*' from t group by b")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select -b from t group by c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select a, max(b) from t")
-	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select sum(a)+b from t")
-	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select count(b), c from t")
-	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select distinct a, b, count(a) from t")
-	c.Assert(terror.ErrorEqual(err, plan.ErrMixOfGroupFuncAndFields), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), IsTrue, Commentf("err %v", err))
 	// test compatible with sql_mode = ONLY_FULL_GROUP_BY
 	tk.MustQuery("select a from t group by a,b,c")
 	tk.MustQuery("select b from t group by b")
@@ -471,7 +507,7 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustQuery("select * from t group by b,d")
 	// test functional depend on a unique null column
 	_, err = tk.Exec("select * from t group by b,c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	// test functional dependency derived from keys in where condition
 	tk.MustQuery("select * from t where c = d group by b, c")
 	tk.MustQuery("select t.*, x.* from t, x where t.a = x.a group by t.a")
@@ -479,7 +515,7 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustQuery("select t.*, x.* from t, x where t.b = x.a group by t.b, t.d")
 	tk.MustQuery("select t.b, x.* from t, x where t.b = x.a group by t.b")
 	_, err = tk.Exec("select t.*, x.* from t, x where t.c = x.a group by t.b, t.c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	// test functional dependency derived from keys in join
 	tk.MustQuery("select t.*, x.* from t inner join x on t.a = x.a group by t.a")
 	tk.MustQuery("select t.*, x.* from t inner join x  on (t.b = x.b and t.d = x.d) group by t.b, x.d")
@@ -489,23 +525,23 @@ func (s *testSuite) TestOnlyFullGroupBy(c *C) {
 	tk.MustQuery("select x.b, t.* from t right join x on x.b = t.b group by x.b, t.d")
 	tk.MustQuery("select x.b, t.* from t right join x on t.b = x.b group by x.b, t.d")
 	_, err = tk.Exec("select t.b, x.* from t right join x on t.b = x.b group by t.b, x.d")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("select t.b, x.* from t right join x on t.b = x.b group by t.b, x.d")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 
 	// FixMe: test functional dependency of derived table
 	//tk.MustQuery("select * from (select * from t) as e group by a")
 	//tk.MustQuery("select * from (select * from t) as e group by b,d")
 	//_, err = tk.Exec("select * from (select * from t) as e group by b,c")
-	//c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	//c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue)
 
 	// test order by
 	tk.MustQuery("select c from t group by c,d order by d")
 	_, err = tk.Exec("select c from t group by c order by d")
-	c.Assert(terror.ErrorEqual(err, plan.ErrFieldNotInGroupBy), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue, Commentf("err %v", err))
 	// test ambiguous column
 	_, err = tk.Exec("select c from t,x group by t.c")
-	c.Assert(terror.ErrorEqual(err, plan.ErrAmbiguous), IsTrue)
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrAmbiguous), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite) TestHaving(c *C) {
@@ -537,28 +573,12 @@ func (s *testSuite) TestAggEliminator(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("create table t(a int primary key, b int)")
-	tk.MustQuery("select min(a) from t").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select min(a), min(a) from t").Check(testkit.Rows("<nil> <nil>"))
 	tk.MustExec("insert into t values(1, -1), (2, -2), (3, 1), (4, NULL)")
 	tk.MustQuery("select max(a) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
 	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
 	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
-}
-
-func (s *testSuite) TestIssue5663(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	plan.GlobalPlanCache = kvcache.NewShardedLRUCache(2, 1)
-	planCahche := tk.Se.GetSessionVars().PlanCacheEnabled
-	defer func() {
-		tk.Se.GetSessionVars().PlanCacheEnabled = planCahche
-	}()
-
-	tk.Se.GetSessionVars().PlanCacheEnabled = true
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1 (i int unsigned, primary key(i));")
-	tk.MustExec("insert into t1 values (1),(2),(3);")
-	tk.MustQuery("select group_concat(i) from t1 where i > 1;").Check(testkit.Rows("2,3"))
-	tk.MustQuery("select group_concat(i) from t1 where i > 1;").Check(testkit.Rows("2,3"))
 }
 
 func (s *testSuite) TestMaxMinFloatScalaFunc(c *C) {
@@ -581,4 +601,15 @@ func (s *testSuite) TestBuildProjBelowAgg(c *C) {
 		"2 3 12 5,5,5 6",
 		"3 3 15 6,6,6 7",
 		"4 3 18 7,7,7 8"))
+}
+
+func (s *testSuite) TestFirstRowEnum(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a enum('a', 'b'));`)
+	tk.MustExec(`insert into t values('a');`)
+	tk.MustQuery(`select a from t group by a;`).Check(testkit.Rows(
+		`a`,
+	))
 }

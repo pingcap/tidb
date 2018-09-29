@@ -18,11 +18,11 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {

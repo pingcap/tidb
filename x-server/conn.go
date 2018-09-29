@@ -17,9 +17,9 @@ import (
 	"io"
 	"net"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -68,7 +68,7 @@ func (cc *clientConn) Run() {
 				default:
 				}
 			}
-			log.Warnf("con:%d dispatch error: %s, %s", cc.connectionID, cc, err)
+			log.Warnf("con:%d dispatch error: %s", cc.connectionID, err)
 			cc.writeError(err)
 			return
 		}

@@ -14,7 +14,10 @@
 package executor_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -88,7 +91,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 
 	tblInfo := tbl.Meta()
 	idxInfo := findIndexByName("c2", tblInfo.Indices)
-	indexOpr := tables.NewIndex(tblInfo, idxInfo)
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 	sc := s.ctx.GetSessionVars().StmtCtx
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -98,6 +101,7 @@ func (s *testSuite) TestAdminRecoverIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("admin check table admin_test")
 	c.Assert(err, NotNil)
+	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 	_, err = tk.Exec("admin check index admin_test c2")
 	c.Assert(err, NotNil)
 
@@ -184,7 +188,7 @@ func (s *testSuite) TestAdminRecoverIndex1(c *C) {
 	tblInfo := tbl.Meta()
 	idxInfo := findIndexByName("primary", tblInfo.Indices)
 	c.Assert(idxInfo, NotNil)
-	indexOpr := tables.NewIndex(tblInfo, idxInfo)
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -240,9 +244,9 @@ func (s *testSuite) TestAdminCleanupIndex(c *C) {
 
 	tblInfo := tbl.Meta()
 	idxInfo2 := findIndexByName("c2", tblInfo.Indices)
-	indexOpr2 := tables.NewIndex(tblInfo, idxInfo2)
+	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
 	idxInfo3 := findIndexByName("c3", tblInfo.Indices)
-	indexOpr3 := tables.NewIndex(tblInfo, idxInfo3)
+	indexOpr3 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -250,11 +254,17 @@ func (s *testSuite) TestAdminCleanupIndex(c *C) {
 	c.Assert(err, IsNil)
 	_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(6), 100)
 	c.Assert(err, IsNil)
+	_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(8), 100)
+	c.Assert(err, IsNil)
 	_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(nil), 101)
+	c.Assert(err, IsNil)
+	_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(nil), 102)
 	c.Assert(err, IsNil)
 	_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(6), 200)
 	c.Assert(err, IsNil)
 	_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(6), -200)
+	c.Assert(err, IsNil)
+	_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(8), -200)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -264,9 +274,9 @@ func (s *testSuite) TestAdminCleanupIndex(c *C) {
 	_, err = tk.Exec("admin check index admin_test c2")
 	c.Assert(err, NotNil)
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
-	r.Check(testkit.Rows("9"))
+	r.Check(testkit.Rows("11"))
 	r = tk.MustQuery("admin cleanup index admin_test c2")
-	r.Check(testkit.Rows("3"))
+	r.Check(testkit.Rows("5"))
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
 	r.Check(testkit.Rows("6"))
 	tk.MustExec("admin check index admin_test c2")
@@ -276,9 +286,9 @@ func (s *testSuite) TestAdminCleanupIndex(c *C) {
 	_, err = tk.Exec("admin check index admin_test c3")
 	c.Assert(err, NotNil)
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c3)")
-	r.Check(testkit.Rows("8"))
+	r.Check(testkit.Rows("9"))
 	r = tk.MustQuery("admin cleanup index admin_test c3")
-	r.Check(testkit.Rows("2"))
+	r.Check(testkit.Rows("3"))
 	r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c3)")
 	r.Check(testkit.Rows("6"))
 	tk.MustExec("admin check index admin_test c3")
@@ -307,7 +317,7 @@ func (s *testSuite) TestAdminCleanupIndexPKNotHandle(c *C) {
 
 	tblInfo := tbl.Meta()
 	idxInfo := findIndexByName("primary", tblInfo.Indices)
-	indexOpr := tables.NewIndex(tblInfo, idxInfo)
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -355,9 +365,9 @@ func (s *testSuite) TestAdminCleanupIndexMore(c *C) {
 
 	tblInfo := tbl.Meta()
 	idxInfo1 := findIndexByName("c1", tblInfo.Indices)
-	indexOpr1 := tables.NewIndex(tblInfo, idxInfo1)
+	indexOpr1 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo1)
 	idxInfo2 := findIndexByName("c2", tblInfo.Indices)
-	indexOpr2 := tables.NewIndex(tblInfo, idxInfo2)
+	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
@@ -434,4 +444,66 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`create table test ( a  TIMESTAMP, primary key(a) );`)
 	tk.MustExec(`insert into test set a='2015-08-10 04:18:49';`)
 	tk.MustExec(`admin check table test;`)
+
+	// Test partitioned table.
+	tk.MustExec(`drop table if exists test`)
+	tk.MustExec(`set @@tidb_enable_table_partition = 1`)
+	tk.MustExec(`create table test (
+		      a int not null,
+		      c int not null,
+		      primary key (a, c),
+		      key idx_a (a)) partition by range (c) (
+		      partition p1 values less than (1),
+		      partition p2 values less than (4),
+		      partition p3 values less than (7),
+		      partition p4 values less than (11))`)
+	for i := 1; i <= 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into test values (%d, %d);", i, i))
+	}
+	tk.MustExec(`admin check table test;`)
+
+	// Test index in virtual generated column.
+	tk.MustExec(`drop table if exists test`)
+	tk.MustExec(`create table test ( b json , c int as (JSON_EXTRACT(b,'$.d')) , index idxc(c));`)
+	tk.MustExec(`INSERT INTO test set b='{"d": 100}';`)
+	tk.MustExec(`admin check table test;`)
+	// Test prefix index.
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (
+  			ID CHAR(32) NOT NULL,
+  			name CHAR(32) NOT NULL,
+  			value CHAR(255),
+  			INDEX indexIDname (ID(8),name(8)));`)
+	tk.MustExec(`INSERT INTO t VALUES ('keyword','urlprefix','text/ /text');`)
+	tk.MustExec(`admin check table t;`)
+
+	tk.MustExec("use mysql")
+	tk.MustExec(`admin check table test.t;`)
+	_, err := tk.Exec("admin check table t")
+	c.Assert(err, NotNil)
+
+	// test add index on time type column which have default value
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`CREATE TABLE t1 (c2 YEAR, PRIMARY KEY (c2))`)
+	tk.MustExec(`INSERT INTO t1 SET c2 = '1912'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c3 TIMESTAMP NULL DEFAULT '1976-08-29 16:28:11'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c4 DATE      NULL DEFAULT '1976-08-29'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c5 TIME      NULL DEFAULT '16:28:11'`)
+	tk.MustExec(`ALTER TABLE t1 ADD COLUMN c6 YEAR      NULL DEFAULT '1976'`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx1 (c2, c3,c4,c5,c6)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx2 (c2)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx3 (c3)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx4 (c4)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx5 (c5)`)
+	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx6 (c6)`)
+	tk.MustExec(`admin check table t1`)
+}
+
+func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
+	tk.MustExec("insert into t values(1, 1, 1), (9223372036854775807, 2, 2);")
+	tk.MustExec("admin check index t idx;")
 }

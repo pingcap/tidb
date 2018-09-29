@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
@@ -330,7 +331,7 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 }
 
 func (ts *testSuite) TestPartitionAddRecord(c *C) {
-	createTable1 := `CREATE TABLE test.t1 (id int(11))
+	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p1 VALUES LESS THAN (11),
@@ -340,13 +341,14 @@ PARTITION BY RANGE ( id ) (
 
 	_, err := ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
 	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
+	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	tbInfo := tb.Meta()
 	p0 := tbInfo.Partition.Definitions[0]
 	c.Assert(p0.Name, Equals, model.NewCIStr("p0"))
-
 	c.Assert(ts.se.NewTxn(), IsNil)
 	rid, err := tb.AddRecord(ts.se, types.MakeDatums(1), false)
 	c.Assert(err, IsNil)
@@ -367,6 +369,16 @@ PARTITION BY RANGE ( id ) (
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(16), false)
 	c.Assert(err, IsNil)
 
+	// Make the changes visible.
+	_, err = ts.se.Execute(context.Background(), "commit")
+	c.Assert(err, IsNil)
+
+	// Check index count equals to data count.
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from t1 use index(id)").Check(testkit.Rows("4"))
+	tk.MustQuery("select count(*) from t1 use index(id) where id > 6").Check(testkit.Rows("3"))
+
 	// Value must locates in one partition.
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
 	c.Assert(table.ErrTrgInvalidCreationCtx.Equal(err), IsTrue)
@@ -384,4 +396,72 @@ PARTITION BY RANGE ( id ) (
 	tbInfo = tb.Meta()
 	_, err = tb.AddRecord(ts.se, types.MakeDatums(22), false)
 	c.Assert(err, IsNil) // Insert into maxvalue partition.
+}
+
+// TestPartitionGetPhysicalID tests partition.GetPhysicalID().
+func (ts *testSuite) TestPartitionGetPhysicalID(c *C) {
+	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
+PARTITION BY RANGE ( id ) (
+		PARTITION p0 VALUES LESS THAN (6),
+		PARTITION p1 VALUES LESS THAN (11),
+		PARTITION p2 VALUES LESS THAN (16),
+		PARTITION p3 VALUES LESS THAN (21)
+)`
+
+	_, err := ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "Drop table if exists test.t1;")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), createTable1)
+	c.Assert(err, IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbInfo := tb.Meta()
+	ps := tbInfo.GetPartitionInfo()
+	c.Assert(ps, NotNil)
+	for _, pd := range ps.Definitions {
+		p := tb.(table.PartitionedTable).GetPartition(pd.ID)
+		c.Assert(p, NotNil)
+		c.Assert(pd.ID, Equals, p.GetPhysicalID())
+	}
+}
+
+func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
+	_, err := ts.se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
+	c.Assert(err, IsNil)
+	_, err = ts.se.Execute(context.Background(), `create table t1 (id int)
+							partition by range (id) (
+							partition p0 values less than (4),
+							partition p1 values less than (7),
+							partition p3 values less than maxvalue)`)
+	c.Assert(err, IsNil)
+
+	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	type partitionExpr interface {
+		PartitionExpr() *tables.PartitionExpr
+	}
+	pe := tbl.(partitionExpr).PartitionExpr()
+	c.Assert(pe.Column.TblName.L, Equals, "t1")
+	c.Assert(pe.Column.ColName.L, Equals, "id")
+
+	ranges := []string{
+		"or(lt(t1.id, 4), isnull(t1.id))",
+		"and(lt(t1.id, 7), ge(t1.id, 4))",
+		"and(1, ge(t1.id, 7))",
+	}
+	upperBounds := []string{
+		"lt(t1.id, 4)",
+		"lt(t1.id, 7)",
+		"1",
+	}
+	for i, expr := range pe.Ranges {
+		c.Assert(expr.String(), Equals, ranges[i])
+	}
+	for i, expr := range pe.UpperBounds {
+		c.Assert(expr.String(), Equals, upperBounds[i])
+	}
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 func (s *testEvaluatorSuite) TestCast(c *C) {
@@ -44,14 +45,14 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	// cast("你好world" as char(5))
 	tp.Charset = charset.CharsetUTF8
 	f := BuildCastFunction(ctx, &Constant{Value: types.NewDatum("你好world"), RetType: tp}, tp)
-	res, err := f.Eval(nil)
+	res, err := f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(res.GetString(), Equals, "你好wor")
 
 	// cast(str as char(N)), N > len([]rune(str)).
 	// cast("a" as char(5))
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("a"), RetType: types.NewFieldType(mysql.TypeString)}, tp)
-	res, err = f.Eval(nil)
+	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(len(res.GetString()), Equals, 1)
 	c.Assert(res.GetString(), Equals, "a")
@@ -63,14 +64,14 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	tp.Charset = charset.CharsetBin
 	tp.Collate = charset.CollationBin
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum(str), RetType: types.NewFieldType(mysql.TypeString)}, tp)
-	res, err = f.Eval(nil)
+	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(res.GetString(), Equals, str[:5])
 
 	// cast(str as binary(N)), N > len([]byte(str)).
 	// cast("a" as binary(5))
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("a"), RetType: types.NewFieldType(mysql.TypeString)}, tp)
-	res, err = f.Eval(nil)
+	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(len(res.GetString()), Equals, 5)
 	c.Assert(res.GetString(), Equals, string([]byte{'a', 0x00, 0x00, 0x00, 0x00}))
@@ -88,25 +89,35 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 		Flen:    mysql.MaxIntWidth,
 	}
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
-	res, err = f.Eval(nil)
+	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(res.GetUint64() == math.MaxUint64, IsTrue)
 
 	warnings := sc.GetWarnings()
 	lastWarn := warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
+	originFlag := tp1.Flag
+	tp1.Flag |= mysql.UnsignedFlag
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
-	res, err = f.Eval(nil)
+	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(res.GetUint64() == 18446744073709551615, IsTrue)
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrCastNegIntAsUnsigned, lastWarn.Err), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrCastNegIntAsUnsigned, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+	tp1.Flag = originFlag
+
+	previousWarnings := len(sc.GetWarnings())
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.GetInt64() == -1, IsTrue)
+	c.Assert(len(sc.GetWarnings()) == previousWarnings, IsTrue)
 
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
-	res, err = f.Eval(nil)
+	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	t := math.MinInt64
 	// 9223372036854775808
@@ -114,29 +125,69 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+
+	// cast('125e342.83' as unsigned)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("125e342.83"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.GetUint64() == 125, IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+
+	// cast('1e9223372036854775807' as unsigned)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("1e9223372036854775807"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.GetUint64() == 1, IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
 	// cast('18446744073709551616' as signed);
 	mask := ^mysql.UnsignedFlag
 	tp1.Flag &= uint(mask)
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("18446744073709551616"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
-	res, err = f.Eval(nil)
+	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Check(res.GetInt64(), Equals, int64(-1))
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrTruncatedWrongVal, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
 	// cast('18446744073709551614' as signed);
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("18446744073709551614"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
-	res, err = f.Eval(nil)
+	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Check(res.GetInt64(), Equals, int64(-2))
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrCastAsSignedOverflow, lastWarn.Err), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrCastAsSignedOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+
+	// cast('125e342.83' as signed)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("125e342.83"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.GetInt64() == 125, IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+
+	// cast('1e9223372036854775807' as signed)
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum("1e9223372036854775807"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(res.GetInt64() == 1, IsTrue)
+
+	warnings = sc.GetWarnings()
+	lastWarn = warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 
 	// create table t1(s1 time);
 	// insert into t1 values('11:11:11');
@@ -150,7 +201,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 		Decimal: 2,
 	}
 	f = BuildCastFunction(ctx, &Constant{Value: timeDatum, RetType: types.NewFieldType(mysql.TypeDatetime)}, ft)
-	res, err = f.Eval(nil)
+	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	resDecimal := new(types.MyDecimal)
 	resDecimal.FromString([]byte("99999.99"))
@@ -158,13 +209,33 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 
 	warnings = sc.GetWarnings()
 	lastWarn = warnings[len(warnings)-1]
-	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue)
+	c.Assert(terror.ErrorEqual(types.ErrOverflow, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
 	sc = origSc
+
+	// create table tt(a bigint unsigned);
+	// insert into tt values(18446744073709551615);
+	// select cast(a as decimal(65, 0)) from tt;
+	ft = &types.FieldType{
+		Tp:      mysql.TypeNewDecimal,
+		Flag:    mysql.BinaryFlag,
+		Charset: charset.CharsetBin,
+		Collate: charset.CollationBin,
+		Flen:    65,
+		Decimal: 0,
+	}
+	rt := types.NewFieldType(mysql.TypeLonglong)
+	rt.Flag = mysql.BinaryFlag | mysql.UnsignedFlag
+	f = BuildCastFunction(ctx, &Constant{Value: types.NewUintDatum(18446744073709551615), RetType: rt}, ft)
+	res, err = f.Eval(chunk.Row{})
+	c.Assert(err, IsNil)
+	u, err := res.GetMysqlDecimal().ToUint()
+	c.Assert(err, IsNil)
+	c.Assert(u == 18446744073709551615, IsTrue)
 
 	// cast(bad_string as decimal)
 	for _, s := range []string{"hello", ""} {
 		f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum(s), RetType: types.NewFieldType(mysql.TypeDecimal)}, tp)
-		res, err = f.Eval(nil)
+		res, err = f.Eval(chunk.Row{})
 		c.Assert(err, IsNil)
 	}
 
@@ -172,7 +243,7 @@ func (s *testEvaluatorSuite) TestCast(c *C) {
 	tp.Flen = 0
 	tp.Charset = charset.CharsetUTF8
 	f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum(1234), RetType: types.NewFieldType(mysql.TypeString)}, tp)
-	res, err = f.Eval(nil)
+	res, err = f.Eval(chunk.Row{})
 	c.Assert(err, IsNil)
 	c.Assert(len(res.GetString()), Equals, 0)
 	c.Assert(res.GetString(), Equals, "")
@@ -234,46 +305,48 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}()
 	var sig builtinFunc
 
+	durationColumn := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
+	durationColumn.RetType.Decimal = types.DefaultFsp
 	// Test cast as Decimal.
 	castToDecCases := []struct {
 		before *Column
 		after  *types.MyDecimal
-		row    types.DatumRow
+		row    chunk.MutRow
 	}{
 		// cast int as decimal.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
 			types.NewDecFromInt(1),
-			[]types.Datum{types.NewIntDatum(1)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1)}),
 		},
 		// cast string as decimal.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			types.NewDecFromInt(1),
-			[]types.Datum{types.NewStringDatum("1")},
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1")}),
 		},
 		// cast real as decimal.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			types.NewDecFromInt(1),
-			[]types.Datum{types.NewFloat64Datum(1)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1)}),
 		},
 		// cast Time as decimal.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			types.NewDecFromInt(curTimeInt),
-			[]types.Datum{timeDatum},
+			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 		},
 		// cast Duration as decimal.
 		{
-			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			durationColumn,
 			types.NewDecFromInt(125959),
-			[]types.Datum{durationDatum},
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 		},
 	}
 	for i, t := range castToDecCases {
 		args := []Expression{t.before}
-		decFunc := newBaseBuiltinFunc(ctx, args)
+		decFunc := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), false)
 		decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
 		switch i {
 		case 0:
@@ -289,18 +362,19 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 5:
 			sig = &builtinCastDecimalAsDecimalSig{decFunc}
 		}
-		res, isNull, err := sig.evalDecimal(t.row)
+		res, isNull, err := sig.evalDecimal(t.row.ToRow())
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		c.Assert(res.Compare(t.after), Equals, 0)
 	}
 
+	durationColumn.RetType.Decimal = 1
 	castToDecCases2 := []struct {
 		before  *Column
 		flen    int
 		decimal int
 		after   *types.MyDecimal
-		row     types.DatumRow
+		row     chunk.MutRow
 	}{
 		// cast int as decimal.
 		{
@@ -308,7 +382,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			7,
 			3,
 			types.NewDecFromStringForTest("1234.000"),
-			[]types.Datum{types.NewIntDatum(1234)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1234)}),
 		},
 		// cast string as decimal.
 		{
@@ -316,7 +390,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			7,
 			3,
 			types.NewDecFromStringForTest("1234.000"),
-			[]types.Datum{types.NewStringDatum("1234")},
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1234")}),
 		},
 		// cast real as decimal.
 		{
@@ -324,7 +398,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			8,
 			4,
 			types.NewDecFromStringForTest("1234.1230"),
-			[]types.Datum{types.NewFloat64Datum(1234.123)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1234.123)}),
 		},
 		// cast Time as decimal.
 		{
@@ -332,15 +406,15 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			15,
 			1,
 			types.NewDecFromStringForTest(strconv.FormatInt(curTimeInt, 10) + ".0"),
-			[]types.Datum{timeDatum},
+			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 		},
 		// cast Duration as decimal.
 		{
-			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			durationColumn,
 			7,
 			1,
 			types.NewDecFromStringForTest("125959.0"),
-			[]types.Datum{durationDatum},
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 		},
 		// cast decimal as decimal.
 		{
@@ -348,7 +422,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			7,
 			3,
 			types.NewDecFromStringForTest("1234.000"),
-			[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("1234"))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("1234"))}),
 		},
 	}
 
@@ -356,7 +430,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeNewDecimal)
 		tp.Flen, tp.Decimal = t.flen, t.decimal
-		decFunc := newBaseBuiltinFunc(ctx, args)
+		decFunc := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), false)
 		decFunc.tp = tp
 		switch i {
 		case 0:
@@ -372,58 +446,59 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 5:
 			sig = &builtinCastDecimalAsDecimalSig{decFunc}
 		}
-		res, isNull, err := sig.evalDecimal(t.row)
+		res, isNull, err := sig.evalDecimal(t.row.ToRow())
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		c.Assert(res.ToString(), DeepEquals, t.after.ToString())
 	}
 
+	durationColumn.RetType.Decimal = 0
 	// Test cast as int.
 	castToIntCases := []struct {
 		before *Column
 		after  int64
-		row    types.DatumRow
+		row    chunk.MutRow
 	}{
 		// cast string as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			1,
-			[]types.Datum{types.NewStringDatum("1")},
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1")}),
 		},
 		// cast decimal as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			1,
-			[]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(1))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(1))}),
 		},
 		// cast real as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			1,
-			[]types.Datum{types.NewFloat64Datum(1)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1)}),
 		},
 		// cast Time as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			curTimeInt,
-			[]types.Datum{timeDatum},
+			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 		},
 		// cast Duration as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
 			125959,
-			[]types.Datum{durationDatum},
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 		},
 		// cast JSON as int.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
 			3,
-			[]types.Datum{jsonInt},
+			chunk.MutRowFromDatums([]types.Datum{jsonInt}),
 		},
 	}
 	for i, t := range castToIntCases {
 		args := []Expression{t.before}
-		intFunc := newBaseBuiltinFunc(ctx, args)
+		intFunc := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), false)
 		switch i {
 		case 0:
 			sig = &builtinCastStringAsIntSig{intFunc}
@@ -438,7 +513,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 5:
 			sig = &builtinCastJSONAsIntSig{intFunc}
 		}
-		res, isNull, err := sig.evalInt(t.row)
+		res, isNull, err := sig.evalInt(t.row.ToRow())
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, t.after)
@@ -448,48 +523,48 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToRealCases := []struct {
 		before *Column
 		after  float64
-		row    types.DatumRow
+		row    chunk.MutRow
 	}{
 		// cast string as real.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			1.1,
-			[]types.Datum{types.NewStringDatum("1.1")},
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1.1")}),
 		},
 		// cast decimal as real.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			1.1,
-			[]types.Datum{types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromFloatForTest(1.1))}),
 		},
 		// cast int as real.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
 			1,
-			[]types.Datum{types.NewIntDatum(1)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1)}),
 		},
 		// cast Time as real.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			float64(curTimeInt),
-			[]types.Datum{timeDatum},
+			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 		},
 		// cast Duration as real.
 		{
-			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
+			durationColumn,
 			125959,
-			[]types.Datum{durationDatum},
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 		},
 		// cast JSON as real.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
 			3.0,
-			[]types.Datum{jsonInt},
+			chunk.MutRowFromDatums([]types.Datum{jsonInt}),
 		},
 	}
 	for i, t := range castToRealCases {
 		args := []Expression{t.before}
-		realFunc := newBaseBuiltinFunc(ctx, args)
+		realFunc := newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), false)
 		switch i {
 		case 0:
 			sig = &builtinCastStringAsRealSig{realFunc}
@@ -504,7 +579,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 5:
 			sig = &builtinCastJSONAsRealSig{realFunc}
 		}
-		res, isNull, err := sig.evalReal(t.row)
+		res, isNull, err := sig.evalReal(t.row.ToRow())
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, t.after)
@@ -514,49 +589,49 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToStringCases := []struct {
 		before *Column
 		after  string
-		row    types.DatumRow
+		row    chunk.MutRow
 	}{
 		// cast real as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			"1",
-			[]types.Datum{types.NewFloat64Datum(1)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1)}),
 		},
 		// cast decimal as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			"1",
-			[]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(1))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(1))}),
 		},
 		// cast int as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
 			"1",
-			[]types.Datum{types.NewIntDatum(1)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1)}),
 		},
 		// cast time as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			curTimeString,
-			[]types.Datum{timeDatum},
+			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 		},
 		// cast duration as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
 			"12:59:59",
-			[]types.Datum{durationDatum},
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 		},
 		// cast JSON as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
 			"3",
-			[]types.Datum{jsonInt},
+			chunk.MutRowFromDatums([]types.Datum{jsonInt}),
 		},
 		// cast string as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			"1234",
-			[]types.Datum{types.NewStringDatum("1234")},
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("1234")}),
 		},
 	}
 	for i, t := range castToStringCases {
@@ -581,7 +656,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 6:
 			sig = &builtinCastStringAsStringSig{stringFunc}
 		}
-		res, isNull, err := sig.evalString(t.row)
+		res, isNull, err := sig.evalString(t.row.ToRow())
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, t.after)
@@ -592,49 +667,49 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		before *Column
 		after  string
 		flen   int
-		row    types.DatumRow
+		row    chunk.MutRow
 	}{
 		// cast real as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			"123",
 			3,
-			[]types.Datum{types.NewFloat64Datum(1234.123)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(1234.123)}),
 		},
 		// cast decimal as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			"123",
 			3,
-			[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("1234.123"))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("1234.123"))}),
 		},
 		// cast int as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
 			"123",
 			3,
-			[]types.Datum{types.NewIntDatum(1234)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1234)}),
 		},
 		// cast time as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			curTimeString[:3],
 			3,
-			[]types.Datum{timeDatum},
+			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 		},
 		// cast duration as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
 			"12:",
 			3,
-			[]types.Datum{durationDatum},
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 		},
 		// cast string as string.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			"你好w",
 			3,
-			[]types.Datum{types.NewStringDatum("你好world")},
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("你好world")}),
 		},
 	}
 	for i, t := range castToStringCases2 {
@@ -658,7 +733,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			stringFunc.tp.Charset = charset.CharsetUTF8
 			sig = &builtinCastStringAsStringSig{stringFunc}
 		}
-		res, isNull, err := sig.evalString(t.row)
+		res, isNull, err := sig.evalString(t.row.ToRow())
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		c.Assert(res, Equals, t.after)
@@ -667,49 +742,49 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToTimeCases := []struct {
 		before *Column
 		after  types.Time
-		row    types.DatumRow
+		row    chunk.MutRow
 	}{
 		// cast real as Time.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			tm,
-			[]types.Datum{types.NewFloat64Datum(float64(curTimeInt))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(float64(curTimeInt))}),
 		},
 		// cast decimal as Time.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			tm,
-			[]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(curTimeInt))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(curTimeInt))}),
 		},
 		// cast int as Time.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
 			tm,
-			[]types.Datum{types.NewIntDatum(curTimeInt)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(curTimeInt)}),
 		},
 		// cast string as Time.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			tm,
-			[]types.Datum{types.NewStringDatum(curTimeString)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum(curTimeString)}),
 		},
 		// cast Duration as Time.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
 			tm,
-			[]types.Datum{durationDatum},
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 		},
 		// cast JSON as Time.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
 			tm,
-			[]types.Datum{jsonTime},
+			chunk.MutRowFromDatums([]types.Datum{jsonTime}),
 		},
 		// cast Time as Time.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			tm,
-			[]types.Datum{timeDatum},
+			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 		},
 	}
 	for i, t := range castToTimeCases {
@@ -734,7 +809,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 6:
 			sig = &builtinCastTimeAsTimeSig{timeFunc}
 		}
-		res, isNull, err := sig.evalTime(t.row)
+		res, isNull, err := sig.evalTime(t.row.ToRow())
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		c.Assert(res.String(), Equals, t.after.String())
@@ -743,7 +818,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToTimeCases2 := []struct {
 		before *Column
 		after  types.Time
-		row    types.DatumRow
+		row    chunk.MutRow
 		fsp    int
 		tp     byte
 	}{
@@ -751,7 +826,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			dt,
-			[]types.Datum{types.NewFloat64Datum(float64(curTimeInt))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(float64(curTimeInt))}),
 			types.DefaultFsp,
 			mysql.TypeDate,
 		},
@@ -759,7 +834,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			dt,
-			[]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(curTimeInt))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(curTimeInt))}),
 			types.DefaultFsp,
 			mysql.TypeDate,
 		},
@@ -767,7 +842,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
 			tm,
-			[]types.Datum{types.NewIntDatum(curTimeInt)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(curTimeInt)}),
 			types.MaxFsp,
 			mysql.TypeDatetime,
 		},
@@ -775,7 +850,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			tm,
-			[]types.Datum{types.NewStringDatum(curTimeString)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum(curTimeString)}),
 			types.MaxFsp,
 			mysql.TypeDatetime,
 		},
@@ -783,7 +858,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
 			dt,
-			[]types.Datum{durationDatum},
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 			types.DefaultFsp,
 			mysql.TypeDate,
 		},
@@ -791,7 +866,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			dt,
-			[]types.Datum{timeDatum},
+			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 			types.DefaultFsp,
 			mysql.TypeDate,
 		},
@@ -816,7 +891,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 5:
 			sig = &builtinCastTimeAsTimeSig{timeFunc}
 		}
-		res, isNull, err := sig.evalTime(t.row)
+		res, isNull, err := sig.evalTime(t.row.ToRow())
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		resAfter := t.after.String()
@@ -832,49 +907,49 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToDurationCases := []struct {
 		before *Column
 		after  types.Duration
-		row    types.DatumRow
+		row    chunk.MutRow
 	}{
 		// cast real as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			duration,
-			[]types.Datum{types.NewFloat64Datum(125959)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(125959)}),
 		},
 		// cast decimal as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			duration,
-			[]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(125959))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(125959))}),
 		},
 		// cast int as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
 			duration,
-			[]types.Datum{types.NewIntDatum(125959)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(125959)}),
 		},
 		// cast string as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			duration,
-			[]types.Datum{types.NewStringDatum("12:59:59")},
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("12:59:59")}),
 		},
 		// cast Time as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			duration,
-			[]types.Datum{timeDatum},
+			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 		},
 		// cast JSON as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0},
 			duration,
-			[]types.Datum{jsonDuration},
+			chunk.MutRowFromDatums([]types.Datum{jsonDuration}),
 		},
 		// cast Duration as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
 			duration,
-			[]types.Datum{durationDatum},
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 		},
 	}
 	for i, t := range castToDurationCases {
@@ -899,7 +974,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 6:
 			sig = &builtinCastDurationAsDurationSig{durationFunc}
 		}
-		res, isNull, err := sig.evalDuration(t.row)
+		res, isNull, err := sig.evalDuration(t.row.ToRow())
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		c.Assert(res.String(), Equals, t.after.String())
@@ -908,49 +983,49 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	castToDurationCases2 := []struct {
 		before *Column
 		after  types.Duration
-		row    types.DatumRow
+		row    chunk.MutRow
 		fsp    int
 	}{
 		// cast real as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			duration,
-			[]types.Datum{types.NewFloat64Datum(125959)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewFloat64Datum(125959)}),
 			1,
 		},
 		// cast decimal as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
 			duration,
-			[]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(125959))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromInt(125959))}),
 			2,
 		},
 		// cast int as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
 			duration,
-			[]types.Datum{types.NewIntDatum(125959)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(125959)}),
 			3,
 		},
 		// cast string as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0},
 			duration,
-			[]types.Datum{types.NewStringDatum("12:59:59")},
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("12:59:59")}),
 			4,
 		},
 		// cast Time as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
 			duration,
-			[]types.Datum{timeDatum},
+			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 			5,
 		},
 		// cast Duration as Duration.
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
 			duration,
-			[]types.Datum{durationDatum},
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 			6,
 		},
 	}
@@ -974,7 +1049,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 5:
 			sig = &builtinCastDurationAsDurationSig{durationFunc}
 		}
-		res, isNull, err := sig.evalDuration(t.row)
+		res, isNull, err := sig.evalDuration(t.row.ToRow())
 		c.Assert(isNull, Equals, false)
 		c.Assert(err, IsNil)
 		resAfter := t.after.String()
@@ -989,19 +1064,19 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 
 	// null case
 	args := []Expression{&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
-	row := types.DatumRow{types.NewDatum(nil)}
+	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)})
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = types.NewFieldType(mysql.TypeVarString)
 	sig = &builtinCastRealAsStringSig{bf}
-	sRes, isNull, err := sig.evalString(row)
+	sRes, isNull, err := sig.evalString(row.ToRow())
 	c.Assert(sRes, Equals, "")
 	c.Assert(isNull, Equals, true)
 	c.Assert(err, IsNil)
 
 	// test hybridType case.
 	args = []Expression{&Constant{Value: types.NewDatum(types.Enum{Name: "a", Value: 0}), RetType: types.NewFieldType(mysql.TypeEnum)}}
-	sig = &builtinCastStringAsIntSig{newBaseBuiltinFunc(ctx, args)}
-	iRes, isNull, err := sig.evalInt(nil)
+	sig = &builtinCastStringAsIntSig{newBaseBuiltinCastFunc(newBaseBuiltinFunc(ctx, args), false)}
+	iRes, isNull, err := sig.evalInt(chunk.Row{})
 	c.Assert(isNull, Equals, false)
 	c.Assert(err, IsNil)
 	c.Assert(iRes, Equals, int64(0))
@@ -1011,9 +1086,13 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	ctx := s.ctx
 
+	durationColumn0 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
+	durationColumn0.RetType.Decimal = types.DefaultFsp
+	durationColumn3 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
+	durationColumn3.RetType.Decimal = 3
 	cases := []struct {
 		expr      Expression
-		row       types.DatumRow
+		row       chunk.MutRow
 		intRes    int64
 		realRes   float64
 		decRes    *types.MyDecimal
@@ -1021,62 +1100,62 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	}{
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeLong), Index: 0},
-			[]types.Datum{types.NewDatum(123)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(123)}),
 			123, 123, types.NewDecFromInt(123), "123",
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
-			[]types.Datum{types.NewDatum(123.555)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(123.555)}),
 			124, 123.555, types.NewDecFromFloatForTest(123.555), "123.555",
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
-			[]types.Datum{types.NewDatum(123.123)},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(123.123)}),
 			123, 123.123, types.NewDecFromFloatForTest(123.123), "123.123",
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
-			[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("123.123"))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("123.123"))}),
 			123, 123.123, types.NewDecFromFloatForTest(123.123), "123.123",
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeNewDecimal), Index: 0},
-			[]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("123.555"))},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDecimalDatum(types.NewDecFromStringForTest("123.555"))}),
 			124, 123.555, types.NewDecFromFloatForTest(123.555), "123.555",
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeVarString), Index: 0},
-			[]types.Datum{types.NewStringDatum("123.123")},
+			chunk.MutRowFromDatums([]types.Datum{types.NewStringDatum("123.123")}),
 			123, 123.123, types.NewDecFromStringForTest("123.123"), "123.123",
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
-			[]types.Datum{timeDatum},
+			chunk.MutRowFromDatums([]types.Datum{timeDatum}),
 			curTimeInt, float64(curTimeInt), types.NewDecFromInt(curTimeInt), curTimeString,
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDatetime), Index: 0},
-			[]types.Datum{timeWithFspDatum},
+			chunk.MutRowFromDatums([]types.Datum{timeWithFspDatum}),
 			int64(curDateInt*1000000 + 130000), curTimeWithFspReal, types.NewDecFromFloatForTest(curTimeWithFspReal), curTimeWithFspString,
 		},
 		{
-			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
-			[]types.Datum{durationDatum},
+			durationColumn0,
+			chunk.MutRowFromDatums([]types.Datum{durationDatum}),
 			125959, 125959, types.NewDecFromFloatForTest(125959), "12:59:59",
 		},
 		{
-			&Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0},
-			[]types.Datum{durationWithFspDatum},
+			durationColumn3,
+			chunk.MutRowFromDatums([]types.Datum{durationWithFspDatum}),
 			130000, 125959.555, types.NewDecFromFloatForTest(125959.555), "12:59:59.555",
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeEnum), Index: 0},
-			[]types.Datum{types.NewDatum(types.Enum{Name: "a", Value: 123})},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(types.Enum{Name: "a", Value: 123})}),
 			123, 123, types.NewDecFromStringForTest("123"), "a",
 		},
 		{
 			&Constant{RetType: types.NewFieldType(mysql.TypeVarString), Value: types.NewBinaryLiteralDatum(types.NewBinaryLiteralFromUint(0x61, -1))},
-			nil,
+			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)}),
 			97, 97, types.NewDecFromInt(0x61), "a",
 		},
 	}
@@ -1084,7 +1163,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		// Test wrapping with CastAsInt.
 		intExpr := WrapWithCastAsInt(ctx, t.expr)
 		c.Assert(intExpr.GetType().EvalType(), Equals, types.ETInt)
-		intRes, isNull, err := intExpr.EvalInt(ctx, t.row)
+		intRes, isNull, err := intExpr.EvalInt(ctx, t.row.ToRow())
 		c.Assert(err, IsNil, Commentf("cast[%v]: %#v", i, t))
 		c.Assert(isNull, Equals, false)
 		c.Assert(intRes, Equals, t.intRes)
@@ -1092,7 +1171,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		// Test wrapping with CastAsReal.
 		realExpr := WrapWithCastAsReal(ctx, t.expr)
 		c.Assert(realExpr.GetType().EvalType(), Equals, types.ETReal)
-		realRes, isNull, err := realExpr.EvalReal(ctx, t.row)
+		realRes, isNull, err := realExpr.EvalReal(ctx, t.row.ToRow())
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
 		c.Assert(realRes, Equals, t.realRes, Commentf("cast[%v]: %#v", i, t))
@@ -1100,7 +1179,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		// Test wrapping with CastAsDecimal.
 		decExpr := WrapWithCastAsDecimal(ctx, t.expr)
 		c.Assert(decExpr.GetType().EvalType(), Equals, types.ETDecimal)
-		decRes, isNull, err := decExpr.EvalDecimal(ctx, t.row)
+		decRes, isNull, err := decExpr.EvalDecimal(ctx, t.row.ToRow())
 		c.Assert(err, IsNil, Commentf("case[%v]: %#v\n", i, t))
 		c.Assert(isNull, Equals, false)
 		c.Assert(decRes.Compare(t.decRes), Equals, 0, Commentf("case[%v]: %#v\n", i, t))
@@ -1108,7 +1187,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		// Test wrapping with CastAsString.
 		strExpr := WrapWithCastAsString(ctx, t.expr)
 		c.Assert(strExpr.GetType().EvalType().IsStringKind(), IsTrue)
-		strRes, isNull, err := strExpr.EvalString(ctx, t.row)
+		strRes, isNull, err := strExpr.EvalString(ctx, t.row.ToRow())
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
 		c.Assert(strRes, Equals, t.stringRes)
@@ -1119,12 +1198,12 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	// test cast unsigned int as string.
 	strExpr := WrapWithCastAsString(ctx, unsignedIntExpr)
 	c.Assert(strExpr.GetType().EvalType().IsStringKind(), IsTrue)
-	strRes, isNull, err := strExpr.EvalString(ctx, types.DatumRow{types.NewUintDatum(math.MaxUint64)})
+	strRes, isNull, err := strExpr.EvalString(ctx, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(math.MaxUint64)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(strRes, Equals, strconv.FormatUint(math.MaxUint64, 10))
 	c.Assert(isNull, Equals, false)
 
-	strRes, isNull, err = strExpr.EvalString(ctx, types.DatumRow{types.NewUintDatum(1234)})
+	strRes, isNull, err = strExpr.EvalString(ctx, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(1234)}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(isNull, Equals, false)
 	c.Assert(strRes, Equals, strconv.FormatUint(uint64(1234), 10))
@@ -1132,7 +1211,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	// test cast unsigned int as decimal.
 	decExpr := WrapWithCastAsDecimal(ctx, unsignedIntExpr)
 	c.Assert(decExpr.GetType().EvalType(), Equals, types.ETDecimal)
-	decRes, isNull, err := decExpr.EvalDecimal(ctx, types.DatumRow{types.NewUintDatum(uint64(1234))})
+	decRes, isNull, err := decExpr.EvalDecimal(ctx, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(uint64(1234))}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(isNull, Equals, false)
 	c.Assert(decRes.Compare(types.NewDecFromUint(uint64(1234))), Equals, 0)
@@ -1140,7 +1219,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 	// test cast unsigned int as Time.
 	timeExpr := WrapWithCastAsTime(ctx, unsignedIntExpr, types.NewFieldType(mysql.TypeDatetime))
 	c.Assert(timeExpr.GetType().Tp, Equals, mysql.TypeDatetime)
-	timeRes, isNull, err := timeExpr.EvalTime(ctx, types.DatumRow{types.NewUintDatum(uint64(curTimeInt))})
+	timeRes, isNull, err := timeExpr.EvalTime(ctx, chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(uint64(curTimeInt))}).ToRow())
 	c.Assert(err, IsNil)
 	c.Assert(isNull, Equals, false)
 	c.Assert(timeRes.Compare(tm), Equals, 0)
@@ -1191,7 +1270,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTime(c *C) {
 	}
 	for d, t := range cases {
 		expr := WrapWithCastAsTime(s.ctx, t.expr, t.tp)
-		res, isNull, err := expr.EvalTime(s.ctx, nil)
+		res, isNull, err := expr.EvalTime(s.ctx, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
 		c.Assert(res.Type, Equals, t.tp.Tp)
@@ -1224,7 +1303,7 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsDuration(c *C) {
 	}
 	for _, t := range cases {
 		expr := WrapWithCastAsDuration(s.ctx, t.expr)
-		res, isNull, err := expr.EvalDuration(s.ctx, nil)
+		res, isNull, err := expr.EvalDuration(s.ctx, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isNull, Equals, false)
 		c.Assert(res.Compare(duration), Equals, 0)
