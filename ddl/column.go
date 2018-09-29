@@ -351,7 +351,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		defer w.sessPool.put(ctx)
 		err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
-		if ErrWarnDataTruncated.Equal(err) {
+		if err != nil || ErrWarnDataTruncated.Equal(err) {
 			ver, err = modifyColumn2RollbackJob(t, tblInfo, job, oldCol)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -434,7 +434,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 
 // CheckForNullValue ensure there are no null values of the column of this table.
 func CheckForNullValue(ctx sessionctx.Context, schema, table, oldCol, newCol model.CIStr) error {
-	sql := fmt.Sprintf("select count(*) from `%s`.`%s` where `%s` is null;", schema.L, table.L, oldCol.L)
+	sql := fmt.Sprintf("select count(*) from `%s`.`%s` where `%s` is null limit 1;", schema.L, table.L, oldCol.L)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
 		return errors.Trace(err)
