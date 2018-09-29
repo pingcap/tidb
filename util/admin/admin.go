@@ -353,6 +353,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	if err != nil {
 		return errors.Trace(err)
 	}
+	sc := new(stmtctx.StatementContext)
 	for {
 		vals1, h, err := it.Next()
 		if terror.ErrorEqual(err, io.EOF) {
@@ -375,7 +376,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 			return errors.Trace(err)
 		}
 		adjustDatumKind(vals1, vals2)
-		if !reflect.DeepEqual(vals1, vals2) {
+		if !compareDatumSlice(sc, vals1, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals1}
 			record2 := &RecordData{Handle: h, Values: vals2}
 			return ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record1, record2)
@@ -383,6 +384,19 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	}
 
 	return nil
+}
+
+func compareDatumSlice(sc *stmtctx.StatementContext, val1s, val2s []types.Datum) bool {
+	if len(val1s) != len(val2s) {
+		return false
+	}
+	for i, v := range val1s {
+		res, err := v.CompareDatum(sc, &val2s[i])
+		if err != nil || res != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // CheckRecordAndIndex is exported for testing.
