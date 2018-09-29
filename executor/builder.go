@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -819,6 +820,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		return nil
 	}
 
+	logrus.Warning(" b.ctx.GetSessionVars().L2CacheSize", b.ctx.GetSessionVars().L2CacheSize)
 	e := &HashJoinExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
 		concurrency:  v.Concurrency,

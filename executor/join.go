@@ -281,18 +281,17 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 				return
 			}
 			if chk.NumRows() == 0 {
+				// Calculate the bit number needed when using radix partition.
+				if e.UseRadixPartition {
+					innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed())
+					l2CacheSize := float64(e.ctx.GetSessionVars().L2CacheSize)
+					e.radixBits = int(math.Log2(innerResultSize / l2CacheSize))
+				}
 				return
 			}
 			chkCh <- chk
 			e.innerResult.Add(chk)
 		}
-	}
-
-	// Calculate the bit number needed when using radix partition.
-	if e.UseRadixPartition {
-		innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed() / 1024)
-		l2CacheSize := float64(e.ctx.GetSessionVars().L2CacheSize)
-		e.radixBits = int(math.Log2(innerResultSize / l2CacheSize))
 	}
 }
 
