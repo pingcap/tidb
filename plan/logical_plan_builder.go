@@ -1140,6 +1140,10 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 			return inNode, false
 		}
 		return ret, true
+	case *ast.ValuesExpr:
+		if v.Column == nil {
+			g.err = ErrUnknownColumn.GenByArgs("", "VALUES() function")
+		}
 	}
 	return inNode, true
 }

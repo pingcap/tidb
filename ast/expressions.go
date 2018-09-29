@@ -931,7 +931,10 @@ func (n *ValuesExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Column = node.(*ColumnNameExpr)
+	n.Column, ok = node.(*ColumnNameExpr)
+	if !ok {
+		n.Column = nil
+	}
 	return v.Leave(n)
 }
 
