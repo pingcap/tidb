@@ -15,7 +15,6 @@ package chunk
 
 import (
 	"sort"
-	"strings"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -164,11 +163,6 @@ func cmpJSON(l Row, lCol int, r Row, rCol int) int {
 
 // Compare compares the value with ad.
 func Compare(row Row, colIdx int, ad *types.Datum) int {
-	return CompareOpt(row, colIdx, ad, false)
-}
-
-// CompareOpt compares the value with ad with prefixAsEq optional
-func CompareOpt(row Row, colIdx int, ad *types.Datum, prefixAsEq bool) int {
 	switch ad.Kind() {
 	case types.KindNull:
 		if row.IsNull(colIdx) {
@@ -191,13 +185,7 @@ func CompareOpt(row Row, colIdx int, ad *types.Datum, prefixAsEq bool) int {
 	case types.KindFloat64:
 		return types.CompareFloat64(row.GetFloat64(colIdx), ad.GetFloat64())
 	case types.KindString, types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
-		x := row.GetString(colIdx)
-		y := ad.GetString()
-		cmp := types.CompareString(x, y)
-		if prefixAsEq && cmp > 0 && strings.HasPrefix(x, y) {
-			cmp = 0
-		}
-		return cmp
+		return types.CompareString(row.GetString(colIdx), ad.GetString())
 	case types.KindMysqlDecimal:
 		l, r := row.GetMyDecimal(colIdx), ad.GetMysqlDecimal()
 		return l.Compare(r)

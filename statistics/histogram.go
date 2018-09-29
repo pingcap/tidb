@@ -861,6 +861,17 @@ func (idx *Index) outOfRange(val types.Datum) bool {
 	if idx.Bounds == nil {
 		return true
 	}
-	return chunk.CompareOpt(idx.Bounds.GetRow(0), 0, &val, true) > 0 ||
-		chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) < 0
+	withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
+		matchPrefix(idx.Bounds.GetRow(0), 0, &val)
+	withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
+	return !withInLowBoundOrPrefixMatch || !withInHighBound
+}
+
+// matchPrefix checks whether ad is the prefix of value
+func matchPrefix(row chunk.Row, colIdx int, ad *types.Datum) bool {
+	switch ad.Kind() {
+	case types.KindString, types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
+		return strings.HasPrefix(row.GetString(colIdx), ad.GetString())
+	}
+	return false
 }
