@@ -816,3 +816,4 @@ func mustFormat(f strutil.Formatter, format string, args ...interface{}) {
 	if err != nil {
 		log.Fatalf("format error %v", err)
 	}
+}
