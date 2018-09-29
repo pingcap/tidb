@@ -356,7 +356,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateCancelling
 			return ver, nil
 		}
 	}
@@ -493,7 +493,7 @@ func checkAddColumnTooManyColumns(oldCols int) error {
 
 func modifyColumn2RollbackJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo) (ver int64, _ error) {
 	job.State = model.JobStateRollingback
-	tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag
+	tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
 	ver, err := updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
