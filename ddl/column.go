@@ -299,8 +299,10 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
 	if job.IsRollingback() {
-		// field flag reset to null.
-		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
+		if mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
+			// field flag reset to null.
+			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
+		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -329,32 +331,30 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	// }
 
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		// Get sessionctx from context resource pool.
-		var ctx sessionctx.Context
-		ctx, err = w.sessPool.get()
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		defer w.sessPool.put(ctx)
-
 		// Modify the type defined Flag to NotNullFlag.
 		tblInfo.Columns[oldCol.Offset].Flag = newCol.Flag
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		// Wait for two leases to ensure that all nodes in the cluster are updated successfully.
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
-			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
+		return ver, nil
+	}
 
-		err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
-		// If there is a null value inserted, it cannot be modified and needs to be rollback.
-		if ErrWarnDataTruncated.Equal(err) {
-			ver, err = modifyColumn2RollbackJob(t, tblInfo, job, oldCol)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
+	// Get sessionctx from context resource pool.
+	var ctx sessionctx.Context
+	ctx, err = w.sessPool.get()
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+	err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
+	// If there is a null value inserted, it cannot be modified and needs to be rollback.
+	if ErrWarnDataTruncated.Equal(err) {
+		ver, err = modifyColumn2RollbackJob(t, tblInfo, job, oldCol)
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
+		return ver, nil
 	}
 
 	// We need the latest column's offset and state. This information can be obtained from the store.
