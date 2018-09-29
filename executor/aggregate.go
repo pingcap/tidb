@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pkg/errors"
-	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"

@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pkg/errors"
 	"github.com/pingcap/tidb/util/tracing"
-	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
