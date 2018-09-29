@@ -356,6 +356,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
+			job.State = model.JobStateCancelled
 			return ver, nil
 		}
 	}
