@@ -276,17 +276,18 @@ func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ erro
 	newCol := &model.ColumnInfo{}
 	oldColName := &model.CIStr{}
 	pos := &ast.ColumnPosition{}
-	err := job.DecodeArgs(newCol, oldColName, pos)
+	IsNull2Notnull := false
+	err := job.DecodeArgs(newCol, oldColName, pos, &IsNull2Notnull)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	return w.doModifyColumn(t, job, newCol, oldColName, pos)
+	return w.doModifyColumn(t, job, newCol, oldColName, pos, IsNull2Notnull)
 }
 
 // doModifyColumn updates the column information and reorders all columns.
-func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
+func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition, IsNull2Notnull bool) (ver int64, _ error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -299,7 +300,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
 	if job.IsRollingback() {
-		if mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
+		if IsNull2Notnull {
 			// field flag reset to null.
 			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
 		}
@@ -340,21 +341,23 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		return ver, nil
 	}
 
-	// Get sessionctx from context resource pool.
-	var ctx sessionctx.Context
-	ctx, err = w.sessPool.get()
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	defer w.sessPool.put(ctx)
-	err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
-	// If there is a null value inserted, it cannot be modified and needs to be rollback.
-	if ErrWarnDataTruncated.Equal(err) {
-		ver, err = modifyColumn2RollbackJob(t, tblInfo, job, oldCol)
+	if IsNull2Notnull {
+		// Get sessionctx from context resource pool.
+		var ctx sessionctx.Context
+		ctx, err = w.sessPool.get()
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		return ver, nil
+		defer w.sessPool.put(ctx)
+		err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
+		// If there is a null value inserted, it cannot be modified and needs to be rollback.
+		if ErrWarnDataTruncated.Equal(err) {
+			ver, err = modifyColumn2RollbackJob(t, tblInfo, job, oldCol)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+			return ver, nil
+		}
 	}
 
 	// We need the latest column's offset and state. This information can be obtained from the store.
