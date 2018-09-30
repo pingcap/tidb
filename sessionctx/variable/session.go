@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
+	"github.com/klauspost/cpuid"
 )
 
 const (
@@ -297,6 +298,10 @@ type SessionVars struct {
 
 	// L2CacheSize indicates the size of CPU L2 cache, using byte as unit.
 	L2CacheSize int
+
+	// EnableRadixJoin indicates whether to use radix hash join to execute
+	// HashJoin.
+	EnableRadixJoin bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -318,6 +323,9 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                DefTiDBRetryLimit,
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
+		EnableRadixJoin: false,
+		//L2CacheSize: 1,
+		L2CacheSize: cpuid.CPU.Cache.L2,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -581,6 +589,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.setDDLReorgPriority(val)
 	case TiDBForcePriority:
 		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
+	case TiDBEnableRadixJoin:
+		s.EnableRadixJoin = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

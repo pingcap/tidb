@@ -281,17 +281,34 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 				return
 			}
 			if chk.NumRows() == 0 {
-				// Calculate the bit number needed when using radix partition.
-				if e.UseRadixPartition {
-					innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed())
-					l2CacheSize := float64(e.ctx.GetSessionVars().L2CacheSize)
-					e.radixBits = int(math.Log2(innerResultSize / l2CacheSize))
-				}
+				e.evalRadixBitNum()
 				return
 			}
 			chkCh <- chk
 			e.innerResult.Add(chk)
 		}
+	}
+}
+
+// evalRadixBitNum evaluates the radix bit numbers.
+func (e *HashJoinExec) evalRadixBitNum() {
+	sc := e.ctx.GetSessionVars()
+	// Calculate the bit number needed when using radix partition.
+	if sc.EnableRadixJoin {
+		return
+	}
+	innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed())
+	// To ensure that one partition of inner relation, one hash
+	// table and one partition of outer relation fit into the L2
+	// cache when the input data obeys the uniform distribution,
+	// we suppose every sub-partition of inner relation using
+	// three quarters of the L2 cache size.
+	l2CacheSize := float64(sc.L2CacheSize) * 3 / 4
+	e.radixBits = int(math.Log2(innerResultSize / l2CacheSize))
+	// The complete inner relation can be hold in L2Cache, we
+	// can skip the partition phase.
+	if e.radixBits <= 0 {
+		sc.EnableRadixJoin = false
 	}
 }
 
