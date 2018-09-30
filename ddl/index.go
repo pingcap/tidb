@@ -16,7 +16,6 @@ package ddl
 import (
 	"context"
 	"math"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -881,7 +880,7 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 		}
 		if col.IsGenerated() && !col.GeneratedStored {
 			for _, c := range cols {
-				if strings.Contains(col.GeneratedExprString, c.Name.L) {
+				if _, ok := col.Dependences[c.Name.L]; ok {
 					decodeColMap[c.ID] = decoder.Column{
 						Info: c.ToInfo(),
 					}
