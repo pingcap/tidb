@@ -156,6 +156,8 @@ func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) {
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
+	case ast.JSONArrayAgg:
+		a.typeInfer4JsonFuncs(ctx)
 	default:
 		panic("unsupported agg function: " + a.Name)
 	}
@@ -276,6 +278,8 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 		return &bitXorFunction{aggFunction: aggFunc}
 	case ast.AggFuncBitAnd:
 		return &bitAndFunction{aggFunction: aggFunc}
+	case ast.JSONArrayAgg:
+		return &jsonArrayAggFunction{aggFunction: aggFunc}
 	default:
 		panic("unsupported agg function")
 	}
@@ -358,6 +362,12 @@ func (a *AggFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+}
+
+func (a *AggFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {
+	a.RetTp = types.NewFieldType(mysql.TypeJSON)
+	types.SetBinChsClnFlag(a.RetTp)
+	a.RetTp.Flag |= mysql.NotNullFlag
 }
 
 func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {

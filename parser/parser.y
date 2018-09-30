@@ -444,6 +444,7 @@ import (
 	jobs		"JOBS"
 	job		    "JOB"
 	stats		"STATS"
+	jsonArrayAgg    "JSON_ARRAYAGG"
 	statsMeta       "STATS_META"
 	statsHistograms "STATS_HISTOGRAMS"
 	statsBuckets    "STATS_BUCKETS"
@@ -478,6 +479,7 @@ import (
 	builtinUser
 	builtinVarPop
 	builtinVarSamp
+	builtinJsonArrayAgg
 
 %token	<item>
 
@@ -2830,7 +2832,7 @@ TiDBKeyword:
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "INPLACE" | "INTERNAL" 
-|"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOP" | "TRIM"
+|"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOP" | "TRIM" | "JSON_ARRAYAGG"
 
 /************************************************************************************
  *
@@ -3796,6 +3798,10 @@ SumExpr:
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
+|   builtinJsonArrayAgg '(' Expression ')'
+    {
+        $$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}}
+    }
 
 OptGConcatSeparator:
         {

@@ -52,6 +52,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitXor(aggFuncDesc, ordinal)
 	case ast.AggFuncBitAnd:
 		return buildBitAnd(aggFuncDesc, ordinal)
+	case ast.AggFuncJsonArrayAgg:
+		return buildJsonArrayAgg(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -311,4 +313,24 @@ func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		ordinal: ordinal,
 	}
 	return &bitAndUint64{baseBitAggFunc{base}}
+}
+
+func buildJsonArrayAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	// Build stddev functions which consume the original data and remove the
+	// duplicated input of the same group.
+	case aggregation.DedupMode:
+		return nil // not implemented yet.
+		// partial results.
+	case aggregation.CompleteMode, aggregation.Partial1Mode:
+		return &original4JsonArrayAgg{baseJsonArrayAgg{base}}
+		// functions and update their partial results.
+	case aggregation.Partial2Mode, aggregation.FinalMode:
+		return &partial4JsonArrayAgg{baseJsonArrayAgg{base}}
+	}
+	return nil
 }

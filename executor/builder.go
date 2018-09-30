@@ -882,6 +882,8 @@ func (b *executorBuilder) wrapCastForAggArgs(funcs []*aggregation.AggFuncDesc) {
 			castFunc = expression.WrapWithCastAsString
 		case types.ETDecimal:
 			castFunc = expression.WrapWithCastAsDecimal
+		case types.ETJson:
+			castFunc = expression.WrapWithCastAsString
 		default:
 			panic("should never happen in executorBuilder.wrapCastForAggArgs")
 		}
