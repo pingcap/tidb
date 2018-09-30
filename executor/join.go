@@ -74,10 +74,10 @@ type HashJoinExec struct {
 	memTracker *memory.Tracker // track memory usage.
 
 	// useRadixPartition indicates whether to use radix-based cluster algorithm
-	// to partitioning.
+	// to partition.
 	// Note: Only used for testing now, we'll check whether to use radix
 	// partition according to the the skew of inner data when radix partition is
-	// totally supported.
+	// fully supported.
 	UseRadixPartition bool
 	// radixBits indicates the bit number using for radix partitioning. Inner
 	// relation will be split to 2^radixBits sub-relations before building the
