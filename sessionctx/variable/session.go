@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/klauspost/cpuid"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
-	"github.com/klauspost/cpuid"
 )
 
 const (
@@ -323,8 +323,8 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                DefTiDBRetryLimit,
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
-		EnableRadixJoin: false,
-		L2CacheSize: cpuid.CPU.Cache.L2,
+		EnableRadixJoin:           false,
+		L2CacheSize:               cpuid.CPU.Cache.L2,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,

@@ -235,7 +235,7 @@ const (
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4
 	DefTiDBForcePriority             = mysql.NoPriority
-	DefTiDBUseRadixJoin = false
+	DefTiDBUseRadixJoin              = false
 )
 
 // Process global variables.
