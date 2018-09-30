@@ -324,7 +324,6 @@ func NewSessionVars() *SessionVars {
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
 		EnableRadixJoin: false,
-		//L2CacheSize: 1,
 		L2CacheSize: cpuid.CPU.Cache.L2,
 	}
 	vars.Concurrency = Concurrency{
