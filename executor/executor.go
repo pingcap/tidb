@@ -120,9 +120,6 @@ func (e *baseExecutor) retTypes() []*types.FieldType {
 
 // Next fills mutiple rows into a chunk.
 func (e *baseExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.nextFunc == nil {
-		fmt.Println()
-	}
 	return e.nextFunc(ctx, chk)
 }
 
@@ -134,7 +131,7 @@ func (e *baseExecutor) wrap(nextFunc func(ctx context.Context, chk *chunk.Chunk)
 	e.nextFunc = func(ctx context.Context, chk *chunk.Chunk) error {
 		start := time.Now()
 		err := nextFunc(ctx, chk)
-		e.execStat.Record(time.Now().Sub(start))
+		e.execStat.Record(time.Now().Sub(start), chk.NumRows())
 		return err
 	}
 }

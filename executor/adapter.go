@@ -364,7 +364,6 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	var internal string
 	if sessVars.InRestrictedSQL {
 		internal = "[INTERNAL] "
-		return
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	if costTime < threshold {

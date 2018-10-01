@@ -13,6 +13,7 @@ type ExecStats map[string]*ExecStat
 type ExecStat struct {
 	loop    int
 	consume time.Duration
+	rows    int
 }
 
 // NewExecutorStats creates new executor collector.
@@ -44,11 +45,12 @@ func (e ExecStats) String() string {
 }
 
 // Record records executor's execution.
-func (e *ExecStat) Record(d time.Duration) {
+func (e *ExecStat) Record(d time.Duration, rowNum int) {
 	e.loop++
 	e.consume += d
+	e.rows += rowNum
 }
 
 func (e *ExecStat) String() string {
-	return fmt.Sprintf("%f-%d", e.consume.Seconds(), e.loop)
+	return fmt.Sprintf("%f-%d-%d", e.consume.Seconds(), e.loop, e.rows)
 }
