@@ -485,7 +485,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		corColInFilter:  e.corColInTblSide,
 		plans:           e.tblPlans,
 	}
-	trExec.wrap(trExec.NextExec)
+	trExec.bindNext(trExec.NextExec)
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, trExec, handles)
 	if err != nil {
 		log.Error(err)

@@ -97,7 +97,7 @@ func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt str
 		is:           is,
 		sqlText:      sqlTxt,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 

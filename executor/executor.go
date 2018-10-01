@@ -123,7 +123,7 @@ func (e *baseExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return e.nextFunc(ctx, chk)
 }
 
-func (e *baseExecutor) wrap(nextFunc func(ctx context.Context, chk *chunk.Chunk) error) {
+func (e *baseExecutor) bindNext(nextFunc func(ctx context.Context, chk *chunk.Chunk) error) {
 	if e.execStat == nil {
 		e.nextFunc = nextFunc
 		return

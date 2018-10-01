@@ -176,7 +176,7 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		jobIDs:       v.JobIDs,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	e.errs, b.err = admin.CancelJobs(e.ctx.Txn(), e.jobIDs)
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
@@ -192,7 +192,7 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 	e := &ShowDDLExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 
 	var err error
 	ownerManager := domain.GetDomain(e.ctx).DDL().OwnerManager()
@@ -220,7 +220,7 @@ func (b *executorBuilder) buildShowDDLJobs(v *plannercore.ShowDDLJobs) Executor 
 		is:           b.is,
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -229,7 +229,7 @@ func (b *executorBuilder) buildShowDDLJobQueries(v *plannercore.ShowDDLJobQuerie
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		jobIDs:       v.JobIDs,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -238,7 +238,7 @@ func (b *executorBuilder) buildShowSlow(v *plannercore.ShowSlow) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		ShowSlow:     v.ShowSlow,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -259,7 +259,7 @@ func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
 		is:           b.is,
 		src:          readerExec,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -270,7 +270,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 		is:           b.is,
 		genExprs:     v.GenExprs,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -318,7 +318,7 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 		index:        index,
 		table:        t,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -367,7 +367,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 		table:        t,
 		batchSize:    20000,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -383,7 +383,7 @@ func (b *executorBuilder) buildCheckIndexRange(v *plannercore.CheckIndexRange) E
 		table:        tb.Meta(),
 		is:           b.is,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	idxName := strings.ToLower(v.IndexName)
 	for _, idx := range tb.Indices() {
 		if idx.Meta().Name.L == idxName {
@@ -401,7 +401,7 @@ func (b *executorBuilder) buildChecksumTable(v *plannercore.ChecksumTable) Execu
 		tables:       make(map[int64]*checksumContext),
 		done:         false,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	startTs := b.getStartTS()
 	for _, t := range v.Tables {
 		e.tables[t.TableInfo.ID] = newChecksumContext(t.DBInfo, t.TableInfo, startTs)
@@ -416,7 +416,7 @@ func (b *executorBuilder) buildDeallocate(v *plannercore.Deallocate) Executor {
 		baseExecutor: base,
 		Name:         v.Name,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -437,7 +437,7 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src),
 		Lock:         v.Lock,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -455,7 +455,7 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 		begin:        v.Offset,
 		end:          v.Offset + v.Count,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -468,7 +468,7 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 		name:         v.Name,
 		sqlText:      v.SQLText,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -482,7 +482,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		stmt:         v.Stmt,
 		plan:         v.Plan,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -499,7 +499,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 		GlobalScope:  v.GlobalScope,
 		is:           b.is,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	if e.Tp == ast.ShowGrants && e.User == nil {
 		e.User = e.ctx.GetSessionVars().User
 	}
@@ -510,7 +510,7 @@ func (b *executorBuilder) buildShow(v *plannercore.Show) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), e),
 		filters:      v.Conditions,
 	}
-	sel.wrap(sel.NextExec)
+	sel.bindNext(sel.NextExec)
 	return sel
 }
 
@@ -528,7 +528,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 		Statement:    v.Statement,
 		is:           b.is,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -539,7 +539,7 @@ func (b *executorBuilder) buildSet(v *plannercore.Set) Executor {
 		baseExecutor: base,
 		vars:         v.VarAssigns,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -576,7 +576,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
 	}
-	insert.wrap(insert.NextExec)
+	insert.bindNext(insert.NextExec)
 	return insert
 }
 
@@ -614,7 +614,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 			columns:      columns,
 		},
 	}
-	loadDataExec.wrap(loadDataExec.NextExec)
+	loadDataExec.bindNext(loadDataExec.NextExec)
 
 	return loadDataExec
 }
@@ -624,7 +624,7 @@ func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		info:         &LoadStatsInfo{v.Path, b.ctx},
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -632,7 +632,7 @@ func (b *executorBuilder) buildReplace(vals *InsertValues) Executor {
 	replaceExec := &ReplaceExec{
 		InsertValues: vals,
 	}
-	replaceExec.wrap(replaceExec.NextExec)
+	replaceExec.bindNext(replaceExec.NextExec)
 	return replaceExec
 }
 
@@ -646,7 +646,7 @@ func (b *executorBuilder) buildGrant(grant *ast.GrantStmt) Executor {
 		WithGrant:    grant.WithGrant,
 		is:           b.is,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -660,7 +660,7 @@ func (b *executorBuilder) buildRevoke(revoke *ast.RevokeStmt) Executor {
 		Users:        revoke.Users,
 		is:           b.is,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -670,7 +670,7 @@ func (b *executorBuilder) buildDDL(v *plannercore.DDL) Executor {
 		stmt:         v.Statement,
 		is:           b.is,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -682,7 +682,7 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 		stmtNode:     v.StmtNode,
 		builder:      b,
 	}
-	exec.wrap(exec.NextExec)
+	exec.bindNext(exec.NextExec)
 	return exec
 }
 
@@ -691,7 +691,7 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 	e := &ExplainExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	e.rows = make([][]string, 0, len(v.Rows))
 	for _, row := range v.Rows {
 		e.rows = append(e.rows, row)
@@ -706,7 +706,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 		return nil
 	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src)}
-	us.wrap(us.NextExec)
+	us.bindNext(us.NextExec)
 	// Get the handle column index of the below plannercore.
 	// We can guarantee that there must be only one col in the map.
 	for _, cols := range v.Children()[0].Schema().TblID2Handle {
@@ -788,7 +788,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) Execu
 			defaultValues, v.OtherConditions,
 			leftExec.retTypes(), rightExec.retTypes()),
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 
 	leftKeys := v.LeftKeys
 	rightKeys := v.RightKeys
@@ -857,7 +857,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 		joinType:     v.JoinType,
 		innerIdx:     v.InnerChildIdx,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 
 	defaultValues := v.DefaultValues
 	lhsTypes, rhsTypes := leftExec.retTypes(), rightExec.retTypes()
@@ -991,7 +991,7 @@ func (b *executorBuilder) buildProjBelowAgg(aggFuncs []*aggregation.AggFuncDesc,
 		baseExecutor:  newBaseExecutor(b.ctx, expression.NewSchema(projSchemaCols...), projFromID, src),
 		evaluatorSuit: expression.NewEvaluatorSuit(projExprs),
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -1009,7 +1009,7 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 		PartialAggFuncs: make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 		GroupByItems:    v.GroupByItems,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	// We take `create table t(a int, b int);` as example.
 	//
 	// 1. If all the aggregation functions are FIRST_ROW, we do not need to set the defaultVal for them:
@@ -1083,7 +1083,7 @@ func (b *executorBuilder) buildStreamAgg(v *plannercore.PhysicalStreamAgg) Execu
 		aggFuncs:     make([]aggfuncs.AggFunc, 0, len(v.AggFuncs)),
 		GroupByItems: v.GroupByItems,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	if len(v.GroupByItems) != 0 || aggregation.IsAllFirstRow(v.AggFuncs) {
 		e.defaultVal = nil
 	} else {
@@ -1112,7 +1112,7 @@ func (b *executorBuilder) buildSelection(v *plannercore.PhysicalSelection) Execu
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
 		filters:      v.Conditions,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -1128,7 +1128,7 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 		evaluatorSuit:    expression.NewEvaluatorSuit(v.Exprs),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 
 	// If the calculation row count for this Projection operator is smaller
 	// than a Chunk size, we turn back to the un-parallel Projection
@@ -1150,7 +1150,7 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) Execu
 		baseExecutor: base,
 		numDualRows:  v.RowCount,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	// Init the startTS for later use.
 	b.getStartTS()
 	return e
@@ -1179,7 +1179,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 		seekHandle:     math.MinInt64,
 		isVirtualTable: tb.Type() == table.VirtualTable,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -1194,7 +1194,7 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	sortExec.wrap(sortExec.NextExec)
+	sortExec.bindNext(sortExec.NextExec)
 	metrics.ExecutorCounter.WithLabelValues("SortExec").Inc()
 	return &sortExec
 }
@@ -1210,13 +1210,13 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	sortExec.wrap(sortExec.NextExec)
+	sortExec.bindNext(sortExec.NextExec)
 	metrics.ExecutorCounter.WithLabelValues("TopNExec").Inc()
 	e := &TopNExec{
 		SortExec: sortExec,
 		limit:    &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -1260,7 +1260,7 @@ func (b *executorBuilder) buildApply(apply *plannercore.PhysicalApply) *NestedLo
 		joiner:       tupleJoiner,
 		outerSchema:  apply.OuterSchema,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	metrics.ExecutorCounter.WithLabelValues("NestedLoopApplyExec").Inc()
 	return e
 }
@@ -1275,7 +1275,7 @@ func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Execu
 	base.initCap = 2
 	base.maxChunkSize = 2
 	e := &MaxOneRowExec{baseExecutor: base}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -1291,7 +1291,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 	e := &UnionExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExecs...),
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	return e
 }
 
@@ -1315,7 +1315,7 @@ func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
 		tblID2table:    tblID2table,
 		columns2Handle: columns2Handle,
 	}
-	updateExec.wrap(updateExec.NextExec)
+	updateExec.bindNext(updateExec.NextExec)
 	return updateExec
 }
 
@@ -1397,7 +1397,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
 		IsMultiTable: v.IsMultiTable,
 		tblID2Table:  tblID2table,
 	}
-	deleteExec.wrap(deleteExec.NextExec)
+	deleteExec.bindNext(deleteExec.NextExec)
 	return deleteExec
 }
 
@@ -1470,7 +1470,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	for _, task := range v.ColTasks {
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: colTask,
@@ -1604,7 +1604,7 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 		indexRanges:   v.Ranges,
 		keyOff2IdxOff: v.KeyOff2IdxOff,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
 	for i := 0; i < len(v.OuterJoinKeys); i++ {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
@@ -1651,7 +1651,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		corColInAccess:  b.corColInAccess(v.TablePlans[0]),
 		plans:           v.TablePlans,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
 		e.physicalTableID = physicalTableID
 	}
@@ -1709,7 +1709,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		colLens:         is.IdxColLens,
 		plans:           v.IndexPlans,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	if isPartition, physicalTableID := is.IsPartition(); isPartition {
 		e.physicalTableID = physicalTableID
 	}
@@ -1782,7 +1782,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		idxPlans:          v.IndexPlans,
 		tblPlans:          v.TablePlans,
 	}
-	e.wrap(e.NextExec)
+	e.bindNext(e.NextExec)
 	if isPartition, physicalTableID := ts.IsPartition(); isPartition {
 		e.physicalTableID = physicalTableID
 	}
