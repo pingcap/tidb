@@ -187,8 +187,8 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 	return iw
 }
 
-// Next implements the Executor interface.
-func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor interface.
+func (e *IndexLookUpJoin) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	e.joinResult.Reset()
 	for {

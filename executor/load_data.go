@@ -48,8 +48,8 @@ func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table,
 	}
 }
 
-// Next implements the Executor Next interface.
-func (e *LoadDataExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *LoadDataExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	// TODO: support load data without local field.
 	if !e.IsLocal {

@@ -95,9 +95,9 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next fills data into the chunk passed by its caller.
+// NextExec fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
-func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *TableReaderExecutor) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	if err := e.resultHandler.nextChunk(ctx, chk); err != nil {
 		e.feedback.Invalidate()
 		return err

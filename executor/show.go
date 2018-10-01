@@ -62,8 +62,8 @@ type ShowExec struct {
 	cursor int
 }
 
-// Next implements the Executor Next interface.
-func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *ShowExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
 		e.result = e.newFirstChunk()

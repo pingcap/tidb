@@ -33,8 +33,8 @@ func (e *ExplainExec) Close() error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *ExplainExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *ExplainExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.rows) {
 		return nil

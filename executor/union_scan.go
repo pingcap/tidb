@@ -123,8 +123,8 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (us *UnionScanExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())
 	for i, batchSize := 0, chk.Capacity(); i < batchSize; i++ {

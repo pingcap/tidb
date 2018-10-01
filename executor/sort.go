@@ -71,8 +71,8 @@ func (e *SortExec) Open(ctx context.Context) error {
 	return errors.Trace(e.children[0].Open(ctx))
 }
 
-// Next implements the Executor Next interface.
-func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *SortExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
 		err := e.fetchRowChunks(ctx)
@@ -294,8 +294,8 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	return errors.Trace(e.SortExec.Open(ctx))
 }
 
-// Next implements the Executor Next interface.
-func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *TopNExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
 		e.totalLimit = int(e.limit.Offset + e.limit.Count)

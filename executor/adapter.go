@@ -364,13 +364,14 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	var internal string
 	if sessVars.InRestrictedSQL {
 		internal = "[INTERNAL] "
+		return
 	}
+	execDetail := sessVars.StmtCtx.GetExecDetails()
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debugf(
 			"[QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			internal, costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
-		execDetail := sessVars.StmtCtx.GetExecDetails()
 		logutil.SlowQueryLogger.Warnf(
 			"[SLOW_QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
 			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)

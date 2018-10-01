@@ -177,8 +177,8 @@ func (e *ReplaceExec) exec(newRows [][]types.Datum) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *ReplaceExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.finished {
 		return nil

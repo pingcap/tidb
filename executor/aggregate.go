@@ -499,8 +499,8 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	w.getFinalResult(ctx)
 }
 
-// Next implements the Executor Next interface.
-func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *HashAggExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.isUnparallelExec {
 		return errors.Trace(e.unparallelExec(ctx, chk))
@@ -754,8 +754,8 @@ func (e *StreamAggExec) Close() error {
 	return errors.Trace(e.baseExecutor.Close())
 }
 
-// Next implements the Executor Next interface.
-func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *StreamAggExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 
 	for !e.executed && chk.NumRows() < e.maxChunkSize {

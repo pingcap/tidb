@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/tracker/call"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -91,15 +92,17 @@ type PrepareExec struct {
 func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
 	base := newBaseExecutor(ctx, nil, "PrepareStmt")
 	base.initCap = chunk.ZeroCapacity
-	return &PrepareExec{
+	e := &PrepareExec{
 		baseExecutor: base,
 		is:           is,
 		sqlText:      sqlTxt,
 	}
+	e.wrap(e.NextExec)
+	return e
 }
 
-// Next implements the Executor Next interface.
-func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *PrepareExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	if e.ID != 0 {
 		// Must be the case when we retry a prepare.
@@ -196,8 +199,8 @@ type ExecuteExec struct {
 	plan      plannercore.Plan
 }
 
-// Next implements the Executor Next interface.
-func (e *ExecuteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *ExecuteExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
@@ -234,8 +237,8 @@ type DeallocateExec struct {
 	Name string
 }
 
-// Next implements the Executor Next interface.
-func (e *DeallocateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *DeallocateExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	vars := e.ctx.GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
@@ -278,6 +281,10 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.Location()
 	sc.MemTracker = memory.NewTracker(s.Text(), sessVars.MemQuotaQuery)
+	if sc.ExecStatsEnable {
+		sc.ExecStats = call.NewExecutorStats()
+		sc.ExecStatsEnable = false
+	}
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
 		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})

@@ -35,12 +35,15 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/tracker/call"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
+	"time"
 )
 
 var (
+	_ Executor = &baseExecutor{}
 	_ Executor = &CheckTableExec{}
 	_ Executor = &HashAggExec{}
 	_ Executor = &LimitExec{}
@@ -71,6 +74,8 @@ type baseExecutor struct {
 	maxChunkSize  int
 	children      []Executor
 	retFieldTypes []*types.FieldType
+	execStat      *call.ExecStat
+	nextFunc      func(ctx context.Context, chk *chunk.Chunk) error
 }
 
 // Open initializes children recursively and "childrenResults" according to children's schemas.
@@ -115,7 +120,23 @@ func (e *baseExecutor) retTypes() []*types.FieldType {
 
 // Next fills mutiple rows into a chunk.
 func (e *baseExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
-	return nil
+	if e.nextFunc == nil {
+		fmt.Println()
+	}
+	return e.nextFunc(ctx, chk)
+}
+
+func (e *baseExecutor) wrap(nextFunc func(ctx context.Context, chk *chunk.Chunk) error) {
+	if e.execStat == nil {
+		e.nextFunc = nextFunc
+		return
+	}
+	e.nextFunc = func(ctx context.Context, chk *chunk.Chunk) error {
+		start := time.Now()
+		err := nextFunc(ctx, chk)
+		e.execStat.Record(time.Now().Sub(start))
+		return err
+	}
 }
 
 func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id string, children ...Executor) baseExecutor {
@@ -126,6 +147,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().MaxChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
+		execStat:     ctx.GetSessionVars().StmtCtx.ExecStats.GetExecStat(id),
 	}
 	if schema != nil {
 		cols := schema.Columns
@@ -166,8 +188,8 @@ type CancelDDLJobsExec struct {
 	errs   []error
 }
 
-// Next implements the Executor Next interface.
-func (e *CancelDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *CancelDDLJobsExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobIDs) {
 		return nil
@@ -195,8 +217,8 @@ type ShowDDLExec struct {
 	done       bool
 }
 
-// Next implements the Executor Next interface.
-func (e *ShowDDLExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *ShowDDLExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil
@@ -259,8 +281,8 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *ShowDDLJobQueriesExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *ShowDDLJobQueriesExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobs) {
 		return nil
@@ -302,8 +324,8 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *ShowDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *ShowDDLJobsExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobs) {
 		return nil
@@ -369,8 +391,8 @@ func (e *CheckTableExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *CheckTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *CheckTableExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
@@ -452,8 +474,8 @@ func (e *CheckIndexExec) Close() error {
 	return errors.Trace(e.src.Close())
 }
 
-// Next implements the Executor Next interface.
-func (e *CheckIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *CheckIndexExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
@@ -499,8 +521,8 @@ func (e *ShowSlowExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *ShowSlowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *ShowSlowExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.cursor >= len(e.result) {
 		return nil
@@ -564,8 +586,8 @@ func (e *SelectLockExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *SelectLockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *SelectLockExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	err := e.children[0].Next(ctx, chk)
 	if err != nil {
@@ -608,8 +630,8 @@ type LimitExec struct {
 	childResult *chunk.Chunk
 }
 
-// Next implements the Executor Next interface.
-func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *LimitExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.cursor >= e.end {
 		return nil
@@ -727,8 +749,8 @@ func (e *TableDualExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *TableDualExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *TableDualExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.numReturned >= e.numDualRows {
 		return nil
@@ -778,8 +800,8 @@ func (e *SelectionExec) Close() error {
 	return errors.Trace(e.baseExecutor.Close())
 }
 
-// Next implements the Executor Next interface.
-func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *SelectionExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 
 	if !e.batched {
@@ -853,8 +875,8 @@ type TableScanExec struct {
 	virtualTableChunkIdx  int
 }
 
-// Next implements the Executor Next interface.
-func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *TableScanExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.isVirtualTable {
 		return errors.Trace(e.nextChunk4InfoSchema(ctx, chk))
@@ -953,8 +975,8 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *MaxOneRowExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.evaluated {
 		return nil
@@ -1095,8 +1117,8 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 	}
 }
 
-// Next implements the Executor Next interface.
-func (e *UnionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *UnionExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	if !e.initialized {
 		e.initialize(ctx)

@@ -84,6 +84,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 		baseExecutor: newBaseExecutor(sctx, schema, ""),
 		Tp:           ast.ShowProcessList,
 	}
+	e.wrap(e.NextExec)
 
 	ctx := context.Background()
 	err := e.Open(ctx)

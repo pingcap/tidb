@@ -241,8 +241,8 @@ func (e *IndexReaderExecutor) Close() error {
 	return errors.Trace(err)
 }
 
-// Next implements the Executor Next interface.
-func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *IndexReaderExecutor) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	err := e.result.Next(ctx, chk)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -453,6 +453,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
+	e.baseExecutor.ctx.GetSessionVars().StmtCtx.ExecStats.GetExecStat(e.id + "_tableReader")
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		worker := &tableWorker{
 			workCh:         workCh,
@@ -474,7 +475,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 }
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, &TableReaderExecutor{
+	trExec := &TableReaderExecutor{
 		baseExecutor:    newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
 		table:           e.table,
 		physicalTableID: e.physicalTableID,
@@ -483,7 +484,9 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		feedback:        statistics.NewQueryFeedback(0, nil, 0, false),
 		corColInFilter:  e.corColInTblSide,
 		plans:           e.tblPlans,
-	}, handles)
+	}
+	trExec.wrap(trExec.NextExec)
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, trExec, handles)
 	if err != nil {
 		log.Error(err)
 		return nil, errors.Trace(err)
@@ -510,8 +513,8 @@ func (e *IndexLookUpExecutor) Close() error {
 	return nil
 }
 
-// Next implements Exec Next interface.
-func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements Exec Next interface.
+func (e *IndexLookUpExecutor) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for {
 		resultTask, err := e.getResultTask()

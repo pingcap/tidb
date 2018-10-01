@@ -478,11 +478,11 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 	return true, joinResult
 }
 
-// Next implements the Executor Next interface.
+// NextExec implements the Executor Next interface.
 // hash join constructs the result following these steps:
 // step 1. fetch data from inner child and build a hash table;
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
-func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+func (e *HashJoinExec) NextExec(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
 		go util.WithRecovery(func() { e.fetchInnerAndBuildHashTable(ctx) }, e.finishFetchInnerAndBuildHashTable)
@@ -694,8 +694,8 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 	}
 }
 
-// Next implements the Executor interface.
-func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+// NextExec implements the Executor interface.
+func (e *NestedLoopApplyExec) NextExec(ctx context.Context, chk *chunk.Chunk) (err error) {
 	chk.Reset()
 	for {
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {

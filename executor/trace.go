@@ -42,8 +42,8 @@ type TraceExec struct {
 	builder *executorBuilder
 }
 
-// Next executes real query and collects span later.
-func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec executes real query and collects span later.
+func (e *TraceExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.exhausted {
 		return nil

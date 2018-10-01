@@ -110,8 +110,8 @@ func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
 	return handle.IsNull()
 }
 
-// Next implements the Executor Next interface.
-func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *UpdateExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.fetched {
 		err := e.fetchChunkRows(ctx)

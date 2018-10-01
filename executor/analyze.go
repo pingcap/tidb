@@ -50,8 +50,8 @@ const (
 	defaultCMSketchWidth = 2048
 )
 
-// Next implements the Executor Next interface.
-func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *AnalyzeExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return errors.Trace(err)

@@ -43,8 +43,8 @@ type DeleteExec struct {
 	finished bool
 }
 
-// Next implements the Executor Next interface.
-func (e *DeleteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *DeleteExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.finished {
 		return nil

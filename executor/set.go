@@ -41,8 +41,8 @@ type SetExecutor struct {
 	done bool
 }
 
-// Next implements the Executor Next interface.
-func (e *SetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *SetExecutor) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil

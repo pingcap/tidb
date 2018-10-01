@@ -81,7 +81,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
+// NextExec implements the Executor Next interface.
 //
 // Here we explain the execution flow of the parallel projection implementation.
 // There are 3 main components:
@@ -138,7 +138,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //  |                              |       |                      |
 //  +------------------------------+       +----------------------+
 //
-func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+func (e *ProjectionExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {
 		return errors.Trace(e.unParallelExecute(ctx, chk))

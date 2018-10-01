@@ -259,8 +259,8 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 	return nil
 }
 
-// Next implements the Executor Next interface.
-func (e *MergeJoinExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *MergeJoinExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !e.prepared {
 		if err := e.prepare(ctx, chk); err != nil {

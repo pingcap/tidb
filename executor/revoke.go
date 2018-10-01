@@ -50,8 +50,8 @@ type RevokeExec struct {
 	done bool
 }
 
-// Next implements the Executor Next interface.
-func (e *RevokeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *RevokeExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}

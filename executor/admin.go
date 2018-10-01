@@ -59,8 +59,8 @@ type CheckIndexRangeExec struct {
 	cols   []*model.ColumnInfo
 }
 
-// Next implements the Executor Next interface.
-func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *CheckIndexRangeExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	handleIdx := e.schema.Len() - 1
 	for {
@@ -433,8 +433,8 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 	return result, nil
 }
 
-// Next implements the Executor Next interface.
-func (e *RecoverIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *RecoverIndexExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil
@@ -569,8 +569,8 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 	}
 }
 
-// Next implements the Executor Next interface.
-func (e *CleanupIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements the Executor Next interface.
+func (e *CleanupIndexExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.done {
 		return nil

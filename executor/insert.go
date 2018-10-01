@@ -128,8 +128,8 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 	return nil
 }
 
-// Next implements Exec Next interface.
-func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+// NextExec implements Exec Next interface.
+func (e *InsertExec) NextExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if e.finished {
 		return nil
