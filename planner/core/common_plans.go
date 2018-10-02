@@ -421,6 +421,10 @@ type Explain struct {
 	StmtPlan       Plan
 	Rows           [][]string
 	explainedPlans map[int]bool
+	PrepareRows    func() error
+	Analyze        bool
+	ExecStmt       ast.StmtNode
+	ExecPlan       Plan
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
@@ -454,6 +458,10 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, TaskType string, indent st
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
 	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, TaskType, operatorInfo}
+	if e.Analyze {
+		execStat := e.ctx.GetSessionVars().StmtCtx.ExecStats
+		row = append(row, execStat.GetExecStat(p.ExplainID()).String())
+	}
 	e.Rows = append(e.Rows, row)
 }
 

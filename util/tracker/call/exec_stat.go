@@ -52,5 +52,8 @@ func (e *ExecStat) Record(d time.Duration, rowNum int) {
 }
 
 func (e *ExecStat) String() string {
-	return fmt.Sprintf("%f-%d-%d", e.consume.Seconds(), e.loop, e.rows)
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("actual_time:%f, loops:%d, rows:%d", e.consume.Seconds()*1e3, e.loop, e.rows)
 }

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/tracker/call"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -281,10 +280,7 @@ func ResetStmtCtx(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = sessVars.Location()
 	sc.MemTracker = memory.NewTracker(s.Text(), sessVars.MemQuotaQuery)
-	if sc.ExecStatsEnable {
-		sc.ExecStats = call.NewExecutorStats()
-		sc.ExecStatsEnable = false
-	}
+	sc.ExecStats = nil
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
 		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})

@@ -74,14 +74,13 @@ type StatementContext struct {
 	}
 
 	// Copied from SessionVars.TimeZone.
-	TimeZone        *time.Location
-	Priority        mysql.PriorityEnum
-	NotFillCache    bool
-	MemTracker      *memory.Tracker
-	ExecStatsEnable bool
-	ExecStats       call.ExecStats
-	TableIDs        []int64
-	IndexIDs        []int64
+	TimeZone     *time.Location
+	Priority     mysql.PriorityEnum
+	NotFillCache bool
+	MemTracker   *memory.Tracker
+	ExecStats    call.ExecStats
+	TableIDs     []int64
+	IndexIDs     []int64
 }
 
 // AddAffectedRows adds affected rows.

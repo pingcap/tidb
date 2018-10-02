@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/util/tracker/call"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -688,6 +689,34 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 
 // buildExplain builds a explain executor. `e.rows` collects final result to `ExplainExec`.
 func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
+	if v.Analyze {
+		stmt := &ExecStmt{
+			InfoSchema: GetInfoSchema(b.ctx),
+			Plan:       v.ExecPlan,
+			StmtNode:   v.ExecStmt,
+			Ctx:        b.ctx,
+		}
+		ResetStmtCtx(b.ctx, v.ExecStmt)
+		b.ctx.GetSessionVars().StmtCtx.ExecStats = call.NewExecutorStats()
+		ctx := context.Background()
+		rs, err := stmt.Exec(ctx)
+		if err != nil {
+			return nil
+		}
+		if rs != nil {
+			chk := rs.NewChunk()
+			for {
+				err := rs.Next(ctx, chk)
+				if err != nil {
+					return nil
+				}
+				if chk.NumRows() == 0 {
+					break
+				}
+			}
+		}
+	}
+	v.PrepareRows()
 	e := &ExplainExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}
