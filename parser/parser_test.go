@@ -49,7 +49,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"current_timestamp", "current_user", "database", "databases", "day_hour", "day_microsecond",
 		"day_minute", "day_second", "decimal", "default", "delete", "desc", "describe",
 		"distinct", "distinctRow", "div", "double", "drop", "dual", "else", "enclosed", "escaped",
-		"exists", "explain", "false", "float", "for", "force", "foreign", "from",
+		"exists", "explain", "false", "fetch", "float", "for", "force", "foreign", "from",
 		"fulltext", "grant", "group", "having", "hour_microsecond", "hour_minute",
 		"hour_second", "if", "ignore", "in", "index", "infile", "inner", "insert", "int", "into", "integer",
 		"interval", "is", "join", "key", "keys", "kill", "leading", "left", "like", "limit", "lines", "load",
@@ -470,6 +470,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		// for dual
 		{"select 1 from dual", true},
 		{"select 1 from dual limit 1", true},
+		{"select 1 from dual fetch first 1 rows only", true},
 		{"select 1 where exists (select 2)", false},
 		{"select 1 from dual where not exists (select 2)", true},
 		{"select 1 as a from dual order by a", true},
@@ -481,6 +482,8 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 
 		// for https://github.com/pingcap/tidb/issues/1050
 		{`SELECT /*!40001 SQL_NO_CACHE */ * FROM test WHERE 1 limit 0, 2000;`, true},
+
+		{`SELECT /*!40001 SQL_NO_CACHE */ * FROM test WHERE 1 fetch first 2000 rows only;`, true},
 
 		{`ANALYZE TABLE t`, true},
 
@@ -1615,6 +1618,7 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table a ignore as select n from b", true},
 		{"create table a replace as select n from b", true},
 		{"create table a (m int) replace as (select n as m from b union select n+1 as m from c group by 1 limit 2)", true},
+		{"create table a (m int) replace as (select n as m from b union select n+1 as m from c group by 1 fetch first 2 rows only)", true},
 
 		// Create table with no option is valid for parser
 		{"create table a", true},
@@ -2006,8 +2010,10 @@ func (s *testParserSuite) TestUnion(c *C) {
 		{"select c1 from t1 union (select c2 from t2) order by c1", true},
 		{"select c1 from t1 union select c2 from t2 order by c2", true},
 		{"select c1 from t1 union (select c2 from t2) limit 1", true},
+		{"select c1 from t1 union (select c2 from t2) fetch first 1 rows only", true},
 		{"select c1 from t1 union (select c2 from t2) limit 1, 1", true},
 		{"select c1 from t1 union (select c2 from t2) order by c1 limit 1", true},
+		{"select c1 from t1 union (select c2 from t2) order by c1 fetch first 1 rows only", true},
 		{"(select c1 from t1) union distinct select c2 from t2", true},
 		{"(select c1 from t1) union distinctrow select c2 from t2", true},
 		{"(select c1 from t1) union all select c2 from t2", true},
@@ -2016,6 +2022,7 @@ func (s *testParserSuite) TestUnion(c *C) {
 		{"(select c1 from t1) union (select c2 from t2) order by c1 union select c3 from t3", false},
 		{"(select c1 from t1) union (select c2 from t2) limit 1 union select c3 from t3", false},
 		{"(select c1 from t1) union select c2 from t2 union (select c3 from t3) order by c1 limit 1", true},
+		{"(select c1 from t1) union select c2 from t2 union (select c3 from t3) order by c1 fetch first 1 rows only", true},
 		{"select (select 1 union select 1) as a", true},
 		{"select * from (select 1 union select 2) as a", true},
 		{"insert into t select c1 from t1 union select c2 from t2", true},
