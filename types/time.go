@@ -672,9 +672,9 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 			} else {
 				_, err = fmt.Sscanf(fracStr, "%2d ", &second)
 			}
-			truncatedOrIncorrect = err != nil || len(fracStr) > 2
+			truncatedOrIncorrect = err != nil
 		}
-		if truncatedOrIncorrect {
+		if truncatedOrIncorrect && sc != nil {
 			sc.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs("datetime", str))
 			err = nil
 		}
