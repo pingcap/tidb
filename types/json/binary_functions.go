@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
 	"unicode/utf8"
 	"unsafe"
 
@@ -52,6 +53,10 @@ func (bj BinaryJSON) Type() string {
 		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, bj.TypeCode)
 		panic(msg)
 	}
+}
+
+func (bj BinaryJSON) Quote() string {
+	return strconv.Quote(hack.String(bj.GetString()))
 }
 
 // Unquote is for JSON_UNQUOTE.
