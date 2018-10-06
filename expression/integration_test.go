@@ -3246,6 +3246,22 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r = tk.MustQuery(`select json_unquote('hello'), json_unquote('world')`)
 	r.Check(testkit.Rows("hello world"))
 
+	r = tk.MustQuery(`select
+		json_quote(''),
+		json_quote('""'),
+		json_quote('a'),
+		json_quote('3'),
+		json_quote('{"a": "b"}'),
+		json_quote('{"a":     "b"}'),
+		json_quote('hello,"quoted string",world'),
+		json_quote('hello,"宽字符",world'),
+		json_quote('Invalid Json string	is OK'),
+		json_quote('1\u2232\u22322')
+	`)
+	r.Check(testkit.Rows(
+		`"" "\"\"" "a" "3" "{\"a\": \"b\"}" "{\"a\":     \"b\"}" "hello,\"quoted string\",world" "hello,\"宽字符\",world" "Invalid Json string\tis OK" "1u2232u22322"`,
+	))
+
 	r = tk.MustQuery(`select json_extract(a, '$.a[1]'), json_extract(b, '$.b') from table_json`)
 	r.Check(testkit.Rows("\"2\" true", "<nil> <nil>"))
 

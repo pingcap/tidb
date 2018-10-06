@@ -55,6 +55,7 @@ func (bj BinaryJSON) Type() string {
 	}
 }
 
+// Quote is for JSON_QUOTE
 func (bj BinaryJSON) Quote() string {
 	return strconv.Quote(hack.String(bj.GetString()))
 }
