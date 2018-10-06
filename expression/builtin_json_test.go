@@ -48,6 +48,35 @@ func (s *testEvaluatorSuite) TestJSONType(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestJSONQuote(c *C) {
+	defer testleak.AfterTest(c)()
+	fc := funcs[ast.JSONQuote]
+	tbl := []struct {
+		Input    interface{}
+		Expected interface{}
+	}{
+		{nil, nil},
+		{``, `""`},
+		{`""`, `"\"\""`},
+		{`a`, `"a"`},
+		{`3`, `"3"`},
+		{`{"a": "b"}`, `"{\"a\": \"b\"}"`},
+		{`{"a":     "b"}`, `"{\"a\":     \"b\"}"`},
+		{`hello,"quoted string",world`, `"hello,\"quoted string\",world"`},
+		{`hello,"宽字符",world`, `"hello,\"宽字符\",world"`},
+		{`Invalid Json string	is OK`, `"Invalid Json string\tis OK"`},
+		{`1\u2232\u22322`, `"1\\u2232\\u22322"`},
+	}
+	dtbl := tblToDtbl(tbl)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
+	}
+}
+
 func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONUnquote]
