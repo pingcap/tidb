@@ -752,7 +752,7 @@ func (c *jsonQuoteFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 		return nil, errors.Trace(err)
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETJson)
-	args[0].GetType().Flag &= ^mysql.ParseToJSONFlag
+	DisableParseJSONFlag4Expr(args[0])
 	sig := &builtinJSONQuoteSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_JsonQuoteSig)
 	return sig, nil
