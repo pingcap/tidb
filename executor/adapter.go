@@ -118,9 +118,6 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.logSlowQuery(a.txnStartTS, a.lastErr == nil)
-	if a.processinfo != nil {
-		a.processinfo.SetProcessInfo("")
-	}
 	return errors.Trace(err)
 }
 
@@ -215,19 +212,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 
-	var pi processinfoSetter
-	if raw, ok := sctx.(processinfoSetter); ok {
-		pi = raw
-		sql := a.OriginText()
-		if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
-			if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
-				// Use SecureText to avoid leak password information.
-				sql = ss.SecureText()
-			}
-		}
-		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql)
-	}
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
 		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
@@ -259,9 +243,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 
 	var err error
 	defer func() {
-		if pi != nil {
-			pi.SetProcessInfo("")
-		}
 		terror.Log(errors.Trace(e.Close()))
 		txnTS := uint64(0)
 		if sctx.Txn() != nil {

@@ -209,6 +209,9 @@ type SessionVars struct {
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
 
+	// CommandValue is the command which current session is doing.
+	CommandValue byte
+
 	// PlanID is the unique id of logical and physical plan.
 	PlanID int
 
@@ -325,8 +328,12 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                DefTiDBRetryLimit,
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
+<<<<<<< HEAD
 		EnableRadixJoin:           false,
 		L2CacheSize:               cpuid.CPU.Cache.L2,
+=======
+		CommandValue:              mysql.ComSleep,
+>>>>>>> fix show processlist
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,

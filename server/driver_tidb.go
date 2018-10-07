@@ -16,6 +16,7 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
+	"time"
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
@@ -205,6 +206,16 @@ func (tc *TiDBContext) SetValue(key fmt.Stringer, value interface{}) {
 // CommitTxn implements QueryCtx CommitTxn method.
 func (tc *TiDBContext) CommitTxn(ctx context.Context) error {
 	return tc.session.CommitTxn(ctx)
+}
+
+// SetCommandValue implements QueryCtx SetCommandValue method.
+func (tc *TiDBContext) SetCommandValue(command byte) {
+	tc.session.SetCommandValue(command)
+}
+
+// SetProcessInfo implements QueryCtx SetProcessInfo method.
+func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time) {
+	tc.session.SetProcessInfo(sql, t)
 }
 
 // RollbackTxn implements QueryCtx RollbackTxn method.

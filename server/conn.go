@@ -584,14 +584,21 @@ func (cc *clientConn) dispatch(data []byte) error {
 	cc.mu.cancelFunc = cancelFunc
 	cc.mu.Unlock()
 
+	t := time.Now()
 	cmd := data[0]
 	data = data[1:]
 	cc.lastCmd = hack.String(data)
 	token := cc.server.getToken()
 	defer func() {
+		cc.ctx.SetCommandValue(mysql.ComSleep)
+		cc.ctx.SetProcessInfo("", t)
 		cc.server.releaseToken(token)
 		span.Finish()
 	}()
+
+	if cmd < mysql.ComEnd {
+		cc.ctx.SetCommandValue(cmd)
+	}
 
 	switch cmd {
 	case mysql.ComSleep:
@@ -609,31 +616,43 @@ func (cc *clientConn) dispatch(data []byte) error {
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
+		cc.ctx.SetProcessInfo(hack.String(data), t)
 		return cc.handleQuery(ctx1, hack.String(data))
 	case mysql.ComPing:
+		cc.ctx.SetProcessInfo("", t)
 		return cc.writeOK()
 	case mysql.ComInitDB:
 		if err := cc.useDB(ctx1, hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
+		cc.ctx.SetProcessInfo("", t)
 		return cc.writeOK()
 	case mysql.ComFieldList:
+		cc.ctx.SetProcessInfo(hack.String(data), t)
 		return cc.handleFieldList(hack.String(data))
 	case mysql.ComStmtPrepare:
+		cc.ctx.SetProcessInfo(hack.String(data), t)
 		return cc.handleStmtPrepare(hack.String(data))
 	case mysql.ComStmtExecute:
+		cc.ctx.SetProcessInfo("", t)
 		return cc.handleStmtExecute(ctx1, data)
 	case mysql.ComStmtFetch:
+		cc.ctx.SetProcessInfo("", t)
 		return cc.handleStmtFetch(ctx1, data)
 	case mysql.ComStmtClose:
+		cc.ctx.SetProcessInfo("", t)
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
+		cc.ctx.SetProcessInfo("", t)
 		return cc.handleStmtSendLongData(data)
 	case mysql.ComStmtReset:
+		cc.ctx.SetProcessInfo("", t)
 		return cc.handleStmtReset(data)
 	case mysql.ComSetOption:
+		cc.ctx.SetProcessInfo("", t)
 		return cc.handleSetOption(data)
 	case mysql.ComChangeUser:
+		cc.ctx.SetProcessInfo("", t)
 		return cc.handleChangeUser(data)
 	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)

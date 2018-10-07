@@ -16,6 +16,7 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
+	"time"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -46,6 +47,9 @@ type QueryCtx interface {
 
 	// SetValue saves a value associated with this context for key.
 	SetValue(key fmt.Stringer, value interface{})
+
+	SetCommandValue(command byte)
+	SetProcessInfo(sql string, t time.Time)
 
 	// CommitTxn commits the transaction operations.
 	CommitTxn(ctx context.Context) error
