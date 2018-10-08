@@ -15,6 +15,8 @@ package parser
 
 import (
 	"testing"
+
+	"github.com/pingcap/tidb/ast"
 )
 
 func BenchmarkSysbenchSelect(b *testing.B) {
@@ -38,6 +40,9 @@ func BenchmarkParseComplex(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for _, v := range table {
 			_, err := parser.Parse(v, "", "")
+			// adding this because these resource will be released on
+			// the finish of each query.
+			ast.FreeColumnNames()
 			if err != nil {
 				b.Failed()
 			}
