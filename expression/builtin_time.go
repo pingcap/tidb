@@ -2593,8 +2593,14 @@ func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, a
 		interval = "00:" + interval
 	case "SECOND_MICROSECOND":
 		/* keep interval as original decimal */
+	case "SECOND", "MICROSECOND":
+		args[1] = WrapWithCastAsReal(ctx, args[1])
+		interval, isNull, err = args[1].EvalString(ctx, row)
+		if isNull || err != nil {
+			return "", true, errors.Trace(err)
+		}
 	default:
-		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, SECOND, MICROSECOND
+		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE
 		args[1] = WrapWithCastAsInt(ctx, args[1])
 		interval, isNull, err = args[1].EvalString(ctx, row)
 		if isNull || err != nil {
@@ -2624,7 +2630,8 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	goTime = goTime.Add(dur)
+	duration := time.Duration(dur)
+	goTime = goTime.Add(duration)
 	goTime = goTime.AddDate(int(year), int(month), int(day))
 
 	if goTime.Nanosecond() == 0 {
@@ -2649,7 +2656,8 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	goTime = goTime.Add(dur)
+	duration := time.Duration(dur)
+	goTime = goTime.Add(duration)
 	goTime = goTime.AddDate(int(year), int(month), int(day))
 
 	if goTime.Nanosecond() == 0 {
