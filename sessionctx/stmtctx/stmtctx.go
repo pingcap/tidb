@@ -60,6 +60,7 @@ type StatementContext struct {
 	UseCache               bool
 	PadCharToFullLength    bool
 	BatchCheck             bool
+	InNullRejectCheck      bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {

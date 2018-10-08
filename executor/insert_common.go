@@ -16,7 +16,6 @@ package executor
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -176,11 +176,11 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	}
 
 	if types.ErrOverflow.Equal(err) {
-		return types.ErrWarnDataOutOfRange.GenByArgs(col.Name.O, rowIdx+1)
+		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(col.Name.O, rowIdx+1)
 	}
 	if types.ErrTruncated.Equal(err) {
 		valStr, _ := val.ToString()
-		return table.ErrTruncatedWrongValueForField.GenByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
+		return table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}
 	return e.filterErr(err)
 }
@@ -250,9 +250,9 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	fields := selectExec.retTypes()
-	chk := selectExec.newChunk()
+	chk := selectExec.newFirstChunk()
 	iter := chunk.NewIterator4Chunk(chk)
-	rows := make([][]types.Datum, 0, e.ctx.GetSessionVars().MaxChunkSize)
+	rows := make([][]types.Datum, 0, chk.Capacity())
 
 	sessVars := e.ctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
@@ -283,7 +283,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 				rows = rows[:0]
 				if err := e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
+					return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 				}
 				if !sessVars.LightningMode {
 					sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)

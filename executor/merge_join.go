@@ -14,11 +14,11 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -179,7 +179,7 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 	// Create a new Chunk and append it to "resourceQueue" if there is no more
 	// available chunk in "resourceQueue".
 	if len(t.resourceQueue) == 0 {
-		newChunk := t.reader.newChunk()
+		newChunk := t.reader.newFirstChunk()
 		t.memTracker.Consume(newChunk.MemoryUsage())
 		t.resourceQueue = append(t.resourceQueue, newChunk)
 	}
@@ -214,7 +214,7 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 
 	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
 	for _, child := range e.children {
-		e.childrenResults = append(e.childrenResults, child.newChunk())
+		e.childrenResults = append(e.childrenResults, child.newFirstChunk())
 	}
 
 	e.innerTable.memTracker = memory.NewTracker("innerTable", -1)

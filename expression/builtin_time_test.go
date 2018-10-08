@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -32,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pkg/errors"
 )
 
 func (s *testEvaluatorSuite) TestDate(c *C) {
@@ -894,7 +895,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		{"-110:00:00", "1 02:00:00", "-84:00:00"},
 	}
 	for _, t := range tbl {
-		dur, err := types.ParseDuration(t.Input, types.GetFsp(t.Input))
+		dur, err := types.ParseDuration(s.ctx.GetSessionVars().StmtCtx, t.Input, types.GetFsp(t.Input))
 		c.Assert(err, IsNil)
 		tmpInput := types.NewDurationDatum(dur)
 		tmpInputDuration := types.NewStringDatum(t.InputDuration)
@@ -961,7 +962,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		{"235959", "00:00:01", "23:59:58"},
 	}
 	for _, t := range tbl {
-		dur, err := types.ParseDuration(t.Input, types.GetFsp(t.Input))
+		dur, err := types.ParseDuration(s.ctx.GetSessionVars().StmtCtx, t.Input, types.GetFsp(t.Input))
 		c.Assert(err, IsNil)
 		tmpInput := types.NewDurationDatum(dur)
 		tmpInputDuration := types.NewStringDatum(t.InputDuration)
@@ -997,7 +998,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	fc := funcs[ast.Sysdate]
 
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	ctx.GetSessionVars().StmtCtx.TimeZone = timeutil.SystemLocation()
 	timezones := []types.Datum{types.NewDatum(1234), types.NewDatum(0)}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.

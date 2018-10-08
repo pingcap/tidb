@@ -22,12 +22,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 func truncateStr(str string, flen int) string {
@@ -142,7 +142,7 @@ func StrToInt(sc *stmtctx.StatementContext, str string) (int64, error) {
 	validPrefix, err := getValidIntPrefix(sc, str)
 	iVal, err1 := strconv.ParseInt(validPrefix, 10, 64)
 	if err1 != nil {
-		return iVal, ErrOverflow.GenByArgs("BIGINT", validPrefix)
+		return iVal, ErrOverflow.GenWithStackByArgs("BIGINT", validPrefix)
 	}
 	return iVal, errors.Trace(err)
 }
@@ -156,7 +156,7 @@ func StrToUint(sc *stmtctx.StatementContext, str string) (uint64, error) {
 	}
 	uVal, err1 := strconv.ParseUint(validPrefix, 10, 64)
 	if err1 != nil {
-		return uVal, ErrOverflow.GenByArgs("BIGINT UNSIGNED", validPrefix)
+		return uVal, ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", validPrefix)
 	}
 	return uVal, errors.Trace(err)
 }
@@ -185,7 +185,7 @@ func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duratio
 		}
 	}
 
-	d, err = ParseDuration(str, fsp)
+	d, err = ParseDuration(sc, str, fsp)
 	if ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}
@@ -204,12 +204,12 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 		}
 		dur, err1 := MaxMySQLTime(fsp).ConvertToDuration()
 		terror.Log(err1)
-		return dur, ErrOverflow.GenByArgs("Duration", strconv.Itoa(int(number)))
+		return dur, ErrOverflow.GenWithStackByArgs("Duration", strconv.Itoa(int(number)))
 	} else if number < -TimeMaxValue {
 		dur, err1 := MaxMySQLTime(fsp).ConvertToDuration()
 		terror.Log(err1)
 		dur.Duration = -dur.Duration
-		return dur, ErrOverflow.GenByArgs("Duration", strconv.Itoa(int(number)))
+		return dur, ErrOverflow.GenWithStackByArgs("Duration", strconv.Itoa(int(number)))
 	}
 	var neg bool
 	if neg = number < 0; neg {
@@ -217,7 +217,7 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 	}
 
 	if number/10000 > TimeMaxHour || number%100 >= 60 || (number/100)%100 >= 60 {
-		return ZeroDuration, errors.Trace(ErrInvalidTimeFormat.GenByArgs(number))
+		return ZeroDuration, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(number))
 	}
 	t := Time{Time: FromDate(0, 0, 0, int(number/10000), int((number/100)%100), int(number%100), 0), Type: mysql.TypeDuration, Fsp: fsp}
 	dur, err := t.ConvertToDuration()
@@ -275,7 +275,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	}
 	if exp > 0 && int64(intCnt) > (math.MaxInt64-int64(exp)) {
 		// (exp + incCnt) overflows MaxInt64.
-		sc.AppendWarning(ErrOverflow.GenByArgs("BIGINT", oriStr))
+		sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
 		return validFloat[:eIdx], nil
 	}
 	intCnt += exp
@@ -293,7 +293,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		extraZeroCount := intCnt - len(digits)
 		if extraZeroCount > 20 {
 			// Append overflow warning and return to avoid allocating too much memory.
-			sc.AppendWarning(ErrOverflow.GenByArgs("BIGINT", oriStr))
+			sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
 			return validFloat[:eIdx], nil
 		}
 		validInt = string(digits) + strings.Repeat("0", extraZeroCount)
@@ -310,7 +310,7 @@ func StrToFloat(sc *stmtctx.StatementContext, str string) (float64, error) {
 		if err2, ok := err1.(*strconv.NumError); ok {
 			// value will truncate to MAX/MIN if out of range.
 			if err2.Err == strconv.ErrRange {
-				err1 = sc.HandleTruncate(ErrTruncatedWrongVal.GenByArgs("DOUBLE", str))
+				err1 = sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", str))
 				if math.IsInf(f, 1) {
 					f = math.MaxFloat64
 				} else if math.IsInf(f, -1) {

@@ -287,7 +287,8 @@ func (a *AggFuncDesc) typeInfer4Count(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
-// For child returns integer or decimal type, "sum" should returns a "decimal", otherwise it returns a "double".
+// typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
+// Because child returns integer or decimal type.
 func (a *AggFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
@@ -297,15 +298,20 @@ func (a *AggFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
 		}
 		// TODO: a.Args[0] = expression.WrapWithCastAsDecimal(ctx, a.Args[0])
-	default:
+	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
 		//TODO: a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
+	default:
+		a.RetTp = types.NewFieldType(mysql.TypeDouble)
+		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+		// TODO: a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
 	}
 	types.SetBinChsClnFlag(a.RetTp)
 }
 
-// For child returns integer or decimal type, "avg" should returns a "decimal", otherwise it returns a "double".
+// typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
+// Because child returns integer or decimal type.
 func (a *AggFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
@@ -317,9 +323,13 @@ func (a *AggFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 		}
 		a.RetTp.Flen = mysql.MaxDecimalWidth
 		// TODO: a.Args[0] = expression.WrapWithCastAsDecimal(ctx, a.Args[0])
-	default:
+	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
+		// TODO: a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
+	default:
+		a.RetTp = types.NewFieldType(mysql.TypeDouble)
+		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 		// TODO: a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
 	}
 	types.SetBinChsClnFlag(a.RetTp)

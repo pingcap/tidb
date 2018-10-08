@@ -190,13 +190,6 @@
   version = "v1.1"
 
 [[projects]]
-  digest = "1:e8fd2854e80293d75ff2aab6df2ea0887bb604c2119f343dbd63e25dcf9f10ef"
-  name = "github.com/juju/errors"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "b2c7a7da5b2995941048f60146e67702a292e468"
-
-[[projects]]
   branch = "master"
   digest = "1:5985ef4caf91ece5d54817c11ea25f182697534f8ae6521eadcd628c142ac4b6"
   name = "github.com/matttproud/golang_protobuf_extensions"
@@ -298,11 +291,11 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:6a846fb5ccc09741c0735f9e9897bbc95915314fab98c5ee56680f1a9591d48d"
+  digest = "1:2c64fe28351dc49da088194d80faceb34186e080a60c649694d094b2ccccacf5"
   name = "github.com/pingcap/pd"
   packages = ["pd-client"]
   pruneopts = "NUT"
-  revision = "5d1bac04f3eab9842ee0988ed46c483d2ce4e854"
+  revision = "b5992e356ff447a6fdaa450b3f5ea33afbd11680"
 
 [[projects]]
   branch = "master"
@@ -317,12 +310,13 @@
   revision = "371b48b15d93924a3a5375019e42b4420bc13d17"
 
 [[projects]]
-  digest = "1:5cf3f025cbee5951a4ee961de067c8a89fc95a5adabead774f82822efabab121"
+  digest = "1:91fee14a873676b2118c54e08c2e04897ea5c141b55a9b9fb8cf0721458d0d85"
   name = "github.com/pkg/errors"
   packages = ["."]
   pruneopts = "NUT"
-  revision = "645ef00459ed84a119197bfb8d8205042c6df63d"
-  version = "v0.8.0"
+  revision = "9316aeb006f59424c65ff505c217f90c43d6445d"
+  source = "https://github.com/pingcap/errors.git"
+  version = "v0.9.0"
 
 [[projects]]
   digest = "1:1ef3c4d6e78616bd3d1b5b7d8899febb9aa1b83d3373fbbdc2804408c7977b57"
@@ -537,7 +531,6 @@
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing",
     "github.com/grpc-ecosystem/go-grpc-prometheus",
-    "github.com/juju/errors",
     "github.com/ngaut/pools",
     "github.com/opentracing/basictracer-go",
     "github.com/opentracing/opentracing-go",
@@ -557,6 +550,7 @@
     "github.com/pingcap/pd/pd-client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-tipb",
+    "github.com/pkg/errors",
     "github.com/prometheus/client_golang/prometheus",
     "github.com/prometheus/client_golang/prometheus/push",
     "github.com/sirupsen/logrus",

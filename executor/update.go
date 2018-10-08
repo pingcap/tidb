@@ -14,13 +14,13 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -140,8 +140,8 @@ func (e *UpdateExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	fields := e.children[0].retTypes()
 	globalRowIdx := 0
+	chk := e.children[0].newFirstChunk()
 	for {
-		chk := e.children[0].newChunk()
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -162,6 +162,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 			e.newRowsData = append(e.newRowsData, newRow)
 			globalRowIdx++
 		}
+		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 	return nil
 }

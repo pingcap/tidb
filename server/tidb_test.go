@@ -27,7 +27,6 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -36,6 +35,7 @@ import (
 	tmysql "github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -525,4 +525,18 @@ func (ts *TidbTestSuite) TestFieldList(c *C) {
 func (ts *TidbTestSuite) TestSumAvg(c *C) {
 	c.Parallel()
 	runTestSumAvg(c)
+}
+
+func (ts *TidbTestSuite) TestShowProcess(c *C) {
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	results, err := qctx.Execute(ctx, "select 1")
+	c.Assert(err, IsNil)
+	pi := qctx.ShowProcess()
+	c.Assert(pi.Command, Equals, "Query")
+	results[0].Close()
+	pi = qctx.ShowProcess()
+	c.Assert(pi.Command, Equals, "Sleep")
+	qctx.Close()
 }

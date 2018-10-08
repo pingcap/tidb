@@ -158,9 +158,34 @@ label = "cop"
 
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
 id	count	task	operator info
-Limit_9	1.00	root	offset:0, count:1
+Point_Get_1	1.00	root	table:index_prune, index:a b
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0;
+id	count	task	operator info
+TableDual_5	0.00	root	rows:0
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 1;
+id	count	task	operator info
+Limit_9	1.00	root	offset:1, count:1
 └─IndexLookUp_15	1.00	root	
-  ├─Limit_14	1.00	cop	offset:0, count:1
+  ├─Limit_14	1.00	cop	offset:0, count:2
   │ └─IndexScan_12	1.00	cop	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false
   └─TableScan_13	1.00	cop	table:index_prune, keep order:false
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 0;
+id	count	task	operator info
+Limit_9	0.00	root	offset:1, count:0
+└─IndexLookUp_15	0.00	root	
+  ├─Limit_14	0.00	cop	offset:0, count:1
+  │ └─IndexScan_12	1.00	cop	table:index_prune, index:a, b, range:[1010010404050976781 26467085526790,1010010404050976781 26467085526790], keep order:false
+  └─TableScan_13	0.00	cop	table:index_prune, keep order:false
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0, 1;
+id	count	task	operator info
+Point_Get_1	1.00	root	table:index_prune, index:a b
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 ORDER BY a;
+id	count	task	operator info
+Point_Get_1	1.00	root	table:index_prune, index:a b
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b;
+id	count	task	operator info
+Point_Get_1	1.00	root	table:index_prune, index:a b
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b ORDER BY a limit 1;
+id	count	task	operator info
+Point_Get_1	1.00	root	table:index_prune, index:a b
 drop table if exists t1, t2, t3, index_prune;

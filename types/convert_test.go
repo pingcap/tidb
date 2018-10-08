@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testTypeConvertSuite{})
@@ -335,7 +335,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	c.Assert(err, IsNil)
 	testToString(c, t, "2011-11-10 11:11:11.999999")
 
-	td, err := ParseDuration("11:11:11.999999", 6)
+	td, err := ParseDuration(nil, "11:11:11.999999", 6)
 	c.Assert(err, IsNil)
 	testToString(c, td, "11:11:11.999999")
 

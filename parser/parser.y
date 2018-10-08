@@ -370,6 +370,7 @@ import (
 	shared		"SHARED"
 	signed		"SIGNED"
 	slave		"SLAVE"
+	slow		"SLOW"
 	snapshot	"SNAPSHOT"
 	sqlCache	"SQL_CACHE"
 	sqlNoCache	"SQL_NO_CACHE"
@@ -420,16 +421,19 @@ import (
 	getFormat		"GET_FORMAT"
 	groupConcat		"GROUP_CONCAT"
 	inplace 		"INPLACE"
+	internal		"INTERNAL"
 	min			"MIN"
 	max			"MAX"
 	maxExecutionTime	"MAX_EXECUTION_TIME"
 	now			"NOW"
 	position		"POSITION"
+	recent			"RECENT"
 	subDate			"SUBDATE"
 	sum			"SUM"
 	substring		"SUBSTRING"
 	timestampAdd		"TIMESTAMPADD"
 	timestampDiff		"TIMESTAMPDIFF"
+	top			"TOP"
 	trim			"TRIM"
 
 	/* The following tokens belong to TiDBKeyword. */
@@ -575,6 +579,7 @@ import (
 	UseStmt				"USE statement"
 
 %type   <item>
+	AdminShowSlow			"Admin Show Slow statement"
 	AlterTableOptionListOpt		"alter table option list opt"
 	AlterTableSpec			"Alter table specification"
 	AlterTableSpecList		"Alter table specification list"
@@ -2815,7 +2820,7 @@ UnReservedKeyword:
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
-| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
+| "MICROSECOND" | "MINUTE" | "PLUGINS" | "QUERY" | "QUERIES" | "SECOND" | "SEPARATOR" | "SHARE" | "SHARED" | "SLOW" | "MAX_CONNECTIONS_PER_HOUR" | "MAX_QUERIES_PER_HOUR" | "MAX_UPDATES_PER_HOUR"
 | "MAX_USER_CONNECTIONS" | "REPLICATION" | "CLIENT" | "SLAVE" | "RELOAD" | "TEMPORARY" | "ROUTINE" | "EVENT" | "ALGORITHM" | "DEFINER" | "INVOKER" | "MERGE" | "TEMPTABLE" | "UNDEFINED" | "SECURITY" | "CASCADED" | "RECOVER"
 
 
@@ -2824,8 +2829,8 @@ TiDBKeyword:
 "ADMIN" | "BUCKETS" | "CANCEL" | "DDL" | "JOBS" | "JOB" | "STATS" | "STATS_META" | "STATS_HISTOGRAMS" | "STATS_BUCKETS" | "STATS_HEALTHY" | "TIDB" | "TIDB_HJ" | "TIDB_SMJ" | "TIDB_INLJ"
 
 NotKeywordToken:
- "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
-| "INPLACE" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM"
+ "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT" | "INPLACE" | "INTERNAL" 
+|"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOP" | "TRIM"
 
 /************************************************************************************
  *
@@ -5219,6 +5224,46 @@ AdminStmt:
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminShowDDLJobQueries,
 			JobIDs: $6.([]int64),
+		}
+	}
+|	"ADMIN" "SHOW" "SLOW" AdminShowSlow
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminShowSlow,
+			ShowSlow: $4.(*ast.ShowSlow),
+		}
+	}
+
+AdminShowSlow:
+	"RECENT" NUM
+	{
+		$$ = &ast.ShowSlow{
+			Tp: ast.ShowSlowRecent,
+			Count: getUint64FromNUM($2),
+		}
+	}
+|	"TOP" NUM
+	{
+		$$ = &ast.ShowSlow{
+			Tp: ast.ShowSlowTop,
+			Kind: ast.ShowSlowKindDefault,
+			Count: getUint64FromNUM($2),
+		}
+	}
+|	"TOP" "INTERNAL" NUM
+	{
+		$$ = &ast.ShowSlow{
+			Tp: ast.ShowSlowTop,
+			Kind: ast.ShowSlowKindInternal,
+			Count: getUint64FromNUM($3),
+		}
+	}
+|	"TOP" "ALL" NUM
+	{
+		$$ = &ast.ShowSlow{
+			Tp: ast.ShowSlowTop,
+			Kind: ast.ShowSlowKindAll,
+			Count: getUint64FromNUM($3),
 		}
 	}
 
