@@ -139,13 +139,27 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 
 // SwapColumn swaps column "c.columns[colIdx]" with column "other.columns[otherIdx]".
 func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
+	// If there exists columns refer to the column to be swapped, we need to
+	// re-build the reference.
+	refColsIdx := make([]int, 0, len(c.columns)-colIdx)
+	for i := colIdx + 1; i < len(c.columns); i++ {
+		if c.columns[i] == c.columns[colIdx] {
+			refColsIdx = append(refColsIdx, i)
+		}
+	}
+	refColsIdx4Other := make([]int, 0, len(other.columns)-otherIdx)
+	for i := otherIdx + 1; i < len(other.columns); i++ {
+		if other.columns[i] == other.columns[otherIdx] {
+			refColsIdx4Other = append(refColsIdx4Other, i)
+		}
+	}
 	c.columns[colIdx], other.columns[otherIdx] = other.columns[otherIdx], c.columns[colIdx]
-}
-
-// SwapColumns swaps columns with another Chunk.
-func (c *Chunk) SwapColumns(other *Chunk) {
-	c.columns, other.columns = other.columns, c.columns
-	c.numVirtualRows, other.numVirtualRows = other.numVirtualRows, c.numVirtualRows
+	for _, i := range refColsIdx {
+		c.MakeRef(colIdx, i)
+	}
+	for _, i := range refColsIdx4Other {
+		other.MakeRef(otherIdx, i)
+	}
 }
 
 // SetNumVirtualRows sets the virtual row number for a Chunk.
