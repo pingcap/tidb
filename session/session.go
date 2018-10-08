@@ -712,6 +712,9 @@ func (s *session) SetProcessInfo(sql string) {
 		State:   s.Status(),
 		Info:    sql,
 	}
+	if sql == "" {
+		pi.Command = "Sleep"
+	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
