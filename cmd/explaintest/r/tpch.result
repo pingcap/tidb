@@ -1024,7 +1024,7 @@ id	count	task	operator info
 Projection_22	100.00	root	tpch.customer.c_name, tpch.customer.c_custkey, tpch.orders.o_orderkey, tpch.orders.o_orderdate, tpch.orders.o_totalprice, 14_col_0
 └─TopN_25	100.00	root	tpch.orders.o_totalprice:desc, tpch.orders.o_orderdate:asc, offset:0, count:100
   └─HashAgg_28	75000000.00	root	group by:tpch.customer.c_custkey, tpch.customer.c_name, tpch.orders.o_orderdate, tpch.orders.o_orderkey, tpch.orders.o_totalprice, funcs:sum(tpch.lineitem.l_quantity), firstrow(tpch.customer.c_custkey), firstrow(tpch.customer.c_name), firstrow(tpch.orders.o_orderkey), firstrow(tpch.orders.o_totalprice), firstrow(tpch.orders.o_orderdate)
-    └─HashLeftJoin_29	237008981.18	root	inner join, inner:Projection_58, equal:[eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)]
+    └─HashLeftJoin_29	237008981.18	root	inner join, inner:Selection_58, equal:[eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)]
       ├─IndexJoin_35	300005811.00	root	inner join, inner:IndexLookUp_34, outer key:tpch.orders.o_orderkey, inner key:tpch.lineitem.l_orderkey
       │ ├─HashRightJoin_51	75000000.00	root	inner join, inner:TableReader_55, equal:[eq(tpch.customer.c_custkey, tpch.orders.o_custkey)]
       │ │ ├─TableReader_55	7500000.00	root	data:TableScan_54
@@ -1034,12 +1034,11 @@ Projection_22	100.00	root	tpch.customer.c_name, tpch.customer.c_custkey, tpch.or
       │ └─IndexLookUp_34	1.00	root	
       │   ├─IndexScan_32	1.00	cop	table:lineitem, index:L_ORDERKEY, L_LINENUMBER, range: decided by [tpch.orders.o_orderkey], keep order:false
       │   └─TableScan_33	1.00	cop	table:lineitem, keep order:false
-      └─Projection_58	59251097.60	root	tpch.lineitem.l_orderkey
-        └─Selection_59	59251097.60	root	gt(sel_agg_2, 314)
-          └─HashAgg_66	74063872.00	root	group by:col_2, funcs:sum(col_0), firstrow(col_1)
-            └─TableReader_67	74063872.00	root	data:HashAgg_60
-              └─HashAgg_60	74063872.00	cop	group by:tpch.lineitem.l_orderkey, funcs:sum(tpch.lineitem.l_quantity), firstrow(tpch.lineitem.l_orderkey)
-                └─TableScan_65	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
+      └─Selection_58	59251097.60	root	gt(sel_agg_2, 314)
+        └─HashAgg_65	74063872.00	root	group by:col_2, funcs:sum(col_0), firstrow(col_1)
+          └─TableReader_66	74063872.00	root	data:HashAgg_59
+            └─HashAgg_59	74063872.00	cop	group by:tpch.lineitem.l_orderkey, funcs:sum(tpch.lineitem.l_quantity), firstrow(tpch.lineitem.l_orderkey)
+              └─TableScan_64	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
 /*
 Q19 Discounted Revenue Query
 The Discounted Revenue Query reports the gross discounted revenue attributed to the sale of selected parts handled
@@ -1154,18 +1153,17 @@ Sort_26	20000.00	root	tpch.supplier.s_name:asc
       └─Projection_45	257492.04	root	tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, tpch.partsupp.ps_availqty, tpch.part.p_partkey, mul(0.5, 14_col_0)
         └─Selection_46	257492.04	root	gt(cast(tpch.partsupp.ps_availqty), mul(0.5, 14_col_0))
           └─HashAgg_49	321865.05	root	group by:tpch.partsupp.ps_partkey, tpch.partsupp.ps_suppkey, funcs:firstrow(tpch.partsupp.ps_partkey), firstrow(tpch.partsupp.ps_suppkey), firstrow(tpch.partsupp.ps_availqty), firstrow(tpch.part.p_partkey), sum(tpch.lineitem.l_quantity)
-            └─HashLeftJoin_52	9711455.06	root	left outer join, inner:TableReader_76, equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
-              ├─IndexJoin_57	321865.05	root	inner join, inner:IndexLookUp_56, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
-              │ ├─IndexLookUp_56	1.00	root	
-              │ │ ├─IndexScan_54	1.00	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [tpch.part.p_partkey], keep order:false
-              │ │ └─TableScan_55	1.00	cop	table:partsupp, keep order:false
-              │ └─Projection_68	80007.93	root	tpch.part.p_partkey
-              │   └─TableReader_71	80007.93	root	data:Selection_70
-              │     └─Selection_70	80007.93	cop	like(tpch.part.p_name, "green%", 92)
-              │       └─TableScan_69	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
-              └─TableReader_76	44189356.65	root	data:Selection_75
-                └─Selection_75	44189356.65	cop	ge(tpch.lineitem.l_shipdate, 1993-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1994-01-01)
-                  └─TableScan_74	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
+            └─HashLeftJoin_52	9711455.06	root	left outer join, inner:TableReader_78, equal:[eq(tpch.partsupp.ps_partkey, tpch.lineitem.l_partkey) eq(tpch.partsupp.ps_suppkey, tpch.lineitem.l_suppkey)]
+              ├─IndexJoin_61	321865.05	root	inner join, inner:IndexLookUp_60, outer key:tpch.part.p_partkey, inner key:tpch.partsupp.ps_partkey
+              │ ├─IndexLookUp_60	1.00	root	
+              │ │ ├─IndexScan_58	1.00	cop	table:partsupp, index:PS_PARTKEY, PS_SUPPKEY, range: decided by [tpch.part.p_partkey], keep order:false
+              │ │ └─TableScan_59	1.00	cop	table:partsupp, keep order:false
+              │ └─TableReader_73	80007.93	root	data:Selection_72
+              │   └─Selection_72	80007.93	cop	like(tpch.part.p_name, "green%", 92)
+              │     └─TableScan_71	10000000.00	cop	table:part, range:[-inf,+inf], keep order:false
+              └─TableReader_78	44189356.65	root	data:Selection_77
+                └─Selection_77	44189356.65	cop	ge(tpch.lineitem.l_shipdate, 1993-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, 1994-01-01)
+                  └─TableScan_76	300005811.00	cop	table:lineitem, range:[-inf,+inf], keep order:false
 /*
 Q21 Suppliers Who Kept Orders Waiting Query
 This query identifies certain suppliers who were not able to ship required parts in a timely manner.
