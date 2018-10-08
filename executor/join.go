@@ -292,9 +292,9 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 
 // evalRadixBitNum evaluates the radix bit numbers.
 func (e *HashJoinExec) evalRadixBitNum() {
-	sc := e.ctx.GetSessionVars()
+	sv := e.ctx.GetSessionVars()
 	// Calculate the bit number needed when using radix partition.
-	if sc.EnableRadixJoin {
+	if !sv.EnableRadixJoin {
 		return
 	}
 	innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed())
@@ -303,12 +303,12 @@ func (e *HashJoinExec) evalRadixBitNum() {
 	// cache when the input data obeys the uniform distribution,
 	// we suppose every sub-partition of inner relation using
 	// three quarters of the L2 cache size.
-	l2CacheSize := float64(sc.L2CacheSize) * 3 / 4
+	l2CacheSize := float64(sv.L2CacheSize) * 3 / 4
 	e.radixBits = int(math.Log2(innerResultSize / l2CacheSize))
 	// The complete inner relation can be hold in L2Cache, we
 	// can skip the partition phase.
 	if e.radixBits <= 0 {
-		sc.EnableRadixJoin = false
+		sv.EnableRadixJoin = false
 	}
 }
 
