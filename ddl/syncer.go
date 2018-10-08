@@ -144,6 +144,7 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	s.storeSession(session)
 
 	s.mu.Lock()
 	s.mu.globalVerCh = s.etcdCli.Watch(ctx, DDLGlobalSchemaVersion)
@@ -151,7 +152,6 @@ func (s *schemaVersionSyncer) Init(ctx context.Context) error {
 
 	err = s.putKV(ctx, keyOpDefaultRetryCnt, s.selfSchemaVerPath, InitialVersion,
 		clientv3.WithLease(s.loadSession().Lease()))
-	s.storeSession(session)
 
 	return errors.Trace(err)
 }
