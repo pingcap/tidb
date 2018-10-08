@@ -163,3 +163,5 @@ drop table if exists t;
 create table t(a bigint primary key, b bigint);
 desc select * from t where a = 1;
 desc select * from t where a = '1';
+
+desc select sysdate(), sleep(1), sysdate();
