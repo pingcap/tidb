@@ -1208,7 +1208,7 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 			end = count
 		}
 	} else {
-		if count <= -(1 << 63) {
+		if -count < 0 {
 			// -count overflows max int64, returns an empty string.
 			return "", false, nil
 		}
