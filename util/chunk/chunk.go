@@ -141,14 +141,14 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
 	// If there exists columns refer to the column to be swapped, we need to
 	// re-build the reference.
-	refColsIdx := make([]int, 0, len(c.columns)-colIdx)
-	for i := colIdx + 1; i < len(c.columns); i++ {
+	refColsIdx := make([]int, 0, len(c.columns))
+	for i := colIdx; i < len(c.columns); i++ {
 		if c.columns[i] == c.columns[colIdx] {
 			refColsIdx = append(refColsIdx, i)
 		}
 	}
-	refColsIdx4Other := make([]int, 0, len(other.columns)-otherIdx)
-	for i := otherIdx + 1; i < len(other.columns); i++ {
+	refColsIdx4Other := make([]int, 0, len(other.columns))
+	for i := otherIdx; i < len(other.columns); i++ {
 		if other.columns[i] == other.columns[otherIdx] {
 			refColsIdx4Other = append(refColsIdx4Other, i)
 		}
