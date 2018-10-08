@@ -27,12 +27,6 @@ type statsInfo struct {
 
 	// HistColl collects histograms of columns.
 	histColl statistics.HistColl
-	// rangesOfXXX This won’t be maintained in the first version.
-	rangesOfColumn map[int][]*ranger.Range 
-	rangesOfIndex map[int][]*ranger.Range
-	// max/minValues is a simplified version of rangesOfXXX. Since maintaining rangesOfXXXX consumes a lot of time and memory, we can first check whether this can meet our needs.
-	maxValues map[int][]types.Datum
-	minValues map[int][]types.Datum
 }
 ```
 
@@ -40,90 +34,98 @@ This struct will be maintained when we call `deriveStats`.
 
 Currently we don't change the histogram itself during planning. Because it will consume a lot of time and memory space. I’ll try to maintain ranges slice or the max/min value to improve the accuracy of row count estimation instead.
 
-### Before we maintain range information
+### How to maintain it.
 
 We maintain the histogram in `Projection`, `Selection`, `Join`, `Aggregation`, `Sort`, `Limit` and `DataSource` operators.
 
-#### `Sort`
-We can just copy children's `statsInfo` without doing any change.
+#### `Select`
+Just use it to calculate the selectivity.
 
-#### `Limit`
-we can just copy children's `statsInfo` or ignore the histogram information. As you know, its execution logic is based on randomization. It's hard to maintain the statistics information after `Limit`. But we may use the information before it to do some estimation in some scenarios.
+And we can get the range information of each column and index involved in filters. Then we can use the range information to cut the histogram bucket of these columns.
+
+For column/index not matched in the filter. The `NDV` and `totalCnt` of each bucket can just mutiply the total selectivity of filters(based on independent assumption).
 
 #### `Projection`
 Change the reflection of the map we maintained.
-
-#### `Aggregation`
-Use the histogram to estimate the NDV of group-by items. If one index cannot cover the group-by item, we’ll multiply the NDV of each group-by column. If the output of `Aggregation` includes group-by columns, we’ll maintain the histogram of them for future use.
 
 #### `Join`
 There're several kinds of joins.
 
 ##### Inner join
-Use histograms to do the row count estimation with the join key condition.
+Use histograms to do the row count estimation with the join key condition. It can be described as the following procedures:
 
-It can be calculated as this formula <img alt="$selecivity=joinKeySelectivity*leftRowCount*rightRowCount$" src="svgs/caab8c4da85732f108d5e1b1cfe5e285.png?invert_in_darkmode" align="middle" width="488.3218329pt" height="22.8310566pt"/>
+- Align the histogram buckets so that each bucket boundary in one histogram can be matched in the other histogram. For example(the following figure), bucket `b1` and `c1`'s left boundary is the same. But the right boundary is different. So we can split `c1` into two buckets. The first one's boundary is totally the same with `b1`. The second one starts from where the first one ends.
+- Since the boundary of the bucket have been aligned. Then we can estimate the join's size bucket by bucket by the well-know way.
 
-Where <img alt="$selectivity = \frac{rowCount(t1) - nulls(t1.key)}{rowCount(t1)*NDV(t1.key)}*\frac{rowCount(t2) - nulls(t2.key)}{rowCount(t2)*NDV(t2.key)}*ndvAfterJoin$" src="svgs/305e3aca4fcdd416e505e59b337ec67f.png?invert_in_darkmode" align="middle" width="579.89943495pt" height="33.2053986pt"/>.
+Original:
+
+<img alt="original histogram" src="./histogram-1.png" width="500pt"/>
+
+Step 1:
+
+<img alt="Step 1" src="./histogram-2.png" width="500pt"/>
+
+Step 2:
+
+<div style="text-align: center">
+<img alt="Step 2" src="./histogram-3.png" width="150pt"/>
+</div>
+
+The calculation inside the bucket can be calculated as this formula <img alt="$selecivity=joinKeySelectivity*RowCount(t1)*RowCount(t2)$" src="svgs/35fa60f709be6b9ab8aa9036bd5e7f7f.png?invert_in_darkmode" align="middle" width="476.19356895pt" height="24.657534pt"/>
+
+Where <img alt="$joinKeySelectivity = \frac{1}{NDV(t1.key)}*\frac{1}{NDV(t2.key)}*ndvAfterJoin$" src="svgs/291c9eb6e8db885402c716ffc3e17a65.png?invert_in_darkmode" align="middle" width="466.6166208pt" height="27.7756545pt"/>.
 
 The `ndvAfterJoin` can be <img alt="$min(NDV(t1.key), NDV(t2.key))$" src="svgs/30df1c648fa9fe43985776847c8dbe60.png?invert_in_darkmode" align="middle" width="248.4423216pt" height="24.657534pt"/> or a more detailed one if we can caculate it.
 
 
-Since it won’t have one side filter, we only need to consider the composite filters after considering the join key. We can simply multiply `selectionFactor` if there are other composite filters in our first version of implementation. Since `Selectivity` cannot calculate selectivity of an expression containing multiple columns.
+Since it won’t have one side filter, we only need to consider the composite filters after considering the join key. We can simply multiply `selectionFactor` if there are other composite filters since `Selectivity` cannot calculate selectivity of an expression containing multiple columns.
 
 ##### One side outer join
-It depends on the join keys’ NDV. And we can just use histograms to estimate it if there’re non-join-key filters.
+It's almost the same as inner join's behavior. But we need to consider two more thing:
+
+- The unmatched row will be filled as `NULL`. This should be calculated in the new histogram. The null count can be caculated when we estimate the matched count bucket by bucket.
+- There will be one side filters of the outer table. If the filter is about join key and can be converted to range information, it's can be easily involved when we do the caculation bucket by bucket. Otherwise it's a little hard to deal with it. Don't consider this case currently.
 
 ##### Semi join
-It’s something similar to inner join. But no data expanding occurs. When we maintain the range information, we can get a nearly accurate answer of its row count.
+It’s something similar to inner join. But no data expanding occurs. So the `total` can be adjusted easily.
 
 ##### Anti semi join
 Same with semi join.
 
-#### `Selection`
-Just use it to calculate the selectivity.
+#### `Aggregate`
+Just read the NDV information from the `statsInfo` to dicide the row count after aggregate. If there's index can fully match the group-by items. We just use its NDV. Otherwise we multiply the ndv of each column(or index that can match part of the group-by item).
 
-And to maintain `NDV`, we can use <img alt="$NDV_{a} = NDV_{a} * (1 - (1 - selectivity_a)^{cntPerVal})*(1 - (1 - selectivity_{others})^{cntPerVal})$" src="svgs/9b88d7d105ad2b263532733169dd94fe.png?invert_in_darkmode" align="middle" width="636.8712141pt" height="27.9124395pt"/> to estimate it.
+If some of the group-by items are also in the select field. We will create new histograms modify the `totalCnt` of each bucket(set it the same with `NDV`).
 
-If we have NDV of every bucket of histogram, we can make this formula more accurate.
+#### `Sort`
+We can just copy children's `statsInfo` without doing any change. Since the data distribution is not changed.
+
+#### `Limit`
+Currently we won't maintain hitogram information for it. But it can be considered in the future.
 
 #### `DataSource`
-If it’s a non-partitioned table, we just maintain the map. If it’s a partitioned table, we now only store the statistics of each partition. So we need to merge them. We need a cache or something else to ensure that we won’t merge them each time we need it, which will consume tooooo much time and memory space.
+Our `DataSource` is actually `source of data` + `select`. So if it’s a non-partitioned table, we just maintain the map and do what `Select` does. If it’s a partitioned table, we now only store the statistics of each partition. So we need to merge them into one histogram so the upper plan can use it. We need a cache or something else to ensure that we won’t merge them each time we need it.
 
 #### Others
-For other plan operators or `DataSource` which do not contain any histogram, we just use the original way to maintain `statsInfo`. We won’t maintain histograms for them. Taking `Union` for an example, if we maintain histograms for it, we need to merge the histograms, which is really an expensive operation. But we can consider maintaining this if a hint is given.
-
-### After we maintain range information
-
-Most things are the same with above. But there will be something more to do.
-
-#### `Selection` and `Join`
-We need to cut off the things which are not in ranges when doing estimation, and update the ranges information after the estimation. Also the NDV of column can be estimated more accurately.
-
-#### `Aggregation`
-We only need to cut off the things which are not in ranges when doing estimation. There is no need to update the ranges information.
-
-#### `TopN`
-We now have the ability to maintain histograms of the order-by items.
-
+For other plan operators or `DataSource` which do not contain any histogram, we just use the original way to maintain `statsInfo`. We won’t maintain histograms for them.
 
 ## Rationale
 
 ### How other systems solve the same issue?
 
-I’ve looked into Spark. They did nearly the same thing with what I said. They only maintain the max and min values, rather than the `ranges` information. And they don’t have the index, so they only maintain the column’s max/min value which make problem much easier to solve.
+I’ve looked into Spark. They only maintain the max and min values, won't create new histogram after `Select`/`Join`/`Aggregate`. And they don’t have the index, so maintaining the column’s max/min value is much easier to solve comparing with us.
 
 As for Orca and Calcite, I haven’t discovered where they maintain this information. But there’s something about statistics in Orca’s paper. According to the paper, I think they construct new histograms during planning and cache it to avoid building too many times.
 
 ### What is the disadvantage of this design?
 
-This may have side effects on OLTP performance. But I’ll try to reduce it.
+This may have side effects on OLTP performance. (Currently totally changing a histogram whose number of bucket is 256 and content is int value costs 7000ns. So we can create 143 histograms at 1ms currently)
  
-For now, only join reorder and the position `after logical optimize before physical optimize` will trigger this mechanism and it’s controlled by `tidb_optimizer_selectivity_level` which is disabled by default. This may not have much more side effects on simple point queries.
-
-And the `expectedCount` we used in physical plan is something same with `Limit`. So the row count modification during physical plan won’t be affected.
+For now, only join reorder and the position `after logical optimize before physical optimize` will trigger this mechanism and it’s controlled by `tidb_optimizer_selectivity_level` which is disabled by default. It will opened by default after we test it carefully.
 
 After we switch to the cascade-like planner, the rule that needs cost to make decision is still a small set of all. And the existence of `Group` can also help us. If we lazily construct the `statsInfo`, this may not be the bottleneck.
+
+And thanks to `predicate push down` and some other optimization rules. The single column(column directly from the DataSource not one the generated by `Project`'s complex `Expr`) filters(Only this type of expression can be calculated to range information) can be all pushed down to the `DataSource` or the `Selection` on the `DataSource`. So simple querys won't create many new histograms.
 
 ### What is the impact of not doing this?
 
