@@ -76,7 +76,7 @@ func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
 
-	myDuration, err := types.ParseDuration("0000-00-00 00:00:00.0000000", 6)
+	myDuration, err := types.ParseDuration(nil, "0000-00-00 00:00:00.0000000", 6)
 	c.Assert(err, IsNil)
 	d = dumpBinaryTime(myDuration.Duration)
 	c.Assert(d, DeepEquals, []byte{0})
@@ -139,7 +139,7 @@ func (s *testUtilSuite) TestDumpTextValue(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(mustDecodeStr(c, bs), Equals, "2017-01-06 00:00:00")
 
-	duration, err := types.ParseDuration("11:30:45", 0)
+	duration, err := types.ParseDuration(nil, "11:30:45", 0)
 	c.Assert(err, IsNil)
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration
