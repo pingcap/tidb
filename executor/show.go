@@ -64,9 +64,9 @@ type ShowExec struct {
 
 // Next implements the Executor Next interface.
 func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+	chk.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
-		e.result = e.newChunk()
+		e.result = e.newFirstChunk()
 		err := e.fetchAll()
 		if err != nil {
 			return errors.Trace(err)
@@ -87,7 +87,7 @@ func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.cursor >= e.result.NumRows() {
 		return nil
 	}
-	numCurBatch := mathutil.Min(e.maxChunkSize, e.result.NumRows()-e.cursor)
+	numCurBatch := mathutil.Min(chk.Capacity(), e.result.NumRows()-e.cursor)
 	chk.Append(e.result, e.cursor, e.cursor+numCurBatch)
 	e.cursor += numCurBatch
 	return nil
@@ -594,6 +594,11 @@ func (e *ShowExec) fetchShowCreateTable() error {
 		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s", charsetName))
 	} else {
 		buf.WriteString(fmt.Sprintf(" DEFAULT CHARSET=%s COLLATE=%s", charsetName, collate))
+	}
+
+	// Displayed if the compression typed is set.
+	if len(tb.Meta().Compression) != 0 {
+		buf.WriteString(fmt.Sprintf(" COMPRESSION='%s'", tb.Meta().Compression))
 	}
 
 	// add partition info here.

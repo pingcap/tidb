@@ -112,7 +112,7 @@ func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // NewChunk create a new chunk using NewChunk function in chunk package.
 func (a *recordSet) NewChunk() *chunk.Chunk {
-	return a.executor.newChunk()
+	return a.executor.newFirstChunk()
 }
 
 func (a *recordSet) Close() error {
@@ -270,7 +270,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.logSlowQuery(txnTS, err == nil)
 	}()
 
-	err = e.Next(ctx, e.newChunk())
+	err = e.Next(ctx, e.newFirstChunk())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -380,7 +380,13 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		if user != nil {
 			userString = user.String()
 		}
-		domain.GetDomain(a.Ctx).LogTopNSlowQuery(&domain.SlowQueryInfo{
+		if len(tableIDs) > 10 {
+			tableIDs = tableIDs[10 : len(tableIDs)-1] // Remove "table_ids:" and the last ","
+		}
+		if len(indexIDs) > 10 {
+			indexIDs = indexIDs[10 : len(indexIDs)-1] // Remove "index_ids:" and the last ","
+		}
+		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:      sql,
 			Start:    a.startTime,
 			Duration: costTime,

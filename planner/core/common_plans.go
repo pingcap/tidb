@@ -44,6 +44,13 @@ type ShowDDLJobs struct {
 	JobNumber int64
 }
 
+// ShowSlow is for showing slow queries.
+type ShowSlow struct {
+	baseSchemaProducer
+
+	*ast.ShowSlow
+}
+
 // ShowDDLJobQueries is for showing DDL job queries sql.
 type ShowDDLJobQueries struct {
 	baseSchemaProducer

@@ -50,3 +50,8 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.GetVar:    {},
 	ast.GetParam:  {},
 }
+
+// inequalFunctions stores functions which cannot be propagated from column equal condition.
+var inequalFunctions = map[string]struct{}{
+	ast.IsNull: {},
+}

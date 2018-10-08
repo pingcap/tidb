@@ -83,8 +83,10 @@ type PrepareExec struct {
 
 // NewPrepareExec creates a new PrepareExec.
 func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
+	base := newBaseExecutor(ctx, nil, "PrepareStmt")
+	base.initCap = chunk.ZeroCapacity
 	return &PrepareExec{
-		baseExecutor: newBaseExecutor(ctx, nil, "PrepareStmt"),
+		baseExecutor: base,
 		is:           is,
 		sqlText:      sqlTxt,
 	}

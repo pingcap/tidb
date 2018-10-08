@@ -24,6 +24,8 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -41,6 +43,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 // Domain represents a storage space. Different domains can use the same database name.
@@ -330,12 +333,23 @@ func (do *Domain) Reload() error {
 	return nil
 }
 
-// LogTopNSlowQuery keeps topN recent slow queries in domain.
-func (do *Domain) LogTopNSlowQuery(query *SlowQueryInfo) {
+// LogSlowQuery keeps topN recent slow queries in domain.
+func (do *Domain) LogSlowQuery(query *SlowQueryInfo) {
 	select {
 	case do.slowQuery.ch <- query:
 	default:
 	}
+}
+
+// ShowSlowQuery returns the slow queries.
+func (do *Domain) ShowSlowQuery(showSlow *ast.ShowSlow) []*SlowQueryInfo {
+	msg := &showSlowMessage{
+		request: showSlow,
+	}
+	msg.Add(1)
+	do.slowQuery.msgCh <- msg
+	msg.Wait()
+	return msg.result
 }
 
 func (do *Domain) topNSlowQueryLoop() {
@@ -346,12 +360,20 @@ func (do *Domain) topNSlowQueryLoop() {
 	for {
 		select {
 		case now := <-ticker.C:
-			do.slowQuery.Refresh(now)
+			do.slowQuery.RemoveExpired(now)
 		case info, ok := <-do.slowQuery.ch:
 			if !ok {
 				return
 			}
 			do.slowQuery.Append(info)
+		case msg := <-do.slowQuery.msgCh:
+			req := msg.request
+			if req.Tp == ast.ShowSlowTop {
+				msg.result = do.slowQuery.QueryTop(int(req.Count), req.Kind)
+			} else if req.Tp == ast.ShowSlowRecent {
+				msg.result = do.slowQuery.QueryRecent(int(req.Count))
+			}
+			msg.Done()
 		}
 	}
 }
@@ -385,16 +407,16 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
 			log.Info("[ddl] reload schema in loop, schema syncer need restart")
-			do.SchemaValidator.Stop()
 			err := do.mustRestartSyncer()
 			if err != nil {
 				log.Errorf("[ddl] reload schema in loop, schema syncer restart err %v", errors.ErrorStack(err))
 				break
 			}
-			do.SchemaValidator.Restart()
+			log.Info("[ddl] schema syncer restarted.")
 		case <-do.info.Done():
 			log.Info("[ddl] reload schema in loop, server info syncer need restart")
 			do.info.Restart(context.Background())
+			log.Info("[ddl] server info syncer restarted.")
 		case <-do.exit:
 			return
 		}
@@ -499,7 +521,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		sysSessionPool:  pools.NewResourcePool(factory, capacity, capacity, resourceIdleTimeout),
 		statsLease:      statsLease,
 		infoHandle:      infoschema.NewHandle(store),
-		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7),
+		slowQuery:       newTopNSlowQueries(30, time.Hour*24*7, 500),
 	}
 }
 
@@ -507,12 +529,19 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	if ebd, ok := do.store.(EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
+			cfg := config.GetGlobalConfig()
 			cli, err := clientv3.New(clientv3.Config{
 				Endpoints:   addrs,
 				DialTimeout: 5 * time.Second,
 				DialOptions: []grpc.DialOption{
 					grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
 					grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
+					grpc.WithBackoffMaxDelay(time.Second * 3),
+					grpc.WithKeepaliveParams(keepalive.ClientParameters{
+						Time:                time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
+						Timeout:             time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
+						PermitWithoutStream: true,
+					}),
 				},
 				TLS: ebd.TLSConfig(),
 			})

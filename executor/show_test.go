@@ -391,6 +391,15 @@ func (s *testSuite) TestShow(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION p0 VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION p1 VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION p2 VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
 	))
 
+	// Test show create table compression type.
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`CREATE TABLE t1 (c1 INT) COMPRESSION="zlib";`)
+	tk.MustQuery("show create table t1").Check(testutil.RowsWithSep("|",
+		"t1 CREATE TABLE `t1` (\n"+
+			"  `c1` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMPRESSION='zlib'",
+	))
+
 	// Test show create table year type
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y));`)
@@ -637,11 +646,24 @@ func (s *testSuite) TestShowTableStatus(c *C) {
  		partition by range(a)
  		( partition p0 values less than (10),
 		  partition p1 values less than (20),
-    	  partition p2 values less than (maxvalue)
+		  partition p2 values less than (maxvalue)
   		);`)
 	rs, err = tk.Exec("show table status from test like 'tp';")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
+}
+
+func (s *testSuite) TestShowSlow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// The test result is volatile, because
+	// 1. Slow queries is stored in domain, which may be affected by other tests.
+	// 2. Collecting slow queries is a asynchronous process, check immediately may not get the expected result.
+	// 3. Make slow query like "select sleep(1)" would slow the CI.
+	// So, we just cover the code but do not check the result.
+	tk.MustQuery(`admin show slow recent 3`)
+	tk.MustQuery(`admin show slow top 3`)
+	tk.MustQuery(`admin show slow top internal 3`)
+	tk.MustQuery(`admin show slow top all 3`)
 }
