@@ -83,6 +83,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 			return "", false, errors.Trace(err)
 		}
 		return string(j), true, nil
+	case TiDBForcePriority:
+		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
 	}
 	sVal, ok := s.systems[key]
 	if ok {
@@ -236,6 +238,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 4, math.MaxUint64, vars)
 	case InteractiveTimeout:
 		return checkUInt64SystemVar(name, value, 1, secondsPerYear, vars)
+	case InnodbCommitConcurrency:
+		return checkUInt64SystemVar(name, value, 0, 1000, vars)
+	case InnodbFastShutdown:
+		return checkUInt64SystemVar(name, value, 0, 2, vars)
+	case InnodbLockWaitTimeout:
+		return checkUInt64SystemVar(name, value, 1, 1073741824, vars)
 	case MaxConnections:
 		return checkUInt64SystemVar(name, value, 1, 100000, vars)
 	case MaxConnectErrors:
@@ -259,6 +267,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case SQLSelectLimit:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case SyncBinlog:
+		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
 	case TableDefinitionCache:
 		return checkUInt64SystemVar(name, value, 400, 524288, vars)
 	case TmpTableSize:
@@ -361,7 +371,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
-		d, err := types.ParseDuration(s[1:], 0)
+		d, err := types.ParseDuration(nil, s[1:], 0)
 		if err == nil {
 			ofst := int(d.Duration / time.Second)
 			if s[0] == '-' {
