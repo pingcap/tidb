@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -82,19 +81,25 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		if err != nil {
 			return false, handleChanged, newHandle, 0, errors.Trace(err)
 		}
-		if cmp != 0 {
-			if mysql.HasAutoIncrementFlag(col.Flag) {
-				val, err := extractLastInsertID(newData[i], col.Name.O, sc)
-				if err != nil {
-					return false, handleChanged, newHandle, 0, errors.Trace(err)
-				}
-				lastInsertID = uint64(val)
-				// Rebase auto increment id if the field is changed.
-				err = t.RebaseAutoID(ctx, val, true)
+		if mysql.HasAutoIncrementFlag(col.Flag) {
+			if newData[i].IsNull() {
+				return false, handleChanged, newHandle, 0,
+					errors.Errorf("Column '%v' cannot be null", col.Name.O)
+			}
+			val, errTI := newData[i].ToInt64(sc)
+			if errTI != nil {
+				return false, handleChanged, newHandle, 0, errors.Trace(errTI)
+			}
+			lastInsertID = uint64(val)
+			// Rebase auto increment id if the field is changed.
+			if cmp != 0 {
+				err := t.RebaseAutoID(ctx, val, true)
 				if err != nil {
 					return false, handleChanged, newHandle, 0, errors.Trace(err)
 				}
 			}
+		}
+		if cmp != 0 {
 			changed = true
 			modified[i] = true
 			if col.IsPKHandleColumn(t.Meta()) {
@@ -102,14 +107,6 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 				newHandle = newData[i].GetInt64()
 			}
 		} else {
-			// Update the lastInsertID.
-			if mysql.HasAutoIncrementFlag(col.Flag) {
-				val, err := extractLastInsertID(newData[i], col.Name.O, sc)
-				if err != nil {
-					return false, handleChanged, newHandle, 0, errors.Trace(err)
-				}
-				lastInsertID = uint64(val)
-			}
 			if mysql.HasOnUpdateNowFlag(col.Flag) && modified[i] {
 				// It's for "UPDATE t SET ts = ts" and ts is a timestamp.
 				onUpdateSpecified[i] = true
@@ -188,17 +185,6 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 	}
 	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1, colSize)
 	return true, handleChanged, newHandle, lastInsertID, nil
-}
-
-func extractLastInsertID(d types.Datum, colName string, sc *stmtctx.StatementContext) (int64, error) {
-	if d.IsNull() {
-		return 0, errors.Errorf("Column '%v' cannot be null", colName)
-	}
-	val, err := d.ToInt64(sc)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return val, nil
 }
 
 // DeleteExec represents a delete executor.
