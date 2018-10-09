@@ -15,12 +15,14 @@ package variable
 
 import (
 	"crypto/tls"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/klauspost/cpuid"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -165,12 +167,12 @@ type SessionVars struct {
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// PreparedStmts stores prepared statement.
-	PreparedStmts        map[uint32]interface{}
+	PreparedStmts        map[uint32]*ast.Prepared
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
 	// params for prepared statements
-	PreparedParams []interface{}
+	PreparedParams []types.Datum
 
 	// retry information
 	RetryInfo *RetryInfo
@@ -309,9 +311,9 @@ func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		Users:                     make(map[string]string),
 		systems:                   make(map[string]string),
-		PreparedStmts:             make(map[uint32]interface{}),
+		PreparedStmts:             make(map[uint32]*ast.Prepared),
 		PreparedStmtNameToID:      make(map[string]uint32),
-		PreparedParams:            make([]interface{}, 10),
+		PreparedParams:            make([]types.Datum, 0, 10),
 		TxnCtx:                    &TransactionContext{},
 		KVVars:                    kv.NewVariables(),
 		RetryInfo:                 &RetryInfo{},
@@ -452,6 +454,26 @@ func (s *SessionVars) ResetPrevAffectedRows() {
 			s.PrevAffectedRows = -1
 		}
 	}
+}
+
+// GetExecuteArgumentsInfo gets the argument list as a string of execute statement.
+func (s *SessionVars) GetExecuteArgumentsInfo() string {
+	if len(s.PreparedParams) == 0 {
+		return ""
+	}
+	args := make([]string, 0, len(s.PreparedParams))
+	for _, v := range s.PreparedParams {
+		if v.IsNull() {
+			args = append(args, "<nil>")
+		} else {
+			str, err := v.ToString()
+			if err != nil {
+				terror.Log(err)
+			}
+			args = append(args, str)
+		}
+	}
+	return fmt.Sprintf(" [arguments: %s]", strings.Join(args, ", "))
 }
 
 // GetSystemVar gets the string value of a system variable.
