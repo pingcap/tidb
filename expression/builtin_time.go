@@ -3292,8 +3292,8 @@ func (b *builtinSubDateIntDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalTime evals ADDDATE(date,INTERVAL expr unit).
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
+// evalTime evals SUBDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
 func (b *builtinSubDateIntDecimalSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
@@ -3386,8 +3386,8 @@ func (b *builtinSubDateDatetimeDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalTime evals ADDDATE(date,INTERVAL expr unit).
-// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
+// evalTime evals SUBDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
 func (b *builtinSubDateDatetimeDecimalSig) evalTime(row chunk.Row) (types.Time, bool, error) {
 	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
