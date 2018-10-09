@@ -457,8 +457,8 @@ func (do *Domain) Close() {
 	if do.etcdClient != nil {
 		terror.Log(errors.Trace(do.etcdClient.Close()))
 	}
-	do.slowQuery.Close()
 	do.sysSessionPool.Close()
+	do.slowQuery.Close()
 	do.wg.Wait()
 	log.Info("[domain] close")
 }

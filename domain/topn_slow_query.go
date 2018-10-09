@@ -196,6 +196,14 @@ func (q *topNSlowQueries) QueryTop(count int, kind ast.ShowSlowKind) []*SlowQuer
 }
 
 func (q *topNSlowQueries) Close() {
+	done := false
+	for !done {
+		select {
+		case <-q.ch:
+		default:
+			done = true
+		}
+	}
 	close(q.ch)
 }
 
