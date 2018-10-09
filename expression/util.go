@@ -374,7 +374,7 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 
 // DeriveRelaxedFiltersFromDNF given a DNF expression, derive a relaxed DNF expression which only contains columns
 // in specified schema; the derived expression is a superset of original expression, i.e, any tuple satisfying
-// the original expression must satisfy the derived expression. Return nil when the derived expression is univeral set.
+// the original expression must satisfy the derived expression. Return nil when the derived expression is universal set.
 // A running example is: for schema of t1, `(t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2)` would be derived as
 // `t1.a=1 or t1.a=2`, while `t1.a=1 or t2.a=1` would get nil.
 func DeriveRelaxedFiltersFromDNF(expr Expression, schema *Schema) Expression {
@@ -394,7 +394,7 @@ func DeriveRelaxedFiltersFromDNF(expr Expression, schema *Schema) Expression {
 				if relaxedCNFItem != nil {
 					newCNFItems = append(newCNFItems, relaxedCNFItem)
 				}
-				// If relaxed expression for embedded DNF is univeral set, just drop this CNF item
+				// If relaxed expression for embedded DNF is universal set, just drop this CNF item
 				continue
 			}
 			// This cnfItem must be simple expression now
