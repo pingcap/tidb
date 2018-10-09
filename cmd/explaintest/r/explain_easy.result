@@ -96,15 +96,14 @@ TableReader_11	2.00	root	data:TableScan_10
 └─TableScan_10	2.00	cop	table:t1, range:[0,0], [1,1], keep order:false, stats:pseudo
 explain select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1;
 id	count	task	operator info
-Projection_13	10000.00	root	k
-└─Projection_14	10000.00	root	test.t1.c1, ifnull(5_col_0, 0)
-  └─MergeJoin_15	10000.00	root	left outer join, left key:test.t1.c1, right key:s.c1
-    ├─TableReader_18	10000.00	root	data:TableScan_17
-    │ └─TableScan_17	10000.00	cop	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
-    └─Selection_20	8000.00	root	ne(k, 0)
-      └─Projection_21	10000.00	root	1, s.c1
-        └─TableReader_23	10000.00	root	data:TableScan_22
-          └─TableScan_22	10000.00	cop	table:s, range:[-inf,+inf], keep order:true, stats:pseudo
+Projection_12	10000.00	root	k
+└─Projection_13	10000.00	root	test.t1.c1, ifnull(5_col_0, 0)
+  └─MergeJoin_14	10000.00	root	left outer join, left key:test.t1.c1, right key:s.c1
+    ├─TableReader_17	10000.00	root	data:TableScan_16
+    │ └─TableScan_16	10000.00	cop	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
+    └─Projection_19	8000.00	root	1, s.c1
+      └─TableReader_21	10000.00	root	data:TableScan_20
+        └─TableScan_20	10000.00	cop	table:s, range:[-inf,+inf], keep order:true, stats:pseudo
 explain select * from information_schema.columns;
 id	count	task	operator info
 MemTableScan_4	10000.00	root	
@@ -347,6 +346,15 @@ TableDual_5	0.00	root	rows:0
 explain select * from t where b = 1 and b = 2;
 id	count	task	operator info
 TableDual_5	0.00	root	rows:0
+explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null;
+id	count	task	operator info
+Projection_7	12.50	root	t1.a, t1.b, t2.a, t2.b
+└─HashRightJoin_9	12.50	root	inner join, inner:TableReader_12, equal:[eq(t2.b, t1.b)]
+  ├─TableReader_12	10.00	root	data:Selection_11
+  │ └─Selection_11	10.00	cop	isnull(t2.b)
+  │   └─TableScan_10	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableReader_14	10000.00	root	data:TableScan_13
+    └─TableScan_13	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a bigint primary key);
 explain select * from t where a = 1 and a = 2;
