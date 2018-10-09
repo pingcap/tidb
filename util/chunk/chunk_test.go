@@ -492,35 +492,29 @@ func (s *testChunkSuite) TestSwapColumn(c *check.C) {
 	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
 	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
 
+	checkRef := func() {
+		c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
+		c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
+		c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+	}
+
 	chk1.SwapColumn(0, chk2, 0)
-	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
-	c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
-	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+	checkRef()
 
 	chk1.SwapColumn(0, chk2, 1)
-	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
-	c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
-	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+	checkRef()
 
 	chk2.SwapColumn(1, chk2, 0)
-	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
-	c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
-	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+	checkRef()
 
 	chk2.SwapColumn(1, chk2, 1)
-	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
-	c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
-	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+	checkRef()
 
 	chk2.SwapColumn(1, chk2, 2)
-	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
-	c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
-	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+	checkRef()
 
 	chk2.SwapColumn(2, chk2, 0)
-	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
-	c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
-	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+	checkRef()
 }
 
 func BenchmarkAppendInt(b *testing.B) {
