@@ -851,7 +851,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		},
 		{
 			sql:  "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
-			best: "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t)->StreamAgg)->StreamAgg->Sel([ne(k, 0)])}(test.t.a,s.a)->Projection->Projection",
+			best: "MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))->Projection}(test.t.a,s.a)->Projection->Projection",
 		},
 		// Test stream agg with multi group by columns.
 		{
