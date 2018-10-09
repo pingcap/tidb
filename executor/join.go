@@ -75,7 +75,8 @@ type HashJoinExec struct {
 
 	// radixBits indicates the bit number using for radix partitioning. Inner
 	// relation will be split to 2^radixBits sub-relations before building the
-	// hash tables.
+	// hash tables. If the complete inner relation can be hold in L2Cache in
+	// which case radixBits will be 0, we can skip the partition phase.
 	radixBits int
 }
 
@@ -299,11 +300,6 @@ func (e *HashJoinExec) evalRadixBitNum() {
 	// three quarters of the L2 cache size.
 	l2CacheSize := float64(sv.L2CacheSize) * 3 / 4
 	e.radixBits = int(math.Log2(innerResultSize / l2CacheSize))
-	// The complete inner relation can be hold in L2Cache, we
-	// can skip the partition phase.
-	if e.radixBits <= 0 {
-		sv.EnableRadixJoin = false
-	}
 }
 
 func (e *HashJoinExec) initializeForProbe() {
