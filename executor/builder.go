@@ -1042,8 +1042,15 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 				partialOrdinal++
 			}
 			finalDesc := aggDesc.Split(ordinal)
+			if aggDesc.Name == ast.AggFuncGroupConcat {
+				var newGroupConcatFlag int32
+				b.ctx.SetValue(sessionctx.PreallocGroupConcatFlag, &newGroupConcatFlag)
+			}
 			e.PartialAggFuncs = append(e.PartialAggFuncs, aggfuncs.Build(b.ctx, aggDesc, i))
 			e.FinalAggFuncs = append(e.FinalAggFuncs, aggfuncs.Build(b.ctx, finalDesc, i))
+			if aggDesc.Name == ast.AggFuncGroupConcat {
+				b.ctx.ClearValue(sessionctx.PreallocGroupConcatFlag)
+			}
 		}
 		if e.defaultVal != nil {
 			value := aggDesc.GetDefaultValue()
