@@ -288,7 +288,7 @@ var Command2Str = map[byte]string{
 	ComFieldList:        "Field List",
 	ComCreateDB:         "Create DB",
 	ComDropDB:           "Drop DB",
-	ComRefresh:          "Refres",
+	ComRefresh:          "Refresh",
 	ComShutdown:         "Shutdown",
 	ComStatistics:       "Statistics",
 	ComProcessInfo:      "Processlist",
