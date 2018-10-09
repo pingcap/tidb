@@ -771,8 +771,7 @@ func (b *builtinGetParamStringSig) evalString(row chunk.Row) (string, bool, erro
 	}
 	v := sessionVars.PreparedParams[idx]
 
-	dt := v.(types.Datum)
-	str, err := (&dt).ToString()
+	str, err := v.ToString()
 	if err != nil {
 		return "", true, nil
 	}
