@@ -16,7 +16,6 @@ package executor
 import (
 	"math"
 	"sort"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/ast"
