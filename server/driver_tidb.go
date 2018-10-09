@@ -208,14 +208,9 @@ func (tc *TiDBContext) CommitTxn(ctx context.Context) error {
 	return tc.session.CommitTxn(ctx)
 }
 
-// SetCommandValue implements QueryCtx SetCommandValue method.
-func (tc *TiDBContext) SetCommandValue(command byte) {
-	tc.session.SetCommandValue(command)
-}
-
 // SetProcessInfo implements QueryCtx SetProcessInfo method.
-func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time) {
-	tc.session.SetProcessInfo(sql, t)
+func (tc *TiDBContext) SetProcessInfo(sql string, t time.Time, command byte) {
+	tc.session.SetProcessInfo(sql, t, command)
 }
 
 // RollbackTxn implements QueryCtx RollbackTxn method.
