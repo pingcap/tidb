@@ -327,7 +327,6 @@ func NewSessionVars() *SessionVars {
 		DDLReorgPriority:          kv.PriorityLow,
 		EnableRadixJoin:           false,
 		L2CacheSize:               cpuid.CPU.Cache.L2,
-		CommandValue:              mysql.ComSleep,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
