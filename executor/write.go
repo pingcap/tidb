@@ -77,7 +77,10 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 			newData[i] = v
 		}
 
-		// Rebase auto increment id if the field is changed.
+		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
+		if err != nil {
+			return false, handleChanged, newHandle, 0, errors.Trace(err)
+		}
 		if mysql.HasAutoIncrementFlag(col.Flag) {
 			if newData[i].IsNull() {
 				return false, handleChanged, newHandle, 0,
@@ -88,14 +91,13 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 				return false, handleChanged, newHandle, 0, errors.Trace(errTI)
 			}
 			lastInsertID = uint64(val)
-			err := t.RebaseAutoID(ctx, val, true)
-			if err != nil {
-				return false, handleChanged, newHandle, 0, errors.Trace(err)
+			// Rebase auto increment id if the field is changed.
+			if cmp != 0 {
+				err := t.RebaseAutoID(ctx, val, true)
+				if err != nil {
+					return false, handleChanged, newHandle, 0, errors.Trace(err)
+				}
 			}
-		}
-		cmp, err := newData[i].CompareDatum(sc, &oldData[i])
-		if err != nil {
-			return false, handleChanged, newHandle, 0, errors.Trace(err)
 		}
 		if cmp != 0 {
 			changed = true
