@@ -475,20 +475,52 @@ func (s *testChunkSuite) TestSwapColumn(c *check.C) {
 	fieldTypes := make([]*types.FieldType, 0, 2)
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 
+	// chk1: column1 refers to column0
 	chk1 := NewChunkWithCapacity(fieldTypes, 1)
-	chk1.AppendInt64(0, 1)
+	chk1.AppendFloat64(0, 1)
 	chk1.MakeRef(0, 1)
-	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
+	chk1.AppendFloat64(2, 3)
 
+	// chk2: column1 refers to column0
 	chk2 := NewChunkWithCapacity(fieldTypes, 1)
 	chk2.AppendFloat64(0, 1)
-	chk2.AppendFloat64(1, 2)
+	chk2.MakeRef(0, 1)
+	chk2.AppendFloat64(2, 3)
+
+	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
+	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
 
 	chk1.SwapColumn(0, chk2, 0)
-	chk2.Reset()
 	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
 	c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
+	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+
+	chk1.SwapColumn(0, chk2, 1)
+	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
+	c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
+	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+
+	chk2.SwapColumn(1, chk2, 0)
+	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
+	c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
+	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+
+	chk2.SwapColumn(1, chk2, 1)
+	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
+	c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
+	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+
+	chk2.SwapColumn(1, chk2, 2)
+	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
+	c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
+	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+
+	chk2.SwapColumn(2, chk2, 0)
+	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
+	c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
+	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
 }
 
 func BenchmarkAppendInt(b *testing.B) {
