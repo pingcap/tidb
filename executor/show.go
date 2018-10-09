@@ -64,6 +64,12 @@ type ShowExec struct {
 
 // Next implements the Executor Next interface.
 func (e *ShowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.execStat != nil {
+		start := time.Now()
+		defer func() {
+			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
+		}()
+	}
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.result == nil {
 		e.result = e.newFirstChunk()

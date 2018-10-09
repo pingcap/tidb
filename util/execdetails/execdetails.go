@@ -14,8 +14,10 @@
 package execdetails
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -51,4 +53,56 @@ func (d ExecDetails) String() string {
 		parts = append(parts, fmt.Sprintf("processed_keys:%d", d.ProcessedKeys))
 	}
 	return strings.Join(parts, " ")
+}
+
+// ExecStats collects executors's execution info.
+type ExecStats map[string]*ExecStat
+
+// ExecStat collects one executor's execution info.
+type ExecStat struct {
+	loop    int32
+	consume int64
+	rows    int64
+}
+
+// NewExecutorStats creates new executor collector.
+func NewExecutorStats() ExecStats {
+	return ExecStats(make(map[string]*ExecStat))
+}
+
+// GetExecStat gets execStat for a executor.
+func (e ExecStats) GetExecStat(planID string) *ExecStat {
+	if e == nil {
+		return nil
+	}
+	execStat, exists := e[planID]
+	if !exists {
+		execStat = &ExecStat{}
+		e[planID] = execStat
+	}
+	return execStat
+}
+
+func (e ExecStats) String() string {
+	var buff bytes.Buffer
+	buff.WriteString("(")
+	for planID, stat := range e {
+		buff.WriteString(planID + ":" + stat.String() + ",")
+	}
+	buff.WriteString(")")
+	return buff.String()
+}
+
+// Record records executor's execution.
+func (e *ExecStat) Record(d time.Duration, rowNum int) {
+	atomic.AddInt32(&e.loop, 1)
+	atomic.AddInt64(&e.consume, int64(d))
+	atomic.AddInt64(&e.rows, int64(rowNum))
+}
+
+func (e *ExecStat) String() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("time:%f, loops:%d, rows:%d", time.Duration(e.consume).Seconds()*1e3, e.loop, e.rows)
 }

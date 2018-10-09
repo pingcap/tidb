@@ -16,6 +16,7 @@ package executor
 import (
 	"container/heap"
 	"sort"
+	"time"
 
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -73,6 +74,12 @@ func (e *SortExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.execStat != nil {
+		start := time.Now()
+		defer func() {
+			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
+		}()
+	}
 	chk.Reset()
 	if !e.fetched {
 		err := e.fetchRowChunks(ctx)
@@ -296,6 +303,12 @@ func (e *TopNExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.execStat != nil {
+		start := time.Now()
+		defer func() {
+			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
+		}()
+	}
 	chk.Reset()
 	if !e.fetched {
 		e.totalLimit = int(e.limit.Offset + e.limit.Count)

@@ -15,6 +15,7 @@ package executor
 
 import (
 	"math"
+	"time"
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/distsql"
@@ -61,6 +62,12 @@ type CheckIndexRangeExec struct {
 
 // Next implements the Executor Next interface.
 func (e *CheckIndexRangeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.execStat != nil {
+		start := time.Now()
+		defer func() {
+			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
+		}()
+	}
 	chk.Reset()
 	handleIdx := e.schema.Len() - 1
 	for {
@@ -435,6 +442,12 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 
 // Next implements the Executor Next interface.
 func (e *RecoverIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.execStat != nil {
+		start := time.Now()
+		defer func() {
+			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
+		}()
+	}
 	chk.Reset()
 	if e.done {
 		return nil
@@ -571,6 +584,12 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 
 // Next implements the Executor Next interface.
 func (e *CleanupIndexExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.execStat != nil {
+		start := time.Now()
+		defer func() {
+			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
+		}()
+	}
 	chk.Reset()
 	if e.done {
 		return nil
