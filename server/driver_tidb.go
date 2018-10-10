@@ -60,6 +60,7 @@ type TiDBStatement struct {
 	paramsType  []byte
 	ctx         *TiDBContext
 	rs          ResultSet
+	sql         string
 }
 
 // ID implements PreparedStatement ID method.
@@ -306,6 +307,7 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 		return
 	}
 	stmt := &TiDBStatement{
+		sql:         sql,
 		id:          stmtID,
 		numParams:   paramCount,
 		boundParams: make([][]byte, paramCount),
