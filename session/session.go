@@ -1066,7 +1066,7 @@ func CreateSession(store kv.Storage) (Session, error) {
 	privilege.BindPrivilegeManager(s, pm)
 
 	// Add statsUpdateHandle.
-	if do.StatsHandle() != nil {
+	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
 	}
 
