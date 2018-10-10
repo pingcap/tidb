@@ -649,7 +649,7 @@ func getPhysicalIDs(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]i
 			}
 		}
 		if !found {
-			return nil, errors.New(fmt.Sprintf("Error in list of partitions to %s", tblInfo.Name.O))
+			return nil, errors.New(fmt.Sprintf("can not found the specified partition name %s in the table definition", name.O))
 		}
 	}
 	return ids, nil
