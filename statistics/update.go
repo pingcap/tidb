@@ -719,7 +719,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 				continue
 			}
 			for _, def := range pi.Definitions {
-				sql := fmt.Sprintf("alter table %s analyze partition `%s`", tblName, def.Name.O)
+				sql := fmt.Sprintf("analyze table %s partition `%s`", tblName, def.Name.O)
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
 				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
 				if analyzed {
