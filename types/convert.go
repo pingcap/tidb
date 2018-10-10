@@ -185,7 +185,7 @@ func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duratio
 		}
 	}
 
-	d, err = ParseDuration(str, fsp)
+	d, err = ParseDuration(sc, str, fsp)
 	if ErrTruncatedWrongVal.Equal(err) {
 		err = sc.HandleTruncate(err)
 	}

@@ -513,7 +513,7 @@ func parseTime(c *C, s string) types.Time {
 }
 
 func parseDuration(c *C, s string) types.Duration {
-	m, err := types.ParseDuration(s, types.DefaultFsp)
+	m, err := types.ParseDuration(nil, s, types.DefaultFsp)
 	c.Assert(err, IsNil)
 	return m
 }
@@ -935,7 +935,7 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 		datums = append(datums, types.NewDatum(t.value))
 	}
 	rowCount := 3
-	decoder := NewDecoder(chunk.NewChunkWithCapacity(tps, 32), time.Local)
+	decoder := NewDecoder(chunk.New(tps, 32, 32), time.Local)
 	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 		encoded, err := EncodeValue(sc, nil, datums...)
 		c.Assert(err, IsNil)

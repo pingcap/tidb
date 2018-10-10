@@ -188,6 +188,9 @@ func (s *propagateConstantSolver) tryToReplaceCond(src *Column, tgt *Column, con
 	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 		return false, true, cond
 	}
+	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
+		return false, true, cond
+	}
 	for idx, expr := range sf.GetArgs() {
 		if src.Equal(nil, expr) {
 			replaced = true

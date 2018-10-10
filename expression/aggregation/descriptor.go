@@ -297,10 +297,14 @@ func (a *AggFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
 		}
 		// TODO: a.Args[0] = expression.WrapWithCastAsDecimal(ctx, a.Args[0])
-	default:
+	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
 		//TODO: a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
+	default:
+		a.RetTp = types.NewFieldType(mysql.TypeDouble)
+		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+		// TODO: a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
 	}
 	types.SetBinChsClnFlag(a.RetTp)
 }
@@ -318,9 +322,13 @@ func (a *AggFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 		}
 		a.RetTp.Flen = mysql.MaxDecimalWidth
 		// TODO: a.Args[0] = expression.WrapWithCastAsDecimal(ctx, a.Args[0])
-	default:
+	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
+		// TODO: a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
+	default:
+		a.RetTp = types.NewFieldType(mysql.TypeDouble)
+		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 		// TODO: a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
 	}
 	types.SetBinChsClnFlag(a.RetTp)

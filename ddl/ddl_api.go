@@ -1457,7 +1457,22 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 			return nil
 		}
 	case mysql.TypeEnum:
-		return errUnsupportedModifyColumn.GenWithStackByArgs("modify enum column is not supported")
+		if origin.Tp == to.Tp {
+			if len(to.Elems) < len(origin.Elems) {
+				msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
+				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			}
+			for index, originElem := range origin.Elems {
+				toElem := to.Elems[index]
+				if originElem != toElem {
+					msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
+					return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				}
+			}
+			return nil
+		}
+		msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	default:
 		if origin.Tp == to.Tp {
 			return nil

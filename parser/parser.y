@@ -2348,7 +2348,13 @@ Expression:
 	}
 |	"NOT" Expression %prec not
 	{
-		$$ = &ast.UnaryOperationExpr{Op: opcode.Not, V: $2}
+		expr, ok := $2.(*ast.ExistsSubqueryExpr)
+		if ok {
+			expr.Not = true
+			$$ = $2
+		} else {
+			$$ = &ast.UnaryOperationExpr{Op: opcode.Not, V: $2}
+		}
 	}
 |	BoolPri IsOrNotOp trueKwd %prec is
 	{

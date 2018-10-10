@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -322,6 +323,11 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 // ShowProcess implements QueryCtx ShowProcess method.
 func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
 	return tc.session.ShowProcess()
+}
+
+// GetSessionVars return SessionVars.
+func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
+	return tc.session.GetSessionVars()
 }
 
 type tidbResultSet struct {
