@@ -138,6 +138,8 @@ func (s *testTimeSuite) TestTimestamp(c *C) {
 }
 
 func (s *testTimeSuite) TestDate(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
@@ -153,7 +155,7 @@ func (s *testTimeSuite) TestDate(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDate(nil, test.Input)
+		t, err := types.ParseDate(sc, test.Input)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -163,12 +165,14 @@ func (s *testTimeSuite) TestDate(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseDate(nil, test)
+		_, err := types.ParseDate(sc, test)
 		c.Assert(err, NotNil)
 	}
 }
 
 func (s *testTimeSuite) TestTime(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
@@ -200,7 +204,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDuration(test.Input, types.MinFsp)
+		t, err := types.ParseDuration(sc, test.Input, types.MinFsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -215,7 +219,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDuration(test.Input, types.MaxFsp)
+		t, err := types.ParseDuration(sc, test.Input, types.MaxFsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -226,7 +230,7 @@ func (s *testTimeSuite) TestTime(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseDuration(test, types.DefaultFsp)
+		_, err := types.ParseDuration(sc, test, types.DefaultFsp)
 		c.Assert(err, NotNil)
 	}
 
@@ -270,15 +274,15 @@ func (s *testTimeSuite) TestDurationAdd(c *C) {
 		{"00:00:00.099", 3, "00:00:00.001", 3, "00:00:00.100"},
 	}
 	for _, test := range table {
-		t, err := types.ParseDuration(test.Input, test.Fsp)
+		t, err := types.ParseDuration(nil, test.Input, test.Fsp)
 		c.Assert(err, IsNil)
-		ta, err := types.ParseDuration(test.InputAdd, test.FspAdd)
+		ta, err := types.ParseDuration(nil, test.InputAdd, test.FspAdd)
 		c.Assert(err, IsNil)
 		result, err := t.Add(ta)
 		c.Assert(err, IsNil)
 		c.Assert(result.String(), Equals, test.Expect)
 	}
-	t, err := types.ParseDuration("00:00:00", 0)
+	t, err := types.ParseDuration(nil, "00:00:00", 0)
 	c.Assert(err, IsNil)
 	ta := new(types.Duration)
 	result, err := t.Add(*ta)
@@ -286,13 +290,15 @@ func (s *testTimeSuite) TestDurationAdd(c *C) {
 	c.Assert(result.String(), Equals, "00:00:00")
 
 	t = types.Duration{Duration: math.MaxInt64, Fsp: 0}
-	tatmp, err := types.ParseDuration("00:01:00", 0)
+	tatmp, err := types.ParseDuration(nil, "00:01:00", 0)
 	c.Assert(err, IsNil)
 	_, err = t.Add(tatmp)
 	c.Assert(err, NotNil)
 }
 
 func (s *testTimeSuite) TestDurationSub(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input    string
@@ -305,9 +311,9 @@ func (s *testTimeSuite) TestDurationSub(c *C) {
 		{"00:00:00", 0, "00:00:00.1", 1, "-00:00:00.1"},
 	}
 	for _, test := range table {
-		t, err := types.ParseDuration(test.Input, test.Fsp)
+		t, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		c.Assert(err, IsNil)
-		ta, err := types.ParseDuration(test.InputAdd, test.FspAdd)
+		ta, err := types.ParseDuration(sc, test.InputAdd, test.FspAdd)
 		c.Assert(err, IsNil)
 		result, err := t.Sub(ta)
 		c.Assert(err, IsNil)
@@ -316,6 +322,8 @@ func (s *testTimeSuite) TestDurationSub(c *C) {
 }
 
 func (s *testTimeSuite) TestTimeFsp(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
 	table := []struct {
 		Input  string
@@ -335,7 +343,7 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 	}
 
 	for _, test := range table {
-		t, err := types.ParseDuration(test.Input, test.Fsp)
+		t, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		c.Assert(err, IsNil)
 		c.Assert(t.String(), Equals, test.Expect)
 	}
@@ -349,7 +357,7 @@ func (s *testTimeSuite) TestTimeFsp(c *C) {
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseDuration(test.Input, test.Fsp)
+		_, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		c.Assert(err, NotNil)
 	}
 }
@@ -553,6 +561,8 @@ func (s *testTimeSuite) TestParseTimeFromNum(c *C) {
 }
 
 func (s *testTimeSuite) TestToNumber(c *C) {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
 	tblDateTime := []struct {
 		Input  string
@@ -617,7 +627,7 @@ func (s *testTimeSuite) TestToNumber(c *C) {
 	}
 
 	for _, test := range tblDuration {
-		t, err := types.ParseDuration(test.Input, test.Fsp)
+		t, err := types.ParseDuration(sc, test.Input, test.Fsp)
 		c.Assert(err, IsNil)
 		// now we can only changetypes.Duration's Fsp to check ToNumber with different Fsp
 		c.Assert(t.ToNumber().String(), Equals, test.Expect)
@@ -704,7 +714,7 @@ func (s *testTimeSuite) TestRoundFrac(c *C) {
 	}
 
 	for _, t := range tbl {
-		v, err := types.ParseDuration(t.Input, types.MaxFsp)
+		v, err := types.ParseDuration(sc, t.Input, types.MaxFsp)
 		c.Assert(err, IsNil)
 		nv, err := v.RoundFrac(t.Fsp)
 		c.Assert(err, IsNil)
@@ -749,7 +759,7 @@ func (s *testTimeSuite) TestConvert(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.TimeZone = time.UTC
 	for _, t := range tblDuration {
-		v, err := types.ParseDuration(t.Input, t.Fsp)
+		v, err := types.ParseDuration(sc, t.Input, t.Fsp)
 		c.Assert(err, IsNil)
 		year, month, day := time.Now().In(time.UTC).Date()
 		n := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
@@ -795,7 +805,7 @@ func (s *testTimeSuite) TestCompare(c *C) {
 	}
 
 	for _, t := range tbl {
-		v1, err := types.ParseDuration(t.Arg1, types.MaxFsp)
+		v1, err := types.ParseDuration(nil, t.Arg1, types.MaxFsp)
 		c.Assert(err, IsNil)
 
 		ret, err := v1.CompareString(nil, t.Arg2)
@@ -820,7 +830,7 @@ func (s *testTimeSuite) TestDurationClock(c *C) {
 	}
 
 	for _, t := range tbl {
-		d, err := types.ParseDuration(t.Input, types.MaxFsp)
+		d, err := types.ParseDuration(nil, t.Input, types.MaxFsp)
 		c.Assert(err, IsNil)
 		c.Assert(d.Hour(), Equals, t.Hour)
 		c.Assert(d.Minute(), Equals, t.Minute)
@@ -941,7 +951,7 @@ func (s *testTimeSuite) TestTimeAdd(c *C) {
 	for _, t := range tbl {
 		v1, err := types.ParseTime(nil, t.Arg1, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
-		dur, err := types.ParseDuration(t.Arg2, types.MaxFsp)
+		dur, err := types.ParseDuration(sc, t.Arg2, types.MaxFsp)
 		c.Assert(err, IsNil)
 		result, err := types.ParseTime(nil, t.Ret, mysql.TypeDatetime, types.MaxFsp)
 		c.Assert(err, IsNil)
