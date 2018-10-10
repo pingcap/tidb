@@ -361,7 +361,7 @@ type CheckTableExec struct {
 	done   bool
 	is     infoschema.InfoSchema
 
-	genExprs map[string]expression.Expression
+	genExprs map[model.TableColumnID]expression.Expression
 }
 
 // Open implements the Executor Open interface.
