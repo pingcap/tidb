@@ -617,10 +617,10 @@ func (cc *clientConn) dispatch(data []byte) error {
 		cc.ctx.SetProcessInfo("", t, cmd)
 		return cc.writeOK()
 	case mysql.ComInitDB:
+		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd)
 		if err := cc.useDB(ctx1, hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
-		cc.ctx.SetProcessInfo("", t, cmd)
 		return cc.writeOK()
 	case mysql.ComFieldList:
 		cc.ctx.SetProcessInfo(hack.String(data), t, cmd)
