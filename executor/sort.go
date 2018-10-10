@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/util/tracing"
 	"golang.org/x/net/context"
 )
 
@@ -55,11 +56,13 @@ type SortExec struct {
 func (e *SortExec) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
+	e.trace.Finish()
 	return errors.Trace(e.children[0].Close())
 }
 
 // Open implements the Executor Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
+	e.trace, ctx = tracing.ChildSpan(ctx, e.id)
 	e.fetched = false
 	e.Idx = 0
 
@@ -73,6 +76,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	defer e.trace.LogKV("next", "finished")
 	chk.Reset()
 	if !e.fetched {
 		err := e.fetchRowChunks(ctx)
@@ -296,6 +300,9 @@ func (e *TopNExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	sp, ctx := tracing.ChildSpan(ctx, e.id)
+	defer sp.Finish()
+
 	chk.Reset()
 	if !e.fetched {
 		e.totalLimit = int(e.limit.Offset + e.limit.Count)

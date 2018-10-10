@@ -14,6 +14,8 @@
 package executor
 
 import (
+	"bytes"
+	"fmt"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
@@ -36,8 +38,6 @@ type TraceExec struct {
 	exhausted bool
 	// stmtNode is the real query ast tree and it is used for building real query's plan.
 	stmtNode ast.StmtNode
-	// rootTrace represents root span which is father of all other span.
-	rootTrace opentracing.Span
 
 	builder *executorBuilder
 }
@@ -48,13 +48,17 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.exhausted {
 		return nil
 	}
+	e.trace = tracing.NewRecordedTrace("trace_exec", func(sp basictracer.RawSpan) {
+		e.CollectedSpans = append(e.CollectedSpans, sp)
+	})
 
 	// record how much time was spent for optimizeing plan
-	optimizeSp := e.rootTrace.Tracer().StartSpan("plan_optimize", opentracing.FollowsFrom(e.rootTrace.Context()))
+	optimizeSp := e.trace.Tracer().StartSpan("plan_optimize", opentracing.FollowsFrom(e.trace.Context()))
 	stmtPlan, err := plannercore.Optimize(e.builder.ctx, e.stmtNode, e.builder.is)
 	if err != nil {
 		return err
 	}
+	optimizeSp.LogKV("optimize", "finished")
 	optimizeSp.Finish()
 
 	pp, ok := stmtPlan.(plannercore.PhysicalPlan)
@@ -64,19 +68,15 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	// append select executor to trace executor
 	stmtExec := e.builder.build(pp)
-
-	e.rootTrace = tracing.NewRecordedTrace("trace_exec", func(sp basictracer.RawSpan) {
-		e.CollectedSpans = append(e.CollectedSpans, sp)
-	})
+	// store span into context
+	ctx = opentracing.ContextWithSpan(ctx, e.trace)
 	err = stmtExec.Open(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	stmtExecChk := stmtExec.newFirstChunk()
 
-	// store span into context
-	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)
-
+	ctx = context.TODO()
 	for {
 		if err := stmtExec.Next(ctx, stmtExecChk); err != nil {
 			return errors.Trace(err)
@@ -85,9 +85,12 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 			break
 		}
 	}
+	if err := stmtExec.Close(); err != nil {
+		return errors.Trace(err)
+	}
 
-	e.rootTrace.LogKV("event", "tracing completed")
-	e.rootTrace.Finish()
+	e.trace.LogKV("event", "tracing completed")
+	e.trace.Finish()
 	var rootSpan basictracer.RawSpan
 
 	treeSpans := make(map[uint64][]basictracer.RawSpan)
@@ -103,6 +106,18 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	dfsTree(rootSpan, treeSpans, "", false, chk)
 	e.exhausted = true
 	return nil
+}
+
+func generateMessage(sp basictracer.RawSpan) string {
+	start := sp.Start
+	msg := bytes.NewBufferString("")
+	for i, l := range sp.Logs {
+		msg.WriteString(fmt.Sprintf("%s tooks %s", l.Fields[0].String(), l.Timestamp.Sub(start).String()))
+		if i != len(sp.Logs)-1 {
+			msg.WriteString(" ")
+		}
+	}
+	return msg.String()
 }
 
 func dfsTree(span basictracer.RawSpan, tree map[uint64][]basictracer.RawSpan, prefix string, isLast bool, chk *chunk.Chunk) {
@@ -123,7 +138,7 @@ func dfsTree(span basictracer.RawSpan, tree map[uint64][]basictracer.RawSpan, pr
 
 	chk.AppendString(0, prefix+suffix+span.Operation)
 	chk.AppendString(1, span.Start.Format(time.StampNano))
-	chk.AppendString(2, span.Duration.String())
+	chk.AppendString(2, generateMessage(span))
 
 	for i, sp := range spans {
 		dfsTree(sp, tree, newPrefix, i == (len(spans))-1 /*last element of array*/, chk)

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/util/tracing"
 	"golang.org/x/net/context"
 )
 
@@ -136,12 +137,14 @@ func (e *HashJoinExec) Close() error {
 	e.memTracker.Detach()
 	e.memTracker = nil
 
+	e.trace.Finish()
 	err := e.baseExecutor.Close()
 	return errors.Trace(err)
 }
 
 // Open implements the Executor Open interface.
 func (e *HashJoinExec) Open(ctx context.Context) error {
+	e.trace, ctx = tracing.ChildSpan(ctx, e.id)
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -508,6 +511,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 // step 1. fetch data from inner child and build a hash table;
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
 func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+	defer e.trace.LogKV("next", "finished")
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
 		go util.WithRecovery(func() { e.fetchInnerAndBuildHashTable(ctx) }, e.finishFetchInnerAndBuildHashTable)
@@ -634,11 +638,13 @@ func (e *NestedLoopApplyExec) Close() error {
 
 	e.memTracker.Detach()
 	e.memTracker = nil
+	e.trace.Finish()
 	return errors.Trace(e.outerExec.Close())
 }
 
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
+	e.trace, ctx = tracing.ChildSpan(ctx, e.id)
 	err := e.outerExec.Open(ctx)
 	if err != nil {
 		return errors.Trace(err)

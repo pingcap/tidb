@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/tracing"
 	tipb "github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -57,6 +58,7 @@ type TableReaderExecutor struct {
 
 // Open initialzes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
+	e.trace, ctx = tracing.ChildSpan(ctx, e.id)
 	var err error
 	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
@@ -98,6 +100,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	defer e.trace.LogKV("next", "finished")
 	if err := e.resultHandler.nextChunk(ctx, chk); err != nil {
 		e.feedback.Invalidate()
 		return err
@@ -109,6 +112,9 @@ func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 func (e *TableReaderExecutor) Close() error {
 	e.ctx.StoreQueryFeedback(e.feedback)
 	err := e.resultHandler.Close()
+	// TODO wired, open -next -close should be in order
+	// there is no way taht e.trace is nil
+	e.trace.Finish()
 	return errors.Trace(err)
 }
 

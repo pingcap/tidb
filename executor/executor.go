@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/cznic/mathutil"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/util/tracing"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -75,6 +77,7 @@ type baseExecutor struct {
 	maxChunkSize  int
 	children      []Executor
 	retFieldTypes []*types.FieldType
+	trace         opentracing.Span
 }
 
 // Open initializes children recursively and "childrenResults" according to children's schemas.
@@ -130,6 +133,7 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().MaxChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
+		trace:        tracing.NoopSpan(),
 	}
 	if schema != nil {
 		cols := schema.Columns
@@ -762,6 +766,7 @@ type SelectionExec struct {
 
 // Open implements the Executor Open interface.
 func (e *SelectionExec) Open(ctx context.Context) error {
+	e.trace, ctx = tracing.ChildSpan(ctx, e.id)
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -779,12 +784,15 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 func (e *SelectionExec) Close() error {
 	e.childResult = nil
 	e.selected = nil
+	e.trace.Finish()
 	return errors.Trace(e.baseExecutor.Close())
 }
 
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
+	defer e.trace.LogKV("next", "finished")
+	chk.Reset()
 
 	if !e.batched {
 		return errors.Trace(e.unBatchedNext(ctx, chk))
@@ -1036,6 +1044,7 @@ func (e *UnionExec) waitAllFinished() {
 
 // Open implements the Executor Open interface.
 func (e *UnionExec) Open(ctx context.Context) error {
+	e.trace, ctx = tracing.ChildSpan(ctx, e.id)
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
@@ -1102,6 +1111,8 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 // Next implements the Executor Next interface.
 func (e *UnionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
+	defer e.trace.LogKV("next", "finished")
+	chk.Reset()
 	if !e.initialized {
 		e.initialize(ctx)
 		e.initialized = true

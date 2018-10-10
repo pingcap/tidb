@@ -40,27 +40,27 @@ func NewRecordedTrace(opName string, callback func(sp basictracer.RawSpan)) open
 	return sp
 }
 
-// noopSpan returns a Span which discards all operations.
-func noopSpan() opentracing.Span {
-	return (opentracing.NoopTracer{}).StartSpan("DefaultSpan")
+// NoopSpan returns a Span which discards all operations.
+func NoopSpan() opentracing.Span {
+	return (opentracing.NoopTracer{}).StartSpan("noop")
 }
 
 // SpanFromContext returns the span obtained from the context or, if none is found, a new one started through tracer.
 func SpanFromContext(ctx context.Context) (sp opentracing.Span) {
 	if sp = opentracing.SpanFromContext(ctx); sp == nil {
-		return noopSpan()
+		return NoopSpan()
 	}
 	return sp
 }
 
-// ChildSpanFromContxt return a non-nil span. If span can be got from ctx, then returned span is
+// ChildSpan return a non-nil span. If span can be got from ctx, then returned span is
 // a child of such span. Otherwise, returned span is a noop span.
-func ChildSpanFromContxt(ctx context.Context, opName string) (opentracing.Span, context.Context) {
+func ChildSpan(ctx context.Context, opName string) (opentracing.Span, context.Context) {
 	if sp := opentracing.SpanFromContext(ctx); sp != nil {
 		if _, ok := sp.Tracer().(opentracing.NoopTracer); !ok {
 			child := opentracing.StartSpan(opName, opentracing.ChildOf(sp.Context()))
 			return child, opentracing.ContextWithSpan(ctx, child)
 		}
 	}
-	return noopSpan(), ctx
+	return NoopSpan(), ctx
 }

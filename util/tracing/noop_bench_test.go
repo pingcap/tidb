@@ -21,7 +21,7 @@ import (
 
 // BenchmarkNoopLogKV benchs the cost of noop's `LogKV`.
 func BenchmarkNoopLogKV(b *testing.B) {
-	sp := noopSpan()
+	sp := NoopSpan()
 	for i := 0; i < b.N; i++ {
 		sp.LogKV("event", "noop is finished")
 	}
@@ -30,7 +30,7 @@ func BenchmarkNoopLogKV(b *testing.B) {
 // BenchmarkNoopLogKVWithF benchs the the cosst of noop's `LogKV` when
 // used with `fmt.Sprintf`
 func BenchmarkNoopLogKVWithF(b *testing.B) {
-	sp := noopSpan()
+	sp := NoopSpan()
 	for i := 0; i < b.N; i++ {
 		sp.LogKV("event", fmt.Sprintf("this is format %s", "noop is finished"))
 	}
@@ -44,10 +44,10 @@ func BenchmarkSpanFromContext(b *testing.B) {
 	}
 }
 
-// BenchmarkChildFromContext benchs the cost of `ChildSpanFromContxt`.
-func BenchmarkChildFromContext(b *testing.B) {
+// BenchmarkChildSpan benchs the cost of `ChildSpanFromContxt`.
+func BenchmarkChildSpan(b *testing.B) {
 	ctx := context.TODO()
 	for i := 0; i < b.N; i++ {
-		ChildSpanFromContxt(ctx, "child")
+		ChildSpan(ctx, "child")
 	}
 }

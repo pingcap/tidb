@@ -16,6 +16,7 @@ package distsql
 import (
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
@@ -68,6 +69,7 @@ type selectResult struct {
 	feedback     *statistics.QueryFeedback
 	partialCount int64 // number of partial results.
 	sqlType      string
+	trace        opentracing.Span
 }
 
 func (r *selectResult) Fetch(ctx context.Context) {
@@ -75,6 +77,11 @@ func (r *selectResult) Fetch(ctx context.Context) {
 }
 
 func (r *selectResult) fetch(ctx context.Context) {
+	defer func() {
+		if r.trace != nil {
+			r.trace.LogKV("fetch", "finished")
+		}
+	}()
 	startTime := time.Now()
 	defer func() {
 		close(r.results)
@@ -191,5 +198,8 @@ func (r *selectResult) Close() error {
 	}
 	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
 	close(r.closed)
+	if r.trace != nil {
+		r.trace.Finish()
+	}
 	return r.resp.Close()
 }
