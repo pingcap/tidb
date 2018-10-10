@@ -406,7 +406,7 @@ func (ds *DataSource) deriveTablePathStats(path *accessPath) (bool, error) {
 // deriveIndexPathStats will fulfill the information that the accessPath need.
 // And it will check whether this index is full matched by point query. We will use this check to
 // determine whether we remove other paths or not.
-func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
+func (ds *DataSource) deriveIndexPathStats(path *accessPath, histColl *statistics.HistColl) (bool, error) {
 	var err error
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.ranges = ranger.FullRange()
@@ -417,7 +417,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		if err != nil {
 			return false, errors.Trace(err)
 		}
-		path.countAfterAccess, err = ds.stats.HistColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
+		path.countAfterAccess, err = histColl.GetRowCountByIndexRanges(sc, path.index.ID, path.ranges)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -435,8 +435,8 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 	}
 	path.indexFilters, path.tableFilters = splitIndexFilterConditions(path.tableFilters, path.index.Columns, ds.tableInfo)
 	if corColInAccessConds {
-		idxHist, ok := ds.stats.HistColl.Indices[path.index.ID]
-		if ok && !ds.stats.HistColl.Pseudo {
+		idxHist, ok := histColl.Indices[path.index.ID]
+		if ok && !histColl.Pseudo {
 			path.countAfterAccess = idxHist.AvgCountPerValue(ds.statisticTable.Count)
 		} else {
 			path.countAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
@@ -448,7 +448,7 @@ func (ds *DataSource) deriveIndexPathStats(path *accessPath) (bool, error) {
 		path.countAfterAccess = math.Min(ds.stats.RowCount/selectionFactor, float64(ds.statisticTable.Count))
 	}
 	if path.indexFilters != nil {
-		selectivity, err := ds.stats.HistColl.Selectivity(ds.ctx, path.indexFilters)
+		selectivity, err := histColl.Selectivity(ds.ctx, path.indexFilters)
 		if err != nil {
 			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 			selectivity = selectionFactor

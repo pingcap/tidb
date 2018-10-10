@@ -32,6 +32,16 @@ import (
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
 const secondsPerYear = 60 * 60 * 24 * 365
 
+// These constants indicates how we calculate the selectivity in planner.
+const (
+	// TiDBoptStatsOnlyPseudo means we only use pseudo statistics.
+	TiDBoptStatsOnlyPseudo int = iota
+	// TiDBoptStatsDataSourceHist means we only use histogram to calculate the selectivity of data source node.
+	TiDBoptStatsDataSourceHist
+	// TiDBoptStatsAllWithUnchangedHist means we use histogram to calculate all plan operator's selectivity but don't modify the histogram.
+	TiDBoptStatsAllWithUnchangedHist
+)
+
 // SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
 // Max worker count is maxDDLReorgWorkerCount.
 func SetDDLReorgWorkerCounter(cnt int32) {
@@ -304,7 +314,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		TiDBDistSQLScanConcurrency,
 		TiDBIndexSerialScanConcurrency, TiDBDDLReorgWorkerCount,
 		TiDBBackoffLockFast, TiDBMaxChunkSize,
-		TiDBDMLBatchSize, TiDBOptimizerSelectivityLevel:
+		TiDBDMLBatchSize:
 		v, err := strconv.Atoi(value)
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
@@ -334,6 +344,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 			return "", errors.Trace(err)
 		}
 		return v, nil
+	case TiDBOptimizerSelectivityLevel:
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
+		if v < TiDBoptStatsOnlyPseudo || v > TiDBoptStatsAllWithUnchangedHist {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name)
+		}
+		return value, nil
 	}
 	return value, nil
 }

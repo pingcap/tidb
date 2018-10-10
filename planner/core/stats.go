@@ -18,6 +18,8 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -60,11 +62,10 @@ func (p *baseLogicalPlan) deriveStats() (*property.StatsInfo, error) {
 	return profile, nil
 }
 
-func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.StatsInfo {
-	profile := &property.StatsInfo{
+func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (profile *property.StatsInfo, histColl *statistics.HistColl) {
+	profile = &property.StatsInfo{
 		RowCount:       float64(ds.statisticTable.Count),
 		Cardinality:    make([]float64, len(ds.Columns)),
-		HistColl:       ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns),
 		UsePseudoStats: ds.statisticTable.Pseudo,
 	}
 	for i, col := range ds.Columns {
@@ -76,13 +77,13 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.Stat
 			profile.Cardinality[i] = profile.RowCount * distinctFactor
 		}
 	}
-	ds.stats = profile
-	selectivity, err := profile.HistColl.Selectivity(ds.ctx, conds)
+	histColl = ds.statisticTable.GenerateHistCollFromColumnInfo(ds.Columns, ds.schema.Columns)
+	selectivity, err := histColl.Selectivity(ds.ctx, conds)
 	if err != nil {
 		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 		selectivity = selectionFactor
 	}
-	return profile.Scale(selectivity)
+	return profile.Scale(selectivity), histColl
 }
 
 func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
@@ -90,7 +91,8 @@ func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
-	ds.stats = ds.getStatsByFilter(ds.pushedDownConds)
+	StatsInfo, histColl := ds.getStatsByFilter(ds.pushedDownConds)
+	ds.stats = StatsInfo
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path)
@@ -105,7 +107,7 @@ func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
 			}
 			continue
 		}
-		noIntervalRanges, err := ds.deriveIndexPathStats(path)
+		noIntervalRanges, err := ds.deriveIndexPathStats(path, histColl)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -116,6 +118,7 @@ func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
 			break
 		}
 	}
+	ds.stats.HistColl = histColl
 	return ds.stats, nil
 }
 
@@ -124,7 +127,24 @@ func (p *LogicalSelection) deriveStats() (*property.StatsInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	p.stats = childProfile.Scale(selectionFactor)
+	selectivity := selectionFactor
+	if p.ctx.GetSessionVars().OptimizerSelectivityLevel == variable.TiDBoptStatsAllWithUnchangedHist && childProfile.HistColl != nil {
+		selectivity, err = childProfile.HistColl.Selectivity(p.ctx, p.Conditions)
+		if err != nil {
+			log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
+			selectivity = selectionFactor
+		}
+	}
+	p.stats = childProfile.Scale(selectivity)
+	if childProfile.HistColl != nil {
+		p.stats.HistColl = &statistics.HistColl{
+			Count:         int64(p.stats.RowCount),
+			Columns:       childProfile.HistColl.Columns,
+			Indices:       childProfile.HistColl.Indices,
+			Idx2ColumnIDs: childProfile.HistColl.Idx2ColumnIDs,
+			ColID2IdxID:   childProfile.HistColl.ColID2IdxID,
+		}
+	}
 	return p.stats, nil
 }
 
@@ -204,7 +224,57 @@ func (p *LogicalProjection) deriveStats() (*property.StatsInfo, error) {
 		cols := expression.ExtractColumns(expr)
 		p.stats.Cardinality[i] = getCardinality(cols, p.children[0].Schema(), childProfile)
 	}
+	// If we enables the enhance selectivity we'll try to maintain the histogram.
+	if p.ctx.GetSessionVars().OptimizerSelectivityLevel >= variable.TiDBoptStatsAllWithUnchangedHist && childProfile.HistColl != nil && !childProfile.HistColl.Pseudo {
+		p.deriveHistStats(childProfile)
+	}
 	return p.stats, nil
+}
+
+// deriveHistStats maintains histograms information for projection using its child's `HistColl`.
+func (p *LogicalProjection) deriveHistStats(childProfile *property.StatsInfo) {
+	colHistMap := make(map[int64]*statistics.Column)
+	colIDMap := make(map[int64]int64)
+	childHist := childProfile.HistColl
+	for i, expr := range p.Exprs {
+		col, ok := expr.(*expression.Column)
+		if !ok {
+			continue
+		}
+		colHist, ok := childHist.Columns[col.UniqueID]
+		if !ok {
+			continue
+		}
+		colHistMap[p.schema.Columns[i].UniqueID] = colHist
+		colIDMap[col.UniqueID] = p.schema.Columns[i].UniqueID
+	}
+
+	colID2IdxID := make(map[int64]int64)
+	idx2ColumnIDs := make(map[int64][]int64)
+	idxHistMap := make(map[int64]*statistics.Index)
+	for id, colIDs := range childHist.Idx2ColumnIDs {
+		newIDList := make([]int64, 0, len(colIDs))
+		for _, id := range colIDs {
+			if newID, ok := colIDMap[id]; ok {
+				newIDList = append(newIDList, newID)
+				continue
+			}
+			break
+		}
+		if len(newIDList) == 0 {
+			continue
+		}
+		colID2IdxID[newIDList[0]] = id
+		idx2ColumnIDs[id] = newIDList
+		idxHistMap[id] = childHist.Indices[id]
+	}
+	p.stats.HistColl = &statistics.HistColl{
+		Columns:       colHistMap,
+		Indices:       idxHistMap,
+		Idx2ColumnIDs: idx2ColumnIDs,
+		ColID2IdxID:   colID2IdxID,
+		Count:         childHist.Count,
+	}
 }
 
 func (la *LogicalAggregation) deriveStats() (*property.StatsInfo, error) {
@@ -222,7 +292,7 @@ func (la *LogicalAggregation) deriveStats() (*property.StatsInfo, error) {
 		RowCount:    cardinality,
 		Cardinality: make([]float64, la.schema.Len()),
 	}
-	// We cannot estimate the Cardinality for every output, so we use a conservative strategy.
+	// We cannot estimate the cardinality for every output, so we use a conservative strategy.
 	for i := range la.stats.Cardinality {
 		la.stats.Cardinality[i] = cardinality
 	}
