@@ -205,8 +205,8 @@ func (e *ShowExec) fetchShowProcessList() error {
 			info = fmt.Sprintf("%.100v", pi.Info)
 		}
 
-		// If you have the PROCESS privilege, you can see all threads. Otherwise, you can
-		// see only your own threads.
+		// If you have the PROCESS privilege, you can see all threads.
+		// Otherwise, you can see only your own threads.
 		if !hasProcessPriv && pi.User != loginUser.Username {
 			continue
 		}
