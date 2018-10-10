@@ -303,6 +303,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		if IsNull2Notnull {
 			// field flag reset to null.
 			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
+			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.PreventNullInsertFlag
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
@@ -331,24 +332,40 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	// }
 	// }
 
+	// Get sessionctx from context resource pool.
+	var ctx sessionctx.Context
+	ctx, err = w.sessPool.get()
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		// Modify the type defined Flag to NotNullFlag.
-		tblInfo.Columns[oldCol.Offset].Flag = newCol.Flag
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
 		if err != nil {
+			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
+		}
+
+		if !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
+			// Prevent this field from inserting null values.
+			tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
+			ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		} else {
+			// Modify the type defined Flag to NotNullFlag.
+			tblInfo.Columns[oldCol.Offset].Flag = newCol.Flag
+			ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		}
 		return ver, nil
 	}
 
 	if IsNull2Notnull {
-		// Get sessionctx from context resource pool.
-		var ctx sessionctx.Context
-		ctx, err = w.sessPool.get()
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		defer w.sessPool.put(ctx)
 		err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
 		if err != nil || ErrWarnDataTruncated.Equal(err) {

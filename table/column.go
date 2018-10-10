@@ -288,6 +288,10 @@ func (c *Column) CheckNotNull(data types.Datum) error {
 	if mysql.HasNotNullFlag(c.Flag) && data.IsNull() {
 		return ErrColumnCantNull.GenWithStackByArgs(c.Name)
 	}
+
+	if mysql.HasPreventNullInsertFlag(c.Flag) && data.IsNull() {
+		return ErrColumnCantNull.GenWithStackByArgs(c.Name)
+	}
 	return nil
 }
 
