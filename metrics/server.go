@@ -40,6 +40,14 @@ var (
 			Help:      "Counter of queries.",
 		}, []string{LblType, LblResult})
 
+	IndexAccessCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "index_access",
+			Help:      "access of index.",
+		}, []string{LbTable, LbIndex})
+
 	ConnGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",

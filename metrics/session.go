@@ -110,4 +110,6 @@ const (
 	LblSQLType     = "sql_type"
 	LblGeneral     = "general"
 	LblInternal    = "internal"
+	LbTable        = "table"
+	LbIndex        = "index"
 )
