@@ -188,6 +188,14 @@ func (e *ShowExec) fetchShowProcessList() error {
 		return nil
 	}
 
+	loginUser := e.ctx.GetSessionVars().User
+	var hasProcessPriv bool
+	if pm := privilege.GetPrivilegeManager(e.ctx); pm != nil {
+		if pm.RequestVerification("", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
 		var info string
@@ -195,6 +203,12 @@ func (e *ShowExec) fetchShowProcessList() error {
 			info = pi.Info
 		} else {
 			info = fmt.Sprintf("%.100v", pi.Info)
+		}
+
+		// If you have the PROCESS privilege, you can see all threads. Otherwise, you can
+		// see only your own threads.
+		if !hasProcessPriv && pi.User != loginUser.Username {
+			continue
 		}
 
 		e.appendRow([]interface{}{
