@@ -248,7 +248,10 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_buffer_pool_instances", "8"},
 	{ScopeGlobal | ScopeSession, BlockEncryptionMode, "aes-128-ecb"},
 	{ScopeGlobal | ScopeSession, "max_length_for_sort_data", "1024"},
-	{ScopeNone, "character_set_system", mysql.DefaultCharset},
+	// Metadata like system column names.
+	// We should not use mysql.DefaultCharset which is for actual data.
+	// This default value matches both 5.7 and 8.0
+	{ScopeNone, "character_set_system", "utf8"},
 	{ScopeGlobal | ScopeSession, "interactive_timeout", "28800"},
 	{ScopeGlobal, "innodb_optimize_fulltext_only", "OFF"},
 	{ScopeNone, "character_sets_dir", "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/charsets/"},
