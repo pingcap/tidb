@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -459,22 +461,22 @@ type indexRecord struct {
 }
 
 type addIndexWorker struct {
-	id          int
-	ddlWorker   *worker
-	batchCnt    int
-	sessCtx     sessionctx.Context
-	taskCh      chan *reorgIndexTask
-	resultCh    chan *addIndexResult
-	index       table.Index
-	table       table.Table
-	colFieldMap map[int64]*types.FieldType
-	closed      bool
-	priority    int
+	id        int
+	ddlWorker *worker
+	batchCnt  int
+	sessCtx   sessionctx.Context
+	taskCh    chan *reorgIndexTask
+	resultCh  chan *addIndexResult
+	index     table.Index
+	table     table.Table
+	closed    bool
+	priority  int
 
 	// The following attributes are used to reduce memory allocation.
 	defaultVals        []types.Datum
 	idxRecords         []*indexRecord
 	rowMap             map[int64]types.Datum
+	rowDecoder         decoder.RowDecoder
 	idxKeyBufs         [][]byte
 	batchCheckKeys     []kv.Key
 	distinctCheckFlags []bool
@@ -513,8 +515,9 @@ func mergeAddIndexCtxToResult(taskCtx *addIndexTaskContext, result *addIndexResu
 	result.scanCount += taskCtx.scanCount
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+	rowDecoder := decoder.NewRowDecoder(t.Cols(), decodeColMap)
 	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
@@ -524,10 +527,10 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		resultCh:    make(chan *addIndexResult, 1),
 		index:       index,
 		table:       t,
-		colFieldMap: colFieldMap,
+		rowDecoder:  rowDecoder,
 		priority:    kv.PriorityLow,
 		defaultVals: make([]types.Datum, len(t.Cols())),
-		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
+		rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
 	}
 }
 
@@ -543,7 +546,8 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	t := w.table
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
-	_, err := tablecodec.DecodeRowWithMap(rawRecord, w.colFieldMap, time.UTC, w.rowMap)
+	sysZone := timeutil.SystemLocation()
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, rawRecord, time.UTC, sysZone, w.rowMap)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -572,9 +576,8 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 
 		if idxColumnVal.Kind() == types.KindMysqlTime {
 			t := idxColumnVal.GetMysqlTime()
-			zone := timeutil.SystemLocation()
-			if t.Type == mysql.TypeTimestamp && zone != time.UTC {
-				err := t.ConvertTimeZone(zone, time.UTC)
+			if t.Type == mysql.TypeTimestamp && sysZone != time.UTC {
+				err := t.ConvertTimeZone(sysZone, time.UTC)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -867,14 +870,31 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 	log.Infof("[ddl-reorg] worker[%v] exit", w.id)
 }
 
-func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64]*types.FieldType {
+func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
 	cols := t.Cols()
-	colFieldMap := make(map[int64]*types.FieldType, len(indexInfo.Columns))
+	decodeColMap := make(map[int64]decoder.Column, len(indexInfo.Columns))
 	for _, v := range indexInfo.Columns {
 		col := cols[v.Offset]
-		colFieldMap[col.ID] = &col.FieldType
+		tpExpr := decoder.Column{
+			Info: col.ToInfo(),
+		}
+		if col.IsGenerated() && !col.GeneratedStored {
+			for _, c := range cols {
+				if _, ok := col.Dependences[c.Name.L]; ok {
+					decodeColMap[c.ID] = decoder.Column{
+						Info: c.ToInfo(),
+					}
+				}
+			}
+			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta(), &col.FieldType)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tpExpr.GenExpr = e
+		}
+		decodeColMap[col.ID] = tpExpr
 	}
-	return colFieldMap
+	return decodeColMap, nil
 }
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
@@ -1077,19 +1097,23 @@ func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, workers []*addInd
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
-	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
+	sessCtx := newContext(reorgInfo.d.store)
+	decodeColMap, err := makeupDecodeColMap(sessCtx, t, indexInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
 	idxWorkers := make([]*addIndexWorker, workerCnt)
 	for i := 0; i < int(workerCnt); i++ {
 		sessCtx := newContext(reorgInfo.d.store)
-		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, colFieldMap)
+		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap)
 		idxWorkers[i].priority = job.Priority
 		go idxWorkers[i].run(reorgInfo.d)
 	}
 	defer closeAddIndexWorkers(idxWorkers)
-	err := w.buildIndexForReorgInfo(t, idxWorkers, job, reorgInfo)
+	err = w.buildIndexForReorgInfo(t, idxWorkers, job, reorgInfo)
 	return errors.Trace(err)
 }
 
