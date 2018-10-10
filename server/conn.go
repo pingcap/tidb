@@ -631,7 +631,6 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(ctx1, data)
 	case mysql.ComStmtFetch:
-		cc.ctx.SetProcessInfo("", t, cmd)
 		return cc.handleStmtFetch(ctx1, data)
 	case mysql.ComStmtClose:
 		cc.ctx.SetProcessInfo("", t, cmd)
