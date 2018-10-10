@@ -546,7 +546,7 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string) (int, erro
 		dt, err := ParseDatetime(sc, s)
 		return d.GetMysqlTime().Compare(dt), errors.Trace(err)
 	case KindMysqlDuration:
-		dur, err := ParseDuration(s, MaxFsp)
+		dur, err := ParseDuration(sc, s, MaxFsp)
 		return d.GetMysqlDuration().Compare(dur), errors.Trace(err)
 	case KindMysqlSet:
 		return CompareString(d.GetMysqlSet().String(), s), nil
@@ -593,7 +593,7 @@ func (d *Datum) compareMysqlDuration(sc *stmtctx.StatementContext, dur Duration)
 	case KindMysqlDuration:
 		return d.GetMysqlDuration().Compare(dur), nil
 	case KindString, KindBytes:
-		dDur, err := ParseDuration(d.GetString(), MaxFsp)
+		dDur, err := ParseDuration(sc, d.GetString(), MaxFsp)
 		return dDur.Compare(dur), errors.Trace(err)
 	default:
 		return d.compareFloat64(sc, dur.Seconds())
@@ -1039,13 +1039,13 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 		if timeNum < -MaxDuration {
 			return ret, ErrInvalidTimeFormat.GenWithStack("Incorrect time value: '%s'", timeStr)
 		}
-		t, err := ParseDuration(timeStr, fsp)
+		t, err := ParseDuration(sc, timeStr, fsp)
 		ret.SetValue(t)
 		if err != nil {
 			return ret, errors.Trace(err)
 		}
 	case KindString, KindBytes:
-		t, err := ParseDuration(d.GetString(), fsp)
+		t, err := ParseDuration(sc, d.GetString(), fsp)
 		ret.SetValue(t)
 		if err != nil {
 			return ret, errors.Trace(err)

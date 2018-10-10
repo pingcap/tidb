@@ -557,7 +557,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "relay_log_recovery", "OFF"},
 	{ScopeNone, "old", "OFF"},
 	{ScopeGlobal | ScopeSession, "innodb_table_locks", "ON"},
-	{ScopeNone, "performance_schema", "ON"},
+	{ScopeNone, "performance_schema", "OFF"},
 	{ScopeNone, "myisam_recover_options", "OFF"},
 	{ScopeGlobal | ScopeSession, "net_buffer_length", "16384"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_for_slave_count", ""},
@@ -664,6 +664,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
+	{ScopeSession, TiDBEnableRadixJoin, boolToIntStr(DefTiDBUseRadixJoin)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

@@ -736,6 +736,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("www.pingcap 12345 45 2017 01:01"))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', '.', 0), substring_index('www.pingcap.com', '.', 100), substring_index('www.pingcap.com', '.', -100)`)
 	result.Check(testkit.Rows(" www.pingcap.com www.pingcap.com"))
+	tk.MustQuery(`select substring_index('xyz', 'abc', 9223372036854775808)`).Check(testkit.Rows(``))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', 'd', 1), substring_index('www.pingcap.com', '', 1), substring_index('', '.', 1)`)
 	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,,"))
 	result = tk.MustQuery(`select substring_index(null, '.', 1), substring_index('www.pingcap.com', null, 1), substring_index('www.pingcap.com', '.', null)`)
@@ -1933,6 +1934,7 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery(`select cast(20170118.999 as datetime);`)
 	result.Check(testkit.Rows("2017-01-18 00:00:00"))
 
+	// Test corner cases of cast string as datetime
 	result = tk.MustQuery(`select cast("170102034" as datetime);`)
 	result.Check(testkit.Rows("2017-01-02 03:04:00"))
 	result = tk.MustQuery(`select cast("1701020304" as datetime);`)
@@ -1944,6 +1946,43 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result = tk.MustQuery(`select cast("1701020304.111" as datetime);`)
 	result.Check(testkit.Rows("2017-01-02 03:04:11"))
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1701020304.111'"))
+	result = tk.MustQuery(`select cast("17011" as datetime);`)
+	result.Check(testkit.Rows("2017-01-01 00:00:00"))
+	result = tk.MustQuery(`select cast("150101." as datetime);`)
+	result.Check(testkit.Rows("2015-01-01 00:00:00"))
+	result = tk.MustQuery(`select cast("150101.a" as datetime);`)
+	result.Check(testkit.Rows("2015-01-01 00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '150101.a'"))
+	result = tk.MustQuery(`select cast("150101.1a" as datetime);`)
+	result.Check(testkit.Rows("2015-01-01 01:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '150101.1a'"))
+	result = tk.MustQuery(`select cast("150101.1a1" as datetime);`)
+	result.Check(testkit.Rows("2015-01-01 01:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '150101.1a1'"))
+	result = tk.MustQuery(`select cast("1101010101.111" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:11"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.111'"))
+	result = tk.MustQuery(`select cast("1101010101.11aaaaa" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:11"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.11aaaaa'"))
+	result = tk.MustQuery(`select cast("1101010101.a1aaaaa" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.a1aaaaa'"))
+	result = tk.MustQuery(`select cast("1101010101.11" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:11"))
+	tk.MustQuery("select @@warning_count;").Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select cast("1101010101.111" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:11"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.111'"))
+	result = tk.MustQuery(`select cast("970101.111" as datetime);`)
+	result.Check(testkit.Rows("1997-01-01 11:01:00"))
+	tk.MustQuery("select @@warning_count;").Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select cast("970101.11111" as datetime);`)
+	result.Check(testkit.Rows("1997-01-01 11:11:01"))
+	tk.MustQuery("select @@warning_count;").Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select cast("970101.111a1" as datetime);`)
+	result.Check(testkit.Rows("1997-01-01 11:01:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '970101.111a1'"))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
@@ -3316,6 +3355,16 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$[*]')
 	`)
 	r.Check(testkit.Rows("1 0 1 0"))
+
+	r = tk.MustQuery(`select
+		json_length('1'),
+		json_length('{}'),
+		json_length('[]'),
+		json_length('{"a": 1}'),
+		json_length('{"a": 1, "b": 2}'),
+		json_length('[1, 2, 3]')
+	`)
+	r.Check(testkit.Rows("1 0 0 1 2 3"))
 }
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {

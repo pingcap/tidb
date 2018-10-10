@@ -273,6 +273,32 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
 	tk.MustExec("admin check table t1;")
 
+	// For add index on virtual column
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`create table t1 (
+		a int             as (JSON_EXTRACT(k,'$.a')),
+		c double          as (JSON_EXTRACT(k,'$.c')),
+		d decimal(20,10)  as (JSON_EXTRACT(k,'$.d')),
+		e char(10)        as (JSON_EXTRACT(k,'$.e')),
+		f date            as (JSON_EXTRACT(k,'$.f')),
+		g time            as (JSON_EXTRACT(k,'$.g')),
+		h datetime        as (JSON_EXTRACT(k,'$.h')),
+		i timestamp       as (JSON_EXTRACT(k,'$.i')),
+		j year            as (JSON_EXTRACT(k,'$.j')),
+		k json);`)
+
+	tk.MustExec("insert into t1 set k='{\"a\": 100,\"c\":1.234,\"d\":1.2340000000,\"e\":\"abcdefg\",\"f\":\"2018-09-28\",\"g\":\"12:59:59\",\"h\":\"2018-09-28 12:59:59\",\"i\":\"2018-09-28 16:40:33\",\"j\":\"2018\"}';")
+	tk.MustExec("alter table t1 add index idx_a(a);")
+	tk.MustExec("alter table t1 add index idx_c(c);")
+	tk.MustExec("alter table t1 add index idx_d(d);")
+	tk.MustExec("alter table t1 add index idx_e(e);")
+	tk.MustExec("alter table t1 add index idx_f(f);")
+	tk.MustExec("alter table t1 add index idx_g(g);")
+	tk.MustExec("alter table t1 add index idx_h(h);")
+	tk.MustExec("alter table t1 add index idx_j(j);")
+	tk.MustExec("alter table t1 add index idx_i(i);")
+	tk.MustExec("alter table t1 add index idx_m(a,c,d,e,f,g,h,i,j);")
+	tk.MustExec("admin check table t1;")
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
@@ -2369,6 +2395,7 @@ func (s *testSuite) TestTimezonePushDown(c *C) {
 
 	systemTZ := timeutil.SystemLocation()
 	c.Assert(systemTZ.String(), Not(Equals), "System")
+	c.Assert(systemTZ.String(), Not(Equals), "Local")
 	ctx := context.Background()
 	count := 0
 	ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {

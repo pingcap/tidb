@@ -112,7 +112,7 @@ func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // NewChunk create a new chunk using NewChunk function in chunk package.
 func (a *recordSet) NewChunk() *chunk.Chunk {
-	return a.executor.newChunk()
+	return a.executor.newFirstChunk()
 }
 
 func (a *recordSet) Close() error {
@@ -270,7 +270,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		a.logSlowQuery(txnTS, err == nil)
 	}()
 
-	err = e.Next(ctx, e.newChunk())
+	err = e.Next(ctx, e.newFirstChunk())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -322,7 +322,6 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		a.Text = executorExec.stmt.Text()
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		e = executorExec.stmtExec
@@ -348,9 +347,9 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	if len(sql) > int(cfg.Log.QueryLogMaxLen) {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
-	sql = QueryReplacer.Replace(sql)
-
 	sessVars := a.Ctx.GetSessionVars()
+	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
+
 	connID := sessVars.ConnectionID
 	currentDB := sessVars.CurrentDB
 	var tableIDs, indexIDs string
@@ -380,6 +379,12 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		var userString string
 		if user != nil {
 			userString = user.String()
+		}
+		if len(tableIDs) > 10 {
+			tableIDs = tableIDs[10 : len(tableIDs)-1] // Remove "table_ids:" and the last ","
+		}
+		if len(indexIDs) > 10 {
+			indexIDs = indexIDs[10 : len(indexIDs)-1] // Remove "index_ids:" and the last ","
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:      sql,
