@@ -315,7 +315,7 @@ func (w *GCWorker) calculateNewSafePoint(now time.Time) (*time.Time, error) {
 	safePoint := now.Add(-*lifeTime)
 	// We should never decrease safePoint.
 	if lastSafePoint != nil && safePoint.Before(*lastSafePoint) {
-		log.Info("[gc worker] leaderTick on %s: last safe point (%v) is later than current one (%v). no need to gc. "+
+		log.Infof("[gc worker] leaderTick on %s: last safe point (%v) is later than current one (%v). no need to gc. "+
 			"this might be caused by manually enlarging gc lifetime.", w.uuid, lastSafePoint, safePoint)
 		return nil, nil
 	}

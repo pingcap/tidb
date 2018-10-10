@@ -322,7 +322,6 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		a.Text = executorExec.stmt.Text()
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		e = executorExec.stmtExec
@@ -348,9 +347,9 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	if len(sql) > int(cfg.Log.QueryLogMaxLen) {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
-	sql = QueryReplacer.Replace(sql)
-
 	sessVars := a.Ctx.GetSessionVars()
+	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
+
 	connID := sessVars.ConnectionID
 	currentDB := sessVars.CurrentDB
 	var tableIDs, indexIDs string

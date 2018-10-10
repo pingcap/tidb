@@ -54,7 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/timeutil"
-	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -712,6 +712,9 @@ func (s *session) SetProcessInfo(sql string) {
 		State:   s.Status(),
 		Info:    sql,
 	}
+	if sql == "" {
+		pi.Command = "Sleep"
+	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
@@ -787,7 +790,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		// Step2: Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 		startTS = time.Now()
 		// Some executions are done in compile stage, so we reset them before compile.
-		if err := executor.ResetStmtCtx(s, stmtNode); err != nil {
+		if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 			return nil, errors.Trace(err)
 		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
@@ -1421,6 +1424,7 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		log.Infof("[GENERAL_LOG] con:%d user:%s schema_ver:%d start_ts:%d sql:%s", vars.ConnectionID, vars.User, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, query)
+		log.Infof("[GENERAL_LOG] con:%d user:%s schema_ver:%d start_ts:%d sql:%s%s",
+			vars.ConnectionID, vars.User, vars.TxnCtx.SchemaVersion, vars.TxnCtx.StartTS, query, vars.GetExecuteArgumentsInfo())
 	}
 }
