@@ -118,6 +118,7 @@ import (
 	exists			"EXISTS"
 	explain			"EXPLAIN"
 	falseKwd		"FALSE"
+	fetch			"FETCH"
 	floatType		"FLOAT"
 	forKwd			"FOR"
 	force			"FORCE"
@@ -361,6 +362,7 @@ import (
 	row 		"ROW"
 	rowCount	"ROW_COUNT"
 	rowFormat	"ROW_FORMAT"
+	rows 		"ROWS"
 	second		"SECOND"
 	security	"SECURITY"
 	separator 	"SEPARATOR"
@@ -2822,7 +2824,7 @@ UnReservedKeyword:
 | "ROLLBACK" | "SESSION" | "SIGNED" | "SNAPSHOT" | "START" | "STATUS" | "SUBPARTITIONS" | "SUBPARTITION" | "TABLES" | "TABLESPACE" | "TEXT" | "THAN" | "TIME" %prec lowerThanStringLitToken 
 | "TIMESTAMP" %prec lowerThanStringLitToken | "TRACE" | "TRANSACTION" | "TRUNCATE" | "UNKNOWN" | "VALUE" | "WARNINGS" | "YEAR" | "MODE"  | "WEEK"  | "ANY" | "SOME" | "USER" | "IDENTIFIED"
 | "COLLATION" | "COMMENT" | "AVG_ROW_LENGTH" | "CONNECTION" | "CHECKSUM" | "COMPRESSION" | "KEY_BLOCK_SIZE" | "MASTER" | "MAX_ROWS"
-| "MIN_ROWS" | "NATIONAL" | "ROW" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
+| "MIN_ROWS" | "NATIONAL" | "ROW" | "ROWS" | "ROW_FORMAT" | "QUARTER" | "GRANTS" | "TRIGGERS" | "DELAY_KEY_WRITE" | "ISOLATION" | "JSON"
 | "REPEATABLE" | "COMMITTED" | "UNCOMMITTED" | "ONLY" | "SERIALIZABLE" | "LEVEL" | "VARIABLES" | "SQL_CACHE" | "INDEXES" | "PROCESSLIST"
 | "SQL_NO_CACHE" | "DISABLE"  | "ENABLE" | "REVERSE" | "PRIVILEGES" | "NO" | "BINLOG" | "FUNCTION" | "VIEW" | "MODIFY" | "EVENTS" | "PARTITIONS"
 | "NONE" | "SUPER" | "EXCLUSIVE" | "STATS_PERSISTENT" | "ROW_COUNT" | "COALESCE" | "MONTH" | "PROCESS" | "PROFILES"
@@ -4574,6 +4576,11 @@ LimitClause:
 	{
 		$$ = &ast.Limit{Count: $2.(ast.ExprNode)}
 	}
+|	"FETCH" "FIRST" LimitOption "ROWS" "ONLY"
+	{
+		$$ = &ast.Limit{Count: $3.(ast.ExprNode)}
+	}
+
 
 LimitOption:
 	LengthNum
@@ -4603,7 +4610,10 @@ SelectStmtLimit:
 	{
 		$$ = &ast.Limit{Offset: $4.(ast.ExprNode), Count: $2.(ast.ExprNode)}
 	}
-
+|	"FETCH" "FIRST" LimitOption "ROWS" "ONLY"
+	{
+		$$ = &ast.Limit{Count: $3.(ast.ExprNode)}
+	}
 
 SelectStmtOpts:
 	TableOptimizerHints DefaultFalseDistinctOpt PriorityOpt SelectStmtSQLCache SelectStmtCalcFoundRows SelectStmtStraightJoin
