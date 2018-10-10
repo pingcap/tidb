@@ -1412,22 +1412,26 @@ func DecimalNeg(from *MyDecimal) *MyDecimal {
 // Note: DO NOT use `from1` or `from2` as `to` since the metadata
 // of `to` may be changed during evaluating.
 func DecimalAdd(from1, from2, to *MyDecimal) error {
-	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
+	var err error
 	if from1.negative == from2.negative {
-		return doAdd(from1, from2, to)
+		err = doAdd(from1, from2, to)
+	} else {
+		_, err = doSub(from1, from2, to)
 	}
-	_, err := doSub(from1, from2, to)
+	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
 	return err
 }
 
 // DecimalSub subs one decimal from another, sets the result to 'to'.
 func DecimalSub(from1, from2, to *MyDecimal) error {
-	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
+	var err error
 	if from1.negative == from2.negative {
-		_, err := doSub(from1, from2, to)
-		return err
+		_, err = doSub(from1, from2, to)
+	} else {
+		err = doAdd(from1, from2, to)
 	}
-	return doAdd(from1, from2, to)
+	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
+	return err
 }
 
 func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
@@ -1878,8 +1882,9 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 // to       - quotient
 // fracIncr - increment of fraction
 func DecimalDiv(from1, from2, to *MyDecimal, fracIncr int) error {
+	err := doDivMod(from1, from2, to, nil, fracIncr)
 	to.resultFrac = myMinInt8(from1.resultFrac+int8(fracIncr), mysql.MaxDecimalScale)
-	return doDivMod(from1, from2, to, nil, fracIncr)
+	return err
 }
 
 /*
@@ -1907,8 +1912,9 @@ DecimalMod does modulus of two decimals.
    thus, there's no requirement for M or N to be integers
 */
 func DecimalMod(from1, from2, to *MyDecimal) error {
+	err := doDivMod(from1, from2, nil, to, 0)
 	to.resultFrac = myMaxInt8(from1.resultFrac, from2.resultFrac)
-	return doDivMod(from1, from2, nil, to, 0)
+	return err
 }
 
 func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
