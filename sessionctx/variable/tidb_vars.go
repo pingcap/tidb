@@ -195,6 +195,10 @@ const (
 	// tidb_enable_radix_join indicates to use radix hash join algorithm to execute
 	// HashJoin.
 	TiDBEnableRadixJoin = "tidb_enable_radix_join"
+
+	// tidb_compatible_insert indicates to check the to-be-insert key exists or not when SQL is
+	// executing. It could hurt the performance of insert statement.
+	TiDBCompatibleInsert = "tidb_compatible_insert"
 )
 
 // Default TiDB system variable values.
@@ -228,6 +232,7 @@ const (
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
 	DefTiDBDisableTxnAutoRetry       = false
+	DefTiDBCompatibleInsert          = false
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0

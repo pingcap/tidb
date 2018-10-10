@@ -304,6 +304,9 @@ type SessionVars struct {
 	// EnableRadixJoin indicates whether to use radix hash join to execute
 	// HashJoin.
 	EnableRadixJoin bool
+
+	// CompatibleInsert indicates whether to check key exists when execute insert.
+	CompatibleInsert bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -566,6 +569,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBBackoffLockFast:
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
+	case TiDBCompatibleInsert:
+		s.CompatibleInsert = TiDBOptOn(val)
 	case TiDBBatchInsert:
 		s.BatchInsert = TiDBOptOn(val)
 	case TiDBBatchDelete:
