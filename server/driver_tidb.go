@@ -333,6 +333,11 @@ func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
 	return tc.session.ShowProcess()
 }
 
+// SetCommandValue implements QueryCtx SetCommandValue method.
+func (tc *TiDBContext) SetCommandValue(command byte) {
+	tc.session.SetCommandValue(command)
+}
+
 // GetSessionVars return SessionVars.
 func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
 	return tc.session.GetSessionVars()

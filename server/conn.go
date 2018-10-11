@@ -595,6 +595,18 @@ func (cc *clientConn) dispatch(data []byte) error {
 		span.Finish()
 	}()
 
+	if cmd < mysql.ComEnd {
+		cc.ctx.SetCommandValue(cmd)
+	}
+
+	switch cmd {
+	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
+		mysql.ComSetOption, mysql.ComChangeUser:
+		cc.ctx.SetProcessInfo("", t, cmd)
+	case mysql.ComInitDB:
+		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd)
+	}
+
 	switch cmd {
 	case mysql.ComSleep:
 		// TODO: According to mysql document, this command is supposed to be used only internally.
@@ -611,41 +623,32 @@ func (cc *clientConn) dispatch(data []byte) error {
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
-		cc.ctx.SetProcessInfo(hack.String(data), t, cmd)
+		// cc.ctx.SetProcessInfo(hack.String(data), t, cmd)
 		return cc.handleQuery(ctx1, hack.String(data))
 	case mysql.ComPing:
-		cc.ctx.SetProcessInfo("", t, cmd)
 		return cc.writeOK()
 	case mysql.ComInitDB:
-		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd)
 		if err := cc.useDB(ctx1, hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
 		return cc.writeOK()
 	case mysql.ComFieldList:
-		cc.ctx.SetProcessInfo(hack.String(data), t, cmd)
 		return cc.handleFieldList(hack.String(data))
 	case mysql.ComStmtPrepare:
-		cc.ctx.SetProcessInfo(hack.String(data), t, cmd)
 		return cc.handleStmtPrepare(hack.String(data))
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(ctx1, data)
 	case mysql.ComStmtFetch:
 		return cc.handleStmtFetch(ctx1, data)
 	case mysql.ComStmtClose:
-		cc.ctx.SetProcessInfo("", t, cmd)
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
-		cc.ctx.SetProcessInfo("", t, cmd)
 		return cc.handleStmtSendLongData(data)
 	case mysql.ComStmtReset:
-		cc.ctx.SetProcessInfo("", t, cmd)
 		return cc.handleStmtReset(data)
 	case mysql.ComSetOption:
-		cc.ctx.SetProcessInfo("", t, cmd)
 		return cc.handleSetOption(data)
 	case mysql.ComChangeUser:
-		cc.ctx.SetProcessInfo("", t, cmd)
 		return cc.handleChangeUser(data)
 	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)

@@ -77,6 +77,7 @@ type Session interface {
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
+	SetCommandValue(byte)
 	SetProcessInfo(string, time.Time, byte)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
@@ -197,6 +198,10 @@ func (s *session) SetTLSState(tlsState *tls.ConnectionState) {
 	if tlsState != nil {
 		s.sessionVars.TLSConnectionState = tlsState
 	}
+}
+
+func (s *session) SetCommandValue(command byte) {
+	atomic.StoreUint32(&s.sessionVars.CommandValue, uint32(command))
 }
 
 func (s *session) GetTLSState() *tls.ConnectionState {

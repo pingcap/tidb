@@ -89,6 +89,8 @@ type QueryCtx interface {
 	// GetSessionVars return SessionVars.
 	GetSessionVars() *variable.SessionVars
 
+	SetCommandValue(command byte)
+
 	SetSessionManager(util.SessionManager)
 }
 

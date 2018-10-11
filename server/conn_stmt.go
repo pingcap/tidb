@@ -119,12 +119,6 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_execute")
 	}
 
-	sql := ""
-	if prepared, ok := cc.ctx.GetStatement(int(stmtID)).(*TiDBStatement); ok {
-		sql = prepared.sql
-	}
-	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute)
-
 	flag := data[pos]
 	pos++
 	// Please refer to https://dev.mysql.com/doc/internals/en/com-stmt-execute.html
