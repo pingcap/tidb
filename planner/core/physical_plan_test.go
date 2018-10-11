@@ -1312,7 +1312,7 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 		// Make txn not read only.
 		se.Txn().Set(kv.Key("AAA"), []byte("BBB"))
 		se.StmtCommit()
-		p, err := core.Optimize(se, stmt, s.is)
+		p, err := planner.Optimize(se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
