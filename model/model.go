@@ -318,6 +318,7 @@ type PartitionInfo struct {
 	Definitions []PartitionDefinition `json:"definitions"`
 }
 
+// GetNameByID gets the partition name by ID.
 func (pi *PartitionInfo) GetNameByID(id int64) string {
 	for _, def := range pi.Definitions {
 		if id == def.ID {
