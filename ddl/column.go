@@ -306,11 +306,11 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 			// field PreventNullInsertFlag flag reset.
 			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.PreventNullInsertFlag
 
-			job.State = model.JobStateRollbackDone
 			ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 			return ver, nil
 		}
 	}
