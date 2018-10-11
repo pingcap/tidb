@@ -320,21 +320,21 @@ func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expres
 
 type propOuterJoinConstSolver struct {
 	basePropConstSolver
-	jConds      []Expression
-	fConds      []Expression
+	joinConds   []Expression
+	filterConds []Expression
 	outerSchema *Schema
 	innerSchema *Schema
 }
 
-func (s *propOuterJoinConstSolver) setConds2ConstFalse(jConds, fConds bool) {
-	if jConds {
-		s.jConds = []Expression{&Constant{
+func (s *propOuterJoinConstSolver) setConds2ConstFalse(joinConds, filterConds bool) {
+	if joinConds {
+		s.joinConds = []Expression{&Constant{
 			Value:   types.NewDatum(false),
 			RetType: types.NewFieldType(mysql.TypeTiny),
 		}}
 	}
-	if fConds {
-		s.fConds = []Expression{&Constant{
+	if filterConds {
+		s.filterConds = []Expression{&Constant{
 			Value:   types.NewDatum(false),
 			RetType: types.NewFieldType(mysql.TypeTiny),
 		}}
@@ -342,14 +342,14 @@ func (s *propOuterJoinConstSolver) setConds2ConstFalse(jConds, fConds bool) {
 }
 
 // pickNewEQCondsFunc picks constant equal expression from specified conditions.
-func (s *propOuterJoinConstSolver) pickNewEQCondsFunc(retMapper map[int]*Constant, visited []bool, fConds bool) map[int]*Constant {
+func (s *propOuterJoinConstSolver) pickNewEQCondsFunc(retMapper map[int]*Constant, visited []bool, filterConds bool) map[int]*Constant {
 	var conds []Expression
 	var condsOffset int
-	if fConds {
-		conds = s.fConds
+	if filterConds {
+		conds = s.filterConds
 	} else {
-		conds = s.jConds
-		condsOffset = len(s.fConds)
+		conds = s.joinConds
+		condsOffset = len(s.filterConds)
 	}
 	for i, cond := range conds {
 		if visited[i+condsOffset] {
@@ -363,7 +363,7 @@ func (s *propOuterJoinConstSolver) pickNewEQCondsFunc(retMapper map[int]*Constan
 				value, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
 				terror.Log(errors.Trace(err))
 				if !value {
-					if fConds {
+					if filterConds {
 						s.setConds2ConstFalse(true, true)
 					} else {
 						s.setConds2ConstFalse(true, false)
@@ -380,7 +380,7 @@ func (s *propOuterJoinConstSolver) pickNewEQCondsFunc(retMapper map[int]*Constan
 		visited[i+condsOffset] = true
 		updated, foreverFalse := s.tryToUpdateEQList(col, con)
 		if foreverFalse {
-			if fConds {
+			if filterConds {
 				s.setConds2ConstFalse(true, true)
 			} else {
 				s.setConds2ConstFalse(true, false)
@@ -410,8 +410,8 @@ func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Const
 // with `const`, the procedure repeats multiple times.
 func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 	s.eqList = make([]*Constant, len(s.columns))
-	lenFilters := len(s.fConds)
-	visited := make([]bool, lenFilters+len(s.jConds))
+	lenFilters := len(s.filterConds)
+	visited := make([]bool, lenFilters+len(s.joinConds))
 	for i := 0; i < MaxPropagateColsCnt; i++ {
 		mapper := s.pickNewEQConds(visited)
 		if len(mapper) == 0 {
@@ -423,9 +423,9 @@ func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 			cols = append(cols, s.columns[id])
 			cons = append(cons, con)
 		}
-		for i, cond := range s.jConds {
+		for i, cond := range s.joinConds {
 			if !visited[i+lenFilters] {
-				s.jConds[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
+				s.joinConds[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
 			}
 		}
 	}
@@ -458,15 +458,15 @@ func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, 
 }
 
 // deriveConds given `outerCol = innerCol`, derive new expression for specified conditions.
-func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schema *Schema, fCondsOffset int, visited []bool, fConds bool) []bool {
+func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schema *Schema, fCondsOffset int, visited []bool, filterConds bool) []bool {
 	var offset, condsLen int
 	var conds []Expression
-	if fConds {
-		conds = s.fConds
+	if filterConds {
+		conds = s.filterConds
 		offset = fCondsOffset
-		condsLen = len(s.fConds)
+		condsLen = len(s.filterConds)
 	} else {
-		conds = s.jConds
+		conds = s.joinConds
 		condsLen = fCondsOffset
 	}
 	for k := 0; k < condsLen; k++ {
@@ -481,7 +481,7 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 		}
 		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond)
 		if replaced {
-			s.jConds = append(s.jConds, newExpr)
+			s.joinConds = append(s.joinConds, newExpr)
 		}
 	}
 	return visited
@@ -492,14 +492,14 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 // 'expression(..., outerCol, ...)' does not reference columns outside children schemas of join node.
 // Derived new expressions must be appended into join condition, not filter condition.
 func (s *propOuterJoinConstSolver) propagateColumnEQ() {
-	visited := make([]bool, len(s.jConds)+len(s.fConds))
+	visited := make([]bool, len(s.joinConds)+len(s.filterConds))
 	s.unionSet = &multiEqualSet{}
 	s.unionSet.init(len(s.columns))
 	var outerCol, innerCol *Column
 	// Only consider column equal condition in joinConds.
 	// If we have column equal in filter condition, the outer join should have been simplified already.
-	for i := range s.jConds {
-		outerCol, innerCol = s.validColEqualCond(s.jConds[i])
+	for i := range s.joinConds {
+		outerCol, innerCol = s.validColEqualCond(s.joinConds[i])
 		if outerCol != nil {
 			outerID := s.getColID(outerCol)
 			innerID := s.getColID(innerCol)
@@ -507,7 +507,7 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 			visited[i] = true
 		}
 	}
-	lenJoinConds := len(s.jConds)
+	lenJoinConds := len(s.joinConds)
 	mergedSchema := MergeSchema(s.outerSchema, s.innerSchema)
 	for i, coli := range s.columns {
 		for j := i + 1; j < len(s.columns); j++ {
@@ -529,25 +529,25 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([]Expression, []Expression) {
 	cols := make([]*Column, 0, len(joinConds)+len(filterConds))
 	for _, cond := range joinConds {
-		s.jConds = append(s.jConds, SplitCNFItems(cond)...)
+		s.joinConds = append(s.joinConds, SplitCNFItems(cond)...)
 		cols = append(cols, ExtractColumns(cond)...)
 	}
 	for _, cond := range filterConds {
-		s.fConds = append(s.fConds, SplitCNFItems(cond)...)
+		s.filterConds = append(s.filterConds, SplitCNFItems(cond)...)
 		cols = append(cols, ExtractColumns(cond)...)
 	}
 	for _, col := range cols {
 		s.insertCol(col)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
-		log.Warnf("[const_propagation] Too many columns: column count is %d, max count is %d.", len(s.columns), MaxPropagateColsCnt)
+		log.Warnf("[const_propagation_over_outerjoin] Too many columns: column count is %d, max count is %d.", len(s.columns), MaxPropagateColsCnt)
 		return joinConds, filterConds
 	}
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
-	s.jConds = propagateConstantDNF(s.ctx, s.jConds)
-	s.fConds = propagateConstantDNF(s.ctx, s.fConds)
-	return s.jConds, s.fConds
+	s.joinConds = propagateConstantDNF(s.ctx, s.joinConds)
+	s.filterConds = propagateConstantDNF(s.ctx, s.filterConds)
+	return s.joinConds, s.filterConds
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
