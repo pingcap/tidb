@@ -54,7 +54,7 @@ func (e *baseGroupConcat4String) truncatePartialResultIfNeed(sctx sessionctx.Con
 		}
 		buffer.Truncate(i)
 		if atomic.CompareAndSwapInt32(e.truncated, 0, 1) {
-			if sctx.GetSessionVars().SQLMode.HasStrictMode() && sctx.GetSessionVars().StmtCtx.InInsertStmt {
+			if !sctx.GetSessionVars().StmtCtx.TruncateAsWarning {
 				return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String())
 			}
 			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String()))
