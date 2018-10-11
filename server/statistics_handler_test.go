@@ -49,6 +49,7 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	session.SetStatsLease(0)
 	ds.domain, err = session.BootstrapSession(ds.store)
 	c.Assert(err, IsNil)
+	ds.domain.SetStatsUpdating(true)
 	tidbdrv := NewTiDBDriver(ds.store)
 
 	cfg := config.NewConfig()
