@@ -506,6 +506,8 @@ type ExistsSubqueryExpr struct {
 	exprNode
 	// Sel is the subquery, may be rewritten to other type of expression.
 	Sel ExprNode
+	// Not is true, the expression is "not exists".
+	Not bool
 }
 
 // Format the ExprNode into a Writer.

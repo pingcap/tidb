@@ -682,9 +682,8 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 	if hg.Bounds == nil {
 		return true
 	}
-	len := hg.Bounds.NumRows()
 	return chunk.Compare(hg.Bounds.GetRow(0), 0, &val) > 0 ||
-		chunk.Compare(hg.Bounds.GetRow(len-1), 0, &val) < 0
+		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
 // ErrorRate is the error rate of estimate row count by bucket and cm sketch.
@@ -856,4 +855,23 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		totalCount = idx.totalRowCount()
 	}
 	return totalCount, nil
+}
+
+func (idx *Index) outOfRange(val types.Datum) bool {
+	if idx.Bounds == nil {
+		return true
+	}
+	withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
+		matchPrefix(idx.Bounds.GetRow(0), 0, &val)
+	withInHighBound := chunk.Compare(idx.Bounds.GetRow(idx.Bounds.NumRows()-1), 0, &val) >= 0
+	return !withInLowBoundOrPrefixMatch || !withInHighBound
+}
+
+// matchPrefix checks whether ad is the prefix of value
+func matchPrefix(row chunk.Row, colIdx int, ad *types.Datum) bool {
+	switch ad.Kind() {
+	case types.KindString, types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
+		return strings.HasPrefix(row.GetString(colIdx), ad.GetString())
+	}
+	return false
 }
