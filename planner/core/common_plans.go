@@ -135,7 +135,7 @@ type Execute struct {
 	Plan      Plan
 }
 
-func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.InfoSchema) error {
+func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := ctx.GetSessionVars()
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
@@ -191,7 +191,7 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			return plan, nil
 		}
 	}
-	p, err := Optimize(ctx, prepared.Stmt, is)
+	p, err := OptimizeAstNode(ctx, prepared.Stmt, is)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

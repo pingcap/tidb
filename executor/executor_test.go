@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1731,7 +1732,7 @@ func (s *testSuite) TestIsPointGet(c *C) {
 		c.Check(err, IsNil)
 		err = plannercore.Preprocess(ctx, stmtNode, infoSchema, false)
 		c.Check(err, IsNil)
-		p, err := plannercore.Optimize(ctx, stmtNode, infoSchema)
+		p, err := planner.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
 		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(ret, Equals, result)

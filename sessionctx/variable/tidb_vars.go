@@ -158,6 +158,9 @@ const (
 	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
+	// tidb_enable_cascades_planner is used to control whether to enable the cascades planner.
+	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
+
 	// tidb_skip_utf8_check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
 	// the input string values are valid, we can skip the check.
 	TiDBSkipUTF8Check = "tidb_skip_utf8_check"

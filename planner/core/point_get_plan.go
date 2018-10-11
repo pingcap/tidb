@@ -114,7 +114,7 @@ func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *PointGetPlan) ResolveIndices() {}
 
-func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
+func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	if PreparedPlanCacheEnabled() {
 		// Do not support plan cache.
 		return nil
