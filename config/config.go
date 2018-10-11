@@ -237,6 +237,11 @@ type TiKVClient struct {
 	GrpcKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
+
+	// For batch commands API.
+	MaxBatchSize          uint          `toml:"max-batch-size" json:"max-batch-size"`
+	MinBatchSizeInBackoff uint          `toml:"min-batch-size-in-backoff" json:"min-batch-size-in-backoff"`
+	BatchBackoff          time.Duration `toml:"batch-backoff" json:"batch-backoff"`
 }
 
 // Binlog is the config for binlog.
@@ -314,10 +319,13 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount:  16,
-		GrpcKeepAliveTime:    10,
-		GrpcKeepAliveTimeout: 3,
-		CommitTimeout:        "41s",
+		GrpcConnectionCount:   16,
+		GrpcKeepAliveTime:     10,
+		GrpcKeepAliveTimeout:  3,
+		CommitTimeout:         "41s",
+		MaxBatchSize:          128,
+		MinBatchSizeInBackoff: 8,
+		BatchBackoff:          500 * time.Microsecond,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

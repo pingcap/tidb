@@ -178,4 +178,20 @@ var (
 			Name:      "region_cache_operations_total",
 			Help:      "Counter of region cache.",
 		}, []string{LblType, LblResult})
+
+	TiKVBatchPendingRequests = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_pending_requests",
+			Help:      "Batch pending requests",
+		})
+
+	TiKVBatchBackoffCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "batch_backoff",
+			Help:      "Batch backoff counter",
+		})
 )
