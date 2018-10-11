@@ -198,7 +198,7 @@ const (
 
 	// tidb_defer_constraint_check indicates to defer the constraint check when committing the
 	// transaction or not. If it is ON, TiDB will defer the check when committing,
-	// otherwise it will do the constraint check when the SQL executing.
+	// otherwise it will check the constraint when the SQL executing.
 	// It could hurt the performance of bulking insert when it is ON.
 	TiDBDeferConstraintCheck = "tidb_defer_constraint_check"
 )

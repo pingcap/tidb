@@ -2080,7 +2080,7 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
 }
 
-func (s *testSuite) TestCompatibleInsert(c *C) {
+func (s *testSuite) TestDeferConstraintCheckForInsert(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t;create table t (i int key);`)
