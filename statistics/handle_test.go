@@ -445,5 +445,6 @@ func newStoreWithBootstrap(statsLease time.Duration) (kv.Storage, *domain.Domain
 	session.SetStatsLease(statsLease)
 	domain.RunAutoAnalyze = false
 	do, err := session.BootstrapSession(store)
+	do.SetStatsUpdating(true)
 	return store, do, errors.Trace(err)
 }
