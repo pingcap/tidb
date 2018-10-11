@@ -305,12 +305,14 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
 			// field PreventNullInsertFlag flag reset.
 			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.PreventNullInsertFlag
+
+			job.State = model.JobStateRollbackDone
 			ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
+			return ver, nil
 		}
-		return ver, nil
 	}
 
 	if oldCol == nil || oldCol.State != model.StatePublic {
