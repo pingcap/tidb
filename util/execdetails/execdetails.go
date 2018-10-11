@@ -78,12 +78,12 @@ func (e RuntimeStats) GetRuntimeStat(planID string) *RuntimeStat {
 	if e == nil {
 		return nil
 	}
-	execStat, exists := e[planID]
+	runtimecStat, exists := e[planID]
 	if !exists {
-		execStat = &RuntimeStat{}
-		e[planID] = execStat
+		runtimecStat = &RuntimeStat{}
+		e[planID] = runtimecStat
 	}
-	return execStat
+	return runtimecStat
 }
 
 func (e RuntimeStats) String() string {
