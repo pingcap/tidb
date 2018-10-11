@@ -462,15 +462,19 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 	}
 	ts.addPushedDownSelection(copTask, ds.stats)
 	t := finishCopTask(ds.ctx, copTask)
-	scan := t.plan()
-	if us != nil {
-		// Use `ts.stats` instead of `us.stats` because it should be more accurate. No need to specify
-		// childrenReqProps now since we have got ts already.
-		physicalUnionScan := PhysicalUnionScan{Conditions: us.conditions}.init(us.ctx, ts.stats, nil)
-		physicalUnionScan.SetChildren(scan)
-		scan = physicalUnionScan
+	reader := t.plan()
+	return p.constructInnerUnionScan(us, reader)
+}
+
+func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
+	if us == nil {
+		return reader
 	}
-	return scan
+	// Use `reader.stats` instead of `us.stats` because it should be more accurate. No need to specify
+	// childrenReqProps now since we have got reader already.
+	physicalUnionScan := PhysicalUnionScan{Conditions: us.conditions}.init(us.ctx, reader.statsInfo(), nil)
+	physicalUnionScan.SetChildren(reader)
+	return physicalUnionScan
 }
 
 // constructInnerIndexScan is specially used to construct the inner plan for PhysicalIndexJoin.
@@ -513,15 +517,8 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
 	t := finishCopTask(ds.ctx, cop)
-	scan := t.plan()
-	if us != nil {
-		// Use `is.stats` instead of `us.stats` because it should be more accurate. No need to specify
-		// childrenReqProps now since we have got is already.
-		physicalUnionScan := PhysicalUnionScan{Conditions: us.conditions}.init(us.ctx, is.stats, nil)
-		physicalUnionScan.SetChildren(scan)
-		scan = physicalUnionScan
-	}
-	return scan
+	reader := t.plan()
+	return p.constructInnerUnionScan(us, reader)
 }
 
 // buildRangeForIndexJoin checks whether this index can be used for building index join and return the range if this index is ok.
