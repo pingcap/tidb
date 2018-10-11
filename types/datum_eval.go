@@ -16,6 +16,7 @@ package types
 import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pkg/errors"
 )
 
@@ -63,4 +64,16 @@ func ComputePlus(a, b Datum) (d Datum, err error) {
 	}
 	_, err = InvOp2(a.GetValue(), b.GetValue(), opcode.Plus)
 	return d, err
+}
+
+func ComputeConcat(a, b Datum) (d Datum, err error) {
+	if a.Kind() == KindMysqlJSON && b.Kind() == KindMysqlJSON {
+		arr1 := a.GetMysqlJSON()
+		arr2 := b.GetMysqlJSON()
+		if arr1.TypeCode == json.TypeCodeArray && arr2.TypeCode == json.TypeCodeArray {
+			d.SetMysqlJSON(json.MergeBinary([]json.BinaryJSON{arr1, arr2}))
+			return d, nil
+		}
+	}
+	return d, errors.Errorf("Invalid concatenate: %v %v", a.GetValue(), b.GetValue())
 }

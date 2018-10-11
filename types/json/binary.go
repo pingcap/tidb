@@ -445,6 +445,9 @@ func appendBinary(buf []byte, in interface{}) (TypeCode, []byte, error) {
 		if err != nil {
 			return typeCode, nil, errors.Trace(err)
 		}
+	case []byte:
+		typeCode = TypeCodeString
+		buf = appendBinaryString(buf, hack.String(x))
 	case string:
 		typeCode = TypeCodeString
 		buf = appendBinaryString(buf, x)

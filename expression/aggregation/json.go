@@ -34,7 +34,7 @@ func (sf *jsonArrayAggFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.
 		return nil
 	}
 
-	// FIXME: what should i do
+	evalCtx.Value, err = ConcatBinaryJSONArray(evalCtx.Value, value)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -43,7 +43,7 @@ func (sf *jsonArrayAggFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.
 
 // GetResult implements Aggregation interface.
 func (sf *jsonArrayAggFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
-	d.SetMysqlJSON(evalCtx.Value.GetMysqlJSON())
+	d.SetValue(evalCtx.Value)
 	return
 }
 

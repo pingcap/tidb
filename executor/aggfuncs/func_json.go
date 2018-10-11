@@ -43,8 +43,8 @@ func (e *baseJsonArrayAgg) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	result := json.CreateBinary(p.array)
-	chk.AppendJSON(e.ordinal, result)
+
+	chk.AppendJSON(e.ordinal, json.CreateBinary(p.array))
 	return nil
 }
 
@@ -57,13 +57,7 @@ func (e *baseJsonArrayAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 			return errors.Trace(err)
 		}
 
-		var finalResult string
-		finalResult, err = res.ToString()
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		result = append(result, finalResult)
+		result = append(result, res.GetValue())
 	}
 	p.array = append(p.array, result...)
 	return nil

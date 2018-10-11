@@ -367,7 +367,6 @@ func (a *AggFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 func (a *AggFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeJSON)
 	types.SetBinChsClnFlag(a.RetTp)
-	a.RetTp.Flag |= mysql.NotNullFlag
 }
 
 func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {

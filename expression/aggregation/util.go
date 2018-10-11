@@ -16,6 +16,7 @@ package aggregation
 import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pkg/errors"
@@ -90,5 +91,31 @@ func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.
 		return types.ComputePlus(sum, data)
 	default:
 		return data, errors.Errorf("invalid value %v for aggregate", sum.Kind())
+	}
+}
+
+func ConcatBinaryJSONArray(data1, data2 types.Datum) (data types.Datum, err error) {
+	if data2.Kind() == types.KindMysqlJSON {
+		a := data2.GetMysqlJSON()
+		if a.TypeCode == json.TypeCodeArray {
+			data = types.NewDatum(a)
+		}
+	} else {
+		return data, errors.Errorf("invalid value %v for aggregate", data2.Kind())
+	}
+	if err != nil {
+		return data, errors.Trace(err)
+	}
+	if data.IsNull() {
+		return data1, nil
+	}
+
+	switch data1.Kind() {
+	case types.KindNull:
+		return data, nil
+	case types.KindMysqlJSON:
+		return types.ComputeConcat(data1, data)
+	default:
+		return data, errors.Errorf("invalid value %v for aggregate", data1.Kind())
 	}
 }
