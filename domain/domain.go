@@ -335,6 +335,12 @@ func (do *Domain) Reload() error {
 
 // LogSlowQuery keeps topN recent slow queries in domain.
 func (do *Domain) LogSlowQuery(query *SlowQueryInfo) {
+	do.slowQuery.mu.RLock()
+	defer do.slowQuery.mu.RUnlock()
+	if do.slowQuery.mu.closed {
+		return
+	}
+
 	select {
 	case do.slowQuery.ch <- query:
 	default:
