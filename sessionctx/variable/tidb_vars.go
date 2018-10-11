@@ -196,9 +196,11 @@ const (
 	// HashJoin.
 	TiDBEnableRadixJoin = "tidb_enable_radix_join"
 
-	// tidb_compatible_insert indicates to check the to-be-insert key exists or not when SQL is
-	// executing. It could hurt the performance of insert statement.
-	TiDBCompatibleInsert = "tidb_compatible_insert"
+	// tidb_defer_constraint_check indicates to defer the constraint check when committing the
+	// transaction or not. If it is ON, TiDB will defer the check when committing,
+	// otherwise it will do the constraint check when the SQL executing.
+	// It could hurt the performance of bulking insert when it is ON.
+	TiDBDeferConstraintCheck = "tidb_defer_constraint_check"
 )
 
 // Default TiDB system variable values.
@@ -232,7 +234,7 @@ const (
 	DefTiDBGeneralLog                = 0
 	DefTiDBRetryLimit                = 10
 	DefTiDBDisableTxnAutoRetry       = false
-	DefTiDBCompatibleInsert          = false
+	DefTiDBDeferConstraintCheck      = true
 	DefTiDBHashJoinConcurrency       = 5
 	DefTiDBProjectionConcurrency     = 4
 	DefTiDBOptimizerSelectivityLevel = 0

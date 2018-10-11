@@ -235,10 +235,10 @@ func (s *testSuite) TestSetVar(c *C) {
 	_, err = tk.Exec(`set global tidb_force_priority = ""`)
 	c.Assert(err, NotNil)
 
-	tk.MustExec("set tidb_compatible_insert = 1")
-	tk.MustQuery(`select @@session.tidb_compatible_insert;`).Check(testkit.Rows("1"))
-	tk.MustExec("set global tidb_compatible_insert = 0")
-	tk.MustQuery(`select @@global.tidb_compatible_insert;`).Check(testkit.Rows("0"))
+	tk.MustExec("set tidb_defer_constraint_check = 1")
+	tk.MustQuery(`select @@session.tidb_defer_constraint_check;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_defer_constraint_check = 0")
+	tk.MustQuery(`select @@global.tidb_defer_constraint_check;`).Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
