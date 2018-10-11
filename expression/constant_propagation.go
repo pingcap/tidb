@@ -441,7 +441,7 @@ func (s *propOuterJoinConstSolver) colsFromOuterAndInner(col1, col2 *Column) (*C
 	return nil, nil
 }
 
-// validColEqualCond checks if expression is column equql condition that we can use for constant
+// validColEqualCond checks if expression is column equal condition that we can use for constant
 // propagation over outer join. We only use expression like `outerCol = innerCol`, for expressions like
 // `outerCol1 = outerCol2` or `innerCol1 = innerCol2`, they do not help deriving new inner table conditions
 // which can be pushed down to children plan nodes, so we do not pick them.
