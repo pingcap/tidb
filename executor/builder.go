@@ -1048,8 +1048,8 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 			e.FinalAggFuncs = append(e.FinalAggFuncs, finalAggFunc)
 			if aggDesc.Name == ast.AggFuncGroupConcat {
 				// For group_concat, finalAggFunc and partialAggFunc need shared `truncate` flag to do duplicate.
-				finalAggFunc.(interface{ SetTruncate(t *int32) }).SetTruncate(
-					partialAggFunc.(interface{ Truncate() *int32 }).Truncate(),
+				finalAggFunc.(interface{ SetTruncated(t *int32) }).SetTruncated(
+					partialAggFunc.(interface{ GetTruncated() *int32 }).GetTruncated(),
 				)
 			}
 		}
