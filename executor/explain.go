@@ -14,8 +14,6 @@
 package executor
 
 import (
-	"time"
-
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/util/chunk"
 	"golang.org/x/net/context"
@@ -37,12 +35,6 @@ func (e *ExplainExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *ExplainExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.execStat != nil {
-		start := time.Now()
-		defer func() {
-			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
-		}()
-	}
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.rows) {
 		return nil

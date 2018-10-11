@@ -16,7 +16,6 @@ package executor
 import (
 	"runtime"
 	"strconv"
-	"time"
 
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
@@ -53,12 +52,6 @@ const (
 
 // Next implements the Executor Next interface.
 func (e *AnalyzeExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.execStat != nil {
-		start := time.Now()
-		defer func() {
-			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
-		}()
-	}
 	concurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return errors.Trace(err)

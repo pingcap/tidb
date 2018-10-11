@@ -55,35 +55,38 @@ func (d ExecDetails) String() string {
 	return strings.Join(parts, " ")
 }
 
-// ExecStats collects executors's execution info.
-type ExecStats map[string]*ExecStat
+// RuntimeStats collects executors's execution info.
+type RuntimeStats map[string]*RuntimeStat
 
-// ExecStat collects one executor's execution info.
-type ExecStat struct {
-	loop    int32
+// RuntimeStat collects one executor's execution info.
+type RuntimeStat struct {
+	// executor's Next() called times.
+	loop int32
+	// executor consume time.
 	consume int64
-	rows    int64
+	// executor return row count.
+	rows int64
 }
 
-// NewExecutorStats creates new executor collector.
-func NewExecutorStats() ExecStats {
-	return ExecStats(make(map[string]*ExecStat))
+// NewRuntimeStats creates new executor collector.
+func NewRuntimeStats() RuntimeStats {
+	return RuntimeStats(make(map[string]*RuntimeStat))
 }
 
-// GetExecStat gets execStat for a executor.
-func (e ExecStats) GetExecStat(planID string) *ExecStat {
+// GetRuntimeStat gets execStat for a executor.
+func (e RuntimeStats) GetRuntimeStat(planID string) *RuntimeStat {
 	if e == nil {
 		return nil
 	}
 	execStat, exists := e[planID]
 	if !exists {
-		execStat = &ExecStat{}
+		execStat = &RuntimeStat{}
 		e[planID] = execStat
 	}
 	return execStat
 }
 
-func (e ExecStats) String() string {
+func (e RuntimeStats) String() string {
 	var buff bytes.Buffer
 	buff.WriteString("(")
 	for planID, stat := range e {
@@ -94,13 +97,13 @@ func (e ExecStats) String() string {
 }
 
 // Record records executor's execution.
-func (e *ExecStat) Record(d time.Duration, rowNum int) {
+func (e *RuntimeStat) Record(d time.Duration, rowNum int) {
 	atomic.AddInt32(&e.loop, 1)
 	atomic.AddInt64(&e.consume, int64(d))
 	atomic.AddInt64(&e.rows, int64(rowNum))
 }
 
-func (e *ExecStat) String() string {
+func (e *RuntimeStat) String() string {
 	if e == nil {
 		return ""
 	}

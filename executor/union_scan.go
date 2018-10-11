@@ -126,11 +126,9 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if us.execStat != nil {
+	if us.runtimeStat != nil {
 		start := time.Now()
-		defer func() {
-			us.execStat.Record(time.Now().Sub(start), chk.NumRows())
-		}()
+		defer us.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
 	}
 	chk.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())

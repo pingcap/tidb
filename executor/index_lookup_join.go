@@ -190,11 +190,9 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 
 // Next implements the Executor interface.
 func (e *IndexLookUpJoin) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.execStat != nil {
+	if e.runtimeStat != nil {
 		start := time.Now()
-		defer func() {
-			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
-		}()
+		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
 	}
 	chk.Reset()
 	e.joinResult.Reset()

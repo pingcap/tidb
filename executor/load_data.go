@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -51,12 +50,6 @@ func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table,
 
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.execStat != nil {
-		start := time.Now()
-		defer func() {
-			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
-		}()
-	}
 	chk.GrowAndReset(e.maxChunkSize)
 	// TODO: support load data without local field.
 	if !e.IsLocal {

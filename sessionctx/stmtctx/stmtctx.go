@@ -77,7 +77,7 @@ type StatementContext struct {
 	Priority     mysql.PriorityEnum
 	NotFillCache bool
 	MemTracker   *memory.Tracker
-	ExecStats    execdetails.ExecStats
+	RuntimeStats execdetails.RuntimeStats
 	TableIDs     []int64
 	IndexIDs     []int64
 }

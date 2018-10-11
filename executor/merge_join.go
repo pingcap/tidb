@@ -263,11 +263,9 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 
 // Next implements the Executor Next interface.
 func (e *MergeJoinExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.execStat != nil {
+	if e.runtimeStat != nil {
 		start := time.Now()
-		defer func() {
-			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
-		}()
+		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
 	}
 	chk.Reset()
 	if !e.prepared {

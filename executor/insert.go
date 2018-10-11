@@ -14,8 +14,6 @@
 package executor
 
 import (
-	"time"
-
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -130,12 +128,6 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 
 // Next implements Exec Next interface.
 func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.execStat != nil {
-		start := time.Now()
-		defer func() {
-			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
-		}()
-	}
 	chk.Reset()
 	cols, err := e.getColumns(e.Table.Cols())
 	if err != nil {

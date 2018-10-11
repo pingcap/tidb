@@ -1482,7 +1482,7 @@ func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 			p.explainedPlans = map[int]bool{}
 			p.explainPlanInRowFormat(p.StmtPlan.(PhysicalPlan), "root", "", true)
 			if explain.Analyze {
-				b.ctx.GetSessionVars().StmtCtx.ExecStats = nil
+				b.ctx.GetSessionVars().StmtCtx.RuntimeStats = nil
 			}
 		case ast.ExplainFormatDOT:
 			retFields := []string{"dot contents"}

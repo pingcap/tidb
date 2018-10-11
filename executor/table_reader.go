@@ -100,11 +100,9 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.execStat != nil {
+	if e.runtimeStat != nil {
 		start := time.Now()
-		defer func() {
-			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
-		}()
+		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
 	}
 	if err := e.resultHandler.nextChunk(ctx, chk); err != nil {
 		e.feedback.Invalidate()

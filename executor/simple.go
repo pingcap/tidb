@@ -16,7 +16,6 @@ package executor
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
@@ -50,12 +49,6 @@ type SimpleExec struct {
 
 // Next implements the Executor Next interface.
 func (e *SimpleExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
-	if e.execStat != nil {
-		start := time.Now()
-		defer func() {
-			e.execStat.Record(time.Now().Sub(start), chk.NumRows())
-		}()
-	}
 	if e.done {
 		return nil
 	}
