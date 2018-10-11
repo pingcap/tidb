@@ -74,7 +74,7 @@ const (
 	BinCmpFlag            uint = 1 << 17 /* Internal: Used by sql_yacc */
 	ParseToJSONFlag       uint = 1 << 18 /* Internal: Used when we want to parse string to JSON in CAST */
 	IsBooleanFlag         uint = 1 << 19 /* Internal: Used for telling boolean literal from integer */
-	PreventNullInsertFlag uint = 1 << 20 /* Prevent this Field from inserting NULL values.*/
+	PreventNullInsertFlag uint = 1 << 20 /* Prevent this Field from inserting NULL values */
 )
 
 // TypeInt24 bounds.

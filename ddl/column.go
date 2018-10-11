@@ -301,13 +301,14 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
 	if job.IsRollingback() {
 		if IsNull2Notnull {
-			// field flag reset to null.
+			// field NotNullFlag flag reset.
 			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
+			// field PreventNullInsertFlag flag reset.
 			tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.PreventNullInsertFlag
-		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
+			ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 		}
 		return ver, nil
 	}
@@ -343,7 +344,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
 		if err != nil {
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
 
@@ -356,7 +357,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 			}
 		} else {
 			// Modify the type defined Flag to NotNullFlag.
-			tblInfo.Columns[oldCol.Offset].Flag = newCol.Flag
+			tblInfo.Columns[oldCol.Offset].Flag |= mysql.NotNullFlag
 			ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -373,7 +374,6 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			job.State = model.JobStateCancelling
 			return ver, nil
 		}
 	}
