@@ -34,11 +34,11 @@ type InsertValues struct {
 	baseExecutor
 	batchChecker
 
-	rowCount              uint64
-	maxRowsInBatch        uint64
-	lastInsertID          uint64
-	needFillDefaultValues bool
-	hasExtraHandle        bool
+	rowCount       uint64
+	maxRowsInBatch uint64
+	lastInsertID   uint64
+	hasRefCols     bool
+	hasExtraHandle bool
 
 	SelectExec Executor
 
@@ -198,7 +198,7 @@ func (e *InsertValues) evalRow(cols []*table.Column, list []expression.Expressio
 	hasValue := make([]bool, rowLen)
 
 	// For statements like `insert into t set a = b + 1`.
-	if e.needFillDefaultValues {
+	if e.hasRefCols {
 		if err := e.setValueForRefColumn(row, hasValue); err != nil {
 			return nil, errors.Trace(err)
 		}
