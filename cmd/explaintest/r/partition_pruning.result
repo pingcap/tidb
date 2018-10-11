@@ -1919,21 +1919,21 @@ Union_11	16666.67	root
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-02 23:59:59' AS DATETIME);
 id	count	task	operator info
-Union_11	50000.00	root	
-├─TableReader_14	10000.00	root	data:Selection_13
-│ └─Selection_13	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:59)
+Union_11	0.00	root	
+├─TableReader_14	0.00	root	data:Selection_13
+│ └─Selection_13	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:59)
 │   └─TableScan_12	10000.00	cop	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	10000.00	root	data:Selection_16
-│ └─Selection_16	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:59)
+├─TableReader_17	0.00	root	data:Selection_16
+│ └─Selection_16	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:59)
 │   └─TableScan_15	10000.00	cop	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	10000.00	root	data:Selection_19
-│ └─Selection_19	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:59)
+├─TableReader_20	0.00	root	data:Selection_19
+│ └─Selection_19	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:59)
 │   └─TableScan_18	10000.00	cop	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	10000.00	root	data:Selection_22
-│ └─Selection_22	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:59)
+├─TableReader_23	0.00	root	data:Selection_22
+│ └─Selection_22	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:59)
 │   └─TableScan_21	10000.00	cop	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	10000.00	root	data:Selection_25
-  └─Selection_25	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:59)
+└─TableReader_26	0.00	root	data:Selection_25
+  └─Selection_25	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:59)
     └─TableScan_24	10000.00	cop	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:59' AS DATETIME);
@@ -2191,21 +2191,21 @@ Union_11	16666.67	root
     └─TableScan_24	10000.00	cop	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b = '2009-04-02 23:59:59';
 id	count	task	operator info
-Union_11	50000.00	root	
-├─TableReader_14	10000.00	root	data:Selection_13
-│ └─Selection_13	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:59.000000)
+Union_11	0.00	root	
+├─TableReader_14	0.00	root	data:Selection_13
+│ └─Selection_13	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:59.000000)
 │   └─TableScan_12	10000.00	cop	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	10000.00	root	data:Selection_16
-│ └─Selection_16	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:59.000000)
+├─TableReader_17	0.00	root	data:Selection_16
+│ └─Selection_16	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:59.000000)
 │   └─TableScan_15	10000.00	cop	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	10000.00	root	data:Selection_19
-│ └─Selection_19	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:59.000000)
+├─TableReader_20	0.00	root	data:Selection_19
+│ └─Selection_19	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:59.000000)
 │   └─TableScan_18	10000.00	cop	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	10000.00	root	data:Selection_22
-│ └─Selection_22	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:59.000000)
+├─TableReader_23	0.00	root	data:Selection_22
+│ └─Selection_22	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:59.000000)
 │   └─TableScan_21	10000.00	cop	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	10000.00	root	data:Selection_25
-  └─Selection_25	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:59.000000)
+└─TableReader_26	0.00	root	data:Selection_25
+  └─Selection_25	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:59.000000)
     └─TableScan_24	10000.00	cop	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1 WHERE b >= '2009-04-02 23:59:59';
 id	count	task	operator info
@@ -2374,21 +2374,21 @@ Union_11	16666.67	root
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-03 00:00:01' AS DATETIME);
 id	count	task	operator info
-Union_11	50000.00	root	
-├─TableReader_14	10000.00	root	data:Selection_13
-│ └─Selection_13	10000.00	cop	eq(test.t1.b, 2009-04-03 00:00:01)
+Union_11	0.00	root	
+├─TableReader_14	0.00	root	data:Selection_13
+│ └─Selection_13	0.00	cop	eq(test.t1.b, 2009-04-03 00:00:01)
 │   └─TableScan_12	10000.00	cop	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	10000.00	root	data:Selection_16
-│ └─Selection_16	10000.00	cop	eq(test.t1.b, 2009-04-03 00:00:01)
+├─TableReader_17	0.00	root	data:Selection_16
+│ └─Selection_16	0.00	cop	eq(test.t1.b, 2009-04-03 00:00:01)
 │   └─TableScan_15	10000.00	cop	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	10000.00	root	data:Selection_19
-│ └─Selection_19	10000.00	cop	eq(test.t1.b, 2009-04-03 00:00:01)
+├─TableReader_20	0.00	root	data:Selection_19
+│ └─Selection_19	0.00	cop	eq(test.t1.b, 2009-04-03 00:00:01)
 │   └─TableScan_18	10000.00	cop	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	10000.00	root	data:Selection_22
-│ └─Selection_22	10000.00	cop	eq(test.t1.b, 2009-04-03 00:00:01)
+├─TableReader_23	0.00	root	data:Selection_22
+│ └─Selection_22	0.00	cop	eq(test.t1.b, 2009-04-03 00:00:01)
 │   └─TableScan_21	10000.00	cop	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	10000.00	root	data:Selection_25
-  └─Selection_25	10000.00	cop	eq(test.t1.b, 2009-04-03 00:00:01)
+└─TableReader_26	0.00	root	data:Selection_25
+  └─Selection_25	0.00	cop	eq(test.t1.b, 2009-04-03 00:00:01)
     └─TableScan_24	10000.00	cop	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-03 00:00:01' AS DATETIME);
@@ -2469,21 +2469,21 @@ Union_11	16666.67	root
 EXPLAIN SELECT * FROM t1
 WHERE b = CAST('2009-04-02 23:59:58' AS DATETIME);
 id	count	task	operator info
-Union_11	50000.00	root	
-├─TableReader_14	10000.00	root	data:Selection_13
-│ └─Selection_13	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:58)
+Union_11	0.00	root	
+├─TableReader_14	0.00	root	data:Selection_13
+│ └─Selection_13	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:58)
 │   └─TableScan_12	10000.00	cop	table:t1, partition:p20090401, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_17	10000.00	root	data:Selection_16
-│ └─Selection_16	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:58)
+├─TableReader_17	0.00	root	data:Selection_16
+│ └─Selection_16	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:58)
 │   └─TableScan_15	10000.00	cop	table:t1, partition:p20090402, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_20	10000.00	root	data:Selection_19
-│ └─Selection_19	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:58)
+├─TableReader_20	0.00	root	data:Selection_19
+│ └─Selection_19	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:58)
 │   └─TableScan_18	10000.00	cop	table:t1, partition:p20090403, range:[-inf,+inf], keep order:false, stats:pseudo
-├─TableReader_23	10000.00	root	data:Selection_22
-│ └─Selection_22	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:58)
+├─TableReader_23	0.00	root	data:Selection_22
+│ └─Selection_22	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:58)
 │   └─TableScan_21	10000.00	cop	table:t1, partition:p20090404, range:[-inf,+inf], keep order:false, stats:pseudo
-└─TableReader_26	10000.00	root	data:Selection_25
-  └─Selection_25	10000.00	cop	eq(test.t1.b, 2009-04-02 23:59:58)
+└─TableReader_26	0.00	root	data:Selection_25
+  └─Selection_25	0.00	cop	eq(test.t1.b, 2009-04-02 23:59:58)
     └─TableScan_24	10000.00	cop	table:t1, partition:p20090405, range:[-inf,+inf], keep order:false, stats:pseudo
 EXPLAIN SELECT * FROM t1
 WHERE b >= CAST('2009-04-02 23:59:58' AS DATETIME);
@@ -5023,12 +5023,12 @@ drop table t1, t2;
 create table t1 (s1 int);
 explain select 1 from t1 union all select 2;
 id	count	task	operator info
-Union_6	10001.00	root	
-├─Projection_7	10000.00	root	1
-│ └─TableReader_9	10000.00	root	data:TableScan_8
-│   └─TableScan_8	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-└─Projection_10	1.00	root	2
-  └─TableDual_11	1.00	root	rows:1
+Union_8	10001.00	root	
+├─Projection_10	10000.00	root	1
+│ └─TableReader_12	10000.00	root	data:TableScan_11
+│   └─TableScan_11	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─Projection_14	1.00	root	2
+  └─TableDual_15	1.00	root	rows:1
 drop table t1;
 create table t1 (a int)
 partition by range(a) (
