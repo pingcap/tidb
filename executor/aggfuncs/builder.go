@@ -279,17 +279,11 @@ func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDe
 		if err != nil {
 			panic(fmt.Sprintf("Error happened when buildGroupConcat: %s", errors.Trace(err).Error()))
 		}
-		var groupConcatFlag *int32
-		if ctx.Value(sessionctx.PreallocGroupConcatFlag) != nil {
-			groupConcatFlag = ctx.Value(sessionctx.PreallocGroupConcatFlag).(*int32)
-		} else {
-			var newConcatFlag int32
-			groupConcatFlag = &newConcatFlag
-		}
+		var newConcatFlag int32
 		if aggFuncDesc.HasDistinct {
-			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen, truncated: groupConcatFlag}}
+			return &groupConcatDistinct{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen, truncated: &newConcatFlag}}
 		}
-		return &groupConcat{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen, truncated: groupConcatFlag}}
+		return &groupConcat{baseGroupConcat4String{baseAggFunc: base, sep: sep, maxLen: maxLen, truncated: &newConcatFlag}}
 	}
 }
 

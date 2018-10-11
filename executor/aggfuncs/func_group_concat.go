@@ -132,6 +132,16 @@ func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	return e.truncatePartialResultIfNeed(sctx, p2.buffer)
 }
 
+// SetTruncate will be called in `executorBuilder#buildHashAgg` with duck-type.
+func (e *groupConcat) SetTruncate(t *int32) {
+	e.truncated = t
+}
+
+// Truncate will be called in `executorBuilder#buildHashAgg` with duck-type.
+func (e *groupConcat) Truncate() *int32 {
+	return e.truncated
+}
+
 type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
 	valsBuf *bytes.Buffer
@@ -190,4 +200,14 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		return e.truncatePartialResultIfNeed(sctx, p.buffer)
 	}
 	return nil
+}
+
+// SetTruncate will be called in `executorBuilder#buildHashAgg` with duck-type.
+func (e *groupConcatDistinct) SetTruncate(t *int32) {
+	e.truncated = t
+}
+
+// Truncate will be called in `executorBuilder#buildHashAgg` with duck-type.
+func (e *groupConcatDistinct) Truncate() *int32 {
+	return e.truncated
 }

@@ -108,8 +108,6 @@ const (
 	Initing basicCtxType = 2
 	// LastExecuteDDL is the key for whether the session execute a ddl command last time.
 	LastExecuteDDL basicCtxType = 3
-	// PreallocGroupConcatFlag is the key for prealloc memory for flag.
-	PreallocGroupConcatFlag basicCtxType = 4
 )
 
 // ConnID is the key in context.
