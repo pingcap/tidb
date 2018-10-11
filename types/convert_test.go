@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testTypeConvertSuite{})
@@ -335,7 +335,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	c.Assert(err, IsNil)
 	testToString(c, t, "2011-11-10 11:11:11.999999")
 
-	td, err := ParseDuration("11:11:11.999999", 6)
+	td, err := ParseDuration(nil, "11:11:11.999999", 6)
 	c.Assert(err, IsNil)
 	testToString(c, td, "11:11:11.999999")
 
@@ -684,10 +684,15 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 		_, err := strconv.ParseFloat(prefix, 64)
 		c.Assert(err, IsNil)
 	}
-	_, err := floatStrToIntStr("1e9223372036854775807")
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
-	_, err = floatStrToIntStr("1e21")
-	c.Assert(terror.ErrorEqual(err, ErrOverflow), IsTrue, Commentf("err %v", err))
+	floatStr, err := floatStrToIntStr(sc, "1e9223372036854775807", "1e9223372036854775807")
+	c.Assert(err, IsNil)
+	c.Assert(floatStr, Equals, "1")
+	floatStr, err = floatStrToIntStr(sc, "125e342", "125e342.83")
+	c.Assert(err, IsNil)
+	c.Assert(floatStr, Equals, "125")
+	floatStr, err = floatStrToIntStr(sc, "1e21", "1e21")
+	c.Assert(err, IsNil)
+	c.Assert(floatStr, Equals, "1")
 }
 
 // TestConvertTime tests time related conversion.

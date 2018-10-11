@@ -15,12 +15,14 @@ package variable
 
 import (
 	"crypto/tls"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
+	"github.com/klauspost/cpuid"
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -30,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -163,12 +167,12 @@ type SessionVars struct {
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// PreparedStmts stores prepared statement.
-	PreparedStmts        map[uint32]interface{}
+	PreparedStmts        map[uint32]*ast.Prepared
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
 	// params for prepared statements
-	PreparedParams []interface{}
+	PreparedParams []types.Datum
 
 	// retry information
 	RetryInfo *RetryInfo
@@ -209,7 +213,7 @@ type SessionVars struct {
 	PlanID int
 
 	// PlanColumnID is the unique id for column when building plan.
-	PlanColumnID int
+	PlanColumnID int64
 
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
@@ -279,7 +283,7 @@ type SessionVars struct {
 	// Table.alloc.
 	IDAllocator autoid.Allocator
 
-	// OptimizerSelectivityLevel defines the level of the selectivity estimation in planner.
+	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
 
 	// EnableTablePartition enables table partition feature.
@@ -293,6 +297,13 @@ type SessionVars struct {
 	EnableStreaming bool
 
 	writeStmtBufs WriteStmtBufs
+
+	// L2CacheSize indicates the size of CPU L2 cache, using byte as unit.
+	L2CacheSize int
+
+	// EnableRadixJoin indicates whether to use radix hash join to execute
+	// HashJoin.
+	EnableRadixJoin bool
 }
 
 // NewSessionVars creates a session vars object.
@@ -300,9 +311,9 @@ func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		Users:                     make(map[string]string),
 		systems:                   make(map[string]string),
-		PreparedStmts:             make(map[uint32]interface{}),
+		PreparedStmts:             make(map[uint32]*ast.Prepared),
 		PreparedStmtNameToID:      make(map[string]uint32),
-		PreparedParams:            make([]interface{}, 10),
+		PreparedParams:            make([]types.Datum, 0, 10),
 		TxnCtx:                    &TransactionContext{},
 		KVVars:                    kv.NewVariables(),
 		RetryInfo:                 &RetryInfo{},
@@ -314,6 +325,8 @@ func NewSessionVars() *SessionVars {
 		RetryLimit:                DefTiDBRetryLimit,
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
+		EnableRadixJoin:           false,
+		L2CacheSize:               cpuid.CPU.Cache.L2,
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -363,8 +376,8 @@ func (s *SessionVars) CleanBuffers() {
 	}
 }
 
-// AllocPlanColumnID allocates column id for planner.
-func (s *SessionVars) AllocPlanColumnID() int {
+// AllocPlanColumnID allocates column id for plan.
+func (s *SessionVars) AllocPlanColumnID() int64 {
 	s.PlanColumnID++
 	return s.PlanColumnID
 }
@@ -426,7 +439,7 @@ func (s *SessionVars) GetNextPreparedStmtID() uint32 {
 func (s *SessionVars) Location() *time.Location {
 	loc := s.TimeZone
 	if loc == nil {
-		loc = time.Local
+		loc = timeutil.SystemLocation()
 	}
 	return loc
 }
@@ -441,6 +454,26 @@ func (s *SessionVars) ResetPrevAffectedRows() {
 			s.PrevAffectedRows = -1
 		}
 	}
+}
+
+// GetExecuteArgumentsInfo gets the argument list as a string of execute statement.
+func (s *SessionVars) GetExecuteArgumentsInfo() string {
+	if len(s.PreparedParams) == 0 {
+		return ""
+	}
+	args := make([]string, 0, len(s.PreparedParams))
+	for _, v := range s.PreparedParams {
+		if v.IsNull() {
+			args = append(args, "<nil>")
+		} else {
+			str, err := v.ToString()
+			if err != nil {
+				terror.Log(err)
+			}
+			args = append(args, str)
+		}
+	}
+	return fmt.Sprintf(" [arguments: %s]", strings.Join(args, ", "))
 }
 
 // GetSystemVar gets the string value of a system variable.
@@ -575,6 +608,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		SetDDLReorgWorkerCounter(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgWorkerCount)))
 	case TiDBDDLReorgPriority:
 		s.setDDLReorgPriority(val)
+	case TiDBForcePriority:
+		atomic.StoreInt32(&ForcePriority, int32(mysql.Str2Priority(val)))
+	case TiDBEnableRadixJoin:
+		s.EnableRadixJoin = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

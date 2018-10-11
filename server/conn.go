@@ -48,7 +48,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -61,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -396,10 +396,10 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 		addr := cc.bufReadConn.RemoteAddr().String()
 		host, _, err1 := net.SplitHostPort(addr)
 		if err1 != nil {
-			return errors.Trace(errAccessDenied.GenByArgs(cc.user, addr, "YES"))
+			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, addr, "YES"))
 		}
 		if !cc.ctx.Auth(&auth.UserIdentity{Username: cc.user, Hostname: host}, authData, cc.salt) {
-			return errors.Trace(errAccessDenied.GenByArgs(cc.user, host, "YES"))
+			return errors.Trace(errAccessDenied.GenWithStackByArgs(cc.user, host, "YES"))
 		}
 	}
 	if cc.dbname != "" {
@@ -569,7 +569,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	} else {
 		metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
 	}
-	metrics.QueryDurationHistogram.Observe(time.Since(startTime).Seconds())
+	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral).Observe(time.Since(startTime).Seconds())
 }
 
 // dispatch handles client request based on command which is the first byte of the data.
@@ -1033,8 +1033,8 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	fetchedRows := rs.GetFetchedRows()
 
 	// if fetchedRows is not enough, getting data from recordSet.
+	chk := rs.NewChunk()
 	for len(fetchedRows) < fetchSize {
-		chk := rs.NewChunk()
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, chk)
 		if err != nil {
@@ -1048,6 +1048,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		for i := 0; i < rowCount; i++ {
 			fetchedRows = append(fetchedRows, chk.GetRow(i))
 		}
+		chk = chunk.Renew(chk, cc.ctx.GetSessionVars().MaxChunkSize)
 	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,

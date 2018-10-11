@@ -19,13 +19,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 func TestT(t *testing.T) {
@@ -389,6 +389,11 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t character set utf8 fields terminated by 'ab' lines terminated by 'xy' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' lines terminated by 'xy' (a,b)", true},
 		{"load data local infile '/tmp/t.csv' into table t (a,b) fields terminated by 'ab'", false},
+		{"load data local infile '/tmp/t.csv' into table t ignore 1 lines", true},
+		{"load data local infile '/tmp/t.csv' into table t ignore -1 lines", false},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' (a,b) ignore 1 lines", false},
+		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy' ignore 1 lines", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*' ignore 1 lines (a,b)", true},
 
 		// select for update
 		{"SELECT * from t for update", true},
@@ -435,6 +440,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin cancel ddl jobs 1, 2", true},
 		{"admin recover index t1 idx_a", true},
 		{"admin cleanup index t1 idx_a", true},
+		{"admin show slow top 3", true},
+		{"admin show slow top internal 7", true},
+		{"admin show slow top all 9", true},
+		{"admin show slow recent 11", true},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true},
@@ -1441,6 +1450,9 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (c int) PACK_KEYS = 1", true},
 		{"create table t (c int) PACK_KEYS = 0", true},
 		{"create table t (c int) PACK_KEYS = DEFAULT", true},
+		{`create table testTableCompression (c VARCHAR(15000)) compression="ZLIB";`, true},
+		{`create table t1 (c1 int) compression="zlib";`, true},
+
 		// partition option
 		{"create table t (c int) PARTITION BY HASH (c) PARTITIONS 32;", true},
 		{"create table t (c int) PARTITION BY RANGE (Year(VDate)) (PARTITION p1980 VALUES LESS THAN (1980) ENGINE = MyISAM, PARTITION p1990 VALUES LESS THAN (1990) ENGINE = MyISAM, PARTITION pothers VALUES LESS THAN MAXVALUE ENGINE = MyISAM)", true},
@@ -1691,6 +1703,8 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t FORCE", true},
 		{"ALTER TABLE t DROP INDEX;", false},
 		{"ALTER TABLE t DROP COLUMN a CASCADE", true},
+		{`ALTER TABLE testTableCompression COMPRESSION="LZ4";`, true},
+		{`ALTER TABLE t1 COMPRESSION="zlib";`, true},
 
 		// For #6405
 		{"ALTER TABLE t RENAME KEY a TO b;", true},
@@ -1819,6 +1833,7 @@ func (s *testParserSuite) TestType(c *C) {
 
 		// for year
 		{"create table t (y year(4), y1 year)", true},
+		{"create table t (y year(4) unsigned zerofill zerofill, y1 year signed unsigned zerofill)", true},
 
 		// for national
 		{"create table t (c1 national char(2), c2 national varchar(2))", true},
@@ -2290,6 +2305,8 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t1 index", true},
 		{"analyze table t1 index a", true},
 		{"analyze table t1 index a,b", true},
+		{"analyze table t with 4 buckets", true},
+		{"analyze table t index a with 4 buckets", true},
 	}
 	s.RunTest(c, table)
 }
@@ -2407,4 +2424,22 @@ func (s *testParserSuite) TestTablePartition(c *C) {
 	c.Assert(err, IsNil)
 	createTable := stmt.(*ast.CreateTableStmt)
 	c.Assert(createTable.Partition.Definitions[0].Comment, Equals, "check")
+}
+
+func (s *testParserSuite) TestNotExistsSubquery(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{`select * from t1 where not exists (select * from t2 where t1.a = t2.a)`, true},
+	}
+
+	parser := New()
+	for _, tt := range table {
+		stmt, err := parser.Parse(tt.src, "", "")
+		c.Assert(err, IsNil)
+
+		sel := stmt[0].(*ast.SelectStmt)
+		exists, ok := sel.Where.(*ast.ExistsSubqueryExpr)
+		c.Assert(ok, IsTrue)
+		c.Assert(exists.Not, Equals, tt.ok)
+	}
 }

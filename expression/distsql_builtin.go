@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
@@ -430,8 +430,12 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinJSONRemoveSig{base}
 	case tipb.ScalarFuncSig_JsonMergeSig:
 		f = &builtinJSONMergeSig{base}
+	case tipb.ScalarFuncSig_JsonContainsSig:
+		f = &builtinJSONContainsSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
 		f = &builtinLikeSig{base}
+	case tipb.ScalarFuncSig_JsonLengthSig:
+		f = &builtinJSONLengthSig{base}
 
 	case tipb.ScalarFuncSig_InInt:
 		f = &builtinInIntSig{base}
@@ -452,7 +456,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinDateFormatSig{base}
 
 	default:
-		e = errFunctionNotExists.GenByArgs("FUNCTION", sigCode)
+		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, errors.Trace(e)
 	}
 	return f, nil

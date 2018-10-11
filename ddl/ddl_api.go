@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -36,13 +35,14 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
+	"github.com/pkg/errors"
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) (err error) {
 	is := d.GetInformationSchema(ctx)
 	_, ok := is.SchemaByName(schema)
 	if ok {
-		return infoschema.ErrDatabaseExists.GenByArgs(schema)
+		return infoschema.ErrDatabaseExists.GenWithStackByArgs(schema)
 	}
 
 	if err = checkTooLongSchema(schema); err != nil {
@@ -99,21 +99,21 @@ func (d *ddl) DropSchema(ctx sessionctx.Context, schema model.CIStr) (err error)
 
 func checkTooLongSchema(schema model.CIStr) error {
 	if len(schema.L) > mysql.MaxDatabaseNameLength {
-		return ErrTooLongIdent.GenByArgs(schema)
+		return ErrTooLongIdent.GenWithStackByArgs(schema)
 	}
 	return nil
 }
 
 func checkTooLongTable(table model.CIStr) error {
 	if len(table.L) > mysql.MaxTableNameLength {
-		return ErrTooLongIdent.GenByArgs(table)
+		return ErrTooLongIdent.GenWithStackByArgs(table)
 	}
 	return nil
 }
 
 func checkTooLongIndex(index model.CIStr) error {
 	if len(index.L) > mysql.MaxIndexIdentifierLen {
-		return ErrTooLongIdent.GenByArgs(index)
+		return ErrTooLongIdent.GenWithStackByArgs(index)
 	}
 	return nil
 }
@@ -211,7 +211,7 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType) error {
 		}
 	} else {
 		if !charset.ValidCharsetAndCollation(tp.Charset, tp.Collate) {
-			return errUnsupportedCharset.GenByArgs(tp.Charset, tp.Collate)
+			return errUnsupportedCharset.GenWithStackByArgs(tp.Charset, tp.Collate)
 		}
 		if len(tp.Collate) == 0 {
 			var err error
@@ -270,11 +270,11 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 				value = `null`
 			}
 			sc := ctx.GetSessionVars().StmtCtx
-			sc.AppendWarning(errBlobCantHaveDefault.GenByArgs(col.Name.O))
+			sc.AppendWarning(errBlobCantHaveDefault.GenWithStackByArgs(col.Name.O))
 			return hasDefaultValue, value, nil
 		}
 		// In strict SQL mode or default value is not an empty string.
-		return hasDefaultValue, value, errBlobCantHaveDefault.GenByArgs(col.Name.O)
+		return hasDefaultValue, value, errBlobCantHaveDefault.GenWithStackByArgs(col.Name.O)
 	}
 	return hasDefaultValue, value, nil
 }
@@ -340,21 +340,23 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionDefaultValue:
 				value, err := getDefaultValue(ctx, v, colDef.Tp.Tp, colDef.Tp.Decimal)
 				if err != nil {
-					return nil, nil, ErrColumnBadNull.Gen("invalid default value - %s", err)
+					return nil, nil, ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 				}
 				if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 					return nil, nil, errors.Trace(err)
 				}
-				col.DefaultValue = value
+				if err = col.SetDefaultValue(value); err != nil {
+					return nil, nil, errors.Trace(err)
+				}
 				removeOnUpdateNowFlag(col)
 			case ast.ColumnOptionOnUpdate:
 				// TODO: Support other time functions.
 				if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
 					if !expression.IsCurrentTimestampExpr(v.Expr) {
-						return nil, nil, ErrInvalidOnUpdate.GenByArgs(col.Name)
+						return nil, nil, ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 					}
 				} else {
-					return nil, nil, ErrInvalidOnUpdate.GenByArgs(col.Name)
+					return nil, nil, ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 				}
 				col.Flag |= mysql.OnUpdateNowFlag
 				setOnUpdateNow = true
@@ -393,6 +395,12 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		// For Year field, it's charset is binary but does not have binary flag.
 		col.Flag &= ^mysql.BinaryFlag
 		col.Flag |= mysql.ZerofillFlag
+	}
+	// If you specify ZEROFILL for a numeric column, MySQL automatically adds the UNSIGNED attribute to the column.
+	// See https://dev.mysql.com/doc/refman/5.7/en/numeric-type-overview.html for more details.
+	// But some types like bit and year, won't show its unsigned flag in `show create table`.
+	if mysql.HasZerofillFlag(col.Flag) {
+		col.Flag |= mysql.UnsignedFlag
 	}
 	err := checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
 	if err != nil {
@@ -473,9 +481,9 @@ func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdate
 	// For timestamp Col, if is not set default value or not set null, use current timestamp.
 	if mysql.HasTimestampFlag(c.Flag) && mysql.HasNotNullFlag(c.Flag) {
 		if setOnUpdateNow {
-			c.DefaultValue = types.ZeroDatetimeStr
+			c.SetDefaultValue(types.ZeroDatetimeStr)
 		} else {
-			c.DefaultValue = strings.ToUpper(ast.CurrentTimestamp)
+			c.SetDefaultValue(strings.ToUpper(ast.CurrentTimestamp))
 		}
 	}
 }
@@ -500,9 +508,9 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 		return nil
 	}
 
-	if c.DefaultValue != nil {
+	if c.GetDefaultValue() != nil {
 		if _, err := table.GetColDefaultValue(ctx, c.ToInfo()); err != nil {
-			return types.ErrInvalidDefault.GenByArgs(c.Name)
+			return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 		}
 		return nil
 	}
@@ -513,7 +521,7 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 
 	// Set not null but default null is invalid.
 	if mysql.HasNotNullFlag(c.Flag) {
-		return types.ErrInvalidDefault.GenByArgs(c.Name)
+		return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 	}
 
 	return nil
@@ -522,8 +530,8 @@ func checkDefaultValue(ctx sessionctx.Context, c *table.Column, hasDefaultValue 
 // checkPriKeyConstraint check all parts of a PRIMARY KEY must be NOT NULL
 func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool, outPriKeyConstraint *ast.Constraint) error {
 	// Primary key should not be null.
-	if mysql.HasPriKeyFlag(col.Flag) && hasDefaultValue && col.DefaultValue == nil {
-		return types.ErrInvalidDefault.GenByArgs(col.Name)
+	if mysql.HasPriKeyFlag(col.Flag) && hasDefaultValue && col.GetDefaultValue() == nil {
+		return types.ErrInvalidDefault.GenWithStackByArgs(col.Name)
 	}
 	// Set primary key flag for outer primary key constraint.
 	// Such as: create table t1 (id int , age int, primary key(id))
@@ -548,7 +556,7 @@ func checkDuplicateColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		nameLower := colDef.Name.Name.L
 		if colNames[nameLower] {
-			return infoschema.ErrColumnExists.GenByArgs(colDef.Name.Name)
+			return infoschema.ErrColumnExists.GenWithStackByArgs(colDef.Name.Name)
 		}
 		colNames[nameLower] = true
 	}
@@ -584,7 +592,7 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 func checkTooLongColumn(colDefs []*ast.ColumnDef) error {
 	for _, colDef := range colDefs {
 		if len(colDef.Name.Name.O) > mysql.MaxColumnNameLength {
-			return ErrTooLongIdent.GenByArgs(colDef.Name.Name)
+			return ErrTooLongIdent.GenWithStackByArgs(colDef.Name.Name)
 		}
 	}
 	return nil
@@ -612,11 +620,11 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 	switch tp.Tp {
 	case mysql.TypeNewDecimal, mysql.TypeDouble, mysql.TypeFloat:
 		if tp.Flen < tp.Decimal {
-			return types.ErrMBiggerThanD.GenByArgs(colName)
+			return types.ErrMBiggerThanD.GenWithStackByArgs(colName)
 		}
 	case mysql.TypeDatetime, mysql.TypeDuration, mysql.TypeTimestamp:
 		if tp.Decimal != types.UnspecifiedFsp && (tp.Decimal < types.MinFsp || tp.Decimal > types.MaxFsp) {
-			return types.ErrTooBigPrecision.GenByArgs(tp.Decimal, colName, types.MaxFsp)
+			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.Decimal, colName, types.MaxFsp)
 		}
 	}
 	return nil
@@ -631,7 +639,7 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 		if foreign {
 			return infoschema.ErrCannotAddForeign
 		}
-		return ErrDupKeyName.Gen("duplicate key name %s", name)
+		return ErrDupKeyName.GenWithStack("duplicate key name %s", name)
 	}
 	namesMap[nameLower] = true
 	return nil
@@ -727,7 +735,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			fk.OnDelete = int(constr.Refer.OnDelete.ReferOpt)
 			fk.OnUpdate = int(constr.Refer.OnUpdate.ReferOpt)
 			if len(fk.Cols) != len(fk.RefCols) {
-				return nil, infoschema.ErrForeignKeyNotMatch.GenByArgs(tbInfo.Name.O)
+				return nil, infoschema.ErrForeignKeyNotMatch.GenWithStackByArgs(tbInfo.Name.O)
 			}
 			if len(fk.Cols) == 0 {
 				// TODO: In MySQL, this case will report a parse error.
@@ -741,11 +749,11 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			for _, key := range constr.Keys {
 				col = table.FindCol(cols, key.Column.Name.O)
 				if col == nil {
-					return nil, errKeyColumnDoesNotExits.Gen("key column %s doesn't exist in table", key.Column.Name)
+					return nil, errKeyColumnDoesNotExits.GenWithStack("key column %s doesn't exist in table", key.Column.Name)
 				}
 				// Virtual columns cannot be used in primary key.
 				if col.IsGenerated() && !col.GeneratedStored {
-					return nil, errUnsupportedOnGeneratedColumn.GenByArgs("Defining a virtual generated column as primary key")
+					return nil, errUnsupportedOnGeneratedColumn.GenWithStackByArgs("Defining a virtual generated column as primary key")
 				}
 			}
 			if len(constr.Keys) == 1 {
@@ -777,7 +785,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			idxInfo.Comment, err = validateCommentLength(ctx.GetSessionVars(),
 				constr.Option.Comment,
 				maxCommentLength,
-				errTooLongIndexComment.GenByArgs(idxInfo.Name.String(), maxCommentLength))
+				errTooLongIndexComment.GenWithStackByArgs(idxInfo.Name.String(), maxCommentLength))
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -801,22 +809,22 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	is := d.GetInformationSchema(ctx)
 	_, ok := is.SchemaByName(referIdent.Schema)
 	if !ok {
-		return infoschema.ErrTableNotExists.GenByArgs(referIdent.Schema, referIdent.Name)
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 	}
 	referTbl, err := is.TableByName(referIdent.Schema, referIdent.Name)
 	if err != nil {
-		return infoschema.ErrTableNotExists.GenByArgs(referIdent.Schema, referIdent.Name)
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 	}
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		if ifNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenByArgs(ident))
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
 			return nil
 		}
-		return infoschema.ErrTableExists.GenByArgs(ident)
+		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 
 	tblInfo := *referTbl.Meta()
@@ -850,14 +858,14 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 	is := d.GetInformationSchema(ctx)
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		if s.IfNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenByArgs(ident))
+			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
 			return nil
 		}
-		return infoschema.ErrTableExists.GenByArgs(ident)
+		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 	if err = checkTooLongTable(ident.Name); err != nil {
 		return errors.Trace(err)
@@ -899,29 +907,33 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	if pi != nil {
-		if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
-			return errors.Trace(err)
-		}
+	if pi != nil && pi.Type == model.PartitionTypeRange {
+		// Only range type partition is now supported.
+		// Range columns partition only implements the parser, so it will not be checked.
+		if s.Partition.ColumnNames == nil {
+			if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkCreatePartitionValue(ctx, tbInfo, pi); err != nil {
-			return errors.Trace(err)
-		}
+			if err = checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
-			return errors.Trace(err)
-		}
+			if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-			return errors.Trace(err)
-		}
+			if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
-			return errors.Trace(err)
-		}
+			if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
+				return errors.Trace(err)
+			}
 
-		if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
-			return errors.Trace(err)
+			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+				return errors.Trace(err)
+			}
 		}
 		tbInfo.Partition = pi
 	}
@@ -961,7 +973,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 func checkCharsetAndCollation(cs string, co string) error {
 	if !charset.ValidCharsetAndCollation(cs, co) {
-		return ErrUnknownCharacterSet.GenByArgs(cs)
+		return ErrUnknownCharacterSet.GenWithStackByArgs(cs)
 	}
 	return nil
 }
@@ -996,6 +1008,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.Charset = op.StrValue
 		case ast.TableOptionCollate:
 			tbInfo.Collate = op.StrValue
+		case ast.TableOptionCompression:
+			tbInfo.Compression = op.StrValue
 		case ast.TableOptionShardRowID:
 			if hasAutoIncrementColumn(tbInfo) && op.UintValue != 0 {
 				return errUnsupportedShardRowIDBits
@@ -1066,7 +1080,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			case ast.ConstraintForeignKey:
 				err = d.CreateForeignKey(ctx, ident, model.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
-				err = ErrUnsupportedModifyPrimaryKey.GenByArgs("add")
+				err = ErrUnsupportedModifyPrimaryKey.GenWithStackByArgs("add")
 			default:
 				// Nothing to do now.
 			}
@@ -1082,7 +1096,7 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			err = d.RenameTable(ctx, ident, newIdent)
 		case ast.AlterTableDropPrimaryKey:
-			err = ErrUnsupportedModifyPrimaryKey.GenByArgs("drop")
+			err = ErrUnsupportedModifyPrimaryKey.GenWithStackByArgs("drop")
 		case ast.AlterTableRenameIndex:
 			err = d.RenameIndex(ctx, ident, spec)
 		case ast.AlterTableOption:
@@ -1119,11 +1133,11 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	is := d.GetInformationSchema(ctx)
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 	t, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 	autoIncID, err := t.Allocator(ctx).NextGlobalAutoID(t.Meta().ID)
 	if err != nil {
@@ -1167,11 +1181,11 @@ func (d *ddl) getSchemaAndTableByIdent(ctx sessionctx.Context, tableIdent ast.Id
 	is := d.GetInformationSchema(ctx)
 	schema, ok := is.SchemaByName(tableIdent.Schema)
 	if !ok {
-		return nil, nil, infoschema.ErrDatabaseNotExists.GenByArgs(tableIdent.Schema)
+		return nil, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(tableIdent.Schema)
 	}
 	t, err = is.TableByName(tableIdent.Schema, tableIdent.Name)
 	if err != nil {
-		return nil, nil, infoschema.ErrTableNotExists.GenByArgs(tableIdent.Schema, tableIdent.Name)
+		return nil, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableIdent.Schema, tableIdent.Name)
 	}
 	return schema, t, nil
 }
@@ -1180,7 +1194,7 @@ func checkColumnConstraint(constraints []*ast.ColumnOption) error {
 	for _, constraint := range constraints {
 		switch constraint.Tp {
 		case ast.ColumnOptionAutoIncrement, ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return errUnsupportedAddColumn.Gen("unsupported add column constraint - %v", constraint.Tp)
+			return errUnsupportedAddColumn.GenWithStack("unsupported add column constraint - %v", constraint.Tp)
 		}
 	}
 
@@ -1208,7 +1222,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
 		return errors.Trace(err)
@@ -1216,7 +1230,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	// Check whether added column has existed.
 	col := table.FindCol(t.Cols(), colName)
 	if col != nil {
-		return infoschema.ErrColumnExists.GenByArgs(colName)
+		return infoschema.ErrColumnExists.GenWithStackByArgs(colName)
 	}
 
 	// If new column is a generated column, do validation.
@@ -1237,7 +1251,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	}
 
 	if len(colName) > mysql.MaxColumnNameLength {
-		return ErrTooLongIdent.GenByArgs(colName)
+		return ErrTooLongIdent.GenWithStackByArgs(colName)
 	}
 
 	// Ingore table constraints now, maybe return error later.
@@ -1247,7 +1261,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	col.OriginDefaultValue = col.DefaultValue
+	col.OriginDefaultValue = col.GetDefaultValue()
 	if col.OriginDefaultValue == nil && mysql.HasNotNullFlag(col.Flag) {
 		zeroVal := table.GetZeroValue(col.ToInfo())
 		col.OriginDefaultValue, err = zeroVal.ToString()
@@ -1283,11 +1297,11 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(schema))
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
 	}
 	t, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
 	meta := t.Meta()
@@ -1331,11 +1345,11 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return errors.Trace(infoschema.ErrDatabaseNotExists.GenByArgs(schema))
+		return errors.Trace(infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schema))
 	}
 	t, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 	meta := t.Meta()
 	if meta.GetPartitionInfo() == nil {
@@ -1371,13 +1385,13 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 	}
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
 	// Check whether dropped column has existed.
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
-		return ErrCantDropFieldOrKey.Gen("column %s doesn't exist", colName)
+		return ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
 
 	tblInfo := t.Meta()
@@ -1409,25 +1423,25 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, colName model.CIS
 func modifiable(origin *types.FieldType, to *types.FieldType) error {
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
-		return errUnsupportedModifyColumn.GenByArgs(msg)
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
-		return errUnsupportedModifyColumn.GenByArgs(msg)
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	if to.Charset != origin.Charset {
 		msg := fmt.Sprintf("charset %s not match origin %s", to.Charset, origin.Charset)
-		return errUnsupportedModifyColumn.GenByArgs(msg)
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	if to.Collate != origin.Collate {
 		msg := fmt.Sprintf("collate %s not match origin %s", to.Collate, origin.Collate)
-		return errUnsupportedModifyColumn.GenByArgs(msg)
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
 		msg := fmt.Sprintf("unsigned %v not match origin %v", toUnsigned, originUnsigned)
-		return errUnsupportedModifyColumn.GenByArgs(msg)
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
@@ -1443,22 +1457,40 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 			return nil
 		}
 	case mysql.TypeEnum:
-		return errUnsupportedModifyColumn.GenByArgs("modify enum column is not supported")
+		if origin.Tp == to.Tp {
+			if len(to.Elems) < len(origin.Elems) {
+				msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
+				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			}
+			for index, originElem := range origin.Elems {
+				toElem := to.Elems[index]
+				if originElem != toElem {
+					msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
+					return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				}
+			}
+			return nil
+		}
+		msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
+		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	default:
 		if origin.Tp == to.Tp {
 			return nil
 		}
 	}
 	msg := fmt.Sprintf("type %v not match origin %v", to.Tp, origin.Tp)
-	return errUnsupportedModifyColumn.GenByArgs(msg)
+	return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 }
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) error {
 	value, err := getDefaultValue(ctx, option, col.Tp, col.Decimal)
 	if err != nil {
-		return ErrColumnBadNull.Gen("invalid default value - %s", err)
+		return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 	}
-	col.DefaultValue = value
+	err = col.SetDefaultValue(value)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return errors.Trace(checkDefaultValue(ctx, col, true))
 }
 
@@ -1482,12 +1514,14 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionDefaultValue:
 			value, err := getDefaultValue(ctx, opt, col.Tp, col.Decimal)
 			if err != nil {
-				return ErrColumnBadNull.Gen("invalid default value - %s", err)
+				return ErrColumnBadNull.GenWithStack("invalid default value - %s", err)
 			}
 			if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
 				return errors.Trace(err)
 			}
-			col.DefaultValue = value
+			if err = col.SetDefaultValue(value); err != nil {
+				return errors.Trace(err)
+			}
 		case ast.ColumnOptionComment:
 			err := setColumnComment(ctx, col, opt)
 			if err != nil {
@@ -1500,15 +1534,15 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 		case ast.ColumnOptionAutoIncrement:
 			col.Flag |= mysql.AutoIncrementFlag
 		case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-			return errUnsupportedModifyColumn.Gen("unsupported modify column constraint - %v", opt.Tp)
+			return errUnsupportedModifyColumn.GenWithStack("unsupported modify column constraint - %v", opt.Tp)
 		case ast.ColumnOptionOnUpdate:
 			// TODO: Support other time functions.
 			if col.Tp == mysql.TypeTimestamp || col.Tp == mysql.TypeDatetime {
 				if !expression.IsCurrentTimestampExpr(opt.Expr) {
-					return ErrInvalidOnUpdate.GenByArgs(col.Name)
+					return ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 				}
 			} else {
-				return ErrInvalidOnUpdate.GenByArgs(col.Name)
+				return ErrInvalidOnUpdate.GenWithStackByArgs(col.Name)
 			}
 			col.Flag |= mysql.OnUpdateNowFlag
 			setOnUpdateNow = true
@@ -1523,7 +1557,7 @@ func setDefaultAndComment(ctx sessionctx.Context, col *table.Column, options []*
 			}
 		default:
 			// TODO: Support other types.
-			return errors.Trace(errUnsupportedModifyColumn.GenByArgs(opt.Tp))
+			return errors.Trace(errUnsupportedModifyColumn.GenWithStackByArgs(opt.Tp))
 		}
 	}
 
@@ -1550,19 +1584,19 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 	t, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
-		return nil, errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+		return nil, errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
 	col := table.FindCol(t.Cols(), originalColName.L)
 	if col == nil {
-		return nil, infoschema.ErrColumnNotExists.GenByArgs(originalColName, ident.Name)
+		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name)
 	}
 	newColName := specNewColumn.Name.Name
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newColName.L != originalColName.L {
 		c := table.FindCol(t.Cols(), newColName.L)
 		if c != nil {
-			return nil, infoschema.ErrColumnExists.GenByArgs(newColName)
+			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(newColName)
 		}
 	}
 
@@ -1615,12 +1649,12 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 
 	// We don't support modifying column from not_auto_increment to auto_increment.
 	if !mysql.HasAutoIncrementFlag(col.Flag) && mysql.HasAutoIncrementFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenByArgs("set auto_increment")
+		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("set auto_increment")
 	}
 
 	// We don't support modifying the type definitions from 'null' to 'not null' now.
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenByArgs("null to not null")
+		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("null to not null")
 	}
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(t.Cols(), col, newCol); err != nil {
@@ -1643,16 +1677,16 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 func (d *ddl) ChangeColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
-		return ErrWrongDBName.GenByArgs(specNewColumn.Name.Schema.O)
+		return ErrWrongDBName.GenWithStackByArgs(specNewColumn.Name.Schema.O)
 	}
 	if len(spec.OldColumnName.Schema.O) != 0 && ident.Schema.L != spec.OldColumnName.Schema.L {
-		return ErrWrongDBName.GenByArgs(spec.OldColumnName.Schema.O)
+		return ErrWrongDBName.GenWithStackByArgs(spec.OldColumnName.Schema.O)
 	}
 	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
-		return ErrWrongTableName.GenByArgs(specNewColumn.Name.Table.O)
+		return ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
 	}
 	if len(spec.OldColumnName.Table.O) != 0 && ident.Name.L != spec.OldColumnName.Table.L {
-		return ErrWrongTableName.GenByArgs(spec.OldColumnName.Table.O)
+		return ErrWrongTableName.GenWithStackByArgs(spec.OldColumnName.Table.O)
 	}
 
 	job, err := d.getModifiableColumnJob(ctx, ident, spec.OldColumnName.Name, spec)
@@ -1670,10 +1704,10 @@ func (d *ddl) ChangeColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 func (d *ddl) ModifyColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
 	specNewColumn := spec.NewColumns[0]
 	if len(specNewColumn.Name.Schema.O) != 0 && ident.Schema.L != specNewColumn.Name.Schema.L {
-		return ErrWrongDBName.GenByArgs(specNewColumn.Name.Schema.O)
+		return ErrWrongDBName.GenWithStackByArgs(specNewColumn.Name.Schema.O)
 	}
 	if len(specNewColumn.Name.Table.O) != 0 && ident.Name.L != specNewColumn.Name.Table.L {
-		return ErrWrongTableName.GenByArgs(specNewColumn.Name.Table.O)
+		return ErrWrongTableName.GenWithStackByArgs(specNewColumn.Name.Table.O)
 	}
 
 	originalColName := specNewColumn.Name.Name
@@ -1692,24 +1726,27 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name)
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name)
 	}
 	t, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
-		return infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name)
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name)
 	}
 
 	colName := specNewColumn.Name.Name
 	// Check whether alter column has existed.
 	col := table.FindCol(t.Cols(), colName.L)
 	if col == nil {
-		return errBadField.GenByArgs(colName, ident.Name)
+		return errBadField.GenWithStackByArgs(colName, ident.Name)
 	}
 
 	// Clean the NoDefaultValueFlag value.
 	col.Flag &= ^mysql.NoDefaultValueFlag
 	if len(specNewColumn.Options) == 0 {
-		col.DefaultValue = nil
+		err = col.SetDefaultValue(nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		setNoDefaultValueFlag(col, false)
 	} else {
 		err = setDefaultValue(ctx, col, specNewColumn.Options[0])
@@ -1736,12 +1773,12 @@ func (d *ddl) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, spec *a
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
 	tb, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
 	job := &model.Job{
@@ -1764,12 +1801,12 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(ident.Schema)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 
 	tb, err := is.TableByName(ident.Schema, ident.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ident.Schema, ident.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 	duplicate, err := validateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
 	if duplicate {
@@ -1797,12 +1834,12 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	is := d.GetInformationSchema(ctx)
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
 	}
 
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
 	job := &model.Job{
@@ -1821,11 +1858,11 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	is := d.GetInformationSchema(ctx)
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
 	}
 	tb, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 	newTableID, err := d.genGlobalID()
 	if err != nil {
@@ -1847,11 +1884,11 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) 
 	is := d.GetInformationSchema(ctx)
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
 	if !ok {
-		return errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name)
+		return errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	oldTbl, err := is.TableByName(oldIdent.Schema, oldIdent.Name)
 	if err != nil {
-		return errFileNotFound.GenByArgs(oldIdent.Schema, oldIdent.Name)
+		return errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
 		// oldIdent is equal to newIdent, do nothing
@@ -1859,10 +1896,10 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident) 
 	}
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
 	if !ok {
-		return errErrorOnRename.GenByArgs(oldIdent.Schema, oldIdent.Name, newIdent.Schema, newIdent.Name)
+		return errErrorOnRename.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name, newIdent.Schema, newIdent.Name)
 	}
 	if is.TableExists(newIdent.Schema, newIdent.Name) {
-		return infoschema.ErrTableExists.GenByArgs(newIdent)
+		return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 	}
 
 	job := &model.Job{
@@ -1897,11 +1934,11 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
 	}
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
 	// Deal with anonymous index.
@@ -1910,7 +1947,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 	}
 
 	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo != nil {
-		return ErrDupKeyName.Gen("index already exist %s", indexName)
+		return ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
 	if err = checkTooLongIndex(indexName); err != nil {
@@ -1922,7 +1959,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, unique bool, ind
 		indexOption.Comment, err = validateCommentLength(ctx.GetSessionVars(),
 			indexOption.Comment,
 			maxCommentLength,
-			errTooLongIndexComment.GenByArgs(indexName.String(), maxCommentLength))
+			errTooLongIndexComment.GenWithStackByArgs(indexName.String(), maxCommentLength))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1968,12 +2005,12 @@ func (d *ddl) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName mode
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
 	fkInfo, err := buildFKInfo(fkName, keys, refer)
@@ -1999,12 +2036,12 @@ func (d *ddl) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName model.
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenByArgs(ti.Schema)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ti.Schema)
 	}
 
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
 	job := &model.Job{
@@ -2028,11 +2065,11 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 	}
 	t, err := is.TableByName(ti.Schema, ti.Name)
 	if err != nil {
-		return errors.Trace(infoschema.ErrTableNotExists.GenByArgs(ti.Schema, ti.Name))
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
 	if indexInfo := findIndexByName(indexName.L, t.Meta().Indices); indexInfo == nil {
-		return ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
+		return ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
 	job := &model.Job{
@@ -2053,18 +2090,18 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 	for _, col := range tblInfo.Columns {
 		for dep := range col.Dependences {
 			if dep == colName.L {
-				return errDependentByGeneratedColumn.GenByArgs(dep)
+				return errDependentByGeneratedColumn.GenWithStackByArgs(dep)
 			}
 		}
 	}
 	if len(tblInfo.Columns) == 1 {
-		return ErrCantRemoveAllFields.Gen("can't drop only column %s in table %s",
+		return ErrCantRemoveAllFields.GenWithStack("can't drop only column %s in table %s",
 			colName, tblInfo.Name)
 	}
 	// We don't support dropping column with index covered now.
 	// We must drop the index first, then drop the column.
 	if isColumnWithIndex(colName.L, tblInfo.Indices) {
-		return errCantDropColWithIndex.Gen("can't drop column %s with index covered now", colName)
+		return errCantDropColWithIndex.GenWithStack("can't drop column %s with index covered now", colName)
 	}
 	return nil
 }
@@ -2100,7 +2137,7 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 					continue
 				}
 				buf.Reset()
-				return nil, infoschema.ErrColumnNotExists.GenByArgs(buf.String(), "partition function")
+				return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(buf.String(), "partition function")
 			}
 		}
 		pid, err1 := d.genGlobalID()

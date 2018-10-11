@@ -27,7 +27,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/text/transform"
 )
@@ -597,7 +597,7 @@ func (b *builtinRepeatSig) evalString(row chunk.Row) (d string, isNull bool, err
 	}
 
 	if uint64(byteLength)*uint64(num) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("repeat", b.maxAllowedPacket))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("repeat", b.maxAllowedPacket))
 		return "", true, nil
 	}
 
@@ -756,7 +756,7 @@ func (b *builtinSpaceSig) evalString(row chunk.Row) (d string, isNull bool, err 
 		x = 0
 	}
 	if uint64(x) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("space", b.maxAllowedPacket))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("space", b.maxAllowedPacket))
 		return d, true, nil
 	}
 	if x > mysql.MaxBlobWidth {
@@ -955,7 +955,7 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 
 	encoding, _ := charset.Lookup(charsetName)
 	if encoding == nil {
-		return "", true, errUnknownCharacterSet.GenByArgs(charsetName)
+		return "", true, errUnknownCharacterSet.GenWithStackByArgs(charsetName)
 	}
 
 	target, _, err := transform.String(encoding.NewDecoder(), expr)
@@ -1210,6 +1210,11 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 	} else {
 		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
 		count = -count
+		if count < 0 {
+			// -count overflows max int64, returns an empty string.
+			return "", false, nil
+		}
+
 		if count < end {
 			start = end - count
 		}
@@ -1833,7 +1838,7 @@ func (b *builtinLpadBinarySig) evalString(row chunk.Row) (string, bool, error) {
 	targetLength := int(length)
 
 	if uint64(targetLength) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("lpad", b.maxAllowedPacket))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("lpad", b.maxAllowedPacket))
 		return "", true, nil
 	}
 
@@ -1882,7 +1887,7 @@ func (b *builtinLpadSig) evalString(row chunk.Row) (string, bool, error) {
 	targetLength := int(length)
 
 	if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("lpad", b.maxAllowedPacket))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("lpad", b.maxAllowedPacket))
 		return "", true, nil
 	}
 
@@ -1960,7 +1965,7 @@ func (b *builtinRpadBinarySig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	targetLength := int(length)
 	if uint64(targetLength) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("rpad", b.maxAllowedPacket))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("rpad", b.maxAllowedPacket))
 		return "", true, nil
 	}
 
@@ -2009,7 +2014,7 @@ func (b *builtinRpadSig) evalString(row chunk.Row) (string, bool, error) {
 	targetLength := int(length)
 
 	if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("rpad", b.maxAllowedPacket))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("rpad", b.maxAllowedPacket))
 		return "", true, nil
 	}
 
@@ -3045,7 +3050,7 @@ func (b *builtinFromBase64Sig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, nil
 	}
 	if needDecodeLen > int(b.maxAllowedPacket) {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("from_base64", b.maxAllowedPacket))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("from_base64", b.maxAllowedPacket))
 		return "", true, nil
 	}
 
@@ -3127,7 +3132,7 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 		return "", true, nil
 	}
 	if needEncodeLen > int(b.maxAllowedPacket) {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenByArgs("to_base64", b.maxAllowedPacket))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("to_base64", b.maxAllowedPacket))
 		return "", true, nil
 	}
 	if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
@@ -3170,21 +3175,30 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	bf.tp.Flen = mysql.MaxBlobWidth
 	SetBinFlagOrBinStr(args[0].GetType(), bf.tp)
 	SetBinFlagOrBinStr(args[3].GetType(), bf.tp)
+
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	if types.IsBinaryStr(args[0].GetType()) {
-		sig = &builtinInsertBinarySig{bf}
+		sig = &builtinInsertBinarySig{bf, maxAllowedPacket}
 	} else {
-		sig = &builtinInsertSig{bf}
+		sig = &builtinInsertSig{bf, maxAllowedPacket}
 	}
 	return sig, nil
 }
 
 type builtinInsertBinarySig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinInsertBinarySig) Clone() builtinFunc {
 	newSig := &builtinInsertBinarySig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -3216,18 +3230,26 @@ func (b *builtinInsertBinarySig) evalString(row chunk.Row) (string, bool, error)
 	}
 
 	if length > strLength-pos+1 || length < 0 {
-		return str[0:pos-1] + newstr, false, nil
+		length = strLength - pos + 1
 	}
+
+	if uint64(strLength-length+int64(len(newstr))) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("insert", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
 	return str[0:pos-1] + newstr + str[pos+length-1:], false, nil
 }
 
 type builtinInsertSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinInsertSig) Clone() builtinFunc {
 	newSig := &builtinInsertSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -3260,9 +3282,16 @@ func (b *builtinInsertSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	if length > runeLength-pos+1 || length < 0 {
-		return string(runes[0:pos-1]) + newstr, false, nil
+		length = runeLength - pos + 1
 	}
-	return string(runes[0:pos-1]) + newstr + string(runes[pos+length-1:]), false, nil
+
+	strHead := string(runes[0 : pos-1])
+	strTail := string(runes[pos+length-1:])
+	if uint64(len(strHead)+len(newstr)+len(strTail)) > b.maxAllowedPacket {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("insert", b.maxAllowedPacket))
+		return "", true, nil
+	}
+	return strHead + newstr + strTail, false, nil
 }
 
 type instrFunctionClass struct {
@@ -3346,5 +3375,5 @@ type loadFileFunctionClass struct {
 }
 
 func (c *loadFileFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "load_file")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "load_file")
 }

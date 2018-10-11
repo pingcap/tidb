@@ -17,13 +17,13 @@ import (
 	"encoding/binary"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 // First byte in the encoded value which specifies the encoding type.

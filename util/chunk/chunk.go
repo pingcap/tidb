@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"unsafe"
 
+	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -30,22 +31,69 @@ type Chunk struct {
 	// numVirtualRows indicates the number of virtual rows, which have zero column.
 	// It is used only when this Chunk doesn't hold any data, i.e. "len(columns)==0".
 	numVirtualRows int
+	// capacity indicates the max number of rows this chunk can hold.
+	capacity int
 }
 
 // Capacity constants.
 const (
 	InitialCapacity = 32
+	ZeroCapacity    = 0
 )
 
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
 func NewChunkWithCapacity(fields []*types.FieldType, cap int) *Chunk {
+	return New(fields, cap, cap) //FIXME: in following PR.
+}
+
+// New creates a new chunk.
+//  cap: the limit for the max number of rows.
+//  maxChunkSize: the max limit for the number of rows.
+func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	chk := new(Chunk)
 	chk.columns = make([]*column, 0, len(fields))
-	chk.numVirtualRows = 0
+	chk.capacity = mathutil.Min(cap, maxChunkSize)
 	for _, f := range fields {
-		chk.addColumnByFieldType(f, cap)
+		elemLen := getFixedLen(f)
+		if elemLen == varElemLen {
+			chk.columns = append(chk.columns, newVarLenColumn(chk.capacity, nil))
+		} else {
+			chk.columns = append(chk.columns, newFixedLenColumn(elemLen, chk.capacity))
+		}
 	}
+	chk.numVirtualRows = 0
 	return chk
+}
+
+// Renew creates a new Chunk based on an existing Chunk. The newly created Chunk
+// has the same data schema with the old Chunk. The capacity of the new Chunk
+// might be doubled based on the capacity of the old Chunk and the maxChunkSize.
+//  chk: old chunk(often used in previous call).
+//  maxChunkSize: the limit for the max number of rows.
+func Renew(chk *Chunk, maxChunkSize int) *Chunk {
+	newChk := new(Chunk)
+	if chk.columns == nil {
+		return newChk
+	}
+	newCap := reCalcCapacity(chk, maxChunkSize)
+	newChk.columns = renewColumns(chk.columns, newCap)
+	newChk.numVirtualRows = 0
+	newChk.capacity = newCap
+	return newChk
+}
+
+// renewColumns creates the columns of a Chunk. The capacity of the newly
+// created columns is equal to cap.
+func renewColumns(oldCol []*column, cap int) []*column {
+	columns := make([]*column, 0, len(oldCol))
+	for _, col := range oldCol {
+		if col.isFixed() {
+			columns = append(columns, newFixedLenColumn(len(col.elemBuf), cap))
+		} else {
+			columns = append(columns, newVarLenColumn(cap, col))
+		}
+	}
+	return columns
 }
 
 // MemoryUsage returns the total memory usage of a Chunk in B.
@@ -59,32 +107,29 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 	return
 }
 
-// addFixedLenColumn adds a fixed length column with elemLen and initial data capacity.
-func (c *Chunk) addFixedLenColumn(elemLen, initCap int) {
-	c.columns = append(c.columns, &column{
+// newFixedLenColumn creates a fixed length column with elemLen and initial data capacity.
+func newFixedLenColumn(elemLen, cap int) *column {
+	return &column{
 		elemBuf:    make([]byte, elemLen),
-		data:       make([]byte, 0, initCap*elemLen),
-		nullBitmap: make([]byte, 0, initCap>>3),
-	})
-}
-
-// addVarLenColumn adds a variable length column with initial data capacity.
-func (c *Chunk) addVarLenColumn(initCap int) {
-	c.columns = append(c.columns, &column{
-		offsets:    make([]int32, 1, initCap+1),
-		data:       make([]byte, 0, initCap*4),
-		nullBitmap: make([]byte, 0, initCap>>3),
-	})
-}
-
-// addColumnByFieldType adds a column by field type.
-func (c *Chunk) addColumnByFieldType(fieldTp *types.FieldType, initCap int) {
-	numFixedBytes := getFixedLen(fieldTp)
-	if numFixedBytes != -1 {
-		c.addFixedLenColumn(numFixedBytes, initCap)
-		return
+		data:       make([]byte, 0, cap*elemLen),
+		nullBitmap: make([]byte, 0, cap>>3),
 	}
-	c.addVarLenColumn(initCap)
+}
+
+// newVarLenColumn creates a variable length column with initial data capacity.
+func newVarLenColumn(cap int, old *column) *column {
+	estimatedElemLen := 8
+	// For varLenColumn (e.g. varchar), the accurate length of an element is unknown.
+	// Therefore, in the first executor.Next we use an experience value -- 8 (so it may make runtime.growslice)
+	// but in the following Next call we estimate the length as AVG x 1.125 elemLen of the previous call.
+	if old != nil && old.length != 0 {
+		estimatedElemLen = (len(old.data) + len(old.data)/8) / old.length
+	}
+	return &column{
+		offsets:    make([]int32, 1, cap+1),
+		data:       make([]byte, 0, cap*estimatedElemLen),
+		nullBitmap: make([]byte, 0, cap>>3),
+	}
 }
 
 // MakeRef makes column in "dstColIdx" reference to column in "srcColIdx".
@@ -92,9 +137,47 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 	c.columns[dstColIdx] = c.columns[srcColIdx]
 }
 
-// SwapColumn swaps column "c.columns[colIdx]" with column "other.columns[otherIdx]".
+// SwapColumn swaps column "c.columns[colIdx]" with column
+// "other.columns[otherIdx]". If there exists columns refer to the column to be
+// swapped, we need to re-build the reference.
 func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
+	// Find the leftmost column of the reference which is the actual column to
+	// be swapped.
+	for i := 0; i < colIdx; i++ {
+		if c.columns[i] == c.columns[colIdx] {
+			colIdx = i
+		}
+	}
+	for i := 0; i < otherIdx; i++ {
+		if other.columns[i] == other.columns[otherIdx] {
+			otherIdx = i
+		}
+	}
+
+	// Find the columns which refer to the actual column to be swapped.
+	refColsIdx := make([]int, 0, len(c.columns)-colIdx)
+	for i := colIdx; i < len(c.columns); i++ {
+		if c.columns[i] == c.columns[colIdx] {
+			refColsIdx = append(refColsIdx, i)
+		}
+	}
+	refColsIdx4Other := make([]int, 0, len(other.columns)-otherIdx)
+	for i := otherIdx; i < len(other.columns); i++ {
+		if other.columns[i] == other.columns[otherIdx] {
+			refColsIdx4Other = append(refColsIdx4Other, i)
+		}
+	}
+
+	// Swap columns from two chunks.
 	c.columns[colIdx], other.columns[otherIdx] = other.columns[otherIdx], c.columns[colIdx]
+
+	// Rebuild the reference.
+	for _, i := range refColsIdx {
+		c.MakeRef(colIdx, i)
+	}
+	for _, i := range refColsIdx4Other {
+		other.MakeRef(otherIdx, i)
+	}
 }
 
 // SwapColumns swaps columns with another Chunk.
@@ -112,10 +195,44 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
-	for _, c := range c.columns {
-		c.reset()
+	if c.columns == nil {
+		return
+	}
+	for _, col := range c.columns {
+		col.reset()
 	}
 	c.numVirtualRows = 0
+}
+
+// GrowAndReset resets the Chunk and doubles the capacity of the Chunk.
+// The doubled capacity should not be larger than maxChunkSize.
+// TODO: this method will be used in following PR.
+func (c *Chunk) GrowAndReset(maxChunkSize int) {
+	if c.columns == nil {
+		return
+	}
+	newCap := reCalcCapacity(c, maxChunkSize)
+	if newCap <= c.capacity {
+		c.Reset()
+		return
+	}
+	c.capacity = newCap
+	c.columns = renewColumns(c.columns, newCap)
+	c.numVirtualRows = 0
+}
+
+// reCalcCapacity calculates the capacity for another Chunk based on the current
+// Chunk. The new capacity is doubled only when the current Chunk is full.
+func reCalcCapacity(c *Chunk, maxChunkSize int) int {
+	if c.NumRows() < c.capacity {
+		return c.capacity
+	}
+	return mathutil.Min(c.capacity*2, maxChunkSize)
+}
+
+// Capacity returns the capacity of the Chunk.
+func (c *Chunk) Capacity() int {
+	return c.capacity
 }
 
 // NumCols returns the number of columns in the chunk.

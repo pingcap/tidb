@@ -14,7 +14,6 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -32,16 +32,6 @@ type InsertExec struct {
 	OnDuplicate []*expression.Assignment
 	Priority    mysql.PriorityEnum
 	finished    bool
-}
-
-func (e *InsertExec) insertOneRow(row []types.Datum) (int64, error) {
-	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
-	h, err := e.Table.AddRecord(e.ctx, row, false)
-	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return h, nil
 }
 
 func (e *InsertExec) exec(rows [][]types.Datum) error {
@@ -67,19 +57,16 @@ func (e *InsertExec) exec(rows [][]types.Datum) error {
 			return errors.Trace(err)
 		}
 	} else if ignoreErr {
-		err := e.batchCheckAndInsert(rows, e.insertOneRow)
+		err := e.batchCheckAndInsert(rows, e.addRecord)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else {
 		for _, row := range rows {
-			if _, err := e.insertOneRow(row); err != nil {
+			if _, err := e.addRecord(row); err != nil {
 				return errors.Trace(err)
 			}
 		}
-	}
-	if e.lastInsertID != 0 {
-		sessVars.SetLastInsertID(e.lastInsertID)
 	}
 	e.finished = true
 	return nil
@@ -131,7 +118,7 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 		// and key-values should be filled back to dupOldRowValues for the further row check,
 		// due to there may be duplicate keys inside the insert statement.
 		if newRows[i] != nil {
-			newHandle, err := e.insertOneRow(newRows[i])
+			newHandle, err := e.addRecord(newRows[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -191,7 +178,7 @@ func (e *InsertExec) updateDupRow(row toBeCheckedRow, handle int64, onDuplicate 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.updateDupKeyValues(row, handle, newHandle, handleChanged, updatedRow)
+	return e.updateDupKeyValues(handle, newHandle, handleChanged, oldRow, updatedRow)
 }
 
 // doDupRowUpdate updates the duplicate row.
@@ -220,26 +207,27 @@ func (e *InsertExec) doDupRowUpdate(handle int64, oldRow []types.Datum, newRow [
 	}
 
 	newData := row4Update[:len(oldRow)]
-	_, handleChanged, newHandle, lastInsertID, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
+	_, handleChanged, newHandle, err := updateRecord(e.ctx, handle, oldRow, newData, assignFlag, e.Table, true)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
-	}
-	if lastInsertID != 0 {
-		e.lastInsertID = lastInsertID
 	}
 	return newData, handleChanged, newHandle, nil
 }
 
 // updateDupKeyValues updates the dupKeyValues for further duplicate key check.
-func (e *InsertExec) updateDupKeyValues(row toBeCheckedRow, oldHandle int64,
-	newHandle int64, handleChanged bool, updatedRow []types.Datum) error {
+func (e *InsertExec) updateDupKeyValues(oldHandle int64, newHandle int64,
+	handleChanged bool, oldRow []types.Datum, updatedRow []types.Datum) error {
 	// There is only one row per update.
 	fillBackKeysInRows, err := e.getKeysNeedCheck(e.ctx, e.Table, [][]types.Datum{updatedRow})
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Delete old keys and fill back new key-values of the updated row.
-	e.deleteDupKeys(row)
+	err = e.deleteDupKeys(e.ctx, e.Table, [][]types.Datum{oldRow})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	if handleChanged {
 		delete(e.dupOldRowValues, string(e.Table.RecordKey(oldHandle)))
 		e.fillBackKeys(e.Table, fillBackKeysInRows[0], newHandle)

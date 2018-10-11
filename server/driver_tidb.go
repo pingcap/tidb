@@ -17,16 +17,17 @@ import (
 	"crypto/tls"
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -324,6 +325,11 @@ func (tc *TiDBContext) ShowProcess() util.ProcessInfo {
 	return tc.session.ShowProcess()
 }
 
+// GetSessionVars return SessionVars.
+func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
+	return tc.session.GetSessionVars()
+}
+
 type tidbResultSet struct {
 	recordSet ast.RecordSet
 	columns   []*ColumnInfo
@@ -391,7 +397,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 			// Consider the decimal point.
 			ci.ColumnLength++
 		}
-	} else if fld.Column.Tp != mysql.TypeBit && fld.Column.Tp != mysql.TypeTiny {
+	} else if types.IsString(fld.Column.Tp) {
 		// Fix issue #4540.
 		// The flen is a hint, not a precise value, so most client will not use the value.
 		// But we found in rare MySQL client, like Navicat for MySQL(version before 12) will truncate
@@ -403,6 +409,8 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 		// * Utf-8, the multiple is 3
 		// * utf8mb4, the multiple is 4
 		// So the large enough multiple is 4 in here.
+		// We used to check non-string types to avoid the truncation problem in some MySQL
+		// client such as Navicat. Now we only allow string type enter this branch.
 		ci.ColumnLength = ci.ColumnLength * mysql.MaxBytesOfCharacter
 	}
 

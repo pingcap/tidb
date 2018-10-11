@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 )
 
 func (s *testEvaluatorSuite) TestLength(c *C) {
@@ -1415,6 +1415,51 @@ func (s *testEvaluatorSuite) TestRpadSig(c *C) {
 	c.Assert(err, IsNil)
 
 	res, isNull, err = rpad.evalString(input.GetRow(1))
+	c.Assert(res, Equals, "")
+	c.Assert(isNull, IsTrue)
+	c.Assert(err, IsNil)
+
+	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(len(warnings), Equals, 1)
+	lastWarn := warnings[len(warnings)-1]
+	c.Assert(terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err), IsTrue, Commentf("err %v", lastWarn.Err))
+}
+
+func (s *testEvaluatorSuite) TestInsertBinarySig(c *C) {
+	colTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeLonglong},
+		{Tp: mysql.TypeLonglong},
+		{Tp: mysql.TypeVarchar},
+	}
+	resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: 3}
+
+	args := []Expression{
+		&Column{Index: 0, RetType: colTypes[0]},
+		&Column{Index: 1, RetType: colTypes[1]},
+		&Column{Index: 2, RetType: colTypes[2]},
+		&Column{Index: 3, RetType: colTypes[3]},
+	}
+
+	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	insert := &builtinInsertBinarySig{base, 3}
+
+	input := chunk.NewChunkWithCapacity(colTypes, 2)
+	input.AppendString(0, "abc")
+	input.AppendString(0, "abc")
+	input.AppendInt64(1, 3)
+	input.AppendInt64(1, 3)
+	input.AppendInt64(2, -1)
+	input.AppendInt64(2, -1)
+	input.AppendString(3, "d")
+	input.AppendString(3, "de")
+
+	res, isNull, err := insert.evalString(input.GetRow(0))
+	c.Assert(res, Equals, "abd")
+	c.Assert(isNull, IsFalse)
+	c.Assert(err, IsNil)
+
+	res, isNull, err = insert.evalString(input.GetRow(1))
 	c.Assert(res, Equals, "")
 	c.Assert(isNull, IsTrue)
 	c.Assert(err, IsNil)

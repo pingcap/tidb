@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -150,6 +150,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.notFillCache = val.(bool)
 	case kv.SyncLog:
 		txn.snapshot.syncLog = val.(bool)
+	case kv.KeyOnly:
+		txn.snapshot.keyOnly = val.(bool)
 	}
 }
 
@@ -197,9 +199,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// When bypassLatch flag is true, commit directly.
 	if bypassLatch {
 		err = committer.executeAndWriteFinishBinlog(ctx)
-		if err == nil {
-			txn.store.txnLatches.RefreshCommitTS(committer.keys, committer.commitTS)
-		}
 		log.Debug("[kv]", connID, " txnLatches enabled while txn not retryable, 2pc directly:", err)
 		return errors.Trace(err)
 	}

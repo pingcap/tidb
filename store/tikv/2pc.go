@@ -20,8 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
-	"github.com/opentracing/opentracing-go"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -29,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/goroutine_pool"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -42,8 +40,6 @@ const (
 	actionCommit   twoPhaseCommitAction = 2
 	actionCleanup  twoPhaseCommitAction = 3
 )
-
-var twoPhaseCommitGP = gp.New(3 * time.Minute)
 
 func (ca twoPhaseCommitAction) String() string {
 	switch ca {
@@ -226,13 +222,13 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	}
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
-		twoPhaseCommitGP.Go(func() {
+		go func() {
 			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
 				log.Debugf("con:%d 2PC async doActionOnBatches %s err: %v", c.connID, action, e)
 				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()
 			}
-		})
+		}()
 	} else {
 		err = c.doActionOnBatches(bo, action, batches)
 	}
@@ -273,7 +269,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 	for _, batch1 := range batches {
 
 		batch := batch1
-		twoPhaseCommitGP.Go(func() {
+		go func() {
 			if action == actionCommit {
 				// Because the secondary batches of the commit actions are implemented to be
 				// committed asynchronously in background goroutines, we should not
@@ -289,7 +285,7 @@ func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseComm
 				defer singleBatchCancel()
 				ch <- singleBatchActionFunc(singleBatchBackoffer, batch)
 			}
-		})
+		}()
 	}
 	var err error
 	for i := 0; i < len(batches); i++ {
@@ -572,7 +568,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 		c.mu.RUnlock()
 		if !committed && !undetermined {
 			c.cleanWg.Add(1)
-			twoPhaseCommitGP.Go(func() {
+			go func() {
 				err := c.cleanupKeys(NewBackoffer(context.Background(), cleanupMaxBackoff).WithVars(c.txn.vars), c.keys)
 				if err != nil {
 					metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback").Inc()
@@ -581,23 +577,9 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 					log.Infof("con:%d 2PC clean up done, tid: %d", c.connID, c.startTS)
 				}
 				c.cleanWg.Done()
-			})
+			}()
 		}
 	}()
-
-	span := opentracing.SpanFromContext(ctx)
-	if span != nil {
-		span = opentracing.StartSpan("twoPhaseCommit.execute", opentracing.ChildOf(span.Context()))
-	} else {
-		// If we lost the trace information, make a new one for 2PC commit.
-		span = opentracing.StartSpan("twoPhaseCommit.execute")
-	}
-	defer span.Finish()
-
-	// I'm not sure is it safe to cancel 2pc commit process at any time,
-	// So use a new Background() context instead of inherit the ctx, this is by design,
-	// to avoid the cancel signal from parent context.
-	ctx = opentracing.ContextWithSpan(context.Background(), span)
 
 	binlogChan := c.prewriteBinlog()
 	err := c.prewriteKeys(NewBackoffer(ctx, prewriteMaxBackoff).WithVars(c.txn.vars), c.keys)
@@ -639,7 +621,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) error {
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
 			log.Warnf("con:%d 2PC commit result undetermined, err: %v, rpcErr: %v, tid: %v", c.connID, err, undeterminedErr, c.startTS)
-			err = errors.Wrap(err, terror.ErrResultUndetermined)
+			log.Error(err)
+			err = errors.Trace(terror.ErrResultUndetermined)
 		}
 		if !c.mu.committed {
 			log.Debugf("con:%d 2PC failed on commit: %v, tid: %d", c.connID, err, c.startTS)

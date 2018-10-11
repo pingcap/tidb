@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -146,7 +145,11 @@ type BetweenExpr struct {
 // Format the ExprNode into a Writer.
 func (n *BetweenExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
-	fmt.Fprint(w, " BETWEEN ")
+	if n.Not {
+		fmt.Fprint(w, " NOT BETWEEN ")
+	} else {
+		fmt.Fprint(w, " BETWEEN ")
+	}
 	n.Left.Format(w)
 	fmt.Fprint(w, " AND ")
 	n.Right.Format(w)
@@ -319,30 +322,15 @@ func (n *CaseExpr) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// SubqueryExec represents a subquery executor interface.
-// This interface is implemented in executor and used in plan/evaluator.
-// It will execute the subselect and get the result.
-type SubqueryExec interface {
-	// EvalRows executes the subquery and returns the multi rows with rowCount.
-	// rowCount < 0 means no limit.
-	// If the ColumnCount is 1, we will return a column result like {1, 2, 3},
-	// otherwise, we will return a table result like {{1, 1}, {2, 2}}.
-	EvalRows(ctx sessionctx.Context, rowCount int) ([]types.Datum, error)
-
-	// ColumnCount returns column count for the sub query.
-	ColumnCount() (int, error)
-}
-
 // SubqueryExpr represents a subquery.
 type SubqueryExpr struct {
 	exprNode
 	// Query is the query SelectNode.
-	Query        ResultSetNode
-	SubqueryExec SubqueryExec
-	Evaluated    bool
-	Correlated   bool
-	MultiRows    bool
-	Exists       bool
+	Query      ResultSetNode
+	Evaluated  bool
+	Correlated bool
+	MultiRows  bool
+	Exists     bool
 }
 
 // Format the ExprNode into a Writer.
@@ -357,9 +345,6 @@ func (n *SubqueryExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*SubqueryExpr)
-	if n.SubqueryExec != nil {
-		return v.Leave(n)
-	}
 	node, ok := n.Query.Accept(v)
 	if !ok {
 		return n, false
@@ -521,6 +506,8 @@ type ExistsSubqueryExpr struct {
 	exprNode
 	// Sel is the subquery, may be rewritten to other type of expression.
 	Sel ExprNode
+	// Not is true, the expression is "not exists".
+	Not bool
 }
 
 // Format the ExprNode into a Writer.
@@ -559,7 +546,11 @@ type PatternInExpr struct {
 // Format the ExprNode into a Writer.
 func (n *PatternInExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
-	fmt.Fprint(w, " IN (")
+	if n.Not {
+		fmt.Fprint(w, " NOT IN (")
+	} else {
+		fmt.Fprint(w, " IN (")
+	}
 	for i, expr := range n.List {
 		expr.Format(w)
 		if i != len(n.List)-1 {
@@ -692,7 +683,11 @@ type PatternLikeExpr struct {
 // Format the ExprNode into a Writer.
 func (n *PatternLikeExpr) Format(w io.Writer) {
 	n.Expr.Format(w)
-	fmt.Fprint(w, " LIKE ")
+	if n.Not {
+		fmt.Fprint(w, " NOT LIKE ")
+	} else {
+		fmt.Fprint(w, " LIKE ")
+	}
 	n.Pattern.Format(w)
 	if n.Escape != '\\' {
 		fmt.Fprint(w, " ESCAPE ")
@@ -934,7 +929,9 @@ func (n *ValuesExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Column = node.(*ColumnNameExpr)
+	// `node` may be *ast.ValueExpr, to avoid panic, we write `ok` but do not use
+	// it.
+	n.Column, ok = node.(*ColumnNameExpr)
 	return v.Leave(n)
 }
 

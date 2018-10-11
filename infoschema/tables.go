@@ -16,9 +16,9 @@ package infoschema
 import (
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -530,37 +531,56 @@ var tableProcesslistCols = []columnInfo{
 }
 
 func dataForCharacterSets() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums("ascii", "ascii_general_ci", "US ASCII", 1),
-		types.MakeDatums("binary", "binary", "Binary pseudo charset", 1),
-		types.MakeDatums("latin1", "latin1_swedish_ci", "cp1252 West European", 1),
-		types.MakeDatums("utf8", "utf8_general_ci", "UTF-8 Unicode", 3),
-		types.MakeDatums("utf8mb4", "utf8mb4_general_ci", "UTF-8 Unicode", 4),
-	)
+
+	charsets := charset.GetAllCharsets()
+
+	for _, charset := range charsets {
+
+		records = append(records,
+			types.MakeDatums(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen),
+		)
+
+	}
+
 	return records
+
 }
 
-func dataForColltions() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums("ascii_general_ci", "ascii", 1, "Yes", "Yes", 1),
-		types.MakeDatums("binary", "binary", 2, "Yes", "Yes", 1),
-		types.MakeDatums("latin1_swedish_ci", "latin1", 3, "Yes", "Yes", 1),
-		types.MakeDatums("utf8_general_ci", "utf8", 4, "Yes", "Yes", 1),
-		types.MakeDatums("utf8mb4_general_ci", "utf8mb4", 5, "Yes", "Yes", 1),
-	)
+func dataForCollations() (records [][]types.Datum) {
+
+	collations := charset.GetCollations()
+
+	for _, collation := range collations {
+
+		isDefault := ""
+		if collation.IsDefault {
+			isDefault = "Yes"
+		}
+
+		records = append(records,
+			types.MakeDatums(collation.Name, collation.CharsetName, collation.ID, isDefault, "Yes", 1),
+		)
+
+	}
+
 	return records
+
 }
 
 func dataForCollationCharacterSetApplicability() (records [][]types.Datum) {
-	records = append(records,
-		types.MakeDatums("ascii_general_ci", "ascii"),
-		types.MakeDatums("binary", "binary"),
-		types.MakeDatums("latin1_swedish_ci", "latin1"),
-		types.MakeDatums("utf8_general_ci", "utf8"),
-		types.MakeDatums("utf8_bin", "utf8"),
-		types.MakeDatums("utf8mb4_general_ci", "utf8mb4"),
-	)
+
+	collations := charset.GetCollations()
+
+	for _, collation := range collations {
+
+		records = append(records,
+			types.MakeDatums(collation.Name, collation.CharsetName),
+		)
+
+	}
+
 	return records
+
 }
 
 func dataForSessionVar(ctx sessionctx.Context) (records [][]types.Datum, err error) {
@@ -588,9 +608,23 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 		return nil
 	}
 
+	loginUser := ctx.GetSessionVars().User
+	var hasProcessPriv bool
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if pm.RequestVerification("", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+
 	var records [][]types.Datum
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
+		// If you have the PROCESS privilege, you can see all threads.
+		// Otherwise, you can see only your own threads.
+		if !hasProcessPriv && pi.User != loginUser.Username {
+			continue
+		}
+
 		var t uint64
 		if len(pi.Info) != 0 {
 			t = uint64(time.Since(pi.Time) / time.Second)
@@ -612,15 +646,14 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 
 func dataForEngines() (records [][]types.Datum) {
 	records = append(records,
-		types.MakeDatums("InnoDB", "DEFAULT", "Supports transactions, row-level locking, and foreign keys", "YES", "YES", "YES"),
-		types.MakeDatums("CSV", "YES", "CSV storage engine", "NO", "NO", "NO"),
-		types.MakeDatums("MRG_MYISAM", "YES", "Collection of identical MyISAM tables", "NO", "NO", "NO"),
-		types.MakeDatums("BLACKHOLE", "YES", "/dev/null storage engine (anything you write to it disappears)", "NO", "NO", "NO"),
-		types.MakeDatums("MyISAM", "YES", "MyISAM storage engine", "NO", "NO", "NO"),
-		types.MakeDatums("MEMORY", "YES", "Hash based, stored in memory, useful for temporary tables", "NO", "NO", "NO"),
-		types.MakeDatums("ARCHIVE", "YES", "Archive storage engine", "NO", "NO", "NO"),
-		types.MakeDatums("FEDERATED", "NO", "Federated MySQL storage engine", nil, nil, nil),
-		types.MakeDatums("PERFORMANCE_SCHEMA", "YES", "Performance Schema", "NO", "NO", "NO"),
+		types.MakeDatums(
+			"InnoDB",  // Engine
+			"DEFAULT", // Support
+			"Supports transactions, row-level locking, and foreign keys", // Comment
+			"YES", // Transactions
+			"YES", // XA
+			"YES", // Savepoints
+		),
 	)
 	return records
 }
@@ -664,13 +697,27 @@ var filesCols = []columnInfo{
 }
 
 func dataForSchemata(schemas []*model.DBInfo) [][]types.Datum {
+
 	var rows [][]types.Datum
+
 	for _, schema := range schemas {
+
+		charset := mysql.DefaultCharset
+		collation := mysql.DefaultCollationName
+
+		if len(schema.Charset) > 0 {
+			charset = schema.Charset // Overwrite default
+		}
+
+		if len(schema.Collate) > 0 {
+			collation = schema.Collate // Overwrite default
+		}
+
 		record := types.MakeDatums(
-			catalogVal,                 // CATALOG_NAME
-			schema.Name.O,              // SCHEMA_NAME
-			mysql.DefaultCharset,       // DEFAULT_CHARACTER_SET_NAME
-			mysql.DefaultCollationName, // DEFAULT_COLLATION_NAME
+			catalogVal,    // CATALOG_NAME
+			schema.Name.O, // SCHEMA_NAME
+			charset,       // DEFAULT_CHARACTER_SET_NAME
+			collation,     // DEFAULT_COLLATION_NAME
 			nil,
 		)
 		rows = append(rows, record)
@@ -690,6 +737,111 @@ func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
 		rowCountMap[tableID] = rowCnt
 	}
 	return rowCountMap, nil
+}
+
+type tableHistID struct {
+	tableID int64
+	histID  int64
+}
+
+func getColLengthAllTables(ctx sessionctx.Context) (map[tableHistID]uint64, error) {
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	colLengthMap := make(map[tableHistID]uint64, len(rows))
+	for _, row := range rows {
+		tableID := row.GetInt64(0)
+		histID := row.GetInt64(1)
+		totalSize := row.GetInt64(2)
+		if totalSize < 0 {
+			totalSize = 0
+		}
+		colLengthMap[tableHistID{tableID: tableID, histID: histID}] = uint64(totalSize)
+	}
+	return colLengthMap, nil
+}
+
+func getDataAndIndexLength(info *model.TableInfo, rowCount uint64, columnLengthMap map[tableHistID]uint64) (uint64, uint64) {
+	columnLength := make(map[string]uint64)
+	for _, col := range info.Columns {
+		if col.State != model.StatePublic {
+			continue
+		}
+		length := col.FieldType.StorageLength()
+		if length != types.VarStorageLen {
+			columnLength[col.Name.L] = rowCount * uint64(length)
+		} else {
+			length := columnLengthMap[tableHistID{tableID: info.ID, histID: col.ID}]
+			columnLength[col.Name.L] = length
+		}
+	}
+	dataLength, indexLength := uint64(0), uint64(0)
+	for _, length := range columnLength {
+		dataLength += length
+	}
+	for _, idx := range info.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		for _, col := range idx.Columns {
+			if col.Length == types.UnspecifiedLength {
+				indexLength += columnLength[col.Name.L]
+			} else {
+				indexLength += rowCount * uint64(col.Length)
+			}
+		}
+	}
+	return dataLength, indexLength
+}
+
+type statsCache struct {
+	mu         sync.Mutex
+	loading    bool
+	modifyTime time.Time
+	tableRows  map[int64]uint64
+	colLength  map[tableHistID]uint64
+}
+
+var tableStatsCache = &statsCache{}
+
+// TableStatsCacheExpiry is the expiry time for table stats cache.
+var TableStatsCacheExpiry = 3 * time.Second
+
+func (c *statsCache) setLoading(loading bool) {
+	c.mu.Lock()
+	c.loading = loading
+	c.mu.Unlock()
+}
+
+func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHistID]uint64, error) {
+	c.mu.Lock()
+	if time.Now().Sub(c.modifyTime) < TableStatsCacheExpiry || c.loading {
+		tableRows, colLength := c.tableRows, c.colLength
+		c.mu.Unlock()
+		return tableRows, colLength, nil
+	}
+	c.loading = true
+	c.mu.Unlock()
+
+	tableRows, err := getRowCountAllTable(ctx)
+	if err != nil {
+		c.setLoading(false)
+		return nil, nil, errors.Trace(err)
+	}
+	colLength, err := getColLengthAllTables(ctx)
+	if err != nil {
+		c.setLoading(false)
+		return nil, nil, errors.Trace(err)
+	}
+
+	c.mu.Lock()
+	c.loading = false
+	c.tableRows = tableRows
+	c.colLength = colLength
+	c.modifyTime = time.Now()
+	c.mu.Unlock()
+	return tableRows, colLength, nil
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
@@ -716,7 +868,7 @@ func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *m
 }
 
 func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.Datum, error) {
-	tableRowsMap, err := getRowCountAllTable(ctx)
+	tableRowsMap, colLengthMap, err := tableStatsCache.get(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -744,28 +896,34 @@ func dataForTables(ctx sessionctx.Context, schemas []*model.DBInfo) ([][]types.D
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			rowCount := tableRowsMap[table.ID]
+			dataLength, indexLength := getDataAndIndexLength(table, rowCount, colLengthMap)
+			avgRowLength := uint64(0)
+			if rowCount != 0 {
+				avgRowLength = dataLength / rowCount
+			}
 			record := types.MakeDatums(
-				catalogVal,             // TABLE_CATALOG
-				schema.Name.O,          // TABLE_SCHEMA
-				table.Name.O,           // TABLE_NAME
-				"BASE TABLE",           // TABLE_TYPE
-				"InnoDB",               // ENGINE
-				uint64(10),             // VERSION
-				"Compact",              // ROW_FORMAT
-				tableRowsMap[table.ID], // TABLE_ROWS
-				uint64(0),              // AVG_ROW_LENGTH
-				uint64(16384),          // DATA_LENGTH
-				uint64(0),              // MAX_DATA_LENGTH
-				uint64(0),              // INDEX_LENGTH
-				uint64(0),              // DATA_FREE
-				autoIncID,              // AUTO_INCREMENT
-				createTime,             // CREATE_TIME
-				nil,                    // UPDATE_TIME
-				nil,                    // CHECK_TIME
-				collation,              // TABLE_COLLATION
-				nil,                    // CHECKSUM
-				"",                     // CREATE_OPTIONS
-				table.Comment,          // TABLE_COMMENT
+				catalogVal,    // TABLE_CATALOG
+				schema.Name.O, // TABLE_SCHEMA
+				table.Name.O,  // TABLE_NAME
+				"BASE TABLE",  // TABLE_TYPE
+				"InnoDB",      // ENGINE
+				uint64(10),    // VERSION
+				"Compact",     // ROW_FORMAT
+				rowCount,      // TABLE_ROWS
+				avgRowLength,  // AVG_ROW_LENGTH
+				dataLength,    // DATA_LENGTH
+				uint64(0),     // MAX_DATA_LENGTH
+				indexLength,   // INDEX_LENGTH
+				uint64(0),     // DATA_FREE
+				autoIncID,     // AUTO_INCREMENT
+				createTime,    // CREATE_TIME
+				nil,           // UPDATE_TIME
+				nil,           // CHECK_TIME
+				collation,     // TABLE_COLLATION
+				nil,           // CHECKSUM
+				"",            // CREATE_OPTIONS
+				table.Comment, // TABLE_COMMENT
 			)
 			rows = append(rows, record)
 		}
@@ -833,7 +991,11 @@ func dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types
 			datetimePrecision = decimal
 		} else if types.IsTypeNumeric(col.Tp) {
 			numericPrecision = colLen
-			numericScale = decimal
+			if col.Tp != mysql.TypeFloat && col.Tp != mysql.TypeDouble {
+				numericScale = decimal
+			} else if decimal != -1 {
+				numericScale = decimal
+			}
 		}
 		columnType := col.FieldType.InfoSchemaStr()
 		columnDesc := table.NewColDesc(table.ToColumn(col))
@@ -1006,24 +1168,24 @@ func dataForTableConstraints(schemas []*model.DBInfo) [][]types.Datum {
 func dataForPseudoProfiling() [][]types.Datum {
 	var rows [][]types.Datum
 	row := types.MakeDatums(
-		0,  // QUERY_ID
-		0,  // SEQ
-		"", // STATE
+		0,                      // QUERY_ID
+		0,                      // SEQ
+		"",                     // STATE
 		types.NewDecFromInt(0), // DURATION
 		types.NewDecFromInt(0), // CPU_USER
 		types.NewDecFromInt(0), // CPU_SYSTEM
-		0, // CONTEXT_VOLUNTARY
-		0, // CONTEXT_INVOLUNTARY
-		0, // BLOCK_OPS_IN
-		0, // BLOCK_OPS_OUT
-		0, // MESSAGES_SENT
-		0, // MESSAGES_RECEIVED
-		0, // PAGE_FAULTS_MAJOR
-		0, // PAGE_FAULTS_MINOR
-		0, // SWAPS
-		0, // SOURCE_FUNCTION
-		0, // SOURCE_FILE
-		0, // SOURCE_LINE
+		0,                      // CONTEXT_VOLUNTARY
+		0,                      // CONTEXT_INVOLUNTARY
+		0,                      // BLOCK_OPS_IN
+		0,                      // BLOCK_OPS_OUT
+		0,                      // MESSAGES_SENT
+		0,                      // MESSAGES_RECEIVED
+		0,                      // PAGE_FAULTS_MAJOR
+		0,                      // PAGE_FAULTS_MINOR
+		0,                      // SWAPS
+		0,                      // SOURCE_FUNCTION
+		0,                      // SOURCE_FILE
+		0,                      // SOURCE_LINE
 	)
 	rows = append(rows, row)
 	return rows
@@ -1208,7 +1370,7 @@ func (it *infoschemaTable) getRows(ctx sessionctx.Context, cols []*table.Column)
 	case tableCharacterSets:
 		fullRows = dataForCharacterSets()
 	case tableCollations:
-		fullRows = dataForColltions()
+		fullRows = dataForCollations()
 	case tableSessionVar:
 		fullRows, err = dataForSessionVar(ctx)
 	case tableConstraints:

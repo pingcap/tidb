@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
@@ -125,9 +125,12 @@ func (s *testSuite) TestCreateDropDatabase(c *C) {
 	tk.MustExec("use drop_test;")
 	tk.MustExec("drop database drop_test;")
 	_, err := tk.Exec("drop table t;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 	_, err = tk.Exec("select * from t;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
+
+	_, err = tk.Exec("drop database mysql")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestCreateDropTable(c *C) {
@@ -137,6 +140,9 @@ func (s *testSuite) TestCreateDropTable(c *C) {
 	tk.MustExec("drop table if exists drop_test")
 	tk.MustExec("create table drop_test (a int)")
 	tk.MustExec("drop table drop_test")
+
+	_, err := tk.Exec("drop table mysql.gc_delete_range")
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite) TestCreateDropIndex(c *C) {

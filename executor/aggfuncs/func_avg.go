@@ -14,10 +14,13 @@
 package aggfuncs
 
 import (
-	"github.com/juju/errors"
+	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/set"
+	"github.com/pkg/errors"
 )
 
 // All the following avg function implementations return the decimal result,
@@ -55,7 +58,19 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	finalResult := new(types.MyDecimal)
 	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, types.DivFracIncr)
 	if err != nil {
-		return errors.Trace(err)
+		return err
+	}
+	// Make the decimal be the result of type inferring.
+	frac := e.args[0].GetType().Decimal
+	if len(e.args) == 2 {
+		frac = e.args[1].GetType().Decimal
+	}
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = finalResult.Round(finalResult, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfEven)
+	if err != nil {
+		return err
 	}
 	chk.AppendMyDecimal(e.ordinal, finalResult)
 	return nil
@@ -138,7 +153,7 @@ func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src Par
 
 type partialResult4AvgDistinctDecimal struct {
 	partialResult4AvgDecimal
-	valSet decimalSet
+	valSet set.DecimalSet
 }
 
 type avgOriginal4DistinctDecimal struct {
@@ -147,7 +162,7 @@ type avgOriginal4DistinctDecimal struct {
 
 func (e *avgOriginal4DistinctDecimal) AllocPartialResult() PartialResult {
 	p := &partialResult4AvgDistinctDecimal{
-		valSet: newDecimalSet(),
+		valSet: set.NewDecimalSet(),
 	}
 	return PartialResult(p)
 }
@@ -156,7 +171,7 @@ func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	p.sum = *types.NewDecFromInt(0)
 	p.count = int64(0)
-	p.valSet = newDecimalSet()
+	p.valSet = set.NewDecimalSet()
 }
 
 func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
@@ -166,7 +181,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isNull || p.valSet.exist(input) {
+		if isNull || p.valSet.Exist(input) {
 			continue
 		}
 
@@ -177,7 +192,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		}
 		p.sum = *newSum
 		p.count++
-		p.valSet.insert(input)
+		p.valSet.Insert(input)
 	}
 	return nil
 }
@@ -193,6 +208,15 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, types.DivFracIncr)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// Make the decimal be the result of type inferring.
+	frac := e.args[0].GetType().Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = finalResult.Round(finalResult, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfEven)
+	if err != nil {
+		return err
 	}
 	chk.AppendMyDecimal(e.ordinal, finalResult)
 	return nil
@@ -291,7 +315,7 @@ func (e *avgPartial4Float64) MergePartialResult(sctx sessionctx.Context, src Par
 
 type partialResult4AvgDistinctFloat64 struct {
 	partialResult4AvgFloat64
-	valSet float64Set
+	valSet set.Float64Set
 }
 
 type avgOriginal4DistinctFloat64 struct {
@@ -300,7 +324,7 @@ type avgOriginal4DistinctFloat64 struct {
 
 func (e *avgOriginal4DistinctFloat64) AllocPartialResult() PartialResult {
 	p := &partialResult4AvgDistinctFloat64{
-		valSet: newFloat64Set(),
+		valSet: set.NewFloat64Set(),
 	}
 	return PartialResult(p)
 }
@@ -309,7 +333,7 @@ func (e *avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	p.sum = float64(0)
 	p.count = int64(0)
-	p.valSet = newFloat64Set()
+	p.valSet = set.NewFloat64Set()
 }
 
 func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
@@ -319,13 +343,13 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Contex
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isNull || p.valSet.exist(input) {
+		if isNull || p.valSet.Exist(input) {
 			continue
 		}
 
 		p.sum += input
 		p.count++
-		p.valSet.insert(input)
+		p.valSet.Insert(input)
 	}
 	return nil
 }

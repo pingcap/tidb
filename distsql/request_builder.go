@@ -16,7 +16,6 @@ package distsql
 import (
 	"math"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -90,6 +90,8 @@ func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestB
 	builder.Request.StartTs = ana.StartTs
 	builder.Request.Data, builder.err = ana.Marshal()
 	builder.Request.NotFillCache = true
+	builder.Request.IsolationLevel = kv.RC
+	builder.Request.Priority = kv.PriorityLow
 	return builder
 }
 

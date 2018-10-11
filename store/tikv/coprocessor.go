@@ -24,21 +24,17 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/juju/errors"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/goroutine_pool"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
-
-var copIteratorGP = gp.New(time.Minute)
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -417,11 +413,6 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
-	if span := opentracing.SpanFromContext(ctx); span != nil {
-		span, ctx = opentracing.StartSpanFromContext(ctx, "copIteratorWorker.run")
-		defer span.Finish()
-	}
-
 	defer worker.wg.Done()
 	for task := range worker.taskCh {
 		respCh := worker.respChan
@@ -458,9 +449,7 @@ func (it *copIterator) open(ctx context.Context) {
 			finishCh: it.finishCh,
 			vars:     it.vars,
 		}
-		copIteratorGP.Go(func() {
-			worker.run(ctx)
-		})
+		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
 		taskCh:   taskCh,
@@ -469,7 +458,7 @@ func (it *copIterator) open(ctx context.Context) {
 		finishCh: it.finishCh,
 	}
 	taskSender.respChan = it.respChan
-	copIteratorGP.Go(taskSender.run)
+	go taskSender.run()
 }
 
 func (sender *copIteratorTaskSender) run() {

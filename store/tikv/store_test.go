@@ -17,7 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -138,6 +138,10 @@ func (c *mockPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Regio
 	return c.client.GetRegion(ctx, key)
 }
 
+func (c *mockPDClient) GetPrevRegion(context.Context, []byte) (*metapb.Region, *metapb.Peer, error) {
+	panic("unimplemented")
+}
+
 func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
 	c.RLock()
 	defer c.RUnlock()
@@ -156,6 +160,20 @@ func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.St
 		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetStore(ctx, storeID)
+}
+
+func (c *mockPDClient) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
+	c.RLock()
+	defer c.Unlock()
+
+	if c.stop {
+		return nil, errors.Trace(errStopped)
+	}
+	return c.client.GetAllStores(ctx)
+}
+
+func (c *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	panic("unimplemented")
 }
 
 func (c *mockPDClient) Close() {}

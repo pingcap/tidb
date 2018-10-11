@@ -19,8 +19,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -35,6 +35,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -51,16 +54,16 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 	for _, ic := range idxColNames {
 		col := model.FindColumnInfo(columns, ic.Column.Name.O)
 		if col == nil {
-			return nil, errKeyColumnDoesNotExits.Gen("column does not exist: %s", ic.Column.Name)
+			return nil, errKeyColumnDoesNotExits.GenWithStack("column does not exist: %s", ic.Column.Name)
 		}
 
 		if col.Flen == 0 {
-			return nil, errors.Trace(errWrongKeyColumn.GenByArgs(ic.Column.Name))
+			return nil, errors.Trace(errWrongKeyColumn.GenWithStackByArgs(ic.Column.Name))
 		}
 
 		// JSON column cannot index.
 		if col.FieldType.Tp == mysql.TypeJSON {
-			return nil, errors.Trace(errJSONUsedAsKey.GenByArgs(col.Name.O))
+			return nil, errors.Trace(errJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
 		}
 
 		// Length must be specified for BLOB and TEXT column indexes.
@@ -100,7 +103,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 				if length, ok := mysql.DefaultLengthOfMysqlTypes[col.FieldType.Tp]; ok {
 					sumLength += length
 				} else {
-					return nil, errUnknownTypeLength.GenByArgs(col.FieldType.Tp)
+					return nil, errUnknownTypeLength.GenWithStackByArgs(col.FieldType.Tp)
 				}
 
 				// Special case for time fraction.
@@ -109,7 +112,7 @@ func buildIndexColumns(columns []*model.ColumnInfo, idxColNames []*ast.IndexColN
 					if length, ok := mysql.DefaultLengthOfTimeFraction[col.FieldType.Decimal]; ok {
 						sumLength += length
 					} else {
-						return nil, errUnknownFractionLength.GenByArgs(col.FieldType.Tp, col.FieldType.Decimal)
+						return nil, errUnknownFractionLength.GenWithStackByArgs(col.FieldType.Tp, col.FieldType.Decimal)
 					}
 				}
 			}
@@ -180,7 +183,7 @@ func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 
 func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore bool, err error) {
 	if fromIdx := findIndexByName(from.L, tbl.Indices); fromIdx == nil {
-		return false, errors.Trace(infoschema.ErrKeyNotExists.GenByArgs(from.O, tbl.Name))
+		return false, errors.Trace(infoschema.ErrKeyNotExists.GenWithStackByArgs(from.O, tbl.Name))
 	}
 	// Take case-sensitivity into account, if `FromKey` and  `ToKey` are the same, nothing need to be changed
 	if from.O == to.O {
@@ -190,7 +193,7 @@ func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 	// e.g: from `inDex` to `IndEX`. Otherwise, we try to rename an index to another different index which already exists,
 	// that's illegal by rule.
 	if toIdx := findIndexByName(to.L, tbl.Indices); toIdx != nil && from.L != to.L {
-		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenByArgs(toIdx.Name.O))
+		return false, errors.Trace(infoschema.ErrKeyNameDuplicate.GenWithStackByArgs(toIdx.Name.O))
 	}
 	return false, nil
 }
@@ -258,7 +261,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
-		return ver, ErrDupKeyName.Gen("index already exist %s", indexName)
+		return ver, ErrDupKeyName.GenWithStack("index already exist %s", indexName)
 	}
 
 	if indexInfo == nil {
@@ -349,7 +352,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
-		err = ErrInvalidIndexState.Gen("invalid index state %v", tblInfo.State)
+		err = ErrInvalidIndexState.GenWithStack("invalid index state %v", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -357,7 +360,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 
 func convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
 	job.State = model.JobStateRollingback
-	job.Args = []interface{}{indexInfo.Name}
+	job.Args = []interface{}{indexInfo.Name, getPartitionIDs(tblInfo)}
 	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
 	// Its work is the same as drop index job do.
 	// The write reorganization state in add index job that likes write only state in drop index job.
@@ -371,7 +374,7 @@ func convert2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo,
 	}
 
 	if kv.ErrKeyExists.Equal(err) {
-		return ver, kv.ErrKeyExists.Gen("Duplicate for key %s", indexInfo.Name.O)
+		return ver, kv.ErrKeyExists.GenWithStack("Duplicate for key %s", indexInfo.Name.O)
 	}
 
 	return ver, errors.Trace(err)
@@ -393,7 +396,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	indexInfo := findIndexByName(indexName.L, tblInfo.Indices)
 	if indexInfo == nil {
 		job.State = model.JobStateCancelled
-		return ver, ErrCantDropFieldOrKey.Gen("index %s doesn't exist", indexName)
+		return ver, ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
 	originalState := indexInfo.State
@@ -439,7 +442,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
 		}
 	default:
-		err = ErrInvalidTableState.Gen("invalid table state %v", tblInfo.State)
+		err = ErrInvalidTableState.GenWithStack("invalid table state %v", tblInfo.State)
 	}
 	return ver, errors.Trace(err)
 }
@@ -458,22 +461,22 @@ type indexRecord struct {
 }
 
 type addIndexWorker struct {
-	id          int
-	ddlWorker   *worker
-	batchCnt    int
-	sessCtx     sessionctx.Context
-	taskCh      chan *reorgIndexTask
-	resultCh    chan *addIndexResult
-	index       table.Index
-	table       table.Table
-	colFieldMap map[int64]*types.FieldType
-	closed      bool
-	priority    int
+	id        int
+	ddlWorker *worker
+	batchCnt  int
+	sessCtx   sessionctx.Context
+	taskCh    chan *reorgIndexTask
+	resultCh  chan *addIndexResult
+	index     table.Index
+	table     table.Table
+	closed    bool
+	priority  int
 
 	// The following attributes are used to reduce memory allocation.
 	defaultVals        []types.Datum
 	idxRecords         []*indexRecord
 	rowMap             map[int64]types.Datum
+	rowDecoder         decoder.RowDecoder
 	idxKeyBufs         [][]byte
 	batchCheckKeys     []kv.Key
 	distinctCheckFlags []bool
@@ -496,8 +499,25 @@ type addIndexResult struct {
 	err        error
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, colFieldMap map[int64]*types.FieldType) *addIndexWorker {
+// addIndexTaskContext is the context of the batch adding indices.
+// After finishing the batch adding indices, result in addIndexTaskContext will be merged into addIndexResult.
+type addIndexTaskContext struct {
+	nextHandle int64
+	done       bool
+	addedCount int
+	scanCount  int
+}
+
+// mergeAddIndexCtxToResult merge partial result in taskCtx into result.
+func mergeAddIndexCtxToResult(taskCtx *addIndexTaskContext, result *addIndexResult) {
+	result.nextHandle = taskCtx.nextHandle
+	result.addedCount += taskCtx.addedCount
+	result.scanCount += taskCtx.scanCount
+}
+
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+	rowDecoder := decoder.NewRowDecoder(t.Cols(), decodeColMap)
 	return &addIndexWorker{
 		id:          id,
 		ddlWorker:   worker,
@@ -507,10 +527,10 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		resultCh:    make(chan *addIndexResult, 1),
 		index:       index,
 		table:       t,
-		colFieldMap: colFieldMap,
+		rowDecoder:  rowDecoder,
 		priority:    kv.PriorityLow,
 		defaultVals: make([]types.Datum, len(t.Cols())),
-		rowMap:      make(map[int64]types.Datum, len(colFieldMap)),
+		rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
 	}
 }
 
@@ -526,7 +546,8 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 	t := w.table
 	cols := t.Cols()
 	idxInfo := w.index.Meta()
-	_, err := tablecodec.DecodeRowWithMap(rawRecord, w.colFieldMap, time.UTC, w.rowMap)
+	sysZone := timeutil.SystemLocation()
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, rawRecord, time.UTC, sysZone, w.rowMap)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -551,6 +572,17 @@ func (w *addIndexWorker) getIndexRecord(handle int64, recordKey []byte, rawRecor
 		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+
+		if idxColumnVal.Kind() == types.KindMysqlTime {
+			t := idxColumnVal.GetMysqlTime()
+			if t.Type == mysql.TypeTimestamp && sysZone != time.UTC {
+				err := t.ConvertTimeZone(sysZone, time.UTC)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				idxColumnVal.SetMysqlTime(t)
+			}
 		}
 		idxVal[j] = idxColumnVal
 	}
@@ -707,21 +739,19 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
-func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHandle int64, taskDone bool, addedCount, scanCount int, errInTxn error) {
+func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx addIndexTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
-		addedCount = 0
-		scanCount = 0
+		taskCtx.addedCount = 0
+		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
 
-		var (
-			idxRecords []*indexRecord
-			err        error
-		)
-		idxRecords, nextHandle, taskDone, err = w.fetchRowColVals(txn, handleRange)
+		idxRecords, nextHandle, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		taskCtx.nextHandle = nextHandle
+		taskCtx.done = taskDone
 
 		err = w.batchCheckUniqueKey(txn, idxRecords)
 		if err != nil {
@@ -729,7 +759,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 		}
 
 		for _, idxRecord := range idxRecords {
-			scanCount++
+			taskCtx.scanCount++
 			// The index is already exists, we skip it, no needs to backfill it.
 			// The following update, delete, insert on these rows, TiDB can handle it correctly.
 			if idxRecord.skip {
@@ -753,7 +783,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (nextHan
 
 				return errors.Trace(err)
 			}
-			addedCount++
+			taskCtx.addedCount++
 		}
 
 		return nil
@@ -771,8 +801,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 	startTime := time.Now()
 
 	for {
-		addedCount := 0
-		nextHandle, taskDone, addedCount, scanCount, err := w.backfillIndexInTxn(handleRange)
+		taskCtx, err := w.backfillIndexInTxn(handleRange)
 		if err == nil {
 			// Because reorgIndexTask may run a long time,
 			// we should check whether this ddl job is still runnable.
@@ -783,19 +812,17 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 			return result
 		}
 
-		result.nextHandle = nextHandle
-		result.addedCount += addedCount
-		result.scanCount += scanCount
-		w.ddlWorker.reorgCtx.increaseRowCount(int64(addedCount))
+		mergeAddIndexCtxToResult(&taskCtx, result)
+		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.addedCount))
 
 		if result.scanCount-lastLogCount >= 30000 {
 			lastLogCount = result.scanCount
 			log.Infof("[ddl-reorg] worker(%v), finish batch addedCount:%v backfill, task addedCount:%v, task scanCount:%v, nextHandle:%v",
-				w.id, addedCount, result.addedCount, result.scanCount, nextHandle)
+				w.id, taskCtx.addedCount, result.addedCount, result.scanCount, taskCtx.nextHandle)
 		}
 
-		handleRange.startHandle = nextHandle
-		if taskDone {
+		handleRange.startHandle = taskCtx.nextHandle
+		if taskCtx.done {
 			break
 		}
 	}
@@ -843,14 +870,31 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 	log.Infof("[ddl-reorg] worker[%v] exit", w.id)
 }
 
-func makeupIndexColFieldMap(t table.Table, indexInfo *model.IndexInfo) map[int64]*types.FieldType {
+func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
 	cols := t.Cols()
-	colFieldMap := make(map[int64]*types.FieldType, len(indexInfo.Columns))
+	decodeColMap := make(map[int64]decoder.Column, len(indexInfo.Columns))
 	for _, v := range indexInfo.Columns {
 		col := cols[v.Offset]
-		colFieldMap[col.ID] = &col.FieldType
+		tpExpr := decoder.Column{
+			Info: col.ToInfo(),
+		}
+		if col.IsGenerated() && !col.GeneratedStored {
+			for _, c := range cols {
+				if _, ok := col.Dependences[c.Name.L]; ok {
+					decodeColMap[c.ID] = decoder.Column{
+						Info: c.ToInfo(),
+					}
+				}
+			}
+			e, err := expression.ParseSimpleExprCastWithTableInfo(sessCtx, col.GeneratedExprString, t.Meta(), &col.FieldType)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tpExpr.GenExpr = e
+		}
+		decodeColMap[col.ID] = tpExpr
 	}
-	return colFieldMap
+	return decodeColMap, nil
 }
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
@@ -1053,19 +1097,23 @@ func (w *worker) buildIndexForReorgInfo(t table.PhysicalTable, workers []*addInd
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	log.Infof("[ddl-reorg] addTableIndex, job:%s, reorgInfo:%#v", job, reorgInfo)
-	colFieldMap := makeupIndexColFieldMap(t, indexInfo)
+	sessCtx := newContext(reorgInfo.d.store)
+	decodeColMap, err := makeupDecodeColMap(sessCtx, t, indexInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
 	idxWorkers := make([]*addIndexWorker, workerCnt)
 	for i := 0; i < int(workerCnt); i++ {
 		sessCtx := newContext(reorgInfo.d.store)
-		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, colFieldMap)
+		idxWorkers[i] = newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap)
 		idxWorkers[i].priority = job.Priority
 		go idxWorkers[i].run(reorgInfo.d)
 	}
 	defer closeAddIndexWorkers(idxWorkers)
-	err := w.buildIndexForReorgInfo(t, idxWorkers, job, reorgInfo)
+	err = w.buildIndexForReorgInfo(t, idxWorkers, job, reorgInfo)
 	return errors.Trace(err)
 }
 

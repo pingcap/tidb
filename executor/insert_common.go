@@ -16,7 +16,6 @@ package executor
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -157,7 +157,7 @@ func (e *InsertValues) insertRows(cols []*table.Column, exec func(rows [][]types
 
 	rows := make([][]types.Datum, len(e.Lists))
 	for i, list := range e.Lists {
-		e.rowCount = uint64(i)
+		e.rowCount++
 		rows[i], err = e.getRow(cols, list, i)
 		if err != nil {
 			return errors.Trace(err)
@@ -176,11 +176,11 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	}
 
 	if types.ErrOverflow.Equal(err) {
-		return types.ErrWarnDataOutOfRange.GenByArgs(col.Name.O, rowIdx+1)
+		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(col.Name.O, rowIdx+1)
 	}
 	if types.ErrTruncated.Equal(err) {
 		valStr, _ := val.ToString()
-		return table.ErrTruncatedWrongValueForField.GenByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
+		return table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(col.Tp), valStr, col.Name.O, rowIdx+1)
 	}
 	return e.filterErr(err)
 }
@@ -250,9 +250,9 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	fields := selectExec.retTypes()
-	chk := selectExec.newChunk()
+	chk := selectExec.newFirstChunk()
 	iter := chunk.NewIterator4Chunk(chk)
-	rows := make([][]types.Datum, 0, e.ctx.GetSessionVars().MaxChunkSize)
+	rows := make([][]types.Datum, 0, chk.Capacity())
 
 	sessVars := e.ctx.GetSessionVars()
 	batchInsert := sessVars.BatchInsert && !sessVars.InTxn()
@@ -283,7 +283,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 				rows = rows[:0]
 				if err := e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.Gen("BatchInsert failed with error: %v", err)
+					return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 				}
 				if !sessVars.LightningMode {
 					sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
@@ -445,7 +445,7 @@ func (e *InsertValues) adjustAutoIncrementDatum(row []types.Datum, i int, c *tab
 			return errors.Trace(err)
 		}
 		// It's compatible with mysql. So it sets last insert id to the first row.
-		if e.rowCount == 0 {
+		if e.rowCount == 1 {
 			e.lastInsertID = uint64(recordID)
 		}
 	}
@@ -474,7 +474,7 @@ func (e *InsertValues) handleWarning(err error, logInfo string) {
 
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
-func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, insertOneRow func(row []types.Datum) (int64, error)) error {
+func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(row []types.Datum) (int64, error)) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
 	err := e.batchGetInsertKeys(e.ctx, e.Table, rows)
@@ -502,7 +502,7 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, insertOneRow fu
 		// it should be add to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
 		if rows[i] != nil {
-			_, err = insertOneRow(rows[i])
+			_, err = addRecord(rows[i])
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -515,4 +515,17 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, insertOneRow fu
 		}
 	}
 	return nil
+}
+
+func (e *InsertValues) addRecord(row []types.Datum) (int64, error) {
+	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
+	h, err := e.Table.AddRecord(e.ctx, row, false)
+	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if e.lastInsertID != 0 {
+		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
+	}
+	return h, nil
 }

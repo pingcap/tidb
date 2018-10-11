@@ -20,14 +20,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -402,7 +402,7 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr := errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
 
@@ -415,7 +415,7 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
 
@@ -454,7 +454,7 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
 
@@ -513,7 +513,7 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	terr = errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
 	c.Assert(rs.Close(), IsNil)
 
@@ -736,6 +736,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("www.pingcap 12345 45 2017 01:01"))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', '.', 0), substring_index('www.pingcap.com', '.', 100), substring_index('www.pingcap.com', '.', -100)`)
 	result.Check(testkit.Rows(" www.pingcap.com www.pingcap.com"))
+	tk.MustQuery(`select substring_index('xyz', 'abc', 9223372036854775808)`).Check(testkit.Rows(``))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', 'd', 1), substring_index('www.pingcap.com', '', 1), substring_index('', '.', 1)`)
 	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,,"))
 	result = tk.MustQuery(`select substring_index(null, '.', 1), substring_index('www.pingcap.com', null, 1), substring_index('www.pingcap.com', '.', null)`)
@@ -989,15 +990,30 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30))")
 	tk.MustExec(`insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb")`)
+	tk.MustExec("SET block_encryption_mode='aes-128-ecb';")
 	result = tk.MustQuery("select HEX(AES_ENCRYPT(a, 'key')), HEX(AES_ENCRYPT(b, 'key')), HEX(AES_ENCRYPT(c, 'key')), HEX(AES_ENCRYPT(d, 'key')), HEX(AES_ENCRYPT(e, 'key')), HEX(AES_ENCRYPT(f, 'key')), HEX(AES_ENCRYPT(g, 'key')), HEX(AES_ENCRYPT(h, 'key')), HEX(AES_ENCRYPT(i, 'key')) from t")
 	result.Check(testkit.Rows("B3800B3A3CB4ECE2051A3E80FE373EAC B3800B3A3CB4ECE2051A3E80FE373EAC 9E018F7F2838DBA23C57F0E4CCF93287 E764D3E9D4AF8F926CD0979DDB1D0AF40C208B20A6C39D5D028644885280973A C452FFEEB76D3F5E9B26B8D48F7A228C 181BD5C81CBD36779A3C9DD5FF486B35 CE15F14AC7FF4E56ECCF148DE60E4BEDBDB6900AD51383970A5F32C59B3AC6E3 E1B29995CCF423C75519790F54A08CD2 84525677E95AC97698D22E1125B67E92"))
 	result = tk.MustQuery("select HEX(AES_ENCRYPT('123', 'foobar')), HEX(AES_ENCRYPT(123, 'foobar')), HEX(AES_ENCRYPT('', 'foobar')), HEX(AES_ENCRYPT('你好', 'foobar')), AES_ENCRYPT(NULL, 'foobar')")
 	result.Check(testkit.Rows(`45ABDD5C4802EFA6771A94C43F805208 45ABDD5C4802EFA6771A94C43F805208 791F1AEB6A6B796E6352BF381895CA0E D0147E2EB856186F146D9F6DE33F9546 <nil>`))
+	result = tk.MustQuery("select HEX(AES_ENCRYPT(a, 'key', 'iv')), HEX(AES_ENCRYPT(b, 'key', 'iv')) from t")
+	result.Check(testkit.Rows("B3800B3A3CB4ECE2051A3E80FE373EAC B3800B3A3CB4ECE2051A3E80FE373EAC"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1618|<IV> option ignored", "Warning|1618|<IV> option ignored"))
+	tk.MustExec("SET block_encryption_mode='aes-128-cbc';")
+	result = tk.MustQuery("select HEX(AES_ENCRYPT(a, 'key', '1234567890123456')), HEX(AES_ENCRYPT(b, 'key', '1234567890123456')), HEX(AES_ENCRYPT(c, 'key', '1234567890123456')), HEX(AES_ENCRYPT(d, 'key', '1234567890123456')), HEX(AES_ENCRYPT(e, 'key', '1234567890123456')), HEX(AES_ENCRYPT(f, 'key', '1234567890123456')), HEX(AES_ENCRYPT(g, 'key', '1234567890123456')), HEX(AES_ENCRYPT(h, 'key', '1234567890123456')), HEX(AES_ENCRYPT(i, 'key', '1234567890123456')) from t")
+	result.Check(testkit.Rows("341672829F84CB6B0BE690FEC4C4DAE9 341672829F84CB6B0BE690FEC4C4DAE9 D43734E147A12BB96C6897C4BBABA283 16F2C972411948DCEF3659B726D2CCB04AD1379A1A367FA64242058A50211B67 41E71D0C58967C1F50EEC074523946D1 1117D292E2D39C3EAA3B435371BE56FC 8ACB7ECC0883B672D7BD1CFAA9FA5FAF5B731ADE978244CD581F114D591C2E7E D2B13C30937E3251AEDA73859BA32E4B 2CF4A6051FF248A67598A17AA2C17267"))
+	result = tk.MustQuery("select HEX(AES_ENCRYPT('123', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT(123, 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('你好', 'foobar', '1234567890123456')), AES_ENCRYPT(NULL, 'foobar', '1234567890123456')")
+	result.Check(testkit.Rows(`80D5646F07B4654B05A02D9085759770 80D5646F07B4654B05A02D9085759770 B3C14BA15030D2D7E99376DBE011E752 0CD2936EE4FEC7A8CDF6208438B2BC05 <nil>`))
 
 	// for AES_DECRYPT
+	tk.MustExec("SET block_encryption_mode='aes-128-ecb';")
 	result = tk.MustQuery("select AES_DECRYPT(AES_ENCRYPT('foo', 'bar'), 'bar')")
 	result.Check(testkit.Rows("foo"))
 	result = tk.MustQuery("select AES_DECRYPT(UNHEX('45ABDD5C4802EFA6771A94C43F805208'), 'foobar'), AES_DECRYPT(UNHEX('791F1AEB6A6B796E6352BF381895CA0E'), 'foobar'), AES_DECRYPT(UNHEX('D0147E2EB856186F146D9F6DE33F9546'), 'foobar'), AES_DECRYPT(NULL, 'foobar'), AES_DECRYPT('SOME_THING_STRANGE', 'foobar')")
+	result.Check(testkit.Rows(`123  你好 <nil> <nil>`))
+	tk.MustExec("SET block_encryption_mode='aes-128-cbc';")
+	result = tk.MustQuery("select AES_DECRYPT(AES_ENCRYPT('foo', 'bar', '1234567890123456'), 'bar', '1234567890123456')")
+	result.Check(testkit.Rows("foo"))
+	result = tk.MustQuery("select AES_DECRYPT(UNHEX('80D5646F07B4654B05A02D9085759770'), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX('B3C14BA15030D2D7E99376DBE011E752'), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX('0CD2936EE4FEC7A8CDF6208438B2BC05'), 'foobar', '1234567890123456'), AES_DECRYPT(NULL, 'foobar', '1234567890123456'), AES_DECRYPT('SOME_THING_STRANGE', 'foobar', '1234567890123456')")
 	result.Check(testkit.Rows(`123  你好 <nil> <nil>`))
 
 	// for COMPRESS
@@ -1044,7 +1060,7 @@ func (s *testIntegrationSuite) TestEncryptionBuiltin(c *C) {
 		c.Assert(err, IsNil, Commentf("%v", len))
 		_, err = session.GetRows4Test(ctx, tk.Se, rs)
 		c.Assert(err, NotNil, Commentf("%v", len))
-		terr := errors.Trace(err).(*errors.Err).Cause().(*terror.Error)
+		terr := errors.Cause(err).(*terror.Error)
 		c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange), Commentf("%v", len))
 		c.Assert(rs.Close(), IsNil)
 	}
@@ -1091,10 +1107,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err := tk.Exec(`insert into t select year("aa")`)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue, Commentf("err %v", err))
-	_, err = tk.Exec(`insert into t select year("0000-00-00 00:00:00")`)
+	tk.MustExec(`insert into t select year("0000-00-00 00:00:00")`)
+	tk.MustExec(`set sql_mode="NO_ZERO_DATE";`)
+	tk.MustExec(`insert into t select year("0000-00-00 00:00:00")`)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustExec(`set sql_mode="NO_ZERO_DATE,STRICT_TRANS_TABLES";`)
+	_, err = tk.Exec(`insert into t select year("0000-00-00 00:00:00");`)
 	c.Assert(err, NotNil)
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue, Commentf("err %v", err))
 	tk.MustExec(`insert into t select 1`)
+	tk.MustExec(`set sql_mode="STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION";`)
 	_, err = tk.Exec(`update t set a = year("aa")`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec(`delete from t where a = year("aa")`)
@@ -1114,9 +1136,16 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	_, err = tk.Exec(`insert into t select month("aa")`)
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
-	_, err = tk.Exec(`insert into t select month("0000-00-00 00:00:00")`)
+	tk.MustExec(`insert into t select month("0000-00-00 00:00:00")`)
+	tk.MustExec(`set sql_mode="NO_ZERO_DATE";`)
+	tk.MustExec(`insert into t select month("0000-00-00 00:00:00")`)
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustExec(`set sql_mode="NO_ZERO_DATE,STRICT_TRANS_TABLES";`)
+	_, err = tk.Exec(`insert into t select month("0000-00-00 00:00:00");`)
 	c.Assert(err, NotNil)
-	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue, Commentf("err %v", err))
+	tk.MustExec(`insert into t select 1`)
+	tk.MustExec(`set sql_mode="STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION";`)
 	tk.MustExec(`insert into t select 1`)
 	_, err = tk.Exec(`update t set a = month("aa")`)
 	c.Assert(terror.ErrorEqual(err, types.ErrInvalidTimeFormat), IsTrue)
@@ -1442,6 +1471,14 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result = tk.MustQuery(`select dayOfYear(null), dayOfYear("2017-08-12"), dayOfYear("0000-00-00"), dayOfYear("2017-00-00"), dayOfYear("0000-00-00 12:12:12"), dayOfYear("2017-00-00 12:12:12")`)
 	result.Check(testkit.Rows("<nil> 224 <nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`select dayOfMonth(null), dayOfMonth("2017-08-12"), dayOfMonth("0000-00-00"), dayOfMonth("2017-00-00"), dayOfMonth("0000-00-00 12:12:12"), dayOfMonth("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 12 0 0 0 0"))
+
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
+	result = tk.MustQuery(`select dayOfWeek(null), dayOfWeek("2017-08-12"), dayOfWeek("0000-00-00"), dayOfWeek("2017-00-00"), dayOfWeek("0000-00-00 12:12:12"), dayOfWeek("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 7 <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select dayOfYear(null), dayOfYear("2017-08-12"), dayOfYear("0000-00-00"), dayOfYear("2017-00-00"), dayOfYear("0000-00-00 12:12:12"), dayOfYear("2017-00-00 12:12:12")`)
+	result.Check(testkit.Rows("<nil> 224 <nil> <nil> <nil> <nil>"))
+	result = tk.MustQuery(`select dayOfMonth(null), dayOfMonth("2017-08-12"), dayOfMonth("0000-00-00"), dayOfMonth("2017-00-00"), dayOfMonth("0000-00-00 12:12:12"), dayOfMonth("2017-00-00 12:12:12")`)
 	result.Check(testkit.Rows("<nil> 12 <nil> 0 0 0"))
 
 	tk.MustExec(`drop table if exists t`)
@@ -1458,6 +1495,13 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 
 	_, err = tk.Exec("insert into t value(dayOfMonth('2017-00-00'))")
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+	tk.MustExec("insert into t value(dayOfMonth('0000-00-00'))")
+	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE';")
+	tk.MustExec("insert into t value(dayOfMonth('0000-00-00'))")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE,STRICT_TRANS_TABLES';")
 	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	tk.MustExec("insert into t value(0)")
@@ -1539,8 +1583,15 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	tk.MustExec(`insert into t value("abc")`)
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 
-	_, err = tk.Exec("insert into t value(monthname('0000-00-00'))")
-	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
+	tk.MustExec("insert into t value(monthname('0000-00-00'))")
+	tk.MustExec(`update t set a = monthname("0000-00-00")`)
+	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
+	tk.MustExec("insert into t value(monthname('0000-00-00'))")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustExec(`update t set a = monthname("0000-00-00")`)
+	tk.MustExec("set sql_mode = ''")
+	tk.MustExec("insert into t value(monthname('0000-00-00'))")
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_DATE'")
 	_, err = tk.Exec(`update t set a = monthname("0000-00-00")`)
 	c.Assert(types.ErrIncorrectDatetimeValue.Equal(err), IsTrue)
 	_, err = tk.Exec(`delete from t where a = monthname(123)`)
@@ -1879,6 +1930,59 @@ func (s *testIntegrationSuite) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery(`select cast(cast('2017-01-01 01:01:11.12' as date) as datetime(2));`)
 	result.Check(testkit.Rows("2017-01-01 00:00:00.00"))
+
+	result = tk.MustQuery(`select cast(20170118.999 as datetime);`)
+	result.Check(testkit.Rows("2017-01-18 00:00:00"))
+
+	// Test corner cases of cast string as datetime
+	result = tk.MustQuery(`select cast("170102034" as datetime);`)
+	result.Check(testkit.Rows("2017-01-02 03:04:00"))
+	result = tk.MustQuery(`select cast("1701020304" as datetime);`)
+	result.Check(testkit.Rows("2017-01-02 03:04:00"))
+	result = tk.MustQuery(`select cast("1701020304." as datetime);`)
+	result.Check(testkit.Rows("2017-01-02 03:04:00"))
+	result = tk.MustQuery(`select cast("1701020304.1" as datetime);`)
+	result.Check(testkit.Rows("2017-01-02 03:04:01"))
+	result = tk.MustQuery(`select cast("1701020304.111" as datetime);`)
+	result.Check(testkit.Rows("2017-01-02 03:04:11"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1701020304.111'"))
+	result = tk.MustQuery(`select cast("17011" as datetime);`)
+	result.Check(testkit.Rows("2017-01-01 00:00:00"))
+	result = tk.MustQuery(`select cast("150101." as datetime);`)
+	result.Check(testkit.Rows("2015-01-01 00:00:00"))
+	result = tk.MustQuery(`select cast("150101.a" as datetime);`)
+	result.Check(testkit.Rows("2015-01-01 00:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '150101.a'"))
+	result = tk.MustQuery(`select cast("150101.1a" as datetime);`)
+	result.Check(testkit.Rows("2015-01-01 01:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '150101.1a'"))
+	result = tk.MustQuery(`select cast("150101.1a1" as datetime);`)
+	result.Check(testkit.Rows("2015-01-01 01:00:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '150101.1a1'"))
+	result = tk.MustQuery(`select cast("1101010101.111" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:11"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.111'"))
+	result = tk.MustQuery(`select cast("1101010101.11aaaaa" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:11"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.11aaaaa'"))
+	result = tk.MustQuery(`select cast("1101010101.a1aaaaa" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.a1aaaaa'"))
+	result = tk.MustQuery(`select cast("1101010101.11" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:11"))
+	tk.MustQuery("select @@warning_count;").Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select cast("1101010101.111" as datetime);`)
+	result.Check(testkit.Rows("2011-01-01 01:01:11"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '1101010101.111'"))
+	result = tk.MustQuery(`select cast("970101.111" as datetime);`)
+	result.Check(testkit.Rows("1997-01-01 11:01:00"))
+	tk.MustQuery("select @@warning_count;").Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select cast("970101.11111" as datetime);`)
+	result.Check(testkit.Rows("1997-01-01 11:11:01"))
+	tk.MustQuery("select @@warning_count;").Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select cast("970101.111a1" as datetime);`)
+	result.Check(testkit.Rows("1997-01-01 11:01:00"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect datetime value: '970101.111a1'"))
 
 	// for ISNULL
 	tk.MustExec("drop table if exists t")
@@ -2515,6 +2619,13 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	result.Check(testkit.Rows("1 1300 -6 <nil> <nil> <nil>"))
 	result = tk.MustQuery("SELECT 2.4 div 1.1, 2.4 div 1.2, 2.4 div 1.3;")
 	result.Check(testkit.Rows("2 2 1"))
+	result = tk.MustQuery("SELECT 1.175494351E-37 div 1.7976931348623157E+308, 1.7976931348623157E+308 div -1.7976931348623157E+307, 1 div 1e-82;")
+	result.Check(testkit.Rows("0 -1 <nil>"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308)'",
+		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308)'",
+		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(-1.7976931348623158e+307)'",
+		"Warning|1365|Division by 0"))
 	rs, err = tk.Exec("select 1e300 DIV 1.5")
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
@@ -2879,6 +2990,7 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(100))")
+	tk.MustExec("create table d(a varchar(100))")
 	tk.MustExec("insert into t values('hello'), ('hello')")
 	result := tk.MustQuery("select group_concat(a) from t")
 	result.Check(testkit.Rows("hello,hello"))
@@ -2886,6 +2998,15 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk.MustExec("set @@group_concat_max_len=7")
 	result = tk.MustQuery("select group_concat(a) from t")
 	result.Check(testkit.Rows("hello,h"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+
+	_, err := tk.Exec("insert into d select group_concat(a) from t")
+	c.Assert(errors.Cause(err).(*terror.Error).Code(), Equals, terror.ErrCode(mysql.ErrCutValueGroupConcat))
+
+	tk.Exec("set sql_mode=''")
+	tk.MustExec("insert into d select group_concat(a) from t")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
 }
 
 func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
@@ -3005,7 +3126,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	rs, err := tk.Exec("select date '0000-00-00';")
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("0000-00-00")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("0000-00-00")), IsTrue)
 	c.Assert(rs.Close(), IsNil)
 
 	tk.MustExec("set sql_mode = ''")
@@ -3016,7 +3137,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	rs, _ = tk.Exec("select date '2007-10-00';")
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("2017-10-00")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("2017-10-00")), IsTrue)
 	c.Assert(rs.Close(), IsNil)
 
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
@@ -3028,13 +3149,13 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 	rs, _ = tk.Exec("select date '2007-10-00';")
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("2017-10-00")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("2017-10-00")), IsTrue)
 	c.Assert(rs.Close(), IsNil)
 
 	rs, err = tk.Exec("select date '0000-00-00';")
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("0000-00-00")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("0000-00-00")), IsTrue)
 	c.Assert(rs.Close(), IsNil)
 
 	r = tk.MustQuery("select date'1998~01~02'")
@@ -3045,7 +3166,7 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 
 	_, err = tk.Exec("select date '0000-00-00 00:00:00';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("0000-00-00 00:00:00")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("0000-00-00 00:00:00")), IsTrue)
 
 	_, err = tk.Exec("select date '2017-99-99';")
 	c.Assert(err, NotNil)
@@ -3057,11 +3178,11 @@ func (s *testIntegrationSuite) TestDateBuiltin(c *C) {
 
 	_, err = tk.Exec("select date '201712-31';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("201712-31")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("201712-31")), IsTrue)
 
 	_, err = tk.Exec("select date 'abcdefg';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("abcdefg")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("abcdefg")), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestJSONBuiltin(c *C) {
@@ -3107,15 +3228,15 @@ func (s *testIntegrationSuite) TestTimeLiteral(c *C) {
 
 	_, err := tk.Exec("select time '2017-01-01 00:00:00';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("2017-01-01 00:00:00")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("2017-01-01 00:00:00")), IsTrue)
 
 	_, err = tk.Exec("select time '071231235959.999999';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("071231235959.999999")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("071231235959.999999")), IsTrue)
 
 	_, err = tk.Exec("select time '20171231235959.999999';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("20171231235959.999999")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("20171231235959.999999")), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
@@ -3136,15 +3257,15 @@ func (s *testIntegrationSuite) TestTimestampLiteral(c *C) {
 
 	_, err := tk.Exec("select timestamp '00:00:00';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("00:00:00")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("00:00:00")), IsTrue)
 
 	_, err = tk.Exec("select timestamp '1992-01-03';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("1992-01-03")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("1992-01-03")), IsTrue)
 
 	_, err = tk.Exec("select timestamp '20171231235959.999999';")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenByArgs("20171231235959.999999")), IsTrue)
+	c.Assert(terror.ErrorEqual(err, types.ErrIncorrectDatetimeValue.GenWithStackByArgs("20171231235959.999999")), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestLiterals(c *C) {
@@ -3198,6 +3319,62 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	tk.MustExec(`update table_json set a=json_set(a,'$.a',json_object('a',1,'b',2)) where json_extract(a,'$.a[1]') = '2'`)
 	r = tk.MustQuery(`select json_extract(a, '$.a.a'), json_extract(a, '$.a.b') from table_json`)
 	r.Check(testkit.Rows("1 2", "<nil> <nil>"))
+
+	r = tk.MustQuery(`select json_contains(NULL, '1'), json_contains('1', NULL), json_contains('1', '1', NULL)`)
+	r.Check(testkit.Rows("<nil> <nil> <nil>"))
+	r = tk.MustQuery(`select json_contains('{}','{}'), json_contains('[1]','1'), json_contains('[1]','"1"'), json_contains('[1,2,[1,[5,[3]]]]', '[1,3]', '$[2]'), json_contains('[1,2,[1,[5,{"a":[2,3]}]]]', '[1,{"a":[3]}]', "$[2]"), json_contains('{"a":1}', '{"a":1,"b":2}', "$")`)
+	r.Check(testkit.Rows("1 1 0 1 1 0"))
+	r = tk.MustQuery(`select json_contains('{"a": 1}', '1', "$.c"), json_contains('{"a": [1, 2]}', '1', "$.a[2]"), json_contains('{"a": [1, {"a": 1}]}', '1', "$.a[1].b")`)
+	r.Check(testkit.Rows("<nil> <nil> <nil>"))
+	rs, err := tk.Exec("select json_contains('1','1','$.*')")
+	c.Assert(err, IsNil)
+	c.Assert(rs, NotNil)
+	_, err = session.GetRows4Test(context.Background(), tk.Se, rs)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[json:3149]In this situation, path expressions may not contain the * and ** tokens.")
+
+	r = tk.MustQuery(`select
+		json_contains_path(NULL, 'one', "$.c"),
+		json_contains_path(NULL, 'all', "$.c"),
+		json_contains_path('{"a": 1}', NULL, "$.c"),
+		json_contains_path('{"a": 1}', 'one', NULL),
+		json_contains_path('{"a": 1}', 'all', NULL)
+	`)
+	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>"))
+
+	r = tk.MustQuery(`select
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.c.d'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a.d'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.c.d'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a.d')
+	`)
+	r.Check(testkit.Rows("1 0 1 0"))
+
+	r = tk.MustQuery(`select
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a', '$.e'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.a', '$.b'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a', '$.e'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.a', '$.b')
+	`)
+	r.Check(testkit.Rows("1 1 0 1"))
+
+	r = tk.MustQuery(`select
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$.*'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'one', '$[*]'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$.*'),
+		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$[*]')
+	`)
+	r.Check(testkit.Rows("1 0 1 0"))
+
+	r = tk.MustQuery(`select
+		json_length('1'),
+		json_length('{}'),
+		json_length('[]'),
+		json_length('{"a": 1}'),
+		json_length('{"a": 1, "b": 2}'),
+		json_length('[1, 2, 3]')
+	`)
+	r.Check(testkit.Rows("1 0 0 1 2 3"))
 }
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
@@ -3379,11 +3556,11 @@ func (s *testIntegrationSuite) TestFilterExtractFromDNF(c *C) {
 		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
 		c.Assert(stmts, HasLen, 1)
 		is := domain.GetDomain(ctx).InfoSchema()
-		err = plan.Preprocess(ctx, stmts[0], is, false)
+		err = plannercore.Preprocess(ctx, stmts[0], is, false)
 		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, err := plan.BuildLogicalPlan(ctx, stmts[0], is)
+		p, err := plannercore.BuildLogicalPlan(ctx, stmts[0], is)
 		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection)
+		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, 0, len(selection.Conditions))
 		for _, cond := range selection.Conditions {
 			conds = append(conds, expression.PushDownNot(ctx, cond, false))

@@ -14,10 +14,10 @@
 package ddl
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -68,7 +68,7 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	if len(ddlInfo.Jobs) == 0 {
 		return m, nil
 	}
-	// TODO: Add all job infromation if needed.
+	// TODO: Add all job information if needed.
 	job := ddlInfo.Jobs[0]
 	m[ddlJobID] = job.ID
 	m[ddlJobAction] = job.Type.String()

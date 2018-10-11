@@ -126,6 +126,22 @@ func (s *testLockSuite) TestScanLockResolveWithSeek(c *C) {
 	}
 }
 
+func (s *testLockSuite) TestScanLockResolveWithSeekKeyOnly(c *C) {
+	s.putAlphabets(c)
+	s.prepareAlphabetLocks(c)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.SetOption(kv.KeyOnly, true)
+	iter, err := txn.Seek([]byte("a"))
+	c.Assert(err, IsNil)
+	for ch := byte('a'); ch <= byte('z'); ch++ {
+		c.Assert(iter.Valid(), IsTrue)
+		c.Assert([]byte(iter.Key()), BytesEquals, []byte{ch})
+		c.Assert(iter.Next(), IsNil)
+	}
+}
+
 func (s *testLockSuite) TestScanLockResolveWithBatchGet(c *C) {
 	s.putAlphabets(c)
 	s.prepareAlphabetLocks(c)
