@@ -887,6 +887,9 @@ func (b *executorBuilder) wrapCastForAggArgs(funcs []*aggregation.AggFuncDesc) {
 		}
 		for i := range f.Args {
 			f.Args[i] = castFunc(b.ctx, f.Args[i])
+			if f.Name != ast.AggFuncAvg && f.Name != ast.AggFuncSum {
+				continue
+			}
 			// After wrapping cast on the argument, flen etc. may not the same
 			// as the type of the aggregation function. The following part set
 			// the type of the argument exactly as the type of the aggregation
