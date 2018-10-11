@@ -24,6 +24,7 @@ import (
 	"github.com/coreos/etcd/clientv3"
 	"github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/ngaut/pools"
+	"github.com/ngaut/sync2"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -54,6 +55,7 @@ type Domain struct {
 	privHandle      *privileges.Handle
 	statsHandle     unsafe.Pointer
 	statsLease      time.Duration
+	statsUpdating   sync2.AtomicInt32
 	ddl             ddl.DDL
 	info            *InfoSyncer
 	m               sync.Mutex
@@ -664,6 +666,20 @@ func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statistics.NewHandle(ctx, do.statsLease)))
 }
 
+// StatsUpdating checks if the stats worker is updating.
+func (do *Domain) StatsUpdating() bool {
+	return do.statsUpdating.Get() > 0
+}
+
+// SetStatsUpdating sets the value of stats updating.
+func (do *Domain) SetStatsUpdating(val bool) {
+	if val {
+		do.statsUpdating.Set(1)
+	} else {
+		do.statsUpdating.Set(0)
+	}
+}
+
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
 var RunAutoAnalyze = true
 
@@ -680,6 +696,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	}
 	owner := do.newStatsOwner()
 	do.wg.Add(1)
+	do.SetStatsUpdating(true)
 	go do.updateStatsWorker(ctx, owner)
 	if RunAutoAnalyze {
 		do.wg.Add(1)
@@ -729,6 +746,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		log.Info("[stats] init stats info takes ", time.Now().Sub(t))
 	}
 	defer func() {
+		do.SetStatsUpdating(false)
 		recoverInDomain("updateStatsWorker", false)
 		do.wg.Done()
 	}()
