@@ -608,9 +608,23 @@ func dataForProcesslist(ctx sessionctx.Context) [][]types.Datum {
 		return nil
 	}
 
+	loginUser := ctx.GetSessionVars().User
+	var hasProcessPriv bool
+	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
+		if pm.RequestVerification("", "", "", mysql.ProcessPriv) {
+			hasProcessPriv = true
+		}
+	}
+
 	var records [][]types.Datum
 	pl := sm.ShowProcessList()
 	for _, pi := range pl {
+		// If you have the PROCESS privilege, you can see all threads.
+		// Otherwise, you can see only your own threads.
+		if !hasProcessPriv && pi.User != loginUser.Username {
+			continue
+		}
+
 		var t uint64
 		if len(pi.Info) != 0 {
 			t = uint64(time.Since(pi.Time) / time.Second)
