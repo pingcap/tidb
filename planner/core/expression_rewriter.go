@@ -546,7 +546,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	}
 	np = er.popExistsSubPlan(np)
 	if len(np.extractCorrelatedCols()) > 0 {
-		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, false)
+		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
 		if er.err != nil || !er.asScalar {
 			return v, true
 		}
@@ -562,7 +562,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 			er.err = errors.Trace(err)
 			return v, true
 		}
-		if len(rows) > 0 {
+		if (len(rows) > 0 && !v.Not) || (len(rows) == 0 && v.Not) {
 			er.ctxStack = append(er.ctxStack, expression.One.Clone())
 		} else {
 			er.ctxStack = append(er.ctxStack, expression.Zero.Clone())
