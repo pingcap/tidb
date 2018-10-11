@@ -97,7 +97,9 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 		Desc:    p.Desc,
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
-	p.ctx.GetSessionVars().StmtCtx.AccessDigest[stmtctx.AccessDigest{Tbl: p.Table.Name.L, Idx: "table-scan"}] = struct{}{}
+	p.ctx.GetSessionVars().StmtCtx.AccessDigest[stmtctx.AccessDigest{
+		DB: p.DBName.L, Tbl: p.Table.Name.L, Idx: "table-scan",
+	}] = struct{}{}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec}, errors.Trace(err)
 }
 
@@ -135,7 +137,9 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
 	}
 	unique := checkCoverIndex(p.Index, p.Ranges)
 	idxExec.Unique = &unique
-	p.ctx.GetSessionVars().StmtCtx.AccessDigest[stmtctx.AccessDigest{Tbl: p.Table.Name.L, Idx: p.Index.Name.L}] = struct{}{}
+	p.ctx.GetSessionVars().StmtCtx.AccessDigest[stmtctx.AccessDigest{
+		DB: p.DBName.L, Tbl: p.Table.Name.L, Idx: p.Index.Name.L,
+	}] = struct{}{}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}, nil
 }
 

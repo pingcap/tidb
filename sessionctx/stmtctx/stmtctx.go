@@ -40,6 +40,7 @@ type SQLWarn struct {
 
 // AccessDigest presents stmt access digest.
 type AccessDigest struct {
+	DB  string
 	Tbl string
 	Idx string
 }

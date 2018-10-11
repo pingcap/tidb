@@ -336,7 +336,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
 	if !sessVars.InRestrictedSQL {
 		for access := range sessVars.StmtCtx.AccessDigest {
-			metrics.IndexAccessCounter.WithLabelValues(access.Tbl, access.Idx).Inc()
+			metrics.IndexAccessCounter.WithLabelValues(access.DB, access.Tbl, access.Idx).Inc()
 		}
 	}
 	level := log.GetLevel()

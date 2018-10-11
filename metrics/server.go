@@ -46,7 +46,7 @@ var (
 			Subsystem: "server",
 			Name:      "index_access",
 			Help:      "access of index.",
-		}, []string{LbTable, LbIndex})
+		}, []string{LbDB, LbTable, LbIndex})
 
 	ConnGauge = prometheus.NewGauge(
 		prometheus.GaugeOpts{
