@@ -32,18 +32,16 @@ type statsInfo struct {
 
 This struct will be maintained when we call `deriveStats`.
 
-Currently we don't change the histogram itself during planning. Because it will consume a lot of time and memory space. I’ll try to maintain ranges slice or the max/min value to improve the accuracy of row count estimation instead.
-
 ### How to maintain it.
 
 We maintain the histogram in `Projection`, `Selection`, `Join`, `Aggregation`, `Sort`, `Limit` and `DataSource` operators.
 
-#### `Select`
+#### `Selection`
 Just use it to calculate the selectivity.
 
 And we can get the range information of each column and index involved in filters. Then we can use the range information to cut the histogram bucket of these columns.
 
-For column/index not matched in the filter. The `NDV` and `totalCnt` of each bucket can just mutiply the total selectivity of filters(based on independent assumption).
+For column/index not matched in the filter. The `NDV` and `totalCnt` of each bucket can just multiply the total selectivity of filters(based on independent assumption).
 
 #### `Projection`
 Change the reflection of the map we maintained.
@@ -75,7 +73,7 @@ The calculation inside the bucket can be calculated as this formula <img alt="$s
 
 Where <img alt="$joinKeySelectivity = \frac{1}{NDV(t1.key)}*\frac{1}{NDV(t2.key)}*ndvAfterJoin$" src="svgs/291c9eb6e8db885402c716ffc3e17a65.png?invert_in_darkmode" align="middle" width="466.6166208pt" height="27.7756545pt"/>.
 
-The `ndvAfterJoin` can be <img alt="$min(NDV(t1.key), NDV(t2.key))$" src="svgs/30df1c648fa9fe43985776847c8dbe60.png?invert_in_darkmode" align="middle" width="248.4423216pt" height="24.657534pt"/> or a more detailed one if we can caculate it.
+The `ndvAfterJoin` can be <img alt="$min(NDV(t1.key), NDV(t2.key))$" src="svgs/30df1c648fa9fe43985776847c8dbe60.png?invert_in_darkmode" align="middle" width="248.4423216pt" height="24.657534pt"/> or a more detailed one if we can calculate it.
 
 
 Since it won’t have one side filter, we only need to consider the composite filters after considering the join key. We can simply multiply `selectionFactor` if there are other composite filters since `Selectivity` cannot calculate selectivity of an expression containing multiple columns.
@@ -83,8 +81,8 @@ Since it won’t have one side filter, we only need to consider the composite fi
 ##### One side outer join
 It's almost the same as inner join's behavior. But we need to consider two more thing:
 
-- The unmatched row will be filled as `NULL`. This should be calculated in the new histogram. The null count can be caculated when we estimate the matched count bucket by bucket.
-- There will be one side filters of the outer table. If the filter is about join key and can be converted to range information, it's can be easily involved when we do the caculation bucket by bucket. Otherwise it's a little hard to deal with it. Don't consider this case currently.
+- The unmatched row will be filled as `NULL`. This should be calculated in the new histogram. The null count can be calculated when we estimate the matched count bucket by bucket.
+- There will be one side filters of the outer table. If the filter is about join key and can be converted to range information, it's can be easily involved when we do the calculation bucket by bucket. Otherwise it's a little hard to deal with it. Don't consider this case currently.
 
 ##### Semi join
 It’s something similar to inner join. But no data expanding occurs. So the `total` can be adjusted easily.
@@ -93,15 +91,15 @@ It’s something similar to inner join. But no data expanding occurs. So the `to
 Same with semi join.
 
 #### `Aggregate`
-Just read the NDV information from the `statsInfo` to dicide the row count after aggregate. If there's index can fully match the group-by items. We just use its NDV. Otherwise we multiply the ndv of each column(or index that can match part of the group-by item).
+Just read the NDV information from the `statsInfo` to decide the row count after aggregate. If there's index can fully match the group-by items, we will just use its NDV. Otherwise we will multiply the ndv of each column(or index that can match part of the group-by item).
 
-If some of the group-by items are also in the select field. We will create new histograms modify the `totalCnt` of each bucket(set it the same with `NDV`).
+If some of the group-by items are also in the select field, we will create new histograms by modifying the `totalCnt` of each bucket(set it the same with `NDV`).
 
 #### `Sort`
-We can just copy children's `statsInfo` without doing any change. Since the data distribution is not changed.
+We can just copy children's `statsInfo` without doing any change, since the data distribution is not changed.
 
 #### `Limit`
-Currently we won't maintain hitogram information for it. But it can be considered in the future.
+Currently we won't maintain histogram information for it. But it can be considered in the future.
 
 #### `DataSource`
 Our `DataSource` is actually `source of data` + `select`. So if it’s a non-partitioned table, we just maintain the map and do what `Select` does. If it’s a partitioned table, we now only store the statistics of each partition. So we need to merge them into one histogram so the upper plan can use it. We need a cache or something else to ensure that we won’t merge them each time we need it.
