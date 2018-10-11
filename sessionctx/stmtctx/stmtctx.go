@@ -38,6 +38,13 @@ type SQLWarn struct {
 	Err   error
 }
 
+// AccessDigest presents stmt access digest.
+type AccessDigest struct {
+	DB  string
+	Tbl string
+	Idx string
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -79,6 +86,7 @@ type StatementContext struct {
 	MemTracker   *memory.Tracker
 	TableIDs     []int64
 	IndexIDs     []int64
+	AccessDigest map[AccessDigest]struct{}
 }
 
 // AddAffectedRows adds affected rows.

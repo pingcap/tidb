@@ -333,6 +333,12 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
 
 func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
+	sessVars := a.Ctx.GetSessionVars()
+	if !sessVars.InRestrictedSQL {
+		for access := range sessVars.StmtCtx.AccessDigest {
+			metrics.IndexAccessCounter.WithLabelValues(access.DB, access.Tbl, access.Idx).Inc()
+		}
+	}
 	level := log.GetLevel()
 	if level < log.WarnLevel {
 		return
@@ -347,7 +353,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	if len(sql) > int(cfg.Log.QueryLogMaxLen) {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
-	sessVars := a.Ctx.GetSessionVars()
+
 	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
 
 	connID := sessVars.ConnectionID

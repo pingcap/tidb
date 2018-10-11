@@ -1138,6 +1138,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc := new(stmtctx.StatementContext)
 	sc.TimeZone = vars.Location()
 	sc.MemTracker = memory.NewTracker(s.Text(), vars.MemQuotaQuery)
+	sc.AccessDigest = make(map[stmtctx.AccessDigest]struct{})
 	switch config.GetGlobalConfig().OOMAction {
 	case config.OOMActionCancel:
 		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
