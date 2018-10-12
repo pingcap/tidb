@@ -119,10 +119,16 @@ func foldConstant(expr Expression) (Expression, bool) {
 				return expr, isDeferredConst
 			}
 			if value.IsNull() {
-				return foldedConstForScalarFunc(value, x, isDeferredConst), isDeferredConst
+				if isDeferredConst {
+					return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
+				}
+				return &Constant{Value: value, RetType: x.RetType}, false
 			}
 			if isTrue, err := value.ToBool(sc); err == nil && isTrue == 0 {
-				return foldedConstForScalarFunc(value, x, isDeferredConst), isDeferredConst
+				if isDeferredConst {
+					return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
+				}
+				return &Constant{Value: value, RetType: x.RetType}, false
 			}
 			return expr, isDeferredConst
 		}
@@ -131,7 +137,10 @@ func foldConstant(expr Expression) (Expression, bool) {
 			log.Warnf("fold constant %s: %s", x.ExplainInfo(), err.Error())
 			return expr, isDeferredConst
 		}
-		return foldedConstForScalarFunc(value, x, isDeferredConst), isDeferredConst
+		if isDeferredConst {
+			return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
+		}
+		return &Constant{Value: value, RetType: x.RetType}, false
 	case *Constant:
 		if x.DeferredExpr != nil {
 			value, err := x.DeferredExpr.Eval(chunk.Row{})
@@ -143,11 +152,4 @@ func foldConstant(expr Expression) (Expression, bool) {
 		}
 	}
 	return expr, false
-}
-
-func foldedConstForScalarFunc(value types.Datum, sf *ScalarFunction, isDeferred bool) *Constant {
-	if isDeferred {
-		return &Constant{Value: value, RetType: sf.RetType, DeferredExpr: sf}
-	}
-	return &Constant{Value: value, RetType: sf.RetType}
 }
