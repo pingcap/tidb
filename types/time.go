@@ -153,6 +153,7 @@ var (
 func FromGoTime(t gotime.Time) MysqlTime {
 	year, month, day := t.Date()
 	hour, minute, second := t.Clock()
+	// Nanosecond plus 500 then divided 1000 means rounding to microseconds.
 	microsecond := (t.Nanosecond() + 500) / 1000
 	return FromDate(year, int(month), day, hour, minute, second, microsecond)
 }
