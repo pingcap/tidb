@@ -538,15 +538,15 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	baseExec.initCap = chunk.ZeroCapacity
 
 	ivs := &InsertValues{
-		baseExecutor:          baseExec,
-		Table:                 v.Table,
-		Columns:               v.Columns,
-		Lists:                 v.Lists,
-		SetList:               v.SetList,
-		GenColumns:            v.GenCols.Columns,
-		GenExprs:              v.GenCols.Exprs,
-		needFillDefaultValues: v.NeedFillDefaultValue,
-		SelectExec:            selectExec,
+		baseExecutor: baseExec,
+		Table:        v.Table,
+		Columns:      v.Columns,
+		Lists:        v.Lists,
+		SetList:      v.SetList,
+		GenColumns:   v.GenCols.Columns,
+		GenExprs:     v.GenCols.Exprs,
+		hasRefCols:   v.NeedFillDefaultValue,
+		SelectExec:   selectExec,
 	}
 
 	if v.IsReplace {

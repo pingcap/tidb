@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
@@ -217,6 +218,11 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch")
 	}
+	sql := ""
+	if prepared, ok := cc.ctx.GetStatement(int(stmtID)).(*TiDBStatement); ok {
+		sql = prepared.sql
+	}
+	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute)
 	rs := stmt.GetResultSet()
 	if rs == nil {
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,

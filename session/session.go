@@ -77,6 +77,8 @@ type Session interface {
 	DropPreparedStmt(stmtID uint32) error
 	SetClientCapability(uint32) // Set client capability flags.
 	SetConnectionID(uint64)
+	SetCommandValue(byte)
+	SetProcessInfo(string, time.Time, byte)
 	SetTLSState(*tls.ConnectionState)
 	SetCollation(coID int) error
 	SetSessionManager(util.SessionManager)
@@ -196,6 +198,10 @@ func (s *session) SetTLSState(tlsState *tls.ConnectionState) {
 	if tlsState != nil {
 		s.sessionVars.TLSConnectionState = tlsState
 	}
+}
+
+func (s *session) SetCommandValue(command byte) {
+	atomic.StoreUint32(&s.sessionVars.CommandValue, uint32(command))
 }
 
 func (s *session) GetTLSState() *tls.ConnectionState {
@@ -703,17 +709,14 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 	return s.parser.Parse(sql, charset, collation)
 }
 
-func (s *session) SetProcessInfo(sql string) {
+func (s *session) SetProcessInfo(sql string, t time.Time, command byte) {
 	pi := util.ProcessInfo{
 		ID:      s.sessionVars.ConnectionID,
 		DB:      s.sessionVars.CurrentDB,
-		Command: "Query",
-		Time:    time.Now(),
+		Command: mysql.Command2Str[command],
+		Time:    t,
 		State:   s.Status(),
 		Info:    sql,
-	}
-	if sql == "" {
-		pi.Command = "Sleep"
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
@@ -1280,6 +1283,7 @@ const loadCommonGlobalVarsSQL = "select HIGH_PRIORITY * from mysql.global_variab
 	variable.TiDBOptInSubqUnFolding + quoteCommaQuote +
 	variable.TiDBDistSQLScanConcurrency + quoteCommaQuote +
 	variable.TiDBMaxChunkSize + quoteCommaQuote +
+	variable.TiDBEnableCascadesPlanner + quoteCommaQuote +
 	variable.TiDBRetryLimit + quoteCommaQuote +
 	variable.TiDBDisableTxnAutoRetry + "')"
 
