@@ -559,6 +559,55 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	return insert
 }
 
+func getColumnInfo4LoadData(e *InsertValues, tableCols []*table.Column, colOrVars []ast.ExprNode) ([]*table.Column, int, error) {
+	colOrVarLen := len(e.colDefaultVals)
+	if colOrVarLen == 0 {
+		colOrVarLen = len(tableCols)
+	}
+	cols := make([]*table.Column, 0, colOrVarLen+len(e.SetList))
+	if len(colOrVars) == 0 {
+		cols = append(cols, tableCols...)
+	} else {
+		columns := make([]string, 0, len(colOrVars))
+		for _, colOrVar := range colOrVars {
+			if colName, isCol := colOrVar.(*ast.ColumnNameExpr); isCol {
+				columns = append(columns, colName.Name.Name.O)
+			} else {
+				columns = append(columns, "")
+			}
+		}
+		colsBind, err := table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if err != nil {
+			return nil, 0, errors.Errorf("%s in field list", err)
+		}
+		cols = append(cols, colsBind...)
+	}
+
+	pivot := len(cols)
+	if len(e.SetList) > 0 {
+		columns := make([]string, 0, len(e.SetList))
+		for _, v := range e.SetList {
+			columns = append(columns, v.Col.ColName.O)
+		}
+		colSet, err := table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+		if err != nil {
+			return nil, 0, errors.Errorf("%s in field list", err)
+		}
+		cols = append(cols, colSet...)
+	}
+
+	for _, col := range cols {
+		if col == nil {
+			continue
+		}
+		if col.Name.L == model.ExtraHandleName.L {
+			e.hasExtraHandle = true
+			break
+		}
+	}
+	return cols, pivot, nil
+}
+
 func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	tbl, ok := b.is.TableByID(v.Table.TableInfo.ID)
 	if !ok {
@@ -568,12 +617,12 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	insertVal := &InsertValues{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		Table:        tbl,
-		Columns:      v.Columns,
+		SetList:      v.SetList,
 		GenColumns:   v.GenCols.Columns,
 		GenExprs:     v.GenCols.Exprs,
 	}
 	tableCols := tbl.Cols()
-	columns, err := insertVal.getColumns(tableCols)
+	columns, pivot, err := getColumnInfo4LoadData(insertVal, tableCols, v.ColumnOrVars)
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -590,10 +639,11 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 			LinesInfo:    v.LinesInfo,
 			IgnoreLines:  v.IgnoreLines,
 			Ctx:          b.ctx,
-			columns:      columns,
+			colOrVar:     v.ColumnOrVars,
+			colInfo:      columns,
+			colPivot:     pivot,
 		},
 	}
-
 	return loadDataExec
 }
 

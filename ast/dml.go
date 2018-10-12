@@ -664,10 +664,11 @@ type LoadDataStmt struct {
 	IsLocal     bool
 	Path        string
 	Table       *TableName
-	Columns     []*ColumnName
+	Columns     []ExprNode
 	FieldsInfo  *FieldsClause
 	LinesInfo   *LinesClause
 	IgnoreLines uint64
+	SetList     []*Assignment
 }
 
 // Accept implements Node Accept interface.
@@ -685,11 +686,20 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 		n.Table = node.(*TableName)
 	}
 	for i, val := range n.Columns {
-		node, ok := val.Accept(v)
+		if colExpr, isCol := val.(*ColumnNameExpr); isCol {
+			name, ok := colExpr.Name.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Columns[i] = &ColumnNameExpr{Name: name.(*ColumnName)}
+			continue
+		}
+		varExpr := val.(*VariableExpr)
+		node, ok := varExpr.Accept(v)
 		if !ok {
 			return n, false
 		}
-		n.Columns[i] = node.(*ColumnName)
+		n.Columns[i] = node.(*VariableExpr)
 	}
 	return v.Leave(n)
 }

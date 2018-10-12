@@ -83,6 +83,10 @@ func ToColumn(col *model.ColumnInfo) *Column {
 func FindCols(cols []*Column, names []string, pkIsHandle bool) ([]*Column, error) {
 	var rcols []*Column
 	for _, name := range names {
+		if name == "" {
+			rcols = append(rcols, nil)
+			continue
+		}
 		col := FindCol(cols, name)
 		if col != nil {
 			rcols = append(rcols, col)

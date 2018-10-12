@@ -378,15 +378,16 @@ type Analyze struct {
 type LoadData struct {
 	baseSchemaProducer
 
-	IsLocal     bool
-	Path        string
-	Table       *ast.TableName
-	Columns     []*ast.ColumnName
-	FieldsInfo  *ast.FieldsClause
-	LinesInfo   *ast.LinesClause
-	IgnoreLines uint64
-
-	GenCols InsertGeneratedColumns
+	IsLocal      bool
+	Path         string
+	Table        *ast.TableName
+	ColumnOrVars []ast.ExprNode
+	FieldsInfo   *ast.FieldsClause
+	LinesInfo    *ast.LinesClause
+	IgnoreLines  uint64
+	SetList      []*expression.Assignment
+	tableSchema  *expression.Schema
+	GenCols      InsertGeneratedColumns
 }
 
 // LoadStats represents a load stats plan.

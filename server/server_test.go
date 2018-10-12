@@ -46,11 +46,12 @@ func TestT(t *testing.T) {
 var regression = true
 
 var defaultDSNConfig = mysql.Config{
-	User:   "root",
-	Net:    "tcp",
-	Addr:   "127.0.0.1:4001",
-	DBName: "test",
-	Strict: true,
+	User:      "root",
+	Net:       "tcp",
+	Addr:      "127.0.0.1:4001",
+	DBName:    "test",
+	Strict:    true,
+	ParseTime: true,
 }
 
 type configOverrider func(*mysql.Config)
@@ -265,7 +266,7 @@ func runTestSpecialType(t *C) {
 		err := rows.Scan(&outA, &outB, &outC, &outD)
 		t.Assert(err, IsNil)
 		t.Assert(outA, Equals, 1.4)
-		t.Assert(outB, Equals, "2012-12-21 12:12:12")
+		t.Assert(outB, Equals, "2012-12-21T12:12:12Z")
 		t.Assert(outC, Equals, "04:23:34")
 		t.Assert(outD, BytesEquals, []byte{8})
 	})
@@ -339,8 +340,109 @@ func runTestPreparedTimestamp(t *C) {
 		var outA, outB string
 		err := rows.Scan(&outA, &outB)
 		t.Assert(err, IsNil)
-		t.Assert(outA, Equals, "1970-01-01 00:00:01")
+		t.Assert(outA, Equals, "1970-01-01T00:00:01Z")
 		t.Assert(outB, Equals, "23:59:59")
+	})
+}
+
+func runTestLoadDataWithSet(c *C, server *Server) {
+	path := "/tmp/load_data_test2.csv"
+	fp, err := os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+	defer func() {
+		err = fp.Close()
+		c.Assert(err, IsNil)
+		err = os.Remove(path)
+		c.Assert(err, IsNil)
+	}()
+	_, err = fp.WriteString("\n" +
+		"11 12 - 1 1212 1212\n" +
+		"21 22 - 2\n" +
+		"31 32 - 3")
+	c.Assert(err, IsNil)
+
+	runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Strict = false
+	}, "LoadData2", func(dbt *DBTest) {
+		dbt.mustExec("create table t (a int, b int default -1, c binary(1), id int not null auto_increment, primary key(id))")
+		rs, err := dbt.db.Exec("load data local infile '/tmp/load_data_test2.csv' into table t fields terminated by ' ' (@x, b, @dummy, @z) set a = @x, c = unhex(@z)")
+		dbt.Assert(err, IsNil)
+		affectedRows, err := rs.RowsAffected()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(affectedRows, Equals, int64(4))
+
+		var (
+			aa *int
+			bb *int
+			cc []uint8
+		)
+		rows := dbt.mustQuery("select a, b, c from t")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&aa, &bb, &cc)
+		dbt.Check(err, IsNil)
+		dbt.Check(*aa, DeepEquals, 0)
+		dbt.Check(bb, DeepEquals, (*int)(nil))
+		dbt.Check(cc, DeepEquals, ([]uint8)(nil))
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&aa, &bb, &cc)
+		dbt.Check(err, IsNil)
+		dbt.Check(*aa, DeepEquals, 11)
+		dbt.Check(*bb, DeepEquals, 12)
+		dbt.Check(cc, DeepEquals, []byte{1})
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&aa, &bb, &cc)
+		dbt.Check(err, IsNil)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&aa, &bb, &cc)
+		dbt.Check(err, IsNil)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+
+		dbt.mustExec("truncate t")
+
+		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test2.csv' into table t fields terminated by ' ' (a) set a = a, b = a, c = unhex(1)")
+		dbt.Assert(err, IsNil)
+		affectedRows, err = rs.RowsAffected()
+		dbt.Assert(err, IsNil)
+		dbt.Assert(affectedRows, Equals, int64(4))
+		rows = dbt.mustQuery("select a, b, c from t")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&aa, &bb, &cc)
+		dbt.Check(err, IsNil)
+		dbt.Check(*aa, DeepEquals, 0)
+		dbt.Check(*bb, DeepEquals, 0)
+		dbt.Check(cc, DeepEquals, []byte{1})
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&aa, &bb, &cc)
+		dbt.Check(err, IsNil)
+		dbt.Check(*aa, DeepEquals, 11)
+		dbt.Check(*bb, DeepEquals, 11)
+		dbt.Check(cc, DeepEquals, []byte{1})
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&aa, &bb, &cc)
+		dbt.Check(err, IsNil)
+		dbt.Check(*aa, DeepEquals, 21)
+		dbt.Check(*bb, DeepEquals, 21)
+		dbt.Check(cc, DeepEquals, []byte{1})
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+
+		startTime := time.Now()
+		time.Sleep(1 * time.Second)
+		dbt.mustExec("drop table if exists t2")
+		dbt.mustExec("create table t2 (a int, b timestamp)")
+		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test2.csv' into table t2 fields terminated by ' ' set a = (select 10), b = current_timestamp")
+		dbt.Assert(err, IsNil)
+		rows = dbt.mustQuery("select a, b from t2")
+		var (
+			i int
+			t time.Time
+		)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&i, &t)
+		dbt.Check(i, Equals, 10)
+		dbt.Check(startTime.Before(t), Equals, true, Commentf("%v %v", startTime, t))
 	})
 }
 

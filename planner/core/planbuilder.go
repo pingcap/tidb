@@ -1344,15 +1344,37 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(insert *ast.InsertStmt, insertPlan
 	return nil
 }
 
+func (b *PlanBuilder) buildSetValuesOfLoadData(ld *ast.LoadDataStmt, ldPlan *LoadData, mockTablePlan *LogicalTableDual) error {
+	for _, assign := range ld.SetList {
+		exprCol, err := ldPlan.tableSchema.FindColumn(assign.Column)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if exprCol == nil {
+			return errors.Errorf("Unknown column '%s' in 'field list'", assign.Column.Name.O)
+		}
+
+		expr, _, err := b.rewriteWithPreprocess(assign.Expr, mockTablePlan, nil, true, func(node ast.Node) ast.Node { return node })
+		if err != nil {
+			return errors.Trace(err)
+		}
+		ldPlan.SetList = append(ldPlan.SetList, &expression.Assignment{
+			Col:  exprCol,
+			Expr: expr,
+		})
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 	p := &LoadData{
-		IsLocal:     ld.IsLocal,
-		Path:        ld.Path,
-		Table:       ld.Table,
-		Columns:     ld.Columns,
-		FieldsInfo:  ld.FieldsInfo,
-		LinesInfo:   ld.LinesInfo,
-		IgnoreLines: ld.IgnoreLines,
+		IsLocal:      ld.IsLocal,
+		Path:         ld.Path,
+		Table:        ld.Table,
+		ColumnOrVars: ld.Columns,
+		FieldsInfo:   ld.FieldsInfo,
+		LinesInfo:    ld.LinesInfo,
+		IgnoreLines:  ld.IgnoreLines,
 	}
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
@@ -1360,11 +1382,18 @@ func (b *PlanBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
 	}
+
 	schema := expression.TableInfo2Schema(b.ctx, tableInfo)
+
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	mockTablePlan.SetSchema(schema)
+	p.tableSchema = schema
 
-	var err error
+	err := b.buildSetValuesOfLoadData(ld, p, mockTablePlan)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	p.GenCols, err = b.resolveGeneratedColumns(tableInPlan.Cols(), nil, mockTablePlan)
 	if err != nil {
 		return nil, errors.Trace(err)

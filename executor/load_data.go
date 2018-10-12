@@ -36,18 +36,6 @@ type LoadDataExec struct {
 	loadDataInfo *LoadDataInfo
 }
 
-// NewLoadDataInfo returns a LoadDataInfo structure, and it's only used for tests now.
-func NewLoadDataInfo(ctx sessionctx.Context, row []types.Datum, tbl table.Table, cols []*table.Column) *LoadDataInfo {
-	insertVal := &InsertValues{baseExecutor: newBaseExecutor(ctx, nil, "InsertValues"), Table: tbl}
-	return &LoadDataInfo{
-		row:          row,
-		InsertValues: insertVal,
-		Table:        tbl,
-		Ctx:          ctx,
-		columns:      cols,
-	}
-}
-
 // Next implements the Executor Next interface.
 func (e *LoadDataExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.GrowAndReset(e.maxChunkSize)
@@ -95,7 +83,9 @@ type LoadDataInfo struct {
 	LinesInfo   *ast.LinesClause
 	IgnoreLines uint64
 	Ctx         sessionctx.Context
-	columns     []*table.Column
+	colOrVar    []ast.ExprNode
+	colInfo     []*table.Column
+	colPivot    int
 }
 
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.
@@ -274,13 +264,68 @@ func (e *LoadDataInfo) colsToRow(cols []field) []types.Datum {
 			e.row[i].SetString(string(cols[i].str))
 		}
 	}
-	row, err := e.getRow(e.columns, e.row)
+	row, err := e.fillRowData4LoadData(e.row)
 	if err != nil {
 		e.handleWarning(err,
 			fmt.Sprintf("Load Data: insert data:%v failed:%v", e.row, errors.ErrorStack(err)))
 		return nil
 	}
 	return row
+}
+
+func (e *LoadDataInfo) fillRowData4LoadData(vals []types.Datum) ([]types.Datum, error) {
+	row := make([]types.Datum, len(e.Table.Cols()))
+	hasValue := make([]bool, len(e.Table.Cols()))
+	i := 0
+	for _, v := range vals {
+		colInfo := e.colInfo[i]
+		if colInfo == nil {
+			if !v.IsNull() {
+				vs, err := v.ToString()
+				if err != nil {
+					return nil, err
+				}
+				e.ctx.GetSessionVars().Users[(e.colOrVar[i]).(*ast.VariableExpr).Name] = vs
+			}
+			i++
+			if i == e.colPivot {
+				break
+			}
+			continue
+		}
+		casted, err := table.CastValue(e.ctx, v, colInfo.ToInfo())
+		if e.filterErr(err) != nil {
+			return nil, errors.Trace(err)
+		}
+		offset := colInfo.Offset
+		row[offset] = casted
+		hasValue[offset] = true
+		i++
+		if i == e.colPivot {
+			break
+		}
+	}
+
+	if len(e.SetList) > 0 {
+		mRow := chunk.MutRowFromDatums(row).ToRow()
+		for _, setExpr := range e.SetList {
+			colInfo := e.colInfo[i]
+			v, err := setExpr.Expr.Eval(mRow)
+			if err != nil {
+				return nil, err
+			}
+			casted, err := table.CastValue(e.ctx, v, colInfo.ToInfo())
+			if e.filterErr(err) != nil {
+				return nil, errors.Trace(err)
+			}
+			offset := colInfo.Offset
+			row[offset] = casted
+			hasValue[offset] = true
+			i++
+		}
+	}
+
+	return e.fillGenColData(e.colInfo, len(vals), hasValue, row)
 }
 
 func (e *LoadDataInfo) addRecordLD(row []types.Datum) (int64, error) {
