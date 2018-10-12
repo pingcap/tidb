@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pkg/errors"
@@ -45,7 +46,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, errors.Trace(err)
 	}
 
-	finalPlan, err := plannercore.Optimize(c.Ctx, stmtNode, infoSchema)
+	finalPlan, err := planner.Optimize(c.Ctx, stmtNode, infoSchema)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
