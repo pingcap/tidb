@@ -2351,6 +2351,14 @@ ExplainStmt:
 			Format: $4,
 		}
 	}
+|   ExplainSym "ANALYZE" ExplainableStmt
+    {
+        $$ = &ast.ExplainStmt {
+            Stmt:   $3,
+            Format: "row",
+            Analyze: true,
+        }
+    }
 
 LengthNum:
 	NUM

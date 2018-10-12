@@ -1496,27 +1496,37 @@ func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 			return nil, ErrUnsupportedType.GenWithStackByArgs(targetPlan)
 		}
 	}
-	p := &Explain{StmtPlan: pp}
-	switch strings.ToLower(explain.Format) {
-	case ast.ExplainFormatROW:
-		retFields := []string{"id", "count", "task", "operator info"}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+	p := &Explain{StmtPlan: pp, Analyze: explain.Analyze, ExecStmt: explain.Stmt, ExecPlan: targetPlan}
+	p.ctx = b.ctx
+	p.PrepareRows = func() error {
+		switch strings.ToLower(explain.Format) {
+		case ast.ExplainFormatROW:
+			retFields := []string{"id", "count", "task", "operator info"}
+			if explain.Analyze {
+				retFields = append(retFields, "execution_info")
+			}
+			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+			for _, fieldName := range retFields {
+				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+			}
+			p.SetSchema(schema)
+			p.explainedPlans = map[int]bool{}
+			p.explainPlanInRowFormat(p.StmtPlan.(PhysicalPlan), "root", "", true)
+			if explain.Analyze {
+				b.ctx.GetSessionVars().StmtCtx.RuntimeStats = nil
+			}
+		case ast.ExplainFormatDOT:
+			retFields := []string{"dot contents"}
+			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+			for _, fieldName := range retFields {
+				schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+			}
+			p.SetSchema(schema)
+			p.prepareDotInfo(p.StmtPlan.(PhysicalPlan))
+		default:
+			return errors.Errorf("explain format '%s' is not supported now", explain.Format)
 		}
-		p.SetSchema(schema)
-		p.explainedPlans = map[int]bool{}
-		p.explainPlanInRowFormat(p.StmtPlan.(PhysicalPlan), "root", "", true)
-	case ast.ExplainFormatDOT:
-		retFields := []string{"dot contents"}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
-		}
-		p.SetSchema(schema)
-		p.prepareDotInfo(p.StmtPlan.(PhysicalPlan))
-	default:
-		return nil, errors.Errorf("explain format '%s' is not supported now", explain.Format)
+		return nil
 	}
 	return p, nil
 }
