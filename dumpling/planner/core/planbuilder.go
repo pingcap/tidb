@@ -19,6 +19,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/model"
@@ -646,22 +647,46 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	return
 }
 
-func getPhysicalIDs(tblInfo *model.TableInfo) []int64 {
-	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+func getPhysicalIDs(tblInfo *model.TableInfo, partitionNames []model.CIStr) ([]int64, error) {
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		if len(partitionNames) != 0 {
+			return nil, errors.Trace(ddl.ErrPartitionMgmtOnNonpartitioned)
+		}
+		return []int64{tblInfo.ID}, nil
+	}
+	if len(partitionNames) == 0 {
 		ids := make([]int64, 0, len(pi.Definitions))
 		for _, def := range pi.Definitions {
 			ids = append(ids, def.ID)
 		}
-		return ids
+		return ids, nil
 	}
-	return []int64{tblInfo.ID}
+	ids := make([]int64, 0, len(partitionNames))
+	for _, name := range partitionNames {
+		found := false
+		for _, def := range pi.Definitions {
+			if def.Name.L == name.L {
+				found = true
+				ids = append(ids, def.ID)
+				break
+			}
+		}
+		if !found {
+			return nil, errors.New(fmt.Sprintf("can not found the specified partition name %s in the table definition", name.O))
+		}
+	}
+	return ids, nil
 }
 
-func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
+func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) (Plan, error) {
 	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	for _, tbl := range as.TableNames {
 		idxInfo, colInfo, pkInfo := getColsInfo(tbl)
-		physicalIDs := getPhysicalIDs(tbl.TableInfo)
+		physicalIDs, err := getPhysicalIDs(tbl.TableInfo, as.PartitionNames)
+		if err != nil {
+			return nil, err
+		}
 		for _, idx := range idxInfo {
 			for _, id := range physicalIDs {
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{PhysicalTableID: id, IndexInfo: idx})
@@ -673,13 +698,16 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt) Plan {
 			}
 		}
 	}
-	return p
+	return p, nil
 }
 
 func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
 	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
-	physicalIDs := getPhysicalIDs(tblInfo)
+	physicalIDs, err := getPhysicalIDs(tblInfo, as.PartitionNames)
+	if err != nil {
+		return nil, err
+	}
 	for _, idxName := range as.IndexNames {
 		idx := findIndexByName(tblInfo.Indices, idxName)
 		if idx == nil || idx.State != model.StatePublic {
@@ -692,10 +720,13 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt) (Plan, error) 
 	return p, nil
 }
 
-func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
+func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) (Plan, error) {
 	p := &Analyze{MaxNumBuckets: as.MaxNumBuckets}
 	tblInfo := as.TableNames[0].TableInfo
-	physicalIDs := getPhysicalIDs(tblInfo)
+	physicalIDs, err := getPhysicalIDs(tblInfo, as.PartitionNames)
+	if err != nil {
+		return nil, err
+	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			for _, id := range physicalIDs {
@@ -703,7 +734,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt) Plan {
 			}
 		}
 	}
-	return p
+	return p, nil
 }
 
 const (
@@ -719,11 +750,11 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	}
 	if as.IndexFlag {
 		if len(as.IndexNames) == 0 {
-			return b.buildAnalyzeAllIndex(as), nil
+			return b.buildAnalyzeAllIndex(as)
 		}
 		return b.buildAnalyzeIndex(as)
 	}
-	return b.buildAnalyzeTable(as), nil
+	return b.buildAnalyzeTable(as)
 }
 
 func buildShowDDLFields() *expression.Schema {
