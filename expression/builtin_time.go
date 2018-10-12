@@ -215,15 +215,19 @@ var (
 	_ builtinFunc = &builtinAddDateStringDecimalSig{}
 	_ builtinFunc = &builtinAddDateIntStringSig{}
 	_ builtinFunc = &builtinAddDateIntIntSig{}
+	_ builtinFunc = &builtinAddDateIntDecimalSig{}
 	_ builtinFunc = &builtinAddDateDatetimeStringSig{}
 	_ builtinFunc = &builtinAddDateDatetimeIntSig{}
+	_ builtinFunc = &builtinAddDateDatetimeDecimalSig{}
 	_ builtinFunc = &builtinSubDateStringStringSig{}
 	_ builtinFunc = &builtinSubDateStringIntSig{}
 	_ builtinFunc = &builtinSubDateStringDecimalSig{}
 	_ builtinFunc = &builtinSubDateIntStringSig{}
 	_ builtinFunc = &builtinSubDateIntIntSig{}
+	_ builtinFunc = &builtinSubDateIntDecimalSig{}
 	_ builtinFunc = &builtinSubDateDatetimeStringSig{}
 	_ builtinFunc = &builtinSubDateDatetimeIntSig{}
+	_ builtinFunc = &builtinSubDateDatetimeDecimalSig{}
 )
 
 func convertTimeToMysqlTime(t time.Time, fsp int) (types.Time, error) {
@@ -2565,8 +2569,14 @@ func (du *baseDateArithmitical) getIntervalFromDecimal(ctx sessionctx.Context, a
 		interval = "00:" + interval
 	case "SECOND_MICROSECOND":
 		/* keep interval as original decimal */
+	case "SECOND", "MICROSECOND":
+		args[1] = WrapWithCastAsReal(ctx, args[1])
+		interval, isNull, err = args[1].EvalString(ctx, row)
+		if isNull || err != nil {
+			return "", true, errors.Trace(err)
+		}
 	default:
-		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE, SECOND, MICROSECOND
+		// YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE
 		args[1] = WrapWithCastAsInt(ctx, args[1])
 		interval, isNull, err = args[1].EvalString(ctx, row)
 		if isNull || err != nil {
@@ -2596,7 +2606,8 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	goTime = goTime.Add(dur)
+	duration := time.Duration(dur)
+	goTime = goTime.Add(duration)
 	goTime = goTime.AddDate(int(year), int(month), int(day))
 
 	if goTime.Nanosecond() == 0 {
@@ -2619,7 +2630,8 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 		return types.Time{}, true, errors.Trace(err)
 	}
 
-	goTime = goTime.Add(dur)
+	duration := time.Duration(dur)
+	goTime = goTime.Add(duration)
 	goTime = goTime.AddDate(int(year), int(month), int(day))
 
 	if goTime.Nanosecond() == 0 {
@@ -2679,6 +2691,11 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
+	case dateEvalTp == types.ETInt && intervalEvalTp == types.ETDecimal:
+		sig = &builtinAddDateIntDecimalSig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETString:
 		sig = &builtinAddDateDatetimeStringSig{
 			baseBuiltinFunc:      bf,
@@ -2686,6 +2703,11 @@ func (c *addDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		}
 	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETInt:
 		sig = &builtinAddDateDatetimeIntSig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
+	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETDecimal:
+		sig = &builtinAddDateDatetimeDecimalSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
@@ -2858,6 +2880,39 @@ func (b *builtinAddDateIntIntSig) evalTime(row types.Row) (types.Time, bool, err
 	return result, isNull || err != nil, errors.Trace(err)
 }
 
+type builtinAddDateIntDecimalSig struct {
+	baseBuiltinFunc
+	baseDateArithmitical
+}
+
+func (b *builtinAddDateIntDecimalSig) Clone() builtinFunc {
+	newSig := &builtinAddDateIntDecimalSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals ADDDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
+func (b *builtinAddDateIntDecimalSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	date, isNull, err := b.getDateFromInt(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	interval, isNull, err := b.getIntervalFromDecimal(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	return result, isNull || err != nil, errors.Trace(err)
+}
+
 type builtinAddDateDatetimeStringSig struct {
 	baseBuiltinFunc
 	baseDateArithmitical
@@ -2924,6 +2979,39 @@ func (b *builtinAddDateDatetimeIntSig) evalTime(row types.Row) (types.Time, bool
 	return result, isNull || err != nil, errors.Trace(err)
 }
 
+type builtinAddDateDatetimeDecimalSig struct {
+	baseBuiltinFunc
+	baseDateArithmitical
+}
+
+func (b *builtinAddDateDatetimeDecimalSig) Clone() builtinFunc {
+	newSig := &builtinAddDateDatetimeDecimalSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals ADDDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_adddate
+func (b *builtinAddDateDatetimeDecimalSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	date, isNull, err := b.getDateFromDatetime(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	interval, isNull, err := b.getIntervalFromDecimal(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	result, isNull, err := b.add(b.ctx, date, interval, unit)
+	return result, isNull || err != nil, errors.Trace(err)
+}
+
 type subDateFunctionClass struct {
 	baseFunctionClass
 }
@@ -2973,6 +3061,11 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
+	case dateEvalTp == types.ETInt && intervalEvalTp == types.ETDecimal:
+		sig = &builtinSubDateIntDecimalSig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
 	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETString:
 		sig = &builtinSubDateDatetimeStringSig{
 			baseBuiltinFunc:      bf,
@@ -2980,6 +3073,11 @@ func (c *subDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 		}
 	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETInt:
 		sig = &builtinSubDateDatetimeIntSig{
+			baseBuiltinFunc:      bf,
+			baseDateArithmitical: newDateArighmeticalUtil(),
+		}
+	case dateEvalTp == types.ETDatetime && intervalEvalTp == types.ETDecimal:
+		sig = &builtinSubDateDatetimeDecimalSig{
 			baseBuiltinFunc:      bf,
 			baseDateArithmitical: newDateArighmeticalUtil(),
 		}
@@ -3155,6 +3253,39 @@ type builtinSubDateDatetimeStringSig struct {
 	baseDateArithmitical
 }
 
+type builtinSubDateIntDecimalSig struct {
+	baseBuiltinFunc
+	baseDateArithmitical
+}
+
+func (b *builtinSubDateIntDecimalSig) Clone() builtinFunc {
+	newSig := &builtinSubDateIntDecimalSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals SUBDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
+func (b *builtinSubDateIntDecimalSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	date, isNull, err := b.getDateFromInt(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	interval, isNull, err := b.getIntervalFromDecimal(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	return result, isNull || err != nil, errors.Trace(err)
+}
+
 func (b *builtinSubDateDatetimeStringSig) Clone() builtinFunc {
 	newSig := &builtinSubDateDatetimeStringSig{baseDateArithmitical: b.baseDateArithmitical}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
@@ -3208,6 +3339,39 @@ func (b *builtinSubDateDatetimeIntSig) evalTime(row types.Row) (types.Time, bool
 	}
 
 	interval, isNull, err := b.getIntervalFromInt(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	result, isNull, err := b.sub(b.ctx, date, interval, unit)
+	return result, isNull || err != nil, errors.Trace(err)
+}
+
+type builtinSubDateDatetimeDecimalSig struct {
+	baseBuiltinFunc
+	baseDateArithmitical
+}
+
+func (b *builtinSubDateDatetimeDecimalSig) Clone() builtinFunc {
+	newSig := &builtinSubDateDatetimeDecimalSig{baseDateArithmitical: b.baseDateArithmitical}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals SUBDATE(date,INTERVAL expr unit).
+// See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subdate
+func (b *builtinSubDateDatetimeDecimalSig) evalTime(row chunk.Row) (types.Time, bool, error) {
+	unit, isNull, err := b.args[2].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	date, isNull, err := b.getDateFromDatetime(b.ctx, b.args, row, unit)
+	if isNull || err != nil {
+		return types.Time{}, true, errors.Trace(err)
+	}
+
+	interval, isNull, err := b.getIntervalFromDecimal(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.Time{}, true, errors.Trace(err)
 	}
