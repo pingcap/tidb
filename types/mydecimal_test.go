@@ -585,7 +585,7 @@ func (s *testMyDecimalSuite) TestAdd(c *C) {
 		{"-123.45", "12345", "12221.55", nil},
 		{"5", "-6.0", "-1.0", nil},
 		{"2" + strings.Repeat("1", 71), strings.Repeat("8", 81), "8888888890" + strings.Repeat("9", 71), nil},
-		{"-1.000", "1.000", "0.000", nil},
+		{"-1.000", "1.000", "0", nil},
 	}
 	for _, tt := range tests {
 		a := NewDecFromStringForTest(tt.a)
