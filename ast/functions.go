@@ -314,8 +314,6 @@ const (
 	JSONDepth         = "json_depth"
 	JSONKeys          = "json_keys"
 	JSONLength        = "json_length"
-	JSONArrayAgg      = "json_arrayagg"
-	JSONObjectAgg     = "json_objectagg"
 )
 
 // FuncCallExpr is for function expression.
@@ -484,9 +482,9 @@ const (
 	AggFuncBitXor = "bit_xor"
 	// AggFuncBitAnd is the name of bit_and function.
 	AggFuncBitAnd = "bit_and"
-
+	// AggFuncJsonArrayAgg is the name of json_arrayagg function.
 	AggFuncJsonArrayAgg = "json_arrayagg"
-
+	// AggFuncJsonObjectAgg is the name of json_objectagg function.
 	AggFuncJsonObjectAgg = "json_objectagg"
 )
 

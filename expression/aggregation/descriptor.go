@@ -156,7 +156,7 @@ func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) {
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
-	case ast.JSONArrayAgg, ast.JSONObjectAgg:
+	case ast.AggFuncJsonArrayAgg, ast.AggFuncJsonObjectAgg:
 		a.typeInfer4JsonFuncs(ctx)
 	default:
 		panic("unsupported agg function: " + a.Name)
@@ -278,9 +278,9 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 		return &bitXorFunction{aggFunction: aggFunc}
 	case ast.AggFuncBitAnd:
 		return &bitAndFunction{aggFunction: aggFunc}
-	case ast.JSONArrayAgg:
+	case ast.AggFuncJsonArrayAgg:
 		return &jsonArrayAggFunction{aggFunction: aggFunc}
-	case ast.JSONObjectAgg:
+	case ast.AggFuncJsonObjectAgg:
 		return &jsonObjectAggFunction{aggFunction: aggFunc}
 	default:
 		panic("unsupported agg function")
