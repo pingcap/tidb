@@ -179,6 +179,7 @@ func (s *testSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(len(fields), Equals, 0)
 
+		// Coverage.
 		exec := &executor.ExecuteExec{}
 		exec.Next(ctx, nil)
 		exec.Close()
