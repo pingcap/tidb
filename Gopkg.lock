@@ -473,7 +473,7 @@
   revision = "6b7d9516179cd47f4714cfeb0103ad1dede756c4"
 
 [[projects]]
-  digest = "1:a893d24a604ae6f45f2d6e00ae9e817476e110e2dd5455152b35bb720ca2f626"
+  digest = "1:7cd8d3d0020bbbe235958c87a2c042c4a8505e401b6e0496880990228fc34f4b"
   name = "google.golang.org/grpc"
   packages = [
     ".",
@@ -503,9 +503,9 @@
     "transport",
   ]
   pruneopts = "NUT"
-  revision = "41344da2231b913fa3d983840a57a6b1b7b631a1"
+  revision = "7a6a684ca69eb4cae85ad0a484f2e531598c047b"
   source = "https://github.com/grpc/grpc-go.git"
-  version = "v1.12.0"
+  version = "v1.12.2"
 
 [[projects]]
   digest = "1:7d95d61ff5828a65cf072a46f3c68d67daffdd11e97d758b0af2176cde717fcd"
