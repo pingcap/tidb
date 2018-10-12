@@ -666,7 +666,7 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 			StmtNode:   v.ExecStmt,
 			Ctx:        b.ctx,
 		}
-		b.ctx.GetSessionVars().StmtCtx.RuntimeStats = execdetails.NewRuntimeStats()
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStats()
 		ctx := context.Background()
 		rs, err := stmt.Exec(ctx)
 		if err != nil {

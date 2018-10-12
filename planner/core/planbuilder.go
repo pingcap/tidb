@@ -1503,7 +1503,7 @@ func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 		case ast.ExplainFormatROW:
 			retFields := []string{"id", "count", "task", "operator info"}
 			if explain.Analyze {
-				retFields = append(retFields, "execution_info")
+				retFields = append(retFields, "execution info")
 			}
 			schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
 			for _, fieldName := range retFields {
@@ -1513,7 +1513,7 @@ func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 			p.explainedPlans = map[int]bool{}
 			p.explainPlanInRowFormat(p.StmtPlan.(PhysicalPlan), "root", "", true)
 			if explain.Analyze {
-				b.ctx.GetSessionVars().StmtCtx.RuntimeStats = nil
+				b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 			}
 		case ast.ExplainFormatDOT:
 			retFields := []string{"dot contents"}

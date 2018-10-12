@@ -448,11 +448,11 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
 	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {
-		runtimeStat := e.ctx.GetSessionVars().StmtCtx.RuntimeStats
+		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
 		if taskType == "cop" {
 			row = append(row, "") //TODO: wait collect resp from tikv
 		} else {
-			row = append(row, runtimeStat.GetRuntimeStat(p.ExplainID()).String())
+			row = append(row, runtimeStatsColl.GetRuntimeStat(p.ExplainID()).String())
 		}
 	}
 	e.Rows = append(e.Rows, row)
