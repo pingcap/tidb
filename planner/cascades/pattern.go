@@ -75,7 +75,7 @@ func GetOperand(p plannercore.LogicalPlan) (Operand, error) {
 	case *plannercore.LogicalLimit:
 		return OperandLimit, nil
 	}
-	return OperandUnsupported, plannercore.ErrUnsupportedType.GenWithStack("Unsupported LogicalPlan(%T) for GetOperand", p)
+	return OperandUnsupported, plannercore.ErrUnsupportedType.GenWithStack("Unsupported LogicalPlan(%T) for GetOperand", x)
 }
 
 // match checks if current Operand matches specified one.
