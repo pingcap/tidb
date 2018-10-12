@@ -285,11 +285,7 @@ func CheckOnce(cols []*Column) error {
 
 // CheckNotNull checks if nil value set to a column with NotNull flag is set.
 func (c *Column) CheckNotNull(data types.Datum) error {
-	if mysql.HasNotNullFlag(c.Flag) && data.IsNull() {
-		return ErrColumnCantNull.GenWithStackByArgs(c.Name)
-	}
-
-	if mysql.HasPreventNullInsertFlag(c.Flag) && data.IsNull() {
+	if mysql.HasNotNullFlag(c.Flag) || mysql.HasPreventNullInsertFlag(c.Flag) && data.IsNull() {
 		return ErrColumnCantNull.GenWithStackByArgs(c.Name)
 	}
 	return nil
