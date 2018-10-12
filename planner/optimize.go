@@ -62,11 +62,9 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if ctx.GetSessionVars().EnableCascadesPlanner {
-		return nil, errors.New("The cascades planner is not implemented yet.")
-	} else {
-		return plannercore.DoOptimize(builder.GetOptFlag(), logic)
+		return nil, errors.New("the cascades planner is not implemented yet")
 	}
-
+	return plannercore.DoOptimize(builder.GetOptFlag(), logic)
 }
 
 func init() {

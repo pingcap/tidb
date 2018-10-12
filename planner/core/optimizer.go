@@ -25,7 +25,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-// EvalAstExpr evaluates ast expression directly.
+// OptimizeAstNode optimizes the query to a physical plan directly.
 var OptimizeAstNode func(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error)
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
@@ -78,6 +78,7 @@ func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoS
 	return p, nil
 }
 
+// CheckPrivilege checks the privilege for a user.
 func CheckPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	for _, v := range vs {
 		if !pm.RequestVerification(v.db, v.table, v.column, v.privilege) {
@@ -87,6 +88,7 @@ func CheckPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	return true
 }
 
+// DoOptimize optimizes a logical plan to a physical plan.
 func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	logic, err := logicalOptimize(flag, logic)
 	if err != nil {
