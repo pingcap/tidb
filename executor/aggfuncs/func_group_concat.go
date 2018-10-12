@@ -15,6 +15,7 @@ package aggfuncs
 
 import (
 	"bytes"
+	"sync/atomic"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/expression"
@@ -32,7 +33,7 @@ type baseGroupConcat4String struct {
 	// According to MySQL, a 'group_concat' function generates exactly one 'truncated' warning during its life time, no matter
 	// how many group actually truncated. 'truncated' acts as a sentinel to indicate whether this warning has already been
 	// generated.
-	truncated bool
+	truncated *int32
 }
 
 func (e *baseGroupConcat4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -52,10 +53,12 @@ func (e *baseGroupConcat4String) truncatePartialResultIfNeed(sctx sessionctx.Con
 			i = int(e.maxLen)
 		}
 		buffer.Truncate(i)
-		if !e.truncated {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat)
+		if atomic.CompareAndSwapInt32(e.truncated, 0, 1) {
+			if !sctx.GetSessionVars().StmtCtx.TruncateAsWarning {
+				return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String())
+			}
+			sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String()))
 		}
-		e.truncated = true
 	}
 	return nil
 }
@@ -126,8 +129,17 @@ func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	}
 	p2.buffer.WriteString(e.sep)
 	p2.buffer.WriteString(p1.buffer.String())
-	e.truncatePartialResultIfNeed(sctx, p2.buffer)
-	return nil
+	return e.truncatePartialResultIfNeed(sctx, p2.buffer)
+}
+
+// SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
+func (e *groupConcat) SetTruncated(t *int32) {
+	e.truncated = t
+}
+
+// GetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
+func (e *groupConcat) GetTruncated() *int32 {
+	return e.truncated
 }
 
 type partialResult4GroupConcatDistinct struct {
@@ -188,4 +200,14 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		return e.truncatePartialResultIfNeed(sctx, p.buffer)
 	}
 	return nil
+}
+
+// SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
+func (e *groupConcatDistinct) SetTruncated(t *int32) {
+	e.truncated = t
+}
+
+// GetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
+func (e *groupConcatDistinct) GetTruncated() *int32 {
+	return e.truncated
 }
