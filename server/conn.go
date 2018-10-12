@@ -623,7 +623,6 @@ func (cc *clientConn) dispatch(data []byte) error {
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
-		// cc.ctx.SetProcessInfo(hack.String(data), t, cmd)
 		return cc.handleQuery(ctx1, hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
