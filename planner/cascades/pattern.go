@@ -25,21 +25,37 @@ import (
 type Operand int
 
 const (
+	// Placeholder for any Operand.
 	OperandAny Operand = iota
+	// Operand for LogicalJoin.
 	OperandJoin
+	// Operand for LogicalAggregation.
 	OperandAggregation
+	// Operand for LogicalProjection.
 	OperandProjection
+	// Operand for LogicalSelection.
 	OperandSelection
+	// Operand for LogicalApply.
 	OperandApply
+	// Operand for LogicalMaxOneRow.
 	OperandMaxOneRow
+	// Operand for LogicalTableDual.
 	OperandTableDual
+	// Operand for DataSource.
 	OperandDataSource
+	// Operand for LogicalUnionScan.
 	OperandUnionScan
+	// Operand for LogicalUnionAll.
 	OperandUnionAll
+	// Operand for LogicalSort.
 	OperandSort
+	// Operand for LogicalTopN.
 	OperandTopN
+	// Operand for LogicalLock.
 	OperandLock
+	// Operand for LogicalLimit.
 	OperandLimit
+	// Upper bound of defined Operand.
 	OperandUnsupported
 )
 
