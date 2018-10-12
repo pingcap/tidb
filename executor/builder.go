@@ -697,18 +697,22 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 }
 
 func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) Executor {
-	src := b.build(v.Children()[0])
+	reader := b.build(v.Children()[0])
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
 		return nil
 	}
-	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), src)}
+	return b.buildUnionScanFromReader(reader, v)
+}
+
+func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) Executor {
+	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), reader)}
 	// Get the handle column index of the below plannercore.
 	// We can guarantee that there must be only one col in the map.
 	for _, cols := range v.Children()[0].Schema().TblID2Handle {
 		us.belowHandleIndex = cols[0].Index
 	}
-	switch x := src.(type) {
+	switch x := reader.(type) {
 	case *TableReaderExecutor:
 		us.desc = x.desc
 		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(x.table.Meta().ID)
@@ -745,7 +749,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 		b.err = us.buildAndSortAddedRows()
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
-		return src
+		return reader
 	}
 	if b.err != nil {
 		b.err = errors.Trace(b.err)
@@ -1841,8 +1845,26 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context,
 		return builder.buildIndexReaderForIndexJoin(ctx, v, datums, IndexRanges, keyOff2IdxOff)
 	case *plannercore.PhysicalIndexLookUpReader:
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, datums, IndexRanges, keyOff2IdxOff)
+	case *plannercore.PhysicalUnionScan:
+		return builder.buildUnionScanForIndexJoin(ctx, v, datums, IndexRanges, keyOff2IdxOff)
 	}
 	return nil, errors.New("Wrong plan type for dataReaderBuilder")
+}
+
+func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *plannercore.PhysicalUnionScan,
+	values [][]types.Datum, indexRanges []*ranger.Range, keyOff2IdxOff []int) (Executor, error) {
+	builder.Plan = v.Children()[0]
+	reader, err := builder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e := builder.buildUnionScanFromReader(reader, v)
+	if e == nil {
+		return nil, builder.err
+	}
+	us := e.(*UnionScanExec)
+	us.snapshotChunkBuffer = us.newFirstChunk()
+	return us, nil
 }
 
 func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader, datums [][]types.Datum) (Executor, error) {
