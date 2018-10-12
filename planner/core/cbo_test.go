@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -323,7 +324,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
-		p, err := core.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -373,7 +374,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
-		p, err := core.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -485,7 +486,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
-		p, err := core.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -561,7 +562,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, true)
 		c.Assert(err, IsNil)
-		p, err := core.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 
 		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
@@ -812,7 +813,7 @@ func BenchmarkOptimize(b *testing.B) {
 		b.Run(tt.sql, func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, err := core.Optimize(ctx, stmt, is)
+				_, err := planner.Optimize(ctx, stmt, is)
 				c.Assert(err, IsNil)
 			}
 			b.ReportAllocs()

@@ -289,6 +289,9 @@ type SessionVars struct {
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition bool
 
+	// EnableCascadesPlanner enables the cascades planner.
+	EnableCascadesPlanner bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -604,6 +607,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
+	case TiDBEnableCascadesPlanner:
+		s.EnableCascadesPlanner = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
