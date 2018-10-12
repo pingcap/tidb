@@ -25,37 +25,37 @@ import (
 type Operand int
 
 const (
-	// Placeholder for any Operand.
+	// OperandAny is a placeholder for any Operand.
 	OperandAny Operand = iota
-	// Operand for LogicalJoin.
+	// OperandJoin for LogicalJoin.
 	OperandJoin
-	// Operand for LogicalAggregation.
+	// OperandAggregation for LogicalAggregation.
 	OperandAggregation
-	// Operand for LogicalProjection.
+	// OperandProjection for LogicalProjection.
 	OperandProjection
-	// Operand for LogicalSelection.
+	// OperandSelection for LogicalSelection.
 	OperandSelection
-	// Operand for LogicalApply.
+	// OperandApply for LogicalApply.
 	OperandApply
-	// Operand for LogicalMaxOneRow.
+	// OperandMaxOneRow for LogicalMaxOneRow.
 	OperandMaxOneRow
-	// Operand for LogicalTableDual.
+	// OperandTableDual for LogicalTableDual.
 	OperandTableDual
-	// Operand for DataSource.
+	// OperandDataSource for DataSource.
 	OperandDataSource
-	// Operand for LogicalUnionScan.
+	// OperandUnionScan for LogicalUnionScan.
 	OperandUnionScan
-	// Operand for LogicalUnionAll.
+	// OperandUnionAll for LogicalUnionAll.
 	OperandUnionAll
-	// Operand for LogicalSort.
+	// OperandSort for LogicalSort.
 	OperandSort
-	// Operand for LogicalTopN.
+	// OperandTopN for LogicalTopN.
 	OperandTopN
-	// Operand for LogicalLock.
+	// OperandLock for LogicalLock.
 	OperandLock
-	// Operand for LogicalLimit.
+	// OperandLimit for LogicalLimit.
 	OperandLimit
-	// Upper bound of defined Operand.
+	// OperandUnsupported is upper bound of defined Operand yet.
 	OperandUnsupported
 )
 
