@@ -364,6 +364,7 @@ func NewSessionVars() *SessionVars {
 		DisableTxnAutoRetry:       DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:          kv.PriorityLow,
 		SlowQueryFile:             config.GetGlobalConfig().Log.SlowQueryFile,
+		CommandValue:              uint32(mysql.ComSleep),
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
