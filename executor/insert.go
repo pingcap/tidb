@@ -31,7 +31,6 @@ type InsertExec struct {
 	*InsertValues
 	OnDuplicate []*expression.Assignment
 	Priority    mysql.PriorityEnum
-	finished    bool
 }
 
 func (e *InsertExec) exec(rows [][]types.Datum) error {
@@ -68,7 +67,6 @@ func (e *InsertExec) exec(rows [][]types.Datum) error {
 			}
 		}
 	}
-	e.finished = true
 	return nil
 }
 
@@ -131,9 +129,6 @@ func (e *InsertExec) batchUpdateDupRows(newRows [][]types.Datum) error {
 // Next implements Exec Next interface.
 func (e *InsertExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if e.finished {
-		return nil
-	}
 	cols, err := e.getColumns(e.Table.Cols())
 	if err != nil {
 		return errors.Trace(err)
