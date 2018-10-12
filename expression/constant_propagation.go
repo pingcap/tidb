@@ -270,7 +270,10 @@ func (s *propConstSolver) pickNewEQConds(visited []bool) (retMapper map[int]*Con
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
 				value, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
-				terror.Log(errors.Trace(err))
+				if err != nil {
+					terror.Log(errors.Trace(err))
+					return nil
+				}
 				if !value {
 					s.setConds2ConstFalse()
 					return nil
@@ -326,13 +329,11 @@ type propOuterJoinConstSolver struct {
 	innerSchema *Schema
 }
 
-func (s *propOuterJoinConstSolver) setConds2ConstFalse(joinConds, filterConds bool) {
-	if joinConds {
-		s.joinConds = []Expression{&Constant{
-			Value:   types.NewDatum(false),
-			RetType: types.NewFieldType(mysql.TypeTiny),
-		}}
-	}
+func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
+	s.joinConds = []Expression{&Constant{
+		Value:   types.NewDatum(false),
+		RetType: types.NewFieldType(mysql.TypeTiny),
+	}}
 	if filterConds {
 		s.filterConds = []Expression{&Constant{
 			Value:   types.NewDatum(false),
@@ -341,8 +342,8 @@ func (s *propOuterJoinConstSolver) setConds2ConstFalse(joinConds, filterConds bo
 	}
 }
 
-// pickNewEQCondsFunc picks constant equal expression from specified conditions.
-func (s *propOuterJoinConstSolver) pickNewEQCondsFunc(retMapper map[int]*Constant, visited []bool, filterConds bool) map[int]*Constant {
+// pickEQCondsOnOuterCol picks constant equal expression from specified conditions.
+func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Constant, visited []bool, filterConds bool) map[int]*Constant {
 	var conds []Expression
 	var condsOffset int
 	if filterConds {
@@ -366,11 +367,7 @@ func (s *propOuterJoinConstSolver) pickNewEQCondsFunc(retMapper map[int]*Constan
 					return nil
 				}
 				if !value {
-					if filterConds {
-						s.setConds2ConstFalse(true, true)
-					} else {
-						s.setConds2ConstFalse(true, false)
-					}
+					s.setConds2ConstFalse(filterConds)
 					return nil
 				}
 			}
@@ -383,11 +380,7 @@ func (s *propOuterJoinConstSolver) pickNewEQCondsFunc(retMapper map[int]*Constan
 		visited[i+condsOffset] = true
 		updated, foreverFalse := s.tryToUpdateEQList(col, con)
 		if foreverFalse {
-			if filterConds {
-				s.setConds2ConstFalse(true, true)
-			} else {
-				s.setConds2ConstFalse(true, false)
-			}
+			s.setConds2ConstFalse(filterConds)
 			return nil
 		}
 		if updated {
@@ -400,12 +393,12 @@ func (s *propOuterJoinConstSolver) pickNewEQCondsFunc(retMapper map[int]*Constan
 // pickNewEQConds picks constant equal expressions from join and filter conditions.
 func (s *propOuterJoinConstSolver) pickNewEQConds(visited []bool) map[int]*Constant {
 	retMapper := make(map[int]*Constant)
-	retMapper = s.pickNewEQCondsFunc(retMapper, visited, true)
+	retMapper = s.pickEQCondsOnOuterCol(retMapper, visited, true)
 	if retMapper == nil {
-		// Filter is constant false, enforce early termination.
+		// Filter is constant false or error occured, enforce early termination.
 		return nil
 	}
-	retMapper = s.pickNewEQCondsFunc(retMapper, visited, false)
+	retMapper = s.pickEQCondsOnOuterCol(retMapper, visited, false)
 	return retMapper
 }
 

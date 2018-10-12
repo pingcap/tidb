@@ -426,9 +426,6 @@ func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 
 // outerJoinPropConst propagates constant equal and column equal conditions over outer join.
 func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []expression.Expression {
-	if p.JoinType == InnerJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
-		return predicates
-	}
 	outerTable := p.children[0]
 	innerTable := p.children[1]
 	if p.JoinType == RightOuterJoin {
