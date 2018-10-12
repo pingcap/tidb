@@ -15,6 +15,7 @@ package expression
 
 import (
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 )
@@ -118,10 +119,10 @@ func foldConstant(expr Expression) (Expression, bool) {
 				return expr, isDeferredConst
 			}
 			if value.IsNull() {
-				return &Constant{Value: value, RetType: x.RetType}, false
+				return foldedConstForScalarFunc(value, x, isDeferredConst), isDeferredConst
 			}
 			if isTrue, err := value.ToBool(sc); err == nil && isTrue == 0 {
-				return &Constant{Value: value, RetType: x.RetType}, false
+				return foldedConstForScalarFunc(value, x, isDeferredConst), isDeferredConst
 			}
 			return expr, isDeferredConst
 		}
@@ -130,10 +131,7 @@ func foldConstant(expr Expression) (Expression, bool) {
 			log.Warnf("fold constant %s: %s", x.ExplainInfo(), err.Error())
 			return expr, isDeferredConst
 		}
-		if isDeferredConst {
-			return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
-		}
-		return &Constant{Value: value, RetType: x.RetType}, false
+		return foldedConstForScalarFunc(value, x, isDeferredConst), isDeferredConst
 	case *Constant:
 		if x.DeferredExpr != nil {
 			value, err := x.DeferredExpr.Eval(chunk.Row{})
@@ -145,4 +143,11 @@ func foldConstant(expr Expression) (Expression, bool) {
 		}
 	}
 	return expr, false
+}
+
+func foldedConstForScalarFunc(value types.Datum, sf *ScalarFunction, isDeferred bool) *Constant {
+	if isDeferred {
+		return &Constant{Value: value, RetType: sf.RetType, DeferredExpr: sf}
+	}
+	return &Constant{Value: value, RetType: sf.RetType}
 }
