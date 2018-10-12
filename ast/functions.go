@@ -315,6 +315,7 @@ const (
 	JSONKeys          = "json_keys"
 	JSONLength        = "json_length"
 	JSONArrayAgg      = "json_arrayagg"
+	JSONObjectAgg     = "json_objectagg"
 )
 
 // FuncCallExpr is for function expression.
@@ -485,6 +486,8 @@ const (
 	AggFuncBitAnd = "bit_and"
 
 	AggFuncJsonArrayAgg = "json_arrayagg"
+
+	AggFuncJsonObjectAgg = "json_objectagg"
 )
 
 // AggregateFuncExpr represents aggregate function expression.

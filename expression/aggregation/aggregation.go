@@ -88,8 +88,10 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 		return &bitXorFunction{aggFunction: newAggFunc(ast.AggFuncBitXor, args, false)}, nil
 	case tipb.ExprType_Agg_BitAnd:
 		return &bitAndFunction{aggFunction: newAggFunc(ast.AggFuncBitAnd, args, false)}, nil
-	case tipb.ExprType_JsonArrayAggr:
+	case tipb.ExprType_JsonArrayAgg:
 		return &jsonArrayAggFunction{newAggFunc(ast.AggFuncJsonArrayAgg, args, false)}, nil
+	case tipb.ExprType_JsonObjectAgg:
+		return &jsonObjectAggFunction{newAggFunc(ast.AggFuncJsonObjectAgg, args, false)}, nil
 	}
 	return nil, errors.Errorf("Unknown aggregate function type %v", expr.Tp)
 }

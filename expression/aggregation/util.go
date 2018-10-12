@@ -95,17 +95,12 @@ func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.
 }
 
 func ConcatBinaryJSONArray(data1, data2 types.Datum) (data types.Datum, err error) {
-	if data2.Kind() == types.KindMysqlJSON {
-		a := data2.GetMysqlJSON()
-		if a.TypeCode == json.TypeCodeArray {
-			data = types.NewDatum(a)
-		}
+	if data2.Kind() == types.KindMysqlJSON && data2.GetMysqlJSON().TypeCode == json.TypeCodeArray {
+		data = data2
 	} else {
 		return data, errors.Errorf("invalid value %v for aggregate", data2.Kind())
 	}
-	if err != nil {
-		return data, errors.Trace(err)
-	}
+
 	if data.IsNull() {
 		return data1, nil
 	}
@@ -118,4 +113,26 @@ func ConcatBinaryJSONArray(data1, data2 types.Datum) (data types.Datum, err erro
 	default:
 		return data, errors.Errorf("invalid value %v for aggregate", data1.Kind())
 	}
+}
+
+func MergeBinaryJSONObject(data1, data2 types.Datum) (data types.Datum, err error) {
+	if data2.Kind() == types.KindMysqlJSON && data2.GetMysqlJSON().TypeCode == json.TypeCodeObject {
+		data = data2
+	} else {
+		return data, errors.Errorf("invalid value %v for aggregate", data2.Kind())
+	}
+
+	if data.IsNull() {
+		return data1, nil
+	}
+
+	switch data1.Kind() {
+	case types.KindNull:
+		return data, nil
+	case types.KindMysqlJSON:
+		return types.ComputeMerge(data1, data)
+	default:
+		return data, errors.Errorf("invalid value %v for aggregate", data1.Kind())
+	}
+
 }

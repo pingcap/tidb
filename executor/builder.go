@@ -869,7 +869,7 @@ func (b *executorBuilder) wrapCastForAggArgs(funcs []*aggregation.AggFuncDesc) {
 	for _, f := range funcs {
 		// We do not need to wrap cast upon these functions,
 		// since the EvalXXX method called by the arg is determined by the corresponding arg type.
-		if f.Name == ast.AggFuncCount || f.Name == ast.AggFuncMin || f.Name == ast.AggFuncMax || f.Name == ast.AggFuncFirstRow || f.Name == ast.AggFuncJsonArrayAgg {
+		if f.Name == ast.AggFuncCount || f.Name == ast.AggFuncMin || f.Name == ast.AggFuncMax || f.Name == ast.AggFuncFirstRow || f.Name == ast.AggFuncJsonArrayAgg || f.Name == ast.AggFuncJsonObjectAgg {
 			continue
 		}
 		var castFunc func(ctx sessionctx.Context, expr expression.Expression) expression.Expression

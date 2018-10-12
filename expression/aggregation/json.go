@@ -51,3 +51,36 @@ func (sf *jsonArrayAggFunction) GetResult(evalCtx *AggEvaluateContext) (d types.
 func (sf *jsonArrayAggFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
 	return []types.Datum{evalCtx.Value}
 }
+
+type jsonObjectAggFunction struct {
+	aggFunction
+}
+
+// Update implements Aggregation interface.
+func (sf *jsonObjectAggFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) (err error) {
+	a := sf.Args[0]
+	value, err := a.Eval(row)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if value.IsNull() {
+		return nil
+	}
+
+	evalCtx.Value, err = MergeBinaryJSONObject(evalCtx.Value, value)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// GetResult implements Aggregation interface.
+func (sf *jsonObjectAggFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
+	d.SetValue(evalCtx.Value)
+	return
+}
+
+// GetPartialResult implements Aggregation interface.
+func (sf *jsonObjectAggFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types.Datum {
+	return []types.Datum{evalCtx.Value}
+}

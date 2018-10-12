@@ -54,6 +54,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitAnd(aggFuncDesc, ordinal)
 	case ast.AggFuncJsonArrayAgg:
 		return buildJsonArrayAgg(aggFuncDesc, ordinal)
+	case ast.AggFuncJsonObjectAgg:
+		return buildJsonObjectAgg(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -331,6 +333,26 @@ func buildJsonArrayAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFun
 		// functions and update their partial results.
 	case aggregation.Partial2Mode, aggregation.FinalMode:
 		return &partial4JsonArrayAgg{baseJsonArrayAgg{base}}
+	}
+	return nil
+}
+
+func buildJsonObjectAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	// Build stddev functions which consume the original data and remove the
+	// duplicated input of the same group.
+	case aggregation.DedupMode:
+		return nil // not implemented yet.
+		// partial results.
+	case aggregation.CompleteMode, aggregation.Partial1Mode:
+		return &original4JsonObjectAgg{baseJsonObjectAgg{base}}
+		// functions and update their partial results.
+	case aggregation.Partial2Mode, aggregation.FinalMode:
+		return &partial4JsonObjectAgg{baseJsonObjectAgg{base}}
 	}
 	return nil
 }

@@ -77,3 +77,15 @@ func ComputeConcat(a, b Datum) (d Datum, err error) {
 	}
 	return d, errors.Errorf("Invalid concatenate: %v %v", a.GetValue(), b.GetValue())
 }
+
+func ComputeMerge(a, b Datum) (d Datum, err error) {
+	if a.Kind() == KindMysqlJSON && b.Kind() == KindMysqlJSON {
+		arr1 := a.GetMysqlJSON()
+		arr2 := b.GetMysqlJSON()
+		if arr1.TypeCode == json.TypeCodeObject && arr2.TypeCode == json.TypeCodeObject {
+			d.SetMysqlJSON(json.MergeBinary([]json.BinaryJSON{arr1, arr2}))
+			return d, nil
+		}
+	}
+	return d, errors.Errorf("Invalid concatenate: %v %v", a.GetValue(), b.GetValue())
+}
