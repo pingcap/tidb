@@ -15,6 +15,7 @@ package executor
 
 import (
 	"fmt"
+
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"

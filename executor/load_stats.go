@@ -15,6 +15,7 @@ package executor
 
 import (
 	"encoding/json"
+
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
