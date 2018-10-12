@@ -45,8 +45,7 @@ const (
 
 // GetOperand maps logical plan operator to Operand.
 func GetOperand(p plannercore.LogicalPlan) (Operand, error) {
-	x := p.(type)
-	switch x {
+	switch x := p.(type) {
 	case *plannercore.LogicalJoin:
 		return OperandJoin, nil
 	case *plannercore.LogicalAggregation:
@@ -75,8 +74,9 @@ func GetOperand(p plannercore.LogicalPlan) (Operand, error) {
 		return OperandLock, nil
 	case *plannercore.LogicalLimit:
 		return OperandLimit, nil
+	default:
+		return OperandUnsupported, plannercore.ErrUnsupportedType.GenWithStack("Unsupported LogicalPlan(%T) for GetOperand", x)
 	}
-	return OperandUnsupported, plannercore.ErrUnsupportedType.GenWithStack("Unsupported LogicalPlan(%T) for GetOperand", x)
 }
 
 // match checks if current Operand matches specified one.
