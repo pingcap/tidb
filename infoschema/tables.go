@@ -1266,6 +1266,9 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 		}
 		for i, key := range fk.Cols {
 			col := nameToCol[key.L]
+			if col == nil {
+				continue
+			}
 			record := types.MakeDatums(
 				catalogVal,    // CONSTRAINT_CATALOG
 				schema.Name.O, // CONSTRAINT_SCHEMA

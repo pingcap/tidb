@@ -70,6 +70,16 @@ func FindCol(cols []*Column, name string) *Column {
 	return nil
 }
 
+// FindColInfo finds column in cols by name.
+func FindColInfo(cols []*model.ColumnInfo, name string) bool {
+	for _, col := range cols {
+		if strings.EqualFold(col.Name.O, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // ToColumn converts a *model.ColumnInfo to *Column.
 func ToColumn(col *model.ColumnInfo) *Column {
 	return &Column{

@@ -583,7 +583,7 @@ const (
 	codeTooLongIdent                           = 1059
 	codeDupKeyName                             = 1061
 	codeTooLongKey                             = 1071
-	codeKeyColumnDoesNotExits                  = 1072
+	codeKeyColumnDoesNotExits                  = mysql.ErrKeyColumnDoesNotExits
 	codeIncorrectPrefixKey                     = 1089
 	codeCantRemoveAllFields                    = 1090
 	codeCantDropFieldOrKey                     = 1091
