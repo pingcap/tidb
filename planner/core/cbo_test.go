@@ -694,6 +694,7 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	dom, err := session.BootstrapSession(store)
+	dom.SetStatsUpdating(true)
 	return store, dom, errors.Trace(err)
 }
 
