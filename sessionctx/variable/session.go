@@ -289,6 +289,9 @@ type SessionVars struct {
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition bool
 
+	// EnableCascadesPlanner enables the cascades planner.
+	EnableCascadesPlanner bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -304,6 +307,9 @@ type SessionVars struct {
 	// EnableRadixJoin indicates whether to use radix hash join to execute
 	// HashJoin.
 	EnableRadixJoin bool
+
+	// CommandValue indicates which command current session is doing.
+	CommandValue uint32
 }
 
 // NewSessionVars creates a session vars object.
@@ -327,6 +333,7 @@ func NewSessionVars() *SessionVars {
 		DDLReorgPriority:          kv.PriorityLow,
 		EnableRadixJoin:           false,
 		L2CacheSize:               cpuid.CPU.Cache.L2,
+		CommandValue:              uint32(mysql.ComSleep),
 	}
 	vars.Concurrency = Concurrency{
 		IndexLookupConcurrency:     DefIndexLookupConcurrency,
@@ -600,6 +607,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DisableTxnAutoRetry = TiDBOptOn(val)
 	case TiDBEnableStreaming:
 		s.EnableStreaming = TiDBOptOn(val)
+	case TiDBEnableCascadesPlanner:
+		s.EnableCascadesPlanner = TiDBOptOn(val)
 	case TiDBOptimizerSelectivityLevel:
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, DefTiDBOptimizerSelectivityLevel)
 	case TiDBEnableTablePartition:
