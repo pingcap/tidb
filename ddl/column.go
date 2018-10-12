@@ -310,9 +310,10 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			return ver, nil
 		}
+
+		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+		return ver, nil
 	}
 
 	if oldCol == nil || oldCol.State != model.StatePublic {
@@ -344,6 +345,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	defer w.sessPool.put(ctx)
 
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
+		// If there is a null value inserted, it cannot be modified and needs to be rollback.
 		err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
 		if err != nil {
 			job.State = model.JobStateRollingback
@@ -368,18 +370,6 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		return ver, nil
 	}
 
-	if IsNull2Notnull {
-		err = CheckForNullValue(ctx, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
-		// If there is a null value inserted, it cannot be modified and needs to be rollback.
-		if err != nil || ErrWarnDataTruncated.Equal(err) {
-			ver, err = modifyColumn2RollbackJob(t, tblInfo, job, oldCol)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
-			return ver, nil
-		}
-	}
-
 	// We need the latest column's offset and state. This information can be obtained from the store.
 	newCol.Offset = oldCol.Offset
 	newCol.State = oldCol.State
@@ -388,13 +378,13 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	if pos.Tp == ast.ColumnPositionAfter {
 		if oldName.L == pos.RelativeColumn.Name.L {
 			// `alter table tableName modify column b int after b` will return ver,ErrColumnNotExists.
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateRollingback
 			return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(oldName, tblInfo.Name)
 		}
 
 		relative := model.FindColumnInfo(tblInfo.Columns, pos.RelativeColumn.Name.L)
 		if relative == nil || relative.State != model.StatePublic {
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateRollingback
 			return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
 
@@ -443,7 +433,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
 
