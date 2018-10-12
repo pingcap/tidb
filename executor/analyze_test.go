@@ -61,6 +61,29 @@ PARTITION BY RANGE ( a ) (
 			c.Assert(idx.Len(), Greater, 0)
 		}
 	}
+
+	tk.MustExec("drop table t")
+	tk.MustExec(createTable)
+	for i := 1; i < 21; i++ {
+		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
+	}
+	tk.MustExec("alter table t analyze partition p0")
+	is = executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	pi = table.Meta().GetPartitionInfo()
+	c.Assert(pi, NotNil)
+
+	for i, def := range pi.Definitions {
+		statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+		if i == 0 {
+			c.Assert(statsTbl.Pseudo, IsFalse)
+			c.Assert(len(statsTbl.Columns), Equals, 2)
+			c.Assert(len(statsTbl.Indices), Equals, 1)
+		} else {
+			c.Assert(statsTbl.Pseudo, IsTrue)
+		}
+	}
 }
 
 func (s *testSuite) TestAnalyzeParameters(c *C) {
