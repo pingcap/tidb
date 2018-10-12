@@ -538,15 +538,15 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	baseExec.initCap = chunk.ZeroCapacity
 
 	ivs := &InsertValues{
-		baseExecutor:          baseExec,
-		Table:                 v.Table,
-		Columns:               v.Columns,
-		Lists:                 v.Lists,
-		SetList:               v.SetList,
-		GenColumns:            v.GenCols.Columns,
-		GenExprs:              v.GenCols.Exprs,
-		needFillDefaultValues: v.NeedFillDefaultValue,
-		SelectExec:            selectExec,
+		baseExecutor: baseExec,
+		Table:        v.Table,
+		Columns:      v.Columns,
+		Lists:        v.Lists,
+		SetList:      v.SetList,
+		GenColumns:   v.GenCols.Columns,
+		GenExprs:     v.GenCols.Exprs,
+		hasRefCols:   v.NeedFillDefaultValue,
+		SelectExec:   selectExec,
 	}
 
 	if v.IsReplace {
@@ -887,6 +887,27 @@ func (b *executorBuilder) wrapCastForAggArgs(funcs []*aggregation.AggFuncDesc) {
 		}
 		for i := range f.Args {
 			f.Args[i] = castFunc(b.ctx, f.Args[i])
+			if f.Name != ast.AggFuncAvg && f.Name != ast.AggFuncSum {
+				continue
+			}
+			// After wrapping cast on the argument, flen etc. may not the same
+			// as the type of the aggregation function. The following part set
+			// the type of the argument exactly as the type of the aggregation
+			// function.
+			// Note: If the `Tp` of argument is the same as the `Tp` of the
+			// aggregation function, it will not wrap cast function on it
+			// internally. The reason of the special handling for `Column` is
+			// that the `RetType` of `Column` refers to the `infoschema`, so we
+			// need to set a new variable for it to avoid modifying the
+			// definition in `infoschema`.
+			if col, ok := f.Args[i].(*expression.Column); ok {
+				col.RetType = types.NewFieldType(col.RetType.Tp)
+			}
+			// originTp is used when the the `Tp` of column is TypeFloat32 while
+			// the type of the aggregation function is TypeFloat64.
+			originTp := f.Args[i].GetType().Tp
+			*(f.Args[i].GetType()) = *(f.RetTp)
+			f.Args[i].GetType().Tp = originTp
 		}
 	}
 }
@@ -1021,8 +1042,16 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 				partialOrdinal++
 			}
 			finalDesc := aggDesc.Split(ordinal)
-			e.PartialAggFuncs = append(e.PartialAggFuncs, aggfuncs.Build(b.ctx, aggDesc, i))
-			e.FinalAggFuncs = append(e.FinalAggFuncs, aggfuncs.Build(b.ctx, finalDesc, i))
+			partialAggFunc := aggfuncs.Build(b.ctx, aggDesc, i)
+			finalAggFunc := aggfuncs.Build(b.ctx, finalDesc, i)
+			e.PartialAggFuncs = append(e.PartialAggFuncs, partialAggFunc)
+			e.FinalAggFuncs = append(e.FinalAggFuncs, finalAggFunc)
+			if aggDesc.Name == ast.AggFuncGroupConcat {
+				// For group_concat, finalAggFunc and partialAggFunc need shared `truncate` flag to do duplicate.
+				finalAggFunc.(interface{ SetTruncated(t *int32) }).SetTruncated(
+					partialAggFunc.(interface{ GetTruncated() *int32 }).GetTruncated(),
+				)
+			}
 		}
 		if e.defaultVal != nil {
 			value := aggDesc.GetDefaultValue()

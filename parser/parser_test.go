@@ -871,6 +871,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select now(6)", true},
 		{"select sysdate(), sysdate(6)", true},
 		{"SELECT time('01:02:03');", true},
+		{"SELECT time('01:02:03.1')", true},
+		{"SELECT time('20.1')", true},
 		{"SELECT TIMEDIFF('2000:01:01 00:00:00', '2000:01:01 00:00:00.000001');", true},
 		{"SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01');", true},
 		{"SELECT TIMESTAMPDIFF(YEAR,'2002-05-01','2001-01-01');", true},
@@ -2424,4 +2426,22 @@ func (s *testParserSuite) TestTablePartition(c *C) {
 	c.Assert(err, IsNil)
 	createTable := stmt.(*ast.CreateTableStmt)
 	c.Assert(createTable.Partition.Definitions[0].Comment, Equals, "check")
+}
+
+func (s *testParserSuite) TestNotExistsSubquery(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{`select * from t1 where not exists (select * from t2 where t1.a = t2.a)`, true},
+	}
+
+	parser := New()
+	for _, tt := range table {
+		stmt, err := parser.Parse(tt.src, "", "")
+		c.Assert(err, IsNil)
+
+		sel := stmt[0].(*ast.SelectStmt)
+		exists, ok := sel.Where.(*ast.ExistsSubqueryExpr)
+		c.Assert(ok, IsTrue)
+		c.Assert(exists.Not, Equals, tt.ok)
+	}
 }

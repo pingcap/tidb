@@ -199,9 +199,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// When bypassLatch flag is true, commit directly.
 	if bypassLatch {
 		err = committer.executeAndWriteFinishBinlog(ctx)
-		if err == nil {
-			txn.store.txnLatches.RefreshCommitTS(committer.keys, committer.commitTS)
-		}
 		log.Debug("[kv]", connID, " txnLatches enabled while txn not retryable, 2pc directly:", err)
 		return errors.Trace(err)
 	}
