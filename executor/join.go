@@ -511,7 +511,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
@@ -728,7 +728,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	for {

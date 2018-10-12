@@ -76,7 +76,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	if !e.fetched {
@@ -303,7 +303,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	if !e.fetched {

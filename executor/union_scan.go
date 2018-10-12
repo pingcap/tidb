@@ -128,7 +128,7 @@ func (us *UnionScanExec) Open(ctx context.Context) error {
 func (us *UnionScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if us.runtimeStat != nil {
 		start := time.Now()
-		defer us.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { us.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(us.retTypes())

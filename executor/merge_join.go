@@ -265,7 +265,7 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 func (e *MergeJoinExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	if !e.prepared {

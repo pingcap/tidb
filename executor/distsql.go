@@ -246,7 +246,7 @@ func (e *IndexReaderExecutor) Close() error {
 func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	err := e.result.Next(ctx, chk)
 	if err != nil {
@@ -520,7 +520,7 @@ func (e *IndexLookUpExecutor) Close() error {
 func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	for {

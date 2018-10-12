@@ -143,7 +143,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {

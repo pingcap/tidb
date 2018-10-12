@@ -179,7 +179,7 @@ type CancelDDLJobsExec struct {
 func (e *CancelDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobIDs) {
@@ -625,7 +625,7 @@ type LimitExec struct {
 func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	if e.cursor >= e.end {
@@ -748,7 +748,7 @@ func (e *TableDualExec) Open(ctx context.Context) error {
 func (e *TableDualExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	if e.numReturned >= e.numDualRows {
@@ -803,7 +803,7 @@ func (e *SelectionExec) Close() error {
 func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.GrowAndReset(e.maxChunkSize)
 
@@ -882,7 +882,7 @@ type TableScanExec struct {
 func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.isVirtualTable {
@@ -986,7 +986,7 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	if e.evaluated {
@@ -1132,7 +1132,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 func (e *UnionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.GrowAndReset(e.maxChunkSize)
 	if !e.initialized {

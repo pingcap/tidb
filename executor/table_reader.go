@@ -102,7 +102,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStat != nil {
 		start := time.Now()
-		defer e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows())
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	if err := e.resultHandler.nextChunk(ctx, chk); err != nil {
 		e.feedback.Invalidate()
