@@ -146,6 +146,7 @@ func (c *batchCommandsClient) batchRecvLoop() {
 	for {
 		resp, err := c.client.Recv()
 		if err != nil {
+			log.Errorf("batchRecvLoop error when receive: %v", err)
 			c.batched.Range(func(key, value interface{}) bool {
 				id, _ := key.(uint64)
 				entry, _ := value.(*batchCommandsEntry)
@@ -288,6 +289,10 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 	requests := make([]*tikvpb.BatchCommandsRequest_Request, 0, cfg.MaxBatchSize)
 	requestIds := make([]uint64, 0, cfg.MaxBatchSize)
 	for {
+		// Choose a connection by round-robbin.
+		next := atomic.AddUint32(&a.index, 1) % uint32(len(a.v))
+		batchCommandsClient := a.batchCommandsClients[next]
+
 		metrics.TiKVBatchPendingRequests.Set(float64(len(a.batchCommandsCh)))
 
 		entries = entries[:0]
@@ -334,10 +339,6 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		}
 
 		a.batchStatus.update(len(requests))
-
-		// Choose a connection by round-robbin.
-		next := atomic.AddUint32(&a.index, 1) % uint32(len(a.v))
-		batchCommandsClient := a.batchCommandsClients[next]
 
 		length := len(requests)
 		maxBatchId := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
