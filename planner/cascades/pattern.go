@@ -45,7 +45,8 @@ const (
 
 // GetOperand maps logical plan operator to Operand.
 func GetOperand(p plannercore.LogicalPlan) (Operand, error) {
-	switch x := p.(type) {
+	x := p.(type)
+	switch x {
 	case *plannercore.LogicalJoin:
 		return OperandJoin, nil
 	case *plannercore.LogicalAggregation:
