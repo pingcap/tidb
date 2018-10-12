@@ -44,6 +44,13 @@ type ShowDDLJobs struct {
 	JobNumber int64
 }
 
+// ShowSlow is for showing slow queries.
+type ShowSlow struct {
+	baseSchemaProducer
+
+	*ast.ShowSlow
+}
+
 // ShowDDLJobQueries is for showing DDL job queries sql.
 type ShowDDLJobQueries struct {
 	baseSchemaProducer
@@ -117,14 +124,6 @@ type Prepare struct {
 	SQLText string
 }
 
-// Prepared represents a prepared statement.
-type Prepared struct {
-	Stmt          ast.StmtNode
-	Params        []*ast.ParamMarkerExpr
-	SchemaVersion int64
-	UseCache      bool
-}
-
 // Execute represents prepare plan.
 type Execute struct {
 	baseSchemaProducer
@@ -136,31 +135,28 @@ type Execute struct {
 	Plan      Plan
 }
 
-func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.InfoSchema) error {
+// OptimizePreparedPlan optimizes the prepared statement.
+func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := ctx.GetSessionVars()
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
 	}
-	v := vars.PreparedStmts[e.ExecID]
-	if v == nil {
+	prepared, ok := vars.PreparedStmts[e.ExecID]
+	if !ok {
 		return errors.Trace(ErrStmtNotFound)
 	}
-	prepared := v.(*Prepared)
 
 	if len(prepared.Params) != len(e.UsingVars) {
 		return errors.Trace(ErrWrongParamCount)
 	}
 
-	if cap(vars.PreparedParams) < len(e.UsingVars) {
-		vars.PreparedParams = make([]interface{}, len(e.UsingVars))
-	}
 	for i, usingVar := range e.UsingVars {
 		val, err := usingVar.Eval(chunk.Row{})
 		if err != nil {
 			return errors.Trace(err)
 		}
 		prepared.Params[i].SetDatum(val)
-		vars.PreparedParams[i] = val
+		vars.PreparedParams = append(vars.PreparedParams, val)
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// If the schema version has changed we need to preprocess it again,
@@ -180,7 +176,7 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	return nil
 }
 
-func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema, prepared *Prepared) (Plan, error) {
+func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) (Plan, error) {
 	var cacheKey kvcache.Key
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.StmtCtx.UseCache = prepared.UseCache
@@ -196,7 +192,7 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			return plan, nil
 		}
 	}
-	p, err := Optimize(ctx, prepared.Stmt, is)
+	p, err := OptimizeAstNode(ctx, prepared.Stmt, is)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

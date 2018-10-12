@@ -75,7 +75,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	}
 
 	if e.isUnparallelExec() {
-		e.childResult = e.children[0].newChunk()
+		e.childResult = e.children[0].newFirstChunk()
 	}
 
 	return nil
@@ -139,7 +139,7 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 //  +------------------------------+       +----------------------+
 //
 func (e *ProjectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	chk.Reset()
+	chk.GrowAndReset(e.maxChunkSize)
 	if e.isUnparallelExec() {
 		return errors.Trace(e.unParallelExecute(ctx, chk))
 	}
@@ -207,11 +207,11 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 		})
 
 		e.fetcher.inputCh <- &projectionInput{
-			chk:          e.children[0].newChunk(),
+			chk:          e.children[0].newFirstChunk(),
 			targetWorker: e.workers[i],
 		}
 		e.fetcher.outputCh <- &projectionOutput{
-			chk:  e.newChunk(),
+			chk:  e.newFirstChunk(),
 			done: make(chan error, 1),
 		}
 	}

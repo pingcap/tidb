@@ -38,6 +38,7 @@ type Chunk struct {
 // Capacity constants.
 const (
 	InitialCapacity = 32
+	ZeroCapacity    = 0
 )
 
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
@@ -70,8 +71,11 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 //  chk: old chunk(often used in previous call).
 //  maxChunkSize: the limit for the max number of rows.
 func Renew(chk *Chunk, maxChunkSize int) *Chunk {
-	newCap := reCalcCapacity(chk, maxChunkSize)
 	newChk := new(Chunk)
+	if chk.columns == nil {
+		return newChk
+	}
+	newCap := reCalcCapacity(chk, maxChunkSize)
 	newChk.columns = renewColumns(chk.columns, newCap)
 	newChk.numVirtualRows = 0
 	newChk.capacity = newCap
@@ -133,9 +137,47 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 	c.columns[dstColIdx] = c.columns[srcColIdx]
 }
 
-// SwapColumn swaps column "c.columns[colIdx]" with column "other.columns[otherIdx]".
+// SwapColumn swaps column "c.columns[colIdx]" with column
+// "other.columns[otherIdx]". If there exists columns refer to the column to be
+// swapped, we need to re-build the reference.
 func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
+	// Find the leftmost column of the reference which is the actual column to
+	// be swapped.
+	for i := 0; i < colIdx; i++ {
+		if c.columns[i] == c.columns[colIdx] {
+			colIdx = i
+		}
+	}
+	for i := 0; i < otherIdx; i++ {
+		if other.columns[i] == other.columns[otherIdx] {
+			otherIdx = i
+		}
+	}
+
+	// Find the columns which refer to the actual column to be swapped.
+	refColsIdx := make([]int, 0, len(c.columns)-colIdx)
+	for i := colIdx; i < len(c.columns); i++ {
+		if c.columns[i] == c.columns[colIdx] {
+			refColsIdx = append(refColsIdx, i)
+		}
+	}
+	refColsIdx4Other := make([]int, 0, len(other.columns)-otherIdx)
+	for i := otherIdx; i < len(other.columns); i++ {
+		if other.columns[i] == other.columns[otherIdx] {
+			refColsIdx4Other = append(refColsIdx4Other, i)
+		}
+	}
+
+	// Swap columns from two chunks.
 	c.columns[colIdx], other.columns[otherIdx] = other.columns[otherIdx], c.columns[colIdx]
+
+	// Rebuild the reference.
+	for _, i := range refColsIdx {
+		c.MakeRef(colIdx, i)
+	}
+	for _, i := range refColsIdx4Other {
+		other.MakeRef(otherIdx, i)
+	}
 }
 
 // SwapColumns swaps columns with another Chunk.
@@ -153,6 +195,9 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
+	if c.columns == nil {
+		return
+	}
 	for _, col := range c.columns {
 		col.reset()
 	}

@@ -183,6 +183,14 @@ func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// Prepared represents a prepared statement.
+type Prepared struct {
+	Stmt          StmtNode
+	Params        []*ParamMarkerExpr
+	SchemaVersion int64
+	UseCache      bool
+}
+
 // ExecuteStmt is a statement to execute PreparedStmt.
 // See https://dev.mysql.com/doc/refman/5.7/en/execute.html
 type ExecuteStmt struct {
@@ -618,12 +626,44 @@ const (
 	AdminCheckIndexRange
 	AdminShowDDLJobQueries
 	AdminChecksumTable
+	AdminShowSlow
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
 type HandleRange struct {
 	Begin int64
 	End   int64
+}
+
+// ShowSlowType defines the type for SlowSlow statement.
+type ShowSlowType int
+
+const (
+	// ShowSlowTop is a ShowSlowType constant.
+	ShowSlowTop ShowSlowType = iota
+	// ShowSlowRecent is a ShowSlowType constant.
+	ShowSlowRecent
+)
+
+// ShowSlowKind defines the kind for SlowSlow statement when the type is ShowSlowTop.
+type ShowSlowKind int
+
+const (
+	// ShowSlowKindDefault is a ShowSlowKind constant.
+	ShowSlowKindDefault ShowSlowKind = iota
+	// ShowSlowKindInternal is a ShowSlowKind constant.
+	ShowSlowKindInternal
+	// ShowSlowKindAll is a ShowSlowKind constant.
+	ShowSlowKindAll
+)
+
+// ShowSlow is used for the following command:
+//	admin show slow top [ internal | all] N
+//	admin show slow recent N
+type ShowSlow struct {
+	Tp    ShowSlowType
+	Count uint64
+	Kind  ShowSlowKind
 }
 
 // AdminStmt is the struct for Admin statement.
@@ -637,6 +677,7 @@ type AdminStmt struct {
 	JobNumber int64
 
 	HandleRanges []HandleRange
+	ShowSlow     *ShowSlow
 }
 
 // Accept implements Node Accept interface.

@@ -485,7 +485,7 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if !mysql.HasUnsignedFlag(b.tp.Flag) {
+	if !mysql.HasUnsignedFlag(b.tp.Flag) && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = types.NewDecFromInt(val)
 	} else if b.inUnion && val < 0 {
 		res = &types.MyDecimal{}
@@ -840,7 +840,7 @@ func (b *builtinCastRealAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(strconv.FormatFloat(val, 'f', -1, 64), b.tp.Decimal)
+	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(val, 'f', -1, 64), b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
 
@@ -994,7 +994,7 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types
 	if isNull || err != nil {
 		return res, false, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(string(val.ToString()), b.tp.Decimal)
+	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
 		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
@@ -1199,7 +1199,7 @@ func (b *builtinCastStringAsDurationSig) evalDuration(row chunk.Row) (res types.
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(val, b.tp.Decimal)
+	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		sc := b.ctx.GetSessionVars().StmtCtx
 		err = sc.HandleTruncate(err)
@@ -1617,7 +1617,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		return res, false, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(s, b.tp.Decimal)
+	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		sc := b.ctx.GetSessionVars().StmtCtx
 		err = sc.HandleTruncate(err)
