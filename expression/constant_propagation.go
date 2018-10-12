@@ -361,7 +361,10 @@ func (s *propOuterJoinConstSolver) pickNewEQCondsFunc(retMapper map[int]*Constan
 		if col == nil {
 			if con, ok = cond.(*Constant); ok {
 				value, err := EvalBool(s.ctx, []Expression{con}, chunk.Row{})
-				terror.Log(errors.Trace(err))
+				if err != nil {
+					terror.Log(errors.Trace(err))
+					return nil
+				}
 				if !value {
 					if filterConds {
 						s.setConds2ConstFalse(true, true)
