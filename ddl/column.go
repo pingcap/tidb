@@ -499,13 +499,3 @@ func checkAddColumnTooManyColumns(oldCols int) error {
 	}
 	return nil
 }
-
-func modifyColumn2RollbackJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo) (ver int64, _ error) {
-	job.State = model.JobStateRollingback
-	tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
-	ver, err := updateVersionAndTableInfo(t, job, tblInfo, true)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	return ver, nil
-}
