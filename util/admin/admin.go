@@ -391,12 +391,13 @@ func compareDatumSlice(sc *stmtctx.StatementContext, val1s, val2s []types.Datum)
 		return false
 	}
 	for i, v := range val1s {
-		if v.Kind() == types.KindMysqlDecimal {
+		switch v.Kind() {
+		case types.KindMysqlDecimal, types.KindBytes:
 			res, err := v.CompareDatum(sc, &val2s[i])
 			if err != nil || res != 0 {
 				return false
 			}
-		} else {
+		default:
 			if !reflect.DeepEqual(v, val2s[i]) {
 				return false
 			}
