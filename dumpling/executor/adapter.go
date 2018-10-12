@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/ast"
@@ -41,17 +42,16 @@ import (
 )
 
 type processinfoSetter interface {
-	SetProcessInfo(string)
+	SetProcessInfo(string, time.Time, byte)
 }
 
 // recordSet wraps an executor, implements ast.RecordSet interface
 type recordSet struct {
-	fields      []*ast.ResultField
-	executor    Executor
-	stmt        *ExecStmt
-	processinfo processinfoSetter
-	lastErr     error
-	txnStartTS  uint64
+	fields     []*ast.ResultField
+	executor   Executor
+	stmt       *ExecStmt
+	lastErr    error
+	txnStartTS uint64
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
@@ -119,9 +119,6 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
 	a.stmt.logSlowQuery(a.txnStartTS, a.lastErr == nil)
-	if a.processinfo != nil {
-		a.processinfo.SetProcessInfo("")
-	}
 	return errors.Trace(err)
 }
 
@@ -216,6 +213,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 
+	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
+	cmd := byte(cmd32)
 	var pi processinfoSetter
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
@@ -227,27 +226,27 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 			}
 		}
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql)
+		pi.SetProcessInfo(sql, time.Now(), cmd)
 	}
+
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
-		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
+		return a.handleNoDelayExecutor(ctx, sctx, e)
 	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
 		// not return the result of the two expressions.
-		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
+		return a.handleNoDelayExecutor(ctx, sctx, e)
 	}
 
 	return &recordSet{
-		executor:    e,
-		stmt:        a,
-		processinfo: pi,
-		txnStartTS:  sctx.Txn().StartTS(),
+		executor:   e,
+		stmt:       a,
+		txnStartTS: sctx.Txn().StartTS(),
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -260,9 +259,6 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 
 	var err error
 	defer func() {
-		if pi != nil {
-			pi.SetProcessInfo("")
-		}
 		terror.Log(errors.Trace(e.Close()))
 		txnTS := uint64(0)
 		if sctx.Txn() != nil {
