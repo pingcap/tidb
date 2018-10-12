@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -448,13 +449,12 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
 	base.initCap = chunk.ZeroCapacity
-	e := &PrepareExec{
+	return &PrepareExec{
 		baseExecutor: base,
 		is:           b.is,
 		name:         v.Name,
 		sqlText:      v.SQLText,
 	}
-	return e
 }
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
@@ -659,6 +659,33 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 
 // buildExplain builds a explain executor. `e.rows` collects final result to `ExplainExec`.
 func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
+	if v.Analyze {
+		stmt := &ExecStmt{
+			InfoSchema: GetInfoSchema(b.ctx),
+			Plan:       v.ExecPlan,
+			StmtNode:   v.ExecStmt,
+			Ctx:        b.ctx,
+		}
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStats = execdetails.NewRuntimeStats()
+		ctx := context.Background()
+		rs, err := stmt.Exec(ctx)
+		if err != nil {
+			return nil
+		}
+		if rs != nil {
+			chk := rs.NewChunk()
+			for {
+				err := rs.Next(ctx, chk)
+				if err != nil {
+					return nil
+				}
+				if chk.NumRows() == 0 {
+					break
+				}
+			}
+		}
+	}
+	v.PrepareRows()
 	e := &ExplainExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 	}
