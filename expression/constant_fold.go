@@ -15,7 +15,6 @@ package expression
 
 import (
 	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	log "github.com/sirupsen/logrus"
 )
