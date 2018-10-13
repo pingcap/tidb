@@ -51,7 +51,6 @@ func newHotTableIndexExport(handler *tikvHandlerTool) *hotTableIndexExporter {
 func (e *hotTableIndexExporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.totalScrapes.Desc()
 	ch <- e.errorScrapes.Desc()
-
 }
 
 // Collect implements prometheus.Collector.

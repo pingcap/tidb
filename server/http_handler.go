@@ -321,27 +321,38 @@ func (t *tikvHandlerTool) scrapeHotInfo(rw string) (map[tblIndex]regionMetric, e
 }
 
 // storeHotRegionInfos records all hog region stores.
+// it's the response of PD.
 type storeHotRegionInfos struct {
 	AsPeer   map[uint64]*hotRegionsStat `json:"as_peer"`
 	AsLeader map[uint64]*hotRegionsStat `json:"as_leader"`
 }
 
 // hotRegions records echo store's hot region.
+// it's the response of PD.
 type hotRegionsStat struct {
 	RegionsStat []regionStat `json:"statistics"`
 }
 
 // regionStat records each hot region's statistics
+// it's the response of PD.
 type regionStat struct {
 	RegionID  uint64 `json:"region_id"`
 	FlowBytes uint64 `json:"flow_bytes"`
 	HotDegree int    `json:"hot_degree"`
 }
 
+// regionMetric presents the final metric output entry.
 type regionMetric struct {
 	FlowBytes    uint64 `json:"flow_bytes"`
 	MaxHotDegree int    `json:"max_hot_degree"`
 	Count        int    `json:"count"`
+}
+
+// tblIndex presents the aggregate key that combined with db,table,index
+type tblIndex struct {
+	DbName    string `json:"db_name"`
+	TableName string `json:"table_name"`
+	IndexName string `json:"index_name"`
 }
 
 func (t *tikvHandlerTool) fetchHotRegion(rw string) (map[uint64]regionMetric, error) {
@@ -353,13 +364,13 @@ func (t *tikvHandlerTool) fetchHotRegion(rw string) (map[uint64]regionMetric, er
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
-	url := protocol + pdHosts[0] + rw
-	resp, err := http.Get(url)
+	resp, err := http.Get(protocol + pdHosts[0] + rw)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	defer func() {
-		if err := resp.Body.Close(); err != nil {
+		err = resp.Body.Close()
+		if err != nil {
 			log.Error(err)
 		}
 	}()
@@ -376,16 +387,6 @@ func (t *tikvHandlerTool) fetchHotRegion(rw string) (map[uint64]regionMetric, er
 	}
 	// TODO: not leader peer....
 	return metric, nil
-}
-
-type tblIndex struct {
-	DbName    string `json:"db_name"`
-	TableName string `json:"table_name"`
-	IndexName string `json:"index_name"`
-}
-
-func (t *tblIndex) String() string {
-	return t.DbName + ":" + t.TableName + ":" + t.IndexName
 }
 
 func (t *tikvHandlerTool) fetchRegionTableIndex(metrics map[uint64]regionMetric) (map[tblIndex]regionMetric, error) {
@@ -408,7 +409,7 @@ func (t *tikvHandlerTool) fetchRegionTableIndex(metrics map[uint64]regionMetric)
 			return nil, err
 		}
 
-		f := t.findTableIndex(schema, hotRange)
+		f := t.findTableIndexOfRegion(schema, hotRange)
 		if f != nil {
 			idx := tblIndex{DbName: f.DBName, TableName: f.TableName, IndexName: f.IndexName}
 			metric, exists := idxMetrics[idx]
@@ -429,7 +430,7 @@ func (t *tikvHandlerTool) fetchRegionTableIndex(metrics map[uint64]regionMetric)
 	return idxMetrics, nil
 }
 
-func (t *tikvHandlerTool) findTableIndex(schema infoschema.InfoSchema, hotRange *RegionFrameRange) *FrameItem {
+func (t *tikvHandlerTool) findTableIndexOfRegion(schema infoschema.InfoSchema, hotRange *RegionFrameRange) *FrameItem {
 	for _, db := range schema.AllSchemas() {
 		for _, tbl := range db.Tables {
 			if f := hotRange.getRecordFrame(tbl.ID, db.Name.O, tbl.Name.O); f != nil {
@@ -1147,17 +1148,17 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				writeError(w, err)
 				return
 			}
-			flattenKey := func(metric map[tblIndex]regionMetric) hotRegions {
-				hotRegions := make(hotRegions, 0, len(metric))
+			asSortedEntry := func(metric map[tblIndex]regionMetric) hotRegions {
+				hs := make(hotRegions, 0, len(metric))
 				for key, value := range metric {
-					hotRegions = append(hotRegions, hotRegion{key, value})
+					hs = append(hs, hotRegion{key, value})
 				}
-				sort.Sort(hotRegions)
-				return hotRegions
+				sort.Sort(hs)
+				return hs
 			}
 			writeData(w, map[string]interface{}{
-				"write": flattenKey(hotWrite),
-				"read":  flattenKey(hotRead),
+				"write": asSortedEntry(hotWrite),
+				"read":  asSortedEntry(hotRead),
 			})
 			return
 		}
