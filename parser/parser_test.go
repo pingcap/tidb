@@ -872,6 +872,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select now(6)", true},
 		{"select sysdate(), sysdate(6)", true},
 		{"SELECT time('01:02:03');", true},
+		{"SELECT time('01:02:03.1')", true},
+		{"SELECT time('20.1')", true},
 		{"SELECT TIMEDIFF('2000:01:01 00:00:00', '2000:01:01 00:00:00.000001');", true},
 		{"SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01');", true},
 		{"SELECT TIMESTAMPDIFF(YEAR,'2002-05-01','2001-01-01');", true},
@@ -1711,6 +1713,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t RENAME KEY a TO b;", true},
 		{"ALTER TABLE t RENAME INDEX a TO b;", true},
 
+		{"alter table t analyze partition a", true},
+		{"alter table t analyze partition a with 4 buckets", true},
+		{"alter table t analyze partition a index b", true},
+		{"alter table t analyze partition a index b with 4 buckets", true},
+
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
 		{"CREATE INDEX idx ON t (a) USING HASH", true},
@@ -2308,6 +2315,10 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t1 index a,b", true},
 		{"analyze table t with 4 buckets", true},
 		{"analyze table t index a with 4 buckets", true},
+		{"analyze table t partition a", true},
+		{"analyze table t partition a with 4 buckets", true},
+		{"analyze table t partition a index b", true},
+		{"analyze table t partition a index b with 4 buckets", true},
 	}
 	s.RunTest(c, table)
 }
