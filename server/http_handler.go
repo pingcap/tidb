@@ -22,6 +22,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -73,8 +74,11 @@ const qTableID = "table_id"
 const qLimit = "limit"
 
 const (
+	protocol          = "http://"
 	headerContentType = "Content-Type"
 	contentTypeJSON   = "application/json"
+	hotRead           = "/pd/api/v1/hotspot/regions/read"
+	hotWrite          = "/pd/api/v1/hotspot/regions/write"
 )
 
 type kvStore interface {
@@ -301,6 +305,144 @@ func (t *tikvHandlerTool) getAllHistoryDDL() ([]*model.Job, error) {
 		return nil, errors.Trace(err)
 	}
 	return jobs, nil
+}
+
+func (t *tikvHandlerTool) scrapeHotRegion(rw string) (map[tblIndex]regionMetric, error) {
+	regionMetrics, err := t.fetchHotRegion(rw)
+	if err != nil {
+		return nil, err
+	}
+
+	tblIdx, err := t.fetchRegionTableIndex(regionMetrics)
+	if err != nil {
+		return nil, err
+	}
+	return tblIdx, nil
+}
+
+// storeHotRegionInfos records all hog region stores.
+type storeHotRegionInfos struct {
+	AsPeer   map[uint64]*hotRegionsStat `json:"as_peer"`
+	AsLeader map[uint64]*hotRegionsStat `json:"as_leader"`
+}
+
+// hotRegions records echo store's hot region.
+type hotRegionsStat struct {
+	RegionsStat []regionStat `json:"statistics"`
+}
+
+// regionStat records each hot region's statistics
+type regionStat struct {
+	RegionID  uint64 `json:"region_id"`
+	FlowBytes uint64 `json:"flow_bytes"`
+	HotDegree int    `json:"hot_degree"`
+}
+
+type regionMetric struct {
+	FlowBytes    uint64 `json:"flow_bytes"`
+	MaxHotDegree int    `json:"max_hot_degree"`
+	Count        int    `json:"count"`
+}
+
+func (t *tikvHandlerTool) fetchHotRegion(rw string) (map[uint64]regionMetric, error) {
+	etcd, ok := t.store.(domain.EtcdBackend)
+	if !ok {
+		return nil, errors.New("not implemented")
+	}
+	pdHosts := etcd.EtcdAddrs()
+	if len(pdHosts) == 0 {
+		return nil, errors.New("pd unavailable")
+	}
+	url := protocol + pdHosts[0] + rw
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Error(err)
+		}
+	}()
+	var regionResp storeHotRegionInfos
+	err = json.NewDecoder(resp.Body).Decode(&regionResp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	metric := make(map[uint64]regionMetric)
+	for _, hotRegions := range regionResp.AsLeader {
+		for _, region := range hotRegions.RegionsStat {
+			metric[region.RegionID] = regionMetric{FlowBytes: region.FlowBytes, MaxHotDegree: region.HotDegree}
+		}
+	}
+	// TODO: not leader peer....
+	return metric, nil
+}
+
+type tblIndex struct {
+	DbName    string `json:"db_name"`
+	TableName string `json:"table_name"`
+	IndexName string `json:"index_name"`
+}
+
+func (t *tblIndex) String() string {
+	return t.DbName + ":" + t.TableName + ":" + t.IndexName
+}
+
+func (t *tikvHandlerTool) fetchRegionTableIndex(metrics map[uint64]regionMetric) (map[tblIndex]regionMetric, error) {
+	s, err := session.CreateSession(t.store.(kv.Storage))
+	if err != nil {
+		return nil, err
+	}
+	schema := domain.GetDomain(s.(sessionctx.Context)).InfoSchema()
+
+	idxMetrics := make(map[tblIndex]regionMetric)
+	for regionID, regionMetric := range metrics {
+		region, err := t.regionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
+		if err != nil {
+			log.Error(err)
+			continue
+		}
+
+		hotRange, err := NewRegionFrameRange(region)
+		if err != nil {
+			return nil, err
+		}
+
+		f := t.findTableIndex(schema, hotRange)
+		if f != nil {
+			idx := tblIndex{DbName: f.DBName, TableName: f.TableName, IndexName: f.IndexName}
+			metric, exists := idxMetrics[idx]
+			if !exists {
+				metric = regionMetric
+				metric.Count++
+				idxMetrics[idx] = metric
+			} else {
+				metric.FlowBytes += regionMetric.FlowBytes
+				if metric.MaxHotDegree < regionMetric.MaxHotDegree {
+					metric.MaxHotDegree = regionMetric.MaxHotDegree
+				}
+				metric.Count++
+			}
+		}
+	}
+
+	return idxMetrics, nil
+}
+
+func (t *tikvHandlerTool) findTableIndex(schema infoschema.InfoSchema, hotRange *RegionFrameRange) *FrameItem {
+	for _, db := range schema.AllSchemas() {
+		for _, tbl := range db.Tables {
+			if f := hotRange.getRecordFrame(tbl.ID, db.Name.O, tbl.Name.O); f != nil {
+				return f
+			}
+			for _, idx := range tbl.Indices {
+				if f := hotRange.getIndexFrame(tbl.ID, idx.ID, db.Name.O, tbl.Name.O, idx.Name.O); f != nil {
+					return f
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // settingsHandler is the handler for list tidb server settings.
@@ -952,26 +1094,73 @@ func (h tableHandler) handleDiskUsageRequest(schema infoschema.InfoSchema, tbl t
 	writeData(w, stats.StorageSize)
 }
 
+type hotRegion struct {
+	tblIndex
+	regionMetric
+}
+type hotRegions []hotRegion
+
+func (rs hotRegions) Len() int {
+	return len(rs)
+}
+
+func (rs hotRegions) Less(i, j int) bool {
+	return rs[i].MaxHotDegree > rs[j].MaxHotDegree || (rs[i].MaxHotDegree == rs[j].MaxHotDegree && rs[i].FlowBytes > rs[j].FlowBytes)
+}
+
+func (rs hotRegions) Swap(i, j int) {
+	rs[i], rs[j] = rs[j], rs[i]
+}
+
 // ServeHTTP handles request of get region by ID.
 func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// parse and check params
 	params := mux.Vars(req)
 	if _, ok := params[pRegionID]; !ok {
-		startKey := []byte{'m'}
-		endKey := []byte{'n'}
+		router := mux.CurrentRoute(req).GetName()
+		if router == "RegionsMeta" {
+			startKey := []byte{'m'}
+			endKey := []byte{'n'}
 
-		recordRegionIDs, err := h.regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
-		if err != nil {
-			writeError(w, err)
+			recordRegionIDs, err := h.regionCache.ListRegionIDsInKeyRange(tikv.NewBackoffer(context.Background(), 500), startKey, endKey)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+
+			recordRegions, err := h.getRegionsMeta(recordRegionIDs)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			writeData(w, recordRegions)
 			return
 		}
-
-		recordRegions, err := h.getRegionsMeta(recordRegionIDs)
-		if err != nil {
-			writeError(w, err)
+		if router == "RegionHot" {
+			hotRead, err := h.scrapeHotRegion(hotRead)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			hotWrite, err := h.scrapeHotRegion(hotWrite)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			flattenKey := func(metric map[tblIndex]regionMetric) hotRegions {
+				hotRegions := make(hotRegions, 0, len(metric))
+				for key, value := range metric {
+					hotRegions = append(hotRegions, hotRegion{key, value})
+				}
+				sort.Sort(hotRegions)
+				return hotRegions
+			}
+			writeData(w, map[string]interface{}{
+				"write": flattenKey(hotWrite),
+				"read":  flattenKey(hotRead),
+			})
 			return
 		}
-		writeData(w, recordRegions)
 		return
 	}
 
