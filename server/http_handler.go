@@ -307,7 +307,7 @@ func (t *tikvHandlerTool) getAllHistoryDDL() ([]*model.Job, error) {
 	return jobs, nil
 }
 
-func (t *tikvHandlerTool) scrapeHotRegion(rw string) (map[tblIndex]regionMetric, error) {
+func (t *tikvHandlerTool) scrapeHotInfo(rw string) (map[tblIndex]regionMetric, error) {
 	regionMetrics, err := t.fetchHotRegion(rw)
 	if err != nil {
 		return nil, err
@@ -1137,12 +1137,12 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if router == "RegionHot" {
-			hotRead, err := h.scrapeHotRegion(hotRead)
+			hotRead, err := h.scrapeHotInfo(hotRead)
 			if err != nil {
 				writeError(w, err)
 				return
 			}
-			hotWrite, err := h.scrapeHotRegion(hotWrite)
+			hotWrite, err := h.scrapeHotInfo(hotWrite)
 			if err != nil {
 				writeError(w, err)
 				return

@@ -73,6 +73,8 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/mvcc/txn/{startTS}/{db}/{table}", mvccTxnHandler{tikvHandlerTool, opMvccGetByTxn})
 		router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 		router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
+
+		prometheus.MustRegister(newHotTableIndexExport(tikvHandlerTool))
 	}
 	addr := fmt.Sprintf(":%d", s.cfg.Status.StatusPort)
 	if s.cfg.Status.StatusPort == 0 {
