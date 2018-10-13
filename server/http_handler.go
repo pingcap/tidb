@@ -364,7 +364,12 @@ func (t *tikvHandlerTool) fetchHotRegion(rw string) (map[uint64]regionMetric, er
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
-	resp, err := http.Get(protocol + pdHosts[0] + rw)
+	req, err := http.NewRequest("GET", protocol+pdHosts[0]+rw, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	timeout, _ := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	resp, err := http.DefaultClient.Do(req.WithContext(timeout))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
