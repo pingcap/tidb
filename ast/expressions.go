@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -392,6 +393,37 @@ func (n *CompareSubqueryExpr) Accept(v Visitor) (Node, bool) {
 	}
 	n.R = node.(ExprNode)
 	return v.Leave(n)
+}
+
+var cnList columnNameList = make(columnNameList, 0, 1024)
+
+var columnNamePool = sync.Pool{
+	New: func() interface{} { return &ColumnName{} },
+}
+
+// NewColumnName create an instance of ColumnName which is gotten from sync.Pool.
+func NewColumnName() *ColumnName {
+	cn := columnNamePool.Get().(*ColumnName)
+	cnList.addCN(cn)
+	return cn
+}
+
+func releaseColumnName(cn *ColumnName) {
+	columnNamePool.Put(cn)
+}
+
+type columnNameList []*ColumnName
+
+// addCN adds newly created columnName to columnNameList.
+func (cnl columnNameList) addCN(cn *ColumnName) {
+	cnl = append(cnl, cn)
+}
+
+// FreeColumnNames frees all columnName at this time.
+func FreeColumnNames() {
+	for i := 0; i < len(cnList); i++ {
+		releaseColumnName(cnList[i])
+	}
 }
 
 // ColumnName represents column name.

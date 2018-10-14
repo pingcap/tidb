@@ -572,13 +572,13 @@ yystack:
 	/* put a state and value onto the stack */
 	yyp++
 	if yyp >= len(yyS) {
-		nyys := make([]%[1]sSymType, len(yyS)*2)
-		copy(nyys, yyS)
-		yyS = nyys
+		yyS = append(yyS, parser.yyVAL)
 		parser.cache = yyS
+	} else {
+		yyS[yyp] = parser.yyVAL
+		yyS[yyp].yys = yystate
 	}
-	yyS[yyp] = parser.yyVAL
-	yyS[yyp].yys = yystate
+
 
 yynewstate:
 	if yychar < 0 {
