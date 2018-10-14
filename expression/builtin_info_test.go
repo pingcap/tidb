@@ -84,7 +84,7 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", MatchedUsername: "root", MatchedHostname: "localhost"}
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "localhost"}
 
 	fc := funcs[ast.CurrentUser]
 	f, err := fc.getFunction(ctx, nil)

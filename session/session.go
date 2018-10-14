@@ -999,21 +999,22 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 	pm := privilege.GetPrivilegeManager(s)
 
 	// Check IP.
-	if pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt) {
-		user.MatchedUsername, user.MatchedHostname = pm.ConnectionMatchIdentity(user.Username, user.Hostname)
+	var success bool
+	user.AuthUsername, user.AuthHostname, success = pm.ConnectionVerification(user.Username, user.Hostname, authentication, salt)
+	if success {
 		s.sessionVars.User = user
 		return true
 	}
 
 	// Check Hostname.
 	for _, addr := range getHostByIP(user.Hostname) {
-		if pm.ConnectionVerification(user.Username, addr, authentication, salt) {
-			u, h := pm.ConnectionMatchIdentity(user.Username, addr)
+		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt)
+		if success {
 			s.sessionVars.User = &auth.UserIdentity{
-				Username:        user.Username,
-				Hostname:        addr,
-				MatchedUsername: u,
-				MatchedHostname: h,
+				Username:     user.Username,
+				Hostname:     addr,
+				AuthUsername: u,
+				AuthHostname: h,
 			}
 			return true
 		}
