@@ -249,7 +249,7 @@ func (s *mockTikvGrpcServer) CoprocessorStream(*coprocessor.Request, tikvpb.Tikv
 	return errors.New("unreachable")
 }
 
-func (c *mockTikvGrpcServer) BatchCommands(tikvpb.Tikv_BatchCommandsServer) error {
+func (s *mockTikvGrpcServer) BatchCommands(tikvpb.Tikv_BatchCommandsServer) error {
 	return errors.New("unreachable")
 }
 

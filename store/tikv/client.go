@@ -164,11 +164,11 @@ func (c *batchCommandsClient) batchRecvLoop() {
 		}
 
 		responses := resp.GetResponses()
-		for i, requestId := range resp.GetRequestIds() {
-			value, _ := c.batched.Load(requestId)
+		for i, requestID := range resp.GetRequestIds() {
+			value, _ := c.batched.Load(requestID)
 			entry, _ := value.(*batchCommandsEntry)
 			entry.res <- responses[i]
-			c.batched.Delete(requestId)
+			c.batched.Delete(requestID)
 		}
 
 		if resp.GetInHeavyLoad() {
@@ -352,11 +352,11 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		a.batchStatistics.update(len(requests))
 
 		length := len(requests)
-		maxBatchId := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
+		maxBatchID := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
 		for i := 0; i < length; i++ {
-			requestId := uint64(i) + maxBatchId - uint64(length)
-			batchCommandsClient.batched.Store(requestId, entries[i])
-			requestIds = append(requestIds, requestId)
+			requestID := uint64(i) + maxBatchID - uint64(length)
+			batchCommandsClient.batched.Store(requestID, entries[i])
+			requestIds = append(requestIds, requestID)
 		}
 
 		request := &tikvpb.BatchCommandsRequest{
