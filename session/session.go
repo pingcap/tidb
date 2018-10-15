@@ -312,9 +312,6 @@ func (s *session) doCommit(ctx context.Context) error {
 	}
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, tableIDs))
-	if s.sessionVars.TxnCtx.ForUpdate {
-		s.txn.SetOption(kv.BypassLatch, true)
-	}
 
 	if err := s.txn.Commit(sessionctx.SetCommitCtx(ctx, s)); err != nil {
 		return errors.Trace(err)
