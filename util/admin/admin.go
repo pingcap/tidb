@@ -16,7 +16,6 @@ package admin
 import (
 	"fmt"
 	"io"
-	"reflect"
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
@@ -391,16 +390,9 @@ func compareDatumSlice(sc *stmtctx.StatementContext, val1s, val2s []types.Datum)
 		return false
 	}
 	for i, v := range val1s {
-		switch v.Kind() {
-		case types.KindMysqlDecimal, types.KindBytes:
-			res, err := v.CompareDatum(sc, &val2s[i])
-			if err != nil || res != 0 {
-				return false
-			}
-		default:
-			if !reflect.DeepEqual(v, val2s[i]) {
-				return false
-			}
+		res, err := v.CompareDatum(sc, &val2s[i])
+		if err != nil || res != 0 {
+			return false
 		}
 	}
 	return true
@@ -524,6 +516,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	}
 
 	startKey := t.RecordKey(0)
+	sc := new(stmtctx.StatementContext)
 	filterFunc := func(h int64, vals []types.Datum, cols []*table.Column) (bool, error) {
 		vals2, ok := m[h]
 		if !ok {
@@ -535,7 +528,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 			return true, nil
 		}
 
-		if !reflect.DeepEqual(vals, vals2) {
+		if !compareDatumSlice(sc, vals, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals2}
 			record2 := &RecordData{Handle: h, Values: vals}
 			return false, ErrDataInConsistent.GenWithStack("data:%#v != record:%#v", record1, record2)
