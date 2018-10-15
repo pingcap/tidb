@@ -3425,12 +3425,24 @@ func (s *testDBSuite) TestColumnModifyingDefinition(c *C) {
 	s.tk.MustExec("use test")
 	s.tk.MustExec("drop table if exists test2;")
 	s.tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
-	s.tk.MustExec("alter table test2 change c2 a bigint not null;")
+	s.tk.MustExec("alter table test2 change c2 a int not null;")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test2"))
+	c.Assert(err, IsNil)
+	var c2 *table.Column
+	for _, col := range t.Cols() {
+		if col.Name.L == "a" {
+			c2 = col
+		}
+	}
+	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
 
 	s.tk.MustExec("drop table if exists test2;")
 	s.tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
 	s.tk.MustExec("insert into test2(c2) values (null);")
-	s.testErrorCode(c, "alter table test2 change c2 a bigint not null;", tmysql.WarnDataTruncated)
+	s.testErrorCode(c, "alter table test2 change c2 a int not null", tmysql.ErrInvalidUseOfNull)
+	s.testErrorCode(c, "alter table test2 change c1 a1 bigint not null;", tmysql.WarnDataTruncated)
 }
 
 func (s *testDBSuite) TestModifyColumnRollback(c *C) {

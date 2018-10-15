@@ -343,7 +343,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	if pos.Tp == ast.ColumnPositionAfter {
 		if oldName.L == pos.RelativeColumn.Name.L {
 			// `alter table tableName modify column b int after b` will return ver,ErrColumnNotExists.
-			// Modified the type definition of 'null' to 'not null' before this, so rollBack the job when an error occurs.
+			// Modified the type definition of 'null' to 'not null' before this, so rollback the job when an error occurs.
 			job.State = model.JobStateRollingback
 			return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(oldName, tblInfo.Name)
 		}
@@ -408,8 +408,8 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	return ver, nil
 }
 
-// CheckForNullValue ensure there are no null values of the column of this table.
-func CheckForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, oldCol, newCol model.CIStr) error {
+// checkForNullValue ensure there are no null values of the column of this table.
+func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, oldCol, newCol model.CIStr) error {
 	sql := fmt.Sprintf("select count(*) from `%s`.`%s` where `%s` is null limit 1;", schema.L, table.L, oldCol.L)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
 	if err != nil {
@@ -472,12 +472,13 @@ func checkAddColumnTooManyColumns(oldCols int) error {
 
 // rollbackModifyColumnJob rollBack the job when an error occurs.
 func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, IsNull2NotNull bool) (ver int64, _ error) {
+	var err error
 	if IsNull2NotNull {
 		// field NotNullFlag flag reset.
 		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
 		// field PreventNullInsertFlag flag reset.
 		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.PreventNullInsertFlag
-		ver, err := updateVersionAndTableInfo(t, job, tblInfo, true)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -496,12 +497,13 @@ func modifyDefinitionNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo,
 	defer w.sessPool.put(ctx)
 
 	// If there is a null value inserted, it cannot be modified and needs to be rollback.
-	err = CheckForNullValue(ctx, oldCol.Tp == newCol.Tp, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
+	err = checkForNullValue(ctx, oldCol.Tp == newCol.Tp, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
 	if err != nil {
 		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
 
+	// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 	if !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
 		// Prevent this field from inserting null values.
 		tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
