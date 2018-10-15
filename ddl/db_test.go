@@ -3454,6 +3454,7 @@ func (s *testDBSuite) TestModifyColumnRollback(c *C) {
 	done := make(chan error, 1)
 	go backgroundExec(s.store, "alter table test2 change c2 c2 bigint not null;", done)
 
+	var c2 *table.Column
 	var checkErr error
 	hook := &ddl.TestDDLCallback{}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
@@ -3461,6 +3462,17 @@ func (s *testDBSuite) TestModifyColumnRollback(c *C) {
 		if checkErr != nil {
 			return
 		}
+
+		t := s.testGetTable(c, "test2")
+		for _, col := range t.Cols() {
+			if col.Name.L == "c2" {
+				c2 = col
+			}
+		}
+		if mysql.HasPreventNullInsertFlag(c2.Flag) {
+			s.testErrorCode(c, "insert into test2(c2) values (null);", tmysql.ErrBadNull)
+		}
+
 		hookCtx := mock.NewContext()
 		hookCtx.Store = s.store
 		var err error
@@ -3503,7 +3515,6 @@ LOOP:
 	}
 
 	t := s.testGetTable(c, "test2")
-	var c2 *table.Column
 	for _, col := range t.Cols() {
 		if col.Name.L == "c2" {
 			c2 = col
