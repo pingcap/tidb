@@ -22,7 +22,7 @@ import (
 // FindBestPlan is the optimization entrance of the cascades planner. The
 // optimization is composed of 2 phases: exploration and implementation.
 func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (plannercore.Plan, error) {
-	rootGroup := Convert2Group(logical)
+	rootGroup := convert2Group(logical)
 
 	err := onPhaseExploration(sctx, rootGroup)
 	if err != nil {
@@ -31,6 +31,17 @@ func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (pla
 
 	best, err := onPhaseImplementation(sctx, rootGroup)
 	return best, err
+}
+
+// convert2Group converts a logical plan to expression groups.
+func convert2Group(node plannercore.LogicalPlan) *Group {
+	e := NewGroupExpr(node)
+	e.children = make([]*Group, 0, len(node.Children()))
+	for _, child := range node.Children() {
+		childGroup := convert2Group(child)
+		e.children = append(e.children, childGroup)
+	}
+	return NewGroup(e)
 }
 
 func onPhaseExploration(sctx sessionctx.Context, g *Group) error {
@@ -49,7 +60,8 @@ func exploreGroup(g *Group) error {
 	}
 
 	g.explored = true
-	for _, curExpr := range g.equivalents {
+	for elem := g.equivalents.Front(); elem != nil; elem.Next() {
+		curExpr := elem.Value.(*GroupExpr)
 		if curExpr.explored {
 			continue
 		}
@@ -76,7 +88,40 @@ func exploreGroup(g *Group) error {
 
 // Find and apply the matched transformation rules.
 func findMoreEquiv(cur *GroupExpr, curGroup *Group) (eraseCur bool, err error) {
-	return false, errors.New("the findMoreEquiv() of the cascades planner is not implemented")
+	for _, rule := range GetTransformationRules(cur.exprNode) {
+		// Create a binding of the current group expression and the pattern of
+		// the transformation rule to enumerate all the possible expressions.
+		exprIter := NewExprIter(cur, rule.GetPattern())
+
+		// the transformation rule can not matche any expression in the group.
+		if exprIter == nil {
+			continue
+		}
+
+		for exprIter.Next() {
+			matched, err := rule.Match(exprIter)
+			if err != nil {
+				return false, err
+			}
+			if !matched {
+				continue
+			}
+
+			newExpr, erase, err := rule.OnTransform(exprIter)
+			eraseCur = eraseCur || erase
+			if !curGroup.Insert(newExpr) {
+				continue
+			}
+
+			// If the new group expression is successfully inserted into the
+			// current group, we mark the group expression and the group as
+			// unexplored to enable the exploration on the new group expression
+			// and all the antecedent groups.
+			newExpr.explored = false
+			curGroup.explored = false
+		}
+	}
+	return eraseCur, nil
 }
 
 func onPhaseImplementation(sctx sessionctx.Context, g *Group) (plannercore.Plan, error) {
