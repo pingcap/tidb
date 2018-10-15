@@ -276,18 +276,18 @@ func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ erro
 	newCol := &model.ColumnInfo{}
 	oldColName := &model.CIStr{}
 	pos := &ast.ColumnPosition{}
-	IsNull2NotNull := false
-	err := job.DecodeArgs(newCol, oldColName, pos, &IsNull2NotNull)
+	var modifyColumnTp byte
+	err := job.DecodeArgs(newCol, oldColName, pos, &modifyColumnTp)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	return w.doModifyColumn(t, job, newCol, oldColName, pos, IsNull2NotNull)
+	return w.doModifyColumn(t, job, newCol, oldColName, pos, modifyColumnTp)
 }
 
 // doModifyColumn updates the column information and reorders all columns.
-func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition, IsNull2NotNull bool) (ver int64, _ error) {
+func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition, modifyColumnTp byte) (ver int64, _ error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -300,7 +300,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
 	if job.IsRollingback() {
-		ver, err = rollbackModifyColumnJob(t, tblInfo, job, oldCol, IsNull2NotNull)
+		ver, err = rollbackModifyColumnJob(t, tblInfo, job, oldCol, modifyColumnTp)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -472,9 +472,9 @@ func checkAddColumnTooManyColumns(oldCols int) error {
 }
 
 // rollbackModifyColumnJob rollbacks the job when an error occurs.
-func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, IsNull2NotNull bool) (ver int64, _ error) {
+func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, modifyColumnTp byte) (ver int64, _ error) {
 	var err error
-	if IsNull2NotNull {
+	if modifyColumnTp == mysql.TypeNull {
 		// field NotNullFlag flag reset.
 		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
 		// field PreventNullInsertFlag flag reset.
