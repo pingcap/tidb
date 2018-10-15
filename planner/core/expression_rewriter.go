@@ -761,9 +761,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		tp := types.NewFieldType(mysql.TypeUnspecified)
 		types.DefaultParamTypeForValue(v.GetValue(), tp)
 		value := &expression.Constant{Value: v.Datum, RetType: tp}
-		if er.useCache() {
-			value.DeferredExpr = er.getParamExpression(v)
-		}
+		er.ctx.GetSessionVars().PreparedParams[v.Order] = v.Datum
+		value.DeferredExpr = er.getParamExpression(v)
 		er.ctxStack = append(er.ctxStack, value)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)

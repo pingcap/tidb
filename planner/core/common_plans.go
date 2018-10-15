@@ -159,7 +159,7 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 			return errors.Trace(err)
 		}
 		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = val
-		vars.PreparedParams = append(vars.PreparedParams, val)
+		vars.PreparedParams[i] = val
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// If the schema version has changed we need to preprocess it again,
@@ -168,6 +168,7 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
+		prepared.Plan = nil
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
 	p, err := e.getPhysicalPlan(ctx, is, prepared)
@@ -195,7 +196,8 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			return plan, nil
 		}
 	}
-	p, err := OptimizeAstNode(ctx, prepared.Stmt, is)
+	preparedPlan := prepared.Plan.(Plan)
+	p, err := OptimizeAstNode(ctx, prepared.Stmt, is, preparedPlan)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -26,7 +26,7 @@ import (
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
-var OptimizeAstNode func(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error)
+var OptimizeAstNode func(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, plan Plan) (Plan, error)
 
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = true

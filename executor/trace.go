@@ -52,7 +52,7 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	// record how much time was spent for optimizeing plan
 	optimizeSp := e.rootTrace.Tracer().StartSpan("plan_optimize", opentracing.FollowsFrom(e.rootTrace.Context()))
-	stmtPlan, err := planner.Optimize(e.builder.ctx, e.stmtNode, e.builder.is)
+	stmtPlan, err := planner.Optimize(e.builder.ctx, e.stmtNode, e.builder.is, nil)
 	if err != nil {
 		return err
 	}

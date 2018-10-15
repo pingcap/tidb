@@ -1479,7 +1479,7 @@ func (b *PlanBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 	if show, ok := explain.Stmt.(*ast.ShowStmt); ok {
 		return b.buildShow(show)
 	}
-	targetPlan, err := OptimizeAstNode(b.ctx, explain.Stmt, b.is)
+	targetPlan, err := OptimizeAstNode(b.ctx, explain.Stmt, b.is, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

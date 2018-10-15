@@ -24,19 +24,25 @@ import (
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
-func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, error) {
+func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema, plan plannercore.Plan) (plannercore.Plan, error) {
 	fp := plannercore.TryFastPlan(ctx, node)
 	if fp != nil {
 		return fp, nil
 	}
 
-	// build logical plan
-	ctx.GetSessionVars().PlanID = 0
-	ctx.GetSessionVars().PlanColumnID = 0
+	var p plannercore.Plan
+	var err error
 	builder := plannercore.NewPlanBuilder(ctx, is)
-	p, err := builder.Build(node)
-	if err != nil {
-		return nil, err
+	if plan == nil {
+		// build logical plan
+		ctx.GetSessionVars().PlanID = 0
+		ctx.GetSessionVars().PlanColumnID = 0
+		p, err = builder.Build(node)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		p = plan
 	}
 
 	// Check privilege. Maybe it's better to move this to the Preprocess, but

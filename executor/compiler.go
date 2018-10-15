@@ -46,7 +46,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		return nil, errors.Trace(err)
 	}
 
-	finalPlan, err := planner.Optimize(c.Ctx, stmtNode, infoSchema)
+	finalPlan, err := planner.Optimize(c.Ctx, stmtNode, infoSchema, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

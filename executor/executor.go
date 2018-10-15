@@ -1248,7 +1248,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreTruncate = true
 		sc.IgnoreZeroInDate = true
 	}
-	vars.PreparedParams = vars.PreparedParams[:0]
+	vars.PreparedParams = make(map[int]types.Datum)
 	if !vars.InRestrictedSQL {
 		if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 			sc.Priority = priority

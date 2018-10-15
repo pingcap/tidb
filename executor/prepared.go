@@ -157,13 +157,14 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
-		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = types.NewIntDatum(0)
+		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = types.NewIntDatum(1)
 	}
 	var p plannercore.Plan
 	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	prepared.Plan = p
 	if _, ok := stmt.(*ast.SelectStmt); ok {
 		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
 	}
@@ -250,7 +251,7 @@ func CompileExecutePreparedStmt(ctx sessionctx.Context, ID uint32, args ...inter
 		execStmt.UsingVars[i] = ast.NewValueExpr(val)
 	}
 	is := GetInfoSchema(ctx)
-	execPlan, err := planner.Optimize(ctx, execStmt, is)
+	execPlan, err := planner.Optimize(ctx, execStmt, is, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

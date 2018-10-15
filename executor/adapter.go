@@ -174,7 +174,7 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
 		return 0, errors.Trace(err)
 	}
-	p, err := planner.Optimize(a.Ctx, a.StmtNode, is)
+	p, err := planner.Optimize(a.Ctx, a.StmtNode, is, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
