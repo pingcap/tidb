@@ -345,7 +345,7 @@ type regionStat struct {
 type regionMetric struct {
 	FlowBytes    uint64 `json:"flow_bytes"`
 	MaxHotDegree int    `json:"max_hot_degree"`
-	Count        int    `json:"count"`
+	Count        int    `json:"region_count"`
 }
 
 // tblIndex presents the aggregate key that combined with db,table,index
