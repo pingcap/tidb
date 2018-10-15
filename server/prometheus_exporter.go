@@ -36,24 +36,24 @@ var (
 	)
 )
 
-type hotTableIndexExporter struct {
+type tidbPromsExporter struct {
 	*tikvHandlerTool
 	totalScrapes prometheus.Counter
 	errorScrapes prometheus.Counter
 }
 
-func newHotTableIndexExport(handler *tikvHandlerTool) *hotTableIndexExporter {
-	return &hotTableIndexExporter{
+func newTiDBPromsExporter(handler *tikvHandlerTool) *tidbPromsExporter {
+	return &tidbPromsExporter{
 		totalScrapes: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
-			Name:      "hot_region_scrapes_total",
+			Name:      "tidb_exporter_scrapes_total",
 			Help:      "Total number of times TiDB hot region was scraped for metrics.",
 		}),
 		errorScrapes: prometheus.NewCounter(prometheus.CounterOpts{
 			Namespace: namespace,
 			Subsystem: subsystem,
-			Name:      "hot_region_scrapes_error",
+			Name:      "tidb_exporter_scrapes_error",
 			Help:      "Total number of times TiDB hot region was scraped failed for metrics.",
 		}),
 		tikvHandlerTool: handler,
@@ -61,38 +61,43 @@ func newHotTableIndexExport(handler *tikvHandlerTool) *hotTableIndexExporter {
 }
 
 // Describe implements prometheus.Collector.
-func (e *hotTableIndexExporter) Describe(ch chan<- *prometheus.Desc) {
+func (e *tidbPromsExporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.totalScrapes.Desc()
 	ch <- e.errorScrapes.Desc()
 }
 
 // Collect implements prometheus.Collector.
-func (e *hotTableIndexExporter) Collect(ch chan<- prometheus.Metric) {
-	e.scrape(ch)
+func (e *tidbPromsExporter) Collect(ch chan<- prometheus.Metric) {
+	e.scrapeHotTableIndex(ch)
 	ch <- e.totalScrapes
 	ch <- e.errorScrapes
 }
 
-func (e *hotTableIndexExporter) scrape(mChan chan<- prometheus.Metric) {
-	e.scrapeOne(mChan, hotRead, "r")
-	e.scrapeOne(mChan, hotWrite, "w")
+var hotTableIndexCfg = []struct {
+	endpoint string
+	op       string
+}{
+	{hotRead, "r"},
+	{hotWrite, "w"},
 }
 
-func (e *hotTableIndexExporter) scrapeOne(mChan chan<- prometheus.Metric, rw, op string) {
-	hotReadInfo, err := e.scrapeHotInfo(rw)
-	if err != nil {
-		log.Error(err)
-		e.errorScrapes.Inc()
-		return
-	}
-	for idx, m := range hotReadInfo {
-		mChan <- prometheus.MustNewConstMetric(
-			hotTblIdxFlowBytesDesc, prometheus.CounterValue, float64(m.FlowBytes),
-			idx.DbName, idx.TableName, idx.IndexName, op,
-		)
-		mChan <- prometheus.MustNewConstMetric(
-			hotTblIdxRegionCountDesc, prometheus.CounterValue, float64(m.Count),
-			idx.DbName, idx.TableName, idx.IndexName, op,
-		)
+func (e *tidbPromsExporter) scrapeHotTableIndex(mChan chan<- prometheus.Metric) {
+	for _, task := range hotTableIndexCfg {
+		hotReadInfo, err := e.scrapeHotInfo(task.endpoint)
+		if err != nil {
+			log.Error(err)
+			e.errorScrapes.Inc()
+			return
+		}
+		for idx, m := range hotReadInfo {
+			mChan <- prometheus.MustNewConstMetric(
+				hotTblIdxFlowBytesDesc, prometheus.CounterValue, float64(m.FlowBytes),
+				idx.DbName, idx.TableName, idx.IndexName, task.op,
+			)
+			mChan <- prometheus.MustNewConstMetric(
+				hotTblIdxRegionCountDesc, prometheus.CounterValue, float64(m.Count),
+				idx.DbName, idx.TableName, idx.IndexName, task.op,
+			)
+		}
 	}
 }
