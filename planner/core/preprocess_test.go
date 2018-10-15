@@ -194,6 +194,9 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from ( select 1 ) a, (select 2) b;", true, nil},
 		{"select * from (select * from ( select 1 ) a join (select 2) b) b join (select 3) a;", false, nil},
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
+
+		//issue 7833
+		{"drop view if exists v;", true, nil},
 	}
 
 	store, dom, err := newStoreWithBootstrap()
