@@ -471,7 +471,7 @@ func checkAddColumnTooManyColumns(oldCols int) error {
 	return nil
 }
 
-// rollbackModifyColumnJob rollBack the job when an error occurs.
+// rollbackModifyColumnJob rollbacks the job when an error occurs.
 func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, IsNull2NotNull bool) (ver int64, _ error) {
 	var err error
 	if IsNull2NotNull {
@@ -487,7 +487,7 @@ func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.
 	return ver, nil
 }
 
-// modifyColumnFromNull2NotNull modifying the type definitions of 'null' to 'not null'.
+// modifyColumnFromNull2NotNull modifies the type definitions of 'null' to 'not null'.
 func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo, job *model.Job, oldCol, newCol *model.ColumnInfo) (ver int64, _ error) {
 	// Get sessionctx from context resource pool.
 	var ctx sessionctx.Context
