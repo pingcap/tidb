@@ -352,7 +352,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sc := new(stmtctx.StatementContext)
+	sc := sessCtx.GetSessionVars().StmtCtx
 	for {
 		vals1, h, err := it.Next()
 		if terror.ErrorEqual(err, io.EOF) {
@@ -516,7 +516,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	}
 
 	startKey := t.RecordKey(0)
-	sc := new(stmtctx.StatementContext)
+	sc := sessCtx.GetSessionVars().StmtCtx
 	filterFunc := func(h int64, vals []types.Datum, cols []*table.Column) (bool, error) {
 		vals2, ok := m[h]
 		if !ok {
