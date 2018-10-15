@@ -308,7 +308,7 @@ func (s *testSuite) TestTableForeignKey(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int, b int);")
 	_, err := tk.Exec("create table t2 (c int, foreign key (a) references t1(a));")
-	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1072]key column a doesn't exist in table")
 	tk.MustExec("drop table if exists t1,t2;")
 }
 

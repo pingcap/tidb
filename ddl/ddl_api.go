@@ -727,7 +727,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			fk.RefTable = constr.Refer.Table.Name
 			fk.State = model.StatePublic
 			for _, key := range constr.Keys {
-				if !table.FindColInfo(tbInfo.Columns, key.Column.Name.L) {
+				if !table.FindColInfo(tbInfo.Columns, key.Column.Name.O) {
 					return nil, errKeyColumnDoesNotExits.GenWithStack("key column %s doesn't exist in table", key.Column.Name)
 				}
 				fk.Cols = append(fk.Cols, key.Column.Name)
