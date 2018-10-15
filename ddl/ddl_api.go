@@ -1636,12 +1636,12 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	// We support modifying the type definitions of 'null' to 'not null' now.
-	isNull2Notnull := false
+	IsNull2NotNull := false
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
 		if err = CheckForNullValue(ctx, col.Tp == newCol.Tp, ident.Schema, ident.Name, col.Name, newCol.Name); err != nil {
 			return nil, errors.Trace(err)
 		}
-		isNull2Notnull = true
+		IsNull2NotNull = true
 	}
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(t.Cols(), col, newCol); err != nil {
@@ -1653,7 +1653,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		TableID:    t.Meta().ID,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, originalColName, spec.Position, isNull2Notnull},
+		Args:       []interface{}{&newCol, originalColName, spec.Position, IsNull2NotNull},
 	}
 	return job, nil
 }

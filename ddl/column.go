@@ -276,18 +276,18 @@ func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ erro
 	newCol := &model.ColumnInfo{}
 	oldColName := &model.CIStr{}
 	pos := &ast.ColumnPosition{}
-	isNull2Notnull := false
-	err := job.DecodeArgs(newCol, oldColName, pos, &isNull2Notnull)
+	IsNull2NotNull := false
+	err := job.DecodeArgs(newCol, oldColName, pos, &IsNull2NotNull)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	return w.doModifyColumn(t, job, newCol, oldColName, pos, isNull2Notnull)
+	return w.doModifyColumn(t, job, newCol, oldColName, pos, IsNull2NotNull)
 }
 
 // doModifyColumn updates the column information and reorders all columns.
-func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition, isNull2Notnull bool) (ver int64, _ error) {
+func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition, IsNull2NotNull bool) (ver int64, _ error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -300,7 +300,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
 	if job.IsRollingback() {
-		ver, err = modifyColumn2RollbackJob(t, tblInfo, job, oldCol, isNull2Notnull)
+		ver, err = rollbackModifyColumnJob(t, tblInfo, job, oldCol, IsNull2NotNull)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -329,7 +329,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	// }
 
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		ver, err = modifyDefinitionNull2Notnull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
+		ver, err = modifyDefinitionNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -419,9 +419,8 @@ func CheckForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, tab
 	if rowCount != 0 {
 		if isDataTruncated {
 			return errInvalidUseOfNull
-		} else {
-			return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, rowCount)
 		}
+		return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, rowCount)
 	}
 	return nil
 }
@@ -471,9 +470,9 @@ func checkAddColumnTooManyColumns(oldCols int) error {
 	return nil
 }
 
-// modifyColumn2RollbackJob rollBack the job when an error occurs.
-func modifyColumn2RollbackJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, isNull2Notnull bool) (ver int64, _ error) {
-	if isNull2Notnull {
+// rollbackModifyColumnJob rollBack the job when an error occurs.
+func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, IsNull2NotNull bool) (ver int64, _ error) {
+	if IsNull2NotNull {
 		// field NotNullFlag flag reset.
 		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
 		// field PreventNullInsertFlag flag reset.
@@ -486,8 +485,8 @@ func modifyColumn2RollbackJob(t *meta.Meta, tblInfo *model.TableInfo, job *model
 	return ver, nil
 }
 
-// modifyDefinitionNull2Notnull modifying the type definitions of 'null' to 'not null'.
-func modifyDefinitionNull2Notnull(w *worker, t *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo, job *model.Job, oldCol, newCol *model.ColumnInfo) (ver int64, _ error) {
+// modifyDefinitionNull2NotNull modifying the type definitions of 'null' to 'not null'.
+func modifyDefinitionNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo, job *model.Job, oldCol, newCol *model.ColumnInfo) (ver int64, _ error) {
 	// Get sessionctx from context resource pool.
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.get()
@@ -507,16 +506,14 @@ func modifyDefinitionNull2Notnull(w *worker, t *meta.Meta, dbInfo *model.DBInfo,
 		// Prevent this field from inserting null values.
 		tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 	} else {
 		// Modify the type defined Flag to NotNullFlag.
 		tblInfo.Columns[oldCol.Offset].Flag |= mysql.NotNullFlag
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+	}
+
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 	return ver, nil
 }
