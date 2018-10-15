@@ -19,12 +19,15 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 )
 
+// Group is short for expression group, which is used to store all the
+// logically equivalent expressions. It's a set of GroupExpr.
 type Group struct {
 	equivalents     map[string]*GroupExpr
 	explored        bool
 	selfFingerprint string
 }
 
+// NewGroup creates a new Group.
 func NewGroup(e *GroupExpr) *Group {
 	g := &Group{equivalents: make(map[string]*GroupExpr)}
 	g.Insert(e)
@@ -44,6 +47,7 @@ func (g *Group) Insert(e *GroupExpr) {
 	g.equivalents[e.FingerPrint()] = e
 }
 
+// Delete an existing group expression.
 func (g *Group) Delete(e *GroupExpr) {
 	fingerprint := e.FingerPrint()
 	if _, ok := g.equivalents[fingerprint]; ok {
@@ -51,11 +55,13 @@ func (g *Group) Delete(e *GroupExpr) {
 	}
 }
 
+// Exists checks whether a group expression existed in a Group.
 func (g *Group) Exists(e *GroupExpr) bool {
 	_, ok := g.equivalents[e.FingerPrint()]
 	return ok
 }
 
+// Convert2Group converts a logical plan to expression groups.
 func Convert2Group(node plannercore.LogicalPlan) *Group {
 	e := NewGroupExpr(node)
 	e.children = make([]*Group, 0, len(node.Children()))

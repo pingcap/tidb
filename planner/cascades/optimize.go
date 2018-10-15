@@ -19,6 +19,8 @@ import (
 	"github.com/pkg/errors"
 )
 
+// FindBestPlan is the optimization entrance of the cascades planner. The
+// optimization is composed of 2 phases: exploration and implementation.
 func FindBestPlan(sctx sessionctx.Context, logical plannercore.LogicalPlan) (plannercore.Plan, error) {
 	rootGroup := Convert2Group(logical)
 

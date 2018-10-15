@@ -19,6 +19,11 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 )
 
+// GroupExpr is used to store all the logically equivalent expressions which
+// have the same root operator. Different from a normal expression, the
+// children of a group expression are expression Groups, not expressions.
+// Another property of group expression is that the child group references will
+// never be changed once the group expression is created.
 type GroupExpr struct {
 	exprNode plannercore.LogicalPlan
 	children []*Group
@@ -27,6 +32,7 @@ type GroupExpr struct {
 	selfFingerprint string
 }
 
+// NewGroupExpr creates a GroupExpr based on a logical plan node.
 func NewGroupExpr(node plannercore.LogicalPlan) *GroupExpr {
 	return &GroupExpr{
 		exprNode: node,
@@ -35,6 +41,7 @@ func NewGroupExpr(node plannercore.LogicalPlan) *GroupExpr {
 	}
 }
 
+// FingerPrint get the unique fingerprint of the group expression.
 func (e *GroupExpr) FingerPrint() string {
 	if e.selfFingerprint == "" {
 		e.selfFingerprint = fmt.Sprintf("%v", e.exprNode.ID())
