@@ -76,6 +76,7 @@ const (
 	nmMetricsInterval  = "metrics-interval"
 	nmDdlLease         = "lease"
 	nmTokenLimit       = "token-limit"
+	nmRunPromsExporter = "run-proms-exporter"
 
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
@@ -96,6 +97,7 @@ var (
 	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
+	runPromsExporter = flag.Bool(nmRunPromsExporter, false, "run tidb prometheus exporter on this tidb-server")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -298,6 +300,9 @@ func overrideConfig() {
 	}
 	if actualFlags[nmTokenLimit] {
 		cfg.TokenLimit = uint(*tokenLimit)
+	}
+	if actualFlags[nmRunPromsExporter] {
+		cfg.RunPromsExporter = *runPromsExporter
 	}
 
 	// Log

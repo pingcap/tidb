@@ -73,6 +73,7 @@ type Config struct {
 	TiKVClient          TiKVClient        `toml:"tikv-client" json:"tikv-client"`
 	Binlog              Binlog            `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery bool              `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	RunPromsExporter    bool              `toml:"run-proms-exporter" json:"run-proms-exporter"`
 }
 
 // Log is the log section of config.
