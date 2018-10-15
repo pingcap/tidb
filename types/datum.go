@@ -323,6 +323,15 @@ func (d *Datum) GetRaw() []byte {
 	return d.b
 }
 
+// SetAutoID set the auto increment ID according to its int flag.
+func (d *Datum) SetAutoID(id int64, flag uint) {
+	if mysql.HasUnsignedFlag(flag) {
+		d.SetUint64(uint64(id))
+	} else {
+		d.SetInt64(id)
+	}
+}
+
 // GetValue gets the value of the datum of any kind.
 func (d *Datum) GetValue() interface{} {
 	switch d.k {
