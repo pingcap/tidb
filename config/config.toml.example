@@ -230,8 +230,9 @@ grpc-keepalive-timeout = 3
 commit-timeout = "41s"
 
 max-batch-size = 128
-min-batch-size-in-backoff = 8
-batch-backoff = 500000
+heavy-load-to-batch = 5000
+batch-wait-time = 500000
+batch-wait-size = 8
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when

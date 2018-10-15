@@ -238,11 +238,14 @@ type TiKVClient struct {
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
 
-	// For batch commands API.
-	MaxBatchSize          uint          `toml:"max-batch-size" json:"max-batch-size"`
-	HeavyLoadToBackoff    uint          `toml:"heavy-load-to-backoff" json:"heavy-load-to-backoff"`
-	MinBatchSizeInBackoff uint          `toml:"min-batch-size-in-backoff" json:"min-batch-size-in-backoff"`
-	BatchBackoff          time.Duration `toml:"batch-backoff" json:"batch-backoff"`
+	// MaxBatchSize is the max batch size when calling batch commands API.
+	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
+	// If QPS is greater than HeavyLoadToBatch, TiDB will wait for a while to avoid little batch.
+	HeavyLoadToBatch uint `toml:"heavy-load-to-batch" json:"heavy-load-to-batch"`
+	// BatchWaitTime in nanosecond is the max wait time for batch.
+	BatchWaitTime time.Duration `toml:"batch-wait-time" json:"batch-wait-time"`
+	// BatchWaitSize is the max wait size for batch.
+	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
 }
 
 // Binlog is the config for binlog.
@@ -320,14 +323,15 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount:   16,
-		GrpcKeepAliveTime:     10,
-		GrpcKeepAliveTimeout:  3,
-		CommitTimeout:         "41s",
-		MaxBatchSize:          128,
-		HeavyLoadToBackoff:    5000,
-		MinBatchSizeInBackoff: 8,
-		BatchBackoff:          500 * time.Microsecond,
+		GrpcConnectionCount:  4,
+		GrpcKeepAliveTime:    10,
+		GrpcKeepAliveTimeout: 3,
+		CommitTimeout:        "41s",
+
+		MaxBatchSize:     128,
+		HeavyLoadToBatch: 5000,
+		BatchWaitTime:    500 * time.Microsecond,
+		BatchWaitSize:    8,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

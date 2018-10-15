@@ -179,19 +179,20 @@ var (
 			Help:      "Counter of region cache.",
 		}, []string{LblType, LblResult})
 
-	TiKVBatchPendingRequests = prometheus.NewGauge(
+	// TiKVPendingBatchRequests indicates the number of requests pending in the batch channel.
+	TiKVPendingBatchRequests = prometheus.NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "batch_pending_requests",
-			Help:      "Batch pending requests",
+			Name:      "pending_batch_requests",
+			Help:      "Pending batch requests",
 		})
 
-	TiKVBatchBackoffCounter = prometheus.NewCounter(
+	TiKVBatchWaitTimes = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
-			Name:      "batch_backoff",
-			Help:      "Batch backoff counter",
+			Name:      "batch_wait_times",
+			Help:      "counter of batch wait times",
 		})
 )

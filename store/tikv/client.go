@@ -294,7 +294,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		next := atomic.AddUint32(&a.index, 1) % uint32(len(a.v))
 		batchCommandsClient := a.batchCommandsClients[next]
 
-		metrics.TiKVBatchPendingRequests.Set(float64(len(a.batchCommandsCh)))
+		metrics.TiKVPendingBatchRequests.Set(float64(len(a.batchCommandsCh)))
 
 		entries = entries[:0]
 		requests = requests[:0]
@@ -316,21 +316,21 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 					break Loop
 				}
 			default:
-				inHeavyLoad = inHeavyLoad || a.batchStatus.inHeavyLoad(cfg.HeavyLoadToBackoff)
+				inHeavyLoad = inHeavyLoad || a.batchStatus.inHeavyLoad(cfg.HeavyLoadToBatch)
 				break Loop
 			}
 		}
 
 		if len(requests) < int(cfg.MaxBatchSize) && inHeavyLoad {
-			metrics.TiKVBatchBackoffCounter.Inc()
-			end := time.After(cfg.BatchBackoff)
+			metrics.TiKVBatchWaitTimes.Inc()
+			end := time.After(cfg.BatchWaitTime)
 		BackoffLoop:
 			for {
 				select {
 				case entry := <-a.batchCommandsCh:
 					entries = append(entries, entry)
 					requests = append(requests, entry.req)
-					if len(requests) >= int(cfg.MinBatchSizeInBackoff) {
+					if len(requests) >= int(cfg.BatchWaitSize) {
 						break BackoffLoop
 					}
 				case <-end:
