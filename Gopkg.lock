@@ -307,7 +307,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:14d83225e335cfa449b1f74d03c03ed70db64bf6af83a6e04c43e6e0021d6b94"
+  digest = "1:9d9d9bf758fc9bbf1a4976534c1622dbca61a8da53d98416dbb711e309e379f7"
   name = "github.com/pingcap/tipb"
   packages = [
     "go-binlog",
@@ -315,7 +315,7 @@
     "sharedbytes",
   ]
   pruneopts = "NUT"
-  revision = "371b48b15d93924a3a5375019e42b4420bc13d17"
+  revision = "11e33c750323a0267a6aee335eaaeb7831bdae67"
 
 [[projects]]
   digest = "1:91fee14a873676b2118c54e08c2e04897ea5c141b55a9b9fb8cf0721458d0d85"
