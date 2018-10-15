@@ -190,6 +190,14 @@
   version = "v1.1"
 
 [[projects]]
+  digest = "1:5e55a8699c9ff7aba1e4c8952aeda209685d88d4cb63a8766c338e333b8e65d6"
+  name = "github.com/klauspost/cpuid"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "ae7887de9fa5d2db4eaa8174a7eff2c1ac00f2da"
+  version = "v1.1"
+
+[[projects]]
   branch = "master"
   digest = "1:5985ef4caf91ece5d54817c11ea25f182697534f8ae6521eadcd628c142ac4b6"
   name = "github.com/matttproud/golang_protobuf_extensions"
@@ -465,7 +473,7 @@
   revision = "6b7d9516179cd47f4714cfeb0103ad1dede756c4"
 
 [[projects]]
-  digest = "1:a893d24a604ae6f45f2d6e00ae9e817476e110e2dd5455152b35bb720ca2f626"
+  digest = "1:7cd8d3d0020bbbe235958c87a2c042c4a8505e401b6e0496880990228fc34f4b"
   name = "google.golang.org/grpc"
   packages = [
     ".",
@@ -495,9 +503,9 @@
     "transport",
   ]
   pruneopts = "NUT"
-  revision = "41344da2231b913fa3d983840a57a6b1b7b631a1"
+  revision = "7a6a684ca69eb4cae85ad0a484f2e531598c047b"
   source = "https://github.com/grpc/grpc-go.git"
-  version = "v1.12.0"
+  version = "v1.12.2"
 
 [[projects]]
   digest = "1:7d95d61ff5828a65cf072a46f3c68d67daffdd11e97d758b0af2176cde717fcd"
@@ -531,6 +539,7 @@
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing",
     "github.com/grpc-ecosystem/go-grpc-prometheus",
+    "github.com/klauspost/cpuid",
     "github.com/ngaut/pools",
     "github.com/opentracing/basictracer-go",
     "github.com/opentracing/opentracing-go",

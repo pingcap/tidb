@@ -498,6 +498,14 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx5 (c5)`)
 	tk.MustExec(`ALTER TABLE t1 ADD INDEX idx6 (c6)`)
 	tk.MustExec(`admin check table t1`)
+
+	// Test add index on decimal column.
+	tk.MustExec(`drop table if exists td1;`)
+	tk.MustExec(`CREATE TABLE td1 (c2 INT NULL DEFAULT '70');`)
+	tk.MustExec(`INSERT INTO td1 SET c2 = '5';`)
+	tk.MustExec(`ALTER TABLE td1 ADD COLUMN c4 DECIMAL(12,8) NULL DEFAULT '213.41598062';`)
+	tk.MustExec(`ALTER TABLE td1 ADD INDEX id2 (c4) ;`)
+	tk.MustExec(`ADMIN CHECK TABLE td1;`)
 }
 
 func (s *testSuite) TestAdminCheckPrimaryIndex(c *C) {

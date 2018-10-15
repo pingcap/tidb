@@ -29,7 +29,7 @@ func (s *testSchedulerSuite) SetUpTest(c *C) {
 
 func (s *testSchedulerSuite) TestWithConcurrency(c *C) {
 	txns := [][][]byte{
-		{[]byte("a"), []byte("a"), []byte("b"), []byte("c")},
+		{[]byte("a"), []byte("b"), []byte("c")},
 		{[]byte("a"), []byte("d"), []byte("e"), []byte("f")},
 		{[]byte("e"), []byte("f"), []byte("g"), []byte("h")},
 	}
