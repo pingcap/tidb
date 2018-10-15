@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -397,7 +396,7 @@ func (s *testSuite) TestShow(c *C) {
 	tk.MustQuery("show create table t1").Check(testutil.RowsWithSep("|",
 		"t1 CREATE TABLE `t1` (\n"+
 			"  `c1` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMPRESSION=`zlib`",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMPRESSION='zlib'",
 	))
 
 	// Test show create table year type
@@ -469,31 +468,8 @@ type mockSessionManager struct {
 	session.Session
 }
 
-// ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
-	ps := msm.ShowProcess()
-	return map[uint64]util.ProcessInfo{ps.ID: ps}
-}
-
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
-}
-
-func (s *testSuite) TestShowFullProcessList(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("select 1") // for tk.Se init
-
-	se := tk.Se
-	se.SetSessionManager(&mockSessionManager{se})
-
-	fullSQL := "show                                                                                        full processlist"
-	simpSQL := "show                                                                                        processlist"
-
-	cols := []int{4, 5, 6, 7} // columns to check: Command, Time, State, Info
-	tk.MustQuery(fullSQL).CheckAt(cols, testutil.RowsWithSep("|", "Query|0|2|"+fullSQL))
-	tk.MustQuery(simpSQL).CheckAt(cols, testutil.RowsWithSep("|", "Query|0|2|"+simpSQL[:100]))
-
-	se.SetSessionManager(nil) // reset sm so other tests won't use this
 }
 
 type stats struct {
