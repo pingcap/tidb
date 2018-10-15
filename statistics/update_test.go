@@ -406,6 +406,44 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(hg.Len(), Equals, 3)
 }
 
+func (s *testStatsUpdateSuite) TestAutoUpdatePartition(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
+	testKit.MustExec("analyze table t")
+
+	statistics.AutoAnalyzeMinCnt = 0
+	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+	}()
+
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	h := do.StatsHandle()
+
+	h.Update(is)
+	stats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	c.Assert(stats.Count, Equals, int64(0))
+
+	testKit.MustExec("insert into t values (1)")
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.Update(is)
+	err = h.HandleAutoAnalyze(is)
+	c.Assert(err, IsNil)
+	stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	c.Assert(stats.Count, Equals, int64(1))
+	c.Assert(stats.ModifyCount, Equals, int64(0))
+}
+
 func (s *testStatsUpdateSuite) TestTableAnalyzed(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)

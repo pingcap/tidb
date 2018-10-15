@@ -68,17 +68,11 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	}
 
-	// 2. Check null.
+	// 2. Handle the bad null error.
 	for i, col := range t.Cols() {
-		if err := col.CheckNotNull(newData[i]); err != nil {
-			if sc.BadNullAsWarning {
-				newData[i], err = table.GetColDefaultValue(ctx, col.ToInfo())
-				if err != nil {
-					return false, false, 0, errors.Trace(err)
-				}
-			} else {
-				return false, false, 0, errors.Trace(err)
-			}
+		var err error
+		if newData[i], err = col.HandleBadNull(newData[i], sc); err != nil {
+			return false, false, 0, errors.Trace(err)
 		}
 	}
 
