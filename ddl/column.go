@@ -329,7 +329,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 	// }
 
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		ver, err = modifyDefinitionNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
+		ver, err = modifyColumnFromNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -409,6 +409,7 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 }
 
 // checkForNullValue ensure there are no null values of the column of this table.
+// `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
 func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, oldCol, newCol model.CIStr) error {
 	sql := fmt.Sprintf("select count(*) from `%s`.`%s` where `%s` is null limit 1;", schema.L, table.L, oldCol.L)
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
@@ -486,8 +487,8 @@ func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.
 	return ver, nil
 }
 
-// modifyDefinitionNull2NotNull modifying the type definitions of 'null' to 'not null'.
-func modifyDefinitionNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo, job *model.Job, oldCol, newCol *model.ColumnInfo) (ver int64, _ error) {
+// modifyColumnFromNull2NotNull modifying the type definitions of 'null' to 'not null'.
+func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo, job *model.Job, oldCol, newCol *model.ColumnInfo) (ver int64, _ error) {
 	// Get sessionctx from context resource pool.
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.get()
