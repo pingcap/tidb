@@ -240,6 +240,7 @@ type TiKVClient struct {
 
 	// For batch commands API.
 	MaxBatchSize          uint          `toml:"max-batch-size" json:"max-batch-size"`
+	HeavyLoadToBackoff    uint          `toml:"heavy-load-to-backoff" json:"heavy-load-to-backoff"`
 	MinBatchSizeInBackoff uint          `toml:"min-batch-size-in-backoff" json:"min-batch-size-in-backoff"`
 	BatchBackoff          time.Duration `toml:"batch-backoff" json:"batch-backoff"`
 }
@@ -324,6 +325,7 @@ var defaultConf = Config{
 		GrpcKeepAliveTimeout:  3,
 		CommitTimeout:         "41s",
 		MaxBatchSize:          128,
+		HeavyLoadToBackoff:    5000,
 		MinBatchSizeInBackoff: 8,
 		BatchBackoff:          500 * time.Microsecond,
 	},

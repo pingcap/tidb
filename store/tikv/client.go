@@ -126,20 +126,19 @@ func (b *batchStatus) update(batch int) {
 	b.reqTsSlots[b.curSlot] = now
 }
 
-func (b *batchStatus) inHeavyLoad(backoff time.Duration, minInBackoff uint) bool {
+func (b *batchStatus) inHeavyLoad(heavyLoad uint) bool {
 	reqSpeed := 0
 	for _, count := range b.reqCountSlots {
 		reqSpeed += count
 	}
-
-	batchSizeIfBackoff := float64(reqSpeed) * float64(backoff) / float64(time.Second)
-	return batchSizeIfBackoff > float64(minInBackoff)
+	return uint(reqSpeed) >= heavyLoad
 }
 
 type batchCommandsClient struct {
-	client  tikvpb.Tikv_BatchCommandsClient
-	batched sync.Map
-	idAlloc uint64
+	client          tikvpb.Tikv_BatchCommandsClient
+	batched         sync.Map
+	idAlloc         uint64
+	tikvInHeavyLoad bool
 }
 
 func (c *batchCommandsClient) batchRecvLoop() {
@@ -165,6 +164,8 @@ func (c *batchCommandsClient) batchRecvLoop() {
 			entry.res <- responses[i]
 			c.batched.Delete(requestId)
 		}
+
+		c.tikvInHeavyLoad = resp.GetInHeavyLoad()
 	}
 }
 
@@ -304,7 +305,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		entries = append(entries, headEntry)
 		requests = append(requests, headEntry.req)
 
-		inHeavyLoad := false
+		inHeavyLoad := batchCommandsClient.tikvInHeavyLoad
 	Loop:
 		for {
 			select {
@@ -315,7 +316,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 					break Loop
 				}
 			default:
-				inHeavyLoad = a.batchStatus.inHeavyLoad(cfg.BatchBackoff, cfg.MinBatchSizeInBackoff)
+				inHeavyLoad = inHeavyLoad || a.batchStatus.inHeavyLoad(cfg.HeavyLoadToBackoff)
 				break Loop
 			}
 		}

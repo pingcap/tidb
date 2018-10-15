@@ -18,6 +18,7 @@ import (
 	"path"
 	"runtime"
 	"testing"
+	"time"
 
 	. "github.com/pingcap/check"
 )

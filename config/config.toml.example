@@ -233,7 +233,6 @@ max-batch-size = 128
 min-batch-size-in-backoff = 8
 batch-backoff = 500000
 
-
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
