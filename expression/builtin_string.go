@@ -1210,6 +1210,11 @@ func (b *builtinSubstringIndexSig) evalString(row chunk.Row) (d string, isNull b
 	} else {
 		// If count is negative, everything to the right of the final delimiter (counting from the right) is returned.
 		count = -count
+		if count < 0 {
+			// -count overflows max int64, returns an empty string.
+			return "", false, nil
+		}
+
 		if count < end {
 			start = end - count
 		}
