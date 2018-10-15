@@ -728,7 +728,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			fk.State = model.StatePublic
 			for _, key := range constr.Keys {
 				if !table.FindColInfo(tbInfo.Columns, key.Column.Name.O) {
-					return nil, errKeyColumnDoesNotExits.GenWithStack("key column %s doesn't exist in table", key.Column.Name)
+					return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
 				}
 				fk.Cols = append(fk.Cols, key.Column.Name)
 			}
@@ -752,7 +752,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			for _, key := range constr.Keys {
 				col = table.FindCol(cols, key.Column.Name.O)
 				if col == nil {
-					return nil, errKeyColumnDoesNotExits.GenWithStack("key column %s doesn't exist in table", key.Column.Name)
+					return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
 				}
 				// Virtual columns cannot be used in primary key.
 				if col.IsGenerated() && !col.GeneratedStored {
