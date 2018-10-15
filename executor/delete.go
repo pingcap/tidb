@@ -39,20 +39,11 @@ type DeleteExec struct {
 	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
 	// by its alias instead of ID.
 	tblMap map[int64][]*ast.TableName
-
-	finished bool
 }
 
 // Next implements the Executor Next interface.
 func (e *DeleteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if e.finished {
-		return nil
-	}
-	defer func() {
-		e.finished = true
-	}()
-
 	if e.IsMultiTable {
 		return errors.Trace(e.deleteMultiTablesByChunk(ctx))
 	}

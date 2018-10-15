@@ -114,6 +114,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	}
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
 	s.domain = d
 }
 
@@ -1476,6 +1477,12 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	tk.MustExec(`UPDATE test_gc_read SET a = a - 200 WHERE d = 812`)
 	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE d = 12`)
 	result.Check(testkit.Rows(`3 4 7 12`))
+
+	tk.MustExec(`INSERT INTO test_gc_read set a = 4, b = d + 1`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`,
+		`4 <nil> <nil> <nil>`, `8 8 16 64`))
+	tk.MustExec(`DELETE FROM test_gc_read where a = 4`)
 
 	// Test on-conditions on virtual/stored generated columns.
 	tk.MustExec(`CREATE TABLE test_gc_help(a int primary key, b int, c int, d int)`)

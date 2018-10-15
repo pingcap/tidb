@@ -64,10 +64,8 @@ func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if ctx.GetSessionVars().EnableCascadesPlanner {
 		return cascades.FindBestPlan(ctx, logic)
-	} else {
-		return plannercore.DoOptimize(builder.GetOptFlag(), logic)
 	}
-
+	return plannercore.DoOptimize(builder.GetOptFlag(), logic)
 }
 
 func init() {

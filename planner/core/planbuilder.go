@@ -130,14 +130,17 @@ type PlanBuilder struct {
 	inStraightJoin bool
 }
 
+// GetVisitInfo gets the visitInfo of the PlanBuilder.
 func (b *PlanBuilder) GetVisitInfo() []visitInfo {
 	return b.visitInfo
 }
 
+// GetOptFlag gets the optFlag of the PlanBuilder.
 func (b *PlanBuilder) GetOptFlag() uint64 {
 	return b.optFlag
 }
 
+// NewPlanBuilder creates a new PlanBuilder.
 func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PlanBuilder {
 	return &PlanBuilder{
 		ctx:       sctx,
@@ -146,6 +149,7 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PlanBuil
 	}
 }
 
+// Build builds the ast node to a Plan.
 func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 	b.optFlag = flagPrunColumns
 	switch x := node.(type) {

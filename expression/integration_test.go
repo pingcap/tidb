@@ -2990,6 +2990,7 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a varchar(100))")
+	tk.MustExec("create table d(a varchar(100))")
 	tk.MustExec("insert into t values('hello'), ('hello')")
 	result := tk.MustQuery("select group_concat(a) from t")
 	result.Check(testkit.Rows("hello,hello"))
@@ -2997,6 +2998,15 @@ func (s *testIntegrationSuite) TestAggregationBuiltinGroupConcat(c *C) {
 	tk.MustExec("set @@group_concat_max_len=7")
 	result = tk.MustQuery("select group_concat(a) from t")
 	result.Check(testkit.Rows("hello,h"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+
+	_, err := tk.Exec("insert into d select group_concat(a) from t")
+	c.Assert(errors.Cause(err).(*terror.Error).Code(), Equals, terror.ErrCode(mysql.ErrCutValueGroupConcat))
+
+	tk.Exec("set sql_mode=''")
+	tk.MustExec("insert into d select group_concat(a) from t")
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
 }
 
 func (s *testIntegrationSuite) TestOtherBuiltin(c *C) {
