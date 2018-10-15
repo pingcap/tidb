@@ -1711,13 +1711,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is, false)
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			ctx:       mockContext(),
 			is:        s.is,
 		}
 		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
-		_, err = builder.build(stmt)
+		_, err = builder.Build(stmt)
 		c.Assert(err, IsNil, comment)
 
 		checkVisitInfo(c, builder.visitInfo, tt.ans, comment)
@@ -1815,12 +1815,12 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is, false)
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			ctx:       mockContext(),
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		plan, err := builder.build(stmt)
+		plan, err := builder.Build(stmt)
 		if tt.err {
 			c.Assert(err, NotNil)
 			return
@@ -1942,12 +1942,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is, false)
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			ctx:       mockContext(),
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		p, err := builder.build(stmt)
+		p, err := builder.Build(stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
