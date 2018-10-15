@@ -322,8 +322,6 @@ func (ow *outerWorker) pushToChan(ctx context.Context, task *lookUpJoinTask, dst
 // buildTask builds a lookUpJoinTask and read outer rows.
 // When err is not nil, task must not be nil to send the error to the main thread via task.
 func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
-	ow.executor.newFirstChunk()
-
 	task := &lookUpJoinTask{
 		doneCh:            make(chan error, 1),
 		outerResult:       ow.executor.newFirstChunk(),
