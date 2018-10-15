@@ -489,6 +489,8 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		corColInFilter:  e.corColInTblSide,
 		plans:           e.tblPlans,
 	}
+	// We assign `nil` to `runtimeStats` to forbidden `TableWorker` driven `IndexLookupExecutor`'s runtime stats collecting,
+	// because TableWorker information isn't showing in explain result now.
 	tableReaderExec.runtimeStats = nil
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles)
 	if err != nil {
