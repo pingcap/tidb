@@ -3445,14 +3445,14 @@ func (s *testDBSuite) TestColumnModifyingDefinition(c *C) {
 	s.testErrorCode(c, "alter table test2 change c1 a1 bigint not null;", tmysql.WarnDataTruncated)
 }
 
-func (s *testDBSuite) TestModifyColumnRollback(c *C) {
+func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
-	s.mustExec(c, "drop table if exists test2")
-	s.mustExec(c, "create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (c1 int, c2 int, c3 int default 1, index (c1));")
 
 	done := make(chan error, 1)
-	go backgroundExec(s.store, "alter table test2 change c2 c2 bigint not null;", done)
+	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
 
 	var c2 *table.Column
 	var checkErr error
@@ -3463,14 +3463,14 @@ func (s *testDBSuite) TestModifyColumnRollback(c *C) {
 			return
 		}
 
-		t := s.testGetTable(c, "test2")
+		t := s.testGetTable(c, "t1")
 		for _, col := range t.Cols() {
 			if col.Name.L == "c2" {
 				c2 = col
 			}
 		}
 		if mysql.HasPreventNullInsertFlag(c2.Flag) {
-			s.testErrorCode(c, "insert into test2(c2) values (null);", tmysql.ErrBadNull)
+			s.testErrorCode(c, "insert into t1(c2) values (null);", tmysql.ErrBadNull)
 		}
 
 		hookCtx := mock.NewContext()
@@ -3510,18 +3510,18 @@ LOOP:
 			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
 			break LOOP
 		case <-ticker.C:
-			s.mustExec(c, "insert into test2(c2) values (null);")
+			s.mustExec(c, "insert into t1(c2) values (null);")
 		}
 	}
 
-	t := s.testGetTable(c, "test2")
+	t := s.testGetTable(c, "t1")
 	for _, col := range t.Cols() {
 		if col.Name.L == "c2" {
 			c2 = col
 		}
 	}
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsFalse)
-	s.mustExec(c, "drop table test2")
+	s.mustExec(c, "drop table t1")
 
 	callback := &ddl.TestDDLCallback{}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
