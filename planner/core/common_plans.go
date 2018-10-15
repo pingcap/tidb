@@ -494,7 +494,7 @@ func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent st
 		if taskType == "cop" {
 			row = append(row, "") //TODO: wait collect resp from tikv
 		} else {
-			row = append(row, runtimeStatsColl.GetRuntimeStat(p.ExplainID()).String())
+			row = append(row, runtimeStatsColl.Get(p.ExplainID()).String())
 		}
 	}
 	e.Rows = append(e.Rows, row)

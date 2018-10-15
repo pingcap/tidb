@@ -71,16 +71,13 @@ type RuntimeStats struct {
 	rows int64
 }
 
-// NewRuntimeStats creates new executor collector.
-func NewRuntimeStats() *RuntimeStatsColl {
+// NewRuntimeStatsColl creates new executor collector.
+func NewRuntimeStatsColl() *RuntimeStatsColl {
 	return &RuntimeStatsColl{stats: make(map[string]*RuntimeStats)}
 }
 
-// GetRuntimeStat gets execStat for a executor.
-func (e *RuntimeStatsColl) GetRuntimeStat(planID string) *RuntimeStats {
-	if e == nil {
-		return nil
-	}
+// Get gets execStat for a executor.
+func (e *RuntimeStatsColl) Get(planID string) *RuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	runtimeStats, exists := e.stats[planID]
