@@ -247,19 +247,19 @@ func (a *connArray) Init(addr string, security config.Security) error {
 		}
 		a.v[i] = conn
 
-		// Initialize batch streaming clients.
-		tikvClient := tikvpb.NewTikvClient(conn)
-		streamClient, err := tikvClient.BatchCommands(context.TODO())
-		if err != nil {
-			a.Close()
-			return errors.Trace(err)
-		}
-		batchClient := &batchCommandsClient{
-			client:  streamClient,
-			idAlloc: 0,
-		}
-		a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 		if allowBatch {
+			// Initialize batch streaming clients.
+			tikvClient := tikvpb.NewTikvClient(conn)
+			streamClient, err := tikvClient.BatchCommands(context.TODO())
+			if err != nil {
+				a.Close()
+				return errors.Trace(err)
+			}
+			batchClient := &batchCommandsClient{
+				client:  streamClient,
+				idAlloc: 0,
+			}
+			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 			go batchClient.batchRecvLoop()
 		}
 	}
