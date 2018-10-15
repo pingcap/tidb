@@ -216,7 +216,7 @@ local-agent-host-port = ""
 
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
-grpc-connection-count = 16
+grpc-connection-count = 4
 
 # After a duration of this time in seconds if the client doesn't see any activity it pings
 # the server to see if the transport is still alive.

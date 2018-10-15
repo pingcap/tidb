@@ -89,44 +89,50 @@ type connArray struct {
 
 	// For batch commands.
 	batchCommandsCh      chan *batchCommandsEntry
-	batchStatus          batchStatus
+	batchStatistics      batchStatistics
 	batchCommandsClients []*batchCommandsClient
 }
 
 // Some internal flags used in batching.
-type batchStatus struct {
+type batchStatistics struct {
 	// 10 slots per second.
 	reqCountSlots [10]int
 	reqTsSlots    [10]int64
 	curSlot       int
 }
 
-func newBatchStatus() batchStatus {
-	return batchStatus{
+func newBatchStatus() batchStatistics {
+	return batchStatistics{
 		reqCountSlots: [10]int{0},
 		reqTsSlots:    [10]int64{0},
 		curSlot:       0,
 	}
 }
 
-func (b *batchStatus) update(batch int) {
+// Update the batchStatistics with a latest batch. batchStatistics holds 10 slots
+// for last 10 0.1s. When update is called, if the current slot is not passed, add
+// the latest batch size in place. Otherwise clean stale slots first and then add
+// the latest batch size in a new slot.
+func (b *batchStatistics) update(batch int) {
+	// normalize it with unit 0.1s.
 	now := time.Now().UnixNano() / 100000000
-	slot := int(now % 10)
-	if slot != b.curSlot {
+	if b.reqTsSlots[b.curSlot] != now {
 		// Clean all stale counts.
 		for i := range b.reqCountSlots {
 			if b.reqTsSlots[i] > 0 && b.reqTsSlots[i] <= int64(now-10) {
+				// The slot lives more than 1s, clean it.
 				b.reqCountSlots[i] = 0
+				b.reqTsSlots[i] = 0
 			}
 		}
-		b.curSlot = slot
+		b.curSlot = int(now % 10)
+		b.reqTsSlots[b.curSlot] = now
 		b.reqCountSlots[b.curSlot] = 0
 	}
 	b.reqCountSlots[b.curSlot] += batch
-	b.reqTsSlots[b.curSlot] = now
 }
 
-func (b *batchStatus) inHeavyLoad(heavyLoad uint) bool {
+func (b *batchStatistics) inHeavyLoad(heavyLoad uint) bool {
 	reqSpeed := 0
 	for _, count := range b.reqCountSlots {
 		reqSpeed += count
@@ -138,7 +144,7 @@ type batchCommandsClient struct {
 	client          tikvpb.Tikv_BatchCommandsClient
 	batched         sync.Map
 	idAlloc         uint64
-	tikvInHeavyLoad bool
+	tikvInHeavyLoad int32
 }
 
 func (c *batchCommandsClient) batchRecvLoop() {
@@ -165,7 +171,11 @@ func (c *batchCommandsClient) batchRecvLoop() {
 			c.batched.Delete(requestId)
 		}
 
-		c.tikvInHeavyLoad = resp.GetInHeavyLoad()
+		if resp.GetInHeavyLoad() {
+			atomic.StoreInt32(&c.tikvInHeavyLoad, 1)
+		} else {
+			atomic.StoreInt32(&c.tikvInHeavyLoad, 0)
+		}
 	}
 }
 
@@ -255,7 +265,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 	}
 	go tikvrpc.CheckStreamTimeoutLoop(a.streamTimeout)
 	if allowBatch {
-		a.batchStatus = newBatchStatus()
+		a.batchStatistics = newBatchStatus()
 		go a.batchSendLoop(cfg.TiKVClient)
 	}
 
@@ -305,7 +315,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		entries = append(entries, headEntry)
 		requests = append(requests, headEntry.req)
 
-		inHeavyLoad := batchCommandsClient.tikvInHeavyLoad
+		inHeavyLoad := atomic.LoadInt32(&batchCommandsClient.tikvInHeavyLoad) == 1
 	Loop:
 		for {
 			select {
@@ -316,7 +326,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 					break Loop
 				}
 			default:
-				inHeavyLoad = inHeavyLoad || a.batchStatus.inHeavyLoad(cfg.HeavyLoadToBatch)
+				inHeavyLoad = inHeavyLoad || a.batchStatistics.inHeavyLoad(cfg.HeavyLoadToBatch)
 				break Loop
 			}
 		}
@@ -339,7 +349,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			}
 		}
 
-		a.batchStatus.update(len(requests))
+		a.batchStatistics.update(len(requests))
 
 		length := len(requests)
 		maxBatchId := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
