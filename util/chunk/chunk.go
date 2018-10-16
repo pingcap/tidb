@@ -305,7 +305,7 @@ func (c *Chunk) PreAlloc4Row(row Row) {
 	c.numVirtualRows++
 }
 
-// Insert inserts row on rowIdx.
+// Insert inserts `row` on the position specified by `rowIdx`.
 // Note: Insert will cover the origin data, it should be called after
 // PreAlloc4Row.
 func (c *Chunk) Insert(rowIdx int, row Row) {

@@ -159,6 +159,9 @@ func (l *List) PreAlloc4Row(row Row) (ptr RowPtr) {
 	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
 }
 
+// Insert inserts `row` on the position specified by `ptr`.
+// Note: Insert will cover the origin data, it should be called after
+// PreAlloc4Row.
 func (l *List) Insert(ptr RowPtr, row Row) {
 	l.chunks[ptr.ChkIdx].Insert(int(ptr.RowIdx), row)
 }
