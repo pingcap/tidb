@@ -576,6 +576,23 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 	}
 }
 
+func eliminateIfNullOnNonNullColumn(p LogicalPlan, expr expression.Expression) expression.Expression {
+	if scalarExpr, ok := expr.(*expression.ScalarFunction); ok {
+		if scalarExpr.FuncName.L == ast.Ifnull {
+			if cExpr, ok := scalarExpr.GetArgs()[0].(*expression.Column); ok {
+				var colFound *model.ColumnInfo
+				if ds, ok := p.(*DataSource); ok {
+					colFound = model.FindColumnInfo(ds.Columns, cExpr.ColName.L)
+					if mysql.HasNotNullFlag(colFound.Flag) {
+						return scalarExpr.GetArgs()[0]
+					}
+				}
+			}
+		}
+	}
+	return expr
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int, error) {
 	b.optFlag |= flagEliminateProjection
@@ -585,6 +602,7 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	oldLen := 0
 	for _, field := range fields {
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
+		newExpr = eliminateIfNullOnNonNullColumn(p, newExpr)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
