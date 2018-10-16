@@ -291,11 +291,11 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:2c64fe28351dc49da088194d80faceb34186e080a60c649694d094b2ccccacf5"
+  digest = "1:8f576565a8479071ca1951bf678519b1c32480aad8dec2379a64858c31d9e6a9"
   name = "github.com/pingcap/pd"
-  packages = ["pd-client"]
+  packages = ["client"]
   pruneopts = "NUT"
-  revision = "b5992e356ff447a6fdaa450b3f5ea33afbd11680"
+  revision = "eb892dda1e33a0b76191d39894ad4a806f313f6e"
 
 [[projects]]
   branch = "master"
@@ -532,6 +532,7 @@
     "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing",
     "github.com/grpc-ecosystem/go-grpc-prometheus",
     "github.com/ngaut/pools",
+    "github.com/ngaut/sync2",
     "github.com/opentracing/basictracer-go",
     "github.com/opentracing/opentracing-go",
     "github.com/pingcap/check",
@@ -547,7 +548,7 @@
     "github.com/pingcap/kvproto/pkg/kvrpcpb",
     "github.com/pingcap/kvproto/pkg/metapb",
     "github.com/pingcap/kvproto/pkg/tikvpb",
-    "github.com/pingcap/pd/pd-client",
+    "github.com/pingcap/pd/client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-tipb",
     "github.com/pkg/errors",
