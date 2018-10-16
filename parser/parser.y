@@ -428,6 +428,8 @@ import (
 	now			"NOW"
 	position		"POSITION"
 	recent			"RECENT"
+	std	            "STD"
+	stddev			"STDDEV"
 	stddevPop		"STDDEV_POP"
 	stddevSamp		"STDDEV_SAMP"
 	subDate			"SUBDATE"
@@ -2833,8 +2835,8 @@ TiDBKeyword:
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
-| "INPLACE" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "STDDEV_POP" | "STDDEV_SAMP" 
-| "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM" 
+| "INPLACE" | "INTERNAL" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "STD" | "STDDEV" | "STDDEV_POP" | "STDDEV_SAMP" 
+| "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TOP" | "TRIM" 
 
 /************************************************************************************
  *
