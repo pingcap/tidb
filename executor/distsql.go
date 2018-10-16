@@ -19,6 +19,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/distsql"
@@ -243,6 +244,10 @@ func (e *IndexReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStat != nil {
+		start := time.Now()
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	err := e.result.Next(ctx, chk)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -453,6 +458,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
+	e.baseExecutor.ctx.GetSessionVars().StmtCtx.RuntimeStats.GetRuntimeStat(e.id + "_tableReader")
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		worker := &tableWorker{
 			workCh:         workCh,
@@ -512,6 +518,10 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStat != nil {
+		start := time.Now()
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
 	for {
 		resultTask, err := e.getResultTask()

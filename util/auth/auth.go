@@ -25,15 +25,23 @@ import (
 
 // UserIdentity represents username and hostname.
 type UserIdentity struct {
-	Username    string
-	Hostname    string
-	CurrentUser bool
+	Username     string
+	Hostname     string
+	CurrentUser  bool
+	AuthUsername string // Username matched in privileges system
+	AuthHostname string // Match in privs system (i.e. could be a wildcard)
 }
 
 // String converts UserIdentity to the format user@host.
 func (user *UserIdentity) String() string {
 	// TODO: Escape username and hostname.
 	return fmt.Sprintf("%s@%s", user.Username, user.Hostname)
+}
+
+// AuthIdentityString returns matched identity in user@host format
+func (user *UserIdentity) AuthIdentityString() string {
+	// TODO: Escape username and hostname.
+	return fmt.Sprintf("%s@%s", user.AuthUsername, user.AuthHostname)
 }
 
 // CheckScrambledPassword check scrambled password received from client.
