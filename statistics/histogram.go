@@ -679,7 +679,7 @@ func (hg *Histogram) AvgCountPerValue(totalCount int64) float64 {
 }
 
 func (hg *Histogram) outOfRange(val types.Datum) bool {
-	if hg.Bounds == nil {
+	if hg.Len() == 0 {
 		return true
 	}
 	return chunk.Compare(hg.Bounds.GetRow(0), 0, &val) > 0 ||
@@ -858,7 +858,7 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 }
 
 func (idx *Index) outOfRange(val types.Datum) bool {
-	if idx.Bounds == nil {
+	if idx.Histogram.Len() == 0 {
 		return true
 	}
 	withInLowBoundOrPrefixMatch := chunk.Compare(idx.Bounds.GetRow(0), 0, &val) <= 0 ||
