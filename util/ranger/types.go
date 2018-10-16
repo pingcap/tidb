@@ -97,6 +97,7 @@ func (ran *Range) String() string {
 	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
 }
 
+// Encode encodes the range to its encoded value.
 func (ran *Range) Encode(sc *stmtctx.StatementContext, lowBuffer, highBuffer []byte) ([]byte, []byte, error) {
 	var err error
 	lowBuffer, err = codec.EncodeKey(sc, lowBuffer[:0], ran.LowVal...)

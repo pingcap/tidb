@@ -161,6 +161,7 @@ func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 	return 0.5
 }
 
+// CalcRangeFraction calculates the fraction between [valLow, valHigh] and hg's indexth Bucket.
 func (hg *Histogram) CalcRangeFraction(index int, valLow, valHigh *types.Datum) float64 {
 	lower, upper := hg.Bounds.GetRow(2*index), hg.Bounds.GetRow(2*index+1)
 	switch valLow.Kind() {

@@ -184,7 +184,8 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			nodes = append(nodes, &StatsNode{Tp: colType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
 			if mysql.HasPriKeyFlag(colInfo.Info.Flag) {
 				nodes[len(nodes)-1].Tp = pkType
-				cnt, err := coll.GetRowCountByIntColumnRanges(sc, id, ranges)
+				var cnt float64
+				cnt, err = coll.GetRowCountByIntColumnRanges(sc, id, ranges)
 				if err != nil {
 					return 0, nil, errors.Trace(err)
 				}

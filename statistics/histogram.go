@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -886,7 +885,6 @@ func (c *Column) newNumericColumnBySelectivity(sc *stmtctx.StatementContext, sta
 		if ranLowIdx == ranHighIdx {
 			continue
 		}
-		logrus.Warnf("ran low: %v, ran high: %v, bucket low: %v, bucketHigh: %v", statsNode.Ranges[ranLowIdx], statsNode.Ranges[ranHighIdx-1], c.Bounds.GetRow(i).GetInt64(0), c.Bounds.GetRow(i+1).GetInt64(0))
 		overlapped := 0.0
 		// Compute the overlap ratio.
 		for ranIdx := ranLowIdx; ranIdx < ranHighIdx; ranIdx++ {
@@ -967,7 +965,6 @@ func (c *Column) newColumnBySelectivity(sc *stmtctx.StatementContext, statsNode 
 	default:
 		return c.newNonNumericColumnBySelectivity(sc, statsNode)
 	}
-	return nil, nil
 }
 
 func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Index, error) {
@@ -1015,6 +1012,7 @@ func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode 
 	return newIndexHist, nil
 }
 
+// NewHistCollBySelectivity creates new HistColl by the given statsNodes.
 func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, statsNodes []*StatsNode) (*HistColl, error) {
 	newColl := &HistColl{
 		Columns:       make(map[int64]*Column),
