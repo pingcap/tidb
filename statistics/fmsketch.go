@@ -16,11 +16,11 @@ package statistics
 import (
 	"hash"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"github.com/spaolacci/murmur3"
 )
 

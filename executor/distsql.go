@@ -22,14 +22,12 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/juju/errors"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
@@ -40,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -118,22 +117,6 @@ func closeAll(objs ...Closeable) error {
 	return errors.Trace(err)
 }
 
-// zone returns the current timezone name and timezone offset in seconds.
-// In compatible with MySQL, we change `Local` to `System`.
-// TODO: Golang team plan to return system timezone name intead of
-// returning `Local` when `loc` is `time.Local`. We need keep an eye on this.
-func zone(sctx sessionctx.Context) (string, int64) {
-	loc := sctx.GetSessionVars().Location()
-	_, offset := time.Now().In(loc).Zone()
-	var name string
-	name = loc.String()
-	if name == "Local" {
-		name = "System"
-	}
-
-	return name, int64(offset)
-}
-
 // statementContextToFlags converts StatementContext to tipb.SelectRequest.Flags.
 func statementContextToFlags(sc *stmtctx.StatementContext) uint64 {
 	var flags uint64
@@ -210,21 +193,9 @@ func splitRanges(ranges []*ranger.Range, keepOrder bool) ([]*ranger.Range, []*ra
 	return signedRanges, unsignedRanges
 }
 
-// startSpanFollowContext is similar to opentracing.StartSpanFromContext, but the span reference use FollowsFrom option.
-func startSpanFollowsContext(ctx context.Context, operationName string) (opentracing.Span, context.Context) {
-	span := opentracing.SpanFromContext(ctx)
-	if span != nil {
-		span = opentracing.StartSpan(operationName, opentracing.FollowsFrom(span.Context()))
-	} else {
-		span = opentracing.StartSpan(operationName)
-	}
-
-	return span, opentracing.ContextWithSpan(ctx, span)
-}
-
 // rebuildIndexRanges will be called if there's correlated column in access conditions. We will rebuild the range
 // by substitute correlated column with the constant.
-func rebuildIndexRanges(ctx sessionctx.Context, is *plan.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
+func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
 	for _, cond := range is.AccessCondition {
 		newCond, err1 := expression.SubstituteCorCol2Constant(cond)
@@ -260,7 +231,7 @@ type IndexReaderExecutor struct {
 	corColInAccess bool
 	idxCols        []*expression.Column
 	colLens        []int
-	plans          []plan.PhysicalPlan
+	plans          []plannercore.PhysicalPlan
 }
 
 // Close clears all resources hold by current object.
@@ -273,6 +244,10 @@ func (e *IndexReaderExecutor) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	err := e.result.Next(ctx, chk)
 	if err != nil {
 		e.feedback.Invalidate()
@@ -284,7 +259,7 @@ func (e *IndexReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.ctx, e.plans[0].(*plan.PhysicalIndexScan), e.idxCols, e.colLens)
+		e.ranges, err = rebuildIndexRanges(e.ctx, e.plans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -298,9 +273,6 @@ func (e *IndexReaderExecutor) Open(ctx context.Context) error {
 }
 
 func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {
-	span, ctx := startSpanFollowsContext(ctx, "executor.IndexReader.Open")
-	defer span.Finish()
-
 	var err error
 	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
@@ -366,9 +338,9 @@ type IndexLookUpExecutor struct {
 	isCheckOp bool
 
 	corColInIdxSide bool
-	idxPlans        []plan.PhysicalPlan
+	idxPlans        []plannercore.PhysicalPlan
 	corColInTblSide bool
-	tblPlans        []plan.PhysicalPlan
+	tblPlans        []plannercore.PhysicalPlan
 	corColInAccess  bool
 	idxCols         []*expression.Column
 	colLens         []int
@@ -378,7 +350,7 @@ type IndexLookUpExecutor struct {
 func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 	var err error
 	if e.corColInAccess {
-		e.ranges, err = rebuildIndexRanges(e.ctx, e.idxPlans[0].(*plan.PhysicalIndexScan), e.idxCols, e.colLens)
+		e.ranges, err = rebuildIndexRanges(e.ctx, e.idxPlans[0].(*plannercore.PhysicalIndexScan), e.idxCols, e.colLens)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -402,9 +374,6 @@ func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	// situation.
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaIndexLookupReader)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-
-	span, ctx := startSpanFollowsContext(ctx, "executor.IndexLookUp.Open")
-	defer span.Finish()
 
 	e.finished = make(chan struct{})
 	e.resultCh = make(chan *lookupTableTask, atomic.LoadInt32(&LookupTableTaskChannelSize))
@@ -510,7 +479,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 }
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []int64) (Executor, error) {
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, &TableReaderExecutor{
+	tableReaderExec := &TableReaderExecutor{
 		baseExecutor:    newBaseExecutor(e.ctx, e.schema, e.id+"_tableReader"),
 		table:           e.table,
 		physicalTableID: e.physicalTableID,
@@ -519,7 +488,11 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []in
 		feedback:        statistics.NewQueryFeedback(0, nil, 0, false),
 		corColInFilter:  e.corColInTblSide,
 		plans:           e.tblPlans,
-	}, handles)
+	}
+	// We assign `nil` to `runtimeStats` to forbidden `TableWorker` driven `IndexLookupExecutor`'s runtime stats collecting,
+	// because TableWorker information isn't showing in explain result now.
+	tableReaderExec.runtimeStats = nil
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles)
 	if err != nil {
 		log.Error(err)
 		return nil, errors.Trace(err)
@@ -548,6 +521,10 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
 	for {
 		resultTask, err := e.getResultTask()
@@ -747,7 +724,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
-		chk := tableReader.newChunk()
+		chk := tableReader.newFirstChunk()
 		err = tableReader.Next(ctx, chk)
 		if err != nil {
 			log.Error(err)

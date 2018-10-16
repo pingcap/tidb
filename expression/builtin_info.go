@@ -18,12 +18,12 @@
 package expression
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -148,14 +148,12 @@ func (b *builtinCurrentUserSig) Clone() builtinFunc {
 
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
-// TODO: The value of CURRENT_USER() can differ from the value of USER(). We will finish this after we support grant tables.
 func (b *builtinCurrentUserSig) evalString(row chunk.Row) (string, bool, error) {
 	data := b.ctx.GetSessionVars()
 	if data == nil || data.User == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-
-	return data.User.String(), false, nil
+	return data.User.AuthIdentityString(), false, nil
 }
 
 type userFunctionClass struct {
@@ -182,7 +180,7 @@ func (b *builtinUserSig) Clone() builtinFunc {
 	return newSig
 }
 
-// eval evals a builtinUserSig.
+// evalString evals a builtinUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
 func (b *builtinUserSig) evalString(row chunk.Row) (string, bool, error) {
 	data := b.ctx.GetSessionVars()
@@ -386,7 +384,7 @@ type benchmarkFunctionClass struct {
 }
 
 func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "BENCHMARK")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "BENCHMARK")
 }
 
 type charsetFunctionClass struct {
@@ -394,7 +392,7 @@ type charsetFunctionClass struct {
 }
 
 func (c *charsetFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "CHARSET")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "CHARSET")
 }
 
 type coercibilityFunctionClass struct {
@@ -402,7 +400,7 @@ type coercibilityFunctionClass struct {
 }
 
 func (c *coercibilityFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "COERCIBILITY")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "COERCIBILITY")
 }
 
 type collationFunctionClass struct {
@@ -410,7 +408,7 @@ type collationFunctionClass struct {
 }
 
 func (c *collationFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenByArgs("FUNCTION", "COLLATION")
+	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "COLLATION")
 }
 
 type rowCountFunctionClass struct {

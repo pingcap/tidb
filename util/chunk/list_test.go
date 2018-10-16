@@ -28,7 +28,7 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	fields := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 	}
-	l := NewList(fields, 2)
+	l := NewList(fields, 2, 2)
 	srcChunk := NewChunkWithCapacity(fields, 32)
 	srcChunk.AppendInt64(0, 1)
 	srcRow := srcChunk.GetRow(0)
@@ -100,7 +100,7 @@ func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
 	srcChk.AppendTime(3, timeObj)
 	srcChk.AppendDuration(4, durationObj)
 
-	list := NewList(fieldTypes, maxChunkSize)
+	list := NewList(fieldTypes, maxChunkSize, maxChunkSize*2)
 	c.Assert(list.GetMemTracker().BytesConsumed(), check.Equals, int64(0))
 
 	list.AppendRow(srcChk.GetRow(0))
@@ -131,7 +131,7 @@ func BenchmarkListMemoryUsage(b *testing.B) {
 	row := chk.GetRow(0)
 
 	initCap := 50
-	list := NewList(fieldTypes, 2)
+	list := NewList(fieldTypes, 2, 8)
 	for i := 0; i < initCap; i++ {
 		list.AppendRow(row)
 	}

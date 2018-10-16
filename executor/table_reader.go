@@ -14,15 +14,17 @@
 package executor
 
 import (
-	"github.com/juju/errors"
+	"time"
+
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/ranger"
 	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -52,14 +54,11 @@ type TableReaderExecutor struct {
 	corColInFilter bool
 	// corColInAccess tells whether there's correlated column in access conditions.
 	corColInAccess bool
-	plans          []plan.PhysicalPlan
+	plans          []plannercore.PhysicalPlan
 }
 
 // Open initialzes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
-	span, ctx := startSpanFollowsContext(ctx, "executor.TableReader.Open")
-	defer span.Finish()
-
 	var err error
 	if e.corColInFilter {
 		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
@@ -68,7 +67,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		}
 	}
 	if e.corColInAccess {
-		ts := e.plans[0].(*plan.PhysicalTableScan)
+		ts := e.plans[0].(*plannercore.PhysicalTableScan)
 		access := ts.AccessCondition
 		pkTP := ts.Table.GetPkColInfo().FieldType
 		e.ranges, err = ranger.BuildTableRange(access, e.ctx.GetSessionVars().StmtCtx, &pkTP)
@@ -101,11 +100,15 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
-	err := e.resultHandler.nextChunk(ctx, chk)
-	if err != nil {
-		e.feedback.Invalidate()
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
-	return errors.Trace(err)
+	if err := e.resultHandler.nextChunk(ctx, chk); err != nil {
+		e.feedback.Invalidate()
+		return err
+	}
+	return errors.Trace(nil)
 }
 
 // Close implements the Executor Close interface.
@@ -115,7 +118,7 @@ func (e *TableReaderExecutor) Close() error {
 	return errors.Trace(err)
 }
 
-// buildResp first build request and send it to tikv using distsql.Select. It uses SelectResut returned by the callee
+// buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder

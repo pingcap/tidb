@@ -24,13 +24,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/terror"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -505,7 +505,7 @@ func (m *Meta) getDDLJob(key []byte, index int64) (*model.Job, error) {
 	}
 
 	job := &model.Job{
-		// For compability, if the job is enqueued by old version TiDB and Priority field is omitted,
+		// For compatibility, if the job is enqueued by old version TiDB and Priority field is omitted,
 		// set the default priority to kv.PriorityLow.
 		Priority: kv.PriorityLow,
 	}

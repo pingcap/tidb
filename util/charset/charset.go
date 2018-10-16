@@ -16,8 +16,8 @@ package charset
 import (
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pkg/errors"
 )
 
 // Charset is a charset.

@@ -60,6 +60,7 @@ type StatementContext struct {
 	UseCache               bool
 	PadCharToFullLength    bool
 	BatchCheck             bool
+	InNullRejectCheck      bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -72,12 +73,13 @@ type StatementContext struct {
 	}
 
 	// Copied from SessionVars.TimeZone.
-	TimeZone     *time.Location
-	Priority     mysql.PriorityEnum
-	NotFillCache bool
-	MemTracker   *memory.Tracker
-	TableIDs     []int64
-	IndexIDs     []int64
+	TimeZone         *time.Location
+	Priority         mysql.PriorityEnum
+	NotFillCache     bool
+	MemTracker       *memory.Tracker
+	RuntimeStatsColl *execdetails.RuntimeStatsColl
+	TableIDs         []int64
+	IndexIDs         []int64
 }
 
 // AddAffectedRows adds affected rows.

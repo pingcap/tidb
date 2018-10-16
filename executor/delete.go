@@ -14,13 +14,13 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -39,20 +39,11 @@ type DeleteExec struct {
 	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
 	// by its alias instead of ID.
 	tblMap map[int64][]*ast.TableName
-
-	finished bool
 }
 
 // Next implements the Executor Next interface.
 func (e *DeleteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if e.finished {
-		return nil
-	}
-	defer func() {
-		e.finished = true
-	}()
-
 	if e.IsMultiTable {
 		return errors.Trace(e.deleteMultiTablesByChunk(ctx))
 	}
@@ -104,8 +95,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
 	fields := e.children[0].retTypes()
+	chk := e.children[0].newFirstChunk()
 	for {
-		chk := e.children[0].newChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
 		err := e.children[0].Next(ctx, chk)
@@ -121,7 +112,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				e.ctx.StmtCommit()
 				if err = e.ctx.NewTxn(); err != nil {
 					// We should return a special error for batch insert.
-					return ErrBatchInsertFail.Gen("BatchDelete failed with error: %v", err)
+					return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 				}
 				rowCount = 0
 			}
@@ -133,6 +124,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			}
 			rowCount++
 		}
+		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 
 	return nil
@@ -184,10 +176,9 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	colPosInfos := e.getColPosInfos(e.children[0].Schema())
 	tblRowMap := make(tableRowMapType)
 	fields := e.children[0].retTypes()
+	chk := e.children[0].newFirstChunk()
 	for {
-		chk := e.children[0].newChunk()
 		iter := chunk.NewIterator4Chunk(chk)
-
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -200,6 +191,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
 			e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
 		}
+		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 
 	return errors.Trace(e.removeRowsInTblRowMap(tblRowMap))

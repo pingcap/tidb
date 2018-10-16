@@ -187,7 +187,7 @@ func (s *testSuite) TestUser(c *C) {
 
 	// Test drop user meet error
 	_, err = tk.Exec(dropUserSQL)
-	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenByArgs("DROP USER", "")), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), IsTrue, Commentf("err %v", err))
 
 	createUserSQL = `CREATE USER 'test1'@'localhost'`
 	tk.MustExec(createUserSQL)
@@ -196,7 +196,7 @@ func (s *testSuite) TestUser(c *C) {
 
 	dropUserSQL = `DROP USER 'test1'@'localhost', 'test2'@'localhost', 'test3'@'localhost';`
 	_, err = tk.Exec(dropUserSQL)
-	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenByArgs("DROP USER", "")), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, executor.ErrCannotUser.GenWithStackByArgs("DROP USER", "")), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite) TestSetPwd(c *C) {
@@ -295,4 +295,15 @@ func (s *testSuite) TestDropStats(c *C) {
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	h.Lease = 0
+}
+
+func (s *testSuite) TestFlushTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	_, err := tk.Exec("FLUSH TABLES")
+	c.Check(err, IsNil)
+
+	_, err = tk.Exec("FLUSH TABLES WITH READ LOCK")
+	c.Check(err, NotNil)
+
 }

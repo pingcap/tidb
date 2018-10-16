@@ -16,10 +16,8 @@ package admin
 import (
 	"fmt"
 	"io"
-	"reflect"
 	"sort"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -35,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -353,6 +352,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	if err != nil {
 		return errors.Trace(err)
 	}
+	sc := sessCtx.GetSessionVars().StmtCtx
 	for {
 		vals1, h, err := it.Next()
 		if terror.ErrorEqual(err, io.EOF) {
@@ -369,20 +369,33 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		vals2 = tables.TruncateIndexValuesIfNeeded(t.Meta(), idx.Meta(), vals2)
 		if kv.ErrNotExist.Equal(err) {
 			record := &RecordData{Handle: h, Values: vals1}
-			err = ErrDataInConsistent.Gen("index:%#v != record:%#v", record, nil)
+			err = ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record, nil)
 		}
 		if err != nil {
 			return errors.Trace(err)
 		}
 		adjustDatumKind(vals1, vals2)
-		if !reflect.DeepEqual(vals1, vals2) {
+		if !compareDatumSlice(sc, vals1, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals1}
 			record2 := &RecordData{Handle: h, Values: vals2}
-			return ErrDataInConsistent.Gen("index:%#v != record:%#v", record1, record2)
+			return ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record1, record2)
 		}
 	}
 
 	return nil
+}
+
+func compareDatumSlice(sc *stmtctx.StatementContext, val1s, val2s []types.Datum) bool {
+	if len(val1s) != len(val2s) {
+		return false
+	}
+	for i, v := range val1s {
+		res, err := v.CompareDatum(sc, &val2s[i])
+		if err != nil || res != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // CheckRecordAndIndex is exported for testing.
@@ -413,14 +426,14 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
-			return false, ErrDataInConsistent.Gen("index:%#v != record:%#v", record2, record1)
+			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record2, record1)
 		}
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 		if !isExist {
 			record := &RecordData{Handle: h1, Values: vals1}
-			return false, ErrDataInConsistent.Gen("index:%#v != record:%#v", nil, record)
+			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", nil, record)
 		}
 
 		return true, nil
@@ -497,27 +510,28 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	m := make(map[int64][]types.Datum, len(data))
 	for _, r := range data {
 		if _, ok := m[r.Handle]; ok {
-			return errRepeatHandle.Gen("handle:%d is repeated in data", r.Handle)
+			return errRepeatHandle.GenWithStack("handle:%d is repeated in data", r.Handle)
 		}
 		m[r.Handle] = r.Values
 	}
 
 	startKey := t.RecordKey(0)
+	sc := sessCtx.GetSessionVars().StmtCtx
 	filterFunc := func(h int64, vals []types.Datum, cols []*table.Column) (bool, error) {
 		vals2, ok := m[h]
 		if !ok {
 			record := &RecordData{Handle: h, Values: vals}
-			return false, ErrDataInConsistent.Gen("data:%#v != record:%#v", nil, record)
+			return false, ErrDataInConsistent.GenWithStack("data:%#v != record:%#v", nil, record)
 		}
 		if !exact {
 			delete(m, h)
 			return true, nil
 		}
 
-		if !reflect.DeepEqual(vals, vals2) {
+		if !compareDatumSlice(sc, vals, vals2) {
 			record1 := &RecordData{Handle: h, Values: vals2}
 			record2 := &RecordData{Handle: h, Values: vals}
-			return false, ErrDataInConsistent.Gen("data:%#v != record:%#v", record1, record2)
+			return false, ErrDataInConsistent.GenWithStack("data:%#v != record:%#v", record1, record2)
 		}
 
 		delete(m, h)
@@ -531,7 +545,7 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 
 	for h, vals := range m {
 		record := &RecordData{Handle: h, Values: vals}
-		return ErrDataInConsistent.Gen("data:%#v != record:%#v", record, nil)
+		return ErrDataInConsistent.GenWithStack("data:%#v != record:%#v", record, nil)
 	}
 
 	return nil
@@ -552,7 +566,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 			continue
 		}
 		if col.State != model.StatePublic {
-			return nil, errInvalidColumnState.Gen("Cannot use none public column - %v", cols)
+			return nil, errInvalidColumnState.GenWithStack("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.Meta()) {
 			if mysql.HasUnsignedFlag(col.Flag) {
@@ -596,7 +610,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 		}
 		if col.State != model.StatePublic {
 			// TODO: check this
-			return nil, errInvalidColumnState.Gen("Cannot use none public column - %v", cols)
+			return nil, errInvalidColumnState.GenWithStack("Cannot use none public column - %v", cols)
 		}
 		if col.IsPKHandleColumn(t.Meta()) {
 			continue

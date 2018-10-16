@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/meta"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -70,7 +70,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 
 		if s.Partition.Tp == model.PartitionTypeRange {
 			if s.Partition.ColumnNames == nil && len(def.LessThan) != 1 {
-				return nil, ErrTooManyValues.GenByArgs(s.Partition.Tp.String())
+				return nil, ErrTooManyValues.GenWithStackByArgs(s.Partition.Tp.String())
 			}
 			buf := new(bytes.Buffer)
 			// Range columns partitions support multi-column partitions.
@@ -96,7 +96,7 @@ func checkPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInfo) 
 	newPars := pi.Definitions
 	for _, newPar := range newPars {
 		if _, ok := partNames[newPar.Name.L]; ok {
-			return ErrSameNamePartition.GenByArgs(newPar.Name)
+			return ErrSameNamePartition.GenWithStackByArgs(newPar.Name)
 		}
 		partNames[newPar.Name.L] = struct{}{}
 	}
@@ -160,7 +160,7 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 				name := strings.Replace(col.Name.String(), ".", "`.`", -1)
 				// Range partitioning key supported types: tinyint, smallint, mediumint, int and bigint.
 				if !validRangePartitionType(col) && fmt.Sprintf("`%s`", name) == exprStr {
-					return errors.Trace(ErrNotAllowedTypeInPartition.GenByArgs(exprStr))
+					return errors.Trace(ErrNotAllowedTypeInPartition.GenWithStackByArgs(exprStr))
 				}
 			}
 		}
@@ -173,12 +173,12 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, cols
 	if e.GetType().EvalType() == types.ETInt {
 		return nil
 	}
-	return ErrPartitionFuncNotAllowed.GenByArgs("PARTITION")
+	return ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION")
 }
 
 // checkCreatePartitionValue checks whether `less than value` is strictly increasing for each partition.
 // Side effect: it may simplify the partition range definition from a constant expression to an integer.
-func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo, pi *model.PartitionInfo) error {
+func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo, pi *model.PartitionInfo, cols []*table.Column) error {
 	defs := pi.Definitions
 	if len(defs) <= 1 {
 		return nil
@@ -187,13 +187,14 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo,
 	if strings.EqualFold(defs[len(defs)-1].LessThan[0], partitionMaxValue) {
 		defs = defs[:len(defs)-1]
 	}
-	var prevRangeValue int64
+	isUnsignedBigint := isRangePartitionColUnsignedBigint(cols, pi)
+	var prevRangeValue interface{}
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
 			return errors.Trace(ErrPartitionMaxvalue)
 		}
 
-		currentRangeValue, fromExpr, err := getRangeValue(ctx, tblInfo, defs[i].LessThan[0])
+		currentRangeValue, fromExpr, err := getRangeValue(ctx, tblInfo, defs[i].LessThan[0], isUnsignedBigint)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -207,8 +208,14 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo,
 			continue
 		}
 
-		if currentRangeValue <= prevRangeValue {
-			return errors.Trace(ErrRangeNotIncreasing)
+		if isUnsignedBigint {
+			if currentRangeValue.(uint64) <= prevRangeValue.(uint64) {
+				return errors.Trace(ErrRangeNotIncreasing)
+			}
+		} else {
+			if currentRangeValue.(int64) <= prevRangeValue.(int64) {
+				return errors.Trace(ErrRangeNotIncreasing)
+			}
 		}
 		prevRangeValue = currentRangeValue
 	}
@@ -217,24 +224,35 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo,
 
 // getRangeValue gets an integer from the range value string.
 // The returned boolean value indicates whether the input string is a constant expression.
-func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string) (int64, bool, error) {
+func getRangeValue(ctx sessionctx.Context, tblInfo *model.TableInfo, str string, unsignedBigint bool) (interface{}, bool, error) {
+	// Unsigned bigint was converted to uint64 handle.
+	if unsignedBigint {
+		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
+			return value, false, nil
+		}
 
-	if value, err := strconv.ParseInt(str, 10, 64); err == nil {
-		return value, false, nil
-	}
-
-	// The range value maybe not an integer, it could be a constant expression.
-	// For example, the following two cases are the same:
-	// PARTITION p0 VALUES LESS THAN (TO_SECONDS('2004-01-01'))
-	// PARTITION p0 VALUES LESS THAN (63340531200)
-	if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
-		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-		if err2 == nil && isNull == false {
-			return res, true, nil
+		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
+			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+			if err2 == nil && isNull == false {
+				return uint64(res), true, nil
+			}
+		}
+	} else {
+		if value, err := strconv.ParseInt(str, 10, 64); err == nil {
+			return value, false, nil
+		}
+		// The range value maybe not an integer, it could be a constant expression.
+		// For example, the following two cases are the same:
+		// PARTITION p0 VALUES LESS THAN (TO_SECONDS('2004-01-01'))
+		// PARTITION p0 VALUES LESS THAN (63340531200)
+		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, tblInfo); err1 == nil {
+			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+			if err2 == nil && isNull == false {
+				return res, true, nil
+			}
 		}
 	}
-
-	return 0, false, ErrNotAllowedTypeInPartition.GenByArgs(str)
+	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
 }
 
 // validRangePartitionType checks the type supported by the range partitioning key.
@@ -258,7 +276,7 @@ func checkDropTablePartition(meta *model.TableInfo, partName string) error {
 			return nil
 		}
 	}
-	return errors.Trace(ErrDropPartitionNonExistent.GenByArgs(partName))
+	return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs(partName))
 }
 
 // removePartitionInfo each ddl job deletes a partition.
@@ -355,7 +373,7 @@ func checkRangePartitioningKeysConstraints(ctx sessionctx.Context, s *ast.Create
 		// Every unique key on the table must use every column in the table's partitioning expression.
 		// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html.
 		if !checkConstraintIncludePartKey(partkeys, con) {
-			return ErrUniqueKeyNeedAllFieldsInPf.GenByArgs(primarykey)
+			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs(primarykey)
 		}
 	}
 	return nil
@@ -387,4 +405,15 @@ func checkConstraintIncludePartKey(partkeys []string, constraints map[string]str
 		}
 	}
 	return true
+}
+
+// isRangePartitionColUnsignedBigint returns true if the partitioning key column type is unsigned bigint type.
+func isRangePartitionColUnsignedBigint(cols []*table.Column, pi *model.PartitionInfo) bool {
+	for _, col := range cols {
+		isUnsigned := col.Tp == mysql.TypeLonglong && mysql.HasUnsignedFlag(col.Flag)
+		if isUnsigned && strings.Contains(strings.ToLower(pi.Expr), col.Name.L) {
+			return true
+		}
+	}
+	return false
 }

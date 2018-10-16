@@ -24,7 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/kvcache"
 	binlog "github.com/pingcap/tipb/go-binlog"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
@@ -97,14 +97,14 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
-		return nil, table.ErrTableStateCantNone.Gen("table %s can't be in none state", tblInfo.Name)
+		return nil, table.ErrTableStateCantNone.GenWithStack("table %s can't be in none state", tblInfo.Name)
 	}
 
 	colsLen := len(tblInfo.Columns)
 	columns := make([]*table.Column, 0, colsLen)
 	for i, colInfo := range tblInfo.Columns {
 		if colInfo.State == model.StateNone {
-			return nil, table.ErrColumnStateCantNone.Gen("column %s can't be in none state", colInfo.Name)
+			return nil, table.ErrColumnStateCantNone.GenWithStack("column %s can't be in none state", colInfo.Name)
 		}
 
 		// Print some information when the column's offset isn't equal to i.
@@ -158,7 +158,7 @@ func initTableIndices(t *tableCommon) error {
 	tblInfo := t.meta
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.State == model.StateNone {
-			return table.ErrIndexStateCantNone.Gen("index %s can't be in none state", idxInfo.Name)
+			return table.ErrIndexStateCantNone.GenWithStack("index %s can't be in none state", idxInfo.Name)
 		}
 
 		// Use partition ID for index, because tableCommon may be table or partition.
@@ -936,7 +936,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value types.Datum) bool {
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
-	if col.DefaultValue == nil && value.IsNull() {
+	if col.GetDefaultValue() == nil && value.IsNull() {
 		return true
 	}
 	if col.IsGenerated() && !col.GeneratedStored {

@@ -22,7 +22,7 @@ required = ["github.com/golang/protobuf/jsonpb"]
 [[constraint]]
   name = "google.golang.org/grpc"
   source = "https://github.com/grpc/grpc-go.git"
-  version = "1.12.0"
+  version = "=1.12.2"
 
 [[constraint]]
   version = "1.1.0"
@@ -92,3 +92,13 @@ required = ["github.com/golang/protobuf/jsonpb"]
 [[constraint]]
   branch = "master"
   name = "github.com/etcd-io/gofail"
+
+[[constraint]]
+  branch = "master"
+  name = "github.com/pingcap/tipb"
+
+[[constraint]]
+  name = "github.com/pkg/errors"
+  version = "0.9.0"
+  source = "https://github.com/pingcap/errors.git"
+

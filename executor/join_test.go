@@ -17,7 +17,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"
@@ -118,14 +118,14 @@ func (s *testSuite) TestJoin(c *C) {
 	result = tk.MustQuery("select a.c1 from t a , (select * from t1 limit 3) b where a.c1 = b.c1 order by b.c1;")
 	result.Check(testkit.Rows("1", "2", "3"))
 
-	plan.AllowCartesianProduct = false
+	plannercore.AllowCartesianProduct = false
 	_, err := tk.Exec("select * from t, t1")
-	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	_, err = tk.Exec("select * from t left join t1 on 1")
-	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
 	_, err = tk.Exec("select * from t right join t1 on 1")
-	c.Check(plan.ErrCartesianProductUnsupported.Equal(err), IsTrue)
-	plan.AllowCartesianProduct = true
+	c.Check(plannercore.ErrCartesianProductUnsupported.Equal(err), IsTrue)
+	plannercore.AllowCartesianProduct = true
 	tk.MustExec("drop table if exists t,t2,t1")
 	tk.MustExec("create table t(c1 int)")
 	tk.MustExec("create table t1(c1 int, c2 int)")
@@ -876,11 +876,11 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 	tk.MustExec("insert into t2 select a*100, b*100 from t1;")
 
 	tk.MustQuery("explain select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;").Check(testkit.Rows(
-		"MergeJoin_15 12500.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
+		"MergeJoin_15 10000.00 root left outer join, left key:test.t1.a, right key:test.t2.a, left cond:[ne(test.t1.a, 3)]",
 		"├─TableReader_11 10000.00 root data:TableScan_10",
 		"│ └─TableScan_10 10000.00 cop table:t1, range:[-inf,+inf], keep order:true, stats:pseudo",
-		"└─TableReader_13 10000.00 root data:TableScan_12",
-		"  └─TableScan_12 10000.00 cop table:t2, range:[-inf,+inf], keep order:true, stats:pseudo",
+		"└─TableReader_13 6666.67 root data:TableScan_12",
+		"  └─TableScan_12 6666.67 cop table:t2, range:[-inf,3), (3,+inf], keep order:true, stats:pseudo",
 	))
 
 	tk.MustExec("set @@tidb_max_chunk_size=1")
@@ -909,4 +909,15 @@ func (s *testSuite) TestMergejoinOrder(c *C) {
 		`1.01`,
 		`2.02`,
 	))
+}
+
+func (s *testSuite) TestEmbeddedOuterJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values(1, 1)")
+	tk.MustQuery("select * from (t1 left join t2 on t1.a = t2.a) left join (t2 t3 left join t2 t4 on t3.a = t4.a) on t2.b = 1").
+		Check(testkit.Rows("1 1 <nil> <nil> <nil> <nil> <nil> <nil>"))
 }

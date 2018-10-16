@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/store/mockstore"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testKvEncoderSuite{})
@@ -49,6 +49,7 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 		return nil, nil, errors.Trace(err)
 	}
 	session.SetSchemaLease(0)
+	session.SetStatsLease(0)
 	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }

@@ -275,7 +275,7 @@ var MySQLErrName = map[uint16]string{
 	ErrZlibZMem:                                 "ZLIB: Not enough memory",
 	ErrZlibZBuf:                                 "ZLIB: Not enough room in the output buffer (probably, length of uncompressed data was corrupted)",
 	ErrZlibZData:                                "ZLIB: Input data corrupted",
-	ErrCutValueGroupConcat:                      "Row %d was cut by GROUPCONCAT()",
+	ErrCutValueGroupConcat:                      "Some rows were cut by GROUPCONCAT(%s)",
 	ErrWarnTooFewRecords:                        "Row %d doesn't contain data for all columns",
 	ErrWarnTooManyRecords:                       "Row %d was truncated; it contained more data than there were input columns",
 	ErrWarnNullToNotnull:                        "Column set to default value; NULL supplied to NOT NULL column '%s' at row %d",
@@ -886,6 +886,8 @@ var MySQLErrName = map[uint16]string{
 	ErrInvalidJSONText:                                       "Invalid JSON text: %-.192s",
 	ErrInvalidJSONPath:                                       "Invalid JSON path expression %s.",
 	ErrInvalidJSONData:                                       "Invalid data type for JSON data",
+	ErrInvalidJSONPathWildcard:                               "In this situation, path expressions may not contain the * and ** tokens.",
+	ErrInvalidJSONContainsPathType:                           "The second argument can only be either 'one' or 'all'.",
 	ErrJSONUsedAsKey:                                         "JSON column '%-.192s' cannot be used in key specification.",
 
 	// TiDB errors.
@@ -899,7 +901,7 @@ var MySQLErrName = map[uint16]string{
 	ErrTiKVServerBusy:     "TiKV server is busy",
 	ErrResolveLockTimeout: "Resolve lock timeout",
 	ErrRegionUnavailable:  "Region is unavailable",
-	ErrGCTooEarly:         "GC life time is shorter than transaction duration",
+	ErrGCTooEarly:         "GC life time is shorter than transaction duration, transaction starts at %v, GC safe point is %v",
 
 	ErrTxnTooLarge: "Transaction is too large",
 }
