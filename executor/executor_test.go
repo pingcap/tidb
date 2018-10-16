@@ -312,15 +312,6 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("admin check table t1;")
 }
 
-func (s *testSuite) TestTableForeignKey(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b int);")
-	_, err := tk.Exec("create table t2 (c int, foreign key (a) references t1(a));")
-	c.Assert(err.Error(), Equals, "[ddl:1072]Key column 'a' doesn't exist in table")
-	tk.MustExec("drop table if exists t1,t2;")
-}
-
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
 	tk.MustExec("use test")
 	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
