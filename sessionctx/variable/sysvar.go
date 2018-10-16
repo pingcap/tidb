@@ -639,6 +639,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 	{ScopeGlobal | ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
+	{ScopeGlobal | ScopeSession, TiDBEnableCascadesPlanner, "0"},
 	{ScopeSession, TIDBMemQuotaQuery, strconv.FormatInt(config.GetGlobalConfig().MemQuotaQuery, 10)},
 	{ScopeSession, TIDBMemQuotaHashJoin, strconv.FormatInt(DefTiDBMemQuotaHashJoin, 10)},
 	{ScopeSession, TIDBMemQuotaMergeJoin, strconv.FormatInt(DefTiDBMemQuotaMergeJoin, 10)},
@@ -664,6 +665,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
+	{ScopeSession, TiDBEnableRadixJoin, boolToIntStr(DefTiDBUseRadixJoin)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

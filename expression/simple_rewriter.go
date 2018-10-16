@@ -44,6 +44,17 @@ func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableI
 	return RewriteSimpleExprWithTableInfo(ctx, tableInfo, expr)
 }
 
+// ParseSimpleExprCastWithTableInfo parses simple expression string to Expression.
+// And the expr returns will cast to the target type.
+func ParseSimpleExprCastWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo, targetFt *types.FieldType) (Expression, error) {
+	e, err := ParseSimpleExprWithTableInfo(ctx, exprStr, tableInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e = BuildCastFunction(ctx, e, targetFt)
+	return e, nil
+}
+
 // RewriteSimpleExprWithTableInfo rewrites simple ast.ExprNode to expression.Expression.
 func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo, expr ast.ExprNode) (Expression, error) {
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)

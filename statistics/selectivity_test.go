@@ -229,6 +229,18 @@ func (s *testSelectivitySuite) TestDiscreteDistribution(c *C) {
 		"└─IndexScan_8 0.00 cop table:t, index:a, b, range:[\"tw\" -inf,\"tw\" 0), keep order:false"))
 }
 
+func (s *testSelectivitySuite) TestSelectCombinedLowBound(c *C) {
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(id int auto_increment, kid int, pid int, primary key(id), key(kid, pid))")
+	testKit.MustExec("insert into t (kid, pid) values (1,2), (1,3), (1,4),(1, 11), (1, 12), (1, 13), (1, 14), (2, 2), (2, 3), (2, 4)")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("explain select * from t where kid = 1").Check(testkit.Rows(
+		"IndexReader_9 7.00 root index:IndexScan_8",
+		"└─IndexScan_8 7.00 cop table:t, index:kid, pid, range:[1,1], keep order:false"))
+}
+
 func getRange(start, end int64) []*ranger.Range {
 	ran := &ranger.Range{
 		LowVal:  []types.Datum{types.NewIntDatum(start)},
