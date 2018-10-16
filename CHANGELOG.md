@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file. See also [R
 - Fix the issue that the time zone is not correctly handled when you add the `TIMESTAMP` index [#7812](https://github.com/pingcap/tidb/pull/7812)
 - Fix the memory leak issue caused by the statistics module in some conditions [#7864](https://github.com/pingcap/tidb/pull/7864) 
 - Fix the issue that the results of `ANALYZE` cannot be obtained in some abnormal conditions [#7871](https://github.com/pingcap/tidb/pull/7871) 
-- Do not unfold expressions in `SYSDATE`, to ensure the returned results are correct [#7894](https://github.com/pingcap/tidb/pull/7894) 
+- Do not fold the function `SYSDATE`, to ensure the returned results are correct [#7894](https://github.com/pingcap/tidb/pull/7894) 
 - Fix the `substring_index` panic issue in some conditions [#7896](https://github.com/pingcap/tidb/pull/7896) 
 - Fix the issue that `OUTER JOIN` is mistakenly converted to `INNER JOIN` in some conditions [#7899](https://github.com/pingcap/tidb/pull/7899) 
 
