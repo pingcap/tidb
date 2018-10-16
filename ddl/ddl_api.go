@@ -727,7 +727,7 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 			fk.RefTable = constr.Refer.Table.Name
 			fk.State = model.StatePublic
 			for _, key := range constr.Keys {
-				if !table.FindColInfo(tbInfo.Columns, key.Column.Name.O) {
+				if table.FindCol(cols, key.Column.Name.O) == nil {
 					return nil, errKeyColumnDoesNotExits.GenWithStackByArgs(key.Column.Name)
 				}
 				fk.Cols = append(fk.Cols, key.Column.Name)
