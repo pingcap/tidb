@@ -317,10 +317,25 @@ func (s *propagateConstantSolver) insertCol(col *Column) {
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
+// API for the ease of use.
 func PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
-	solver := &propagateConstantSolver{
+	return newPGSolver().PropagateConstant(ctx, conditions)
+}
+
+// PropagateConstant propagate constant values of deterministic predicates in a condition.
+func (s *propagateConstantSolver) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+	s.ctx = ctx
+	return s.solve(conditions)
+}
+
+// newPGSolver returns a PropagateConstantSolver.
+func newPGSolver() PropagateConstantSolver {
+	return &propagateConstantSolver{
 		colMapper: make(map[string]int),
-		ctx:       ctx,
 	}
-	return solver.solve(conditions)
+}
+
+// PropagateConstantSolver is a constant propagate solver.
+type PropagateConstantSolver interface {
+	PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression
 }

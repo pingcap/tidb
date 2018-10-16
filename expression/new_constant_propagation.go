@@ -16,21 +16,20 @@ package expression
 import (
 	"bytes"
 
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 // exprSet is a Set container for expressions, each expression in it is unique.
 // `tombstone` is deleted mark, if tombstone[i] is false, data[i] is invalid.
-// `index` use expr.HashCode() as key.
+// `index` use expr.HashCode() as key, to implement the unique property.
 type exprSet struct {
-	data      []Expression
-	tombstone []bool
-	index     map[string]struct{}
+	data       []Expression
+	tombstone  []bool
+	index      map[string]struct{}
+	constfalse bool
 }
 
 func (s *exprSet) Append(e Expression) bool {
@@ -44,7 +43,15 @@ func (s *exprSet) Append(e Expression) bool {
 	return true
 }
 
+// Slice returns the valid expressions in the exprSet, this function has side effect.
 func (s *exprSet) Slice() []Expression {
+	if s.constfalse {
+		return []Expression{&Constant{
+			Value:   types.NewDatum(false),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		}}
+	}
+
 	idx := 0
 	for i := 0; i < len(s.data); i++ {
 		if !s.tombstone[i] {
@@ -54,18 +61,12 @@ func (s *exprSet) Slice() []Expression {
 	}
 	return s.data[:idx]
 }
+
 func (s *exprSet) SetConstFalse() {
-	for i := 0; i < len(s.data); i++ {
-		s.tombstone[i] = true
-	}
-	s.Append(&Constant{
-		Value:   types.NewDatum(false),
-		RetType: types.NewFieldType(mysql.TypeTiny),
-	})
+	s.constfalse = true
 }
 
-// PropagateConstantNew propagate constant values of deterministic predicates in a condition.
-func PropagateConstantNew(ctx sessionctx.Context, conditions []Expression) []Expression {
+func newExprSet(conditions []Expression) *exprSet {
 	var exprs exprSet
 	exprs.data = make([]Expression, 0, len(conditions))
 	exprs.tombstone = make([]bool, 0, len(conditions))
@@ -73,8 +74,15 @@ func PropagateConstantNew(ctx sessionctx.Context, conditions []Expression) []Exp
 	for _, v := range conditions {
 		exprs.Append(v)
 	}
+	return &exprs
+}
 
-	fixPoint(ctx, &exprs)
+type pgSolver2 struct{}
+
+// PropagateConstant propagate constant values of deterministic predicates in a condition.
+func (pgSolver2) PropagateConstant(ctx sessionctx.Context, conditions []Expression) []Expression {
+	exprs := newExprSet(conditions)
+	fixPoint(ctx, exprs)
 	return exprs.Slice()
 }
 
@@ -112,181 +120,43 @@ func iterOnce(ctx sessionctx.Context, exprs *exprSet) {
 	}
 }
 
+// solve uses exprs[i] exprs[j] to propagate new conditions.
 func solve(ctx sessionctx.Context, i, j int, exprs *exprSet) {
+	for _, rule := range rules {
+		rule(ctx.GetSessionVars().StmtCtx, i, j, exprs)
+	}
+}
+
+type constantPropagateRule func(ctx *stmtctx.StatementContext, i, j int, exprs *exprSet)
+
+var rules = []constantPropagateRule{
+	ruleConstantFalse,
+	ruleColumnEQConst,
+}
+
+// ruleConstantFalse propagates from CNF condition that false plus anything returns false.
+// false, a = 1, b = c ... => false
+func ruleConstantFalse(ctx *stmtctx.StatementContext, i, j int, exprs *exprSet) {
 	cond := exprs.data[i]
 	if cons, ok := cond.(*Constant); ok {
 		switch cons.RetType.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong:
 			if cons.Value.GetInt64() == 0 {
-				exprs.tombstone[j] = true
-				return
+				exprs.SetConstFalse()
 			}
 		}
 	}
-	col, cons := validEqualCond(cond)
+}
+
+// ruleColumnEQConst propagates the "column = const" condition.
+// "a = 3, b = a, c = a, d = b" => "a = 3, b = 3, c = 3, d = 3"
+func ruleColumnEQConst(ctx *stmtctx.StatementContext, i, j int, exprs *exprSet) {
+	col, cons := validEqualCond(exprs.data[i])
 	if col != nil {
-		solveColumnEQConst(ctx.GetSessionVars().StmtCtx, col, cons, i, j, exprs)
-		return
-	}
-	switch {
-	case matchColumnEQColumn(cond, func(_ *ScalarFunction, col1, col2 *Column) {
-		solveColumnEQColumn(ctx, col1, col2, i, j, exprs)
-	}):
-	case matchColumnGTConst(cond, func(_ *ScalarFunction, col1 *Column, cons1 *Constant) {
-		solveColumnGTConst(ctx, col1, cons1, i, j, exprs)
-	}):
-	case matchColumnGEConst(cond, func(_ *ScalarFunction, col1 *Column, cons1 *Constant) {
-		solveColumnGEConst(ctx, col1, cons1, i, j, exprs)
-	}):
-	}
-}
-
-func solveColumnEQConst(ctx *stmtctx.StatementContext, col *Column, cons *Constant, i, j int, exprs *exprSet) {
-	expr := ColumnSubstitute(exprs.data[j], NewSchema(col), []Expression{cons})
-	if bytes.Compare(expr.HashCode(ctx), exprs.data[j].HashCode(ctx)) != 0 {
-		exprs.Append(expr)
-		exprs.tombstone[j] = true
-	}
-}
-
-func solveColumnEQColumn(ctx sessionctx.Context, col1, col2 *Column, i, j int, exprs *exprSet) {
-	expr := exprs.data[j]
-	if !matchColumnEQColumn(expr, func(_ *ScalarFunction, _, _ *Column) {}) {
-		if replaced, _, newExpr := tryToReplaceCond(ctx, col1, col2, expr); replaced {
-			exprs.Append(newExpr)
-		}
-		if replaced, _, newExpr := tryToReplaceCond(ctx, col2, col1, expr); replaced {
-			exprs.Append(newExpr)
+		expr := ColumnSubstitute(exprs.data[j], NewSchema(col), []Expression{cons})
+		if bytes.Compare(expr.HashCode(ctx), exprs.data[j].HashCode(ctx)) != 0 {
+			exprs.Append(expr)
+			exprs.tombstone[j] = true
 		}
 	}
-}
-
-func solveColumnGTConst(ctx sessionctx.Context, col *Column, cons *Constant, i, j int, exprs *exprSet) {
-	expr := exprs.data[j]
-	switch {
-	case matchColumnEQColumn(expr, func(op *ScalarFunction, col1, col2 *Column) {
-		if col.UniqueID == col1.UniqueID {
-			// x > const, x = y => y > const
-			newExpr := NewFunctionInternal(ctx, ast.GT, op.RetType, col2, cons)
-			exprs.Append(newExpr)
-		}
-		if col.UniqueID == col2.UniqueID {
-			// y > const, x = y => x > const
-			newExpr := NewFunctionInternal(ctx, ast.GT, op.RetType, col1, cons)
-			exprs.Append(newExpr)
-		}
-	}):
-	case matchColumnGTConst(expr, func(op *ScalarFunction, col1 *Column, cons1 *Constant) {
-		if col.UniqueID == col1.UniqueID {
-			// x > const1, x > const2  => x > max(const1, const2)
-			cmp := NewFunctionInternal(ctx, ast.GT, op.RetType, cons, cons1)
-			val, isNull, err := cmp.EvalInt(ctx, chunk.Row{})
-			if err == nil && !isNull {
-				if val > 0 {
-					exprs.tombstone[j] = true
-				}
-			}
-		}
-	}):
-	case matchColumnLTConst(expr, func(op *ScalarFunction, col1 *Column, cons1 *Constant) {
-		if col.UniqueID == col1.UniqueID {
-			// x > const1, x < const2 && const1 >= const2 => false
-			cmp := NewFunctionInternal(ctx, ast.GE, op.RetType, cons, cons1)
-			val, isNull, err := cmp.EvalInt(ctx, chunk.Row{})
-			if err == nil && !isNull {
-				if val > 0 {
-					exprs.SetConstFalse()
-				}
-			}
-		}
-	}):
-	}
-}
-
-func solveColumnGEConst(ctx sessionctx.Context, col *Column, cons *Constant, i, j int, exprs *exprSet) {
-	expr := exprs.data[j]
-	switch {
-	case matchColumnEQColumn(expr, func(op *ScalarFunction, col1, col2 *Column) {
-		if col.UniqueID == col1.UniqueID {
-			// x >= const, x = y => y >= const
-			newExpr := NewFunctionInternal(ctx, ast.GE, op.RetType, col2, cons)
-			exprs.Append(newExpr)
-		}
-		if col.UniqueID == col2.UniqueID {
-			// y >= const, x = y => x >= const
-			newExpr := NewFunctionInternal(ctx, ast.GE, op.RetType, col1, cons)
-			exprs.Append(newExpr)
-		}
-	}):
-	case matchColumnGEConst(expr, func(op *ScalarFunction, col1 *Column, cons1 *Constant) {
-		if col.UniqueID == col1.UniqueID {
-			// x >= const1, x >= const2  => x >= max(const1, const2)
-			cmp := NewFunctionInternal(ctx, ast.GE, op.RetType, cons, cons1)
-			val, isNull, err := cmp.EvalInt(ctx, chunk.Row{})
-			if err == nil && !isNull {
-				if val > 0 {
-					exprs.tombstone[j] = true
-				}
-			}
-		}
-	}):
-	case matchColumnLTConst(expr, func(op *ScalarFunction, col1 *Column, cons1 *Constant) {
-		if col.UniqueID == col1.UniqueID {
-			// x >= const1, x < const2 && const1 > const2 => false
-			cmp := NewFunctionInternal(ctx, ast.GE, op.RetType, cons, cons1)
-			val, isNull, err := cmp.EvalInt(ctx, chunk.Row{})
-			if err == nil && !isNull {
-				if val > 0 {
-					exprs.SetConstFalse()
-				}
-			}
-		}
-	}):
-	}
-}
-
-func matchColumnGTConst(expr Expression, action func(*ScalarFunction, *Column, *Constant)) bool {
-	return matchColumnOPConst(expr, ast.GT, action)
-}
-
-func matchColumnGEConst(expr Expression, action func(*ScalarFunction, *Column, *Constant)) bool {
-	return matchColumnOPConst(expr, ast.GE, action)
-}
-
-func matchColumnLTConst(expr Expression, action func(*ScalarFunction, *Column, *Constant)) bool {
-	return matchColumnOPConst(expr, ast.LT, action)
-}
-
-func matchColumnOPConst(expr Expression, OP string, action func(*ScalarFunction, *Column, *Constant)) bool {
-	fun, ok := expr.(*ScalarFunction)
-	if !ok || fun.FuncName.L != OP {
-		return false
-	}
-	col, ok := fun.GetArgs()[0].(*Column)
-	if !ok {
-		return false
-	}
-	con, ok := fun.GetArgs()[1].(*Constant)
-	if !ok {
-		return false
-	}
-	action(fun, col, con)
-	return true
-}
-
-func matchColumnEQColumn(expr Expression, action func(*ScalarFunction, *Column, *Column)) bool {
-	fun, ok := expr.(*ScalarFunction)
-	if !ok || fun.FuncName.L != ast.EQ {
-		return false
-	}
-	col1, ok := fun.GetArgs()[0].(*Column)
-	if !ok {
-		return false
-	}
-	col2, ok := fun.GetArgs()[1].(*Column)
-	if !ok {
-		return false
-	}
-	action(fun, col1, col2)
-	return true
 }
