@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See also [Release Notes](https://github.com/pingcap/docs/blob/master/releases/rn.md), [TiKV changelog](https://github.com/pingcap/tikv/blob/master/CHANGELOG.md) and [PD changelog](https://github.com/pingcap/pd/blob/master/CHANGELOG.md).
 
+## [2.0.8] - 2018-10-16
+### Improvements
+- Slow down the AUTO-ID increasing speed when the `Update` statement does not modify the corresponding AUTO-INCREMENT column [#7846](https://github.com/pingcap/tidb/pull/7846) 
+### Bug fixes
+- Quickly create a new etcd session to recover the service when the PD leader goes down [#7810](https://github.com/pingcap/tidb/pull/7810)
+- Fix the issue that the time zone is not considered when the default value of the `DateTime` type is calculated [#7672](https://github.com/pingcap/tidb/pull/7672)
+- Fix the issue that `duplicate key update` inserts values incorrectly in some conditions [#7685](https://github.com/pingcap/tidb/pull/7685)
+- Fix the issue that the predicate conditions of `UnionScan` are not pushed down [#7726](https://github.com/pingcap/tidb/pull/7726)
+- Fix the issue that the time zone is not correctly handled when you add the `TIMESTAMP` index [#7812](https://github.com/pingcap/tidb/pull/7812)
+- Fix the memory leak issue caused by the statistics module in some conditions [#7864](https://github.com/pingcap/tidb/pull/7864) 
+
+
 ## [2.0.7] - 2018-09-07
 ### New Feature
   - Add the `PROCESSLIST` table in `information_schema` [#7286](https://github.com/pingcap/tidb/pull/7286)
