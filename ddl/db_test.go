@@ -3451,15 +3451,11 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 	s.mustExec(c, "drop table if exists t1")
 	s.mustExec(c, "create table t1 (c1 int, c2 int, c3 int default 1, index (c1));")
 
-	done := make(chan error, 1)
-	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
-
 	var c2 *table.Column
 	var checkErr error
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	hook := &ddl.TestDDLCallback{}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if checkErr != nil {
 			return
@@ -3502,6 +3498,9 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 		}
 	}
 
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	done := make(chan error, 1)
+	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
 	ticker := time.NewTicker(s.lease / 2)
 	defer ticker.Stop()
 LOOP:
@@ -3525,8 +3524,6 @@ LOOP:
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsFalse)
 	s.mustExec(c, "drop table t1")
 	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
-	callback := &ddl.TestDDLCallback{}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
 }
 
 func (s *testDBSuite) TestPartitionAddIndex(c *C) {
