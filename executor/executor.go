@@ -74,7 +74,7 @@ type baseExecutor struct {
 	maxChunkSize  int
 	children      []Executor
 	retFieldTypes []*types.FieldType
-	runtimeStat   *execdetails.RuntimeStat
+	runtimeStats  *execdetails.RuntimeStats
 }
 
 // Open initializes children recursively and "childrenResults" according to children's schemas.
@@ -130,7 +130,9 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().MaxChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
-		runtimeStat:  ctx.GetSessionVars().StmtCtx.RuntimeStats.GetRuntimeStat(id),
+	}
+	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.id)
 	}
 	if schema != nil {
 		cols := schema.Columns
@@ -173,9 +175,9 @@ type CancelDDLJobsExec struct {
 
 // Next implements the Executor Next interface.
 func (e *CancelDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.runtimeStat != nil {
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobIDs) {
@@ -619,9 +621,9 @@ type LimitExec struct {
 
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.runtimeStat != nil {
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	if e.cursor >= e.end {
@@ -742,9 +744,9 @@ func (e *TableDualExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *TableDualExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.runtimeStat != nil {
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	if e.numReturned >= e.numDualRows {
@@ -797,9 +799,9 @@ func (e *SelectionExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.runtimeStat != nil {
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.GrowAndReset(e.maxChunkSize)
 
@@ -876,9 +878,9 @@ type TableScanExec struct {
 
 // Next implements the Executor Next interface.
 func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.runtimeStat != nil {
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.isVirtualTable {
@@ -980,9 +982,9 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.runtimeStat != nil {
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	if e.evaluated {
@@ -1126,9 +1128,9 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 
 // Next implements the Executor Next interface.
 func (e *UnionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.runtimeStat != nil {
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.GrowAndReset(e.maxChunkSize)
 	if !e.initialized {
