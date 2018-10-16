@@ -84,7 +84,7 @@ func (s *testEvaluatorSuite) TestCurrentUser(c *C) {
 	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "localhost"}
 
 	fc := funcs[ast.CurrentUser]
 	f, err := fc.getFunction(ctx, nil)
@@ -168,7 +168,7 @@ func (s *testEvaluatorSuite) TestRowCount(c *C) {
 	c.Assert(intResult, Equals, int64(10))
 }
 
-// Test case for tidb_server().
+// TestTiDBVersion for tidb_server().
 func (s *testEvaluatorSuite) TestTiDBVersion(c *C) {
 	defer testleak.AfterTest(c)()
 	f, err := newFunctionForTest(s.ctx, ast.TiDBVersion, s.primitiveValsToConstants([]interface{}{})...)

@@ -96,15 +96,14 @@ TableReader_11	2.00	root	data:TableScan_10
 └─TableScan_10	2.00	cop	table:t1, range:[0,0], [1,1], keep order:false, stats:pseudo
 explain select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1;
 id	count	task	operator info
-Projection_13	10000.00	root	k
-└─Projection_14	10000.00	root	test.t1.c1, ifnull(5_col_0, 0)
-  └─MergeJoin_15	10000.00	root	left outer join, left key:test.t1.c1, right key:s.c1
-    ├─TableReader_18	10000.00	root	data:TableScan_17
-    │ └─TableScan_17	10000.00	cop	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
-    └─Selection_20	8000.00	root	ne(k, 0)
-      └─Projection_21	10000.00	root	1, s.c1
-        └─TableReader_23	10000.00	root	data:TableScan_22
-          └─TableScan_22	10000.00	cop	table:s, range:[-inf,+inf], keep order:true, stats:pseudo
+Projection_12	10000.00	root	k
+└─Projection_13	10000.00	root	test.t1.c1, ifnull(5_col_0, 0)
+  └─MergeJoin_14	10000.00	root	left outer join, left key:test.t1.c1, right key:s.c1
+    ├─TableReader_17	10000.00	root	data:TableScan_16
+    │ └─TableScan_16	10000.00	cop	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
+    └─Projection_19	8000.00	root	1, s.c1
+      └─TableReader_21	10000.00	root	data:TableScan_20
+        └─TableScan_20	10000.00	cop	table:s, range:[-inf,+inf], keep order:true, stats:pseudo
 explain select * from information_schema.columns;
 id	count	task	operator info
 MemTableScan_4	10000.00	root	
@@ -151,35 +150,35 @@ TableReader_5	10000.00	root	data:TableScan_4
 └─TableScan_4	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select c1 from t2 union select c1 from t2 union all select c1 from t2;
 id	count	task	operator info
-Union_14	26000.00	root	
-├─TableReader_17	10000.00	root	data:TableScan_16
-│ └─TableScan_16	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
-└─HashAgg_21	16000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
-  └─Union_22	16000.00	root	
-    ├─StreamAgg_35	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
-    │ └─IndexReader_36	8000.00	root	index:StreamAgg_26
-    │   └─StreamAgg_26	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
-    │     └─IndexScan_34	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
-    └─StreamAgg_52	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
-      └─IndexReader_53	8000.00	root	index:StreamAgg_43
-        └─StreamAgg_43	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
-          └─IndexScan_51	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+Union_17	26000.00	root	
+├─TableReader_20	10000.00	root	data:TableScan_19
+│ └─TableScan_19	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+└─HashAgg_24	16000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
+  └─Union_25	16000.00	root	
+    ├─StreamAgg_38	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
+    │ └─IndexReader_39	8000.00	root	index:StreamAgg_29
+    │   └─StreamAgg_29	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
+    │     └─IndexScan_37	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+    └─StreamAgg_55	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
+      └─IndexReader_56	8000.00	root	index:StreamAgg_46
+        └─StreamAgg_46	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
+          └─IndexScan_54	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
 explain select c1 from t2 union all select c1 from t2 union select c1 from t2;
 id	count	task	operator info
-HashAgg_15	24000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
-└─Union_16	24000.00	root	
-  ├─StreamAgg_29	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
-  │ └─IndexReader_30	8000.00	root	index:StreamAgg_20
-  │   └─StreamAgg_20	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
-  │     └─IndexScan_28	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
-  ├─StreamAgg_46	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
-  │ └─IndexReader_47	8000.00	root	index:StreamAgg_37
-  │   └─StreamAgg_37	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
-  │     └─IndexScan_45	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
-  └─StreamAgg_63	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
-    └─IndexReader_64	8000.00	root	index:StreamAgg_54
-      └─StreamAgg_54	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
-        └─IndexScan_62	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+HashAgg_18	24000.00	root	group by:t2.c1, funcs:firstrow(join_agg_0)
+└─Union_19	24000.00	root	
+  ├─StreamAgg_32	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
+  │ └─IndexReader_33	8000.00	root	index:StreamAgg_23
+  │   └─StreamAgg_23	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
+  │     └─IndexScan_31	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+  ├─StreamAgg_49	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
+  │ └─IndexReader_50	8000.00	root	index:StreamAgg_40
+  │   └─StreamAgg_40	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
+  │     └─IndexScan_48	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
+  └─StreamAgg_66	8000.00	root	group by:col_2, funcs:firstrow(col_0), firstrow(col_1)
+    └─IndexReader_67	8000.00	root	index:StreamAgg_57
+      └─StreamAgg_57	8000.00	cop	group by:test.t2.c1, funcs:firstrow(test.t2.c1), firstrow(test.t2.c1)
+        └─IndexScan_65	10000.00	cop	table:t2, index:c1, range:[NULL,+inf], keep order:true, stats:pseudo
 set @@session.tidb_opt_insubquery_unfold = 0;
 explain select sum(t1.c1 in (select c1 from t2)) from t1;
 id	count	task	operator info
@@ -269,7 +268,7 @@ create table t(a int primary key, b int, c int, index idx(b));
 explain select t.c in (select count(*) from t s ignore index(idx), t t1 where s.a = t.a and s.a = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	9_aux_0
-└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]
+└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
@@ -282,7 +281,7 @@ Projection_11	10000.00	root	9_aux_0
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	9_aux_0
-└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]
+└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
@@ -294,7 +293,7 @@ Projection_11	10000.00	root	9_aux_0
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	9_aux_0
-└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]
+└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
@@ -347,8 +346,42 @@ TableDual_5	0.00	root	rows:0
 explain select * from t where b = 1 and b = 2;
 id	count	task	operator info
 TableDual_5	0.00	root	rows:0
+explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null;
+id	count	task	operator info
+Projection_7	12.50	root	t1.a, t1.b, t2.a, t2.b
+└─HashRightJoin_9	12.50	root	inner join, inner:TableReader_12, equal:[eq(t2.b, t1.b)]
+  ├─TableReader_12	10.00	root	data:Selection_11
+  │ └─Selection_11	10.00	cop	isnull(t2.b)
+  │   └─TableScan_10	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableReader_14	10000.00	root	data:TableScan_13
+    └─TableScan_13	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t t1 where not exists (select * from t t2 where t1.b = t2.b);
+id	count	task	operator info
+HashLeftJoin_9	8000.00	root	anti semi join, inner:TableReader_13, equal:[eq(t1.b, t2.b)]
+├─TableReader_11	10000.00	root	data:TableScan_10
+│ └─TableScan_10	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_13	10000.00	root	data:TableScan_12
+  └─TableScan_12	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a bigint primary key);
 explain select * from t where a = 1 and a = 2;
 id	count	task	operator info
 TableDual_5	0.00	root	rows:0
+explain select null or a > 1 from t;
+id	count	task	operator info
+Projection_3	10000.00	root	or(NULL, gt(test.t.a, 1))
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists ta, tb;
+create table ta (a varchar(20));
+create table tb (a varchar(20));
+begin;
+insert tb values ('1');
+explain select * from ta where a = 1;
+id	count	task	operator info
+Projection_5	8000.00	root	test.ta.a
+└─Selection_6	8000.00	root	eq(cast(test.ta.a), 1)
+  └─UnionScan_7	10000.00	root	eq(cast(test.ta.a), 1)
+    └─TableReader_9	10000.00	root	data:TableScan_8
+      └─TableScan_8	10000.00	cop	table:ta, range:[-inf,+inf], keep order:false, stats:pseudo
+rollback;

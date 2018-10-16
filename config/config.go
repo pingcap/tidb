@@ -157,6 +157,7 @@ type Performance struct {
 	FeedbackProbability float64 `toml:"feedback-probability" json:"feedback-probability"`
 	QueryFeedbackLimit  uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
+	ForcePriority       string  `toml:"force-priority" json:"force-priority"`
 }
 
 // XProtocol is the XProtocol section of the config.
@@ -242,7 +243,7 @@ type TiKVClient struct {
 type Binlog struct {
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
 	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
-	// If IgnoreError is true, when writting binlog meets error, TiDB would
+	// If IgnoreError is true, when writing binlog meets error, TiDB would
 	// ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
 }
@@ -261,8 +262,8 @@ var defaultConf = Config{
 	MemQuotaQuery:    32 << 30,
 	EnableStreaming:  false,
 	TxnLocalLatches: TxnLocalLatches{
-		Enabled:  false,
-		Capacity: 10240000,
+		Enabled:  true,
+		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{
@@ -290,6 +291,7 @@ var defaultConf = Config{
 		FeedbackProbability: 0.05,
 		QueryFeedbackLimit:  1024,
 		PseudoEstimateRatio: 0.8,
+		ForcePriority:       "NO_PRIORITY",
 	},
 	XProtocol: XProtocol{
 		XHost: "",

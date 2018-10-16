@@ -14,6 +14,8 @@
 package types
 
 import (
+	"reflect"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -72,7 +74,7 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	c.Assert(err, IsNil)
 	testDatumToBool(c, t, 1)
 
-	td, err := ParseDuration("11:11:11.999999", 6)
+	td, err := ParseDuration(nil, "11:11:11.999999", 6)
 	c.Assert(err, IsNil)
 	testDatumToBool(c, td, 1)
 
@@ -151,7 +153,7 @@ func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, t, int64(20111110111112))
 
-	td, err := ParseDuration("11:11:11.999999", 6)
+	td, err := ParseDuration(nil, "11:11:11.999999", 6)
 	c.Assert(err, IsNil)
 	testDatumToInt64(c, td, int64(111112))
 
@@ -303,7 +305,7 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 }
 
 func mustParseDurationDatum(str string, fsp int) Datum {
-	dur, err := ParseDuration(str, fsp)
+	dur, err := ParseDuration(nil, str, fsp)
 	if err != nil {
 		panic(err)
 	}
@@ -360,5 +362,41 @@ func (ts *testDatumSuite) TestCopyDatum(c *C) {
 		if tt.b != nil {
 			c.Assert(&tt.b[0], Not(Equals), &tt1.b[0])
 		}
+	}
+}
+
+func prepareCompareDatums() ([]Datum, []Datum) {
+	vals := make([]Datum, 0, 5)
+	vals = append(vals, NewIntDatum(1))
+	vals = append(vals, NewFloat64Datum(1.23))
+	vals = append(vals, NewStringDatum("abcde"))
+	vals = append(vals, NewDecimalDatum(NewDecFromStringForTest("1.2345")))
+	vals = append(vals, NewTimeDatum(Time{Time: FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp}))
+
+	vals1 := make([]Datum, 0, 5)
+	vals1 = append(vals1, NewIntDatum(1))
+	vals1 = append(vals1, NewFloat64Datum(1.23))
+	vals1 = append(vals1, NewStringDatum("abcde"))
+	vals1 = append(vals1, NewDecimalDatum(NewDecFromStringForTest("1.2345")))
+	vals1 = append(vals1, NewTimeDatum(Time{Time: FromGoTime(time.Date(2018, 3, 8, 16, 1, 0, 315313000, time.UTC)), Fsp: 6, Type: mysql.TypeTimestamp}))
+	return vals, vals1
+}
+
+func BenchmarkCompareDatum(b *testing.B) {
+	vals, vals1 := prepareCompareDatums()
+	sc := new(stmtctx.StatementContext)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for j, v := range vals {
+			v.CompareDatum(sc, &vals1[j])
+		}
+	}
+}
+
+func BenchmarkCompareDatumByReflect(b *testing.B) {
+	vals, vals1 := prepareCompareDatums()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		reflect.DeepEqual(vals, vals1)
 	}
 }

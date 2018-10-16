@@ -30,7 +30,7 @@ type concatFunction struct {
 	separator string
 	sepInited bool
 	maxLen    uint64
-	// According to MySQL, a 'group_concat' function generates exactly one 'truncated' warning during its life time, no matter
+	// truncated according to MySQL, a 'group_concat' function generates exactly one 'truncated' warning during its life time, no matter
 	// how many group actually truncated. 'truncated' acts as a sentinel to indicate whether this warning has already been
 	// generated.
 	truncated bool
@@ -103,7 +103,7 @@ func (cf *concatFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.Statem
 		}
 		evalCtx.Buffer.Truncate(i)
 		if !cf.truncated {
-			sc.AppendWarning(expression.ErrCutValueGroupConcat)
+			sc.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(cf.Args[0].String()))
 		}
 		cf.truncated = true
 	}

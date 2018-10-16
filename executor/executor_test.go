@@ -37,7 +37,8 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/plan"
+	"github.com/pingcap/tidb/planner"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -113,6 +114,7 @@ func (s *testSuite) SetUpSuite(c *C) {
 	}
 	d, err := session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
+	d.SetStatsUpdating(true)
 	s.domain = d
 }
 
@@ -273,6 +275,41 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
 	tk.MustExec("admin check table t1;")
 
+	// For add index on virtual column
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`create table t1 (
+		a int             as (JSON_EXTRACT(k,'$.a')),
+		c double          as (JSON_EXTRACT(k,'$.c')),
+		d decimal(20,10)  as (JSON_EXTRACT(k,'$.d')),
+		e char(10)        as (JSON_EXTRACT(k,'$.e')),
+		f date            as (JSON_EXTRACT(k,'$.f')),
+		g time            as (JSON_EXTRACT(k,'$.g')),
+		h datetime        as (JSON_EXTRACT(k,'$.h')),
+		i timestamp       as (JSON_EXTRACT(k,'$.i')),
+		j year            as (JSON_EXTRACT(k,'$.j')),
+		k json);`)
+
+	tk.MustExec("insert into t1 set k='{\"a\": 100,\"c\":1.234,\"d\":1.2340000000,\"e\":\"abcdefg\",\"f\":\"2018-09-28\",\"g\":\"12:59:59\",\"h\":\"2018-09-28 12:59:59\",\"i\":\"2018-09-28 16:40:33\",\"j\":\"2018\"}';")
+	tk.MustExec("alter table t1 add index idx_a(a);")
+	tk.MustExec("alter table t1 add index idx_c(c);")
+	tk.MustExec("alter table t1 add index idx_d(d);")
+	tk.MustExec("alter table t1 add index idx_e(e);")
+	tk.MustExec("alter table t1 add index idx_f(f);")
+	tk.MustExec("alter table t1 add index idx_g(g);")
+	tk.MustExec("alter table t1 add index idx_h(h);")
+	tk.MustExec("alter table t1 add index idx_j(j);")
+	tk.MustExec("alter table t1 add index idx_i(i);")
+	tk.MustExec("alter table t1 add index idx_m(a,c,d,e,f,g,h,i,j);")
+	tk.MustExec("admin check table t1;")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (c1 int);")
+	tk.MustExec("INSERT INTO t1 SET c1 = 1;")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN cc1 CHAR(36)    NULL DEFAULT '';")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN cc2 VARCHAR(36) NULL DEFAULT ''")
+	tk.MustExec("ALTER TABLE t1 ADD INDEX idx1 (cc1);")
+	tk.MustExec("ALTER TABLE t1 ADD INDEX idx2 (cc2);")
+	tk.MustExec("admin check table t1;")
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
@@ -718,7 +755,7 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	tk.MustQuery("select * from t where 1 order by b").Check(testkit.Rows("1 1", "2 2"))
 	tk.MustQuery("select * from t where a between 1 and 2 order by a desc").Check(testkit.Rows("2 2", "1 1"))
 
-	// Test double read and topN is pushed down to first read plan.
+	// Test double read and topN is pushed down to first read plannercore.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, c int, index idx(b))")
 	tk.MustExec("insert into t values(1, 3, 1)")
@@ -1002,7 +1039,7 @@ func (s *testSuite) TestUnion(c *C) {
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrWrongUsage))
 
 	_, err = tk.Exec("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1")
-	c.Assert(terror.ErrorEqual(err, plan.ErrWrongUsage), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, plannercore.ErrWrongUsage), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("(select a from t limit 1) union all select a from t limit 1")
 	c.Assert(err, IsNil)
@@ -1450,6 +1487,12 @@ func (s *testSuite) TestGeneratedColumnRead(c *C) {
 	result = tk.MustQuery(`SELECT * FROM test_gc_read WHERE d = 12`)
 	result.Check(testkit.Rows(`3 4 7 12`))
 
+	tk.MustExec(`INSERT INTO test_gc_read set a = 4, b = d + 1`)
+	result = tk.MustQuery(`SELECT * FROM test_gc_read ORDER BY a`)
+	result.Check(testkit.Rows(`0 <nil> <nil> <nil>`, `1 2 3 2`, `3 4 7 12`,
+		`4 <nil> <nil> <nil>`, `8 8 16 64`))
+	tk.MustExec(`DELETE FROM test_gc_read where a = 4`)
+
 	// Test on-conditions on virtual/stored generated columns.
 	tk.MustExec(`CREATE TABLE test_gc_help(a int primary key, b int, c int, d int)`)
 	tk.MustExec(`INSERT INTO test_gc_help(a, b, c, d) SELECT * FROM test_gc_read`)
@@ -1703,9 +1746,9 @@ func (s *testSuite) TestIsPointGet(c *C) {
 	for sqlStr, result := range tests {
 		stmtNode, err := s.ParseOneStmt(sqlStr, "", "")
 		c.Check(err, IsNil)
-		err = plan.Preprocess(ctx, stmtNode, infoSchema, false)
+		err = plannercore.Preprocess(ctx, stmtNode, infoSchema, false)
 		c.Check(err, IsNil)
-		p, err := plan.Optimize(ctx, stmtNode, infoSchema)
+		p, err := planner.Optimize(ctx, stmtNode, infoSchema)
 		c.Check(err, IsNil)
 		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(ret, Equals, result)
@@ -2369,6 +2412,7 @@ func (s *testSuite) TestTimezonePushDown(c *C) {
 
 	systemTZ := timeutil.SystemLocation()
 	c.Assert(systemTZ.String(), Not(Equals), "System")
+	c.Assert(systemTZ.String(), Not(Equals), "Local")
 	ctx := context.Background()
 	count := 0
 	ctx1 := context.WithValue(ctx, "CheckSelectRequestHook", func(req *kv.Request) {

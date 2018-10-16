@@ -46,7 +46,7 @@ var zoneSources = []string{
 	"/usr/share/lib/zoneinfo/",
 	"/usr/lib/locale/TZ/",
 	// this is for macOS
-	"/var/db/timezone/zoneinfo",
+	"/var/db/timezone/zoneinfo/",
 }
 
 // locCache is a simple map with lock. It stores all used timezone during the lifetime of tidb instance.
@@ -93,6 +93,15 @@ func InferSystemTZ() string {
 func inferTZNameFromFileName(path string) (string, error) {
 	// phase1 only support read /etc/localtime which is a softlink to zoneinfo file
 	substr := "zoneinfo"
+	// macOs MoJave changes the sofe link of /etc/localtime from
+	// "/var/db/timezone/tz/2018e.1.0/zoneinfo/Asia/Shanghai"
+	// to "/usr/share/zoneinfo.default/Asia/Shanghai"
+	substrMojave := "zoneinfo.default"
+
+	if idx := strings.Index(path, substrMojave); idx != -1 {
+		return string(path[idx+len(substrMojave)+1:]), nil
+	}
+
 	if idx := strings.Index(path, substr); idx != -1 {
 		return string(path[idx+len(substr)+1:]), nil
 	}
@@ -108,9 +117,13 @@ func SystemLocation() *time.Location {
 	return loc
 }
 
+var setSysTZOnce sync.Once
+
 // SetSystemTZ sets systemTZ by the value loaded from mysql.tidb.
 func SetSystemTZ(name string) {
-	systemTZ = name
+	setSysTZOnce.Do(func() {
+		systemTZ = name
+	})
 }
 
 // getLoc first trying to load location from a cache map. If nothing found in such map, then call
@@ -149,7 +162,7 @@ func Zone(loc *time.Location) (string, int64) {
 	_, offset := time.Now().In(loc).Zone()
 	var name string
 	name = loc.String()
-	// when we found name is "SystemLocation", we have no chice but push down
+	// when we found name is "System", we have no chice but push down
 	// "System" to tikv side.
 	if name == "Local" {
 		name = "System"

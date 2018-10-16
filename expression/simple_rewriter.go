@@ -44,6 +44,17 @@ func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableI
 	return RewriteSimpleExprWithTableInfo(ctx, tableInfo, expr)
 }
 
+// ParseSimpleExprCastWithTableInfo parses simple expression string to Expression.
+// And the expr returns will cast to the target type.
+func ParseSimpleExprCastWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo, targetFt *types.FieldType) (Expression, error) {
+	e, err := ParseSimpleExprWithTableInfo(ctx, exprStr, tableInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	e = BuildCastFunction(ctx, e, targetFt)
+	return e, nil
+}
+
 // RewriteSimpleExprWithTableInfo rewrites simple ast.ExprNode to expression.Expression.
 func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo, expr ast.ExprNode) (Expression, error) {
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
@@ -229,6 +240,7 @@ func (sr *simpleRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	}
 }
 
+// constructBinaryOpFunction works as following:
 // 1. If op are EQ or NE or NullEQ, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to (a0 op b0) and (a1 op b1) and (a2 op b2)
 // 2. If op are LE or GE, constructBinaryOpFunctions converts (a0,a1,a2) op (b0,b1,b2) to
 // `IF( (a0 op b0) EQ 0, 0,

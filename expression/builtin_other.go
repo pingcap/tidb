@@ -102,7 +102,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInIntSig struct {
 	baseBuiltinFunc
 }
@@ -151,7 +151,7 @@ func (b *builtinInIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInStringSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInStringSig struct {
 	baseBuiltinFunc
 }
@@ -184,7 +184,7 @@ func (b *builtinInStringSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInRealSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInRealSig struct {
 	baseBuiltinFunc
 }
@@ -217,7 +217,7 @@ func (b *builtinInRealSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInDecimalSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInDecimalSig struct {
 	baseBuiltinFunc
 }
@@ -250,7 +250,7 @@ func (b *builtinInDecimalSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInTimeSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInTimeSig struct {
 	baseBuiltinFunc
 }
@@ -283,7 +283,7 @@ func (b *builtinInTimeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInDurationSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInDurationSig struct {
 	baseBuiltinFunc
 }
@@ -316,7 +316,7 @@ func (b *builtinInDurationSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return 0, hasNull, nil
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
+// builtinInJSONSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInJSONSig struct {
 	baseBuiltinFunc
 }
@@ -771,8 +771,7 @@ func (b *builtinGetParamStringSig) evalString(row chunk.Row) (string, bool, erro
 	}
 	v := sessionVars.PreparedParams[idx]
 
-	dt := v.(types.Datum)
-	str, err := (&dt).ToString()
+	str, err := v.ToString()
 	if err != nil {
 		return "", true, nil
 	}
