@@ -262,12 +262,12 @@ func (p *partialResult4VarianceFloat64) merge(count int64, sum, variance float64
 	if p.count == 0 {
 		p.count, p.sum, p.variance = count, sum, variance
 	} else {
-		variance, sum, err := types.CalculateMergeFloat64(p.count, count, p.sum, sum, p.variance, variance)
+		varianceNew, sumNew, err := types.CalculateMergeFloat64(p.count, count, p.sum, sum, p.variance, variance)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		p.variance = variance
-		p.sum = sum
+		p.variance = varianceNew
+		p.sum = sumNew
 	}
 	return nil
 }
