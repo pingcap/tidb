@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file. See also [R
 
 ## [2.0.8] - 2018-10-16
 ### Improvements
-- Slow down the AUTO-ID increasing speed when the `Update` statement does not modify the corresponding AUTO-INCREMENT column [#7846](https://github.com/pingcap/tidb/pull/7846) 
+- Slow down the AUTO_INCREMENT ID increasing speed when the `Update` statement does not modify the corresponding AUTO_INCREMENT column [#7846](https://github.com/pingcap/tidb/pull/7846) 
 ### Bug fixes
 - Quickly create a new etcd session to recover the service when the PD leader goes down [#7810](https://github.com/pingcap/tidb/pull/7810)
 - Fix the issue that the time zone is not considered when the default value of the `DateTime` type is calculated [#7672](https://github.com/pingcap/tidb/pull/7672)
