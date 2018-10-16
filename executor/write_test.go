@@ -1793,7 +1793,7 @@ func (s *testSuite) TestNullDefault(c *C) {
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
 }
 
-func (s *testBypassSuite) TestBypassLatch(c *C) {
+func (s *testBypassSuite) TestLatch(c *C) {
 	store, err := mockstore.NewMockTikvStore(
 		// Small latch slot size to make conflicts.
 		mockstore.WithTxnLocalLatches(64),
@@ -1827,15 +1827,13 @@ func (s *testBypassSuite) TestBypassLatch(c *C) {
 		tk2.MustExec("commit")
 	}
 
-	// txn1 and txn2 data range do not overlap, but using latches result in txn conflict.
+	// txn1 and txn2 data range do not overlap, using latches should not
+	// result in txn conflict.
 	fn()
 	tk1.MustExec("commit")
 
 	tk1.MustExec("truncate table t")
 	fn()
-	txn := tk1.Se.Txn()
-	txn.SetOption(kv.BypassLatch, true)
-	// Bypass latch, there will be no conflicts.
 	tk1.MustExec("commit")
 }
 

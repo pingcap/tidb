@@ -109,6 +109,11 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
+		predicates = p.outerJoinPropConst(predicates)
+		dual := conds2TableDual(p, predicates)
+		if dual != nil {
+			return ret, dual
+		}
 		// Handle where conditions
 		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
 		// Only derive left where condition, because right where condition cannot be pushed down
@@ -121,6 +126,11 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, rightPushCond...)
 	case RightOuterJoin:
+		predicates = p.outerJoinPropConst(predicates)
+		dual := conds2TableDual(p, predicates)
+		if dual != nil {
+			return ret, dual
+		}
 		// Handle where conditions
 		predicates = expression.ExtractFiltersFromDNFs(p.ctx, predicates)
 		// Only derive right where condition, because left where condition cannot be pushed down
@@ -412,4 +422,28 @@ func conds2TableDual(p LogicalPlan, conds []expression.Expression) LogicalPlan {
 		return dual
 	}
 	return nil
+}
+
+// outerJoinPropConst propagates constant equal and column equal conditions over outer join.
+func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []expression.Expression {
+	outerTable := p.children[0]
+	innerTable := p.children[1]
+	if p.JoinType == RightOuterJoin {
+		innerTable, outerTable = outerTable, innerTable
+	}
+	lenJoinConds := len(p.EqualConditions) + len(p.LeftConditions) + len(p.RightConditions) + len(p.OtherConditions)
+	joinConds := make([]expression.Expression, 0, lenJoinConds)
+	for _, equalCond := range p.EqualConditions {
+		joinConds = append(joinConds, equalCond)
+	}
+	joinConds = append(joinConds, p.LeftConditions...)
+	joinConds = append(joinConds, p.RightConditions...)
+	joinConds = append(joinConds, p.OtherConditions...)
+	p.EqualConditions = nil
+	p.LeftConditions = nil
+	p.RightConditions = nil
+	p.OtherConditions = nil
+	joinConds, predicates = expression.PropConstOverOuterJoin(p.ctx, joinConds, predicates, outerTable.Schema(), innerTable.Schema())
+	p.attachOnConds(joinConds)
+	return predicates
 }
