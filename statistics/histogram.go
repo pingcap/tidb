@@ -616,7 +616,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 }
 
 func (hg *Histogram) outOfRange(val types.Datum) bool {
-	if hg.Bounds == nil {
+	if hg.Len() == 0 {
 		return true
 	}
 	len := hg.Bounds.NumRows()
