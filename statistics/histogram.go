@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -44,7 +45,7 @@ type Histogram struct {
 	// LastUpdateVersion is the version that this histogram updated last time.
 	LastUpdateVersion uint64
 
-	tp *types.FieldType
+	Tp *types.FieldType
 
 	// Histogram elements.
 	//
@@ -84,7 +85,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		NDV:               ndv,
 		NullCount:         nullCount,
 		LastUpdateVersion: version,
-		tp:                tp,
+		Tp:                tp,
 		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
 		Buckets:           make([]Bucket, 0, bucketSize),
 		TotColSize:        totColSize,
@@ -93,13 +94,13 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 
 // GetLower gets the lower bound of bucket `idx`.
 func (hg *Histogram) GetLower(idx int) *types.Datum {
-	d := hg.Bounds.GetRow(2*idx).GetDatum(0, hg.tp)
+	d := hg.Bounds.GetRow(2*idx).GetDatum(0, hg.Tp)
 	return &d
 }
 
 // GetUpper gets the upper bound of bucket `idx`.
 func (hg *Histogram) GetUpper(idx int) *types.Datum {
-	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.tp)
+	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.Tp)
 	return &d
 }
 
@@ -108,7 +109,7 @@ func (c *Column) AvgColSize(count int64) float64 {
 	if count == 0 {
 		return 0
 	}
-	switch c.Histogram.tp.Tp {
+	switch c.Histogram.Tp.Tp {
 	case mysql.TypeFloat:
 		return 4
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong,
@@ -138,11 +139,11 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64) {
 	hg.Buckets[len-1] = Bucket{Count: count, Repeat: repeat}
 }
 
-// DecodeTo decodes the histogram bucket values into `tp`.
+// DecodeTo decodes the histogram bucket values into `Tp`.
 func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) error {
 	oldIter := chunk.NewIterator4Chunk(hg.Bounds)
 	hg.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{tp}, oldIter.Len())
-	hg.tp = tp
+	hg.Tp = tp
 	for row := oldIter.Begin(); row != oldIter.End(); row = oldIter.Next() {
 		datum, err := tablecodec.DecodeColumnValue(row.GetBytes(0), tp, timeZone)
 		if err != nil {
@@ -153,12 +154,12 @@ func (hg *Histogram) DecodeTo(tp *types.FieldType, timeZone *time.Location) erro
 	return nil
 }
 
-// ConvertTo converts the histogram bucket values into `tp`.
+// ConvertTo converts the histogram bucket values into `Tp`.
 func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType) (*Histogram, error) {
 	hist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, tp, hg.Len(), hg.TotColSize)
 	iter := chunk.NewIterator4Chunk(hg.Bounds)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		d := row.GetDatum(0, hg.tp)
+		d := row.GetDatum(0, hg.Tp)
 		d, err := d.ConvertTo(sc, tp)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -385,7 +386,7 @@ func (hg *Histogram) equalRowCount(value types.Datum) float64 {
 		return hg.totalRowCount() / float64(hg.NDV)
 	}
 	if match {
-		cmp := chunk.GetCompareFunc(hg.tp)
+		cmp := chunk.GetCompareFunc(hg.Tp)
 		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
 			return float64(hg.Buckets[index/2].Repeat)
 		}
@@ -468,7 +469,7 @@ func (hg *Histogram) totalRowCount() float64 {
 // mergeBuckets is used to merge every two neighbor buckets.
 func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	curBuck := 0
-	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.tp}, bucketIdx)
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, bucketIdx)
 	for i := 0; i+1 <= bucketIdx; i += 2 {
 		hg.Buckets[curBuck] = hg.Buckets[i+1]
 		c.AppendDatum(0, hg.GetLower(i))
@@ -515,7 +516,7 @@ func validRange(ran *ranger.Range) bool {
 }
 
 // SplitRange splits the range according to the histogram upper bound. Note that we treat last bucket's upper bound
-// as inf, so all the split ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
+// as inf, so all the split Ranges will totally fall in one of the (-inf, u(0)], (u(0), u(1)],...(u(n-3), u(n-2)],
 // (u(n-2), +inf), where n is the number of buckets, u(i) is the i-th bucket's upper bound.
 func (hg *Histogram) SplitRange(ranges []*ranger.Range) []*ranger.Range {
 	split := make([]*ranger.Range, 0, len(ranges))
@@ -553,7 +554,7 @@ func (hg *Histogram) SplitRange(ranges []*ranger.Range) []*ranger.Range {
 		// Split according to the upper bound.
 		cmp := chunk.Compare(upperBound, 0, &ranges[0].LowVal[0])
 		if cmp > 0 || (cmp == 0 && !ranges[0].LowExclude) {
-			upper := upperBound.GetDatum(0, hg.tp)
+			upper := upperBound.GetDatum(0, hg.Tp)
 			split = append(split, &ranger.Range{
 				LowExclude:  ranges[0].LowExclude,
 				LowVal:      []types.Datum{ranges[0].LowVal[0]},
@@ -609,13 +610,13 @@ func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 
 func (hg *Histogram) popFirstBucket() {
 	hg.Buckets = hg.Buckets[1:]
-	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.tp, hg.tp}, hg.Bounds.NumRows()-2)
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp, hg.Tp}, hg.Bounds.NumRows()-2)
 	c.Append(hg.Bounds, 2, hg.Bounds.NumRows())
 	hg.Bounds = c
 }
 
 func (hg *Histogram) isIndexHist() bool {
-	return hg.tp.Tp == mysql.TypeBlob
+	return hg.Tp.Tp == mysql.TypeBlob
 }
 
 // MergeHistograms merges two histograms.
@@ -856,4 +857,207 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		totalCount = idx.totalRowCount()
 	}
 	return totalCount, nil
+}
+
+func (c *Column) newNumericColumnBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Column, error) {
+	newColHist := &Column{Info: c.Info}
+	if len(statsNode.Ranges) == 0 {
+		newColHist.Histogram = *NewHistogram(c.ID, 0, 0, 0, c.Tp, 0, 0)
+		return newColHist, nil
+	}
+	newColHist.Histogram = *NewHistogram(c.ID, int64(float64(c.NDV)*statsNode.Selectivity), 0, 0, c.Tp, chunk.InitialCapacity, 0)
+	ranLowIdx := 0
+	var totCnt int64 = 0
+	// Process each bucket.
+	for i := 0; i < c.Bounds.NumRows() && ranLowIdx < len(statsNode.Ranges); i += 2 {
+		newBkt := Bucket{Repeat: c.Buckets[i/2].Repeat}
+		// Find the bucket which is the first one whose have intersection with the bucket.
+		for ; ranLowIdx < len(statsNode.Ranges); ranLowIdx++ {
+			if chunk.Compare(c.Bounds.GetRow(i), 0, &statsNode.Ranges[ranLowIdx].HighVal[0]) <= 0 {
+				break
+			}
+		}
+		ranHighIdx := ranLowIdx
+		// Find the bucket which is the first one whose lowVal is bigger than bucket's high bound, i.e. out of the bucket.
+		for ; ranHighIdx < len(statsNode.Ranges); ranHighIdx++ {
+			if chunk.Compare(c.Bounds.GetRow(i+1), 0, &statsNode.Ranges[ranHighIdx].LowVal[0]) < 0 {
+				break
+			}
+		}
+		if ranLowIdx == ranHighIdx {
+			continue
+		}
+		logrus.Warnf("ran low: %v, ran high: %v, bucket low: %v, bucketHigh: %v", statsNode.Ranges[ranLowIdx], statsNode.Ranges[ranHighIdx-1], c.Bounds.GetRow(i).GetInt64(0), c.Bounds.GetRow(i+1).GetInt64(0))
+		overlapped := 0.0
+		// Compute the overlap ratio.
+		for ranIdx := ranLowIdx; ranIdx < ranHighIdx; ranIdx++ {
+			overlapped += c.CalcRangeFraction(i/2, &statsNode.Ranges[ranIdx].LowVal[0], &statsNode.Ranges[ranIdx].HighVal[0])
+		}
+		// If there's no overlap, skip it.
+		if overlapped == 0 {
+			ranLowIdx = ranHighIdx - 1
+			continue
+		}
+		// Update the bound of the bucket.
+		if chunk.Compare(c.Bounds.GetRow(i), 0, &statsNode.Ranges[ranLowIdx].LowVal[0]) < 0 {
+			newColHist.Bounds.AppendDatum(0, &statsNode.Ranges[ranLowIdx].LowVal[0])
+		} else {
+			newColHist.Bounds.AppendRow(c.Bounds.GetRow(i))
+		}
+		if chunk.Compare(c.Bounds.GetRow(i), 0, &statsNode.Ranges[ranHighIdx-1].HighVal[0]) > 0 {
+			newColHist.Bounds.AppendDatum(0, &statsNode.Ranges[ranHighIdx-1].HighVal[0])
+			// Update the repeat val.
+			newBkt.Repeat = 0
+		} else {
+			newColHist.Bounds.AppendRow(c.Bounds.GetRow(i + 1))
+		}
+		totCnt += int64(overlapped * float64(c.bucketCount(i/2)))
+		newBkt.Count = totCnt
+		newColHist.Buckets = append(newColHist.Buckets, newBkt)
+		ranLowIdx = ranHighIdx - 1
+	}
+	return newColHist, nil
+}
+
+func (c *Column) newNonNumericColumnBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Column, error) {
+	newColHist := &Column{Info: c.Info}
+	if len(statsNode.Ranges) == 0 {
+		newColHist.Histogram = *NewHistogram(c.ID, 0, 0, 0, c.Tp, 0, 0)
+		return newColHist, nil
+	}
+	newColHist.Histogram = *NewHistogram(c.ID, int64(float64(c.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
+
+	lowBucketIdx, highBucketIdx := 0, 0
+	var totCnt int64 = 0
+
+	// Bucket bound of index is encoded one, so we need to decode it if we want to calculate the fraction accurately.
+	// TODO: enhance its calculation.
+	// Now just remove the bucket that no range fell in.
+	for _, ran := range statsNode.Ranges {
+		lowBucketIdx = highBucketIdx
+		for ; highBucketIdx*2 < c.Bounds.NumRows(); highBucketIdx++ {
+			if chunk.Compare(c.Bounds.GetRow(highBucketIdx*2), 0, &ran.HighVal[0]) >= 0 {
+				break
+			}
+		}
+		for ; lowBucketIdx < highBucketIdx; lowBucketIdx++ {
+			if chunk.Compare(c.Bounds.GetRow(lowBucketIdx*2+1), 0, &ran.LowVal[0]) > 0 {
+				break
+			}
+		}
+		if lowBucketIdx*2 >= c.Bounds.NumRows() {
+			break
+		}
+		for i := lowBucketIdx; i < highBucketIdx; i++ {
+			newColHist.Bounds.AppendBytes(0, c.Bounds.GetRow(i*2).GetBytes(0))
+			newColHist.Bounds.AppendBytes(0, c.Bounds.GetRow(i*2+1).GetBytes(0))
+			totCnt += c.bucketCount(i)
+			newColHist.Buckets = append(newColHist.Buckets, Bucket{Repeat: c.Buckets[i].Repeat, Count: totCnt})
+		}
+	}
+	return newColHist, nil
+}
+
+func (c *Column) newColumnBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Column, error) {
+	if len(statsNode.Ranges) == 0 {
+
+	}
+	switch statsNode.Ranges[0].LowVal[0].Kind() {
+	case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64:
+		return c.newNumericColumnBySelectivity(sc, statsNode)
+	default:
+		return c.newNonNumericColumnBySelectivity(sc, statsNode)
+	}
+	return nil, nil
+}
+
+func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Index, error) {
+	var (
+		ranLowEncode, ranHighEncode []byte
+		err                         error
+	)
+	newIndexHist := &Index{Info: idx.Info}
+	newIndexHist.Histogram = *NewHistogram(idx.ID, int64(float64(idx.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
+
+	lowBucketIdx, highBucketIdx := 0, 0
+	var totCnt int64 = 0
+
+	// Bucket bound of index is encoded one, so we need to decode it if we want to calculate the fraction accurately.
+	// TODO: enhance its calculation.
+	// Now just remove the bucket that no range fell in.
+	for _, ran := range statsNode.Ranges {
+		lowBucketIdx = highBucketIdx
+		ranLowEncode, ranHighEncode, err = ran.Encode(sc, ranLowEncode, ranHighEncode)
+		if err != nil {
+			return nil, err
+		}
+		for ; highBucketIdx*2 < idx.Bounds.NumRows(); highBucketIdx++ {
+			// Encoded value can only go to its next quickly. So ranHighEncode is actually range.HighVal's PrefixNext value.
+			// So the Bound should also go to its PrefixNext.
+			if bytes.Compare(ranHighEncode, kv.Key(idx.Bounds.GetRow(highBucketIdx*2).GetBytes(0)).PrefixNext()) < 0 {
+				break
+			}
+		}
+		for ; lowBucketIdx < highBucketIdx; lowBucketIdx++ {
+			if bytes.Compare(ranLowEncode, idx.Bounds.GetRow(lowBucketIdx*2+1).GetBytes(0)) <= 0 {
+				break
+			}
+		}
+		if lowBucketIdx*2 >= idx.Bounds.NumRows() {
+			break
+		}
+		for i := lowBucketIdx; i < highBucketIdx; i++ {
+			newIndexHist.Bounds.AppendBytes(0, idx.Bounds.GetRow(i*2).GetBytes(0))
+			newIndexHist.Bounds.AppendBytes(0, idx.Bounds.GetRow(i*2+1).GetBytes(0))
+			totCnt += idx.bucketCount(i)
+			newIndexHist.Buckets = append(newIndexHist.Buckets, Bucket{Repeat: idx.Buckets[i].Repeat, Count: totCnt})
+		}
+	}
+	return newIndexHist, nil
+}
+
+func (coll *HistColl) NewHistCollBySelectivity(sc *stmtctx.StatementContext, statsNodes []*StatsNode) (*HistColl, error) {
+	newColl := &HistColl{
+		Columns:       make(map[int64]*Column),
+		Indices:       make(map[int64]*Index),
+		Idx2ColumnIDs: coll.Idx2ColumnIDs,
+		ColID2IdxID:   coll.ColID2IdxID,
+		Count:         coll.Count,
+	}
+	for _, node := range statsNodes {
+		if node.Tp == indexType {
+			idxHist, ok := coll.Indices[node.ID]
+			if !ok {
+				continue
+			}
+			newIdxHist, err := idxHist.newIndexBySelectivity(sc, node)
+			if err != nil {
+				return nil, err
+			}
+			newColl.Indices[node.ID] = newIdxHist
+		} else {
+			colHist, ok := coll.Columns[node.ID]
+			if !ok {
+				continue
+			}
+			newColHist, err := colHist.newColumnBySelectivity(sc, node)
+			if err != nil {
+				return nil, err
+			}
+			newColl.Columns[node.ID] = newColHist
+		}
+	}
+	for id, idx := range coll.Indices {
+		_, ok := newColl.Indices[id]
+		if !ok {
+			newColl.Indices[id] = idx
+		}
+	}
+	for id, col := range coll.Columns {
+		_, ok := newColl.Columns[id]
+		if !ok {
+			newColl.Columns[id] = col
+		}
+	}
+	return newColl, nil
 }

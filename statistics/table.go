@@ -50,7 +50,7 @@ type Table struct {
 	name    string
 }
 
-// HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
+// HistColl is a collection of histogram. It collects enough information for plan to calculate the Selectivity.
 type HistColl struct {
 	PhysicalID int64
 	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
@@ -58,9 +58,9 @@ type HistColl struct {
 	HavePhysicalID bool
 	Columns        map[int64]*Column
 	Indices        map[int64]*Index
-	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
+	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the Selectivity in planner.
 	Idx2ColumnIDs map[int64][]int64
-	// ColID2IdxID maps the column id to index id whose first column is it. It's used to calculate the selectivity in planner.
+	// ColID2IdxID maps the column id to index id whose first column is it. It's used to calculate the Selectivity in planner.
 	ColID2IdxID map[int64]int64
 	Pseudo      bool
 	Count       int64
@@ -181,7 +181,7 @@ func (h *Handle) columnStatsFromStorage(row chunk.Row, table *Table, tableInfo *
 					ID:                histID,
 					NDV:               distinct,
 					NullCount:         nullCount,
-					tp:                &colInfo.FieldType,
+					Tp:                &colInfo.FieldType,
 					LastUpdateVersion: histVer,
 					TotColSize:        totColSize,
 				},
@@ -471,7 +471,7 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 }
 
 // GenerateHistCollFromColumnInfo generates a new HistColl whose ColID2IdxID and IdxID2ColIDs is built from the given parameter.
-func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) HistColl {
+func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, columns []*expression.Column) *HistColl {
 	newColHistMap := make(map[int64]*Column)
 	colInfoID2UniqueID := make(map[int64]int64)
 	colNames2UniqueID := make(map[string]int64)
@@ -511,7 +511,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(infos []*model.ColumnInfo, 
 		newIdxHistMap[idxHist.ID] = idxHist
 		idx2Columns[idxHist.ID] = ids
 	}
-	newColl := HistColl{
+	newColl := &HistColl{
 		PhysicalID:     coll.PhysicalID,
 		HavePhysicalID: coll.HavePhysicalID,
 		Pseudo:         coll.Pseudo,

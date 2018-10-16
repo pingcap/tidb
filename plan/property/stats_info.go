@@ -24,7 +24,7 @@ type StatsInfo struct {
 	RowCount    float64
 	Cardinality []float64
 
-	HistColl statistics.HistColl
+	HistColl *statistics.HistColl
 	// UsePseudoStats indicates whether the StatsInfo is calculated using the
 	// pseudo statistics on a table.
 	UsePseudoStats bool

@@ -41,6 +41,32 @@ func calcFraction(lower, upper, value float64) float64 {
 	return frac
 }
 
+func calcFloatRangeFraction(lower, upper, valLow, valHigh float64) float64 {
+	if upper <= lower {
+		return 0.5
+	}
+	if valHigh > upper {
+		valHigh = upper
+	}
+	if valLow < lower {
+		valLow = lower
+	}
+	return (valHigh - valLow) / (upper - lower)
+}
+
+func calcIntRangeFraction(lower, upper, valLow, valHigh float64) float64 {
+	if upper <= lower {
+		return 0.5
+	}
+	if valHigh > upper {
+		valHigh = upper
+	}
+	if valLow < lower {
+		valLow = lower
+	}
+	return (valHigh - valLow + 1) / (upper - lower + 1)
+}
+
 func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	switch value.Kind() {
 	case types.KindMysqlDecimal:
@@ -131,6 +157,21 @@ func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, 0))
 	case types.KindBytes, types.KindString:
 		return calcFraction(hg.scalars[index].lower, hg.scalars[index].upper, convertDatumToScalar(value, hg.scalars[index].commonPfxLen))
+	}
+	return 0.5
+}
+
+func (hg *Histogram) CalcRangeFraction(index int, valLow, valHigh *types.Datum) float64 {
+	lower, upper := hg.Bounds.GetRow(2*index), hg.Bounds.GetRow(2*index+1)
+	switch valLow.Kind() {
+	case types.KindFloat32:
+		return calcFloatRangeFraction(float64(lower.GetFloat32(0)), float64(upper.GetFloat32(0)), float64(valLow.GetFloat32()), float64(valHigh.GetFloat32()))
+	case types.KindFloat64:
+		return calcFloatRangeFraction(lower.GetFloat64(0), upper.GetFloat64(0), valLow.GetFloat64(), valHigh.GetFloat64())
+	case types.KindInt64:
+		return calcIntRangeFraction(float64(lower.GetInt64(0)), float64(upper.GetInt64(0)), float64(valLow.GetInt64()), float64(valHigh.GetInt64()))
+	case types.KindUint64:
+		return calcIntRangeFraction(float64(lower.GetUint64(0)), float64(upper.GetUint64(0)), float64(valLow.GetUint64()), float64(valHigh.GetUint64()))
 	}
 	return 0.5
 }

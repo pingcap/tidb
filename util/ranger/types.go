@@ -18,8 +18,10 @@ import (
 	"math"
 	"strings"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pkg/errors"
 )
 
@@ -93,6 +95,25 @@ func (ran *Range) String() string {
 		r = ")"
 	}
 	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
+}
+
+func (ran *Range) Encode(sc *stmtctx.StatementContext, lowBuffer, highBuffer []byte) ([]byte, []byte, error) {
+	var err error
+	lowBuffer, err = codec.EncodeKey(sc, lowBuffer[:0], ran.LowVal...)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ran.LowExclude {
+		lowBuffer = kv.Key(lowBuffer).PrefixNext()
+	}
+	highBuffer, err = codec.EncodeKey(sc, highBuffer[:0], ran.HighVal...)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ran.HighExclude {
+		highBuffer = kv.Key(highBuffer).PrefixNext()
+	}
+	return lowBuffer, highBuffer, nil
 }
 
 // PrefixEqualLen tells you how long the prefix of the range is a point.

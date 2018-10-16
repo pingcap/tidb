@@ -45,7 +45,7 @@ type feedback struct {
 	repeat int64
 }
 
-// QueryFeedback is used to represent the query feedback info. It contains the query's scan ranges and number of rows
+// QueryFeedback is used to represent the query feedback info. It contains the query's scan Ranges and number of rows
 // in each range.
 type QueryFeedback struct {
 	tableID  int64
@@ -78,7 +78,7 @@ func NewQueryFeedback(tableID int64, hist *Histogram, expected int64, desc bool)
 }
 
 var (
-	// MaxNumberOfRanges is the max number of ranges before split to collect feedback.
+	// MaxNumberOfRanges is the max number of Ranges before split to collect feedback.
 	MaxNumberOfRanges = 20
 	// FeedbackProbability is the probability to collect the feedback.
 	FeedbackProbability = 0.0
@@ -86,7 +86,7 @@ var (
 
 // CollectFeedback decides whether to collect the feedback. It returns false when:
 // 1: the histogram is nil or has no buckets;
-// 2: the number of scan ranges exceeds the limit because it may affect the performance;
+// 2: the number of scan Ranges exceeds the limit because it may affect the performance;
 // 3: it does not pass the probabilistic sampler.
 func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 	if q.hist == nil || q.hist.Len() == 0 {
@@ -100,7 +100,7 @@ func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 	return true
 }
 
-// DecodeToRanges decode the feedback to ranges.
+// DecodeToRanges decode the feedback to Ranges.
 func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 	ranges := make([]*ranger.Range, 0, len(q.feedback))
 	for _, val := range q.feedback {
@@ -158,7 +158,7 @@ func (q *QueryFeedback) decodeIntValues() *QueryFeedback {
 	return nq
 }
 
-// StoreRanges stores the ranges for update.
+// StoreRanges stores the Ranges for update.
 func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
 	q.feedback = make([]feedback, 0, len(ranges))
 	for _, ran := range ranges {
@@ -545,7 +545,7 @@ func UpdateCMSketch(c *CMSketch, eqFeedbacks []feedback) *CMSketch {
 }
 
 func buildNewHistogram(h *Histogram, buckets []bucket) *Histogram {
-	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.tp, len(buckets), h.TotColSize)
+	hist := NewHistogram(h.ID, h.NDV, h.NullCount, h.LastUpdateVersion, h.Tp, len(buckets), h.TotColSize)
 	preCount := int64(0)
 	for _, bkt := range buckets {
 		hist.AppendBucket(bkt.lower, bkt.upper, bkt.count+preCount, bkt.repeat)
@@ -561,7 +561,7 @@ type queryFeedback struct {
 	HashValues  []uint64
 	IndexRanges [][]byte
 	// Counts is the number of scan keys in each range. It first stores the count for `IntRanges`, `IndexRanges` or `ColumnRanges`.
-	// After that, it stores the ranges for `HashValues`.
+	// After that, it stores the Ranges for `HashValues`.
 	Counts       []int64
 	ColumnRanges [][]byte
 }
@@ -746,7 +746,7 @@ func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
 	if tablePseudo == false {
 		return nil
 	}
-	isIndex := q.hist.tp.Tp == mysql.TypeBlob
+	isIndex := q.hist.Tp.Tp == mysql.TypeBlob
 	id := q.hist.ID
 	if isIndex && (t.Indices[id] == nil || t.Indices[id].NotAccurate() == false) {
 		return nil
@@ -947,7 +947,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 	}
 	ranges, err := q.DecodeToRanges(true)
 	if err != nil {
-		log.Debug("decode feedback ranges failed: ", err)
+		log.Debug("decode feedback Ranges failed: ", err)
 		return nil
 	}
 	for i, ran := range ranges {
@@ -981,7 +981,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 			continue
 		}
 		if err != nil {
-			log.Debug("get row count by ranges failed: ", err)
+			log.Debug("get row count by Ranges failed: ", err)
 			continue
 		}
 
@@ -1016,10 +1016,10 @@ func (q *QueryFeedback) dumpRangeFeedback(h *Handle, ran *ranger.Range, rangeCou
 			return nil
 		}
 		if ran.LowVal[0].Kind() == types.KindMinNotNull {
-			ran.LowVal[0] = getMinValue(k, q.hist.tp)
+			ran.LowVal[0] = getMinValue(k, q.hist.Tp)
 		}
 		if ran.HighVal[0].Kind() == types.KindMaxValue {
-			ran.HighVal[0] = getMaxValue(k, q.hist.tp)
+			ran.HighVal[0] = getMaxValue(k, q.hist.Tp)
 		}
 	}
 	ranges := q.hist.SplitRange([]*ranger.Range{ran})

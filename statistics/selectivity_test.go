@@ -199,12 +199,12 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.Columns, ds.Schema().Columns)
 
-		ratio, err := histColl.Selectivity(ctx, sel.Conditions)
+		ratio, _, err := histColl.Selectivity(ctx, sel.Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 
 		histColl.Count *= 10
-		ratio, err = histColl.Selectivity(ctx, sel.Conditions)
+		ratio, _, err = histColl.Selectivity(ctx, sel.Conditions)
 		c.Assert(err, IsNil, comment)
 		c.Assert(math.Abs(ratio-tt.selectivity) < eps, IsTrue, Commentf("for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio))
 	}
@@ -307,10 +307,10 @@ func BenchmarkSelectivity(b *testing.B) {
 	defer file.Close()
 	pprof.StartCPUProfile(file)
 
-	b.Run("selectivity", func(b *testing.B) {
+	b.Run("Selectivity", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			_, err := statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
+			_, _, err := statsTbl.Selectivity(ctx, p.(plan.LogicalPlan).Children()[0].(*plan.LogicalSelection).Conditions)
 			c.Assert(err, IsNil)
 		}
 		b.ReportAllocs()

@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/plan/property"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -60,7 +61,7 @@ func (p *baseLogicalPlan) deriveStats() (*property.StatsInfo, error) {
 	return profile, nil
 }
 
-func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.StatsInfo {
+func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.StatsInfo, *statistics.HistColl) {
 	profile := &property.StatsInfo{
 		RowCount:       float64(ds.statisticTable.Count),
 		Cardinality:    make([]float64, len(ds.Columns)),
@@ -77,12 +78,20 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) *property.Stat
 		}
 	}
 	ds.stats = profile
-	selectivity, err := profile.HistColl.Selectivity(ds.ctx, conds)
+	selectivity, nodes, err := profile.HistColl.Selectivity(ds.ctx, conds)
+	log.Warnf("selectivity: %v", selectivity)
 	if err != nil {
 		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 		selectivity = selectionFactor
 	}
-	return profile.Scale(selectivity)
+	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 && ds.stats.HistColl != nil {
+		finalHist, err := ds.stats.HistColl.NewHistCollBySelectivity(ds.ctx.GetSessionVars().StmtCtx, nodes)
+		if err != nil {
+			log.Warnf("[stats-in-datasource]: An error happened: %v", err.Error())
+		}
+		return profile, finalHist
+	}
+	return profile.Scale(selectivity), nil
 }
 
 func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
@@ -90,7 +99,8 @@ func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
 	for i, expr := range ds.pushedDownConds {
 		ds.pushedDownConds[i] = expression.PushDownNot(nil, expr, false)
 	}
-	ds.stats = ds.getStatsByFilter(ds.pushedDownConds)
+	var finalHist *statistics.HistColl
+	ds.stats, finalHist = ds.getStatsByFilter(ds.pushedDownConds)
 	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			noIntervalRanges, err := ds.deriveTablePathStats(path)
@@ -115,6 +125,9 @@ func (ds *DataSource) deriveStats() (*property.StatsInfo, error) {
 			ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 			break
 		}
+	}
+	if ds.ctx.GetSessionVars().OptimizerSelectivityLevel >= 1 {
+		ds.stats.HistColl = finalHist
 	}
 	return ds.stats, nil
 }
