@@ -367,20 +367,23 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		innerJoinKeys = p.LeftJoinKeys
 		outerJoinKeys = p.RightJoinKeys
 	}
-	x, ok := innerChild.(*DataSource)
-	if !ok {
+	ds, isDataSource := innerChild.(*DataSource)
+	us, isUnionScan := innerChild.(*LogicalUnionScan)
+	if !isDataSource && !isUnionScan {
 		return nil
 	}
+	if isUnionScan {
+		ds = us.Children()[0].(*DataSource)
+	}
 	var tblPath *accessPath
-	for _, path := range x.possibleAccessPaths {
+	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			tblPath = path
 			break
 		}
 	}
-	if pkCol := x.getPKIsHandleCol(); pkCol != nil && tblPath != nil {
+	if pkCol := ds.getPKIsHandleCol(); pkCol != nil && tblPath != nil {
 		keyOff2IdxOff := make([]int, len(innerJoinKeys))
-		pkCol := x.getPKIsHandleCol()
 		pkMatched := false
 		for i, key := range innerJoinKeys {
 			if !key.Equal(nil, pkCol) {
@@ -391,7 +394,7 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 			keyOff2IdxOff[i] = 0
 		}
 		if pkMatched {
-			innerPlan := p.constructInnerTableScan(x, pkCol, outerJoinKeys)
+			innerPlan := p.constructInnerTableScan(ds, pkCol, outerJoinKeys, us)
 			// Since the primary key means one value corresponding to exact one row, this will always be a no worse one
 			// comparing to other index.
 			return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, nil, keyOff2IdxOff)
@@ -404,12 +407,12 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		remainedOfBest []expression.Expression
 		keyOff2IdxOff  []int
 	)
-	for _, path := range x.possibleAccessPaths {
+	for _, path := range ds.possibleAccessPaths {
 		if path.isTablePath {
 			continue
 		}
 		indexInfo := path.index
-		ranges, remained, tmpKeyOff2IdxOff := p.buildRangeForIndexJoin(indexInfo, x, innerJoinKeys)
+		ranges, remained, tmpKeyOff2IdxOff := p.buildRangeForIndexJoin(indexInfo, ds, innerJoinKeys)
 		// We choose the index by the number of used columns of the range, the much the better.
 		// Notice that there may be the cases like `t1.a=t2.a and b > 2 and b < 1`. So ranges can be nil though the conditions are valid.
 		// But obviously when the range is nil, we don't need index join.
@@ -422,20 +425,15 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		}
 	}
 	if bestIndexInfo != nil {
-		innerPlan := p.constructInnerIndexScan(x, bestIndexInfo, remainedOfBest, outerJoinKeys)
+		innerPlan := p.constructInnerIndexScan(ds, bestIndexInfo, remainedOfBest, outerJoinKeys, us)
 		return p.constructIndexJoin(prop, innerJoinKeys, outerJoinKeys, outerIdx, innerPlan, rangesOfBest, keyOff2IdxOff)
 	}
 	return nil
 }
 
 // constructInnerTableScan is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column) PhysicalPlan {
-	var ranges []*ranger.Range
-	if pk != nil {
-		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
-	} else {
-		ranges = ranger.FullIntRange(false)
-	}
+func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Column, outerJoinKeys []*expression.Column, us *LogicalUnionScan) PhysicalPlan {
+	ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
 		Columns:         ds.Columns,
@@ -464,11 +462,23 @@ func (p *LogicalJoin) constructInnerTableScan(ds *DataSource, pk *expression.Col
 	}
 	ts.addPushedDownSelection(copTask, ds.stats)
 	t := finishCopTask(ds.ctx, copTask)
-	return t.plan()
+	reader := t.plan()
+	return p.constructInnerUnionScan(us, reader)
+}
+
+func (p *LogicalJoin) constructInnerUnionScan(us *LogicalUnionScan, reader PhysicalPlan) PhysicalPlan {
+	if us == nil {
+		return reader
+	}
+	// Use `reader.stats` instead of `us.stats` because it should be more accurate. No need to specify
+	// childrenReqProps now since we have got reader already.
+	physicalUnionScan := PhysicalUnionScan{Conditions: us.conditions}.init(us.ctx, reader.statsInfo(), nil)
+	physicalUnionScan.SetChildren(reader)
+	return physicalUnionScan
 }
 
 // constructInnerIndexScan is specially used to construct the inner plan for PhysicalIndexJoin.
-func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, remainedConds []expression.Expression, outerJoinKeys []*expression.Column) PhysicalPlan {
+func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexInfo, remainedConds []expression.Expression, outerJoinKeys []*expression.Column, us *LogicalUnionScan) PhysicalPlan {
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
@@ -507,7 +517,8 @@ func (p *LogicalJoin) constructInnerIndexScan(ds *DataSource, idx *model.IndexIn
 	path := &accessPath{indexFilters: indexConds, tableFilters: tblConds, countAfterIndex: math.MaxFloat64}
 	is.addPushedDownSelection(cop, ds, math.MaxFloat64, path)
 	t := finishCopTask(ds.ctx, cop)
-	return t.plan()
+	reader := t.plan()
+	return p.constructInnerUnionScan(us, reader)
 }
 
 // buildRangeForIndexJoin checks whether this index can be used for building index join and return the range if this index is ok.

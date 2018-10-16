@@ -135,7 +135,8 @@ type Execute struct {
 	Plan      Plan
 }
 
-func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.InfoSchema) error {
+// OptimizePreparedPlan optimizes the prepared statement.
+func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := ctx.GetSessionVars()
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
@@ -191,7 +192,7 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			return plan, nil
 		}
 	}
-	p, err := Optimize(ctx, prepared.Stmt, is)
+	p, err := OptimizeAstNode(ctx, prepared.Stmt, is)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -409,11 +410,15 @@ type Explain struct {
 	StmtPlan       Plan
 	Rows           [][]string
 	explainedPlans map[int]bool
+	PrepareRows    func() error
+	Analyze        bool
+	ExecStmt       ast.StmtNode
+	ExecPlan       Plan
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
-func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, TaskType, indent string, isLastChild bool) {
-	e.prepareOperatorInfo(p, TaskType, indent, isLastChild)
+func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string, isLastChild bool) {
+	e.prepareOperatorInfo(p, taskType, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
 	// For every child we create a new sub-tree rooted by it.
@@ -422,7 +427,7 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, TaskType, indent string
 		if e.explainedPlans[child.ID()] {
 			continue
 		}
-		e.explainPlanInRowFormat(child.(PhysicalPlan), TaskType, childIndent, i == len(p.Children())-1)
+		e.explainPlanInRowFormat(child.(PhysicalPlan), taskType, childIndent, i == len(p.Children())-1)
 	}
 
 	switch copPlan := p.(type) {
@@ -438,10 +443,18 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, TaskType, indent string
 
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, task type, operator info, and the estemated row count.
-func (e *Explain) prepareOperatorInfo(p PhysicalPlan, TaskType string, indent string, isLastChild bool) {
+func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
-	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, TaskType, operatorInfo}
+	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
+	if e.Analyze {
+		runtimeStat := e.ctx.GetSessionVars().StmtCtx.RuntimeStats
+		if taskType == "cop" {
+			row = append(row, "") //TODO: wait collect resp from tikv
+		} else {
+			row = append(row, runtimeStat.GetRuntimeStat(p.ExplainID()).String())
+		}
+	}
 	e.Rows = append(e.Rows, row)
 }
 

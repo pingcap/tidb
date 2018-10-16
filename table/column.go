@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/charset"
@@ -291,6 +292,19 @@ func (c *Column) CheckNotNull(data types.Datum) error {
 	return nil
 }
 
+// HandleBadNull handles the bad null error.
+// If BadNullAsWarning is true, it will append the error as a warning, else return the error.
+func (c *Column) HandleBadNull(d types.Datum, sc *stmtctx.StatementContext) (types.Datum, error) {
+	if err := c.CheckNotNull(d); err != nil {
+		if sc.BadNullAsWarning {
+			sc.AppendWarning(err)
+			return GetZeroValue(c.ToInfo()), nil
+		}
+		return types.Datum{}, errors.Trace(err)
+	}
+	return d, nil
+}
+
 // IsPKHandleColumn checks if the column is primary key handle column.
 func (c *Column) IsPKHandleColumn(tbInfo *model.TableInfo) bool {
 	return mysql.HasPriKeyFlag(c.Flag) && tbInfo.PKIsHandle
@@ -348,6 +362,9 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo) (t
 	}
 	if mysql.HasAutoIncrementFlag(col.Flag) {
 		// Auto increment column doesn't has default value and we should not return error.
+		return GetZeroValue(col), nil
+	}
+	if col.IsGenerated() {
 		return types.Datum{}, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
