@@ -147,6 +147,10 @@ query-feedback-limit = 1024
 # row count in statistics of a table is greater than it.
 pseudo-estimate-ratio = 0.8
 
+# Force the priority of all statements in a specified priority.
+# The value could be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY" or "DELAYED".
+force-priority = "NO_PRIORITY"
+
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
 # Empty string means disable PROXY protocol, * means all networks.
@@ -228,8 +232,8 @@ commit-timeout = "41s"
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when
 # there are lots of conflicts between transactions.
-enabled = false
-capacity = 10240000
+enabled = true
+capacity = 2048000
 
 [binlog]
 

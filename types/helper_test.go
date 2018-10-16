@@ -16,8 +16,8 @@ package types
 import (
 	"strconv"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
+	"github.com/pkg/errors"
 )
 
 var _ = Suite(&testTypeHelperSuite{})

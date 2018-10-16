@@ -34,19 +34,19 @@ TiDB (The pronunciation is: /'taɪdiːbi:/ tai-D-B, etymology: titanium) is an o
 
     With TiDB, your data and applications are always on and continuously available, so your users are never disappointed.
 
-For more details, see [How we build TiDB](https://pingcap.github.io/blog/2016/10/17/how-we-build-tidb/).
+For more details, see [How we build TiDB](https://pingcap.com/blog/2016-10-17-how-we-build-tidb/).
 
 ## Adopters
 
-You can view the list of TiDB adopters [here](https://github.com/pingcap/docs/blob/master/adopters.md).
+You can view the list of TiDB adopters [here](https://pingcap.com/docs/adopters/).
 
 ## Roadmap
 
-Read the [Roadmap](https://github.com/pingcap/docs/blob/master/ROADMAP.md).
+Read the [Roadmap](https://pingcap.com/docs/ROADMAP).
 
 ## Quick start
 
-Read the [Quick Start](https://pingcap.com/doc-QUICKSTART).
+Read the [Quick Start](https://pingcap.com/docs/QUICKSTART).
 
 ## Documentation
 

@@ -16,7 +16,6 @@ package expression
 import (
 	"fmt"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -253,7 +253,7 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.
 		if err != nil {
 			return types.Duration{}, true, errors.Trace(err)
 		}
-		dur, err := types.ParseDuration(val, types.MaxFsp)
+		dur, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, val, types.MaxFsp)
 		if err != nil {
 			return types.Duration{}, true, errors.Trace(err)
 		}

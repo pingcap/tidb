@@ -199,7 +199,7 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	ctx := testNewContext(d2)
 
 	// d2 must not be owner.
-	d2.ownerManager.SetOwner(false)
+	d2.ownerManager.RetireOwner()
 
 	dbInfo := testSchemaInfo(c, d2, "test")
 	testCreateSchema(c, ctx, d2, dbInfo)

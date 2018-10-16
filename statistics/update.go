@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -198,7 +198,7 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	metrics.StatsInaccuracyRate.Observe(rate)
 	s.Lock()
 	defer s.Unlock()
-	isIndex := q.hist.isIndexHist()
+	isIndex := q.tp == indexType
 	s.rateMap.update(q.tableID, q.hist.ID, rate, isIndex)
 	if len(s.feedback) < MaxQueryFeedbackCount {
 		s.feedback = append(s.feedback, q)
@@ -364,7 +364,14 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 	var err error
 	var successCount int
 	for _, fb := range h.feedback {
-		err = h.dumpFeedbackToKV(fb)
+		if fb.tp == pkType {
+			err = h.dumpFeedbackToKV(fb)
+		} else {
+			t, ok := h.statsCache.Load().(statsCache)[fb.tableID]
+			if ok {
+				err = dumpFeedbackForIndex(h, fb, t)
+			}
+		}
 		if err != nil {
 			break
 		}
@@ -381,7 +388,7 @@ func (h *Handle) dumpFeedbackToKV(fb *QueryFeedback) error {
 		return nil
 	}
 	var isIndex int64
-	if fb.hist.isIndexHist() {
+	if fb.tp == indexType {
 		isIndex = 1
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_feedback (table_id, hist_id, is_index, feedback) values "+
@@ -415,9 +422,9 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 		}
 		tblStats := h.GetTableStats(table.Meta())
 		newTblStats := tblStats.copy()
-		if fb.hist.isIndexHist() {
+		if fb.tp == indexType {
 			idx, ok := tblStats.Indices[fb.hist.ID]
-			if !ok {
+			if !ok || idx.Histogram.Len() == 0 {
 				continue
 			}
 			newIdx := *idx
@@ -428,7 +435,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 			newTblStats.Indices[fb.hist.ID] = &newIdx
 		} else {
 			col, ok := tblStats.Columns[fb.hist.ID]
-			if !ok {
+			if !ok || col.Histogram.Len() == 0 {
 				continue
 			}
 			newCol := *col
@@ -528,14 +535,14 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 	var hist *Histogram
 	if isIndex == 1 {
 		idx, ok := tbl.Indices[histID]
-		if ok {
+		if ok && idx.Histogram.Len() > 0 {
 			idxHist := idx.Histogram
 			hist = &idxHist
 			cms = idx.CMSketch.copy()
 		}
 	} else {
 		col, ok := tbl.Columns[histID]
-		if ok {
+		if ok && col.Histogram.Len() > 0 {
 			colHist := col.Histogram
 			hist = &colHist
 		}
@@ -552,7 +559,7 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 		}
 	}
 	// Update the NDV of primary key column.
-	if table.Meta().PKIsHandle && isIndex == 0 {
+	if table.Meta().PKIsHandle && q.tp == pkType {
 		hist.NDV = int64(hist.totalRowCount())
 	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
@@ -601,12 +608,28 @@ func TableAnalyzed(tbl *Table) bool {
 	return false
 }
 
-// needAnalyzeTable checks if we need to analyze the table:
+// withinTimePeriod tests whether `now` is between `start` and `end`.
+func withinTimePeriod(start, end, now time.Time) bool {
+	// Converts to UTC and only keeps the hour and minute info.
+	start, end, now = start.UTC(), end.UTC(), now.UTC()
+	start = time.Date(0, 0, 0, start.Hour(), start.Minute(), 0, 0, time.UTC)
+	end = time.Date(0, 0, 0, end.Hour(), end.Minute(), 0, 0, time.UTC)
+	now = time.Date(0, 0, 0, now.Hour(), now.Minute(), 0, 0, time.UTC)
+	// for cases like from 00:00 to 06:00
+	if end.Sub(start) >= 0 {
+		return now.Sub(start) >= 0 && now.Sub(end) <= 0
+	}
+	// for cases like from 22:00 to 06:00
+	return now.Sub(end) <= 0 || now.Sub(start) >= 0
+}
+
+// NeedAnalyzeTable checks if we need to analyze the table:
 // 1. If the table has never been analyzed, we need to analyze it when it has
-//    not been modified for a time.
+//    not been modified for a while.
 // 2. If the table had been analyzed before, we need to analyze it when
 //    "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
-func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64) bool {
+// 3. The current time is between `start` and `end`.
+func NeedAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64, start, end, now time.Time) bool {
 	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		t := time.Unix(0, oracle.ExtractPhysical(tbl.Version)*int64(time.Millisecond))
@@ -616,23 +639,36 @@ func needAnalyzeTable(tbl *Table, limit time.Duration, autoAnalyzeRatio float64)
 	if autoAnalyzeRatio == 0 {
 		return false
 	}
-	return float64(tbl.ModifyCount)/float64(tbl.Count) > autoAnalyzeRatio
+	// No need to analyze it.
+	if float64(tbl.ModifyCount)/float64(tbl.Count) <= autoAnalyzeRatio {
+		return false
+	}
+	// Tests if current time is within the time period.
+	return withinTimePeriod(start, end, now)
 }
 
-const minAutoAnalyzeRatio = 0.3
+const (
+	minAutoAnalyzeRatio = 0.3
+)
 
-func (h *Handle) getAutoAnalyzeRatio() float64 {
-	sql := fmt.Sprintf("select variable_value from mysql.global_variables where variable_name = '%s'", variable.TiDBAutoAnalyzeRatio)
+func (h *Handle) getAutoAnalyzeParameters() map[string]string {
+	sql := fmt.Sprintf("select variable_name, variable_value from mysql.global_variables where variable_name in ('%s', '%s', '%s')",
+		variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
 	rows, _, err := h.restrictedExec.ExecRestrictedSQL(nil, sql)
 	if err != nil {
-		return variable.DefAutoAnalyzeRatio
+		return map[string]string{}
 	}
-	autoAnalyzeRatio := variable.DefAutoAnalyzeRatio
-	if len(rows) > 0 {
-		autoAnalyzeRatio, err = strconv.ParseFloat(rows[0].GetString(0), 64)
-		if err != nil {
-			return variable.DefAutoAnalyzeRatio
-		}
+	parameters := make(map[string]string)
+	for _, row := range rows {
+		parameters[row.GetString(0)] = row.GetString(1)
+	}
+	return parameters
+}
+
+func parseAutoAnalyzeRatio(ratio string) float64 {
+	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
+	if err != nil {
+		return variable.DefAutoAnalyzeRatio
 	}
 	if autoAnalyzeRatio > 0 {
 		autoAnalyzeRatio = math.Max(autoAnalyzeRatio, minAutoAnalyzeRatio)
@@ -640,37 +676,81 @@ func (h *Handle) getAutoAnalyzeRatio() float64 {
 	return autoAnalyzeRatio
 }
 
+func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
+	if start == "" {
+		start = variable.DefAutoAnalyzeStartTime
+	}
+	if end == "" {
+		end = variable.DefAutoAnalyzeEndTime
+	}
+	s, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, start, time.UTC)
+	if err != nil {
+		return s, s, errors.Trace(err)
+	}
+	e, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, end, time.UTC)
+	if err != nil {
+		return s, e, errors.Trace(err)
+	}
+	return s, e, nil
+}
+
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) error {
 	dbs := is.AllSchemaNames()
-	autoAnalyzeRatio := h.getAutoAnalyzeRatio()
+	parameters := h.getAutoAnalyzeParameters()
+	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
+	if err != nil {
+		return errors.Trace(err)
+	}
 	for _, db := range dbs {
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
-			statsTbl := h.GetTableStats(tblInfo)
-			if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
+			pi := tblInfo.GetPartitionInfo()
+			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
+			if pi == nil {
+				statsTbl := h.GetTableStats(tblInfo)
+				sql := fmt.Sprintf("analyze table %s", tblName)
+				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				if analyzed {
+					return err
+				}
 				continue
 			}
-			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
-			if needAnalyzeTable(statsTbl, 20*h.Lease, autoAnalyzeRatio) {
-				sql := fmt.Sprintf("analyze table %s", tblName)
-				log.Infof("[stats] auto analyze table %s now", tblName)
-				return errors.Trace(h.execAutoAnalyze(sql))
-			}
-			for _, idx := range tblInfo.Indices {
-				if idx.State != model.StatePublic {
-					continue
+			for _, def := range pi.Definitions {
+				sql := fmt.Sprintf("analyze table %s partition `%s`", tblName, def.Name.O)
+				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
+				analyzed, err := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
+				if analyzed {
+					return err
 				}
-				if _, ok := statsTbl.Indices[idx.ID]; !ok {
-					sql := fmt.Sprintf("analyze table %s index `%s`", tblName, idx.Name.O)
-					log.Infof("[stats] auto analyze index `%s` for table %s now", idx.Name.O, tblName)
-					return errors.Trace(h.execAutoAnalyze(sql))
-				}
+				continue
 			}
 		}
 	}
 	return nil
+}
+
+func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *Table, start, end time.Time, ratio float64, sql string) (bool, error) {
+	if statsTbl.Pseudo || statsTbl.Count < AutoAnalyzeMinCnt {
+		return false, nil
+	}
+	if NeedAnalyzeTable(statsTbl, 20*h.Lease, ratio, start, end, time.Now()) {
+		log.Infof("[stats] auto %s now", sql)
+		return true, h.execAutoAnalyze(sql)
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.State != model.StatePublic {
+			continue
+		}
+		if _, ok := statsTbl.Indices[idx.ID]; !ok {
+			sql = fmt.Sprintf("%s index `%s`", sql, idx.Name.O)
+			log.Infof("[stats] auto %s now", sql)
+			return true, h.execAutoAnalyze(sql)
+		}
+	}
+	return false, nil
 }
 
 func (h *Handle) execAutoAnalyze(sql string) error {

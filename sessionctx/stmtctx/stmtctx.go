@@ -60,6 +60,7 @@ type StatementContext struct {
 	UseCache               bool
 	PadCharToFullLength    bool
 	BatchCheck             bool
+	InNullRejectCheck      bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {
@@ -76,6 +77,7 @@ type StatementContext struct {
 	Priority     mysql.PriorityEnum
 	NotFillCache bool
 	MemTracker   *memory.Tracker
+	RuntimeStats execdetails.RuntimeStats
 	TableIDs     []int64
 	IndexIDs     []int64
 }

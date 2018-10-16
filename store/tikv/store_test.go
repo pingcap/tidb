@@ -17,14 +17,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/pd/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -160,6 +160,16 @@ func (c *mockPDClient) GetStore(ctx context.Context, storeID uint64) (*metapb.St
 		return nil, errors.Trace(errStopped)
 	}
 	return c.client.GetStore(ctx, storeID)
+}
+
+func (c *mockPDClient) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
+	c.RLock()
+	defer c.Unlock()
+
+	if c.stop {
+		return nil, errors.Trace(errStopped)
+	}
+	return c.client.GetAllStores(ctx)
 }
 
 func (c *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {

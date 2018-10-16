@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
@@ -32,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pkg/errors"
 )
 
 func (s *testEvaluatorSuite) TestDate(c *C) {
@@ -171,11 +172,113 @@ func (s *testEvaluatorSuite) TestDate(c *C) {
 		YearWeek   interface{}
 	}{
 		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
+		{"0000-00-00 00:00:00", 0, 0, nil, 0, nil, nil, nil, nil, nil, nil, nil},
+		{"0000-00-00", 0, 0, nil, 0, nil, nil, nil, nil, nil, nil, nil},
+	}
+
+	dtblNil := tblToDtbl(tblNil)
+	for _, t := range dtblNil {
+		fc := funcs[ast.Year]
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Year"][0])
+
+		fc = funcs[ast.Month]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Month"][0])
+
+		fc = funcs[ast.MonthName]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["MonthName"][0])
+
+		fc = funcs[ast.DayOfMonth]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["DayOfMonth"][0])
+
+		fc = funcs[ast.DayOfWeek]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["DayOfWeek"][0])
+
+		fc = funcs[ast.DayOfYear]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["DayOfYear"][0])
+
+		fc = funcs[ast.Weekday]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		c.Assert(f, NotNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["WeekDay"][0])
+
+		fc = funcs[ast.DayName]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["DayName"][0])
+
+		fc = funcs[ast.Week]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["Week"][0])
+
+		fc = funcs[ast.WeekOfYear]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["WeekOfYear"][0])
+
+		fc = funcs[ast.YearWeek]
+		f, err = fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		v, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(v, testutil.DatumEquals, t["YearWeek"][0])
+	}
+
+	// test nil with 'NO_ZERO_DATE' set in sql_mode
+	tblNil = []struct {
+		Input      interface{}
+		Year       interface{}
+		Month      interface{}
+		MonthName  interface{}
+		DayOfMonth interface{}
+		DayOfWeek  interface{}
+		DayOfYear  interface{}
+		WeekDay    interface{}
+		DayName    interface{}
+		Week       interface{}
+		WeekOfYear interface{}
+		YearWeek   interface{}
+	}{
+		{nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 		{"0000-00-00 00:00:00", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 		{"0000-00-00", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil},
 	}
 
-	dtblNil := tblToDtbl(tblNil)
+	dtblNil = tblToDtbl(tblNil)
+	s.ctx.GetSessionVars().SetSystemVar("sql_mode", "NO_ZERO_DATE")
 	for _, t := range dtblNil {
 		fc := funcs[ast.Year]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
@@ -792,7 +895,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 		{"-110:00:00", "1 02:00:00", "-84:00:00"},
 	}
 	for _, t := range tbl {
-		dur, err := types.ParseDuration(t.Input, types.GetFsp(t.Input))
+		dur, err := types.ParseDuration(s.ctx.GetSessionVars().StmtCtx, t.Input, types.GetFsp(t.Input))
 		c.Assert(err, IsNil)
 		tmpInput := types.NewDurationDatum(dur)
 		tmpInputDuration := types.NewStringDatum(t.InputDuration)
@@ -859,7 +962,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 		{"235959", "00:00:01", "23:59:58"},
 	}
 	for _, t := range tbl {
-		dur, err := types.ParseDuration(t.Input, types.GetFsp(t.Input))
+		dur, err := types.ParseDuration(s.ctx.GetSessionVars().StmtCtx, t.Input, types.GetFsp(t.Input))
 		c.Assert(err, IsNil)
 		tmpInput := types.NewDurationDatum(dur)
 		tmpInputDuration := types.NewStringDatum(t.InputDuration)
@@ -895,7 +998,7 @@ func (s *testEvaluatorSuite) TestSysDate(c *C) {
 	fc := funcs[ast.Sysdate]
 
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	ctx.GetSessionVars().StmtCtx.TimeZone = timeutil.SystemLocation()
 	timezones := []types.Datum{types.NewDatum(1234), types.NewDatum(0)}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.

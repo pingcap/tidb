@@ -18,10 +18,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -192,20 +192,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 
 	// latches enabled
-	var bypassLatch bool
-	if option := txn.us.GetOption(kv.BypassLatch); option != nil {
-		bypassLatch = option.(bool)
-	}
-	// When bypassLatch flag is true, commit directly.
-	if bypassLatch {
-		err = committer.executeAndWriteFinishBinlog(ctx)
-		if err == nil {
-			txn.store.txnLatches.RefreshCommitTS(committer.keys, committer.commitTS)
-		}
-		log.Debug("[kv]", connID, " txnLatches enabled while txn not retryable, 2pc directly:", err)
-		return errors.Trace(err)
-	}
-
 	// for transactions which need to acquire latches
 	lock := txn.store.txnLatches.Lock(committer.startTS, committer.keys)
 	defer txn.store.txnLatches.UnLock(lock)

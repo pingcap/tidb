@@ -86,18 +86,43 @@ func foldConstant(expr Expression) (Expression, bool) {
 		}
 
 		args := x.GetArgs()
-		canFold := true
+		sc := x.GetCtx().GetSessionVars().StmtCtx
+		argIsConst := make([]bool, len(args))
+		hasNullArg := false
+		allConstArg := true
 		isDeferredConst := false
 		for i := 0; i < len(args); i++ {
 			foldedArg, isDeferred := foldConstant(args[i])
 			x.GetArgs()[i] = foldedArg
-			_, conOK := foldedArg.(*Constant)
-			if !conOK {
-				canFold = false
-			}
+			con, conOK := foldedArg.(*Constant)
+			argIsConst[i] = conOK
+			allConstArg = allConstArg && conOK
+			hasNullArg = hasNullArg || (conOK && con.Value.IsNull())
 			isDeferredConst = isDeferredConst || isDeferred
 		}
-		if !canFold {
+		if !allConstArg {
+			if !hasNullArg || !sc.InNullRejectCheck || x.FuncName.L == ast.NullEQ {
+				return expr, isDeferredConst
+			}
+			constArgs := make([]Expression, len(args))
+			for i, arg := range args {
+				if argIsConst[i] {
+					constArgs[i] = arg
+				} else {
+					constArgs[i] = One
+				}
+			}
+			dummyScalarFunc := NewFunctionInternal(x.GetCtx(), x.FuncName.L, x.GetType(), constArgs...)
+			value, err := dummyScalarFunc.Eval(chunk.Row{})
+			if err != nil {
+				return expr, isDeferredConst
+			}
+			if value.IsNull() {
+				return &Constant{Value: value, RetType: x.RetType}, false
+			}
+			if isTrue, err := value.ToBool(sc); err == nil && isTrue == 0 {
+				return &Constant{Value: value, RetType: x.RetType}, false
+			}
 			return expr, isDeferredConst
 		}
 		value, err := x.Eval(chunk.Row{})

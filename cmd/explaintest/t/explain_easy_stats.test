@@ -48,5 +48,12 @@ explain select 1 in (select c2 from t2) from t1;
 explain format="dot" select 1 in (select c2 from t2) from t1;
 
 explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 1;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 1, 0;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 LIMIT 0, 1;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 ORDER BY a;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b;
+explain select * from index_prune WHERE a = 1010010404050976781 AND b = 26467085526790 GROUP BY b ORDER BY a limit 1;
 
 drop table if exists t1, t2, t3, index_prune;

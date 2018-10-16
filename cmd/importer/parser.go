@@ -18,14 +18,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
-	_ "github.com/pingcap/tidb/plan"
+	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 

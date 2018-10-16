@@ -19,11 +19,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 // SchemaState is the state for schema elements.
@@ -96,11 +96,15 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 	if c.Tp == mysql.TypeBit {
 		// For mysql.TypeBit type, the default value storage format must be a string.
 		// Other value such as int must convert to string format first.
+		// The mysql.TypeBit type supports the null default value.
+		if value == nil {
+			return nil
+		}
 		if v, ok := value.(string); ok {
 			c.DefaultValueBit = []byte(v)
 			return nil
 		}
-		return types.ErrInvalidDefault.GenByArgs(c.Name)
+		return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 	}
 	return nil
 }
@@ -165,6 +169,8 @@ type TableInfo struct {
 	ShardRowIDBits uint64
 
 	Partition *PartitionInfo `json:"partition"`
+
+	Compression string `json:"compression"`
 }
 
 // GetPartitionInfo returns the partition information.

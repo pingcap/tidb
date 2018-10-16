@@ -122,6 +122,7 @@ const (
 	ComDaemon
 	ComBinlogDumpGtid
 	ComResetConnection
+	ComEnd
 )
 
 // Client information.
@@ -276,6 +277,42 @@ var Priv2UserCol = map[PrivilegeType]string{
 	AlterPriv:      "Alter_priv",
 	ExecutePriv:    "Execute_priv",
 	IndexPriv:      "Index_priv",
+}
+
+// Command2Str is the command information to command name.
+var Command2Str = map[byte]string{
+	ComSleep:            "Sleep",
+	ComQuit:             "Quit",
+	ComInitDB:           "Init DB",
+	ComQuery:            "Query",
+	ComFieldList:        "Field List",
+	ComCreateDB:         "Create DB",
+	ComDropDB:           "Drop DB",
+	ComRefresh:          "Refresh",
+	ComShutdown:         "Shutdown",
+	ComStatistics:       "Statistics",
+	ComProcessInfo:      "Processlist",
+	ComConnect:          "Connect",
+	ComProcessKill:      "Kill",
+	ComDebug:            "Debug",
+	ComPing:             "Ping",
+	ComTime:             "Time",
+	ComDelayedInsert:    "Delayed Insert",
+	ComChangeUser:       "Change User",
+	ComBinlogDump:       "Binlog Dump",
+	ComTableDump:        "Table Dump",
+	ComConnectOut:       "Connect out",
+	ComRegisterSlave:    "Register Slave",
+	ComStmtPrepare:      "Prepare",
+	ComStmtExecute:      "Execute",
+	ComStmtSendLongData: "Long Data",
+	ComStmtClose:        "Close stmt",
+	ComStmtReset:        "Reset stmt",
+	ComSetOption:        "Set option",
+	ComStmtFetch:        "Fetch",
+	ComDaemon:           "Daemon",
+	ComBinlogDumpGtid:   "Binlog Dump",
+	ComResetConnection:  "Reset connect",
 }
 
 // Col2PrivType is the privilege tables column name to privilege type.
@@ -626,6 +663,31 @@ const (
 	HighPriority
 	DelayedPriority
 )
+
+// Priority2Str is used to convert the statement priority to string.
+var Priority2Str = map[PriorityEnum]string{
+	NoPriority:      "NO_PRIORITY",
+	LowPriority:     "LOW_PRIORITY",
+	HighPriority:    "HIGH_PRIORITY",
+	DelayedPriority: "DELAYED",
+}
+
+// Str2Priority is used to convert a string to a priority.
+func Str2Priority(val string) PriorityEnum {
+	val = strings.ToUpper(val)
+	switch val {
+	case "NO_PRIORITY":
+		return NoPriority
+	case "HIGH_PRIORITY":
+		return HighPriority
+	case "LOW_PRIORITY":
+		return LowPriority
+	case "DELAYED":
+		return DelayedPriority
+	default:
+		return NoPriority
+	}
+}
 
 // PrimaryKeyName defines primary key name.
 const (

@@ -26,7 +26,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -485,7 +485,7 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	if !mysql.HasUnsignedFlag(b.tp.Flag) {
+	if !mysql.HasUnsignedFlag(b.tp.Flag) && !mysql.HasUnsignedFlag(b.args[0].GetType().Flag) {
 		res = types.NewDecFromInt(val)
 	} else if b.inUnion && val < 0 {
 		res = &types.MyDecimal{}
@@ -840,7 +840,7 @@ func (b *builtinCastRealAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(strconv.FormatFloat(val, 'f', -1, 64), b.tp.Decimal)
+	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, strconv.FormatFloat(val, 'f', -1, 64), b.tp.Decimal)
 	return res, false, errors.Trace(err)
 }
 
@@ -902,7 +902,7 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row chunk.Row) (res int64, isNull b
 	}
 
 	if types.ErrOverflow.Equal(err) {
-		warnErr := types.ErrTruncatedWrongVal.GenByArgs("DECIMAL", val)
+		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", val)
 		err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
 	}
 
@@ -968,7 +968,7 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(row chunk.Row) (res types.Time, i
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc, string(val.ToString()), b.tp.Tp, b.tp.Decimal)
+	res, err = types.ParseTimeFromFloatString(sc, string(val.ToString()), b.tp.Tp, b.tp.Decimal)
 	if err != nil {
 		return res, false, errors.Trace(err)
 	}
@@ -994,7 +994,7 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types
 	if isNull || err != nil {
 		return res, false, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(string(val.ToString()), b.tp.Decimal)
+	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, string(val.ToString()), b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
 		// ZeroDuration of error ErrTruncatedWrongVal needs to be considered NULL.
@@ -1053,7 +1053,7 @@ func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string
 			uval := uint64(math.MaxUint64)
 			res = int64(uval)
 		}
-		warnErr := types.ErrTruncatedWrongVal.GenByArgs("INTEGER", origStr)
+		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", origStr)
 		err = sc.HandleOverflow(origErr, warnErr)
 	}
 	return
@@ -1199,7 +1199,7 @@ func (b *builtinCastStringAsDurationSig) evalDuration(row chunk.Row) (res types.
 	if isNull || err != nil {
 		return res, isNull, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(val, b.tp.Decimal)
+	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, val, b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		sc := b.ctx.GetSessionVars().StmtCtx
 		err = sc.HandleTruncate(err)
@@ -1617,7 +1617,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(row chunk.Row) (res types.Du
 	if err != nil {
 		return res, false, errors.Trace(err)
 	}
-	res, err = types.ParseDuration(s, b.tp.Decimal)
+	res, err = types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, s, b.tp.Decimal)
 	if types.ErrTruncatedWrongVal.Equal(err) {
 		sc := b.ctx.GetSessionVars().StmtCtx
 		err = sc.HandleTruncate(err)

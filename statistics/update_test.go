@@ -20,12 +20,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -405,6 +406,44 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(hg.Len(), Equals, 3)
 }
 
+func (s *testStatsUpdateSuite) TestAutoUpdatePartition(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
+	testKit.MustExec("analyze table t")
+
+	statistics.AutoAnalyzeMinCnt = 0
+	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+	}()
+
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	h := do.StatsHandle()
+
+	h.Update(is)
+	stats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	c.Assert(stats.Count, Equals, int64(0))
+
+	testKit.MustExec("insert into t values (1)")
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.Update(is)
+	err = h.HandleAutoAnalyze(is)
+	c.Assert(err, IsNil)
+	stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	c.Assert(stats.Count, Equals, int64(1))
+	c.Assert(stats.ModifyCount, Equals, int64(0))
+}
+
 func (s *testStatsUpdateSuite) TestTableAnalyzed(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -659,8 +698,18 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		c.Assert(len(feedback), Equals, 0)
 	}
 
-	// Test that the outdated feedback won't cause panic.
+	// Test that after drop stats, the feedback won't cause panic.
 	statistics.FeedbackProbability = 1
+	for _, t := range tests {
+		testKit.MustQuery(t.sql)
+	}
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	testKit.MustExec("drop stats t")
+	c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+
+	// Test that the outdated feedback won't cause panic.
+	testKit.MustExec("analyze table t")
 	for _, t := range tests {
 		testKit.MustQuery(t.sql)
 	}
@@ -843,6 +892,10 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 
 	// Test that it won't cause panic after update.
 	testKit.MustQuery("select * from t use index(idx) where b > 0")
+
+	// Test that after drop stats, it won't cause panic.
+	testKit.MustExec("drop stats t")
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 }
 
 type logHook struct {
@@ -868,17 +921,14 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 	oriMinLogCount := statistics.MinLogScanCount
 	oriMinError := statistics.MinLogErrorRate
 	oriLevel := log.GetLevel()
-	oriBucketNum := executor.GetMaxBucketSizeForTest()
 	oriLease := s.do.StatsHandle().Lease
 	defer func() {
 		statistics.FeedbackProbability = oriProbability
 		statistics.MinLogScanCount = oriMinLogCount
 		statistics.MinLogErrorRate = oriMinError
-		executor.SetMaxBucketSizeForTest(oriBucketNum)
 		s.do.StatsHandle().Lease = oriLease
 		log.SetLevel(oriLevel)
 	}()
-	executor.SetMaxBucketSizeForTest(4)
 	statistics.FeedbackProbability = 1
 	statistics.MinLogScanCount = 0
 	statistics.MinLogErrorRate = 0
@@ -890,7 +940,7 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
-	testKit.MustExec("analyze table t")
+	testKit.MustExec("analyze table t with 4 buckets")
 	tests := []struct {
 		sql    string
 		result string
@@ -923,5 +973,186 @@ func (s *testStatsUpdateSuite) TestLogDetailedInfo(c *C) {
 		s.hook.results = ""
 		testKit.MustQuery(t.sql)
 		c.Assert(s.hook.results, Equals, t.result)
+	}
+}
+
+func (s *testStatsUpdateSuite) TestNeedAnalyzeTable(c *C) {
+	columns := map[int64]*statistics.Column{}
+	columns[1] = &statistics.Column{Count: 1}
+	tests := []struct {
+		tbl    *statistics.Table
+		ratio  float64
+		limit  time.Duration
+		start  string
+		end    string
+		now    string
+		result bool
+	}{
+		// table was never analyzed and has reach the limit
+		{
+			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			limit:  0,
+			ratio:  0,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: true,
+		},
+		// table was never analyzed but has not reach the limit
+		{
+			tbl:    &statistics.Table{Version: oracle.EncodeTSO(oracle.GetPhysical(time.Now()))},
+			limit:  time.Hour,
+			ratio:  0,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: false,
+		},
+		// table was already analyzed but auto analyze is disabled
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: false,
+		},
+		// table was already analyzed and but modify count is small
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: false,
+		},
+		// table was already analyzed and but not within time period
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:02 +0800",
+			result: false,
+		},
+		// table was already analyzed and but not within time period
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "22:00 +0800",
+			end:    "06:00 +0800",
+			now:    "10:00 +0800",
+			result: false,
+		},
+		// table was already analyzed and within time period
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "00:00 +0800",
+			end:    "00:01 +0800",
+			now:    "00:00 +0800",
+			result: true,
+		},
+		// table was already analyzed and within time period
+		{
+			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, Count: 1}},
+			limit:  0,
+			ratio:  0.3,
+			start:  "22:00 +0800",
+			end:    "06:00 +0800",
+			now:    "23:00 +0800",
+			result: true,
+		},
+	}
+	for _, test := range tests {
+		start, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.start, time.UTC)
+		c.Assert(err, IsNil)
+		end, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.end, time.UTC)
+		c.Assert(err, IsNil)
+		now, err := time.ParseInLocation(variable.AnalyzeFullTimeFormat, test.now, time.UTC)
+		c.Assert(err, IsNil)
+		c.Assert(statistics.NeedAnalyzeTable(test.tbl, test.limit, test.ratio, start, end, now), Equals, test.result)
+	}
+}
+
+func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability = 1
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), c bigint(64), index idx_ab(a,b), index idx_ac(a,c), index idx_b(b))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (1, %d, %d)", i, i))
+	}
+	h := s.do.StatsHandle()
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	testKit.MustExec("analyze table t with 3 buckets")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (1, %d, %d)", i, i))
+	}
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	is := s.do.InfoSchema()
+	h.Update(is)
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	tests := []struct {
+		sql     string
+		hist    string
+		idxCols int
+		rangeID int64
+		idxID   int64
+		eqCount uint32
+	}{
+		{
+			sql: "select * from t use index(idx_ab) where a = 1 and b < 21",
+			hist: "index:3 ndv:20\n" +
+				"num: 16 lower_bound: -inf upper_bound: 7 repeats: 0\n" +
+				"num: 16 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
+				"num: 8 lower_bound: 16 upper_bound: 21 repeats: 0",
+			rangeID: tblInfo.Indices[2].ID,
+			idxID:   tblInfo.Indices[0].ID,
+			idxCols: 1,
+			eqCount: 39,
+		},
+		{
+			sql: "select * from t use index(idx_ac) where a = 1 and c < 21",
+			hist: "column:3 ndv:20 totColSize:20\n" +
+				"num: 13 lower_bound: -9223372036854775808 upper_bound: 6 repeats: 0\n" +
+				"num: 13 lower_bound: 7 upper_bound: 13 repeats: 0\n" +
+				"num: 12 lower_bound: 14 upper_bound: 21 repeats: 0",
+			rangeID: tblInfo.Columns[2].ID,
+			idxID:   tblInfo.Indices[1].ID,
+			idxCols: 0,
+			eqCount: 35,
+		},
+	}
+	for i, t := range tests {
+		testKit.MustQuery(t.sql)
+		c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+		h.Update(is)
+		tbl := h.GetTableStats(tblInfo)
+		if t.idxCols == 0 {
+			c.Assert(tbl.Columns[t.rangeID].ToString(0), Equals, tests[i].hist)
+		} else {
+			c.Assert(tbl.Indices[t.rangeID].ToString(1), Equals, tests[i].hist)
+		}
+		val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+		c.Assert(err, IsNil)
+		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, t.eqCount)
 	}
 }

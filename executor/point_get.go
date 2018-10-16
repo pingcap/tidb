@@ -14,12 +14,11 @@
 package executor
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -27,10 +26,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
-func (b *executorBuilder) buildPointGet(p *plan.PointGetPlan) Executor {
+func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 	return &PointGetExecutor{
 		ctx:     b.ctx,
 		schema:  p.Schema(),
@@ -102,7 +102,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 	if len(val) == 0 {
 		if e.idxInfo != nil {
-			return kv.ErrNotExist.Gen("inconsistent extra index %s, handle %d not found in table",
+			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
 				e.idxInfo.Name.O, e.handle)
 		}
 		return nil
@@ -143,6 +143,9 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if colVals == nil {
+		colVals = make([][]byte, len(colIDs))
+	}
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for id, offset := range colIDs {
 		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(e.schema.Columns[offset].RetType.Flag) {
@@ -153,8 +156,7 @@ func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) 
 			chk.AppendInt64(offset, e.handle)
 			continue
 		}
-		colVal := colVals[offset]
-		if len(colVal) == 0 {
+		if len(colVals[offset]) == 0 {
 			colInfo := getColInfoByID(e.tblInfo, id)
 			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
 			if err1 != nil {
@@ -195,6 +197,6 @@ func (e *PointGetExecutor) retTypes() []*types.FieldType {
 	return e.tps
 }
 
-func (e *PointGetExecutor) newChunk() *chunk.Chunk {
-	return chunk.NewChunkWithCapacity(e.retTypes(), 1)
+func (e *PointGetExecutor) newFirstChunk() *chunk.Chunk {
+	return chunk.New(e.retTypes(), 1, 1)
 }
