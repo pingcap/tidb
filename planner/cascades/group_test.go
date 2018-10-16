@@ -14,8 +14,6 @@
 package cascades
 
 import (
-	// "container/list"
-	//"fmt"
 	"testing"
 
 	. "github.com/pingcap/check"
