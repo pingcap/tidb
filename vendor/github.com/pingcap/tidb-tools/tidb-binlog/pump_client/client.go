@@ -224,7 +224,7 @@ func (c *PumpsClient) WriteBinlog(binlog *pb.Binlog) error {
 			// every pump can retry 5 times, if retry 5 times and still failed, set this pump unavaliable, and choose a new pump.
 			if (retryTime+1)%5 == 0 {
 				c.setPumpAvaliable(pump, false)
-				pump = c.Selector.Next(pump, binlog, retryTime/5+1)
+				pump = c.Selector.Next(binlog, retryTime/5+1)
 				Logger.Debugf("[pumps client] avaliable pumps: %v, write binlog choose pump %v", c.Pumps.AvaliablePumps, pump)
 			}
 

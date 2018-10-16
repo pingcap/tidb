@@ -41,7 +41,7 @@ type PumpSelector interface {
 	Select(*pb.Binlog) *PumpStatus
 
 	// returns the next pump.
-	Next(*PumpStatus, *pb.Binlog, int) *PumpStatus
+	Next(*pb.Binlog, int) *PumpStatus
 }
 
 // HashSelector select a pump by hash.
@@ -106,7 +106,7 @@ func (h *HashSelector) Select(binlog *pb.Binlog) *PumpStatus {
 }
 
 // Next implement PumpSelector.Next. Only for Prewrite binlog.
-func (h *HashSelector) Next(pump *PumpStatus, binlog *pb.Binlog, retryTime int) *PumpStatus {
+func (h *HashSelector) Next(binlog *pb.Binlog, retryTime int) *PumpStatus {
 	h.Lock()
 	defer h.Unlock()
 
@@ -116,7 +116,7 @@ func (h *HashSelector) Next(pump *PumpStatus, binlog *pb.Binlog, retryTime int) 
 
 	nextPump := h.Pumps[(hashTs(binlog.StartTs)+int(retryTime))%len(h.Pumps)]
 	if binlog.Tp == pb.BinlogType_Prewrite {
-		h.TsMap[binlog.StartTs] = pump
+		h.TsMap[binlog.StartTs] = nextPump
 	}
 
 	return nextPump
@@ -199,7 +199,7 @@ func (r *RangeSelector) Select(binlog *pb.Binlog) *PumpStatus {
 }
 
 // Next implement PumpSelector.Next. Only for Prewrite binlog.
-func (r *RangeSelector) Next(pump *PumpStatus, binlog *pb.Binlog, retryTime int) *PumpStatus {
+func (r *RangeSelector) Next(binlog *pb.Binlog, retryTime int) *PumpStatus {
 	r.Lock()
 	defer func() {
 		if len(r.Pumps) != 0 {
@@ -218,8 +218,7 @@ func (r *RangeSelector) Next(pump *PumpStatus, binlog *pb.Binlog, retryTime int)
 
 	nextPump := r.Pumps[r.Offset]
 	if binlog.Tp == pb.BinlogType_Prewrite {
-		r.Offset++
-		r.TsMap[binlog.StartTs] = pump
+		r.TsMap[binlog.StartTs] = nextPump
 	}
 
 	return nextPump
@@ -245,7 +244,7 @@ func (s *ScoreSelector) Select(binlog *pb.Binlog) *PumpStatus {
 }
 
 // Next implement PumpSelector.Next. Only for Prewrite binlog.
-func (s *ScoreSelector) Next(pump *PumpStatus, binlog *pb.Binlog, retryTime int) *PumpStatus {
+func (s *ScoreSelector) Next(binlog *pb.Binlog, retryTime int) *PumpStatus {
 	// TODO
 	return nil
 }

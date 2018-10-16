@@ -80,4 +80,4 @@ ignored = ["github.com/coreos/etcd/etcdserver", "github.com/coreos/etcd/mvcc", "
 
 [[constraint]]
   name = "github.com/pingcap/tidb-tools"
-  revision = "ff0ddbf51b5744cca6d426b892a5dac5aa97a014"
+  revision = "8b1ff6f60738cf3fb5638684b3e74040ed87221f"
