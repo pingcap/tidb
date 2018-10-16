@@ -93,42 +93,65 @@ func calculateSum(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.
 	}
 }
 
-// calculateSumSquare adds v^2 to sum
-func calculateSumSquare(sc *stmtctx.StatementContext, sum, v types.Datum) (data types.Datum, err error) {
-	// for stddev and stddev_samp calculation
-	// stddev and stddev_samp use decimal for integer and decimal type, use float for others
+// calculateVariance merge two variance
+func calculateVariance(sc *stmtctx.StatementContext, count1, count2 int64, variance1, variance2, sum1, sum2 types.Datum) (retVariance, retSum types.Datum, err error) {
+	// for variance calculation
+	// variance use decimal for integer and decimal type, use float for others
 	// see https://dev.mysql.com/doc/refman/5.7/en/group-by-functions.html
 
-	switch v.Kind() {
+	switch variance1.Kind() {
 	case types.KindNull:
 	case types.KindInt64, types.KindUint64, types.KindMysqlDecimal:
-		var d *types.MyDecimal
-		d, err = v.ToDecimal(sc)
-		dd := new(types.MyDecimal)
-		types.DecimalMul(d, d, dd)
-		if err == nil {
-			data = types.NewDecimalDatum(dd)
+		var v1, s1, v2, s2 *types.MyDecimal
+		var variance, sum *types.MyDecimal
+		v1, err = variance1.ToDecimal(sc)
+		if err != nil {
+			return
 		}
+		s1, err = sum1.ToDecimal(sc)
+		if err != nil {
+			return
+		}
+		v2, err = variance2.ToDecimal(sc)
+		if err != nil {
+			return
+		}
+		s2, err = sum2.ToDecimal(sc)
+		if err != nil {
+			return
+		}
+		variance, sum, err = types.CalculateMergeDecimal(count1, count2, s1, s2, v1, v2)
+		if err != nil {
+			return
+		}
+		retVariance = types.NewDecimalDatum(variance)
+		retSum = types.NewDecimalDatum(sum)
 	default:
-		var f float64
-		f, err = v.ToFloat64(sc)
-		if err == nil {
-			data = types.NewFloat64Datum(f * f)
+		var v1, s1, v2, s2 float64
+		var variance, sum float64
+		v1, err = variance1.ToFloat64(sc)
+		if err != nil {
+			return
 		}
+		s1, err = sum1.ToFloat64(sc)
+		if err != nil {
+			return
+		}
+		v2, err = variance2.ToFloat64(sc)
+		if err != nil {
+			return
+		}
+		s2, err = sum2.ToFloat64(sc)
+		if err != nil {
+			return
+		}
+		variance, sum, err = types.CalculateMergeFloat64(count1, count2, s1, s2, v1, v2)
+		if err != nil {
+			return
+		}
+		retVariance = types.NewFloat64Datum(variance)
+		retSum = types.NewFloat64Datum(sum)
 	}
 
-	if err != nil {
-		return data, errors.Trace(err)
-	}
-	if data.IsNull() {
-		return sum, nil
-	}
-	switch sum.Kind() {
-	case types.KindNull:
-		return data, nil
-	case types.KindFloat64, types.KindMysqlDecimal:
-		return types.ComputePlus(sum, data)
-	default:
-		return data, errors.Errorf("invalid value %v for aggregate", sum.Kind())
-	}
+	return
 }

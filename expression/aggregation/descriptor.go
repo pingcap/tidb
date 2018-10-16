@@ -281,9 +281,9 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 	case ast.AggFuncBitAnd:
 		return &bitAndFunction{aggFunction: aggFunc}
 	case ast.AggFuncStd, ast.AggFuncStddev, ast.AggFuncStddevPop:
-		return &stddevFunction{aggFunction: aggFunc}
+		return &stddevPopFunction{baseVarianceFunction{aggFunction: aggFunc}}
 	case ast.AggFuncStddevSamp:
-		return &stddevSampFunction{aggFunction: aggFunc}
+		return &stddevSampFunction{baseVarianceFunction{aggFunction: aggFunc}}
 	default:
 		panic("unsupported agg function")
 	}

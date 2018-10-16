@@ -46,7 +46,8 @@ const (
 	wordMax       = wordBase - 1
 	notFixedDec   = 31
 
-	DivFracIncr = 4
+	DivFracIncr  = 4
+	SqrtFracIncr = 4
 
 	// ModeHalfEven rounds normally.
 	ModeHalfEven RoundMode = "ModeHalfEven"

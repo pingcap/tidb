@@ -428,8 +428,6 @@ import (
 	now			"NOW"
 	position		"POSITION"
 	recent			"RECENT"
-  std				"STD"
-	stddev			"STDDEV"
 	stddevPop		"STDDEV_POP"
 	stddevSamp		"STDDEV_SAMP"
 	subDate			"SUBDATE"
@@ -477,8 +475,6 @@ import (
 	builtinSubstring
 	builtinSum
 	builtinSysDate
-	builtinStd
-	builtinStddev
 	builtinStddevPop
 	builtinStddevSamp
 	builtinTrim
@@ -2837,7 +2833,7 @@ TiDBKeyword:
 
 NotKeywordToken:
  "ADDDATE" | "BIT_AND" | "BIT_OR" | "BIT_XOR" | "CAST" | "COPY" | "COUNT" | "CURTIME" | "DATE_ADD" | "DATE_SUB" | "EXTRACT" | "GET_FORMAT" | "GROUP_CONCAT"
-| "INPLACE" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "STD" | "STDDEV" | "STDDEV_POP" | "STDDEV_SAMP" 
+| "INPLACE" |"MIN" | "MAX" | "MAX_EXECUTION_TIME" | "NOW" | "RECENT" | "POSITION" | "SUBDATE" | "SUBSTRING" | "SUM" | "STDDEV_POP" | "STDDEV_SAMP" 
 | "TIMESTAMPADD" | "TIMESTAMPDIFF" | "TRIM" 
 
 /************************************************************************************
@@ -3801,14 +3797,6 @@ SumExpr:
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
 |	builtinSum '(' BuggyDefaultFalseDistinctOpt Expression ')'
-	{
-		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
-	}
-|	builtinStd '(' BuggyDefaultFalseDistinctOpt Expression ')'
-	{
-		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
-	}
-|	builtinStddev '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
 		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}

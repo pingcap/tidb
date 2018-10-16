@@ -82,23 +82,14 @@ var (
 	// All the AggFunc implementations for "BIT_AND" are listed here.
 	_ AggFunc = (*bitAndUint64)(nil)
 
-	// All the AggFunc implementations for "STDDEV" are listed here.
-	_ AggFunc = (*stddevOriginal4Decimal)(nil)
-	_ AggFunc = (*stddevOriginal4DistinctDecimal)(nil)
-	_ AggFunc = (*stddevPartial4Decimal)(nil)
+	// All the AggFunc implementations for "STDDEV_POP" & "STDDEV_SAMP" & "VAR_POP" & "VAR_SAMP" are listed here.
+	_ AggFunc = (*varianceOriginal4Decimal)(nil)
+	_ AggFunc = (*varianceOriginal4DistinctDecimal)(nil)
+	_ AggFunc = (*variancePartial4Decimal)(nil)
 
-	_ AggFunc = (*stddevOriginal4Float64)(nil)
-	_ AggFunc = (*stddevOriginal4DistinctFloat64)(nil)
-	_ AggFunc = (*stddevPartial4Float64)(nil)
-
-	// All the AggFunc implementations for "STDDEV_SAMP" are listed here.
-	_ AggFunc = (*stddevSampOriginal4Decimal)(nil)
-	_ AggFunc = (*stddevSampOriginal4DistinctDecimal)(nil)
-	_ AggFunc = (*stddevSampPartial4Decimal)(nil)
-
-	_ AggFunc = (*stddevSampOriginal4Float64)(nil)
-	_ AggFunc = (*stddevSampOriginal4DistinctFloat64)(nil)
-	_ AggFunc = (*stddevSampPartial4Float64)(nil)
+	_ AggFunc = (*varianceOriginal4Float64)(nil)
+	_ AggFunc = (*varianceOriginal4DistinctFloat64)(nil)
+	_ AggFunc = (*variancePartial4Float64)(nil)
 )
 
 // PartialResult represents data structure to store the partial result for the

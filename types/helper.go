@@ -192,3 +192,89 @@ func strToInt(str string) (int64, error) {
 	}
 	return int64(r), err
 }
+
+// CalculateMergeFloat64 merge variance and partialCount > 0 and mergeCount > 0.
+// NOTE: mergeCount and mergeSum do not include partialCount and partialSum yet.
+//
+// Evaluate the variance using the algorithm described by Chan, Golub, and LeVeque in
+// "Algorithms for computing the sample variance: analysis and recommendations"
+// The American Statistician, 37 (1983) pp. 242--247.
+//
+// variance = variance1 + variance2 + n/(m*(m+n)) * pow(((m/n)*t1 - t2),2)
+//
+// where:
+// - variance is sum[(x-avg)^2] (this is actually n times the variance) and is updated at every step.
+// - n is the count of elements in chunk1
+// - m is the count of elements in chunk2
+// - t1 = sum of elements in chunk1,
+// - t2 = sum of elements in chunk2.
+//
+// This algorithm was proven to be numerically stable by J.L. Barlow in
+// "Error analysis of a pairwise summation algorithm to compute sample variance"
+// Numer. Math, 58 (1991) pp. 583--590
+func CalculateMergeFloat64(partialCount int64, mergeCount int64, partialSum float64, mergeSum float64, partialVariance float64, mergeVariance float64) (float64, float64, error) {
+	doublePartialCount, doubleMergeCount := float64(partialCount), float64(mergeCount)
+	t := (doublePartialCount/doubleMergeCount)*mergeSum - partialSum
+	return mergeVariance + partialVariance + (doubleMergeCount/doublePartialCount/(doubleMergeCount+doublePartialCount))*t*t, partialSum + mergeSum, nil
+}
+
+// CalculateMergeDecimal merge variance and partialCount > 0 and mergeCount > 0.
+// NOTE: mergeCount and mergeSum do not include partialCount and partialSum yet.
+func CalculateMergeDecimal(partialCount int64, mergeCount int64, partialSum *MyDecimal, mergeSum *MyDecimal, partialVariance *MyDecimal, mergeVariance *MyDecimal) (variance *MyDecimal, sum *MyDecimal, err error) {
+	err = DecimalAdd(partialSum, mergeSum, sum)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+
+	decimalPartialCount, decimalMergeCount := NewDecFromInt(partialCount), NewDecFromInt(mergeCount)
+	divCount := new(MyDecimal)
+	err = DecimalDiv(decimalPartialCount, decimalMergeCount, divCount, DivFracIncr)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	addCount := new(MyDecimal)
+	err = DecimalAdd(decimalPartialCount, decimalMergeCount, addCount)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	doubleDivCount := new(MyDecimal)
+	err = DecimalMul(divCount, divCount, doubleDivCount)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	mgDivPt := new(MyDecimal)
+	err = DecimalDiv(decimalMergeCount, decimalPartialCount, mgDivPt, DivFracIncr)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	t2 := new(MyDecimal)
+	err = DecimalDiv(mgDivPt, addCount, t2, DivFracIncr)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	t2MulDouble := new(MyDecimal)
+	err = DecimalMul(t2, doubleDivCount, t2MulDouble)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	addVariance := new(MyDecimal)
+	err = DecimalAdd(partialVariance, mergeVariance, addVariance)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+	err = DecimalAdd(addVariance, t2MulDouble, variance)
+	if err != nil {
+		err = errors.Trace(err)
+		return
+	}
+
+	return
+}
