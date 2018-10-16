@@ -2097,7 +2097,7 @@ func (s *testSuite) TestDeferConstraintCheckForInsert(c *C) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t;create table t (i int key);`)
 	tk.MustExec(`insert t values (1);`)
-	tk.MustExec(`set tidb_defer_constraint_check = 0;`)
+	tk.MustExec(`set tidb_constraint_check_in_place = 1;`)
 	tk.MustExec(`begin;`)
 	_, err := tk.Exec(`insert t values (1);`)
 	c.Assert(err, NotNil)
