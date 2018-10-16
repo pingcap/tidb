@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
-	"github.com/juju/errors"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl/util"
@@ -39,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/terror"
+	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"github.com/twinj/uuid"
 	"golang.org/x/net/context"
@@ -369,7 +370,15 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		d.workers[addIdxWorker] = newWorker(addIdxWorker, d.store, ctxPool)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
-			go worker.start(d.ddlCtx)
+			w := worker
+			go tidbutil.WithRecovery(
+				func() { w.start(d.ddlCtx) },
+				func(r interface{}) {
+					if r != nil {
+						log.Errorf("[ddl-%s] ddl %s meet panic", w, d.uuid)
+						metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
+					}
+				})
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
 
 			// When the start function is called, we will send a fake job to let worker
@@ -447,6 +456,9 @@ func checkJobMaxInterval(job *model.Job) time.Duration {
 	if job.Type == model.ActionAddIndex {
 		return 3 * time.Second
 	}
+	if job.Type == model.ActionCreateTable || job.Type == model.ActionCreateSchema {
+		return 500 * time.Millisecond
+	}
 	return 1 * time.Second
 }
 
@@ -484,7 +496,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	jobID := job.ID
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
-	// But we use etcd to speed up, normally it takes less than 1s now, so we use 1s or 3s as the max value.
+	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
 	ticker := time.NewTicker(chooseLeaseTime(10*d.lease, checkJobMaxInterval(job)))
 	startTime := time.Now()
 	metrics.JobsGauge.WithLabelValues(job.Type.String()).Inc()

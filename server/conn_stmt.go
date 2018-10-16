@@ -39,11 +39,12 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -217,6 +218,11 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch")
 	}
+	sql := ""
+	if prepared, ok := cc.ctx.GetStatement(int(stmtID)).(*TiDBStatement); ok {
+		sql = prepared.sql
+	}
+	cc.ctx.SetProcessInfo(sql, time.Now(), mysql.ComStmtExecute)
 	rs := stmt.GetResultSet()
 	if rs == nil {
 		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
@@ -432,7 +438,7 @@ func parseStmtArgs(args []interface{}, boundParams [][]byte, nullBitmap, paramTy
 			}
 			continue
 		default:
-			err = errUnknownFieldType.Gen("stmt unknown field type %d", tp)
+			err = errUnknownFieldType.GenWithStack("stmt unknown field type %d", tp)
 			return
 		}
 	}
@@ -536,7 +542,7 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 	return cc.writeOK()
 }
 
-// See https://dev.mysql.com/doc/internals/en/com-set-option.html
+// handleSetOption refer to https://dev.mysql.com/doc/internals/en/com-set-option.html
 func (cc *clientConn) handleSetOption(data []byte) (err error) {
 	if len(data) < 2 {
 		return mysql.ErrMalformPacket

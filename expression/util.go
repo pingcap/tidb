@@ -19,7 +19,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pkg/errors"
 )
 
 // Filter the input expressions, append the results to result.
@@ -372,6 +372,46 @@ func extractFiltersFromDNF(ctx sessionctx.Context, dnfFunc *ScalarFunction) ([]E
 	return extractedExpr, ComposeDNFCondition(ctx, newDNFItems...)
 }
 
+// DeriveRelaxedFiltersFromDNF given a DNF expression, derive a relaxed DNF expression which only contains columns
+// in specified schema; the derived expression is a superset of original expression, i.e, any tuple satisfying
+// the original expression must satisfy the derived expression. Return nil when the derived expression is universal set.
+// A running example is: for schema of t1, `(t1.a=1 and t2.a=1) or (t1.a=2 and t2.a=2)` would be derived as
+// `t1.a=1 or t1.a=2`, while `t1.a=1 or t2.a=1` would get nil.
+func DeriveRelaxedFiltersFromDNF(expr Expression, schema *Schema) Expression {
+	sf, ok := expr.(*ScalarFunction)
+	if !ok || sf.FuncName.L != ast.LogicOr {
+		return nil
+	}
+	ctx := sf.GetCtx()
+	dnfItems := FlattenDNFConditions(sf)
+	newDNFItems := make([]Expression, 0, len(dnfItems))
+	for _, dnfItem := range dnfItems {
+		cnfItems := SplitCNFItems(dnfItem)
+		newCNFItems := make([]Expression, 0, len(cnfItems))
+		for _, cnfItem := range cnfItems {
+			if itemSF, ok := cnfItem.(*ScalarFunction); ok && itemSF.FuncName.L == ast.LogicOr {
+				relaxedCNFItem := DeriveRelaxedFiltersFromDNF(cnfItem, schema)
+				if relaxedCNFItem != nil {
+					newCNFItems = append(newCNFItems, relaxedCNFItem)
+				}
+				// If relaxed expression for embedded DNF is universal set, just drop this CNF item
+				continue
+			}
+			// This cnfItem must be simple expression now
+			// If it cannot be fully covered by schema, just drop this CNF item
+			if ExprFromSchema(cnfItem, schema) {
+				newCNFItems = append(newCNFItems, cnfItem)
+			}
+		}
+		// If this DNF item involves no column of specified schema, the relaxed expression must be universal set
+		if len(newCNFItems) == 0 {
+			return nil
+		}
+		newDNFItems = append(newDNFItems, ComposeCNFCondition(ctx, newCNFItems...))
+	}
+	return ComposeDNFCondition(ctx, newDNFItems...)
+}
+
 // GetRowLen gets the length if the func is row, returns 1 if not row.
 func GetRowLen(e Expression) int {
 	if f, ok := e.(*ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
@@ -384,7 +424,7 @@ func GetRowLen(e Expression) int {
 func CheckArgsNotMultiColumnRow(args ...Expression) error {
 	for _, arg := range args {
 		if GetRowLen(arg) != 1 {
-			return ErrOperandColumns.GenByArgs(1)
+			return ErrOperandColumns.GenWithStackByArgs(1)
 		}
 	}
 	return nil

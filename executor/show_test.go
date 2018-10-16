@@ -18,20 +18,19 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/juju/errors"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -100,6 +99,37 @@ func (s *testSuite) TestShow(c *C) {
 			"  `c3` mediumint(8) UNSIGNED DEFAULT NULL,\n" +
 			"  `c4` int(10) UNSIGNED DEFAULT NULL,\n" +
 			"  `c5` bigint(20) UNSIGNED DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	// Issue #7665
+	tk.MustExec("drop table if exists `decimalschema`")
+	testSQL = "create table `decimalschema` (`c1` decimal);"
+	tk.MustExec(testSQL)
+	testSQL = "show create table decimalschema"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
+			"  `c1` decimal(11,0) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
+	for i, r := range row {
+		c.Check(r, Equals, expectedRow[i])
+	}
+
+	tk.MustExec("drop table if exists `decimalschema`")
+	testSQL = "create table `decimalschema` (`c1` decimal(15));"
+	tk.MustExec(testSQL)
+	testSQL = "show create table decimalschema"
+	result = tk.MustQuery(testSQL)
+	c.Check(result.Rows(), HasLen, 1)
+	row = result.Rows()[0]
+	expectedRow = []interface{}{
+		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
+			"  `c1` decimal(15,0) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
@@ -360,6 +390,15 @@ func (s *testSuite) TestShow(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION p0 VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION p1 VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION p2 VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
 	))
 
+	// Test show create table compression type.
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`CREATE TABLE t1 (c1 INT) COMPRESSION="zlib";`)
+	tk.MustQuery("show create table t1").Check(testutil.RowsWithSep("|",
+		"t1 CREATE TABLE `t1` (\n"+
+			"  `c1` int(11) DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMPRESSION='zlib'",
+	))
+
 	// Test show create table year type
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y));`)
@@ -429,31 +468,8 @@ type mockSessionManager struct {
 	session.Session
 }
 
-// ShowProcessList implements the SessionManager.ShowProcessList interface.
-func (msm *mockSessionManager) ShowProcessList() map[uint64]util.ProcessInfo {
-	ps := msm.ShowProcess()
-	return map[uint64]util.ProcessInfo{ps.ID: ps}
-}
-
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
-}
-
-func (s *testSuite) TestShowFullProcessList(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("select 1") // for tk.Se init
-
-	se := tk.Se
-	se.SetSessionManager(&mockSessionManager{se})
-
-	fullSQL := "show                                                                                        full processlist"
-	simpSQL := "show                                                                                        processlist"
-
-	cols := []int{4, 5, 6, 7} // columns to check: Command, Time, State, Info
-	tk.MustQuery(fullSQL).CheckAt(cols, testutil.RowsWithSep("|", "Query|0|2|"+fullSQL))
-	tk.MustQuery(simpSQL).CheckAt(cols, testutil.RowsWithSep("|", "Query|0|2|"+simpSQL[:100]))
-
-	se.SetSessionManager(nil) // reset sm so other tests won't use this
 }
 
 type stats struct {
@@ -516,9 +532,9 @@ func (s *testSuite) TestShowErrors(c *C) {
 func (s *testSuite) TestIssue3641(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("show tables;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 	_, err = tk.Exec("show table status;")
-	c.Assert(err.Error(), Equals, plan.ErrNoDB.Error())
+	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
 }
 
 // TestShow2 is moved from session_test
@@ -606,11 +622,24 @@ func (s *testSuite) TestShowTableStatus(c *C) {
  		partition by range(a)
  		( partition p0 values less than (10),
 		  partition p1 values less than (20),
-    	  partition p2 values less than (maxvalue)
+		  partition p2 values less than (maxvalue)
   		);`)
 	rs, err = tk.Exec("show table status from test like 'tp';")
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Assert(errors.ErrorStack(err), Equals, "")
 	c.Assert(rows[0].GetString(16), Equals, "partitioned")
+}
+
+func (s *testSuite) TestShowSlow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	// The test result is volatile, because
+	// 1. Slow queries is stored in domain, which may be affected by other tests.
+	// 2. Collecting slow queries is a asynchronous process, check immediately may not get the expected result.
+	// 3. Make slow query like "select sleep(1)" would slow the CI.
+	// So, we just cover the code but do not check the result.
+	tk.MustQuery(`admin show slow recent 3`)
+	tk.MustQuery(`admin show slow top 3`)
+	tk.MustQuery(`admin show slow top internal 3`)
+	tk.MustQuery(`admin show slow top all 3`)
 }

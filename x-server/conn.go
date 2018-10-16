@@ -17,9 +17,9 @@ import (
 	"io"
 	"net"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 

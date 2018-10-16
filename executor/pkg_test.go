@@ -7,7 +7,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -29,7 +29,7 @@ type MockExec struct {
 func (m *MockExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	colTypes := m.retTypes()
-	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < m.maxChunkSize; m.curRowIdx++ {
+	for ; m.curRowIdx < len(m.Rows) && chk.NumRows() < chk.Capacity(); m.curRowIdx++ {
 		curRow := m.Rows[m.curRowIdx]
 		for i := 0; i < curRow.Len(); i++ {
 			curDatum := curRow.ToRow().GetDatum(i, colTypes[i])
@@ -80,7 +80,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	outerFilter := expression.NewFunctionInternal(sctx, ast.LT, types.NewFieldType(mysql.TypeTiny), col0, con)
 	innerFilter := outerFilter.Clone()
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
-	joiner := newJoiner(sctx, plan.InnerJoin, false,
+	joiner := newJoiner(sctx, plannercore.InnerJoin, false,
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, outerExec.retTypes(), innerExec.retTypes())
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
@@ -91,10 +91,10 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		innerFilter:  []expression.Expression{innerFilter},
 		joiner:       joiner,
 	}
-	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.maxChunkSize)
-	join.innerChunk = innerExec.newChunk()
-	join.outerChunk = outerExec.newChunk()
-	joinChk := join.newChunk()
+	join.innerList = chunk.NewList(innerExec.retTypes(), innerExec.initCap, innerExec.maxChunkSize)
+	join.innerChunk = innerExec.newFirstChunk()
+	join.outerChunk = outerExec.newFirstChunk()
+	joinChk := join.newFirstChunk()
 	it := chunk.NewIterator4Chunk(joinChk)
 	for rowIdx := 1; ; {
 		err := join.Next(ctx, joinChk)

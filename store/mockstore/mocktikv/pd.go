@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/pd-client"
+	"github.com/pingcap/pd/client"
 	"golang.org/x/net/context"
 )
 
@@ -94,6 +94,10 @@ func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store,
 	}
 	store := c.cluster.GetStore(storeID)
 	return store, nil
+}
+
+func (c *pdClient) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
+	panic("unimplemented")
 }
 
 func (c *pdClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {

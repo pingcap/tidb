@@ -13,6 +13,12 @@
 
 package variable
 
+import (
+	"os"
+
+	"github.com/pingcap/tidb/mysql"
+)
+
 /*
 	Steps to add a new TiDB specific system variable:
 
@@ -152,6 +158,9 @@ const (
 	// tidb_max_chunk_capacity is used to control the max chunk size during query execution.
 	TiDBMaxChunkSize = "tidb_max_chunk_size"
 
+	// tidb_enable_cascades_planner is used to control whether to enable the cascades planner.
+	TiDBEnableCascadesPlanner = "tidb_enable_cascades_planner"
+
 	// tidb_skip_utf8_check skips the UTF8 validate process, validate UTF8 has performance cost, if we can make sure
 	// the input string values are valid, we can skip the check.
 	TiDBSkipUTF8Check = "tidb_skip_utf8_check"
@@ -181,6 +190,14 @@ const (
 	// tidb_ddl_reorg_priority defines the operations priority of adding indices.
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
+
+	// tidb_force_priority defines the operations priority of all statements.
+	// It can be "NO_PRIORITY", "LOW_PRIORITY", "HIGH_PRIORITY", "DELAYED"
+	TiDBForcePriority = "tidb_force_priority"
+
+	// tidb_enable_radix_join indicates to use radix hash join algorithm to execute
+	// HashJoin.
+	TiDBEnableRadixJoin = "tidb_enable_radix_join"
 )
 
 // Default TiDB system variable values.
@@ -220,13 +237,16 @@ const (
 	DefTiDBDDLReorgWorkerCount       = 16
 	DefTiDBHashAggPartialConcurrency = 4
 	DefTiDBHashAggFinalConcurrency   = 4
+	DefTiDBForcePriority             = mysql.NoPriority
+	DefTiDBUseRadixJoin              = false
 )
 
 // Process global variables.
 var (
 	ProcessGeneralLog      uint32
-	ddlReorgWorkerCounter  int32 = DefTiDBDDLReorgWorkerCount
-	maxDDLReorgWorkerCount int32 = 128
-	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold uint32 = 300
+	ddlReorgWorkerCounter  int32  = DefTiDBDDLReorgWorkerCount
+	maxDDLReorgWorkerCount int32  = 128
+	DDLSlowOprThreshold    uint32 = 300 // DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
+	ForcePriority                 = int32(DefTiDBForcePriority)
+	ServerHostname, _             = os.Hostname()
 )

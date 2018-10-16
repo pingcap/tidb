@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -277,11 +277,8 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 	defer terror.Call(rs.Close)
 
 	fs := rs.Fields()
+	chk := rs.NewChunk()
 	for {
-		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
-		// The result will reference memory in the chunk, so the chunk must not be reused
-		// here, otherwise some werid bug will happen!
-		chk := rs.NewChunk()
 		err = rs.Next(context.TODO(), chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -296,6 +293,10 @@ func (p *MySQLPrivilege) loadTable(sctx sessionctx.Context, sql string,
 				return errors.Trace(err)
 			}
 		}
+		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
+		// The result will reference memory in the chunk, so the chunk must not be reused
+		// here, otherwise some werid bug will happen!
+		chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
 	}
 }
 
@@ -316,7 +317,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(row chunk.Row, fs []*ast.ResultField
 			}
 			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
-				return errInvalidPrivilegeType.Gen("Unknown Privilege Type!")
+				return errInvalidPrivilegeType.GenWithStack("Unknown Privilege Type!")
 			}
 			value.Privileges |= priv
 		}
@@ -343,7 +344,7 @@ func (p *MySQLPrivilege) decodeDBTableRow(row chunk.Row, fs []*ast.ResultField) 
 			}
 			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
-				return errInvalidPrivilegeType.Gen("Unknown Privilege Type!")
+				return errInvalidPrivilegeType.GenWithStack("Unknown Privilege Type!")
 			}
 			value.Privileges |= priv
 		}

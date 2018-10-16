@@ -14,11 +14,13 @@
 package executor
 
 import (
-	"github.com/juju/errors"
+	"time"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
 
@@ -179,7 +181,7 @@ func (t *mergeJoinInnerTable) reallocReaderResult() {
 	// Create a new Chunk and append it to "resourceQueue" if there is no more
 	// available chunk in "resourceQueue".
 	if len(t.resourceQueue) == 0 {
-		newChunk := t.reader.newChunk()
+		newChunk := t.reader.newFirstChunk()
 		t.memTracker.Consume(newChunk.MemoryUsage())
 		t.resourceQueue = append(t.resourceQueue, newChunk)
 	}
@@ -214,7 +216,7 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 
 	e.childrenResults = make([]*chunk.Chunk, 0, len(e.children))
 	for _, child := range e.children {
-		e.childrenResults = append(e.childrenResults, child.newChunk())
+		e.childrenResults = append(e.childrenResults, child.newFirstChunk())
 	}
 
 	e.innerTable.memTracker = memory.NewTracker("innerTable", -1)
@@ -261,6 +263,10 @@ func (e *MergeJoinExec) prepare(ctx context.Context, chk *chunk.Chunk) error {
 
 // Next implements the Executor Next interface.
 func (e *MergeJoinExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStat != nil {
+		start := time.Now()
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
 	if !e.prepared {
 		if err := e.prepare(ctx, chk); err != nil {

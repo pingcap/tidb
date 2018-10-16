@@ -137,11 +137,11 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "default_storage_engine", "InnoDB"},
 	{ScopeNone, "ft_query_expansion_limit", "20"},
 	{ScopeGlobal, MaxConnectErrors, "100"},
-	{ScopeGlobal, "sync_binlog", "0"},
+	{ScopeGlobal, SyncBinlog, "0"},
 	{ScopeNone, "max_digest_length", "1024"},
 	{ScopeNone, "innodb_force_load_corrupted", "OFF"},
 	{ScopeNone, "performance_schema_max_table_handles", "4000"},
-	{ScopeGlobal, "innodb_fast_shutdown", "1"},
+	{ScopeGlobal, InnodbFastShutdown, "1"},
 	{ScopeNone, "ft_max_word_len", "84"},
 	{ScopeGlobal, "log_backward_compatible_user_definitions", ""},
 	{ScopeNone, "lc_messages_dir", "/usr/local/mysql-5.6.25-osx10.8-x86_64/share/"},
@@ -246,7 +246,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "myisam_mmap_size", "18446744073709551615"},
 	{ScopeGlobal, "init_slave", ""},
 	{ScopeNone, "innodb_buffer_pool_instances", "8"},
-	{ScopeGlobal | ScopeSession, "block_encryption_mode", "aes-128-ecb"},
+	{ScopeGlobal | ScopeSession, BlockEncryptionMode, "aes-128-ecb"},
 	{ScopeGlobal | ScopeSession, "max_length_for_sort_data", "1024"},
 	{ScopeNone, "character_set_system", "utf8"},
 	{ScopeGlobal | ScopeSession, "interactive_timeout", "28800"},
@@ -287,7 +287,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "thread_cache_size", "9"},
 	{ScopeGlobal, "log_slow_admin_statements", "OFF"},
 	{ScopeNone, "innodb_checksums", "ON"},
-	{ScopeNone, "hostname", "localhost"},
+	{ScopeNone, "hostname", ServerHostname},
 	{ScopeGlobal | ScopeSession, "auto_increment_offset", "1"},
 	{ScopeNone, "ft_stopword_file", "(built-in)"},
 	{ScopeGlobal, "innodb_max_dirty_pages_pct_lwm", "0"},
@@ -452,7 +452,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_api_enable_mdl", "OFF"},
 	{ScopeGlobal, "binlog_cache_size", "32768"},
 	{ScopeGlobal, "innodb_compression_pad_pct_max", "50"},
-	{ScopeGlobal, "innodb_commit_concurrency", "0"},
+	{ScopeGlobal, InnodbCommitConcurrency, "0"},
 	{ScopeNone, "ft_min_word_len", "4"},
 	{ScopeGlobal, "enforce_gtid_consistency", "OFF"},
 	{ScopeGlobal, "secure_auth", "ON"},
@@ -550,14 +550,14 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "basedir", "/usr/local/mysql"},
 	{ScopeGlobal, "innodb_old_blocks_time", "1000"},
 	{ScopeGlobal, "innodb_stats_method", "nulls_equal"},
-	{ScopeGlobal | ScopeSession, "innodb_lock_wait_timeout", "50"},
+	{ScopeGlobal | ScopeSession, InnodbLockWaitTimeout, "50"},
 	{ScopeGlobal, "local_infile", "ON"},
 	{ScopeGlobal | ScopeSession, "myisam_stats_method", "nulls_unequal"},
 	{ScopeNone, "version_compile_os", "osx10.8"},
 	{ScopeNone, "relay_log_recovery", "OFF"},
 	{ScopeNone, "old", "OFF"},
 	{ScopeGlobal | ScopeSession, "innodb_table_locks", "ON"},
-	{ScopeNone, "performance_schema", "ON"},
+	{ScopeNone, "performance_schema", "OFF"},
 	{ScopeNone, "myisam_recover_options", "OFF"},
 	{ScopeGlobal | ScopeSession, "net_buffer_length", "16384"},
 	{ScopeGlobal, "rpl_semi_sync_master_wait_for_slave_count", ""},
@@ -639,6 +639,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 	{ScopeGlobal | ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
+	{ScopeGlobal | ScopeSession, TiDBEnableCascadesPlanner, "0"},
 	{ScopeSession, TIDBMemQuotaQuery, strconv.FormatInt(config.GetGlobalConfig().MemQuotaQuery, 10)},
 	{ScopeSession, TIDBMemQuotaHashJoin, strconv.FormatInt(DefTiDBMemQuotaHashJoin, 10)},
 	{ScopeSession, TIDBMemQuotaMergeJoin, strconv.FormatInt(DefTiDBMemQuotaMergeJoin, 10)},
@@ -663,6 +664,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBConfig, ""},
 	{ScopeGlobal | ScopeSession, TiDBDDLReorgWorkerCount, strconv.Itoa(DefTiDBDDLReorgWorkerCount)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
+	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
+	{ScopeSession, TiDBEnableRadixJoin, boolToIntStr(DefTiDBUseRadixJoin)},
 }
 
 // SynonymsSysVariables is synonyms of system variables.
@@ -713,6 +716,12 @@ const (
 	DelayKeyWrite = "delay_key_write"
 	// EndMakersInJSON is the name for 'end_markers_in_json' system variable.
 	EndMakersInJSON = "end_markers_in_json"
+	// InnodbCommitConcurrency is the name for 'innodb_commit_concurrency' system variable.
+	InnodbCommitConcurrency = "innodb_commit_concurrency"
+	// InnodbFastShutdown is the name for 'innodb_fast_shutdown' system variable.
+	InnodbFastShutdown = "innodb_fast_shutdown"
+	// InnodbLockWaitTimeout is the name for 'innodb_lock_wait_timeout' system variable.
+	InnodbLockWaitTimeout = "innodb_lock_wait_timeout"
 	// SQLLogBin is the name for 'sql_log_bin' system variable.
 	SQLLogBin = "sql_log_bin"
 	// MaxSortLength is the name for 'max_sort_length' system variable.
@@ -757,6 +766,10 @@ const (
 	TmpTableSize = "tmp_table_size"
 	// ConnectTimeout is the name for 'connect_timeout' system variable.
 	ConnectTimeout = "connect_timeout"
+	// SyncBinlog is the name for 'sync_binlog' system variable.
+	SyncBinlog = "sync_binlog"
+	// BlockEncryptionMode is the name for 'block_encryption_mode' system variable.
+	BlockEncryptionMode = "block_encryption_mode"
 )
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

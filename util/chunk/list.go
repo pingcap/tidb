@@ -14,18 +14,19 @@
 package chunk
 
 import (
-	"github.com/juju/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pkg/errors"
 )
 
 // List holds a slice of chunks, use to append rows with max chunk size properly handled.
 type List struct {
-	fieldTypes   []*types.FieldType
-	maxChunkSize int
-	length       int
-	chunks       []*Chunk
-	freelist     []*Chunk
+	fieldTypes    []*types.FieldType
+	initChunkSize int
+	maxChunkSize  int
+	length        int
+	chunks        []*Chunk
+	freelist      []*Chunk
 
 	memTracker  *memory.Tracker // track memory usage.
 	consumedIdx int             // chunk index in "chunks", has been consumed.
@@ -38,13 +39,14 @@ type RowPtr struct {
 	RowIdx uint32
 }
 
-// NewList creates a new List with field types and max chunk size.
-func NewList(fieldTypes []*types.FieldType, maxChunkSize int) *List {
+// NewList creates a new List with field types, init chunk size and max chunk size.
+func NewList(fieldTypes []*types.FieldType, initChunkSize, maxChunkSize int) *List {
 	l := &List{
-		fieldTypes:   fieldTypes,
-		maxChunkSize: maxChunkSize,
-		memTracker:   memory.NewTracker("chunk.List", -1),
-		consumedIdx:  -1,
+		fieldTypes:    fieldTypes,
+		initChunkSize: initChunkSize,
+		maxChunkSize:  maxChunkSize,
+		memTracker:    memory.NewTracker("chunk.List", -1),
+		consumedIdx:   -1,
 	}
 	return l
 }
@@ -72,7 +74,7 @@ func (l *List) GetChunk(chkIdx int) *Chunk {
 // AppendRow appends a row to the List, the row is copied to the List.
 func (l *List) AppendRow(row Row) RowPtr {
 	chkIdx := len(l.chunks) - 1
-	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.maxChunkSize || chkIdx == l.consumedIdx {
+	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() || chkIdx == l.consumedIdx {
 		newChk := l.allocChunk()
 		l.chunks = append(l.chunks, newChk)
 		if chkIdx != l.consumedIdx {
@@ -115,7 +117,10 @@ func (l *List) allocChunk() (chk *Chunk) {
 		chk.Reset()
 		return
 	}
-	return NewChunkWithCapacity(l.fieldTypes, l.maxChunkSize)
+	if len(l.chunks) > 0 {
+		return Renew(l.chunks[len(l.chunks)-1], l.maxChunkSize)
+	}
+	return New(l.fieldTypes, l.initChunkSize, l.maxChunkSize)
 }
 
 // GetRow gets a Row from the list by RowPtr.

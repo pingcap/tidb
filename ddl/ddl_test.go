@@ -29,8 +29,10 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
@@ -75,7 +77,13 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	for _, worker := range d.workers {
 		worker.wg.Add(1)
 		worker.quitCh = make(chan struct{})
-		go worker.start(d.ddlCtx)
+		w := worker
+		go util.WithRecovery(func() { w.start(d.ddlCtx) },
+			func(r interface{}) {
+				if r != nil {
+					log.Errorf("[ddl-%s] ddl %s meet panic", w, d.uuid)
+				}
+			})
 		asyncNotify(worker.ddlJobCh)
 	}
 }

@@ -320,7 +320,7 @@ func runTestPreparedString(t *C) {
 	})
 }
 
-// This test case does not really cover binary timestamp format, because MySQL driver in golang
+// runTestPreparedTimestamp does not really cover binary timestamp format, because MySQL driver in golang
 // does not use this format. MySQL driver in golang will convert the timestamp to a string.
 // This case guarantees it could work.
 func runTestPreparedTimestamp(t *C) {
@@ -588,6 +588,29 @@ func checkErrorCode(c *C, e error, codes ...uint16) {
 		}
 	}
 	c.Assert(isMatchCode, IsTrue, Commentf("got err %v, expected err codes %v", me, codes))
+}
+
+func runTestShowProcessList(c *C) {
+	runTests(c, nil, func(dbt *DBTest) {
+		fullSQL := "show                                                                                        full processlist"
+		simpSQL := "show                                                                                        processlist"
+		rows := dbt.mustQuery(fullSQL)
+		c.Assert(rows.Next(), IsTrue)
+		var outA, outB, outC, outD, outE, outF, outG, outH, outI string
+		err := rows.Scan(&outA, &outB, &outC, &outD, &outE, &outF, &outG, &outH, &outI)
+		c.Assert(err, IsNil)
+		c.Assert(outE, Equals, "Query")
+		c.Assert(outF, Equals, "0")
+		c.Assert(outG, Equals, "2")
+		c.Assert(outH, Equals, fullSQL)
+		rows = dbt.mustQuery(simpSQL)
+		err = rows.Scan(&outA, &outB, &outC, &outD, &outE, &outF, &outG, &outH, &outI)
+		c.Assert(err, IsNil)
+		c.Assert(outE, Equals, "Query")
+		c.Assert(outF, Equals, "0")
+		c.Assert(outG, Equals, "2")
+		c.Assert(outH, Equals, simpSQL[:100])
+	})
 }
 
 func runTestAuth(c *C) {
