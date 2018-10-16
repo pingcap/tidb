@@ -322,3 +322,46 @@ func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
 	}
 	return "insert into t values " + strings.Join(placeholders, ","), params
 }
+
+func (s *testSuite) TestPreparedIssue7579(c *C) {
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	orgCapacity := plannercore.PreparedPlanCacheCapacity
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+		plannercore.PreparedPlanCacheCapacity = orgCapacity
+	}()
+	flags := []bool{false, true}
+	for _, flag := range flags {
+		plannercore.SetPreparedPlanCache(flag)
+		plannercore.PreparedPlanCacheCapacity = 100
+		tk := testkit.NewTestKit(c, s.store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, index a_idx(a))")
+		tk.MustExec("insert into t values (1,1), (2,2), (null,3)")
+
+		r := tk.MustQuery("select a, b from t order by b asc;")
+		r.Check(testkit.Rows("1 1", "2 2", "<nil> 3"))
+
+		tk.MustExec(`prepare stmt from 'select a, b from t where ? order by b asc'`)
+
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(nil)
+
+		tk.MustExec(`set @param = true`)
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(testkit.Rows("1 1", "2 2", "<nil> 3"))
+
+		tk.MustExec(`set @param = false`)
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(nil)
+
+		tk.MustExec(`set @param = 1`)
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(testkit.Rows("1 1", "2 2", "<nil> 3"))
+
+		tk.MustExec(`set @param = 0`)
+		r = tk.MustQuery(`execute stmt using @param;`)
+		r.Check(nil)
+	}
+}
