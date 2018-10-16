@@ -1371,7 +1371,7 @@ func (b *PlanBuilder) buildLoadData(ld *ast.LoadDataStmt) (Plan, error) {
 		IsLocal:      ld.IsLocal,
 		Path:         ld.Path,
 		Table:        ld.Table,
-		ColumnOrVars: ld.Columns,
+		ColumnOrVars: ld.ColumnOrVars,
 		FieldsInfo:   ld.FieldsInfo,
 		LinesInfo:    ld.LinesInfo,
 		IgnoreLines:  ld.IgnoreLines,

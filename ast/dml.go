@@ -661,14 +661,14 @@ func (n *Assignment) Accept(v Visitor) (Node, bool) {
 type LoadDataStmt struct {
 	dmlNode
 
-	IsLocal     bool
-	Path        string
-	Table       *TableName
-	Columns     []ExprNode
-	FieldsInfo  *FieldsClause
-	LinesInfo   *LinesClause
-	IgnoreLines uint64
-	SetList     []*Assignment
+	IsLocal      bool
+	Path         string
+	Table        *TableName
+	ColumnOrVars []ExprNode
+	FieldsInfo   *FieldsClause
+	LinesInfo    *LinesClause
+	IgnoreLines  uint64
+	SetList      []*Assignment
 }
 
 // Accept implements Node Accept interface.
@@ -685,21 +685,22 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 		}
 		n.Table = node.(*TableName)
 	}
-	for i, val := range n.Columns {
-		if colExpr, isCol := val.(*ColumnNameExpr); isCol {
-			name, ok := colExpr.Name.Accept(v)
+	for i, val := range n.ColumnOrVars {
+
+		switch exp := val.(type) {
+		case *ColumnNameExpr:
+			name, ok := exp.Name.Accept(v)
 			if !ok {
 				return n, false
 			}
-			n.Columns[i] = &ColumnNameExpr{Name: name.(*ColumnName)}
-			continue
+			n.ColumnOrVars[i] = &ColumnNameExpr{Name: name.(*ColumnName)}
+		case *VariableExpr:
+			node, ok := exp.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.ColumnOrVars[i] = node.(*VariableExpr)
 		}
-		varExpr := val.(*VariableExpr)
-		node, ok := varExpr.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Columns[i] = node.(*VariableExpr)
 	}
 	return v.Leave(n)
 }

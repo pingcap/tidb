@@ -6989,11 +6989,11 @@ LoadDataStmt:
 	"LOAD" "DATA" LocalOpt "INFILE" stringLit "INTO" "TABLE" TableName CharsetOpt Fields Lines IgnoreLines ColumnOrVarListOptWithBrackets LoadDataSetOpt
 	{
 		x := &ast.LoadDataStmt{
-			Path:       $5,
-			Table:      $8.(*ast.TableName),
-			Columns:    $13.([]ast.ExprNode),
-			IgnoreLines:$12.(uint64),
-			SetList:    $14.([]*ast.Assignment),
+			Path:        $5,
+			Table:       $8.(*ast.TableName),
+			ColumnOrVars:$13.([]ast.ExprNode),
+			IgnoreLines: $12.(uint64),
+			SetList:     $14.([]*ast.Assignment),
 		}
 		if $3 != nil {
 			x.IsLocal = true

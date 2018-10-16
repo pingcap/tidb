@@ -346,17 +346,10 @@ func runTestPreparedTimestamp(t *C) {
 }
 
 func runTestLoadDataWithSet(c *C, server *Server) {
-	path := "/tmp/load_data_test2.csv"
-	fp, err := os.Create(path)
+	tmpfile, err := ioutil.TempFile("", "load_data_test.*.csv")
 	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
-	defer func() {
-		err = fp.Close()
-		c.Assert(err, IsNil)
-		err = os.Remove(path)
-		c.Assert(err, IsNil)
-	}()
-	_, err = fp.WriteString("\n" +
+	defer os.Remove(tmpfile.Name())
+	_, err = tmpfile.WriteString("\n" +
 		"11 12 - 1 1212 1212\n" +
 		"21 22 - 2\n" +
 		"31 32 - 3")
@@ -367,7 +360,7 @@ func runTestLoadDataWithSet(c *C, server *Server) {
 		config.Strict = false
 	}, "LoadData2", func(dbt *DBTest) {
 		dbt.mustExec("create table t (a int, b int default -1, c binary(1), id int not null auto_increment, primary key(id))")
-		rs, err := dbt.db.Exec("load data local infile '/tmp/load_data_test2.csv' into table t fields terminated by ' ' (@x, b, @dummy, @z) set a = @x, c = unhex(@z)")
+		rs, err := dbt.db.Exec("load data local infile '" + tmpfile.Name() + "' into table t fields terminated by ' ' (@x, b, @dummy, @z) set a = @x, c = unhex(@z)")
 		dbt.Assert(err, IsNil)
 		affectedRows, err := rs.RowsAffected()
 		dbt.Assert(err, IsNil)
@@ -401,7 +394,7 @@ func runTestLoadDataWithSet(c *C, server *Server) {
 
 		dbt.mustExec("truncate t")
 
-		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test2.csv' into table t fields terminated by ' ' (a) set a = a, b = a, c = unhex(1)")
+		rs, err = dbt.db.Exec("load data local infile '" + tmpfile.Name() + "' into table t fields terminated by ' ' (a) set a = a, b = a, c = unhex(1)")
 		dbt.Assert(err, IsNil)
 		affectedRows, err = rs.RowsAffected()
 		dbt.Assert(err, IsNil)
@@ -432,7 +425,7 @@ func runTestLoadDataWithSet(c *C, server *Server) {
 		time.Sleep(1 * time.Second)
 		dbt.mustExec("drop table if exists t2")
 		dbt.mustExec("create table t2 (a int, b timestamp)")
-		rs, err = dbt.db.Exec("load data local infile '/tmp/load_data_test2.csv' into table t2 fields terminated by ' ' set a = (select 10), b = current_timestamp")
+		rs, err = dbt.db.Exec("load data local infile '" + tmpfile.Name() + "' into table t2 fields terminated by ' ' set a = (select 10), b = current_timestamp")
 		dbt.Assert(err, IsNil)
 		rows = dbt.mustQuery("select a, b from t2")
 		var (

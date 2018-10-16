@@ -559,12 +559,17 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	return insert
 }
 
-func getColumnInfo4LoadData(e *InsertValues, tableCols []*table.Column, colOrVars []ast.ExprNode) ([]*table.Column, int, error) {
+// getColumnInfo4LoadData gets column info for load data.
+// return:
+//     - cols: column info lists, include column in brackets and in set lists.
+//     - pivot: the pivot point to divide columns in brackets or in sets lists, before pivot is brackets's columns
+//     - err: error
+func getColumnInfo4LoadData(e *InsertValues, tableCols []*table.Column, colOrVars []ast.ExprNode) (cols []*table.Column, pivot int, err error) {
 	colOrVarLen := len(e.colDefaultVals)
 	if colOrVarLen == 0 {
 		colOrVarLen = len(tableCols)
 	}
-	cols := make([]*table.Column, 0, colOrVarLen+len(e.SetList))
+	cols = make([]*table.Column, 0, colOrVarLen+len(e.SetList))
 	if len(colOrVars) == 0 {
 		cols = append(cols, tableCols...)
 	} else {
@@ -573,6 +578,9 @@ func getColumnInfo4LoadData(e *InsertValues, tableCols []*table.Column, colOrVar
 			if colName, isCol := colOrVar.(*ast.ColumnNameExpr); isCol {
 				columns = append(columns, colName.Name.Name.O)
 			} else {
+				// an variable in brackets is not a column and no column info,
+				// but we append empty placeholder string to keep other column's array index "right",
+				// later eval SetList expression will use those idx.
 				columns = append(columns, "")
 			}
 		}
@@ -583,7 +591,7 @@ func getColumnInfo4LoadData(e *InsertValues, tableCols []*table.Column, colOrVar
 		cols = append(cols, colsBind...)
 	}
 
-	pivot := len(cols)
+	pivot = len(cols)
 	if len(e.SetList) > 0 {
 		columns := make([]string, 0, len(e.SetList))
 		for _, v := range e.SetList {
