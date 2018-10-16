@@ -335,7 +335,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ta.d = 0",
-			best: "Join{DataScan(ta)->DataScan(tb)}(ta.d,tb.d)->Projection",
+			best: "Join{DataScan(ta)->DataScan(tb)}->Projection",
 		},
 		{
 			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where tb.d = 0",
