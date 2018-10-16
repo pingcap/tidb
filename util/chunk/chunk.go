@@ -15,6 +15,7 @@ package chunk
 
 import (
 	"encoding/binary"
+	"reflect"
 	"unsafe"
 
 	"github.com/cznic/mathutil"
@@ -274,6 +275,60 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 			chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
 		}
 		chkCol.length++
+	}
+}
+
+// PreAlloc4Row pre-allocates the memory space for a Row.
+// The null elem info will be pre-written.
+func (c *Chunk) PreAlloc4Row(row Row) {
+	for i, rowCol := range row.c.columns {
+		chkCol := c.columns[i]
+		chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
+		if rowCol.isFixed() {
+			elemLen := len(rowCol.elemBuf)
+			if len(chkCol.data)+elemLen >= cap(chkCol.data) {
+				chkCol.data = make([]byte, len(chkCol.data)+elemLen, 2*cap(chkCol.data))
+			} else {
+				(*reflect.SliceHeader)(unsafe.Pointer(&chkCol.data)).Len = len(chkCol.data) + elemLen
+			}
+		} else {
+			elemLen := int(rowCol.offsets[row.idx+1] - rowCol.offsets[row.idx])
+			if len(chkCol.data)+elemLen >= cap(chkCol.data) {
+				chkCol.data = make([]byte, len(chkCol.data)+elemLen, 2*cap(chkCol.data))
+			} else {
+				(*reflect.SliceHeader)(unsafe.Pointer(&chkCol.data)).Len = len(chkCol.data) + elemLen
+			}
+			chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+		}
+		chkCol.length++
+	}
+	c.numVirtualRows++
+}
+
+// Insert inserts row on rowIdx.
+// Note: Insert will cover the origin data, it should be called after
+// PreAlloc4Row.
+func (c *Chunk) Insert(rowIdx int, row Row) {
+	// Check data length between row and the origin data for every column.
+	// Cover the origin data if the upper check is valid.
+	for i, rowCol := range row.c.columns {
+		chkCol := c.columns[i]
+		if chkCol.isFixed() != rowCol.isFixed() {
+			panic("unexcepted error happens during Chunk.Insert")
+		}
+		var srcStart, srcEnd, destStart, destEnd int
+		if rowCol.isFixed() {
+			srcElemLen, destElemLen := len(rowCol.elemBuf), len(chkCol.elemBuf)
+			srcStart, destStart = row.idx*srcElemLen, rowIdx*destElemLen
+			srcEnd, destEnd = srcStart+srcElemLen, destStart+destElemLen
+		} else {
+			srcStart, srcEnd = int(rowCol.offsets[row.idx]), int(rowCol.offsets[row.idx+1])
+			destStart, destEnd = int(chkCol.offsets[rowIdx]), int(chkCol.offsets[rowIdx+1])
+		}
+		if destEnd-destStart != srcEnd-srcStart {
+			panic("unexcepted error happens during Chunk.Insert")
+		}
+		copy(chkCol.data[destStart:destEnd], rowCol.data[srcStart:srcEnd])
 	}
 }
 

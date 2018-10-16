@@ -140,6 +140,29 @@ func (l *List) Reset() {
 	l.consumedIdx = -1
 }
 
+// PreAlloc4Row pre-allocate the storage memory for a Row.
+func (l *List) PreAlloc4Row(row Row) (ptr RowPtr) {
+	chkIdx := len(l.chunks) - 1
+	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() || chkIdx == l.consumedIdx {
+		newChk := l.allocChunk()
+		l.chunks = append(l.chunks, newChk)
+		if chkIdx != l.consumedIdx {
+			l.memTracker.Consume(l.chunks[chkIdx].MemoryUsage())
+			l.consumedIdx = chkIdx
+		}
+		chkIdx++
+	}
+	chk := l.chunks[chkIdx]
+	rowIdx := chk.NumRows()
+	chk.PreAlloc4Row(row)
+	l.length++
+	return RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
+}
+
+func (l *List) Insert(ptr RowPtr, row Row) {
+	l.chunks[ptr.ChkIdx].Insert(int(ptr.RowIdx), row)
+}
+
 // ListWalkFunc is used to walk the list.
 // If error is returned, it will stop walking.
 type ListWalkFunc = func(row Row) error
