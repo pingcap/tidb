@@ -1224,7 +1224,7 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 				3: {"a"},
 			},
 		},
-		//issue 78333
+		//issue 7833
 		{
 			sql: "drop view if exists v",
 			ans: map[int][]string{
