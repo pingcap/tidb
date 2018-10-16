@@ -268,7 +268,7 @@ create table t(a int primary key, b int, c int, index idx(b));
 explain select t.c in (select count(*) from t s ignore index(idx), t t1 where s.a = t.a and s.a = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	9_aux_0
-└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]
+└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
@@ -281,7 +281,7 @@ Projection_11	10000.00	root	9_aux_0
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	9_aux_0
-└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]
+└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
@@ -293,7 +293,7 @@ Projection_11	10000.00	root	9_aux_0
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	9_aux_0
-└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]
+└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
