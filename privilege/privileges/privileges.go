@@ -70,50 +70,57 @@ func (p *UserPrivileges) RequestVerification(db, table, column string, priv mysq
 }
 
 // ConnectionVerification implements the Manager interface.
-func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte) bool {
+func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte) (u string, h string, success bool) {
+
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
-		return true
+		success = true
+		return
 	}
 
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
 		log.Errorf("Get user privilege record fail: user %v, host %v", user, host)
-		return false
+		return
 	}
+
+	u = record.User
+	h = record.Host
 
 	pwd := record.Password
 	if len(pwd) != 0 && len(pwd) != mysql.PWDHashLen+1 {
 		log.Errorf("User [%s] password from SystemDB not like a sha1sum", user)
-		return false
+		return
 	}
 
 	// empty password
 	if len(pwd) == 0 && len(authentication) == 0 {
 		p.user = user
 		p.host = host
-		return true
+		success = true
+		return
 	}
 
 	if len(pwd) == 0 || len(authentication) == 0 {
-		return false
+		return
 	}
 
 	hpwd, err := auth.DecodePassword(pwd)
 	if err != nil {
 		log.Errorf("Decode password string error %v", err)
-		return false
+		return
 	}
 
 	if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
-		return false
+		return
 	}
 
 	p.user = user
 	p.host = host
-	return true
+	success = true
+	return
 }
 
 // DBIsVisible implements the Manager interface.
