@@ -61,7 +61,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 		result     string
 	}{
 		{
-			solver: []PropagateConstantSolver{newPGSolver(), pgSolver2{}},
+			solver: []PropagateConstantSolver{newPropConstSolver(), pgSolver2{}},
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.EQ, newColumn(1), newColumn(2)),
@@ -72,7 +72,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "1, eq(test.t.0, 1), eq(test.t.1, 1), eq(test.t.2, 1), eq(test.t.3, 1)",
 		},
 		{
-			solver: []PropagateConstantSolver{newPGSolver(), pgSolver2{}},
+			solver: []PropagateConstantSolver{newPropConstSolver(), pgSolver2{}},
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.EQ, newColumn(1), newLonglong(1)),
@@ -81,7 +81,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "eq(test.t.0, 1), eq(test.t.1, 1), ne(test.t.2, 2)",
 		},
 		{
-			solver: []PropagateConstantSolver{newPGSolver()},
+			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.EQ, newColumn(1), newLonglong(1)),
@@ -93,7 +93,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "eq(test.t.0, 1), eq(test.t.1, 1), eq(test.t.2, test.t.3), ge(test.t.2, 2), ge(test.t.3, 2), ne(test.t.2, 4), ne(test.t.2, 5), ne(test.t.3, 4), ne(test.t.3, 5)",
 		},
 		{
-			solver: []PropagateConstantSolver{newPGSolver()},
+			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.EQ, newColumn(0), newColumn(2)),
@@ -102,7 +102,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "eq(test.t.0, test.t.1), eq(test.t.0, test.t.2), ge(test.t.0, 0), ge(test.t.1, 0), ge(test.t.2, 0)",
 		},
 		{
-			solver: []PropagateConstantSolver{newPGSolver()},
+			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.GT, newColumn(0), newLonglong(2)),
@@ -113,7 +113,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "eq(test.t.0, test.t.1), gt(2, test.t.0), gt(2, test.t.1), gt(test.t.0, 2), gt(test.t.0, 3), gt(test.t.1, 2), gt(test.t.1, 3), lt(test.t.0, 1), lt(test.t.1, 1)",
 		},
 		{
-			solver: []PropagateConstantSolver{newPGSolver(), pgSolver2{}},
+			solver: []PropagateConstantSolver{newPropConstSolver(), pgSolver2{}},
 			conditions: []Expression{
 				newFunction(ast.EQ, newLonglong(1), newColumn(0)),
 				newLonglong(0),
@@ -121,7 +121,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "0",
 		},
 		{
-			solver: []PropagateConstantSolver{newPGSolver()},
+			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.In, newColumn(0), newLonglong(1), newLonglong(2)),
@@ -130,7 +130,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "eq(test.t.0, test.t.1), in(test.t.0, 1, 2), in(test.t.0, 3, 4), in(test.t.1, 1, 2), in(test.t.1, 3, 4)",
 		},
 		{
-			solver: []PropagateConstantSolver{newPGSolver()},
+			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.EQ, newColumn(0), newFunction(ast.BitLength, newColumn(2))),
@@ -138,7 +138,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "eq(test.t.0, bit_length(cast(test.t.2))), eq(test.t.0, test.t.1), eq(test.t.1, bit_length(cast(test.t.2)))",
 		},
 		{
-			solver: []PropagateConstantSolver{newPGSolver()},
+			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.LE, newFunction(ast.Mul, newColumn(0), newColumn(0)), newLonglong(50)),
@@ -146,7 +146,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "eq(test.t.0, test.t.1), le(mul(test.t.0, test.t.0), 50), le(mul(test.t.1, test.t.1), 50)",
 		},
 		{
-			solver: []PropagateConstantSolver{newPGSolver()},
+			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.LE, newColumn(0), newFunction(ast.Plus, newColumn(1), newLonglong(1))),
@@ -154,7 +154,7 @@ func (*testExpressionSuite) TestConstantPropagation(c *C) {
 			result: "eq(test.t.0, test.t.1), le(test.t.0, plus(test.t.0, 1)), le(test.t.0, plus(test.t.1, 1)), le(test.t.1, plus(test.t.1, 1))",
 		},
 		{
-			solver: []PropagateConstantSolver{newPGSolver()},
+			solver: []PropagateConstantSolver{newPropConstSolver()},
 			conditions: []Expression{
 				newFunction(ast.EQ, newColumn(0), newColumn(1)),
 				newFunction(ast.LE, newColumn(0), newFunction(ast.Rand)),
