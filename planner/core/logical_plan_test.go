@@ -1224,6 +1224,13 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 				3: {"a"},
 			},
 		},
+		//issue 78333
+		{
+			sql: "drop view if exists v",
+			ans: map[int][]string{
+				1: {},
+			},
+		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
