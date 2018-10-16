@@ -3456,6 +3456,8 @@ func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
 
 	var c2 *table.Column
 	var checkErr error
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	hook := &ddl.TestDDLCallback{}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	hook.OnJobUpdatedExported = func(job *model.Job) {
@@ -3522,7 +3524,7 @@ LOOP:
 	}
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsFalse)
 	s.mustExec(c, "drop table t1")
-
+	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 	callback := &ddl.TestDDLCallback{}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(callback)
 }
