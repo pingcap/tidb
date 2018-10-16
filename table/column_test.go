@@ -338,7 +338,7 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 				},
 			},
 			true,
-			types.Datum{},
+			types.NewIntDatum(0),
 			nil,
 		},
 	}

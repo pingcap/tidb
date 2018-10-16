@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
@@ -78,6 +79,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	}
 	sctx := mock.NewContext()
 	sctx.SetSessionManager(sm)
+	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
 
 	// Compose executor.
 	e := &ShowExec{
@@ -89,7 +91,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 	err := e.Open(ctx)
 	c.Assert(err, IsNil)
 
-	chk := e.newChunk()
+	chk := e.newFirstChunk()
 	it := chunk.NewIterator4Chunk(chk)
 	// Run test and check results.
 	for _, p := range ps {

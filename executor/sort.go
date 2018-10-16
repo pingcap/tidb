@@ -16,9 +16,10 @@ package executor
 import (
 	"container/heap"
 	"sort"
+	"time"
 
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/plan"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/memory"
@@ -30,7 +31,7 @@ import (
 type SortExec struct {
 	baseExecutor
 
-	ByItems []*plan.ByItems
+	ByItems []*plannercore.ByItems
 	Idx     int
 	fetched bool
 	schema  *expression.Schema
@@ -73,6 +74,10 @@ func (e *SortExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStat != nil {
+		start := time.Now()
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
 	if !e.fetched {
 		err := e.fetchRowChunks(ctx)
@@ -107,11 +112,11 @@ func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	fields := e.retTypes()
-	e.rowChunks = chunk.NewList(fields, e.maxChunkSize)
+	e.rowChunks = chunk.NewList(fields, e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for {
-		chk := e.children[0].newChunk()
+		chk := e.children[0].newFirstChunk()
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -171,7 +176,7 @@ func (e *SortExec) buildKeyExprsAndTypes() {
 }
 
 func (e *SortExec) buildKeyChunks() error {
-	e.keyChunks = chunk.NewList(e.keyTypes, e.maxChunkSize)
+	e.keyChunks = chunk.NewList(e.keyTypes, e.initCap, e.maxChunkSize)
 	e.keyChunks.GetMemTracker().SetLabel("keyChunks")
 	e.keyChunks.GetMemTracker().AttachTo(e.memTracker)
 
@@ -221,7 +226,7 @@ func (e *SortExec) keyChunksLess(i, j int) bool {
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
 	SortExec
-	limit      *plan.PhysicalLimit
+	limit      *plannercore.PhysicalLimit
 	totalLimit int
 
 	chkHeap *topNChunkHeap
@@ -296,6 +301,10 @@ func (e *TopNExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStat != nil {
+		start := time.Now()
+		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
 	if !e.fetched {
 		e.totalLimit = int(e.limit.Offset + e.limit.Count)
@@ -323,11 +332,11 @@ func (e *TopNExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
-	e.rowChunks = chunk.NewList(e.retTypes(), e.maxChunkSize)
+	e.rowChunks = chunk.NewList(e.retTypes(), e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
 	e.rowChunks.GetMemTracker().SetLabel("rowChunks")
 	for e.rowChunks.Len() < e.totalLimit {
-		srcChk := e.children[0].newChunk()
+		srcChk := e.children[0].newFirstChunk()
 		err := e.children[0].Next(ctx, srcChk)
 		if err != nil {
 			return errors.Trace(err)
@@ -362,7 +371,7 @@ func (e *TopNExec) executeTopN(ctx context.Context) error {
 	if e.keyChunks != nil {
 		childKeyChk = chunk.NewChunkWithCapacity(e.keyTypes, e.maxChunkSize)
 	}
-	childRowChk := e.children[0].newChunk()
+	childRowChk := e.children[0].newFirstChunk()
 	for {
 		err := e.children[0].Next(ctx, childRowChk)
 		if err != nil {
@@ -425,7 +434,7 @@ func (e *TopNExec) processChildChk(childRowChk, childKeyChk *chunk.Chunk) error 
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (e *TopNExec) doCompaction() error {
-	newRowChunks := chunk.NewList(e.retTypes(), e.maxChunkSize)
+	newRowChunks := chunk.NewList(e.retTypes(), e.initCap, e.maxChunkSize)
 	newRowPtrs := make([]chunk.RowPtr, 0, e.rowChunks.Len())
 	for _, rowPtr := range e.rowPtrs {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
@@ -436,7 +445,7 @@ func (e *TopNExec) doCompaction() error {
 	e.rowChunks = newRowChunks
 
 	if e.keyChunks != nil {
-		newKeyChunks := chunk.NewList(e.keyTypes, e.maxChunkSize)
+		newKeyChunks := chunk.NewList(e.keyTypes, e.initCap, e.maxChunkSize)
 		for _, rowPtr := range e.rowPtrs {
 			newKeyChunks.AppendRow(e.keyChunks.GetRow(rowPtr))
 		}
