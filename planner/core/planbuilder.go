@@ -227,6 +227,9 @@ func (b *PlanBuilder) buildDo(v *ast.DoStmt) (Plan, error) {
 			RetType:  expr.GetType(),
 		})
 	}
+	if dual.schema == nil {
+		dual.schema = expression.NewSchema()
+	}
 	p.SetChildren(dual)
 	p.self = p
 	p.SetSchema(schema)
