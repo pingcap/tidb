@@ -121,7 +121,7 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 				continue
 			}
 		}
-		if sub1.Seconds()*2 >= float64(time.Second) {
+		if sub1*2 >= time.Second {
 			log.Infof("xxx ------------------------- region %v, sub %v, sub1 %v", regionID, sub, sub1)
 		}
 		return resp, nil
