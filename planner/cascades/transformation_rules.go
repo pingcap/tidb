@@ -24,19 +24,13 @@ type Transformation interface {
 	OnTransform(old *ExprIter) (new *GroupExpr, eraseOld bool, err error)
 }
 
-// Pattern defines the match pattern for a rule.
-type Pattern struct {
-	operand  int
-	children []*Pattern
-}
-
 // GetTransformationRules gets the all the candidate transformation rules based
 // on the logical plan node.
 func GetTransformationRules(node plannercore.LogicalPlan) []Transformation {
-	return transformationMap[node.GetOperand()]
+	return transformationMap[GetOperand(node)]
 }
 
-var transformationMap = map[int][]Transformation{
+var transformationMap = map[Operand][]Transformation{
 	/**
 	operandSelect: []Transformation{
 		nil,

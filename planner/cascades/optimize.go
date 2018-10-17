@@ -87,29 +87,24 @@ func exploreGroup(g *Group) error {
 }
 
 // Find and apply the matched transformation rules.
-func findMoreEquiv(cur *GroupExpr, curGroup *Group) (eraseCur bool, err error) {
-	for _, rule := range GetTransformationRules(cur.exprNode) {
+func findMoreEquiv(expr *GroupExpr, g *Group) (eraseCur bool, err error) {
+	for _, rule := range GetTransformationRules(expr.exprNode) {
+		pattern := rule.GetPattern()
 		// Create a binding of the current group expression and the pattern of
 		// the transformation rule to enumerate all the possible expressions.
-		exprIter := NewExprIter(cur, rule.GetPattern())
-
-		// the transformation rule can not matche any expression in the group.
-		if exprIter == nil {
-			continue
-		}
-
-		for exprIter.Next() {
-			matched, err := rule.Match(exprIter)
+		for iter := NewExprIter(expr, pattern); iter != nil && iter.OK(); iter.Next() {
+			matched, err := rule.Match(iter)
 			if err != nil {
 				return false, err
 			}
+
 			if !matched {
 				continue
 			}
 
-			newExpr, erase, err := rule.OnTransform(exprIter)
+			newExpr, erase, err := rule.OnTransform(iter)
 			eraseCur = eraseCur || erase
-			if !curGroup.Insert(newExpr) {
+			if !g.Insert(newExpr) {
 				continue
 			}
 
@@ -118,7 +113,7 @@ func findMoreEquiv(cur *GroupExpr, curGroup *Group) (eraseCur bool, err error) {
 			// unexplored to enable the exploration on the new group expression
 			// and all the antecedent groups.
 			newExpr.explored = false
-			curGroup.explored = false
+			g.explored = false
 		}
 	}
 	return eraseCur, nil
