@@ -308,6 +308,9 @@ type SessionVars struct {
 	// HashJoin.
 	EnableRadixJoin bool
 
+	// ConstraintCheckInPlace indicates whether to check the constraint when the SQL executing.
+	ConstraintCheckInPlace bool
+
 	// CommandValue indicates which command current session is doing.
 	CommandValue uint32
 }
@@ -573,6 +576,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
 	case TiDBBackoffLockFast:
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
+	case TiDBConstraintCheckInPlace:
+		s.ConstraintCheckInPlace = TiDBOptOn(val)
 	case TiDBBatchInsert:
 		s.BatchInsert = TiDBOptOn(val)
 	case TiDBBatchDelete:
