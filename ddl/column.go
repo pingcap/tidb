@@ -337,8 +337,6 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		if !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
 			return ver, nil
 		}
-		// Modify the type defined Flag to NotNullFlag.
-		tblInfo.Columns[oldCol.Offset].Flag |= mysql.NotNullFlag
 	}
 
 	// We need the latest column's offset and state. This information can be obtained from the store.
