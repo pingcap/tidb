@@ -90,9 +90,9 @@ func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("get").Inc()
 	start := time.Now()
 	defer func() {
-		sub := time.Since(start).Seconds()
-		metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(sub)
-		if sub >= float64(time.Second) {
+		sub := time.Since(start)
+		metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(sub.Seconds())
+		if sub.Seconds() >= float64(time.Second) {
 			log.Infof("xxx ------------------------- key %s, sub %v", k, sub)
 		}
 	}()
