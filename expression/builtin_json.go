@@ -780,10 +780,11 @@ func (c *jsonKeysFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	switch len(args) {
 	case 1:
 		sig = &builtinJSONKeysSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_JsonKeysSig)
 	case 2:
 		sig = &builtinJSONKeys2ArgsSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_JsonKeys2ArgsSig)
 	}
-	sig.setPbCode(tipb.ScalarFuncSig_JsonKeysSig)
 	return sig, nil
 }
 
