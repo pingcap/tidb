@@ -129,6 +129,13 @@ func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) {
+	used := getUsedList(parentUsedCols, p.schema)
+	for i := range used{
+		if used[i]{
+			continue
+		}
+		parentUsedCols = append(parentUsedCols, p.schema.Columns[i])
+	}
 	for _, child := range p.Children() {
 		child.PruneColumns(parentUsedCols)
 	}
