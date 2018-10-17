@@ -148,23 +148,55 @@ type batchCommandsClient struct {
 	batched         sync.Map
 	idAlloc         uint64
 	tikvInHeavyLoad *int32
+	closed          chan int
+}
+
+func (c *batchCommandsClient) stop() {
+	c.closed <- 0
+}
+
+func (c *batchCommandsClient) stopped() bool {
+	select {
+	case <-c.closed:
+		return true
+	default:
+	}
+	return false
+}
+
+func (c *batchCommandsClient) failPendingRequests(err error) {
+	c.batched.Range(func(key, value interface{}) bool {
+		id, _ := key.(uint64)
+		entry, _ := value.(*batchCommandsEntry)
+		entry.err = err
+		close(entry.res)
+		c.batched.Delete(id)
+		return true
+	})
 }
 
 func (c *batchCommandsClient) batchRecvLoop() {
 	for {
 		resp, err := c.client.Recv()
 		if err != nil {
-			log.Errorf("batchRecvLoop error when receive: %v", err)
-			c.clientLock.Lock()
+			if c.stopped() {
+				return
+			}
 
-			tikvClient := tikvpb.NewTikvClient(c.conn)
-			streamClient, err := tikvClient.BatchCommands(context.TODO())
-			if err != nil {
+			log.Errorf("batchRecvLoop error when receive: %v", err)
+
+			c.clientLock.Lock()
+			c.failPendingRequests() // fail all pending requests.
+			for {                   // try to re-create the streaming in the loop.
+				tikvClient := tikvpb.NewTikvClient(c.conn)
+				streamClient, err := tikvClient.BatchCommands(context.TODO())
+				if err == nil {
+					log.Infof("batchRecvLoop re-create streaming success")
+					c.client = streamClient
+					break
+				}
 				log.Errorf("batchRecvLoop re-create streaming fail: %v", err)
 				time.Sleep(time.Second)
-			} else {
-				log.Infof("batchRecvLoop re-create streaming success")
-				c.client = streamClient
 			}
 			c.clientLock.Unlock()
 			continue
@@ -266,8 +298,10 @@ func (a *connArray) Init(addr string, security config.Security) error {
 			batchClient := &batchCommandsClient{
 				conn:            conn,
 				client:          streamClient,
+				batched:         sync.Map{},
 				idAlloc:         0,
 				tikvInHeavyLoad: &a.tikvInHeavyLoad,
+				closed:          make(chan int, 1),
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 			go batchClient.batchRecvLoop()
@@ -288,6 +322,12 @@ func (a *connArray) Get() *grpc.ClientConn {
 }
 
 func (a *connArray) Close() {
+	// Close all batchRecvLoop.
+	for _, c := range a.batchCommandsClients {
+		c.stop()
+	}
+	close(a.batchCommandsCh)
+
 	for i, c := range a.v {
 		if c != nil {
 			err := c.Close()
@@ -296,7 +336,6 @@ func (a *connArray) Close() {
 		}
 	}
 	close(a.streamTimeout)
-	close(a.batchCommandsCh)
 }
 
 type batchCommandsEntry struct {
@@ -308,7 +347,7 @@ type batchCommandsEntry struct {
 func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 	entries := make([]*batchCommandsEntry, 0, cfg.MaxBatchSize)
 	requests := make([]*tikvpb.BatchCommandsRequest_Request, 0, cfg.MaxBatchSize)
-	requestIds := make([]uint64, 0, cfg.MaxBatchSize)
+	requestIDs := make([]uint64, 0, cfg.MaxBatchSize)
 
 	batchWaitSize := cfg.BatchWaitSize
 	for {
@@ -333,10 +372,13 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 
 		entries = entries[:0]
 		requests = requests[:0]
-		requestIds = requestIds[:0]
+		requestIDs = requestIDs[:0]
 
 		// Block on the first element.
 		headEntry := <-a.batchCommandsCh
+		if headEntry == nil {
+			return
+		}
 		entries = append(entries, headEntry)
 		requests = append(requests, headEntry.req)
 
@@ -345,6 +387,9 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		for {
 			select {
 			case entry := <-a.batchCommandsCh:
+				if entry == nil {
+					return
+				}
 				entries = append(entries, entry)
 				requests = append(requests, entry.req)
 				if len(requests) >= int(cfg.MaxBatchSize) {
@@ -363,6 +408,9 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			for {
 				select {
 				case entry := <-a.batchCommandsCh:
+					if entry == nil {
+						return
+					}
 					entries = append(entries, entry)
 					requests = append(requests, entry.req)
 					if len(requests) >= int(batchWaitSize) {
@@ -380,24 +428,27 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		maxBatchID := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
 		for i := 0; i < length; i++ {
 			requestID := uint64(i) + maxBatchID - uint64(length)
-			batchCommandsClient.batched.Store(requestID, entries[i])
-			requestIds = append(requestIds, requestID)
+			requestIDs = append(requestIDs, requestID)
 		}
 
 		request := &tikvpb.BatchCommandsRequest{
 			Requests:   requests,
-			RequestIds: requestIds,
+			RequestIds: requestIDs,
 		}
 
-		for {
-			batchCommandsClient.clientLock.Lock()
-			if err := batchCommandsClient.client.Send(request); err != nil {
-				log.Errorf("batch commands send error: %v", err)
-				batchCommandsClient.clientLock.Unlock()
-				time.Sleep(time.Second)
-				continue
+		batchCommandsClient.clientLock.Lock()
+		err := batchCommandsClient.client.Send(request)
+		batchCommandsClient.clientLock.Unlock()
+		if err != nil {
+			log.Errorf("batch commands send error: %v", err)
+			for _, entry := range entries {
+				close(entry.res)
+				entry.err = err
 			}
-			batchCommandsClient.clientLock.Unlock()
+			continue
+		}
+		for i := range requestIDs {
+			batchCommandsClient.batched.Store(requestIDs[i], entries[i])
 		}
 	}
 }
