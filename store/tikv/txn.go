@@ -192,17 +192,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 
 	// latches enabled
-	var bypassLatch bool
-	if option := txn.us.GetOption(kv.BypassLatch); option != nil {
-		bypassLatch = option.(bool)
-	}
-	// When bypassLatch flag is true, commit directly.
-	if bypassLatch {
-		err = committer.executeAndWriteFinishBinlog(ctx)
-		log.Debug("[kv]", connID, " txnLatches enabled while txn not retryable, 2pc directly:", err)
-		return errors.Trace(err)
-	}
-
 	// for transactions which need to acquire latches
 	lock := txn.store.txnLatches.Lock(committer.startTS, committer.keys)
 	defer txn.store.txnLatches.UnLock(lock)
