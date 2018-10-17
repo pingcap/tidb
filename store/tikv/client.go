@@ -91,6 +91,7 @@ type connArray struct {
 	batchCommandsCh      chan *batchCommandsEntry
 	batchStatistics      batchStatistics
 	batchCommandsClients []*batchCommandsClient
+	tikvInHeavyLoad      int32
 }
 
 // Some internal flags used in batching.
@@ -144,7 +145,7 @@ type batchCommandsClient struct {
 	client          tikvpb.Tikv_BatchCommandsClient
 	batched         sync.Map
 	idAlloc         uint64
-	tikvInHeavyLoad int32
+	tikvInHeavyLoad *int32
 }
 
 func (c *batchCommandsClient) batchRecvLoop() {
@@ -172,9 +173,9 @@ func (c *batchCommandsClient) batchRecvLoop() {
 		}
 
 		if resp.GetInHeavyLoad() {
-			atomic.StoreInt32(&c.tikvInHeavyLoad, 1)
+			atomic.StoreInt32(c.tikvInHeavyLoad, 1)
 		} else {
-			atomic.StoreInt32(&c.tikvInHeavyLoad, 0)
+			atomic.StoreInt32(c.tikvInHeavyLoad, 0)
 		}
 	}
 }
@@ -188,6 +189,7 @@ func newConnArray(maxSize uint, addr string, security config.Security) (*connArr
 
 		batchCommandsCh:      make(chan *batchCommandsEntry, cfg.TiKVClient.MaxBatchSize),
 		batchCommandsClients: make([]*batchCommandsClient, 0, maxSize),
+		tikvInHeavyLoad:      0,
 	}
 	if err := a.Init(addr, security); err != nil {
 		return nil, err
@@ -256,8 +258,9 @@ func (a *connArray) Init(addr string, security config.Security) error {
 				return errors.Trace(err)
 			}
 			batchClient := &batchCommandsClient{
-				client:  streamClient,
-				idAlloc: 0,
+				client:          streamClient,
+				idAlloc:         0,
+				tikvInHeavyLoad: &a.tikvInHeavyLoad,
 			}
 			a.batchCommandsClients = append(a.batchCommandsClients, batchClient)
 			go batchClient.batchRecvLoop()
@@ -299,7 +302,22 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 	entries := make([]*batchCommandsEntry, 0, cfg.MaxBatchSize)
 	requests := make([]*tikvpb.BatchCommandsRequest_Request, 0, cfg.MaxBatchSize)
 	requestIds := make([]uint64, 0, cfg.MaxBatchSize)
+
+	batchWaitSize := cfg.BatchWaitSize
 	for {
+		// batch-wait-size follows tikv's load.
+		if atomic.LoadInt32(&a.tikvInHeavyLoad) != 0 {
+			batchWaitSize += 1
+			if batchWaitSize > cfg.MaxBatchSize {
+				batchWaitSize = cfg.MaxBatchSize
+			}
+		} else {
+			batchWaitSize /= 2
+			if batchWaitSize < cfg.BatchWaitSize {
+				batchWaitSize = cfg.BatchWaitSize
+			}
+		}
+
 		// Choose a connection by round-robbin.
 		next := atomic.AddUint32(&a.index, 1) % uint32(len(a.v))
 		batchCommandsClient := a.batchCommandsClients[next]
@@ -315,7 +333,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		entries = append(entries, headEntry)
 		requests = append(requests, headEntry.req)
 
-		inHeavyLoad := atomic.LoadInt32(&batchCommandsClient.tikvInHeavyLoad) == 1
+		inHeavyLoad := atomic.LoadInt32(batchCommandsClient.tikvInHeavyLoad) == 1
 	Loop:
 		for {
 			select {
@@ -340,7 +358,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 				case entry := <-a.batchCommandsCh:
 					entries = append(entries, entry)
 					requests = append(requests, entry.req)
-					if len(requests) >= int(cfg.BatchWaitSize) {
+					if len(requests) >= int(batchWaitSize) {
 						break BackoffLoop
 					}
 				case <-end:
