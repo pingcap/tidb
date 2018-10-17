@@ -1655,9 +1655,14 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("set auto_increment")
 	}
 
-	// We don't support modifying the type definitions from 'null' to 'not null' now.
+	// We support modifying the type definitions of 'null' to 'not null' now.
+	var modifyColumnTp byte
 	if !mysql.HasNotNullFlag(col.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
-		return nil, errUnsupportedModifyColumn.GenWithStackByArgs("null to not null")
+		if err = checkForNullValue(ctx, col.Tp == newCol.Tp, ident.Schema, ident.Name, col.Name, newCol.Name); err != nil {
+			return nil, errors.Trace(err)
+		}
+		// `modifyColumnTp` indicates that there is a type modification.
+		modifyColumnTp = mysql.TypeNull
 	}
 	// As same with MySQL, we don't support modifying the stored status for generated columns.
 	if err = checkModifyGeneratedColumn(t.Cols(), col, newCol); err != nil {
@@ -1669,7 +1674,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		TableID:    t.Meta().ID,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, originalColName, spec.Position},
+		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp},
 	}
 	return job, nil
 }

@@ -1226,8 +1226,12 @@ func (s *testDBSuite) TestChangeColumn(c *C) {
 	s.testErrorCode(c, sql, tmysql.ErrWrongDBName)
 	sql = "alter table t3 change t.a aa bigint"
 	s.testErrorCode(c, sql, tmysql.ErrWrongTableName)
-	sql = "alter table t3 change aa a bigint not null"
-	s.testErrorCode(c, sql, tmysql.ErrUnknown)
+	s.mustExec(c, "create table t4 (c1 int, c2 int, c3 int default 1, index (c1));")
+	s.tk.MustExec("insert into t4(c2) values (null);")
+	sql = "alter table t4 change c1 a1 int not null;"
+	s.testErrorCode(c, sql, tmysql.ErrInvalidUseOfNull)
+	sql = "alter table t4 change c2 a bigint not null;"
+	s.testErrorCode(c, sql, tmysql.WarnDataTruncated)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
 	s.testErrorCode(c, sql, tmysql.ErrUnknown)
 	// Rename to an existing column.
@@ -3423,6 +3427,112 @@ func backgroundExecOnJobUpdatedExported(c *C, s *testDBSuite, hook *ddl.TestDDLC
 		}
 	}
 	return hook.OnJobUpdatedExported, c3IdxInfo
+}
+
+func (s *testDBSuite) TestColumnModifyingDefinition(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.tk.MustExec("use test")
+	s.tk.MustExec("drop table if exists test2;")
+	s.tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
+	s.tk.MustExec("alter table test2 change c2 a int not null;")
+	ctx := s.tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test2"))
+	c.Assert(err, IsNil)
+	var c2 *table.Column
+	for _, col := range t.Cols() {
+		if col.Name.L == "a" {
+			c2 = col
+		}
+	}
+	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
+
+	s.tk.MustExec("drop table if exists test2;")
+	s.tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
+	s.tk.MustExec("insert into test2(c2) values (null);")
+	s.testErrorCode(c, "alter table test2 change c2 a int not null", tmysql.ErrInvalidUseOfNull)
+	s.testErrorCode(c, "alter table test2 change c1 a1 bigint not null;", tmysql.WarnDataTruncated)
+}
+
+func (s *testDBSuite) TestModifyColumnRollBack(c *C) {
+	s.tk = testkit.NewTestKit(c, s.store)
+	s.mustExec(c, "use test_db")
+	s.mustExec(c, "drop table if exists t1")
+	s.mustExec(c, "create table t1 (c1 int, c2 int, c3 int default 1, index (c1));")
+
+	var c2 *table.Column
+	var checkErr error
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 10 * time.Millisecond
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+
+		t := s.testGetTable(c, "t1")
+		for _, col := range t.Cols() {
+			if col.Name.L == "c2" {
+				c2 = col
+			}
+		}
+		if mysql.HasPreventNullInsertFlag(c2.Flag) {
+			s.testErrorCode(c, "insert into t1(c2) values (null);", tmysql.ErrBadNull)
+		}
+
+		hookCtx := mock.NewContext()
+		hookCtx.Store = s.store
+		var err error
+		err = hookCtx.NewTxn()
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+
+		jobIDs := []int64{job.ID}
+		errs, err := admin.CancelJobs(hookCtx.Txn(), jobIDs)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		// It only tests cancel one DDL job.
+		if errs[0] != nil {
+			checkErr = errors.Trace(errs[0])
+			return
+		}
+
+		err = hookCtx.Txn().Commit(context.Background())
+		if err != nil {
+			checkErr = errors.Trace(err)
+		}
+	}
+
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	done := make(chan error, 1)
+	go backgroundExec(s.store, "alter table t1 change c2 c2 bigint not null;", done)
+	ticker := time.NewTicker(s.lease / 2)
+	defer ticker.Stop()
+LOOP:
+	for {
+		select {
+		case err := <-done:
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+			break LOOP
+		case <-ticker.C:
+			s.mustExec(c, "insert into t1(c2) values (null);")
+		}
+	}
+
+	t := s.testGetTable(c, "t1")
+	for _, col := range t.Cols() {
+		if col.Name.L == "c2" {
+			c2 = col
+		}
+	}
+	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsFalse)
+	s.mustExec(c, "drop table t1")
+	ddl.ReorgWaitTimeout = oldReorgWaitTimeout
 }
 
 func (s *testDBSuite) TestPartitionAddIndex(c *C) {
