@@ -53,6 +53,7 @@ type InsertValues struct {
 	// colDefaultVals is used to store casted default value.
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
 	colDefaultVals []defaultVal
+	evalBuffer     *chunk.MutRow
 }
 
 type defaultVal struct {
@@ -117,7 +118,28 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		return nil, errors.Trace(err)
 	}
 
+	e.initEvalBuffer()
+
 	return cols, nil
+}
+
+func (e *InsertValues) initEvalBuffer() {
+	if e.evalBuffer != nil {
+		return
+	}
+	tpsLen := len(e.Table.Cols())
+	if e.hasExtraHandle {
+		tpsLen++
+	}
+	tps := make([]*types.FieldType, tpsLen)
+	for i, col := range e.Table.Cols() {
+		tps[i] = &col.FieldType
+	}
+	if e.hasExtraHandle {
+		tps[len(tps)-1] = types.NewFieldType(mysql.TypeLonglong)
+	}
+	mutChunk := chunk.MutRowFromTypes(tps)
+	e.evalBuffer = &mutChunk
 }
 
 func (e *InsertValues) lazilyInitColDefaultValBuf() (ok bool) {
@@ -204,8 +226,9 @@ func (e *InsertValues) evalRow(cols []*table.Column, list []expression.Expressio
 		}
 	}
 
+	e.evalBuffer.SetDatums(row...)
 	for i, expr := range list {
-		val, err := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
+		val, err := expr.Eval(e.evalBuffer.ToRow())
 		if err = e.handleErr(cols[i], &val, rowIdx, err); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -216,6 +239,7 @@ func (e *InsertValues) evalRow(cols []*table.Column, list []expression.Expressio
 
 		offset := cols[i].Offset
 		row[offset], hasValue[offset] = val1, true
+		e.evalBuffer.SetDatum(offset, val1)
 	}
 
 	return e.fillRow(row, hasValue)
