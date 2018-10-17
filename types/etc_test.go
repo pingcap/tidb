@@ -122,7 +122,7 @@ func (s *testTypeEtcSuite) TestMaxFloat(c *C) {
 	}
 
 	for _, t := range tbl {
-		f := getMaxFloat(t.Flen, t.Decimal)
+		f := GetMaxFloat(t.Flen, t.Decimal)
 		c.Assert(f, Equals, t.Expect)
 	}
 }
