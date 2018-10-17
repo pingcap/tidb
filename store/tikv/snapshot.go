@@ -243,7 +243,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 			return nil, errors.Trace(err)
 		}
 		sub := time.Since(start)
-		if sub.Seconds() >= float64(time.Second) {
+		if sub.Seconds()*2 >= float64(time.Second) {
 			log.Infof("xxx ------------------------- region %v, key %s, sub %v", loc.Region, k, sub)
 		}
 		regionErr, err := resp.GetRegionError()
