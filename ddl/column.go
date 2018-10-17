@@ -509,12 +509,10 @@ func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo,
 		// Prevent this field from inserting null values.
 		tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 	} else {
 		// Modify the type defined Flag to NotNullFlag.
 		tblInfo.Columns[oldCol.Offset].Flag |= mysql.NotNullFlag
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	}
-	return ver, nil
+	return ver, errors.Trace(err)
 }
