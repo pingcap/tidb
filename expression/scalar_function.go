@@ -46,11 +46,6 @@ func (sf *ScalarFunction) GetArgs() []Expression {
 	return sf.Function.getArgs()
 }
 
-// SetArgs sets arguments of function.
-func (sf *ScalarFunction) SetArgs(args []Expression) {
-	sf.Function.setArgs(args)
-}
-
 // GetCtx gets the context of function.
 func (sf *ScalarFunction) GetCtx() sessionctx.Context {
 	return sf.Function.getCtx()

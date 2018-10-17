@@ -591,21 +591,21 @@ func eliminateIfNullOnNotNullCol(p LogicalPlan, expr expression.Expression) expr
 		exprChildren[i] = eliminateIfNullOnNotNullCol(p, exprChildren[i])
 	}
 
-	if scalarExpr.FuncName.L == ast.Ifnull {
-		colRef, isColRef := exprChildren[0].(*expression.Column)
-		if !isColRef {
-			return expr
-		}
+	if scalarExpr.FuncName.L != ast.Ifnull {
+		return expr
 
-		colInfo := model.FindColumnInfo(ds.Columns, colRef.ColName.L)
-		if !mysql.HasNotNullFlag(colInfo.Flag) {
-			return expr
-		}
-
-		return colRef
 	}
-	scalarExpr.SetArgs(exprChildren)
-	return scalarExpr
+	colRef, isColRef := exprChildren[0].(*expression.Column)
+	if !isColRef {
+		return expr
+	}
+
+	colInfo := model.FindColumnInfo(ds.Columns, colRef.ColName.L)
+	if !mysql.HasNotNullFlag(colInfo.Flag) {
+		return expr
+	}
+
+	return colRef
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
