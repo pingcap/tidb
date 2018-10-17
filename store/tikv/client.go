@@ -142,7 +142,9 @@ func (b *batchStatistics) inHeavyLoad(heavyLoad uint) bool {
 }
 
 type batchCommandsClient struct {
+	conn            *grpc.ClientConn
 	client          tikvpb.Tikv_BatchCommandsClient
+	clientLock      sync.Mutex // Protect client when re-create the streaming.
 	batched         sync.Map
 	idAlloc         uint64
 	tikvInHeavyLoad *int32
@@ -153,14 +155,18 @@ func (c *batchCommandsClient) batchRecvLoop() {
 		resp, err := c.client.Recv()
 		if err != nil {
 			log.Errorf("batchRecvLoop error when receive: %v", err)
-			c.batched.Range(func(key, value interface{}) bool {
-				id, _ := key.(uint64)
-				entry, _ := value.(*batchCommandsEntry)
-				entry.err = err
-				close(entry.res)
-				c.batched.Delete(id)
-				return true
-			})
+			c.clientLock.Lock()
+
+			tikvClient := tikvpb.NewTikvClient(c.conn)
+			streamClient, err := tikvClient.BatchCommands(context.TODO())
+			if err != nil {
+				log.Errorf("batchRecvLoop re-create streaming fail: %v", err)
+				time.Sleep(time.Second)
+			} else {
+				log.Infof("batchRecvLoop re-create streaming success")
+				c.client = streamClient
+			}
+			c.clientLock.Unlock()
 			continue
 		}
 
@@ -258,6 +264,7 @@ func (a *connArray) Init(addr string, security config.Security) error {
 				return errors.Trace(err)
 			}
 			batchClient := &batchCommandsClient{
+				conn:            conn,
 				client:          streamClient,
 				idAlloc:         0,
 				tikvInHeavyLoad: &a.tikvInHeavyLoad,
@@ -381,9 +388,16 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			Requests:   requests,
 			RequestIds: requestIds,
 		}
-		if err := batchCommandsClient.client.Send(request); err != nil {
-			log.Errorf("batch commands send error: %v", err)
-			return
+
+		for {
+			batchCommandsClient.clientLock.Lock()
+			if err := batchCommandsClient.client.Send(request); err != nil {
+				log.Errorf("batch commands send error: %v", err)
+				batchCommandsClient.clientLock.Unlock()
+				time.Sleep(time.Second)
+				continue
+			}
+			batchCommandsClient.clientLock.Unlock()
 		}
 	}
 }
