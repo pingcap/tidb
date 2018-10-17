@@ -419,13 +419,13 @@ func isRangePartitionColUnsignedBigint(cols []*table.Column, pi *model.Partition
 }
 
 // truncateTableFromReassignPartitionIDs reassign a new partition ids.
-func truncateTableFromReassignPartitionIDs(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo) (ver int64, _ error) {
+func truncateTableFromReassignPartitionIDs(job *model.Job, t *meta.Meta, tblInfo *model.TableInfo) error {
 	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions))
 	for _, def := range tblInfo.Partition.Definitions {
 		pid, err := t.GenGlobalID()
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		newDef := model.PartitionDefinition{
 			ID:       pid,
@@ -436,5 +436,5 @@ func truncateTableFromReassignPartitionIDs(job *model.Job, t *meta.Meta, tblInfo
 		newDefs = append(newDefs, newDef)
 	}
 	tblInfo.Partition.Definitions = newDefs
-	return ver, nil
+	return nil
 }
