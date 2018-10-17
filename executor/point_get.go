@@ -135,7 +135,7 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 }
 
 func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) error {
-	// e.g. select b, b, c, c from t where a = 1. One column will be filled in multiple position in schema.
+	//  One column could be filled for multi-times in the schema. e.g. select b, b, c, c from t where a = 1.
 	// Hence we need to record what positions in schema share the same column.
 	colID2DecodedPos := make(map[int64]int, e.schema.Len())
 	decodedPos2SchemaPos := make([][]int, 0, e.schema.Len())
