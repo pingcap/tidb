@@ -1793,7 +1793,7 @@ func (s *testSuite) TestNullDefault(c *C) {
 	tk.MustQuery("select * from test_null_default").Check(testkit.Rows("<nil>", "1970-01-01 08:20:34"))
 }
 
-func (s *testBypassSuite) TestBypassLatch(c *C) {
+func (s *testBypassSuite) TestLatch(c *C) {
 	store, err := mockstore.NewMockTikvStore(
 		// Small latch slot size to make conflicts.
 		mockstore.WithTxnLocalLatches(64),
@@ -1827,15 +1827,13 @@ func (s *testBypassSuite) TestBypassLatch(c *C) {
 		tk2.MustExec("commit")
 	}
 
-	// txn1 and txn2 data range do not overlap, but using latches result in txn conflict.
+	// txn1 and txn2 data range do not overlap, using latches should not
+	// result in txn conflict.
 	fn()
 	tk1.MustExec("commit")
 
 	tk1.MustExec("truncate table t")
 	fn()
-	txn := tk1.Se.Txn()
-	txn.SetOption(kv.BypassLatch, true)
-	// Bypass latch, there will be no conflicts.
 	tk1.MustExec("commit")
 }
 
@@ -2092,4 +2090,18 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	tk.MustExec(`insert into t set b = 3 on duplicate key update a = a + 1;`)
 	tk.MustExec(`insert into t (b) values (6);`)
 	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
+}
+
+func (s *testSuite) TestDeferConstraintCheckForInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t;create table t (i int key);`)
+	tk.MustExec(`insert t values (1);`)
+	tk.MustExec(`set tidb_constraint_check_in_place = 1;`)
+	tk.MustExec(`begin;`)
+	_, err := tk.Exec(`insert t values (1);`)
+	c.Assert(err, NotNil)
+	tk.MustExec(`update t set i = 2 where i = 1;`)
+	tk.MustExec(`commit;`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows("2"))
 }
