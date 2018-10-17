@@ -593,7 +593,6 @@ func eliminateIfNullOnNotNullCol(p LogicalPlan, expr expression.Expression) expr
 
 	if scalarExpr.FuncName.L != ast.Ifnull {
 		return expr
-
 	}
 	colRef, isColRef := exprChildren[0].(*expression.Column)
 	if !isColRef {
