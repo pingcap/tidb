@@ -576,21 +576,36 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 	}
 }
 
-func eliminateIfNullOnNonNullColumn(p LogicalPlan, expr expression.Expression) expression.Expression {
-	if scalarExpr, ok := expr.(*expression.ScalarFunction); ok {
-		if scalarExpr.FuncName.L == ast.Ifnull {
-			if cExpr, ok := scalarExpr.GetArgs()[0].(*expression.Column); ok {
-				var colFound *model.ColumnInfo
-				if ds, ok := p.(*DataSource); ok {
-					colFound = model.FindColumnInfo(ds.Columns, cExpr.ColName.L)
-					if mysql.HasNotNullFlag(colFound.Flag) {
-						return scalarExpr.GetArgs()[0]
-					}
-				}
-			}
-		}
+func eliminateIfNullOnNotNullCol(p LogicalPlan, expr expression.Expression) expression.Expression {
+	ds, isDs := p.(*DataSource)
+	if !isDs {
+		return expr
 	}
-	return expr
+
+	scalarExpr, isScalarFunc := expr.(*expression.ScalarFunction)
+	if !isScalarFunc {
+		return expr
+	}
+	exprChildren := scalarExpr.GetArgs()
+	for i := 0; i < len(exprChildren); i++ {
+		exprChildren[i] = eliminateIfNullOnNotNullCol(p, exprChildren[i])
+	}
+
+	if scalarExpr.FuncName.L == ast.Ifnull {
+		colRef, isColRef := exprChildren[0].(*expression.Column)
+		if !isColRef {
+			return expr
+		}
+
+		colInfo := model.FindColumnInfo(ds.Columns, colRef.ColName.L)
+		if !mysql.HasNotNullFlag(colInfo.Flag) {
+			return expr
+		}
+
+		return colRef
+	}
+	scalarExpr.SetArgs(exprChildren)
+	return scalarExpr
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
@@ -602,7 +617,7 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	oldLen := 0
 	for _, field := range fields {
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
-		newExpr = eliminateIfNullOnNonNullColumn(p, newExpr)
+		newExpr = eliminateIfNullOnNotNullCol(p, newExpr)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}

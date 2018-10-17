@@ -90,4 +90,6 @@ explain select ifnull(nb, 0) from t;
 explain select ifnull(nb, 0), ifnull(nc, 0) from t;
 explain select ifnull(a, 0), ifnull(nb, 0) from t;
 explain select ifnull(nb, 0), ifnull(nb, 0) from t;
+explain select 1+ifnull(nb, 0) from t;
+explain select 1+ifnull(a, 0) from t;
 drop table if exists t;

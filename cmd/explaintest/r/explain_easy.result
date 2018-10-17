@@ -410,4 +410,15 @@ id	count	task	operator info
 Projection_3	10000.00	root	test.t.nb, test.t.nb
 └─TableReader_5	10000.00	root	data:TableScan_4
   └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select 1+ifnull(nb, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	plus(1, test.t.nb)
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select 1+ifnull(a, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	plus(1, ifnull(test.t.a, 0))
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
 drop table if exists t;

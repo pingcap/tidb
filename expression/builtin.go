@@ -162,6 +162,10 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
+func (b *baseBuiltinFunc) setArgs(args []Expression) {
+	b.args = args
+}
+
 func (b *baseBuiltinFunc) evalInt(row chunk.Row) (int64, bool, error) {
 	panic("baseBuiltinFunc.evalInt() should never be called.")
 }
@@ -274,6 +278,8 @@ type builtinFunc interface {
 	evalJSON(row chunk.Row) (val json.BinaryJSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
+	// setArgs set the arguments expressions to builtFunc.
+	setArgs(args []Expression)
 	// equal check if this function equals to another function.
 	equal(builtinFunc) bool
 	// getCtx returns this function's context.
