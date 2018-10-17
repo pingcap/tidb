@@ -516,7 +516,9 @@ func (e *InsertValues) batchCheckAndInsert(rows [][]types.Datum, addRecord func(
 }
 
 func (e *InsertValues) addRecord(row []types.Datum) (int64, error) {
-	e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
+	if !e.ctx.GetSessionVars().ConstraintCheckInPlace {
+		e.ctx.Txn().SetOption(kv.PresumeKeyNotExists, nil)
+	}
 	h, err := e.Table.AddRecord(e.ctx, row, false)
 	e.ctx.Txn().DelOption(kv.PresumeKeyNotExists)
 	if err != nil {
