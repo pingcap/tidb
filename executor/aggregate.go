@@ -502,9 +502,9 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.runtimeStat != nil {
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	if e.isUnparallelExec {
@@ -761,9 +761,9 @@ func (e *StreamAggExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if e.runtimeStat != nil {
+	if e.runtimeStats != nil {
 		start := time.Now()
-		defer func() { e.runtimeStat.Record(time.Now().Sub(start), chk.NumRows()) }()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
 	}
 	chk.Reset()
 	for !e.executed && chk.NumRows() < e.maxChunkSize {
