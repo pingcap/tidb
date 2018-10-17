@@ -333,7 +333,12 @@ func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.Colu
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		return ver, nil
+		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
+		if !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
+			return ver, nil
+		}
+		// Modify the type defined Flag to NotNullFlag.
+		tblInfo.Columns[oldCol.Offset].Flag |= mysql.NotNullFlag
 	}
 
 	// We need the latest column's offset and state. This information can be obtained from the store.
@@ -505,14 +510,8 @@ func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo,
 		return ver, errors.Trace(err)
 	}
 
-	// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-	if !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
-		// Prevent this field from inserting null values.
-		tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
-	} else {
-		// Modify the type defined Flag to NotNullFlag.
-		tblInfo.Columns[oldCol.Offset].Flag |= mysql.NotNullFlag
-	}
+	// Prevent this field from inserting null values.
+	tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	return ver, errors.Trace(err)
 }
