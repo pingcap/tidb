@@ -385,3 +385,29 @@ Projection_5	8000.00	root	test.ta.a
     └─TableReader_9	10000.00	root	data:TableScan_8
       └─TableScan_8	10000.00	cop	table:ta, range:[-inf,+inf], keep order:false, stats:pseudo
 rollback;
+drop table if exists t;
+create table t(a int, nb int not null, nc int not null);
+explain select ifnull(a, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	ifnull(test.t.a, 0)
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select ifnull(nb, 0) from t;
+id	count	task	operator info
+TableReader_5	10000.00	root	data:TableScan_4
+└─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select ifnull(nb, 0), ifnull(nc, 0) from t;
+id	count	task	operator info
+TableReader_5	10000.00	root	data:TableScan_4
+└─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select ifnull(a, 0), ifnull(nb, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	ifnull(test.t.a, 0), test.t.nb
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select ifnull(nb, 0), ifnull(nb, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	test.t.nb, test.t.nb
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
