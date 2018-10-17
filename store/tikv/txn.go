@@ -89,7 +89,13 @@ func (txn *tikvTxn) Reset() {
 func (txn *tikvTxn) Get(k kv.Key) ([]byte, error) {
 	metrics.TiKVTxnCmdCounter.WithLabelValues("get").Inc()
 	start := time.Now()
-	defer func() { metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(time.Since(start).Seconds()) }()
+	defer func() {
+		sub := time.Since(start).Seconds()
+		metrics.TiKVTxnCmdHistogram.WithLabelValues("get").Observe(sub)
+		if sub >= float64(time.Second) {
+			log.Infof("xxx ------------------------- key %s, sub %v", k, sub)
+		}
+	}()
 
 	ret, err := txn.us.Get(k)
 	if err != nil {
