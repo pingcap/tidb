@@ -118,9 +118,15 @@ func foldConstant(expr Expression) (Expression, bool) {
 				return expr, isDeferredConst
 			}
 			if value.IsNull() {
+				if isDeferredConst {
+					return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
+				}
 				return &Constant{Value: value, RetType: x.RetType}, false
 			}
 			if isTrue, err := value.ToBool(sc); err == nil && isTrue == 0 {
+				if isDeferredConst {
+					return &Constant{Value: value, RetType: x.RetType, DeferredExpr: x}, true
+				}
 				return &Constant{Value: value, RetType: x.RetType}, false
 			}
 			return expr, isDeferredConst
