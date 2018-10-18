@@ -118,8 +118,9 @@ func (n *TraceStmt) Accept(v Visitor) (Node, bool) {
 type ExplainStmt struct {
 	stmtNode
 
-	Stmt   StmtNode
-	Format string
+	Stmt    StmtNode
+	Format  string
+	Analyze bool
 }
 
 // Accept implements Node Accept interface.
