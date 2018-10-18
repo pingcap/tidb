@@ -519,7 +519,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		if job.State != model.JobStateCancelled {
 			log.Errorf("[ddl-%s] run DDL job err %v", w, errors.ErrorStack(err))
 		} else {
-			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, errors.ErrorStack(err))
+			log.Infof("[ddl-%s] the DDL job is normal to cancel because %v", w, err)
 		}
 
 		job.Error = toTError(err)
