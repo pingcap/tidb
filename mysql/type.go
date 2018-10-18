@@ -69,11 +69,12 @@ const (
 	PartKeyFlag        uint = 1 << 14 /* Intern: Part of some keys */
 	NumFlag            uint = 1 << 15 /* Field is a num (for clients) */
 
-	GroupFlag       uint = 1 << 15 /* Internal: Group field */
-	UniqueFlag      uint = 1 << 16 /* Internal: Used by sql_yacc */
-	BinCmpFlag      uint = 1 << 17 /* Internal: Used by sql_yacc */
-	ParseToJSONFlag uint = 1 << 18 /* Internal: Used when we want to parse string to JSON in CAST */
-	IsBooleanFlag   uint = 1 << 19 /* Internal: Used for telling boolean literal from integer */
+	GroupFlag             uint = 1 << 15 /* Internal: Group field */
+	UniqueFlag            uint = 1 << 16 /* Internal: Used by sql_yacc */
+	BinCmpFlag            uint = 1 << 17 /* Internal: Used by sql_yacc */
+	ParseToJSONFlag       uint = 1 << 18 /* Internal: Used when we want to parse string to JSON in CAST */
+	IsBooleanFlag         uint = 1 << 19 /* Internal: Used for telling boolean literal from integer */
+	PreventNullInsertFlag uint = 1 << 20 /* Prevent this Field from inserting NULL values */
 )
 
 // TypeInt24 bounds.
@@ -146,4 +147,9 @@ func HasParseToJSONFlag(flag uint) bool {
 // HasIsBooleanFlag checks if IsBooleanFlag is set.
 func HasIsBooleanFlag(flag uint) bool {
 	return (flag & IsBooleanFlag) > 0
+}
+
+// HasPreventNullInsertFlag checks if PreventNullInsertFlag is set.
+func HasPreventNullInsertFlag(flag uint) bool {
+	return (flag & PreventNullInsertFlag) > 0
 }
