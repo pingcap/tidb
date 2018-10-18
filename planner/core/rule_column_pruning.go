@@ -167,7 +167,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) {
-	used := getUsedList(parentUsedCols, p.schema)
+	used := getUsedList(parentUsedCols, p.Schema())
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
