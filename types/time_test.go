@@ -30,10 +30,35 @@ var _ = Suite(&testTimeSuite{})
 type testTimeSuite struct {
 }
 
+func (s *testTimeSuite) TestParseTimeFromFloatString(c *C) ()  {
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
+	defer testleak.AfterTest(c)()
+
+	table := []struct {
+		Input  string
+		Expect string
+	}{
+		{"20170118.999", "2017-01-18 00:00:00.000"},
+		{"20170118123950.123","2017-01-18 12:39:50.123"},
+		{"20170118123950.999","2017-01-18 12:39:50.999"},
+		{"20170118123950.999","2017-01-18 12:39:50.999"},
+	}
+
+	for _, test := range table {
+		t, err := types.ParseTimeFromFloatString(sc, test.Input, mysql.TypeDatetime, types.GetFsp(test.Input))
+		c.Assert(err, IsNil)
+		var parsed = t.String()
+		c.Assert(parsed, Equals, test.Expect)
+	}
+}
+
 func (s *testTimeSuite) TestDateTime(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
+
+
 	table := []struct {
 		Input  string
 		Expect string

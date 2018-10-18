@@ -699,7 +699,7 @@ func parseOnePart(lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, c
 		if err != nil {
 			return err
 		}
-	} else if len(*seps) == 6 {
+	} else if len(*seps) == MaxSqlTimeParts - 1 {
 		parseWhenLen6(lastSepChar, selfDecideFsp, currentPart, realFsp, seps)
 		return nil
 	} else {
@@ -711,7 +711,7 @@ func parseOnePart(lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, c
 	return nil
 }
 
-func splitDateTimeV2(format string, fsp int, selfDecideFsp bool) ([]string, int, error) {
+func splitDateTimeV2(format string, fsp int, selfDecideFsp bool, isFloat bool) ([]string, int, error) {
 	format = strings.TrimSpace(format)
 	var err error = nil
 	var realFsp = fsp
@@ -768,11 +768,14 @@ func splitDateTimeV2(format string, fsp int, selfDecideFsp bool) ([]string, int,
 		return seps, realFsp, nil
 	}
 
-	err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, lastPart, &realFsp, &totalPartCount, &seps)
-	if err != nil {
-		return nil, realFsp, err
+	if isFloat && MaxSqlTimeParts - 1 > totalPartCount{
+		// 20170118.999-->"2017-01-18 00:00:00.000"
+	}else {
+		err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, lastPart, &realFsp, &totalPartCount, &seps)
+		if err != nil {
+			return nil, realFsp, err
+		}
 	}
-
 	return seps, realFsp, nil
 }
 
@@ -922,7 +925,7 @@ func parseDatetimeV2(str string, fsp int, isFloat bool, selfDecideFsp bool) (Tim
 		err                                                 error
 	)
 
-	seps, realFsp, err := splitDateTimeV2(str, fsp, selfDecideFsp)
+	seps, realFsp, err := splitDateTimeV2(str, fsp, selfDecideFsp, isFloat)
 	if err != nil {
 		return ZeroDatetime, errors.Trace(err)
 	}
