@@ -284,6 +284,10 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 // 2. The schema of the Row must be the same with the Chunk.
 // 3. This API is paired with the `Insert()` function, which inserts all the
 //    rows data into the Chunk after the pre-allocation.
+// 4. We set the null bitmap here instead of in the Insert() function because
+//    when the Insert() function is called parallelly, the data race on a byte
+//    can not be avoided although the manipulated bits are different inside a
+//    byte.
 func (c *Chunk) PreAlloc(row Row) {
 	for i, srcCol := range row.c.columns {
 		dstCol := c.columns[i]
