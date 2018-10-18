@@ -15,6 +15,7 @@ package core_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -35,6 +36,35 @@ import (
 var _ = Suite(&testAnalyzeSuite{})
 
 type testAnalyzeSuite struct {
+}
+
+func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int, c int, key idx(a, b))")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustExec("insert into t2 values (2, 22), (3, 33), (5, 55)")
+	tk.MustExec("analyze table t1, t2")
+	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
+	c.Assert(len(rs.Rows()), Equals, 10)
+	for _, row := range rs.Rows() {
+		c.Assert(len(row), Equals, 5)
+		taskType := row[2].(string)
+		if taskType != "cop" {
+			execInfo := row[4].(string)
+			c.Assert(strings.Contains(execInfo, "time"), Equals, true)
+			c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
+			c.Assert(strings.Contains(execInfo, "rows"), Equals, true)
+		}
+	}
 }
 
 // TestCBOWithoutAnalyze tests the plan with stats that only have count info.
@@ -628,7 +658,7 @@ func (s *testAnalyzeSuite) TestCorrelatedEstimation(c *C) {
 	tk.MustQuery("explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;").
 		Check(testkit.Rows(
 			"Projection_11 10.00 root 9_aux_0",
-			"└─Apply_13 10.00 root left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]",
+			"└─Apply_13 10.00 root left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]",
 			"  ├─TableReader_15 10.00 root data:TableScan_14",
 			"  │ └─TableScan_14 10.00 cop table:t, range:[-inf,+inf], keep order:false",
 			"  └─StreamAgg_20 1.00 root funcs:count(1)",

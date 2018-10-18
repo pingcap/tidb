@@ -394,6 +394,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' (a,b) ignore 1 lines", false},
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy' ignore 1 lines", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*' ignore 1 lines (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by ''", true},
 
 		// select for update
 		{"SELECT * from t for update", true},
@@ -1712,6 +1713,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t RENAME KEY a TO b;", true},
 		{"ALTER TABLE t RENAME INDEX a TO b;", true},
 
+		{"alter table t analyze partition a", true},
+		{"alter table t analyze partition a with 4 buckets", true},
+		{"alter table t analyze partition a index b", true},
+		{"alter table t analyze partition a index b with 4 buckets", true},
+
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
 		{"CREATE INDEX idx ON t (a) USING HASH", true},
@@ -2309,6 +2315,10 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t1 index a,b", true},
 		{"analyze table t with 4 buckets", true},
 		{"analyze table t index a with 4 buckets", true},
+		{"analyze table t partition a", true},
+		{"analyze table t partition a with 4 buckets", true},
+		{"analyze table t partition a index b", true},
+		{"analyze table t partition a index b with 4 buckets", true},
 	}
 	s.RunTest(c, table)
 }

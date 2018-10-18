@@ -202,3 +202,31 @@ func (*testExpressionSuite) TestConstantFolding(c *C) {
 		c.Assert(newConds.String(), Equals, tt.result, Commentf("different for expr %s", tt.condition))
 	}
 }
+
+func (*testExpressionSuite) TestDeferredExprNullConstantFold(c *C) {
+	defer testleak.AfterTest(c)()
+	nullConst := &Constant{
+		Value:        types.NewDatum(nil),
+		RetType:      types.NewFieldType(mysql.TypeTiny),
+		DeferredExpr: Null,
+	}
+	tests := []struct {
+		condition Expression
+		deferred  string
+	}{
+		{
+			condition: newFunction(ast.LT, newColumn(0), nullConst),
+			deferred:  "lt(test.t.0, <nil>)",
+		},
+	}
+	for _, tt := range tests {
+		comment := Commentf("different for expr %s", tt.condition)
+		sf, ok := tt.condition.(*ScalarFunction)
+		c.Assert(ok, IsTrue, comment)
+		sf.GetCtx().GetSessionVars().StmtCtx.InNullRejectCheck = true
+		newConds := FoldConstant(tt.condition)
+		newConst, ok := newConds.(*Constant)
+		c.Assert(ok, IsTrue, comment)
+		c.Assert(newConst.DeferredExpr.String(), Equals, tt.deferred, comment)
+	}
+}
