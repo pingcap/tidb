@@ -46,7 +46,7 @@ func (g *Group) FingerPrint() string {
 	return g.selfFingerprint
 }
 
-// Insert a nonexistent group exxpression.
+// Insert a nonexistent group expression.
 func (g *Group) Insert(e *GroupExpr) bool {
 	if g.Exists(e) {
 		return false
