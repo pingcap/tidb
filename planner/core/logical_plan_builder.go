@@ -493,7 +493,9 @@ func (b *PlanBuilder) buildSelection(p LogicalPlan, where ast.ExprNode, AggMappe
 }
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
-func (b *PlanBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField, c *expression.Column) (colName, origColName, tblName, origTblName, dbName model.CIStr) {
+func (b *PlanBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField,
+	c *expression.Column) (colName, origColName, tblName, origTblName,
+	dbName model.CIStr, flag uint) {
 	if astCol, ok := getInnerFromParentheses(field.Expr).(*ast.ColumnNameExpr); ok {
 		origColName, tblName, dbName = astCol.Name.Name, astCol.Name.Table, astCol.Name.Schema
 	}
@@ -508,7 +510,8 @@ func (b *PlanBuilder) buildProjectionFieldNameFromColumns(field *ast.SelectField
 	if dbName.L == "" {
 		dbName = c.DBName
 	}
-	return colName, origColName, tblName, c.OrigTblName, c.DBName
+	flag = c.Flag
+	return colName, origColName, tblName, c.OrigTblName, c.DBName, flag
 }
 
 // buildProjectionFieldNameFromExpressions builds the field name when field expression is a normal expression.
@@ -555,9 +558,10 @@ func (b *PlanBuilder) buildProjectionFieldNameFromExpressions(field *ast.SelectF
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectField, expr expression.Expression) *expression.Column {
 	var origTblName, tblName, origColName, colName, dbName model.CIStr
+	var flag uint
 	if c, ok := expr.(*expression.Column); ok && !c.IsAggOrSubq {
 		// Field is a column reference.
-		colName, origColName, tblName, origTblName, dbName = b.buildProjectionFieldNameFromColumns(field, c)
+		colName, origColName, tblName, origTblName, dbName, flag = b.buildProjectionFieldNameFromColumns(field, c)
 	} else if field.AsName.L != "" {
 		// Field has alias.
 		colName = field.AsName
@@ -573,6 +577,7 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 		OrigColName: origColName,
 		DBName:      dbName,
 		RetType:     expr.GetType(),
+		Flag:        flag,
 	}
 }
 
@@ -659,6 +664,7 @@ func (b *PlanBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		unionCols = append(unionCols, &expression.Column{
 			ColName:  col.ColName,
 			TblName:  col.TblName,
+			Flag:     col.Flag,
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 		})

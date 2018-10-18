@@ -1186,7 +1186,7 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		newArg1, isColumn := arg1.(*expression.Column)
 		if !isColumn {
 			newArg2, isColumn := arg2.(*expression.Column)
-			if isColumn {
+			if !isColumn {
 				return false
 			}
 			newArg1 = newArg2
@@ -1195,6 +1195,7 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 		if !mysql.HasNotNullFlag(newArg1.Flag) {
 			return false
 		}
+
 		er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
 		er.ctxStack = append(er.ctxStack, newArg1)
 		return true
@@ -1240,6 +1241,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	if er.err != nil {
 		return
 	}
+
 	if er.rewriteFuncCall(v) {
 		return
 	}
