@@ -15,12 +15,12 @@ package chunk
 
 import (
 	"encoding/binary"
+	"reflect"
 	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"reflect"
 )
 
 // Chunk stores multiple rows of data in Apache Arrow format.
