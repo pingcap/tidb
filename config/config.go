@@ -243,7 +243,7 @@ type TiKVClient struct {
 type Binlog struct {
 	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
 	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
-	// If IgnoreError is true, when writting binlog meets error, TiDB would
+	// If IgnoreError is true, when writing binlog meets error, TiDB would
 	// ignore the error.
 	IgnoreError bool `toml:"ignore-error" json:"ignore-error"`
 }
@@ -262,8 +262,8 @@ var defaultConf = Config{
 	MemQuotaQuery:    32 << 30,
 	EnableStreaming:  false,
 	TxnLocalLatches: TxnLocalLatches{
-		Enabled:  false,
-		Capacity: 10240000,
+		Enabled:  true,
+		Capacity: 2048000,
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{

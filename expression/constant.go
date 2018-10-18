@@ -253,7 +253,7 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.
 		if err != nil {
 			return types.Duration{}, true, errors.Trace(err)
 		}
-		dur, err := types.ParseDuration(val, types.MaxFsp)
+		dur, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, val, types.MaxFsp)
 		if err != nil {
 			return types.Duration{}, true, errors.Trace(err)
 		}

@@ -296,7 +296,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		ctx := context.TODO()
 		se.PrepareTxnCtx(ctx)
 		sctx := se.(sessionctx.Context)
-		if err = executor.ResetStmtCtx(sctx, c.rawStmt); err != nil {
+		if err = executor.ResetContextOfStmt(sctx, c.rawStmt); err != nil {
 			return errors.Trace(err)
 		}
 		c.stmt, err = compiler.Compile(ctx, c.rawStmt)
@@ -599,6 +599,18 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 		c.Assert(err, IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
+func (s *testStateChangeSuite) TestParallelColumnModifyingDefinition(c *C) {
+	sql1 := "insert into t(b) values (null);"
+	sql2 := "alter table t change b b2 bigint not null;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		if err2 != nil {
+			c.Assert(err2.Error(), Equals, "[ddl:1265]Data truncated for column 'b2' at row 1")
+		}
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
 func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {

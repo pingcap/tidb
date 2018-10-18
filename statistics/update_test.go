@@ -406,6 +406,44 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	c.Assert(hg.Len(), Equals, 3)
 }
 
+func (s *testStatsUpdateSuite) TestAutoUpdatePartition(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
+	testKit.MustExec("analyze table t")
+
+	statistics.AutoAnalyzeMinCnt = 0
+	testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
+	}()
+
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	h := do.StatsHandle()
+
+	h.Update(is)
+	stats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	c.Assert(stats.Count, Equals, int64(0))
+
+	testKit.MustExec("insert into t values (1)")
+	h.DumpStatsDeltaToKV(statistics.DumpAll)
+	h.Update(is)
+	err = h.HandleAutoAnalyze(is)
+	c.Assert(err, IsNil)
+	stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
+	c.Assert(stats.Count, Equals, int64(1))
+	c.Assert(stats.ModifyCount, Equals, int64(0))
+}
+
 func (s *testStatsUpdateSuite) TestTableAnalyzed(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -594,7 +632,7 @@ func (s *testStatsUpdateSuite) TestQueryFeedback(c *C) {
 		{
 			// test primary key feedback
 			sql: "select * from t where t.a <= 5",
-			hist: "column:1 ndv:3 totColSize:0\n" +
+			hist: "column:1 ndv:4 totColSize:0\n" +
 				"num: 1 lower_bound: -9223372036854775808 upper_bound: 1 repeats: 0\n" +
 				"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1\n" +
 				"num: 2 lower_bound: 3 upper_bound: 5 repeats: 0",
@@ -1116,5 +1154,74 @@ func (s *testStatsUpdateSuite) TestIndexQueryFeedback(c *C) {
 		val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
 		c.Assert(err, IsNil)
 		c.Assert(tbl.Indices[t.idxID].CMSketch.QueryBytes(val), Equals, t.eqCount)
+	}
+}
+
+func (s *testStatsUpdateSuite) TestFeedbackRanges(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	h := s.do.StatsHandle()
+	oriProbability := statistics.FeedbackProbability
+	oriNumber := statistics.MaxNumberOfRanges
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+		statistics.MaxNumberOfRanges = oriNumber
+	}()
+	statistics.FeedbackProbability = 1
+
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a tinyint, b tinyint, primary key(a), index idx(a, b))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	testKit.MustExec("analyze table t with 3 buckets")
+	for i := 30; i < 40; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	tests := []struct {
+		sql   string
+		hist  string
+		colID int64
+	}{
+		{
+			sql: "select * from t where a <= 50 or (a > 130 and a < 140)",
+			hist: "column:1 ndv:30 totColSize:0\n" +
+				"num: 8 lower_bound: -128 upper_bound: 7 repeats: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 50 repeats: 0",
+			colID: 1,
+		},
+		{
+			sql: "select * from t where a >= 10",
+			hist: "column:1 ndv:30 totColSize:0\n" +
+				"num: 8 lower_bound: -128 upper_bound: 7 repeats: 0\n" +
+				"num: 8 lower_bound: 8 upper_bound: 15 repeats: 0\n" +
+				"num: 14 lower_bound: 16 upper_bound: 127 repeats: 0",
+			colID: 1,
+		},
+		{
+			sql: "select * from t use index(idx) where a = 1 and (b <= 50 or (b > 130 and b < 140))",
+			hist: "column:2 ndv:20 totColSize:20\n" +
+				"num: 7 lower_bound: -128 upper_bound: 6 repeats: 0\n" +
+				"num: 7 lower_bound: 7 upper_bound: 13 repeats: 1\n" +
+				"num: 6 lower_bound: 14 upper_bound: 19 repeats: 1",
+			colID: 2,
+		},
+	}
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	for i, t := range tests {
+		testKit.MustQuery(t.sql)
+		c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
+		c.Assert(err, IsNil)
+		h.Update(is)
+		tblInfo := table.Meta()
+		tbl := h.GetTableStats(tblInfo)
+		c.Assert(tbl.Columns[t.colID].ToString(0), Equals, tests[i].hist)
 	}
 }

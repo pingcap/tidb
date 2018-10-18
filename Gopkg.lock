@@ -190,6 +190,14 @@
   version = "v1.1"
 
 [[projects]]
+  digest = "1:5e55a8699c9ff7aba1e4c8952aeda209685d88d4cb63a8766c338e333b8e65d6"
+  name = "github.com/klauspost/cpuid"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "ae7887de9fa5d2db4eaa8174a7eff2c1ac00f2da"
+  version = "v1.1"
+
+[[projects]]
   branch = "master"
   digest = "1:5985ef4caf91ece5d54817c11ea25f182697534f8ae6521eadcd628c142ac4b6"
   name = "github.com/matttproud/golang_protobuf_extensions"
@@ -291,15 +299,15 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:2c64fe28351dc49da088194d80faceb34186e080a60c649694d094b2ccccacf5"
+  digest = "1:8f576565a8479071ca1951bf678519b1c32480aad8dec2379a64858c31d9e6a9"
   name = "github.com/pingcap/pd"
-  packages = ["pd-client"]
+  packages = ["client"]
   pruneopts = "NUT"
-  revision = "b5992e356ff447a6fdaa450b3f5ea33afbd11680"
+  revision = "eb892dda1e33a0b76191d39894ad4a806f313f6e"
 
 [[projects]]
   branch = "master"
-  digest = "1:14d83225e335cfa449b1f74d03c03ed70db64bf6af83a6e04c43e6e0021d6b94"
+  digest = "1:9d9d9bf758fc9bbf1a4976534c1622dbca61a8da53d98416dbb711e309e379f7"
   name = "github.com/pingcap/tipb"
   packages = [
     "go-binlog",
@@ -307,7 +315,7 @@
     "sharedbytes",
   ]
   pruneopts = "NUT"
-  revision = "371b48b15d93924a3a5375019e42b4420bc13d17"
+  revision = "11e33c750323a0267a6aee335eaaeb7831bdae67"
 
 [[projects]]
   digest = "1:91fee14a873676b2118c54e08c2e04897ea5c141b55a9b9fb8cf0721458d0d85"
@@ -465,7 +473,7 @@
   revision = "6b7d9516179cd47f4714cfeb0103ad1dede756c4"
 
 [[projects]]
-  digest = "1:a893d24a604ae6f45f2d6e00ae9e817476e110e2dd5455152b35bb720ca2f626"
+  digest = "1:7cd8d3d0020bbbe235958c87a2c042c4a8505e401b6e0496880990228fc34f4b"
   name = "google.golang.org/grpc"
   packages = [
     ".",
@@ -495,9 +503,9 @@
     "transport",
   ]
   pruneopts = "NUT"
-  revision = "41344da2231b913fa3d983840a57a6b1b7b631a1"
+  revision = "7a6a684ca69eb4cae85ad0a484f2e531598c047b"
   source = "https://github.com/grpc/grpc-go.git"
-  version = "v1.12.0"
+  version = "v1.12.2"
 
 [[projects]]
   digest = "1:7d95d61ff5828a65cf072a46f3c68d67daffdd11e97d758b0af2176cde717fcd"
@@ -531,7 +539,9 @@
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing",
     "github.com/grpc-ecosystem/go-grpc-prometheus",
+    "github.com/klauspost/cpuid",
     "github.com/ngaut/pools",
+    "github.com/ngaut/sync2",
     "github.com/opentracing/basictracer-go",
     "github.com/opentracing/opentracing-go",
     "github.com/pingcap/check",
@@ -547,7 +557,7 @@
     "github.com/pingcap/kvproto/pkg/kvrpcpb",
     "github.com/pingcap/kvproto/pkg/metapb",
     "github.com/pingcap/kvproto/pkg/tikvpb",
-    "github.com/pingcap/pd/pd-client",
+    "github.com/pingcap/pd/client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-tipb",
     "github.com/pkg/errors",
