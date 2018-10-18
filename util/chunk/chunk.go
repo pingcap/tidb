@@ -320,8 +320,6 @@ func (c *Chunk) PreAlloc4Row(row Row) {
 // Note: Insert will cover the origin data, it should be called after
 // PreAlloc4Row.
 func (c *Chunk) Insert(rowIdx int, row Row) {
-	// Check data length between row and the origin data for every column.
-	// Cover the origin data if the upper check is valid.
 	for i, srcCol := range row.c.columns {
 		dstCol := c.columns[i]
 		var srcStart, srcEnd, destStart, destEnd int
