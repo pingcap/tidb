@@ -1445,27 +1445,11 @@ func (b *planBuilder) buildExplain(explain *ast.ExplainStmt) (Plan, error) {
 			return nil, ErrUnsupportedType.GenWithStackByArgs(targetPlan)
 		}
 	}
-	p := &Explain{StmtPlan: pp}
-	switch strings.ToLower(explain.Format) {
-	case ast.ExplainFormatROW:
-		retFields := []string{"id", "count", "task", "operator info"}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
-		}
-		p.SetSchema(schema)
-		p.explainedPlans = map[int]bool{}
-		p.explainPlanInRowFormat(p.StmtPlan.(PhysicalPlan), "root", "", true)
-	case ast.ExplainFormatDOT:
-		retFields := []string{"dot contents"}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
-		}
-		p.SetSchema(schema)
-		p.prepareDotInfo(p.StmtPlan.(PhysicalPlan))
-	default:
-		return nil, errors.Errorf("explain format '%s' is not supported now", explain.Format)
+	p := &Explain{StmtPlan: pp, Analyze: explain.Analyze, Format: explain.Format, ExecStmt: explain.Stmt, ExecPlan: targetPlan}
+	p.ctx = b.ctx
+	err = p.prepareSchema()
+	if err != nil {
+		return nil, err
 	}
 	return p, nil
 }
