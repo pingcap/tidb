@@ -141,5 +141,9 @@ func (p *UserPrivileges) UserPrivilegesTable() [][]types.Datum {
 // ShowGrants implements privilege.Manager ShowGrants interface.
 func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity) ([]string, error) {
 	mysqlPrivilege := p.Handle.Get()
+	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+		return mysqlPrivilege.showGrants(user.AuthUsername, user.AuthHostname), nil
+	}
 	return mysqlPrivilege.showGrants(user.Username, user.Hostname), nil
+
 }

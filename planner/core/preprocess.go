@@ -607,6 +607,8 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 		if currentUser != nil {
 			node.User.Username = currentUser.Username
 			node.User.Hostname = currentUser.Hostname
+			node.User.AuthUsername = currentUser.AuthUsername
+			node.User.AuthHostname = currentUser.AuthHostname
 		}
 	}
 }

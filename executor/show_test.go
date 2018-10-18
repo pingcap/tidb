@@ -566,7 +566,8 @@ func (s *testSuite) TestShow2(c *C) {
 	timeStr := time.Now().Format("2006-01-02 15:04:05")
 	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 100 100 100 100 100 100 100 %s %s %s utf8_general_ci   注释", create_time, timeStr, timeStr)))
 
-	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, []byte("012345678901234567890"))
+	// The Hostname is the actual host
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
 	tk.MustQuery("show databases like 'test'").Check(testkit.Rows("test"))
 
