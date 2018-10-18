@@ -96,7 +96,7 @@ var (
 	errIncorrectPrefixKey   = terror.ClassDDL.New(codeIncorrectPrefixKey, "Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys")
 	errTooLongKey           = terror.ClassDDL.New(codeTooLongKey,
 		fmt.Sprintf("Specified key was too long; max key length is %d bytes", maxPrefixLength))
-	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, "this key column doesn't exist in table")
+	errKeyColumnDoesNotExits    = terror.ClassDDL.New(codeKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits])
 	errUnknownTypeLength        = terror.ClassDDL.New(codeUnknownTypeLength, "Unknown length for type tp %d")
 	errUnknownFractionLength    = terror.ClassDDL.New(codeUnknownFractionLength, "Unknown Length for type tp %d and fraction %d")
 	errInvalidJobVersion        = terror.ClassDDL.New(codeInvalidJobVersion, "DDL job with version %d greater than current %d")
@@ -263,7 +263,7 @@ func (dc *ddlCtx) isOwner() bool {
 	isOwner := dc.ownerManager.IsOwner()
 	log.Debugf("[ddl] it's the DDL owner %v, self ID %s", isOwner, dc.uuid)
 	if isOwner {
-		metrics.DDLCounter.WithLabelValues(metrics.IsDDLOwner).Inc()
+		metrics.DDLCounter.WithLabelValues(metrics.DDLOwner + "_" + mysql.TiDBReleaseVersion).Inc()
 	}
 	return isOwner
 }
@@ -585,7 +585,7 @@ const (
 	codeTooLongIdent                           = 1059
 	codeDupKeyName                             = 1061
 	codeTooLongKey                             = 1071
-	codeKeyColumnDoesNotExits                  = 1072
+	codeKeyColumnDoesNotExits                  = mysql.ErrKeyColumnDoesNotExits
 	codeIncorrectPrefixKey                     = 1089
 	codeCantRemoveAllFields                    = 1090
 	codeCantDropFieldOrKey                     = 1091
