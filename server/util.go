@@ -357,6 +357,7 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	return out
 }
 
+// CorsHandler add Cors Header if `cors` config is setted
 type CorsHandler struct {
 	handler http.Handler
 	cfg     *config.Config
