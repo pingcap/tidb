@@ -505,10 +505,12 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		metrics.JobsGauge.WithLabelValues(job.Type.String()).Dec()
 		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
+	var start time.Time
 	for {
 		select {
 		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
+			start = time.Now()
 		}
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
@@ -522,7 +524,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		// If a job is a history job, the state must be JobSynced or JobCancel.
 		if historyJob.IsSynced() {
-			log.Infof("[ddl] DDL job ID:%d is finished", jobID)
+			log.Infof("[ddl] start time %v, sub %v, DDL job ID:%d is finished", start, time.Since(startTime), jobID)
 			return nil
 		}
 

@@ -296,7 +296,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}
 
 	job.BinlogInfo.FinishedTS = t.StartTS
-	log.Infof("[ddl-%s] finish DDL job %v", w, job)
+	// log.Infof("[ddl-%s] finish DDL job %v", w, job)
 	err = t.AddHistoryDDLJob(job)
 	return errors.Trace(err)
 }
@@ -401,6 +401,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			return nil
 		}
 		w.waitDependencyJobFinished(job, &waitDependencyJobCnt)
+		if job.IsCancelled() || job.IsDone() || job.IsRollbackDone() {
+			log.Infof("[ddl-%s] finish DDL job %v", w, job)
+		}
 
 		d.mu.RLock()
 		d.mu.hook.OnJobUpdated(job)

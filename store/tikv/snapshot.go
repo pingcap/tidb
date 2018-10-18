@@ -235,6 +235,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 	start := time.Now()
 	num := 0
 	for {
+		num++
 		loc, err := s.store.regionCache.LocateKey(bo, k)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -247,7 +248,6 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		if sub*2 >= time.Second {
 			log.Infof("xxx ------------------------- ver %v, key %s, sub %v, no.%d", req.Get.Version, k, sub, num)
 		}
-		num++
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -283,9 +283,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 					return nil, errors.Trace(err)
 				}
 				sub = time.Since(start)
-				if sub*2 >= time.Second {
-					log.Infof("xxx ------------------------- ver %v, key %s, sub %v, no.%d, err %v", req.Get.Version, k, sub, num, regionErr.String())
-				}
+				log.Infof("xxx ------------------------- ver %v, key %s, sub %v, no.%d, err %v", req.Get.Version, k, sub, num, keyErr)
 			}
 			continue
 		}
