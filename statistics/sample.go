@@ -18,6 +18,7 @@ import (
 	"math/rand"
 
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -73,6 +74,8 @@ func SampleCollectorToProto(c *SampleCollector) *tipb.SampleCollector {
 	return collector
 }
 
+const maxSampleValueLength = mysql.MaxFieldVarCharLength / 2
+
 // SampleCollectorFromProto converts SampleCollector from its protobuf representation.
 func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector {
 	s := &SampleCollector{
@@ -85,7 +88,10 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	}
 	s.CMSketch = CMSketchFromProto(collector.CmSketch)
 	for _, val := range collector.Samples {
-		s.Samples = append(s.Samples, types.NewBytesDatum(val))
+		// When store the histogram bucket boundaries to kv, we need to limit the length of the value.
+		if len(val) <= maxSampleValueLength {
+			s.Samples = append(s.Samples, types.NewBytesDatum(val))
+		}
 	}
 	return s
 }
