@@ -278,9 +278,13 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 	}
 }
 
-// PreAlloc4Row pre-allocates the memory space for a Row.
-// Nothing except for the nullBitMap of c.columns will be pre-written.
-func (c *Chunk) PreAlloc4Row(row Row) {
+// PreAlloc pre-allocates the memory space in a Chunk to store the Row.
+// NOTE:
+// 1. The Chunk must be empty or holds no useful data.
+// 2. The schema of the Row must be the same with the Chunk.
+// 3. This API is paired with the `Insert()` function, which inserts all the
+//    rows data into the Chunk after the pre-allocation.
+func (c *Chunk) PreAlloc(row Row) {
 	for i, srcCol := range row.c.columns {
 		dstCol := c.columns[i]
 		dstCol.appendNullBitmap(!srcCol.isNull(row.idx))
@@ -318,9 +322,12 @@ func (c *Chunk) PreAlloc4Row(row Row) {
 
 // Insert inserts `row` on the position specified by `rowIdx`.
 // Note: Insert will cover the origin data, it should be called after
-// PreAlloc4Row.
+// PreAlloc.
 func (c *Chunk) Insert(rowIdx int, row Row) {
 	for i, srcCol := range row.c.columns {
+		if row.IsNull(i) {
+			continue
+		}
 		dstCol := c.columns[i]
 		var srcStart, srcEnd, destStart, destEnd int
 		if srcCol.isFixed() {

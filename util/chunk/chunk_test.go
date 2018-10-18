@@ -536,10 +536,10 @@ func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
 
 	destChk := NewChunkWithCapacity(fieldTypes, 3)
 
-	// Test Chunk.PreAlloc4Row.
+	// Test Chunk.PreAlloc.
 	for i := 0; i < srcChk.NumRows(); i++ {
 		c.Assert(destChk.NumRows(), check.Equals, i)
-		destChk.PreAlloc4Row(srcChk.GetRow(i))
+		destChk.PreAlloc(srcChk.GetRow(i))
 	}
 	for i, srcCol := range srcChk.columns {
 		destCol := destChk.columns[i]
@@ -590,7 +590,7 @@ func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
 	startWg, endWg := &sync.WaitGroup{}, &sync.WaitGroup{}
 	startWg.Add(1)
 	for i := 0; i < srcChk.NumRows(); i++ {
-		destChk.PreAlloc4Row(srcChk.GetRow(i))
+		destChk.PreAlloc(srcChk.GetRow(i))
 		endWg.Add(1)
 		go func(rowIdx int) {
 			defer func() {
