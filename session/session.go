@@ -379,9 +379,9 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 
 func (s *session) CommitTxn(ctx context.Context) error {
 	stmt := executor.ExecStmt{
-		Text:       "commit",
-		Ctx:        s,
-		StartTime:  time.Now(),
+		Text:      "commit",
+		Ctx:       s,
+		StartTime: time.Now(),
 	}
 	err := s.doCommitWithRetry(ctx)
 	stmt.LogSlowQuery(s.sessionVars.TxnCtx.StartTS, err == nil)
