@@ -41,7 +41,7 @@ func NewGroupExpr(node plannercore.LogicalPlan) *GroupExpr {
 	}
 }
 
-// FingerPrint get the unique fingerprint of the group expression.
+// FingerPrint gets the unique fingerprint of the group expression.
 func (e *GroupExpr) FingerPrint() string {
 	if e.selfFingerprint == "" {
 		e.selfFingerprint = fmt.Sprintf("%v", e.exprNode.ID())
