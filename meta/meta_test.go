@@ -98,6 +98,7 @@ func (s *testSuite) TestMeta(c *C) {
 	tbInfo := &model.TableInfo{
 		ID:   1,
 		Name: model.NewCIStr("t"),
+		Type: model.BaseTable,
 	}
 	err = t.CreateTable(1, tbInfo)
 	c.Assert(err, IsNil)
@@ -128,6 +129,7 @@ func (s *testSuite) TestMeta(c *C) {
 	tbInfo2 := &model.TableInfo{
 		ID:   2,
 		Name: model.NewCIStr("bb"),
+		Type: model.BaseTable,
 	}
 	err = t.CreateTable(1, tbInfo2)
 	c.Assert(err, IsNil)
@@ -160,6 +162,7 @@ func (s *testSuite) TestMeta(c *C) {
 	tbInfo100 := &model.TableInfo{
 		ID:   tid,
 		Name: model.NewCIStr("t_rename"),
+		Type: model.BaseTable,
 	}
 	// Create table.
 	err = t.CreateTable(1, tbInfo100)

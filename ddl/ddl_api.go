@@ -169,6 +169,31 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 	}
 }
 
+func buildViewColumns(ctx sessionctx.Context, viewColNames []model.CIStr, fullCols []*expression.Column) ([]*table.Column, error) {
+	if viewColNames != nil && len(viewColNames) != len(fullCols) {
+		return nil, errViewWrongList
+	}
+
+	var fullTableCols = make([]*table.Column, len(fullCols))
+	for i, v := range fullCols {
+		fullTableCols[i] = table.ToColumn(&model.ColumnInfo{
+			Name:      v.ColName,
+			ID:        v.ID,
+			Offset:    i,
+			FieldType: *v.GetType(),
+			State:     model.StatePublic,
+		})
+	}
+	if viewColNames == nil {
+		return fullTableCols, nil
+	}
+
+	for i := 0; i < len(viewColNames); i++ {
+		fullTableCols[i].Name = viewColNames[i]
+	}
+	return fullTableCols, nil
+}
+
 func buildColumnsAndConstraints(ctx sessionctx.Context, colDefs []*ast.ColumnDef,
 	constraints []*ast.Constraint) ([]*table.Column, []*ast.Constraint, error) {
 	var cols []*table.Column
@@ -699,9 +724,14 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 	return nil
 }
 
-func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint) (tbInfo *model.TableInfo, err error) {
+func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols []*table.Column, constraints []*ast.Constraint, isview bool, selectText string) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name: tableName,
+		Type: model.BaseTable,
+	}
+	if isview {
+		tbInfo.Type = model.View
+		tbInfo.ViewSelectStmt = selectText
 	}
 	// When this function is called by MockTableInfo, we should set a particular table id.
 	// So the `ddl` structure may be nil.
@@ -851,6 +881,51 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	return errors.Trace(err)
 }
 
+func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt, fullCols []*expression.Column) (err error) {
+	ident := ast.Ident{Schema: s.ViewName.Schema, Name: s.ViewName.Name}
+
+	is := d.GetInformationSchema(ctx)
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+	if is.TableExists(ident.Schema, ident.Name) && !s.OrReplace {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
+	}
+	if err = checkTooLongTable(ident.Name); err != nil {
+		return errors.Trace(err)
+	}
+
+	cols, err := buildViewColumns(ctx, s.Cols, fullCols)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, nil, true, s.Select.Text())
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tbInfo.ID,
+		Type:       model.ActionCreateView,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{tbInfo, s.OrReplace},
+	}
+
+	if err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate); err != nil {
+		return errors.Trace(err)
+	}
+	err = d.doDDLJob(ctx, job)
+	if err == nil {
+		if tbInfo.AutoIncID > 1 {
+			// Default tableAutoIncID base is 0.
+			// If the first ID is expected to greater than 1, we need to do rebase.
+			err = d.handleAutoIncID(tbInfo, schema.ID)
+		}
+	}
+
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if s.ReferTable != nil {
@@ -900,7 +975,7 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, newConstraints)
+	tbInfo, err := buildTableInfo(ctx, d, ident.Name, cols, newConstraints, false, "")
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -135,6 +135,16 @@ func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
 // for use of execution phase.
 const ExtraHandleID = -1
 
+// TableType is te type of table object
+type TableType byte
+
+const (
+	// BaseTable means this table object is a basic data table
+	BaseTable TableType = iota
+	// View means this table object is a view
+	View
+)
+
 // ExtraHandleName is the name of ExtraHandle Column.
 var ExtraHandleName = NewCIStr("_tidb_rowid")
 
@@ -171,6 +181,10 @@ type TableInfo struct {
 	Partition *PartitionInfo `json:"partition"`
 
 	Compression string `json:"compression"`
+
+	ViewSelectStmt string `json:"view_select_stmt"`
+
+	Type TableType `json:"type"`
 }
 
 // GetPartitionInfo returns the partition information.

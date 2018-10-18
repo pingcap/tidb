@@ -194,7 +194,7 @@ func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt:
 		return b.buildSimple(node.(ast.StmtNode)), nil
 	case ast.DDLNode:
-		return b.buildDDL(x), nil
+		return b.buildDDL(x)
 	}
 	return nil, ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -1382,7 +1382,8 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
-func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
+func (b *PlanBuilder) buildDDL(node ast.DDLNode) (Plan, error) {
+	schema := expression.NewSchema()
 	switch v := node.(type) {
 	case *ast.AlterTableStmt:
 		b.visitInfo = append(b.visitInfo, visitInfo{
@@ -1412,6 +1413,19 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
 				privilege: mysql.SelectPriv,
 				db:        v.ReferTable.Schema.L,
 				table:     v.ReferTable.Name.L,
+			})
+		}
+	case *ast.CreateViewStmt:
+		plan, err := b.Build(v.Select)
+		if err != nil {
+			return nil, err
+		}
+		schema = plan.Schema()
+		if _, ok := plan.(LogicalPlan); ok {
+			b.visitInfo = append(b.visitInfo, visitInfo{
+				privilege: mysql.CreatePriv,
+				db:        v.ViewName.Schema.L,
+				table:     v.ViewName.Name.L,
 			})
 		}
 	case *ast.DropDatabaseStmt:
@@ -1453,7 +1467,8 @@ func (b *PlanBuilder) buildDDL(node ast.DDLNode) Plan {
 	}
 
 	p := &DDL{Statement: node}
-	return p
+	p.SetSchema(schema)
+	return p, nil
 }
 
 // buildTrace builds a trace plan. Inside this method, it first optimize the

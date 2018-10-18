@@ -233,6 +233,7 @@ func (e *ShowExec) fetchShowTables() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
 	// sort for tables
 	var tableNames []string
+	var tableTypes = make(map[string]string)
 	for _, v := range e.is.SchemaTables(e.DBName) {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
@@ -240,13 +241,19 @@ func (e *ShowExec) fetchShowTables() error {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
+		switch v.Meta().Type {
+		case model.BaseTable:
+			tableTypes[v.Meta().Name.O] = "BASE TABLE"
+		case model.View:
+			tableTypes[v.Meta().Name.O] = "VIEW"
+		default:
+			tableTypes[v.Meta().Name.O] = "BASE TABLE"
+		}
 	}
 	sort.Strings(tableNames)
 	for _, v := range tableNames {
 		if e.Full {
-			// TODO: support "VIEW" later if we have supported view feature.
-			// now, just use "BASE TABLE".
-			e.appendRow([]interface{}{v, "BASE TABLE"})
+			e.appendRow([]interface{}{v, tableTypes[v]})
 		} else {
 			e.appendRow([]interface{}{v})
 		}
@@ -490,6 +497,21 @@ func (e *ShowExec) fetchShowCreateTable() error {
 
 	// TODO: let the result more like MySQL.
 	var buf bytes.Buffer
+
+	if tb.Meta().Type == model.View {
+		buf.WriteString(fmt.Sprintf("CREATE VIEW `%s` (", tb.Meta().Name.O))
+		for i, col := range tb.Cols() {
+			buf.WriteString(fmt.Sprintf("`%s`", col.Name.O))
+			if i != len(tb.Cols())-1 {
+				buf.WriteString(",")
+			}
+		}
+		buf.WriteString(fmt.Sprintf(") AS "))
+		buf.WriteString(tb.Meta().ViewSelectStmt)
+		e.appendRow([]interface{}{tb.Meta().Name.O, buf.String()})
+		return nil
+	}
+
 	buf.WriteString(fmt.Sprintf("CREATE TABLE `%s` (\n", tb.Meta().Name.O))
 	var pkCol *table.Column
 	var hasAutoIncID bool
