@@ -140,10 +140,13 @@ func (l *List) Reset() {
 	l.consumedIdx = -1
 }
 
-// PreAlloc4Row pre-allocate the storage memory for a Row.
+// PreAlloc4Row pre-allocates the storage memory for a Row.
+// Note: this function will *ONLY* allocate the needed memory for `row`, the
+// data will *NOT* be written into the List. List.Insert can be called to write
+// the data later on.
 func (l *List) PreAlloc4Row(row Row) (ptr RowPtr) {
 	chkIdx := len(l.chunks) - 1
-	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() || chkIdx == l.consumedIdx {
+	if chkIdx == -1 || l.chunks[chkIdx].NumRows() >= l.chunks[chkIdx].Capacity() {
 		newChk := l.allocChunk()
 		l.chunks = append(l.chunks, newChk)
 		if chkIdx != l.consumedIdx {

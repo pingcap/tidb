@@ -15,12 +15,12 @@ package chunk
 
 import (
 	"encoding/binary"
-	"reflect"
 	"unsafe"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"reflect"
 )
 
 // Chunk stores multiple rows of data in Apache Arrow format.
@@ -279,7 +279,7 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 }
 
 // PreAlloc4Row pre-allocates the memory space for a Row.
-// The nullBitMap of c.columns will be pre-written.
+// Nothing except for the nullBitMap of c.columns will be pre-written.
 func (c *Chunk) PreAlloc4Row(row Row) {
 	for i, srcCol := range row.c.columns {
 		dstCol := c.columns[i]
@@ -289,29 +289,30 @@ func (c *Chunk) PreAlloc4Row(row Row) {
 			elemLen = int(srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx])
 			dstCol.offsets = append(dstCol.offsets, int32(len(dstCol.data)+elemLen))
 		}
-		if needCap := len(dstCol.data) + elemLen; needCap > cap(dstCol.data) {
-			// Grow the capacity according to golang.growslice.
-			newCap := cap(dstCol.data)
-			doubleCap := newCap << 1
-			if needCap > doubleCap {
-				newCap = needCap
+		dstCol.length++
+		needCap := len(dstCol.data) + elemLen
+		if needCap <= cap(dstCol.data) {
+			(*reflect.SliceHeader)(unsafe.Pointer(&dstCol.data)).Len = len(dstCol.data) + elemLen
+			continue
+		}
+		// Grow the capacity according to golang.growslice.
+		newCap := cap(dstCol.data)
+		doubleCap := newCap << 1
+		if needCap > doubleCap {
+			newCap = needCap
+		} else {
+			if len(dstCol.data) < 1024 {
+				newCap = doubleCap
 			} else {
-				if len(dstCol.data) < 1024 {
-					newCap = doubleCap
-				} else {
-					for 0 < newCap && newCap < needCap {
-						newCap += newCap / 4
-					}
-					if newCap <= 0 {
-						newCap = needCap
-					}
+				for 0 < newCap && newCap < needCap {
+					newCap += newCap / 4
+				}
+				if newCap <= 0 {
+					newCap = needCap
 				}
 			}
-			dstCol.data = make([]byte, len(dstCol.data)+elemLen, newCap)
-		} else {
-			(*reflect.SliceHeader)(unsafe.Pointer(&dstCol.data)).Len = len(dstCol.data) + elemLen
 		}
-		dstCol.length++
+		dstCol.data = make([]byte, len(dstCol.data)+elemLen, newCap)
 	}
 }
 
@@ -321,24 +322,18 @@ func (c *Chunk) PreAlloc4Row(row Row) {
 func (c *Chunk) Insert(rowIdx int, row Row) {
 	// Check data length between row and the origin data for every column.
 	// Cover the origin data if the upper check is valid.
-	for i, rowCol := range row.c.columns {
-		chkCol := c.columns[i]
-		if chkCol.isFixed() != rowCol.isFixed() {
-			panic("unexcepted error happens during Chunk.Insert")
-		}
+	for i, srcCol := range row.c.columns {
+		dstCol := c.columns[i]
 		var srcStart, srcEnd, destStart, destEnd int
-		if rowCol.isFixed() {
-			srcElemLen, destElemLen := len(rowCol.elemBuf), len(chkCol.elemBuf)
+		if srcCol.isFixed() {
+			srcElemLen, destElemLen := len(srcCol.elemBuf), len(dstCol.elemBuf)
 			srcStart, destStart = row.idx*srcElemLen, rowIdx*destElemLen
 			srcEnd, destEnd = srcStart+srcElemLen, destStart+destElemLen
 		} else {
-			srcStart, srcEnd = int(rowCol.offsets[row.idx]), int(rowCol.offsets[row.idx+1])
-			destStart, destEnd = int(chkCol.offsets[rowIdx]), int(chkCol.offsets[rowIdx+1])
+			srcStart, srcEnd = int(srcCol.offsets[row.idx]), int(srcCol.offsets[row.idx+1])
+			destStart, destEnd = int(dstCol.offsets[rowIdx]), int(dstCol.offsets[rowIdx+1])
 		}
-		if destEnd-destStart != srcEnd-srcStart {
-			panic("unexcepted error happens during Chunk.Insert")
-		}
-		copy(chkCol.data[destStart:destEnd], rowCol.data[srcStart:srcEnd])
+		copy(dstCol.data[destStart:destEnd], srcCol.data[srcStart:srcEnd])
 	}
 }
 
