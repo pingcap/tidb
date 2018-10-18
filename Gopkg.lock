@@ -299,15 +299,15 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:2c64fe28351dc49da088194d80faceb34186e080a60c649694d094b2ccccacf5"
+  digest = "1:8f576565a8479071ca1951bf678519b1c32480aad8dec2379a64858c31d9e6a9"
   name = "github.com/pingcap/pd"
-  packages = ["pd-client"]
+  packages = ["client"]
   pruneopts = "NUT"
-  revision = "b5992e356ff447a6fdaa450b3f5ea33afbd11680"
+  revision = "eb892dda1e33a0b76191d39894ad4a806f313f6e"
 
 [[projects]]
   branch = "master"
-  digest = "1:14d83225e335cfa449b1f74d03c03ed70db64bf6af83a6e04c43e6e0021d6b94"
+  digest = "1:9d9d9bf758fc9bbf1a4976534c1622dbca61a8da53d98416dbb711e309e379f7"
   name = "github.com/pingcap/tipb"
   packages = [
     "go-binlog",
@@ -315,7 +315,7 @@
     "sharedbytes",
   ]
   pruneopts = "NUT"
-  revision = "371b48b15d93924a3a5375019e42b4420bc13d17"
+  revision = "11e33c750323a0267a6aee335eaaeb7831bdae67"
 
 [[projects]]
   digest = "1:91fee14a873676b2118c54e08c2e04897ea5c141b55a9b9fb8cf0721458d0d85"
@@ -541,6 +541,7 @@
     "github.com/grpc-ecosystem/go-grpc-prometheus",
     "github.com/klauspost/cpuid",
     "github.com/ngaut/pools",
+    "github.com/ngaut/sync2",
     "github.com/opentracing/basictracer-go",
     "github.com/opentracing/opentracing-go",
     "github.com/pingcap/check",
@@ -556,7 +557,7 @@
     "github.com/pingcap/kvproto/pkg/kvrpcpb",
     "github.com/pingcap/kvproto/pkg/metapb",
     "github.com/pingcap/kvproto/pkg/tikvpb",
-    "github.com/pingcap/pd/pd-client",
+    "github.com/pingcap/pd/client",
     "github.com/pingcap/tipb/go-binlog",
     "github.com/pingcap/tipb/go-tipb",
     "github.com/pkg/errors",

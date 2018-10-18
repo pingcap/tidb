@@ -81,3 +81,15 @@ begin;
 insert tb values ('1');
 explain select * from ta where a = 1;
 rollback;
+
+# https://github.com/pingcap/tidb/issues/7918
+drop table if exists t;
+create table t(a int, nb int not null, nc int not null);
+explain select ifnull(a, 0) from t;
+explain select ifnull(nb, 0) from t;
+explain select ifnull(nb, 0), ifnull(nc, 0) from t;
+explain select ifnull(a, 0), ifnull(nb, 0) from t;
+explain select ifnull(nb, 0), ifnull(nb, 0) from t;
+explain select 1+ifnull(nb, 0) from t;
+explain select 1+ifnull(a, 0) from t;
+drop table if exists t;
