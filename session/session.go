@@ -378,7 +378,15 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 }
 
 func (s *session) CommitTxn(ctx context.Context) error {
-	err := s.doCommitWithRetry(ctx)
+	var err error
+	startTime := time.Now()
+	defer func() {
+		h := GetHistory(s)
+		stmt := h.history[len(h.history)-1].st.(*executor.ExecStmt)
+		stmt.StartTime = startTime
+		stmt.LogSlowQuery(s.sessionVars.TxnCtx.StartTS, err == nil)
+	}()
+	err = s.doCommitWithRetry(ctx)
 	label := metrics.LblOK
 	if err != nil {
 		label = metrics.LblError
