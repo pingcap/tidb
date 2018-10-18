@@ -18,12 +18,13 @@ import (
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	log "github.com/sirupsen/logrus"
 )
 
 // exprSet is a Set container for expressions, each expression in it is unique.
-// `tombstone` is deleted mark, if tombstone[i] is false, data[i] is invalid.
+// `tombstone` is deleted mark, if tombstone[i] is true, data[i] is invalid.
 // `index` use expr.HashCode() as key, to implement the unique property.
 type exprSet struct {
 	data       []Expression
@@ -123,11 +124,11 @@ func iterOnce(ctx sessionctx.Context, exprs *exprSet) {
 // solve uses exprs[i] exprs[j] to propagate new conditions.
 func solve(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	for _, rule := range rules {
-		rule(ctx.GetSessionVars().StmtCtx, i, j, exprs)
+		rule(ctx, i, j, exprs)
 	}
 }
 
-type constantPropagateRule func(ctx *stmtctx.StatementContext, i, j int, exprs *exprSet)
+type constantPropagateRule func(ctx sessionctx.Context, i, j int, exprs *exprSet)
 
 var rules = []constantPropagateRule{
 	ruleConstantFalse,
@@ -136,25 +137,28 @@ var rules = []constantPropagateRule{
 
 // ruleConstantFalse propagates from CNF condition that false plus anything returns false.
 // false, a = 1, b = c ... => false
-func ruleConstantFalse(ctx *stmtctx.StatementContext, i, j int, exprs *exprSet) {
+func ruleConstantFalse(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	cond := exprs.data[i]
 	if cons, ok := cond.(*Constant); ok {
-		switch cons.RetType.Tp {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong:
-			if cons.Value.GetInt64() == 0 {
-				exprs.SetConstFalse()
-			}
+		v, isNull, err := cons.EvalInt(ctx, chunk.Row{})
+		if err != nil {
+			log.Error(err)
+			return
+		}
+		if !isNull && v == 0 {
+			exprs.SetConstFalse()
 		}
 	}
 }
 
 // ruleColumnEQConst propagates the "column = const" condition.
 // "a = 3, b = a, c = a, d = b" => "a = 3, b = 3, c = 3, d = 3"
-func ruleColumnEQConst(ctx *stmtctx.StatementContext, i, j int, exprs *exprSet) {
+func ruleColumnEQConst(ctx sessionctx.Context, i, j int, exprs *exprSet) {
 	col, cons := validEqualCond(exprs.data[i])
 	if col != nil {
 		expr := ColumnSubstitute(exprs.data[j], NewSchema(col), []Expression{cons})
-		if bytes.Compare(expr.HashCode(ctx), exprs.data[j].HashCode(ctx)) != 0 {
+		stmtctx := ctx.GetSessionVars().StmtCtx
+		if bytes.Compare(expr.HashCode(stmtctx), exprs.data[j].HashCode(stmtctx)) != 0 {
 			exprs.Append(expr)
 			exprs.tombstone[j] = true
 		}
