@@ -93,7 +93,7 @@ var (
 
 	CreateDDLInstance = "create_ddl_instance"
 	CreateDDL         = "create_ddl"
-	IsDDLOwner        = "is_ddl_owner"
+	DDLOwner          = "owner"
 	DDLCounter        = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",

@@ -711,6 +711,10 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 100;")
 	r.Check(testkit.Rows())
 
+	// Test limit exceeds int range.
+	r = tk.MustQuery("select id from select_order_test order by name, id limit 18446744073709551615;")
+	r.Check(testkit.Rows("1", "2"))
+
 	// Test multiple field
 	r = tk.MustQuery("select id, name from select_order_test where id = 1 group by id, name limit 1 offset 0;")
 	r.Check(testkit.Rows("1 hello"))
