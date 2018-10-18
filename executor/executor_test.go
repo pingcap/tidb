@@ -1061,6 +1061,21 @@ func (s *testSuite) TestUnion(c *C) {
 
 	tk.MustQuery("select 1 union select 1 union all select 1").Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select 1 union all select 1 union select 1").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`create table t1(a bigint, b bigint);`)
+	tk.MustExec(`create table t2(a bigint, b bigint);`)
+	tk.MustExec(`insert into t1 values(1, 1);`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t2 values(1, 1);`)
+	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustQuery(`select count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("128"))
+	tk.MustQuery(`select tmp.a, count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("1 128"))
 }
 
 func (s *testSuite) TestIn(c *C) {
