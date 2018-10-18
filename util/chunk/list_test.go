@@ -15,6 +15,8 @@ package chunk
 
 import (
 	"math"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"strconv"
-	"strings"
 )
 
 func (s *testChunkSuite) TestList(c *check.C) {
