@@ -140,7 +140,7 @@ func (l *List) Reset() {
 	l.consumedIdx = -1
 }
 
-// PreAlloc pre-allocates the storage memory for a Row.
+// PreAlloc4Row pre-allocates the storage memory for a Row.
 // Note: this function will *ONLY* allocate the needed memory for `row`, the
 // data will *NOT* be written into the List. List.Insert can be called to write
 // the data later on.
