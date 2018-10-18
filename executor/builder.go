@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -448,13 +449,12 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) Executor {
 func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
 	base.initCap = chunk.ZeroCapacity
-	e := &PrepareExec{
+	return &PrepareExec{
 		baseExecutor: base,
 		is:           b.is,
 		name:         v.Name,
 		sqlText:      v.SQLText,
 	}
-	return e
 }
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
@@ -659,14 +659,15 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 
 // buildExplain builds a explain executor. `e.rows` collects final result to `ExplainExec`.
 func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
-	e := &ExplainExec{
+	explainExec := &ExplainExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		explain:      v,
 	}
-	e.rows = make([][]string, 0, len(v.Rows))
-	for _, row := range v.Rows {
-		e.rows = append(e.rows, row)
+	if v.Analyze {
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		explainExec.analyzeExec = b.build(v.ExecPlan)
 	}
-	return e
+	return explainExec
 }
 
 func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) Executor {
