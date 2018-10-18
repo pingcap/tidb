@@ -37,8 +37,10 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
+	"github.com/pingcap/tidb/config"
 	"io"
 	"math"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -353,4 +355,17 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 		out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
 	}
 	return out
+}
+
+type CorsHandler struct {
+	handler http.Handler
+	cfg     *config.Config
+}
+
+func (h CorsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if h.cfg.Cors {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET")
+	}
+	h.handler.ServeHTTP(w, req)
 }

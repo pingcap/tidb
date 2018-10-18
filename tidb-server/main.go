@@ -64,6 +64,7 @@ const (
 	nmHost             = "host"
 	nmAdvertiseAddress = "advertise-address"
 	nmPort             = "P"
+	nmCors             = "cors"
 	nmSocket           = "socket"
 	nmBinlogSocket     = "binlog-socket"
 	nmRunDDL           = "run-ddl"
@@ -91,6 +92,7 @@ var (
 	host             = flag.String(nmHost, "0.0.0.0", "tidb server host")
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
 	port             = flag.String(nmPort, "4000", "tidb server port")
+	cors             = flagBoolean(nmCors, false, "tidb server allow cors request")
 	socket           = flag.String(nmSocket, "", "The socket file to use for connection.")
 	binlogSocket     = flag.String(nmBinlogSocket, "", "socket file to write binlog")
 	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
@@ -277,6 +279,9 @@ func overrideConfig() {
 		p, err = strconv.Atoi(*port)
 		terror.MustNil(err)
 		cfg.Port = uint(p)
+	}
+	if actualFlags[nmCors] {
+		cfg.Cors = *cors
 	}
 	if actualFlags[nmStore] {
 		cfg.Store = *store
