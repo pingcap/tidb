@@ -160,6 +160,10 @@ type Column struct {
 	// Index is used for execution, to tell the column's position in the given row.
 	Index int
 
+	// Flag is a flag comes from model.ColumnInfo. We maintain here mainly because we
+	// want to eliminate ifnull on not null column.
+	Flag uint
+
 	hashcode []byte
 }
 

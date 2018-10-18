@@ -1174,6 +1174,30 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 // Otherwise it should return false to indicate (the caller) that original behavior needs to be performed.
 func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	switch v.FnName.L {
+	// when column is not null, ifnull on such column is not necessary.
+	case ast.Ifnull:
+		if len(v.Args) != 2 {
+			er.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
+			return true
+		}
+		stackLen := len(er.ctxStack)
+		arg1 := er.ctxStack[stackLen-2]
+		arg2 := er.ctxStack[stackLen-1]
+		newArg1, isColumn := arg1.(*expression.Column)
+		if !isColumn {
+			newArg2, isColumn := arg2.(*expression.Column)
+			if isColumn {
+				return false
+			}
+			newArg1 = newArg2
+		}
+
+		if !mysql.HasNotNullFlag(newArg1.Flag) {
+			return false
+		}
+		er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]
+		er.ctxStack = append(er.ctxStack, newArg1)
+		return true
 	case ast.Nullif:
 		if len(v.Args) != 2 {
 			er.err = expression.ErrIncorrectParameterCount.GenWithStackByArgs(v.FnName.O)
@@ -1219,6 +1243,7 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	if er.rewriteFuncCall(v) {
 		return
 	}
+
 	var function expression.Expression
 	function, er.err = expression.NewFunction(er.ctx, v.FnName.L, &v.Type, args...)
 	er.ctxStack = er.ctxStack[:stackLen-len(v.Args)]

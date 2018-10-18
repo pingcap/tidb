@@ -486,6 +486,7 @@ func colInfoToColumn(db model.CIStr, tblName model.CIStr, asName model.CIStr, co
 		OrigTblName: tblName,
 		DBName:      db,
 		TblName:     tblName,
+		Flag:        col.Flag,
 		RetType:     &col.FieldType,
 		ID:          col.ID,
 		UniqueID:    int64(col.Offset),
