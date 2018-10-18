@@ -17,6 +17,7 @@ type IntSet struct {
 	parent []int
 }
 
+// NewIntSet returns a new int disjoint set.
 func NewIntSet(size int) *IntSet {
 	p := make([]int, size)
 	for i := range p {
@@ -25,6 +26,7 @@ func NewIntSet(size int) *IntSet {
 	return &IntSet{parent: p}
 }
 
+// Init inits or reset the int disjoint set.
 func (m *IntSet) Init(l int) {
 	m.parent = make([]int, l)
 	for i := range m.parent {
@@ -32,10 +34,12 @@ func (m *IntSet) Init(l int) {
 	}
 }
 
+// AddRelation merges two sets in int disjoint set.
 func (m *IntSet) AddRelation(a int, b int) {
 	m.parent[m.FindRoot(a)] = m.FindRoot(b)
 }
 
+// FindRoot finds the representative element of the set that `a` belongs to.
 func (m *IntSet) FindRoot(a int) int {
 	if a == m.parent[a] {
 		return a
