@@ -34,8 +34,10 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
+	gcodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	gstatus "google.golang.org/grpc/status"
 )
 
 // MaxConnectionCount is the max gRPC connections that will be established with
@@ -186,8 +188,8 @@ func (c *batchCommandsClient) batchRecvLoop() {
 			log.Errorf("batchRecvLoop error when receive: %v", err)
 
 			c.clientLock.Lock()
-			c.failPendingRequests() // fail all pending requests.
-			for {                   // try to re-create the streaming in the loop.
+			c.failPendingRequests(err) // fail all pending requests.
+			for {                      // try to re-create the streaming in the loop.
 				tikvClient := tikvpb.NewTikvClient(c.conn)
 				streamClient, err := tikvClient.BatchCommands(context.TODO())
 				if err == nil {
@@ -339,9 +341,10 @@ func (a *connArray) Close() {
 }
 
 type batchCommandsEntry struct {
-	req *tikvpb.BatchCommandsRequest_Request
-	res chan *tikvpb.BatchCommandsResponse_Response
-	err error
+	req     *tikvpb.BatchCommandsRequest_Request
+	res     chan *tikvpb.BatchCommandsResponse_Response
+	timeout int32 // Indicates the request is timeout or not.
+	err     error
 }
 
 func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
@@ -429,6 +432,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		for i := 0; i < length; i++ {
 			requestID := uint64(i) + maxBatchID - uint64(length)
 			requestIDs = append(requestIDs, requestID)
+			batchCommandsClient.batched.Store(requestID, entries[i])
 		}
 
 		request := &tikvpb.BatchCommandsRequest{
@@ -441,14 +445,8 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		batchCommandsClient.clientLock.Unlock()
 		if err != nil {
 			log.Errorf("batch commands send error: %v", err)
-			for _, entry := range entries {
-				close(entry.res)
-				entry.err = err
-			}
+			batchCommandsClient.failPendingRequests(err)
 			continue
-		}
-		for i := range requestIDs {
-			batchCommandsClient.batched.Store(requestIDs[i], entries[i])
 		}
 	}
 }
@@ -535,17 +533,22 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 {
 		if batchCommandsReq := req.ToBatchCommandsRequest(); batchCommandsReq != nil {
 			entry := &batchCommandsEntry{
-				req: batchCommandsReq,
-				res: make(chan *tikvpb.BatchCommandsResponse_Response, 1),
-				err: nil,
+				req:     batchCommandsReq,
+				res:     make(chan *tikvpb.BatchCommandsResponse_Response, 1),
+				timeout: 0,
+				err:     nil,
 			}
 			connArray.batchCommandsCh <- entry
-
-			res, ok := <-entry.res
-			if !ok {
-				return nil, errors.Trace(entry.err)
+			select {
+			case res, ok := <-entry.res:
+				if !ok {
+					return nil, errors.Trace(entry.err)
+				}
+				return tikvrpc.FromBatchCommandsResponse(res), nil
+			case <-time.After(timeout):
+				atomic.StoreInt32(&entry.timeout, 1)
+				return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, ""))
 			}
-			return tikvrpc.FromBatchCommandsResponse(res), nil
 		}
 	}
 
