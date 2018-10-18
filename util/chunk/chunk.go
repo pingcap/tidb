@@ -279,30 +279,40 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 }
 
 // PreAlloc4Row pre-allocates the memory space for a Row.
-// The null elem info will be pre-written.
+// The nullBitMap of c.columns will be pre-written.
 func (c *Chunk) PreAlloc4Row(row Row) {
-	for i, rowCol := range row.c.columns {
-		chkCol := c.columns[i]
-		chkCol.appendNullBitmap(!rowCol.isNull(row.idx))
-		if rowCol.isFixed() {
-			elemLen := len(rowCol.elemBuf)
-			if len(chkCol.data)+elemLen >= cap(chkCol.data) {
-				chkCol.data = make([]byte, len(chkCol.data)+elemLen, 2*cap(chkCol.data))
-			} else {
-				(*reflect.SliceHeader)(unsafe.Pointer(&chkCol.data)).Len = len(chkCol.data) + elemLen
-			}
-		} else {
-			elemLen := int(rowCol.offsets[row.idx+1] - rowCol.offsets[row.idx])
-			if len(chkCol.data)+elemLen >= cap(chkCol.data) {
-				chkCol.data = make([]byte, len(chkCol.data)+elemLen, 2*cap(chkCol.data))
-			} else {
-				(*reflect.SliceHeader)(unsafe.Pointer(&chkCol.data)).Len = len(chkCol.data) + elemLen
-			}
-			chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
+	for i, srcCol := range row.c.columns {
+		dstCol := c.columns[i]
+		dstCol.appendNullBitmap(!srcCol.isNull(row.idx))
+		elemLen := len(srcCol.elemBuf)
+		if !srcCol.isFixed() {
+			elemLen = int(srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx])
+			dstCol.offsets = append(dstCol.offsets, int32(len(dstCol.data)+elemLen))
 		}
-		chkCol.length++
+		if needCap := len(dstCol.data) + elemLen; needCap > cap(dstCol.data) {
+			// Grow the capacity according to golang.growslice.
+			newCap := cap(dstCol.data)
+			doubleCap := newCap << 1
+			if needCap > doubleCap {
+				newCap = needCap
+			} else {
+				if len(dstCol.data) < 1024 {
+					newCap = doubleCap
+				} else {
+					for 0 < newCap && newCap < needCap {
+						newCap += newCap / 4
+					}
+					if newCap <= 0 {
+						newCap = needCap
+					}
+				}
+			}
+			dstCol.data = make([]byte, len(dstCol.data)+elemLen, newCap)
+		} else {
+			(*reflect.SliceHeader)(unsafe.Pointer(&dstCol.data)).Len = len(dstCol.data) + elemLen
+		}
+		dstCol.length++
 	}
-	c.numVirtualRows++
 }
 
 // Insert inserts `row` on the position specified by `rowIdx`.
