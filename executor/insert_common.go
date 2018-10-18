@@ -52,8 +52,9 @@ type InsertValues struct {
 
 	// colDefaultVals is used to store casted default value.
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
-	colDefaultVals []defaultVal
-	evalBuffer     *chunk.MutRow
+	colDefaultVals  []defaultVal
+	evalBuffer      *chunk.MutRow
+	evalBufferTypes []*types.FieldType
 }
 
 type defaultVal struct {
@@ -131,14 +132,14 @@ func (e *InsertValues) initEvalBuffer() {
 	if e.hasExtraHandle {
 		tpsLen++
 	}
-	tps := make([]*types.FieldType, tpsLen)
+	e.evalBufferTypes = make([]*types.FieldType, tpsLen)
 	for i, col := range e.Table.Cols() {
-		tps[i] = &col.FieldType
+		e.evalBufferTypes[i] = &col.FieldType
 	}
 	if e.hasExtraHandle {
-		tps[len(tps)-1] = types.NewFieldType(mysql.TypeLonglong)
+		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)
 	}
-	mutChunk := chunk.MutRowFromTypes(tps)
+	mutChunk := chunk.MutRowFromTypes(e.evalBufferTypes)
 	e.evalBuffer = &mutChunk
 }
 
@@ -239,7 +240,13 @@ func (e *InsertValues) evalRow(cols []*table.Column, list []expression.Expressio
 
 		offset := cols[i].Offset
 		row[offset], hasValue[offset] = val1, true
-		e.evalBuffer.SetDatum(offset, val1)
+		if expr.Flag()&expression.FlagChunkReused > 0 {
+			mutChunk := chunk.MutRowFromTypes(e.evalBufferTypes)
+			mutChunk.SetDatums(row...)
+			e.evalBuffer = &mutChunk
+		} else {
+			e.evalBuffer.SetDatum(offset, val1)
+		}
 	}
 
 	return e.fillRow(row, hasValue)

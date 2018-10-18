@@ -236,6 +236,15 @@ func (b *baseBuiltinFunc) Clone() builtinFunc {
 	panic("you should not call this method.")
 }
 
+func (b *baseBuiltinFunc) flag() Flag {
+	for _, arg := range b.args {
+		if arg.Flag()&FlagChunkReused > 0 {
+			return FlagChunkReused
+		}
+	}
+	return 0
+}
+
 // baseBuiltinCastFunc will be contained in every struct that implement cast builtinFunc.
 type baseBuiltinCastFunc struct {
 	baseBuiltinFunc
@@ -286,6 +295,8 @@ type builtinFunc interface {
 	PbCode() tipb.ScalarFuncSig
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
+	// flag return func's property flag.
+	flag() Flag
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.
