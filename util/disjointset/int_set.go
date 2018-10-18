@@ -13,6 +13,7 @@
 
 package disjointset
 
+// IntSet is the int disjoint set.
 type IntSet struct {
 	parent []int
 }
@@ -26,16 +27,8 @@ func NewIntSet(size int) *IntSet {
 	return &IntSet{parent: p}
 }
 
-// Init inits or reset the int disjoint set.
-func (m *IntSet) Init(l int) {
-	m.parent = make([]int, l)
-	for i := range m.parent {
-		m.parent[i] = i
-	}
-}
-
-// AddRelation merges two sets in int disjoint set.
-func (m *IntSet) AddRelation(a int, b int) {
+// Union unions two sets in int disjoint set.
+func (m *IntSet) Union(a int, b int) {
 	m.parent[m.FindRoot(a)] = m.FindRoot(b)
 }
 

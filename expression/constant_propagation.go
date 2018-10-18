@@ -194,7 +194,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 			if lOk && rOk {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
-				s.unionSet.AddRelation(lID, rID)
+				s.unionSet.Union(lID, rID)
 				visited[i] = true
 			}
 		}
@@ -475,7 +475,7 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 		if outerCol != nil {
 			outerID := s.getColID(outerCol)
 			innerID := s.getColID(innerCol)
-			s.unionSet.AddRelation(outerID, innerID)
+			s.unionSet.Union(outerID, innerID)
 			visited[i] = true
 		}
 	}

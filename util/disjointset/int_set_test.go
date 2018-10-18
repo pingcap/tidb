@@ -30,23 +30,18 @@ type testDisjointSetSuite struct {
 }
 
 func (s *testDisjointSetSuite) TestIntDisjointSet(c *C) {
-	set := NewIntSet(5)
-	c.Assert(len(set.parent), Equals, 5)
-	for i := range set.parent {
-		c.Assert(set.parent[i], Equals, i)
-	}
-	set.Init(10)
+	set := NewIntSet(10)
 	c.Assert(len(set.parent), Equals, 10)
 	for i := range set.parent {
 		c.Assert(set.parent[i], Equals, i)
 	}
-	set.AddRelation(0, 1)
-	set.AddRelation(1, 3)
-	set.AddRelation(4, 2)
-	set.AddRelation(2, 6)
-	set.AddRelation(3, 5)
-	set.AddRelation(7, 8)
-	set.AddRelation(9, 6)
+	set.Union(0, 1)
+	set.Union(1, 3)
+	set.Union(4, 2)
+	set.Union(2, 6)
+	set.Union(3, 5)
+	set.Union(7, 8)
+	set.Union(9, 6)
 	c.Assert(set.FindRoot(0), Equals, set.FindRoot(1))
 	c.Assert(set.FindRoot(3), Equals, set.FindRoot(1))
 	c.Assert(set.FindRoot(5), Equals, set.FindRoot(1))
