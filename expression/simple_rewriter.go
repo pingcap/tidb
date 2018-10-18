@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pkg/errors"
 )
 
@@ -118,7 +119,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 			return originInNode, false
 		}
 		sr.push(column)
-	case *ast.ValueExpr:
+	case *driver.ValueExpr:
 		value := &Constant{Value: v.Datum, RetType: &v.Type}
 		sr.push(value)
 	case *ast.FuncCallExpr:
@@ -148,10 +149,10 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 		if v.Sel == nil {
 			sr.inToExpression(len(v.List), v.Not, &v.Type)
 		}
-	case *ast.ParamMarkerExpr:
+	case *driver.ParamMarkerExpr:
 		tp := types.NewFieldType(mysql.TypeUnspecified)
 		types.DefaultParamTypeForValue(v.GetValue(), tp)
-		value := &Constant{Value: v.Datum, RetType: tp}
+		value := &Constant{Value: v.ValueExpr.Datum, RetType: tp}
 		sr.push(value)
 	case *ast.RowExpr:
 		sr.rowToScalarFunc(v)

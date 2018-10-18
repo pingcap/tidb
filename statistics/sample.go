@@ -169,7 +169,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			panic(fmt.Sprintf("%T", s.RecordSet))
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			datums := ast.RowToDatums(row, s.RecordSet.Fields())
+			datums := RowToDatums(row, s.RecordSet.Fields())
 			if s.PkBuilder != nil {
 				err = s.PkBuilder.Iterate(datums[0])
 				if err != nil {
@@ -185,4 +185,13 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			}
 		}
 	}
+}
+
+// RowToDatums converts row to datum slice.
+func RowToDatums(row chunk.Row, fields []*ast.ResultField) []types.Datum {
+	datums := make([]types.Datum, len(fields))
+	for i, f := range fields {
+		datums[i] = row.GetDatum(i, &f.Column.FieldType)
+	}
+	return datums
 }
