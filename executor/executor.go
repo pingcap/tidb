@@ -18,9 +18,11 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -29,18 +31,23 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
 var (
+	_ Executor = &baseExecutor{}
 	_ Executor = &CheckTableExec{}
 	_ Executor = &HashAggExec{}
 	_ Executor = &LimitExec{}
@@ -71,6 +78,7 @@ type baseExecutor struct {
 	maxChunkSize  int
 	children      []Executor
 	retFieldTypes []*types.FieldType
+	runtimeStats  *execdetails.RuntimeStats
 }
 
 // Open initializes children recursively and "childrenResults" according to children's schemas.
@@ -127,6 +135,9 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id strin
 		initCap:      ctx.GetSessionVars().MaxChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
+	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
+		e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.Get(e.id)
+	}
 	if schema != nil {
 		cols := schema.Columns
 		e.retFieldTypes = make([]*types.FieldType, len(cols))
@@ -168,6 +179,10 @@ type CancelDDLJobsExec struct {
 
 // Next implements the Executor Next interface.
 func (e *CancelDDLJobsExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.cursor >= len(e.jobIDs) {
 		return nil
@@ -610,6 +625,10 @@ type LimitExec struct {
 
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
 	if e.cursor >= e.end {
 		return nil
@@ -729,6 +748,10 @@ func (e *TableDualExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *TableDualExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
 	if e.numReturned >= e.numDualRows {
 		return nil
@@ -780,6 +803,10 @@ func (e *SelectionExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.GrowAndReset(e.maxChunkSize)
 
 	if !e.batched {
@@ -855,6 +882,10 @@ type TableScanExec struct {
 
 // Next implements the Executor Next interface.
 func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.GrowAndReset(e.maxChunkSize)
 	if e.isVirtualTable {
 		return errors.Trace(e.nextChunk4InfoSchema(ctx, chk))
@@ -955,6 +986,10 @@ func (e *MaxOneRowExec) Open(ctx context.Context) error {
 
 // Next implements the Executor Next interface.
 func (e *MaxOneRowExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
 	if e.evaluated {
 		return nil
@@ -1097,6 +1132,10 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 
 // Next implements the Executor Next interface.
 func (e *UnionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.GrowAndReset(e.maxChunkSize)
 	if !e.initialized {
 		e.initialize(ctx)
@@ -1125,4 +1164,110 @@ func (e *UnionExec) Close() error {
 	}
 	e.resourcePools = nil
 	return errors.Trace(e.baseExecutor.Close())
+}
+
+// ResetContextOfStmt resets the StmtContext and session variables.
+// Before every execution, we must clear statement context.
+func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
+	vars := ctx.GetSessionVars()
+	sc := new(stmtctx.StatementContext)
+	sc.TimeZone = vars.Location()
+	sc.MemTracker = memory.NewTracker(s.Text(), vars.MemQuotaQuery)
+	switch config.GetGlobalConfig().OOMAction {
+	case config.OOMActionCancel:
+		sc.MemTracker.SetActionOnExceed(&memory.PanicOnExceed{})
+	case config.OOMActionLog:
+		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+	default:
+		sc.MemTracker.SetActionOnExceed(&memory.LogOnExceed{})
+	}
+
+	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
+		s, err = getPreparedStmt(execStmt, vars)
+	}
+	// TODO: Many same bool variables here.
+	// We should set only two variables (
+	// IgnoreErr and StrictSQLMode) to avoid setting the same bool variables and
+	// pushing them down to TiKV as flags.
+	switch stmt := s.(type) {
+	case *ast.UpdateStmt:
+		sc.InUpdateOrDeleteStmt = true
+		sc.DupKeyAsWarning = stmt.IgnoreErr
+		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.Priority = stmt.Priority
+	case *ast.DeleteStmt:
+		sc.InUpdateOrDeleteStmt = true
+		sc.DupKeyAsWarning = stmt.IgnoreErr
+		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.Priority = stmt.Priority
+	case *ast.InsertStmt:
+		sc.InInsertStmt = true
+		sc.DupKeyAsWarning = stmt.IgnoreErr
+		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.Priority = stmt.Priority
+	case *ast.CreateTableStmt, *ast.AlterTableStmt:
+		// Make sure the sql_mode is strict when checking column default value.
+	case *ast.LoadDataStmt:
+		sc.DupKeyAsWarning = true
+		sc.BadNullAsWarning = true
+		sc.TruncateAsWarning = !vars.StrictSQLMode
+	case *ast.SelectStmt:
+		sc.InSelectStmt = true
+
+		// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
+		// said "For statements such as SELECT that do not change data, invalid values
+		// generate a warning in strict mode, not an error."
+		// and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
+		sc.OverflowAsWarning = true
+
+		// Return warning for truncate error in selection.
+		sc.TruncateAsWarning = true
+		sc.IgnoreZeroInDate = true
+		if opts := stmt.SelectStmtOpts; opts != nil {
+			sc.Priority = opts.Priority
+			sc.NotFillCache = !opts.SQLCache
+		}
+		sc.PadCharToFullLength = ctx.GetSessionVars().SQLMode.HasPadCharToFullLengthMode()
+	case *ast.ShowStmt:
+		sc.IgnoreTruncate = true
+		sc.IgnoreZeroInDate = true
+		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors {
+			sc.InShowWarning = true
+			sc.SetWarnings(vars.StmtCtx.GetWarnings())
+		}
+	default:
+		sc.IgnoreTruncate = true
+		sc.IgnoreZeroInDate = true
+	}
+	vars.PreparedParams = vars.PreparedParams[:0]
+	if !vars.InRestrictedSQL {
+		if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
+			sc.Priority = priority
+		}
+	}
+	if vars.LastInsertID > 0 {
+		vars.PrevLastInsertID = vars.LastInsertID
+		vars.LastInsertID = 0
+	}
+	vars.ResetPrevAffectedRows()
+	err = vars.SetSystemVar("warning_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(false)))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = vars.SetSystemVar("error_count", fmt.Sprintf("%d", vars.StmtCtx.NumWarnings(true)))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	vars.InsertID = 0
+	vars.StmtCtx = sc
+	return
 }

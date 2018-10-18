@@ -14,11 +14,16 @@
 package ddl
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -267,27 +272,42 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return updateColumn(t, job, newCol, &newCol.Name)
 }
 
-func onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onModifyColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	newCol := &model.ColumnInfo{}
 	oldColName := &model.CIStr{}
 	pos := &ast.ColumnPosition{}
-	err := job.DecodeArgs(newCol, oldColName, pos)
+	var modifyColumnTp byte
+	err := job.DecodeArgs(newCol, oldColName, pos, &modifyColumnTp)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	return doModifyColumn(t, job, newCol, oldColName, pos)
+	return w.doModifyColumn(t, job, newCol, oldColName, pos, modifyColumnTp)
 }
 
 // doModifyColumn updates the column information and reorders all columns.
-func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition) (ver int64, _ error) {
+func (w *worker) doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldName *model.CIStr, pos *ast.ColumnPosition, modifyColumnTp byte) (ver int64, _ error) {
+	dbInfo, err := t.GetDatabase(job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	tblInfo, err := getTableInfo(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldName.L)
+	if job.IsRollingback() {
+		ver, err = rollbackModifyColumnJob(t, tblInfo, job, oldCol, modifyColumnTp)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+		return ver, nil
+	}
+
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(oldName, tblInfo.Name)
@@ -308,6 +328,17 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 	// }
 	// }
 
+	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
+		ver, err = modifyColumnFromNull2NotNull(w, t, dbInfo, tblInfo, job, oldCol, newCol)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Introduce the `mysql.HasPreventNullInsertFlag` flag to prevent users from inserting or updating null values.
+		if !mysql.HasPreventNullInsertFlag(oldCol.Flag) {
+			return ver, nil
+		}
+	}
+
 	// We need the latest column's offset and state. This information can be obtained from the store.
 	newCol.Offset = oldCol.Offset
 	newCol.State = oldCol.State
@@ -316,13 +347,14 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 	if pos.Tp == ast.ColumnPositionAfter {
 		if oldName.L == pos.RelativeColumn.Name.L {
 			// `alter table tableName modify column b int after b` will return ver,ErrColumnNotExists.
-			job.State = model.JobStateCancelled
+			// Modified the type definition of 'null' to 'not null' before this, so rollback the job when an error occurs.
+			job.State = model.JobStateRollingback
 			return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(oldName, tblInfo.Name)
 		}
 
 		relative := model.FindColumnInfo(tblInfo.Columns, pos.RelativeColumn.Name.L)
 		if relative == nil || relative.State != model.StatePublic {
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateRollingback
 			return ver, infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
 
@@ -371,12 +403,31 @@ func doModifyColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldN
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
-		job.State = model.JobStateCancelled
+		// Modified the type definition of 'null' to 'not null' before this, so rollBack the job when an error occurs.
+		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+// checkForNullValue ensure there are no null values of the column of this table.
+// `isDataTruncated` indicates whether the new field and the old field type are the same, in order to be compatible with mysql.
+func checkForNullValue(ctx sessionctx.Context, isDataTruncated bool, schema, table, oldCol, newCol model.CIStr) error {
+	sql := fmt.Sprintf("select count(*) from `%s`.`%s` where `%s` is null limit 1;", schema.L, table.L, oldCol.L)
+	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, sql)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rowCount := rows[0].GetInt64(0)
+	if rowCount != 0 {
+		if isDataTruncated {
+			return errInvalidUseOfNull
+		}
+		return ErrWarnDataTruncated.GenWithStackByArgs(newCol.L, rowCount)
+	}
+	return nil
 }
 
 func updateColumn(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
@@ -422,4 +473,43 @@ func checkAddColumnTooManyColumns(oldCols int) error {
 		return errTooManyFields
 	}
 	return nil
+}
+
+// rollbackModifyColumnJob rollbacks the job when an error occurs.
+func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, modifyColumnTp byte) (ver int64, _ error) {
+	var err error
+	if modifyColumnTp == mysql.TypeNull {
+		// field NotNullFlag flag reset.
+		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
+		// field PreventNullInsertFlag flag reset.
+		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.PreventNullInsertFlag
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+	return ver, nil
+}
+
+// modifyColumnFromNull2NotNull modifies the type definitions of 'null' to 'not null'.
+func modifyColumnFromNull2NotNull(w *worker, t *meta.Meta, dbInfo *model.DBInfo, tblInfo *model.TableInfo, job *model.Job, oldCol, newCol *model.ColumnInfo) (ver int64, _ error) {
+	// Get sessionctx from context resource pool.
+	var ctx sessionctx.Context
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	// If there is a null value inserted, it cannot be modified and needs to be rollback.
+	err = checkForNullValue(ctx, oldCol.Tp == newCol.Tp, dbInfo.Name, tblInfo.Name, oldCol.Name, newCol.Name)
+	if err != nil {
+		job.State = model.JobStateRollingback
+		return ver, errors.Trace(err)
+	}
+
+	// Prevent this field from inserting null values.
+	tblInfo.Columns[oldCol.Offset].Flag |= mysql.PreventNullInsertFlag
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	return ver, errors.Trace(err)
 }

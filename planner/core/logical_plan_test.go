@@ -335,7 +335,7 @@ func (s *testPlanSuite) TestPredicatePushDown(c *C) {
 		},
 		{
 			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where ta.d = 0",
-			best: "Join{DataScan(ta)->DataScan(tb)}(ta.d,tb.d)->Projection",
+			best: "Join{DataScan(ta)->DataScan(tb)}->Projection",
 		},
 		{
 			sql:  "select * from t ta left outer join t tb on ta.d = tb.d and ta.a > 1 where tb.d = 0",
@@ -1090,6 +1090,10 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 			sql:  "select max(a.c) from t a join t b on a.a=b.a and a.b=b.b group by a.b",
 			best: "Join{DataScan(a)->DataScan(b)}(a.a,b.a)(a.b,b.b)->Aggr(max(a.c))->Projection",
 		},
+		{
+			sql:  "select t1.a, count(t2.b) from t t1, t t2 where t1.a = t2.a group by t1.a",
+			best: "Join{DataScan(t1)->DataScan(t2)}(t1.a,t2.a)->Projection->Projection",
+		},
 	}
 	s.ctx.GetSessionVars().AllowAggPushDown = true
 	for _, tt := range tests {
@@ -1099,7 +1103,7 @@ func (s *testPlanSuite) TestEagerAggregation(c *C) {
 
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
-		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagAggregationOptimize, p.(LogicalPlan))
+		p, err = logicalOptimize(flagBuildKeyInfo|flagPredicatePushDown|flagPrunColumns|flagPushDownAgg, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -1218,6 +1222,13 @@ func (s *testPlanSuite) TestColumnPruning(c *C) {
 			ans: map[int][]string{
 				1: {"a"},
 				3: {"a"},
+			},
+		},
+		//issue 7833
+		{
+			sql: "drop view if exists v",
+			ans: map[int][]string{
+				1: {},
 			},
 		},
 	}
@@ -1531,19 +1542,14 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 			best: "DataScan(t)->Aggr(sum(test.t.b))->Projection",
 		},
 		{
-			sql:  "select t1.a, count(t2.b) from t t1, t t2 where t1.a = t2.a group by t1.a",
-			best: "Join{DataScan(t1)->DataScan(t2)}(t1.a,t2.a)->Projection->Projection",
-		},
-		{
 			sql:  "select tt.a, sum(tt.b) from (select a, b from t) tt group by tt.a",
-			best: "DataScan(t)->Projection->Projection->Projection",
+			best: "DataScan(t)->Projection->Projection",
 		},
 		{
 			sql:  "select count(1) from (select count(1), a as b from t group by a) tt group by b",
-			best: "DataScan(t)->Projection->Projection->Projection->Projection",
+			best: "DataScan(t)->Projection->Projection",
 		},
 	}
-	s.ctx.GetSessionVars().AllowAggPushDown = true
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
@@ -1552,11 +1558,10 @@ func (s *testPlanSuite) TestAggPrune(c *C) {
 		p, err := BuildLogicalPlan(s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
 
-		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagAggregationOptimize, p.(LogicalPlan))
+		p, err = logicalOptimize(flagPredicatePushDown|flagPrunColumns|flagBuildKeyInfo|flagEliminateAgg|flagEliminateProjection, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
-	s.ctx.GetSessionVars().AllowAggPushDown = false
 }
 
 func (s *testPlanSuite) TestVisitInfo(c *C) {
@@ -1713,13 +1718,13 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is, false)
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 			ctx:       mockContext(),
 			is:        s.is,
 		}
 		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
-		_, err = builder.build(stmt)
+		_, err = builder.Build(stmt)
 		c.Assert(err, IsNil, comment)
 
 		checkVisitInfo(c, builder.visitInfo, tt.ans, comment)
@@ -1817,12 +1822,12 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is, false)
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			ctx:       mockContext(),
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		plan, err := builder.build(stmt)
+		plan, err := builder.Build(stmt)
 		if tt.err {
 			c.Assert(err, NotNil)
 			return
@@ -1944,12 +1949,12 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is, false)
-		builder := &planBuilder{
+		builder := &PlanBuilder{
 			ctx:       mockContext(),
 			is:        s.is,
 			colMapper: make(map[*ast.ColumnNameExpr]int),
 		}
-		p, err := builder.build(stmt)
+		p, err := builder.Build(stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)

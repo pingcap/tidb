@@ -234,6 +234,11 @@ func (s *testSuite) TestSetVar(c *C) {
 	tk.MustQuery(`select @@tidb_force_priority;`).Check(testkit.Rows("NO_PRIORITY"))
 	_, err = tk.Exec(`set global tidb_force_priority = ""`)
 	c.Assert(err, NotNil)
+
+	tk.MustExec("set tidb_constraint_check_in_place = 1")
+	tk.MustQuery(`select @@session.tidb_constraint_check_in_place;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_constraint_check_in_place = 0")
+	tk.MustQuery(`select @@global.tidb_constraint_check_in_place;`).Check(testkit.Rows("0"))
 }
 
 func (s *testSuite) TestSetCharset(c *C) {
