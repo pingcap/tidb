@@ -21,7 +21,9 @@ import (
 // Group is short for expression group, which is used to store all the
 // logically equivalent expressions. It's a set of GroupExpr.
 type Group struct {
-	equivalents  *list.List
+	equivalents *list.List
+
+	firstExpr    map[Operand]*list.Element
 	fingerprints map[string]*list.Element
 
 	explored        bool
@@ -51,7 +53,20 @@ func (g *Group) Insert(e *GroupExpr) bool {
 	if g.Exists(e) {
 		return false
 	}
-	newEquiv := g.equivalents.PushBack(e)
+
+	operand := GetOperand(e.exprNode)
+	var newEquiv *list.Element
+	mark, hasMark := g.firstExpr[operand]
+	if hasMark {
+		newEquiv = g.equivalents.InsertAfter(e, mark)
+	} else {
+		if operand == OperandAny {
+			newEquiv = g.equivalents.PushFront(e)
+		} else {
+			newEquiv = g.equivalents.PushBack(e)
+		}
+		g.firstExpr[operand] = newEquiv
+	}
 	g.fingerprints[e.FingerPrint()] = newEquiv
 	return true
 }
@@ -59,10 +74,25 @@ func (g *Group) Insert(e *GroupExpr) bool {
 // Delete an existing group expression.
 func (g *Group) Delete(e *GroupExpr) {
 	fingerprint := e.FingerPrint()
-	if equiv, ok := g.fingerprints[fingerprint]; ok {
-		g.equivalents.Remove(equiv)
-		delete(g.fingerprints, fingerprint)
+	equiv, ok := g.fingerprints[fingerprint]
+	if !ok {
+		return // Can not find the target GroupExpr.
 	}
+
+	g.equivalents.Remove(equiv)
+	delete(g.fingerprints, fingerprint)
+
+	operand := GetOperand(equiv.Value.(*GroupExpr).exprNode)
+	if g.firstExpr[operand] != equiv {
+		return // The target GroupExpr is not the first element of the same operand.
+	}
+
+	nextElem := equiv.Next()
+	if nextElem != nil && GetOperand(nextElem.Value.(*GroupExpr).exprNode) == operand {
+		g.firstExpr[operand] = nextElem
+		return // The first element of the same operand has been changed.
+	}
+	delete(g.firstExpr, operand)
 }
 
 // Exists checks whether a group expression existed in a Group.

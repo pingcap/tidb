@@ -20,17 +20,16 @@ import (
 // ExprIter enumerates all the equivalent expressions in the group according to
 // the expression pattern.
 type ExprIter struct {
-	// The group and element field solely identify a group expression.
+	// group and element solely identify a group expression.
 	group   *Group
 	element *list.Element
 
-	// Indicates whether the current group expression binded by the iterator
-	// matches the pattern after the creation or iteration of the group.
-	foundMatch bool
+	// matched indicates whether the current group expression binded by the
+	// iterator matches the pattern after the creation or iteration.
+	matched bool
 
 	// operand is the node of the pattern tree. The operand type of the group
-	// expression must be matched with it, otherwise the group expression is
-	// ignored during the iteration.
+	// expression must be matched with it.
 	operand Operand
 
 	// children is used to iterate the child expressions.
@@ -38,20 +37,27 @@ type ExprIter struct {
 }
 
 // Next returns the next group expression matches the pattern.
-func (iter *ExprIter) Next() {
+func (iter *ExprIter) Next() (found bool) {
+	defer func() {
+		iter.matched = found
+	}()
+
 	// Iterate child firstly.
-	for i := range iter.children {
+	for i := len(iter.children) - 1; i >= 0; i-- {
 		iter.children[i].Next()
-		if iter.children[i].OK() {
-			iter.foundMatch = true
-			return
+		if !iter.children[i].Matched() {
+			continue
 		}
+
+		for j := i + 1; j < len(iter.children); j++ {
+			iter.children[j].Reset(iter.group)
+		}
+		return true
 	}
 
 	// It's root node.
 	if iter.group == nil {
-		iter.foundMatch = false
-		return
+		return false
 	}
 
 	// Otherwise, iterate itself to find more matched equivalent expressions.
@@ -59,64 +65,57 @@ func (iter *ExprIter) Next() {
 		expr := iter.element.Value.(*GroupExpr)
 		exprOperand := GetOperand(expr.exprNode)
 
-		if !iter.operand.match(exprOperand) {
-			continue
+		if !iter.operand.match(exprOperand) && iter.operand != OperandAny {
+			// All the equivalents which have the same operand are continuously
+			// stored in the list. Once the current equivalent can not match
+			// the operand, the rest can not, either.
+			return false
 		}
 
-		iter.foundMatch = true
-		for i := range iter.children {
-			if !iter.children[i].Reset(expr.children[i]) {
-				iter.foundMatch = false
-				break
-			}
-		}
-		if iter.foundMatch {
-			return
-		}
-	}
-	iter.foundMatch = false
-	return
-}
-
-// OK returns whether the iterator founds a group expression matches the pattern.
-func (iter *ExprIter) OK() bool {
-	return iter.foundMatch
-}
-
-// Reset resets the iterator to the first matched group expression.
-func (iter *ExprIter) Reset(g *Group) bool {
-	for elem := g.equivalents.Front(); elem != nil; elem.Next() {
-		expr := elem.Value.(*GroupExpr)
-		if !iter.operand.match(GetOperand(expr.exprNode)) {
+		if len(iter.children) != len(expr.children) {
 			continue
 		}
 
 		allMatched := true
-		for i := range expr.children {
+		for i := range iter.children {
 			if !iter.children[i].Reset(expr.children[i]) {
 				allMatched = false
 				break
 			}
 		}
+
 		if allMatched {
-			iter.group = g
-			iter.element = elem
 			return true
 		}
 	}
 	return false
 }
 
-// NewExprIter creates the iterator on the group which iterates the group
-// expressions matches the pattern.
-func NewExprIter(expr *GroupExpr, p *Pattern) *ExprIter {
+// Matched returns whether the iterator founds a group expression matches the
+// pattern.
+func (iter *ExprIter) Matched() bool {
+	return iter.matched
+}
+
+// Reset resets the iterator to the first matched group expression.
+func (iter *ExprIter) Reset(g *Group) (findMatch bool) {
+	iter.element, findMatch = g.firstExpr[iter.operand]
+	return findMatch
+}
+
+// NewExprIterFromGroupExpr creates the iterator on the group expression.
+func NewExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
 	if !p.operand.match(GetOperand(expr.exprNode)) {
 		return nil
 	}
 
-	iter := &ExprIter{operand: p.operand, foundMatch: true}
+	if len(p.children) != len(expr.children) {
+		return nil
+	}
+
+	iter := &ExprIter{operand: p.operand, matched: true}
 	for i := range p.children {
-		childIter := newChildExprIter(expr.children[i], p.children[i])
+		childIter := NewExprIterFromGroup(expr.children[i], p.children[i])
 		if childIter == nil {
 			return nil
 		}
@@ -125,15 +124,14 @@ func NewExprIter(expr *GroupExpr, p *Pattern) *ExprIter {
 	return iter
 }
 
-func newChildExprIter(childGroup *Group, childPattern *Pattern) *ExprIter {
-	for elem := childGroup.equivalents.Front(); elem != nil; elem = elem.Next() {
-		childIter := NewExprIter(elem.Value.(*GroupExpr), childPattern)
-		if childIter == nil {
-			continue
-		}
-		childIter.group = childGroup
-		childIter.element = elem
-		return childIter
+// NewExprIterFromGroup creates the iterator on the group.
+func NewExprIterFromGroup(g *Group, p *Pattern) *ExprIter {
+	elem, ok := g.firstExpr[p.operand]
+	if !ok {
+		return nil
 	}
+
+	iter := NewExprIterFromGroupExpr(elem.Value.(*GroupExpr), p)
+	iter.group, iter.element = g, elem
 	return nil
 }

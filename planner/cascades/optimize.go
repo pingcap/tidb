@@ -86,13 +86,14 @@ func exploreGroup(g *Group) error {
 	return nil
 }
 
-// Find and apply the matched transformation rules.
+// findMoreEquiv finds and applies the matched transformation rules.
 func findMoreEquiv(expr *GroupExpr, g *Group) (eraseCur bool, err error) {
 	for _, rule := range GetTransformationRules(expr.exprNode) {
 		pattern := rule.GetPattern()
 		// Create a binding of the current group expression and the pattern of
 		// the transformation rule to enumerate all the possible expressions.
-		for iter := NewExprIter(expr, pattern); iter != nil && iter.OK(); iter.Next() {
+		iter := NewExprIterFromGroupExpr(expr, pattern)
+		for ; iter != nil && iter.Matched(); iter.Next() {
 			matched, err := rule.Match(iter)
 			if err != nil {
 				return false, err
