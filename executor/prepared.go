@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pkg/errors"
@@ -39,7 +40,7 @@ var (
 )
 
 type paramMarkerSorter struct {
-	markers []*ast.ParamMarkerExpr
+	markers []ast.ParamMarkerExpr
 }
 
 func (p *paramMarkerSorter) Len() int {
@@ -47,7 +48,7 @@ func (p *paramMarkerSorter) Len() int {
 }
 
 func (p *paramMarkerSorter) Less(i, j int) bool {
-	return p.markers[i].Offset < p.markers[j].Offset
+	return p.markers[i].(*driver.ParamMarkerExpr).Offset < p.markers[j].(*driver.ParamMarkerExpr).Offset
 }
 
 func (p *paramMarkerSorter) Swap(i, j int) {
@@ -55,7 +56,7 @@ func (p *paramMarkerSorter) Swap(i, j int) {
 }
 
 type paramMarkerExtractor struct {
-	markers []*ast.ParamMarkerExpr
+	markers []ast.ParamMarkerExpr
 }
 
 func (e *paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
@@ -63,7 +64,7 @@ func (e *paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
 }
 
 func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
-	if x, ok := in.(*ast.ParamMarkerExpr); ok {
+	if x, ok := in.(*driver.ParamMarkerExpr); ok {
 		e.markers = append(e.markers, x)
 	}
 	return in, true
@@ -145,7 +146,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	sort.Sort(sorter)
 	e.ParamCount = len(sorter.markers)
 	for i := 0; i < e.ParamCount; i++ {
-		sorter.markers[i].Order = i
+		sorter.markers[i].SetOrder(i)
 	}
 	prepared := &ast.Prepared{
 		Stmt:          stmt,
@@ -156,7 +157,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {
-		prepared.Params[i].SetDatum(types.NewIntDatum(0))
+		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = types.NewIntDatum(0)
 	}
 	var p plannercore.Plan
 	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
