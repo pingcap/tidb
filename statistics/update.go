@@ -455,11 +455,11 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 	h.mu.Lock()
 	tbls := make([]*Table, 0, len(h.mu.rateMap))
 	for id, item := range h.mu.rateMap {
-		table, ok := is.TableByID(id)
+		table, ok := h.getTableByPhysicalID(is, id)
 		if !ok {
 			continue
 		}
-		tbl := h.GetTableStats(table.Meta()).copy()
+		tbl := h.GetPartitionStats(table.Meta(), id)
 		if item.PkErrorRate != nil && tbl.Columns[item.PkID] != nil {
 			col := *tbl.Columns[item.PkID]
 			col.ErrorRate.merge(item.PkErrorRate)
