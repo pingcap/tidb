@@ -44,6 +44,7 @@ func (visitor1) Enter(in Node) (Node, bool) {
 }
 
 func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
+	valueExpr := NewValueExpr(42)
 	stmts := []Node{
 		&AdminStmt{},
 		&AlterUserStmt{},
@@ -53,15 +54,15 @@ func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
 		&CreateUserStmt{},
 		&DeallocateStmt{},
 		&DoStmt{},
-		&ExecuteStmt{UsingVars: []ExprNode{&ValueExpr{}}},
+		&ExecuteStmt{UsingVars: []ExprNode{valueExpr}},
 		&ExplainStmt{Stmt: &ShowStmt{}},
 		&GrantStmt{},
-		&PrepareStmt{SQLVar: &VariableExpr{Value: &ValueExpr{}}},
+		&PrepareStmt{SQLVar: &VariableExpr{Value: valueExpr}},
 		&RollbackStmt{},
 		&SetPwdStmt{},
 		&SetStmt{Variables: []*VariableAssignment{
 			{
-				Value: &ValueExpr{},
+				Value: valueExpr,
 			},
 		}},
 		&UseStmt{},
@@ -72,7 +73,7 @@ func (ts *testMiscSuite) TestMiscVisitorCover(c *C) {
 		},
 		&FlushStmt{},
 		&PrivElem{},
-		&VariableAssignment{Value: &ValueExpr{}},
+		&VariableAssignment{Value: valueExpr},
 		&KillStmt{},
 		&DropStatsStmt{Table: &TableName{}},
 	}

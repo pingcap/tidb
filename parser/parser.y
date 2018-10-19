@@ -3082,7 +3082,7 @@ StringLiteral:
 	}
 |	StringLiteral stringLit
 	{
-		valExpr := $1.(*ast.ValueExpr)
+		valExpr := $1.(ast.ValueExpr)
 		strLit := valExpr.GetString()
 		expr := ast.NewValueExpr(strLit+$2)
 		// Fix #4239, use first string literal as projection name.
@@ -3115,7 +3115,7 @@ ByItem:
 	Expression Order
 	{
 		expr := $1
-		valueExpr, ok := expr.(*ast.ValueExpr)
+		valueExpr, ok := expr.(ast.ValueExpr)
 		if ok {
 			position, isPosition := valueExpr.GetValue().(int64)
 			if isPosition {
@@ -3264,9 +3264,7 @@ SimpleExpr:
 |	Literal
 |	paramMarker
 	{
-		$$ = &ast.ParamMarkerExpr{
-			Offset: yyS[yypt].offset,
-		}
+		$$ = ast.NewParamMarkerExpr(yyS[yypt].offset)
 	}
 |	Variable
 |	SumExpr
@@ -4574,7 +4572,7 @@ LimitClause:
 	}
 |	"LIMIT" LimitOption
 	{
-		$$ = &ast.Limit{Count: $2.(ast.ExprNode)}
+		$$ = &ast.Limit{Count: $2.(ast.ValueExpr)}
 	}
 
 LimitOption:
@@ -4584,9 +4582,7 @@ LimitOption:
 	}
 |	paramMarker
 	{
-		$$ = &ast.ParamMarkerExpr{
-			Offset: yyS[yypt].offset,
-		}
+		$$ = ast.NewParamMarkerExpr(yyS[yypt].offset)
 	}
 
 SelectStmtLimit:

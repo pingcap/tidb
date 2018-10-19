@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pkg/errors"
 )
@@ -237,8 +238,8 @@ func (b *planBuilder) buildSet(v *ast.SetStmt) (Plan, error) {
 		}
 		if vars.ExtendValue != nil {
 			assign.ExtendValue = &expression.Constant{
-				Value:   vars.ExtendValue.Datum,
-				RetType: &vars.ExtendValue.Type,
+				Value:   vars.ExtendValue.(*driver.ValueExpr).Datum,
+				RetType: &vars.ExtendValue.(*driver.ValueExpr).Type,
 			}
 		}
 		p.VarAssigns = append(p.VarAssigns, assign)
@@ -375,7 +376,8 @@ func (b *planBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		Name: x.Name,
 	}
 	if x.SQLVar != nil {
-		p.SQLText, _ = x.SQLVar.GetValue().(string)
+		// TODO: Prepared statement from variable expression do not work as expected.
+		// p.SQLText, _ = x.SQLVar.GetValue().(string)
 	} else {
 		p.SQLText = x.SQLText
 	}
@@ -1234,7 +1236,7 @@ func (b *planBuilder) buildValuesListOfInsert(insert *ast.InsertStmt, insertPlan
 				} else {
 					expr, err = b.getDefaultValue(affectedValuesCols[j])
 				}
-			case *ast.ValueExpr:
+			case *driver.ValueExpr:
 				expr = &expression.Constant{
 					Value:   x.Datum,
 					RetType: &x.Type,

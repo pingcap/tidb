@@ -64,14 +64,6 @@ type ExprNode interface {
 	SetType(tp *types.FieldType)
 	// GetType gets the evaluation type of the expression.
 	GetType() *types.FieldType
-	// SetValue sets value to the expression.
-	SetValue(val interface{})
-	// GetValue gets value of the expression.
-	GetValue() interface{}
-	// SetDatum sets datum to the expression.
-	SetDatum(datum types.Datum)
-	// GetDatum gets datum of the expression.
-	GetDatum() *types.Datum
 	// SetFlag sets flag to the expression.
 	// Flag indicates whether the expression contains
 	// parameter marker, reference, aggregate function...
@@ -152,15 +144,6 @@ type RecordSet interface {
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
 	Close() error
-}
-
-// RowToDatums converts row to datum slice.
-func RowToDatums(row chunk.Row, fields []*ResultField) []types.Datum {
-	datums := make([]types.Datum, len(fields))
-	for i, f := range fields {
-		datums[i] = row.GetDatum(i, &f.Column.FieldType)
-	}
-	return datums
 }
 
 // ResultSetNode interface has a ResultFields property, represents a Node that returns result set.

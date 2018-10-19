@@ -187,7 +187,7 @@ func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 // Prepared represents a prepared statement.
 type Prepared struct {
 	Stmt          StmtNode
-	Params        []*ParamMarkerExpr
+	Params        []ParamMarkerExpr
 	SchemaVersion int64
 	UseCache      bool
 }
@@ -321,7 +321,7 @@ type VariableAssignment struct {
 	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
 	// For SetCharsetStmt, Value is charset, ExtendValue is collation.
 	// TODO: Use SetStmt to implement set password statement.
-	ExtendValue *ValueExpr
+	ExtendValue ValueExpr
 }
 
 // Accept implements Node interface.

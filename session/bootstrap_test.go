@@ -17,13 +17,13 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
@@ -55,7 +55,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	err := r.Next(ctx, chk)
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
-	datums := ast.RowToDatums(chk.GetRow(0), r.Fields())
+	datums := statistics.RowToDatums(chk.GetRow(0), r.Fields())
 	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
@@ -91,7 +91,7 @@ func (s *testBootstrapSuite) TestBootstrap(c *C) {
 	chk = r.NewChunk()
 	err = r.Next(ctx, chk)
 	c.Assert(err, IsNil)
-	datums = ast.RowToDatums(chk.GetRow(0), r.Fields())
+	datums = statistics.RowToDatums(chk.GetRow(0), r.Fields())
 	match(c, datums, 3)
 	mustExecSQL(c, se, "drop table if exists t")
 	se.Close()
@@ -159,7 +159,7 @@ func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(chk.NumRows() == 0, IsFalse)
 	row := chk.GetRow(0)
-	datums := ast.RowToDatums(row, r.Fields())
+	datums := statistics.RowToDatums(row, r.Fields())
 	match(c, datums, []byte(`%`), []byte("root"), []byte(""), "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
 	c.Assert(r.Close(), IsNil)
 
