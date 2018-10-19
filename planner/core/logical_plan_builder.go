@@ -577,6 +577,37 @@ func (b *PlanBuilder) buildProjectionField(id, position int, field *ast.SelectFi
 	}
 }
 
+func eliminateIfNullOnNotNullCol(p LogicalPlan, expr expression.Expression) expression.Expression {
+	ds, isDs := p.(*DataSource)
+	if !isDs {
+		return expr
+	}
+
+	scalarExpr, isScalarFunc := expr.(*expression.ScalarFunction)
+	if !isScalarFunc {
+		return expr
+	}
+	exprChildren := scalarExpr.GetArgs()
+	for i := 0; i < len(exprChildren); i++ {
+		exprChildren[i] = eliminateIfNullOnNotNullCol(p, exprChildren[i])
+	}
+
+	if scalarExpr.FuncName.L != ast.Ifnull {
+		return expr
+	}
+	colRef, isColRef := exprChildren[0].(*expression.Column)
+	if !isColRef {
+		return expr
+	}
+
+	colInfo := model.FindColumnInfo(ds.Columns, colRef.ColName.L)
+	if !mysql.HasNotNullFlag(colInfo.Flag) {
+		return expr
+	}
+
+	return colRef
+}
+
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int) (LogicalPlan, int, error) {
 	b.optFlag |= flagEliminateProjection
@@ -586,6 +617,7 @@ func (b *PlanBuilder) buildProjection(p LogicalPlan, fields []*ast.SelectField, 
 	oldLen := 0
 	for _, field := range fields {
 		newExpr, np, err := b.rewrite(field.Expr, p, mapper, true)
+		newExpr = eliminateIfNullOnNotNullCol(p, newExpr)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
