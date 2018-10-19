@@ -168,11 +168,9 @@ func (s *testSuite) TestSchemataCharacterSet(c *C) {
 	c.Assert(err, IsNil)
 	defer do.Close()
 
-	// The default collation is still reported as utf8_bin
-	// But this is consistent with information_schema.tables -> table_collation
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("CREATE DATABASE `foo` DEFAULT CHARACTER SET = 'utf8mb4'")
 	tk.MustQuery("select default_character_set_name, default_collation_name FROM information_schema.SCHEMATA  WHERE schema_name = 'foo'").Check(
-		testkit.Rows("utf8mb4 utf8_bin"))
+		testkit.Rows("utf8mb4 utf8mb4_bin"))
 
 }

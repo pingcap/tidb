@@ -53,8 +53,10 @@ func (s *testSuite) SetUpSuite(c *C) {
 }
 
 func (s *testSuite) TearDownSuite(c *C) {
-	err := s.ln.Close()
-	c.Assert(err, IsNil)
+	if s.ln != nil {
+		err := s.ln.Close()
+		c.Assert(err, IsNil)
+	}
 }
 
 var (

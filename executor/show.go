@@ -593,7 +593,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	buf.WriteString(") ENGINE=InnoDB")
 	charsetName := tb.Meta().Charset
 	if len(charsetName) == 0 {
-		charsetName = charset.CharsetUTF8
+		charsetName = charset.CharsetUTF8MB4
 	}
 	collate := tb.Meta().Collate
 	// Set default collate if collate is not specified.

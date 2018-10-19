@@ -556,8 +556,8 @@ func (s *testEvaluatorSuite) TestConv(c *C) {
 		c.Assert(err, IsNil)
 		tp := f.GetType()
 		c.Assert(tp.Tp, Equals, mysql.TypeVarString)
-		c.Assert(tp.Charset, Equals, charset.CharsetUTF8)
-		c.Assert(tp.Collate, Equals, charset.CharsetUTF8)
+		c.Assert(tp.Charset, Equals, charset.CharsetUTF8MB4)
+		c.Assert(tp.Collate, Equals, charset.CollationUTF8MB4)
 		c.Assert(tp.Flag, Equals, uint(0))
 
 		d, err := f.Eval(chunk.Row{})

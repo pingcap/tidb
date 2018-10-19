@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pkg/errors"
 )
@@ -835,8 +836,8 @@ func buildColumn(tableName, name string, tp byte, size int) *expression.Column {
 	cs, cl := types.DefaultCharsetForType(tp)
 	flag := mysql.UnsignedFlag
 	if tp == mysql.TypeVarchar || tp == mysql.TypeBlob {
-		cs = mysql.DefaultCharset
-		cl = mysql.DefaultCollationName
+		cs = charset.CharsetUTF8MB4
+		cl = charset.CollationUTF8MB4
 		flag = 0
 	}
 

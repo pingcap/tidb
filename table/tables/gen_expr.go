@@ -19,13 +19,9 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pkg/errors"
 )
-
-// getDefaultCharsetAndCollate is copyed from ddl/ddl_api.go.
-func getDefaultCharsetAndCollate() (string, string) {
-	return "utf8", "utf8_bin"
-}
 
 // nameResolver is the visitor to resolve table name and column name.
 // it combines TableInfo and ColumnInfo to a generation expression.
@@ -64,7 +60,7 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 // it into ast.ExprNode. This function is for that.
 func parseExpression(expr string) (node ast.ExprNode, err error) {
 	expr = fmt.Sprintf("select %s", expr)
-	charset, collation := getDefaultCharsetAndCollate()
+	charset, collation := charset.GetDefaultCharsetAndCollate()
 	stmts, err := parser.New().Parse(expr, charset, collation)
 	if err == nil {
 		node = stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr

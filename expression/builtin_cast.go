@@ -1741,7 +1741,7 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		argLen = mysql.MaxIntWidth
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset, tp.Collate = charset.CharsetUTF8, charset.CollationUTF8
+	tp.Charset, tp.Collate = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
 	tp.Flen, tp.Decimal = argLen, types.UnspecifiedLength
 	return BuildCastFunction(ctx, expr, tp)
 }
@@ -1804,8 +1804,8 @@ func WrapWithCastAsJSON(ctx sessionctx.Context, expr Expression) Expression {
 		Tp:      mysql.TypeJSON,
 		Flen:    12582912, // FIXME: Here the Flen is not trusted.
 		Decimal: 0,
-		Charset: charset.CharsetUTF8,
-		Collate: charset.CollationUTF8,
+		Charset: charset.CharsetUTF8MB4,
+		Collate: charset.CollationUTF8MB4,
 		Flag:    mysql.BinaryFlag,
 	}
 	return BuildCastFunction(ctx, expr, tp)

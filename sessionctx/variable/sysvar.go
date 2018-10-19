@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/charset"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -164,7 +163,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_max_undo_log_size", ""},
 	{ScopeGlobal | ScopeSession, "range_alloc_block_size", "4096"},
 	{ScopeGlobal, ConnectTimeout, "10"},
-	{ScopeGlobal | ScopeSession, "collation_server", charset.CollationUTF8},
+	{ScopeGlobal | ScopeSession, "collation_server", mysql.DefaultCollationName},
 	{ScopeNone, "have_rtree_keys", "YES"},
 	{ScopeGlobal, "innodb_old_blocks_pct", "37"},
 	{ScopeGlobal, "innodb_file_format", "Antelope"},
@@ -296,7 +295,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "query_cache_wlock_invalidate", "OFF"},
 	{ScopeGlobal | ScopeSession, "sql_buffer_result", "OFF"},
 	{ScopeGlobal | ScopeSession, "character_set_filesystem", "binary"},
-	{ScopeGlobal | ScopeSession, "collation_database", charset.CollationUTF8},
+	{ScopeGlobal | ScopeSession, "collation_database", mysql.DefaultCollationName},
 	{ScopeGlobal | ScopeSession, "auto_increment_increment", "1"},
 	{ScopeGlobal | ScopeSession, "max_heap_table_size", "16777216"},
 	{ScopeGlobal | ScopeSession, "div_precision_increment", "4"},
@@ -317,7 +316,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_purge_batch_size", "300"},
 	{ScopeNone, "have_profiling", "NO"},
 	{ScopeGlobal, "slave_checkpoint_group", "512"},
-	{ScopeGlobal | ScopeSession, "character_set_client", charset.CharsetUTF8},
+	{ScopeGlobal | ScopeSession, "character_set_client", mysql.DefaultCharset},
 	{ScopeNone, "slave_load_tmpdir", "/var/tmp/"},
 	{ScopeGlobal, "innodb_buffer_pool_dump_now", "OFF"},
 	{ScopeGlobal, "relay_log_purge", "ON"},
@@ -392,7 +391,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, "binlog_direct_non_transactional_updates", "OFF"},
 	{ScopeGlobal, "innodb_change_buffering", "all"},
 	{ScopeGlobal | ScopeSession, "sql_big_selects", "ON"},
-	{ScopeGlobal | ScopeSession, CharacterSetResults, charset.CharsetUTF8},
+	{ScopeGlobal | ScopeSession, CharacterSetResults, mysql.DefaultCharset},
 	{ScopeGlobal, "innodb_max_purge_lag_delay", "0"},
 	{ScopeGlobal | ScopeSession, "session_track_schema", ""},
 	{ScopeGlobal, "innodb_io_capacity_max", "2000"},
@@ -405,7 +404,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_buffer_pool_load_abort", "OFF"},
 	{ScopeGlobal | ScopeSession, "tx_isolation", "REPEATABLE-READ"},
 	{ScopeGlobal | ScopeSession, "transaction_isolation", "REPEATABLE-READ"},
-	{ScopeGlobal | ScopeSession, "collation_connection", charset.CollationUTF8},
+	{ScopeGlobal | ScopeSession, "collation_connection", mysql.DefaultCollationName},
 	{ScopeGlobal, "rpl_semi_sync_master_timeout", ""},
 	{ScopeGlobal | ScopeSession, "transaction_prealloc_size", "4096"},
 	{ScopeNone, "slave_skip_errors", "OFF"},
@@ -500,7 +499,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "max_points_in_geometry", ""},
 	{ScopeGlobal, "innodb_stats_sample_pages", "8"},
 	{ScopeGlobal | ScopeSession, "profiling_history_size", "15"},
-	{ScopeGlobal | ScopeSession, "character_set_database", charset.CharsetUTF8},
+	{ScopeGlobal | ScopeSession, "character_set_database", mysql.DefaultCharset},
 	{ScopeNone, "have_symlink", "YES"},
 	{ScopeGlobal | ScopeSession, "storage_engine", "InnoDB"},
 	{ScopeGlobal | ScopeSession, "sql_log_off", "OFF"},
@@ -579,10 +578,10 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "flush", "OFF"},
 	{ScopeGlobal | ScopeSession, "eq_range_index_dive_limit", "10"},
 	{ScopeNone, "performance_schema_events_stages_history_size", "10"},
-	{ScopeGlobal | ScopeSession, "character_set_connection", charset.CharsetUTF8},
+	{ScopeGlobal | ScopeSession, "character_set_connection", mysql.DefaultCharset},
 	{ScopeGlobal, "myisam_use_mmap", "OFF"},
 	{ScopeGlobal | ScopeSession, "ndb_join_pushdown", ""},
-	{ScopeGlobal | ScopeSession, "character_set_server", charset.CharsetUTF8},
+	{ScopeGlobal | ScopeSession, "character_set_server", mysql.DefaultCharset},
 	{ScopeGlobal, "validate_password_special_char_count", "1"},
 	{ScopeNone, "performance_schema_max_thread_instances", "402"},
 	{ScopeGlobal, "slave_rows_search_algorithms", "TABLE_SCAN,INDEX_SCAN"},

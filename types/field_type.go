@@ -285,7 +285,7 @@ func (ft *FieldType) FormatAsCastType(w io.Writer) {
 		if ft.Flag&mysql.BinaryFlag != 0 {
 			fmt.Fprint(w, " BINARY")
 		}
-		if ft.Charset != charset.CharsetBin && ft.Charset != charset.CharsetUTF8 {
+		if ft.Charset != charset.CharsetBin && ft.Charset != mysql.DefaultCharset {
 			fmt.Fprintf(w, " %s", ft.Charset)
 		}
 	case mysql.TypeDate:
@@ -365,8 +365,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		// TODO: tp.Flen should be len(x) * 3 (max bytes length of CharsetUTF8)
 		tp.Flen = len(x)
 		tp.Decimal = UnspecifiedLength
-		tp.Charset = mysql.DefaultCharset
-		tp.Collate = mysql.DefaultCollationName
+		tp.Charset = charset.CharsetUTF8MB4
+		tp.Collate = charset.CollationUTF8MB4
 	case float64:
 		tp.Tp = mysql.TypeDouble
 		s := strconv.FormatFloat(x, 'f', -1, 64)

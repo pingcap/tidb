@@ -334,8 +334,8 @@ func (a *AggFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 
 func (a *AggFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeVarString)
-	a.RetTp.Charset = charset.CharsetUTF8
-	a.RetTp.Collate = charset.CollationUTF8
+	a.RetTp.Charset = charset.CharsetUTF8MB4
+	a.RetTp.Collate = charset.CollationUTF8MB4
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxBlobWidth, 0
 	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
 }
