@@ -333,7 +333,7 @@ func (col *Column) resolveIndices(schema *Schema) {
 
 // Flag implements Expression interface.
 func (col *Column) Flag() Flag {
-	return FlagChunkReused
+	return FlagHoldChunkMemory
 }
 
 // Column2Exprs will transfer column slice to expression slice.

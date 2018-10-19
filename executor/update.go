@@ -196,7 +196,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Da
 			return nil, errors.Trace(err1)
 		}
 		newRowData[assign.Col.Index] = val
-		if assign.Expr.Flag()&expression.FlagChunkReused > 0 {
+		if assign.Expr.Flag()&expression.FlagHoldChunkMemory > 0 {
 			mutChunk := chunk.MutRowFromTypes(e.children[0].retTypes())
 			mutChunk.SetDatums(newRowData...)
 			e.evalBuffer = &mutChunk

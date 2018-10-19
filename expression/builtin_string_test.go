@@ -410,6 +410,7 @@ func (s *testEvaluatorSuite) TestRepeatSig(c *C) {
 		&Column{Index: 1, RetType: colTypes[1]},
 	}
 	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	base.deriveFlag()
 	repeat := &builtinRepeatSig{base, 1000}
 
 	cases := []struct {
@@ -816,6 +817,7 @@ func (s *testEvaluatorSuite) TestSpaceSig(c *C) {
 		&Column{Index: 0, RetType: colTypes[0]},
 	}
 	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	base.deriveFlag()
 	space := &builtinSpaceSig{base, 1000}
 	input := chunk.NewChunkWithCapacity(colTypes, 10)
 	input.AppendInt64(0, 6)
@@ -1399,6 +1401,7 @@ func (s *testEvaluatorSuite) TestRpadSig(c *C) {
 	}
 
 	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	base.deriveFlag()
 	rpad := &builtinRpadSig{base, 1000}
 
 	input := chunk.NewChunkWithCapacity(colTypes, 10)
@@ -1442,6 +1445,7 @@ func (s *testEvaluatorSuite) TestInsertBinarySig(c *C) {
 	}
 
 	base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+	base.deriveFlag()
 	insert := &builtinInsertBinarySig{base, 3}
 
 	input := chunk.NewChunkWithCapacity(colTypes, 2)
@@ -1760,6 +1764,7 @@ func (s *testEvaluatorSuite) TestFromBase64Sig(c *C) {
 	for _, test := range tests {
 		resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: mysql.MaxBlobWidth}
 		base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+		base.deriveFlag()
 		fromBase64 := &builtinFromBase64Sig{base, test.maxAllowPacket}
 
 		input := chunk.NewChunkWithCapacity(colTypes, 1)
@@ -2095,6 +2100,7 @@ func (s *testEvaluatorSuite) TestToBase64Sig(c *C) {
 	for _, test := range tests {
 		resultType := &types.FieldType{Tp: mysql.TypeVarchar, Flen: base64NeededEncodedLength(len(test.args))}
 		base := baseBuiltinFunc{args: args, ctx: s.ctx, tp: resultType}
+		base.deriveFlag()
 		toBase64 := &builtinToBase64Sig{base, test.maxAllowPacket}
 
 		input := chunk.NewChunkWithCapacity(colTypes, 1)

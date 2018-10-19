@@ -40,8 +40,8 @@ const (
 type Flag byte
 
 const (
-	// FlagChunkReused indicates expression return result maybe returned by unsafe operation over chunk.
-	FlagChunkReused Flag = 1 << iota
+	// FlagHoldChunkMemory indicates expression return result maybe returned by unsafe operation over chunk.
+	FlagHoldChunkMemory Flag = 1 << iota
 )
 
 // EvalAstExpr evaluates ast expression directly.

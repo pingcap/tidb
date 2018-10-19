@@ -31,10 +31,11 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args   []Expression
-	ctx    sessionctx.Context
-	tp     *types.FieldType
-	pbCode tipb.ScalarFuncSig
+	args     []Expression
+	ctx      sessionctx.Context
+	tp       *types.FieldType
+	pbCode   tipb.ScalarFuncSig
+	funcFlag Flag
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -49,11 +50,13 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 	if ctx == nil {
 		panic("ctx should not be nil")
 	}
-	return baseBuiltinFunc{
+	fn := baseBuiltinFunc{
 		args: args,
 		ctx:  ctx,
 		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
+	fn.deriveFlag()
+	return fn
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
@@ -151,10 +154,20 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	} else {
 		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
 	}
-	return baseBuiltinFunc{
+	fn := baseBuiltinFunc{
 		args: args,
 		ctx:  ctx,
 		tp:   fieldType,
+	}
+	fn.deriveFlag()
+	return fn
+}
+
+func (b *baseBuiltinFunc) deriveFlag() {
+	for _, arg := range b.args {
+		if arg.Flag()&FlagHoldChunkMemory > 0 {
+			b.funcFlag |= FlagHoldChunkMemory
+		}
 	}
 }
 
@@ -227,6 +240,7 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}
+	b.deriveFlag()
 	b.ctx = from.ctx
 	b.tp = from.tp
 	b.pbCode = from.pbCode
@@ -237,12 +251,7 @@ func (b *baseBuiltinFunc) Clone() builtinFunc {
 }
 
 func (b *baseBuiltinFunc) flag() Flag {
-	for _, arg := range b.args {
-		if arg.Flag()&FlagChunkReused > 0 {
-			return FlagChunkReused
-		}
-	}
-	return 0
+	return b.funcFlag
 }
 
 // baseBuiltinCastFunc will be contained in every struct that implement cast builtinFunc.

@@ -240,7 +240,7 @@ func (e *InsertValues) evalRow(cols []*table.Column, list []expression.Expressio
 
 		offset := cols[i].Offset
 		row[offset], hasValue[offset] = val1, true
-		if expr.Flag()&expression.FlagChunkReused > 0 {
+		if expr.Flag()&expression.FlagHoldChunkMemory > 0 {
 			mutChunk := chunk.MutRowFromTypes(e.evalBufferTypes)
 			mutChunk.SetDatums(row...)
 			e.evalBuffer = &mutChunk
