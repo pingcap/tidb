@@ -30,7 +30,7 @@ var _ = Suite(&testTimeSuite{})
 type testTimeSuite struct {
 }
 
-func (s *testTimeSuite) TestParseTimeFromFloatString(c *C) ()  {
+func (s *testTimeSuite) TestParseTimeFromFloatString(c *C) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
@@ -40,9 +40,9 @@ func (s *testTimeSuite) TestParseTimeFromFloatString(c *C) ()  {
 		Expect string
 	}{
 		{"20170118.999", "2017-01-18 00:00:00.000"},
-		{"20170118123950.123","2017-01-18 12:39:50.123"},
-		{"20170118123950.999","2017-01-18 12:39:50.999"},
-		{"20170118123950.999","2017-01-18 12:39:50.999"},
+		{"20170118123950.123", "2017-01-18 12:39:50.123"},
+		{"20170118123950.999", "2017-01-18 12:39:50.999"},
+		{"20170118123950.999", "2017-01-18 12:39:50.999"},
 	}
 
 	for _, test := range table {
@@ -58,11 +58,12 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 	sc.IgnoreZeroInDate = true
 	defer testleak.AfterTest(c)()
 
-
 	table := []struct {
 		Input  string
 		Expect string
 	}{
+		{"20111111 10:10:10", ""},
+		{"1701020304.111", "2017-01-02 03:04:11"},
 		{"1701020301.", "2017-01-02 03:01:00"},
 		{"011011.12.43(3.5", "2001-10-11 12:43:03.500000"},
 		{"1011011.12.43(3", "2010-11-01 01:12:43"}, //YYDDMMH.MM.SS
@@ -99,9 +100,13 @@ func (s *testTimeSuite) TestDateTime(c *C) {
 
 	for _, test := range table {
 		t, err := types.ParseDatetime(sc, test.Input)
-		c.Assert(err, IsNil)
-		var parsed = t.String()
-		c.Assert(parsed, Equals, test.Expect)
+		if "" == test.Expect {
+			c.Assert(err, NotNil)
+		} else {
+			c.Assert(err, IsNil)
+			var parsed = t.String()
+			c.Assert(parsed, Equals, test.Expect)
+		}
 	}
 
 	fspTbl := []struct {

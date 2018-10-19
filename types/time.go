@@ -699,7 +699,7 @@ func parseOnePart(lastSepChar uint8, currentSepChar uint8, selfDecideFsp bool, c
 		if err != nil {
 			return err
 		}
-	} else if len(*seps) == MaxSqlTimeParts - 1 {
+	} else if len(*seps) == MaxSqlTimeParts-1 {
 		parseWhenLen6(lastSepChar, selfDecideFsp, currentPart, realFsp, seps)
 		return nil
 	} else {
@@ -723,6 +723,8 @@ func splitDateTimeV2(format string, fsp int, selfDecideFsp bool, isFloat bool) (
 	if 0 == len(format) {
 		return seps, realFsp, nil
 	}
+	var isFirstPartHasYMD = false
+	var firstSepChar uint8 = 0
 
 	if !unicode.IsNumber(rune(format[0])) {
 		// Date format must start with number.
@@ -744,7 +746,6 @@ func splitDateTimeV2(format string, fsp int, selfDecideFsp bool, isFloat bool) (
 		//if i - 1 is number,i is not number,meaning the ending of one sep
 		if isNumberI_1 && !isNumberI {
 			var currentPart = format[start:i]
-			start = -1
 			currentSepChar = format[i]
 
 			err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, currentPart, &realFsp, &totalPartCount, &seps)
@@ -752,9 +753,27 @@ func splitDateTimeV2(format string, fsp int, selfDecideFsp bool, isFloat bool) (
 				return nil, realFsp, err
 			}
 
+			if 0 == start {
+				firstSepChar = currentSepChar
+			}
+
+			if 0 == start && 3 == totalPartCount {
+				isFirstPartHasYMD = true
+			}
+
+			if 0 == start && isFirstPartHasYMD && '.' != firstSepChar {
+				//"20111111#"-->nil
+				//"20111111 "-->nil
+				//"20111111 10:10:10"-->nil
+				//"20111111.10:10:10"-->2011-11-11 10:10:10
+				return seps, realFsp, errors.Trace(ErrInvalidTimeFormat.GenWithStackByArgs(format))
+			}
+
 			if totalPartCount >= MaxSqlTimeParts {
 				return seps, realFsp, nil
 			}
+
+			start = -1
 		}
 
 	}
@@ -768,9 +787,9 @@ func splitDateTimeV2(format string, fsp int, selfDecideFsp bool, isFloat bool) (
 		return seps, realFsp, nil
 	}
 
-	if isFloat && MaxSqlTimeParts - 1 > totalPartCount{
+	if isFloat && MaxSqlTimeParts-1 > totalPartCount {
 		// 20170118.999-->"2017-01-18 00:00:00.000"
-	}else {
+	} else {
 		err = parseOnePart(lastSepChar, currentSepChar, selfDecideFsp, lastPart, &realFsp, &totalPartCount, &seps)
 		if err != nil {
 			return nil, realFsp, err
