@@ -92,7 +92,7 @@ var (
 	host             = flag.String(nmHost, "0.0.0.0", "tidb server host")
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
 	port             = flag.String(nmPort, "4000", "tidb server port")
-	cors             = flagBoolean(nmCors, false, "tidb server allow cors request")
+	cors             = flag.String(nmCors, "", "tidb server allow cors origin")
 	socket           = flag.String(nmSocket, "", "The socket file to use for connection.")
 	binlogSocket     = flag.String(nmBinlogSocket, "", "socket file to write binlog")
 	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
@@ -281,6 +281,7 @@ func overrideConfig() {
 		cfg.Port = uint(p)
 	}
 	if actualFlags[nmCors] {
+		fmt.Println(cors)
 		cfg.Cors = *cors
 	}
 	if actualFlags[nmStore] {

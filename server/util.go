@@ -364,8 +364,8 @@ type CorsHandler struct {
 }
 
 func (h CorsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if h.cfg.Cors {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+	if h.cfg.Cors != "" {
+		w.Header().Set("Access-Control-Allow-Origin", h.cfg.Cors)
 		w.Header().Set("Access-Control-Allow-Methods", "GET")
 	}
 	h.handler.ServeHTTP(w, req)
