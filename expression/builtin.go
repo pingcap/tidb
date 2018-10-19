@@ -167,6 +167,7 @@ func (b *baseBuiltinFunc) deriveFlag() {
 	for _, arg := range b.args {
 		if arg.Flag()&FlagHoldChunkMemory > 0 {
 			b.funcFlag |= FlagHoldChunkMemory
+			break
 		}
 	}
 }
