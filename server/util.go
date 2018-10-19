@@ -37,13 +37,13 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
-	"github.com/pingcap/tidb/config"
 	"io"
 	"math"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -357,7 +357,7 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 	return out
 }
 
-// CorsHandler add Cors Header if `cors` config is setted
+// CorsHandler adds Cors Header if `cors` config is set.
 type CorsHandler struct {
 	handler http.Handler
 	cfg     *config.Config
