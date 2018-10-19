@@ -85,6 +85,10 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	return nil
 }
 
+func (e *ProjectionExec) newFirstChunk() *chunk.Chunk {
+	return chunk.WideNew(e.retTypes(), e.initCap, e.maxChunkSize)
+}
+
 // Next implements the Executor Next interface.
 //
 // Here we explain the execution flow of the parallel projection implementation.

@@ -66,6 +66,115 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	return chk
 }
 
+// WideNew create a new chunk for wide fields table.
+func WideNew(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
+	chk := new(Chunk)
+	chk.columns = make([]*column, len(fields))
+	chk.capacity = mathutil.Min(cap, maxChunkSize)
+	colMem := make([]column, len(fields))
+	var capInfo capInfo
+	for i := 0; i < len(fields); i++ {
+		chk.columns[i] = &colMem[i]
+		f := fields[i]
+		elemLen := getFixedLen(f)
+		if elemLen == varElemLen {
+			capInfo.add(preCalVarLenColumn(chk.capacity))
+		} else {
+			capInfo.add(preCalFixedLenColumn(elemLen, chk.capacity))
+		}
+	}
+
+	span := chunkSpan{
+		elemBuf:    make([]byte, capInfo.elemBuf),
+		offsets:    make([]int32, capInfo.offsets),
+		data:       make([]byte, capInfo.data),
+		nullBitmap: make([]byte, capInfo.nullBitmap),
+	}
+
+	chk.capacity = mathutil.Min(cap, maxChunkSize)
+	for i, f := range fields {
+		elemLen := getFixedLen(f)
+		if elemLen == varElemLen {
+			chk.columns[i].distVarLenColumn(chk.capacity, &span)
+		} else {
+			chk.columns[i].distFixedLenColumn(elemLen, chk.capacity, &span)
+		}
+	}
+	chk.numVirtualRows = 0
+	return chk
+}
+
+type capInfo struct {
+	elemBuf    int
+	offsets    int
+	data       int
+	nullBitmap int
+}
+
+func (c *capInfo) add(i capInfo) {
+	c.elemBuf += i.elemBuf
+	c.offsets += i.offsets
+	c.data += i.data
+	c.nullBitmap += i.nullBitmap
+}
+
+func preCalVarLenColumn(cap int) capInfo {
+	estimatedElemLen := 8
+	return capInfo{
+		offsets:    cap + 1,
+		data:       cap * estimatedElemLen,
+		nullBitmap: cap >> 3,
+	}
+}
+
+func preCalFixedLenColumn(elemLen, cap int) capInfo {
+	return capInfo{
+		elemBuf:    elemLen,
+		data:       cap * elemLen,
+		nullBitmap: cap >> 3,
+	}
+}
+
+type chunkSpan struct {
+	elemBuf       []byte
+	elemBufIdx    int
+	nullBitmap    []byte
+	nullBitMapIdx int
+	offsets       []int32
+	offsetsIdx    int
+	data          []byte
+	dataIdx       int
+}
+
+func (c *column) distVarLenColumn(cap int, span *chunkSpan) {
+	estimatedElemLen := 8
+
+	c.offsets = span.offsets[span.offsetsIdx : span.offsetsIdx+cap+1]
+	span.offsetsIdx += cap + 1
+	(*reflect.SliceHeader)(unsafe.Pointer(&c.offsets)).Len = 1
+
+	c.data = span.data[span.dataIdx : span.dataIdx+cap*estimatedElemLen]
+	span.dataIdx += cap * estimatedElemLen
+	(*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Len = 0
+
+	c.nullBitmap = span.nullBitmap[span.nullBitMapIdx : span.nullBitMapIdx+cap>>3]
+	span.nullBitMapIdx += cap >> 3
+	(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = 0
+}
+
+func (c *column) distFixedLenColumn(elemLen, cap int, span *chunkSpan) {
+	c.elemBuf = span.elemBuf[span.elemBufIdx : span.elemBufIdx+elemLen]
+	span.elemBufIdx += elemLen
+
+	c.data = span.data[span.dataIdx : span.dataIdx+cap*elemLen]
+	span.dataIdx += cap * elemLen
+	(*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Len = 0
+
+	c.nullBitmap = span.nullBitmap[span.nullBitMapIdx : span.nullBitMapIdx+cap>>3]
+	span.nullBitMapIdx += cap >> 3
+	(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = 0
+}
+
 // Renew creates a new Chunk based on an existing Chunk. The newly created Chunk
 // has the same data schema with the old Chunk. The capacity of the new Chunk
 // might be doubled based on the capacity of the old Chunk and the maxChunkSize.
