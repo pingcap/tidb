@@ -159,6 +159,7 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		prepared.Params[i].SetDatum(types.NewIntDatum(0))
 	}
 	var p plannercore.Plan
+	vars.StmtCtx.UseCache = false
 	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
 	if err != nil {
 		return errors.Trace(err)
