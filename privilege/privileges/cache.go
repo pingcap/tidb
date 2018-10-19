@@ -574,9 +574,11 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 
 func (p *MySQLPrivilege) showGrants(user, host string) []string {
 	var gs []string
+	var hasGlobalGrant bool = false
 	// Show global grants
 	for _, record := range p.User {
 		if record.User == user && record.Host == host {
+			hasGlobalGrant = true
 			g := userPrivToString(record.Privileges)
 			if len(g) > 0 {
 				s := fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, record.User, record.Host)
@@ -584,6 +586,12 @@ func (p *MySQLPrivilege) showGrants(user, host string) []string {
 			}
 			break // it's unique
 		}
+	}
+
+	// This is a mysql convention.
+	if len(gs) == 0 && hasGlobalGrant {
+		s := fmt.Sprintf("GRANT USAGE ON *.* TO '%s'@'%s'", user, host)
+		gs = append(gs, s)
 	}
 
 	// Show db scope grants
@@ -607,6 +615,7 @@ func (p *MySQLPrivilege) showGrants(user, host string) []string {
 			}
 		}
 	}
+
 	return gs
 }
 
