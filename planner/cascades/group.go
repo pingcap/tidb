@@ -35,6 +35,7 @@ func NewGroup(e *GroupExpr) *Group {
 	g := &Group{
 		equivalents:  list.New(),
 		fingerprints: make(map[string]*list.Element),
+		firstExpr:    make(map[Operand]*list.Element),
 	}
 	g.Insert(e)
 	return g
