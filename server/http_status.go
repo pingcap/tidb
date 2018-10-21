@@ -117,7 +117,7 @@ func (s *Server) startHTTPServer() {
 	})
 
 	log.Infof("Listening on %v for status and metrics report.", addr)
-	s.statusServer = &http.Server{Addr: addr, Handler: serverMux}
+	s.statusServer = &http.Server{Addr: addr, Handler: CorsHandler{handler: serverMux, cfg: s.cfg}}
 
 	if len(s.cfg.Security.ClusterSSLCA) != 0 {
 		err = s.statusServer.ListenAndServeTLS(s.cfg.Security.ClusterSSLCert, s.cfg.Security.ClusterSSLKey)
