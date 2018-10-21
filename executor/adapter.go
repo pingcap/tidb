@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/ast"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -40,17 +42,16 @@ import (
 )
 
 type processinfoSetter interface {
-	SetProcessInfo(string)
+	SetProcessInfo(string, time.Time, byte)
 }
 
 // recordSet wraps an executor, implements ast.RecordSet interface
 type recordSet struct {
-	fields      []*ast.ResultField
-	executor    Executor
-	stmt        *ExecStmt
-	processinfo processinfoSetter
-	lastErr     error
-	txnStartTS  uint64
+	fields     []*ast.ResultField
+	executor   Executor
+	stmt       *ExecStmt
+	lastErr    error
+	txnStartTS uint64
 }
 
 func (a *recordSet) Fields() []*ast.ResultField {
@@ -112,15 +113,12 @@ func (a *recordSet) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // NewChunk create a new chunk using NewChunk function in chunk package.
 func (a *recordSet) NewChunk() *chunk.Chunk {
-	return a.executor.newChunk()
+	return a.executor.newFirstChunk()
 }
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.logSlowQuery(a.txnStartTS, a.lastErr == nil)
-	if a.processinfo != nil {
-		a.processinfo.SetProcessInfo("")
-	}
+	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	return errors.Trace(err)
 }
 
@@ -139,8 +137,9 @@ type ExecStmt struct {
 
 	StmtNode ast.StmtNode
 
-	Ctx            sessionctx.Context
-	startTime      time.Time
+	Ctx sessionctx.Context
+	// StartTime stands for the starting time when executing the statement.
+	StartTime      time.Time
 	isPreparedStmt bool
 }
 
@@ -174,7 +173,7 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 	if err := plannercore.Preprocess(a.Ctx, a.StmtNode, is, false); err != nil {
 		return 0, errors.Trace(err)
 	}
-	p, err := plannercore.Optimize(a.Ctx, a.StmtNode, is)
+	p, err := planner.Optimize(a.Ctx, a.StmtNode, is)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -186,7 +185,7 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
 // result, execution is done after this function returns, in the returned ast.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
-	a.startTime = time.Now()
+	a.StartTime = time.Now()
 	sctx := a.Ctx
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
@@ -215,6 +214,8 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 		return nil, errors.Trace(err)
 	}
 
+	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
+	cmd := byte(cmd32)
 	var pi processinfoSetter
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
@@ -226,27 +227,27 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 			}
 		}
 		// Update processinfo, ShowProcess() will use it.
-		pi.SetProcessInfo(sql)
+		pi.SetProcessInfo(sql, time.Now(), cmd)
 	}
+
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if e.Schema().Len() == 0 {
-		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
+		return a.handleNoDelayExecutor(ctx, sctx, e)
 	} else if proj, ok := e.(*ProjectionExec); ok && proj.calculateNoDelay {
 		// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
 		// the Projection has two expressions and two columns in the schema, but we should
 		// not return the result of the two expressions.
-		return a.handleNoDelayExecutor(ctx, sctx, e, pi)
+		return a.handleNoDelayExecutor(ctx, sctx, e)
 	}
 
 	return &recordSet{
-		executor:    e,
-		stmt:        a,
-		processinfo: pi,
-		txnStartTS:  sctx.Txn().StartTS(),
+		executor:   e,
+		stmt:       a,
+		txnStartTS: sctx.Txn().StartTS(),
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (ast.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -259,18 +260,15 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 
 	var err error
 	defer func() {
-		if pi != nil {
-			pi.SetProcessInfo("")
-		}
 		terror.Log(errors.Trace(e.Close()))
 		txnTS := uint64(0)
 		if sctx.Txn() != nil {
 			txnTS = sctx.Txn().StartTS()
 		}
-		a.logSlowQuery(txnTS, err == nil)
+		a.LogSlowQuery(txnTS, err == nil)
 	}()
 
-	err = e.Next(ctx, e.newChunk())
+	err = e.Next(ctx, e.newFirstChunk())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -322,7 +320,6 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		a.Text = executorExec.stmt.Text()
 		a.isPreparedStmt = true
 		a.Plan = executorExec.plan
 		e = executorExec.stmtExec
@@ -333,13 +330,14 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 // QueryReplacer replaces new line and tab for grep result including query string.
 var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
 
-func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
+// LogSlowQuery is used to print the slow query in the log files.
+func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	level := log.GetLevel()
 	if level < log.WarnLevel {
 		return
 	}
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(a.startTime)
+	costTime := time.Since(a.StartTime)
 	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
 	if costTime < threshold && level < log.DebugLevel {
 		return
@@ -348,9 +346,9 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	if len(sql) > int(cfg.Log.QueryLogMaxLen) {
 		sql = fmt.Sprintf("%.*q(len:%d)", cfg.Log.QueryLogMaxLen, sql, len(a.Text))
 	}
-	sql = QueryReplacer.Replace(sql)
-
 	sessVars := a.Ctx.GetSessionVars()
+	sql = QueryReplacer.Replace(sql) + sessVars.GetExecuteArgumentsInfo()
+
 	connID := sessVars.ConnectionID
 	currentDB := sessVars.CurrentDB
 	var tableIDs, indexIDs string
@@ -365,12 +363,12 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 	if sessVars.InRestrictedSQL {
 		internal = "[INTERNAL] "
 	}
+	execDetail := sessVars.StmtCtx.GetExecDetails()
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debugf(
 			"[QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
-			internal, costTime, sessVars.StmtCtx.GetExecDetails(), succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
+			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
 	} else {
-		execDetail := sessVars.StmtCtx.GetExecDetails()
 		logutil.SlowQueryLogger.Warnf(
 			"[SLOW_QUERY] %vcost_time:%v %s succ:%v con:%v user:%s txn_start_ts:%v database:%v %v%vsql:%v",
 			internal, costTime, execDetail, succ, connID, user, txnTS, currentDB, tableIDs, indexIDs, sql)
@@ -381,9 +379,15 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		if user != nil {
 			userString = user.String()
 		}
+		if len(tableIDs) > 10 {
+			tableIDs = tableIDs[10 : len(tableIDs)-1] // Remove "table_ids:" and the last ","
+		}
+		if len(indexIDs) > 10 {
+			indexIDs = indexIDs[10 : len(indexIDs)-1] // Remove "index_ids:" and the last ","
+		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:      sql,
-			Start:    a.startTime,
+			Start:    a.StartTime,
 			Duration: costTime,
 			Detail:   sessVars.StmtCtx.GetExecDetails(),
 			Succ:     succ,

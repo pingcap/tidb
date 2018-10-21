@@ -147,6 +147,7 @@ func (s *testPrivilegeSuite) TestCheckTablePrivilege(c *C) {
 
 func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	se := newSession(c, s.store, s.dbName)
+	ctx, _ := se.(sessionctx.Context)
 	mustExec(c, se, `CREATE USER 'show'@'localhost' identified by '123';`)
 	mustExec(c, se, `GRANT Index ON *.* TO  'show'@'localhost';`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
@@ -222,16 +223,23 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 		`GRANT Update ON test.test TO 'show'@'localhost'`}
 	c.Assert(testutil.CompareUnorderedStringSlice(gs, expected), IsTrue)
 
-	// Fix a issue that empty privileges is displayed when revoke after grant.
-	mustExec(c, se, "TRUNCATE TABLE mysql.db")
-	mustExec(c, se, "TRUNCATE TABLE mysql.user")
-	mustExec(c, se, "TRUNCATE TABLE mysql.tables_priv")
-	mustExec(c, se, `GRANT ALL PRIVILEGES ON `+"`"+`te%`+"`"+`.* TO 'show'@'localhost'`)
-	mustExec(c, se, `REVOKE ALL PRIVILEGES ON `+"`"+`te%`+"`"+`.* FROM 'show'@'localhost'`)
+	// Expected behavior: Usage still exists after revoking all privileges
+	mustExec(c, se, `REVOKE ALL PRIVILEGES ON *.* FROM 'show'@'localhost'`)
+	mustExec(c, se, `REVOKE Select on test.* FROM 'show'@'localhost'`)
+	mustExec(c, se, `REVOKE ALL ON test1.* FROM 'show'@'localhost'`)
+	mustExec(c, se, `REVOKE UPDATE on test.test FROM 'show'@'localhost'`)
 	mustExec(c, se, `FLUSH PRIVILEGES;`)
 	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(err, IsNil)
-	// It should not be "GRANT ON `te%`.* to 'show'@'localhost'"
+	c.Assert(gs, HasLen, 1)
+	c.Assert(gs[0], Equals, `GRANT USAGE ON *.* TO 'show'@'localhost'`)
+
+	// Usage should not exist after dropping the user
+	// Which we need privileges to do so!
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	mustExec(c, se, `DROP USER 'show'@'localhost'`)
+	mustExec(c, se, `FLUSH PRIVILEGES;`)
+	gs, err = pc.ShowGrants(se, &auth.UserIdentity{Username: "show", Hostname: "localhost"})
 	c.Assert(gs, HasLen, 0)
 
 }

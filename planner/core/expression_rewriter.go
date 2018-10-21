@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pkg/errors"
 )
@@ -36,10 +37,10 @@ var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx sessionctx.C
 
 // evalAstExpr evaluates ast expression directly.
 func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
-	if val, ok := expr.(*ast.ValueExpr); ok {
+	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
-	b := &planBuilder{
+	b := &PlanBuilder{
 		ctx:       ctx,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 	}
@@ -53,7 +54,7 @@ func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 	return newExpr.Eval(chunk.Row{})
 }
 
-func (b *planBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
+func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -77,7 +78,7 @@ func (b *planBuilder) rewriteInsertOnDuplicateUpdate(exprNode ast.ExprNode, mock
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
-func (b *planBuilder) rewrite(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
+func (b *PlanBuilder) rewrite(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, LogicalPlan, error) {
 	expr, resultPlan, err := b.rewriteWithPreprocess(exprNode, p, aggMapper, asScalar, nil)
 	return expr, resultPlan, errors.Trace(err)
 }
@@ -85,7 +86,7 @@ func (b *planBuilder) rewrite(exprNode ast.ExprNode, p LogicalPlan, aggMapper ma
 // rewriteWithPreprocess is for handling the situation that we need to adjust the input ast tree
 // before really using its node in `expressionRewriter.Leave`. In that case, we first call
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
-func (b *planBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (expression.Expression, LogicalPlan, error) {
+func (b *PlanBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool, preprocess func(ast.Node) ast.Node) (expression.Expression, LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -106,7 +107,7 @@ func (b *planBuilder) rewriteWithPreprocess(exprNode ast.ExprNode, p LogicalPlan
 	return expr, resultPlan, errors.Trace(err)
 }
 
-func (b *planBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expressionRewriter) {
+func (b *PlanBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expressionRewriter) {
 	defer func() {
 		if p != nil {
 			rewriter.schema = p.Schema()
@@ -129,7 +130,7 @@ func (b *planBuilder) getExpressionRewriter(p LogicalPlan) (rewriter *expression
 	return
 }
 
-func (b *planBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
+func (b *PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
 	exprNode.Accept(rewriter)
 	if rewriter.err != nil {
 		return nil, nil, errors.Trace(rewriter.err)
@@ -153,7 +154,7 @@ type expressionRewriter struct {
 	schema   *expression.Schema
 	err      error
 	aggrMap  map[*ast.AggregateFuncExpr]int
-	b        *planBuilder
+	b        *PlanBuilder
 	ctx      sessionctx.Context
 
 	// asScalar indicates the return value must be a scalar value.
@@ -546,13 +547,13 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 	}
 	np = er.popExistsSubPlan(np)
 	if len(np.extractCorrelatedCols()) > 0 {
-		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, false)
+		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
 		if er.err != nil || !er.asScalar {
 			return v, true
 		}
 		er.ctxStack = append(er.ctxStack, er.p.Schema().Columns[er.p.Schema().Len()-1])
 	} else {
-		physicalPlan, err := doOptimize(er.b.optFlag, np)
+		physicalPlan, err := DoOptimize(er.b.optFlag, np)
 		if err != nil {
 			er.err = errors.Trace(err)
 			return v, true
@@ -562,7 +563,7 @@ func (er *expressionRewriter) handleExistSubquery(v *ast.ExistsSubqueryExpr) (as
 			er.err = errors.Trace(err)
 			return v, true
 		}
-		if len(rows) > 0 {
+		if (len(rows) > 0 && !v.Not) || (len(rows) == 0 && v.Not) {
 			er.ctxStack = append(er.ctxStack, expression.One.Clone())
 		} else {
 			er.ctxStack = append(er.ctxStack, expression.Zero.Clone())
@@ -621,7 +622,7 @@ func (er *expressionRewriter) handleInSubquery(v *ast.PatternInExpr) (ast.Node, 
 	// TODO: Now we cannot add it to CBO framework. Instead, user can set a session variable to open this optimization.
 	// We will improve our CBO framework in future.
 	if lLen == 1 && er.ctx.GetSessionVars().AllowInSubqueryUnFolding && len(np.extractCorrelatedCols()) == 0 {
-		physicalPlan, err1 := doOptimize(er.b.optFlag, np)
+		physicalPlan, err1 := DoOptimize(er.b.optFlag, np)
 		if err1 != nil {
 			er.err = errors.Trace(err1)
 			return v, true
@@ -709,7 +710,7 @@ func (er *expressionRewriter) handleScalarSubquery(v *ast.SubqueryExpr) (ast.Nod
 		}
 		return v, true
 	}
-	physicalPlan, err := doOptimize(er.b.optFlag, np)
+	physicalPlan, err := DoOptimize(er.b.optFlag, np)
 	if err != nil {
 		er.err = errors.Trace(err)
 		return v, true
@@ -753,10 +754,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
-	case *ast.ValueExpr:
+	case *driver.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
-	case *ast.ParamMarkerExpr:
+	case *driver.ParamMarkerExpr:
 		tp := types.NewFieldType(mysql.TypeUnspecified)
 		types.DefaultParamTypeForValue(v.GetValue(), tp)
 		value := &expression.Constant{Value: v.Datum, RetType: tp}
@@ -820,7 +821,7 @@ func datumToConstant(d types.Datum, tp byte) *expression.Constant {
 	return &expression.Constant{Value: d, RetType: types.NewFieldType(tp)}
 }
 
-func (er *expressionRewriter) getParamExpression(v *ast.ParamMarkerExpr) expression.Expression {
+func (er *expressionRewriter) getParamExpression(v *driver.ParamMarkerExpr) expression.Expression {
 	f, err := expression.NewFunction(er.ctx,
 		ast.GetParam,
 		&v.Type,

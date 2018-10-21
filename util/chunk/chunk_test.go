@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unsafe"
@@ -469,6 +471,153 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
 	}
 	c.Assert(memUsage, check.Equals, int64(expectedUsage))
+}
+
+func (s *testChunkSuite) TestSwapColumn(c *check.C) {
+	fieldTypes := make([]*types.FieldType, 0, 2)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+
+	// chk1: column1 refers to column0
+	chk1 := NewChunkWithCapacity(fieldTypes, 1)
+	chk1.AppendFloat64(0, 1)
+	chk1.MakeRef(0, 1)
+	chk1.AppendFloat64(2, 3)
+
+	// chk2: column1 refers to column0
+	chk2 := NewChunkWithCapacity(fieldTypes, 1)
+	chk2.AppendFloat64(0, 1)
+	chk2.MakeRef(0, 1)
+	chk2.AppendFloat64(2, 3)
+
+	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
+	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+
+	checkRef := func() {
+		c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
+		c.Assert(chk1.columns[0] == chk2.columns[0], check.IsFalse)
+		c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
+	}
+
+	chk1.SwapColumn(0, chk2, 0)
+	checkRef()
+
+	chk1.SwapColumn(0, chk2, 1)
+	checkRef()
+
+	chk2.SwapColumn(1, chk2, 0)
+	checkRef()
+
+	chk2.SwapColumn(1, chk2, 1)
+	checkRef()
+
+	chk2.SwapColumn(1, chk2, 2)
+	checkRef()
+
+	chk2.SwapColumn(2, chk2, 0)
+	checkRef()
+}
+
+func (s *testChunkSuite) TestPreAlloc4RowAndInsert(c *check.C) {
+	fieldTypes := make([]*types.FieldType, 0, 4)
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeLonglong})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeNewDecimal})
+	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeVarchar})
+
+	srcChk := NewChunkWithCapacity(fieldTypes, 10)
+	for i := int64(0); i < 10; i++ {
+		srcChk.AppendFloat32(0, float32(i))
+		srcChk.AppendInt64(1, i)
+		srcChk.AppendMyDecimal(2, types.NewDecFromInt(i))
+		srcChk.AppendString(3, strings.Repeat(strconv.FormatInt(i, 10), int(i)))
+	}
+
+	destChk := NewChunkWithCapacity(fieldTypes, 3)
+
+	// Test Chunk.PreAlloc.
+	for i := 0; i < srcChk.NumRows(); i++ {
+		c.Assert(destChk.NumRows(), check.Equals, i)
+		destChk.PreAlloc(srcChk.GetRow(i))
+	}
+	for i, srcCol := range srcChk.columns {
+		destCol := destChk.columns[i]
+		c.Assert(len(srcCol.elemBuf), check.Equals, len(destCol.elemBuf))
+		c.Assert(len(srcCol.data), check.Equals, len(destCol.data))
+		c.Assert(len(srcCol.offsets), check.Equals, len(destCol.offsets))
+		c.Assert(len(srcCol.nullBitmap), check.Equals, len(destCol.nullBitmap))
+		c.Assert(srcCol.length, check.Equals, destCol.length)
+		c.Assert(srcCol.nullCount, check.Equals, destCol.nullCount)
+
+		for _, val := range destCol.data {
+			c.Assert(val == 0, check.IsTrue)
+		}
+		for j, val := range srcCol.offsets {
+			c.Assert(val, check.Equals, destCol.offsets[j])
+		}
+		for j, val := range srcCol.nullBitmap {
+			c.Assert(val, check.Equals, destCol.nullBitmap[j])
+		}
+		for _, val := range destCol.elemBuf {
+			c.Assert(val == 0, check.IsTrue)
+		}
+	}
+
+	// Test Chunk.Insert.
+	for i := srcChk.NumRows() - 1; i >= 0; i-- {
+		destChk.Insert(i, srcChk.GetRow(i))
+	}
+	for i, srcCol := range srcChk.columns {
+		destCol := destChk.columns[i]
+
+		for j, val := range srcCol.data {
+			c.Assert(val, check.Equals, destCol.data[j])
+		}
+		for j, val := range srcCol.offsets {
+			c.Assert(val, check.Equals, destCol.offsets[j])
+		}
+		for j, val := range srcCol.nullBitmap {
+			c.Assert(val, check.Equals, destCol.nullBitmap[j])
+		}
+		for _, val := range destCol.elemBuf {
+			c.Assert(val == 0, check.IsTrue)
+		}
+	}
+
+	// Test parallel Chunk.Insert.
+	destChk.Reset()
+	startWg, endWg := &sync.WaitGroup{}, &sync.WaitGroup{}
+	startWg.Add(1)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		destChk.PreAlloc(srcChk.GetRow(i))
+		endWg.Add(1)
+		go func(rowIdx int) {
+			defer func() {
+				endWg.Done()
+			}()
+			startWg.Wait()
+			destChk.Insert(rowIdx, srcChk.GetRow(rowIdx))
+		}(i)
+	}
+	startWg.Done()
+	endWg.Wait()
+	for i, srcCol := range srcChk.columns {
+		destCol := destChk.columns[i]
+
+		for j, val := range srcCol.data {
+			c.Assert(val, check.Equals, destCol.data[j])
+		}
+		for j, val := range srcCol.offsets {
+			c.Assert(val, check.Equals, destCol.offsets[j])
+		}
+		for j, val := range srcCol.nullBitmap {
+			c.Assert(val, check.Equals, destCol.nullBitmap[j])
+		}
+		for _, val := range destCol.elemBuf {
+			c.Assert(val == 0, check.IsTrue)
+		}
+	}
 }
 
 func BenchmarkAppendInt(b *testing.B) {

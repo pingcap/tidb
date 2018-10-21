@@ -296,3 +296,14 @@ func (s *testSuite) TestDropStats(c *C) {
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	h.Lease = 0
 }
+
+func (s *testSuite) TestFlushTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	_, err := tk.Exec("FLUSH TABLES")
+	c.Check(err, IsNil)
+
+	_, err = tk.Exec("FLUSH TABLES WITH READ LOCK")
+	c.Check(err, NotNil)
+
+}

@@ -96,15 +96,14 @@ TableReader_11	2.00	root	data:TableScan_10
 └─TableScan_10	2.00	cop	table:t1, range:[0,0], [1,1], keep order:false, stats:pseudo
 explain select (select count(1) k from t1 s where s.c1 = t1.c1 having k != 0) from t1;
 id	count	task	operator info
-Projection_13	10000.00	root	k
-└─Projection_14	10000.00	root	test.t1.c1, ifnull(5_col_0, 0)
-  └─MergeJoin_15	10000.00	root	left outer join, left key:test.t1.c1, right key:s.c1
-    ├─TableReader_18	10000.00	root	data:TableScan_17
-    │ └─TableScan_17	10000.00	cop	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
-    └─Selection_20	8000.00	root	ne(k, 0)
-      └─Projection_21	10000.00	root	1, s.c1
-        └─TableReader_23	10000.00	root	data:TableScan_22
-          └─TableScan_22	10000.00	cop	table:s, range:[-inf,+inf], keep order:true, stats:pseudo
+Projection_12	10000.00	root	k
+└─Projection_13	10000.00	root	test.t1.c1, ifnull(5_col_0, 0)
+  └─MergeJoin_14	10000.00	root	left outer join, left key:test.t1.c1, right key:s.c1
+    ├─TableReader_17	10000.00	root	data:TableScan_16
+    │ └─TableScan_16	10000.00	cop	table:t1, range:[-inf,+inf], keep order:true, stats:pseudo
+    └─Projection_19	8000.00	root	1, s.c1
+      └─TableReader_21	10000.00	root	data:TableScan_20
+        └─TableScan_20	10000.00	cop	table:s, range:[-inf,+inf], keep order:true, stats:pseudo
 explain select * from information_schema.columns;
 id	count	task	operator info
 MemTableScan_4	10000.00	root	
@@ -269,7 +268,7 @@ create table t(a int primary key, b int, c int, index idx(b));
 explain select t.c in (select count(*) from t s ignore index(idx), t t1 where s.a = t.a and s.a = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	9_aux_0
-└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]
+└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
@@ -282,7 +281,7 @@ Projection_11	10000.00	root	9_aux_0
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.a = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	9_aux_0
-└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]
+└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
@@ -294,7 +293,7 @@ Projection_11	10000.00	root	9_aux_0
 explain select t.c in (select count(*) from t s use index(idx), t t1 where s.b = t.a and s.c = t1.a) from t;
 id	count	task	operator info
 Projection_11	10000.00	root	9_aux_0
-└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, count(*))]
+└─Apply_13	10000.00	root	left outer semi join, inner:StreamAgg_20, equal:[eq(test.t.c, 7_col_0)]
   ├─TableReader_15	10000.00	root	data:TableScan_14
   │ └─TableScan_14	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
   └─StreamAgg_20	1.00	root	funcs:count(1)
@@ -347,6 +346,22 @@ TableDual_5	0.00	root	rows:0
 explain select * from t where b = 1 and b = 2;
 id	count	task	operator info
 TableDual_5	0.00	root	rows:0
+explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null;
+id	count	task	operator info
+Projection_7	12.50	root	t1.a, t1.b, t2.a, t2.b
+└─HashRightJoin_9	12.50	root	inner join, inner:TableReader_12, equal:[eq(t2.b, t1.b)]
+  ├─TableReader_12	10.00	root	data:Selection_11
+  │ └─Selection_11	10.00	cop	isnull(t2.b)
+  │   └─TableScan_10	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
+  └─TableReader_14	10000.00	root	data:TableScan_13
+    └─TableScan_13	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select * from t t1 where not exists (select * from t t2 where t1.b = t2.b);
+id	count	task	operator info
+HashLeftJoin_9	8000.00	root	anti semi join, inner:TableReader_13, equal:[eq(t1.b, t2.b)]
+├─TableReader_11	10000.00	root	data:TableScan_10
+│ └─TableScan_10	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
+└─TableReader_13	10000.00	root	data:TableScan_12
+  └─TableScan_12	10000.00	cop	table:t2, range:[-inf,+inf], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a bigint primary key);
 explain select * from t where a = 1 and a = 2;
@@ -370,3 +385,40 @@ Projection_5	8000.00	root	test.ta.a
     └─TableReader_9	10000.00	root	data:TableScan_8
       └─TableScan_8	10000.00	cop	table:ta, range:[-inf,+inf], keep order:false, stats:pseudo
 rollback;
+drop table if exists t;
+create table t(a int, nb int not null, nc int not null);
+explain select ifnull(a, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	ifnull(test.t.a, 0)
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select ifnull(nb, 0) from t;
+id	count	task	operator info
+TableReader_5	10000.00	root	data:TableScan_4
+└─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select ifnull(nb, 0), ifnull(nc, 0) from t;
+id	count	task	operator info
+TableReader_5	10000.00	root	data:TableScan_4
+└─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select ifnull(a, 0), ifnull(nb, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	ifnull(test.t.a, 0), test.t.nb
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select ifnull(nb, 0), ifnull(nb, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	test.t.nb, test.t.nb
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select 1+ifnull(nb, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	plus(1, test.t.nb)
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select 1+ifnull(a, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	plus(1, ifnull(test.t.a, 0))
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
+drop table if exists t;

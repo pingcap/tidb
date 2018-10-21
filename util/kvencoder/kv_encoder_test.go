@@ -49,6 +49,7 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 		return nil, nil, errors.Trace(err)
 	}
 	session.SetSchemaLease(0)
+	session.SetStatsLease(0)
 	dom, err := session.BootstrapSession(store)
 	return store, dom, errors.Trace(err)
 }

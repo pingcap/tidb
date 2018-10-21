@@ -17,14 +17,17 @@ import (
 	"bytes"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -42,6 +45,13 @@ type ShowDDLJobs struct {
 	baseSchemaProducer
 
 	JobNumber int64
+}
+
+// ShowSlow is for showing slow queries.
+type ShowSlow struct {
+	baseSchemaProducer
+
+	*ast.ShowSlow
 }
 
 // ShowDDLJobQueries is for showing DDL job queries sql.
@@ -117,14 +127,6 @@ type Prepare struct {
 	SQLText string
 }
 
-// Prepared represents a prepared statement.
-type Prepared struct {
-	Stmt          ast.StmtNode
-	Params        []*ast.ParamMarkerExpr
-	SchemaVersion int64
-	UseCache      bool
-}
-
 // Execute represents prepare plan.
 type Execute struct {
 	baseSchemaProducer
@@ -136,31 +138,28 @@ type Execute struct {
 	Plan      Plan
 }
 
-func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.InfoSchema) error {
+// OptimizePreparedPlan optimizes the prepared statement.
+func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.InfoSchema) error {
 	vars := ctx.GetSessionVars()
 	if e.Name != "" {
 		e.ExecID = vars.PreparedStmtNameToID[e.Name]
 	}
-	v := vars.PreparedStmts[e.ExecID]
-	if v == nil {
+	prepared, ok := vars.PreparedStmts[e.ExecID]
+	if !ok {
 		return errors.Trace(ErrStmtNotFound)
 	}
-	prepared := v.(*Prepared)
 
 	if len(prepared.Params) != len(e.UsingVars) {
 		return errors.Trace(ErrWrongParamCount)
 	}
 
-	if cap(vars.PreparedParams) < len(e.UsingVars) {
-		vars.PreparedParams = make([]interface{}, len(e.UsingVars))
-	}
 	for i, usingVar := range e.UsingVars {
 		val, err := usingVar.Eval(chunk.Row{})
 		if err != nil {
 			return errors.Trace(err)
 		}
-		prepared.Params[i].SetDatum(val)
-		vars.PreparedParams[i] = val
+		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = val
+		vars.PreparedParams = append(vars.PreparedParams, val)
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {
 		// If the schema version has changed we need to preprocess it again,
@@ -180,7 +179,7 @@ func (e *Execute) optimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 	return nil
 }
 
-func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema, prepared *Prepared) (Plan, error) {
+func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema, prepared *ast.Prepared) (Plan, error) {
 	var cacheKey kvcache.Key
 	sessionVars := ctx.GetSessionVars()
 	sessionVars.StmtCtx.UseCache = prepared.UseCache
@@ -196,7 +195,7 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			return plan, nil
 		}
 	}
-	p, err := Optimize(ctx, prepared.Stmt, is)
+	p, err := OptimizeAstNode(ctx, prepared.Stmt, is)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -414,11 +413,55 @@ type Explain struct {
 	StmtPlan       Plan
 	Rows           [][]string
 	explainedPlans map[int]bool
+	Format         string
+	Analyze        bool
+	ExecStmt       ast.StmtNode
+	ExecPlan       Plan
+}
+
+// prepareSchema prepares explain's result schema.
+func (e *Explain) prepareSchema() error {
+	switch strings.ToLower(e.Format) {
+	case ast.ExplainFormatROW:
+		retFields := []string{"id", "count", "task", "operator info"}
+		if e.Analyze {
+			retFields = append(retFields, "execution info")
+		}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		for _, fieldName := range retFields {
+			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+		}
+		e.SetSchema(schema)
+	case ast.ExplainFormatDOT:
+		retFields := []string{"dot contents"}
+		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
+		for _, fieldName := range retFields {
+			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+		}
+		e.SetSchema(schema)
+	default:
+		return errors.Errorf("explain format '%s' is not supported now", e.Format)
+	}
+	return nil
+}
+
+// RenderResult renders the explain result as specified format.
+func (e *Explain) RenderResult() error {
+	switch strings.ToLower(e.Format) {
+	case ast.ExplainFormatROW:
+		e.explainedPlans = map[int]bool{}
+		e.explainPlanInRowFormat(e.StmtPlan.(PhysicalPlan), "root", "", true)
+	case ast.ExplainFormatDOT:
+		e.prepareDotInfo(e.StmtPlan.(PhysicalPlan))
+	default:
+		return errors.Errorf("explain format '%s' is not supported now", e.Format)
+	}
+	return nil
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
-func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, TaskType, indent string, isLastChild bool) {
-	e.prepareOperatorInfo(p, TaskType, indent, isLastChild)
+func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string, isLastChild bool) {
+	e.prepareOperatorInfo(p, taskType, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
 	// For every child we create a new sub-tree rooted by it.
@@ -427,7 +470,7 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, TaskType, indent string
 		if e.explainedPlans[child.ID()] {
 			continue
 		}
-		e.explainPlanInRowFormat(child.(PhysicalPlan), TaskType, childIndent, i == len(p.Children())-1)
+		e.explainPlanInRowFormat(child.(PhysicalPlan), taskType, childIndent, i == len(p.Children())-1)
 	}
 
 	switch copPlan := p.(type) {
@@ -443,10 +486,18 @@ func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, TaskType, indent string
 
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, task type, operator info, and the estemated row count.
-func (e *Explain) prepareOperatorInfo(p PhysicalPlan, TaskType string, indent string, isLastChild bool) {
+func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
 	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
-	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, TaskType, operatorInfo}
+	row := []string{e.prettyIdentifier(p.ExplainID(), indent, isLastChild), count, taskType, operatorInfo}
+	if e.Analyze {
+		runtimeStatsColl := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		if taskType == "cop" {
+			row = append(row, "") //TODO: wait collect resp from tikv
+		} else {
+			row = append(row, runtimeStatsColl.Get(p.ExplainID()).String())
+		}
+	}
 	e.Rows = append(e.Rows, row)
 }
 

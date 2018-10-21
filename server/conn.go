@@ -584,14 +584,28 @@ func (cc *clientConn) dispatch(data []byte) error {
 	cc.mu.cancelFunc = cancelFunc
 	cc.mu.Unlock()
 
+	t := time.Now()
 	cmd := data[0]
 	data = data[1:]
 	cc.lastCmd = hack.String(data)
 	token := cc.server.getToken()
 	defer func() {
+		cc.ctx.SetProcessInfo("", t, mysql.ComSleep)
 		cc.server.releaseToken(token)
 		span.Finish()
 	}()
+
+	if cmd < mysql.ComEnd {
+		cc.ctx.SetCommandValue(cmd)
+	}
+
+	switch cmd {
+	case mysql.ComPing, mysql.ComStmtClose, mysql.ComStmtSendLongData, mysql.ComStmtReset,
+		mysql.ComSetOption, mysql.ComChangeUser:
+		cc.ctx.SetProcessInfo("", t, cmd)
+	case mysql.ComInitDB:
+		cc.ctx.SetProcessInfo("use "+hack.String(data), t, cmd)
+	}
 
 	switch cmd {
 	case mysql.ComSleep:
@@ -750,11 +764,6 @@ func insertDataWithCommit(ctx context.Context, prevData, curData []byte, loadDat
 			break
 		}
 		loadDataInfo.Ctx.StmtCommit()
-		// Load data should not use latches, because:
-		// 1. latches may result in false positive transaction conflicts.
-		// 2. load data is not retryable when it meets conflicts.
-		// 3. load data will abort abnormally under condition 1 + 2.
-		loadDataInfo.Ctx.Txn().SetOption(kv.BypassLatch, true)
 		// Make sure that there are no retries when committing.
 		if err = loadDataInfo.Ctx.RefreshTxnCtx(ctx); err != nil {
 			return nil, errors.Trace(err)
@@ -823,7 +832,6 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 		return errors.Trace(err)
 	}
 
-	txn.SetOption(kv.BypassLatch, true)
 	return errors.Trace(cc.ctx.CommitTxn(sessionctx.SetCommitCtx(ctx, loadDataInfo.Ctx)))
 }
 
@@ -1033,8 +1041,8 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 	fetchedRows := rs.GetFetchedRows()
 
 	// if fetchedRows is not enough, getting data from recordSet.
+	chk := rs.NewChunk()
 	for len(fetchedRows) < fetchSize {
-		chk := rs.NewChunk()
 		// Here server.tidbResultSet implements Next method.
 		err := rs.Next(ctx, chk)
 		if err != nil {
@@ -1048,6 +1056,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		for i := 0; i < rowCount; i++ {
 			fetchedRows = append(fetchedRows, chk.GetRow(i))
 		}
+		chk = chunk.Renew(chk, cc.ctx.GetSessionVars().MaxChunkSize)
 	}
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,

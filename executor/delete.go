@@ -39,20 +39,11 @@ type DeleteExec struct {
 	// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
 	// by its alias instead of ID.
 	tblMap map[int64][]*ast.TableName
-
-	finished bool
 }
 
 // Next implements the Executor Next interface.
 func (e *DeleteExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-	if e.finished {
-		return nil
-	}
-	defer func() {
-		e.finished = true
-	}()
-
 	if e.IsMultiTable {
 		return errors.Trace(e.deleteMultiTablesByChunk(ctx))
 	}
@@ -104,8 +95,8 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn()
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
 	fields := e.children[0].retTypes()
+	chk := e.children[0].newFirstChunk()
 	for {
-		chk := e.children[0].newChunk()
 		iter := chunk.NewIterator4Chunk(chk)
 
 		err := e.children[0].Next(ctx, chk)
@@ -133,6 +124,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 			}
 			rowCount++
 		}
+		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 
 	return nil
@@ -184,10 +176,9 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 	colPosInfos := e.getColPosInfos(e.children[0].Schema())
 	tblRowMap := make(tableRowMapType)
 	fields := e.children[0].retTypes()
+	chk := e.children[0].newFirstChunk()
 	for {
-		chk := e.children[0].newChunk()
 		iter := chunk.NewIterator4Chunk(chk)
-
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {
 			return errors.Trace(err)
@@ -200,6 +191,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 			joinedDatumRow := joinedChunkRow.GetDatumRow(fields)
 			e.composeTblRowMap(tblRowMap, colPosInfos, joinedDatumRow)
 		}
+		chk = chunk.Renew(chk, e.maxChunkSize)
 	}
 
 	return errors.Trace(e.removeRowsInTblRowMap(tblRowMap))
@@ -224,14 +216,6 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, d
 		return errors.Trace(err)
 	}
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-	colSize := make(map[int64]int64)
-	for id, col := range t.Cols() {
-		val := -int64(len(data[id].GetBytes()))
-		if val != 0 {
-			colSize[col.ID] = val
-		}
-	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1, colSize)
 	return nil
 }
 

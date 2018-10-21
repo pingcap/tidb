@@ -346,10 +346,10 @@ func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
 		n.Args[0].Format(w)
 		fmt.Fprint(w, ", INTERVAL ")
 		n.Args[1].Format(w)
-		fmt.Fprintf(w, " %s", n.Args[2].GetDatum().GetString())
+		fmt.Fprintf(w, " %s", n.Args[2].(ValueExpr).GetDatumString())
 		return true
 	case TimestampAdd, TimestampDiff:
-		fmt.Fprintf(w, "%s, ", n.Args[0].GetDatum().GetString())
+		fmt.Fprintf(w, "%s, ", n.Args[0].(ValueExpr).GetDatumString())
 		n.Args[1].Format(w)
 		fmt.Fprint(w, ", ")
 		n.Args[2].Format(w)

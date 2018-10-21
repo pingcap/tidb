@@ -15,6 +15,7 @@ package executor
 
 import (
 	"sync"
+	"time"
 
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
@@ -235,7 +236,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.partialResultMap = make(aggPartialResultMapper, 0)
 	e.groupKeyBuffer = make([]byte, 0, 8)
 	e.groupValDatums = make([]types.Datum, 0, len(e.groupKeyBuffer))
-	e.childResult = e.children[0].newChunk()
+	e.childResult = e.children[0].newFirstChunk()
 }
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
@@ -270,12 +271,12 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			partialResultsMap: make(aggPartialResultMapper, 0),
 			groupByItems:      e.GroupByItems,
 			groupValDatums:    make([]types.Datum, 0, len(e.GroupByItems)),
-			chk:               e.children[0].newChunk(),
+			chk:               e.children[0].newFirstChunk(),
 		}
 
 		e.partialWorkers[i] = w
 		e.inputCh <- &HashAggInput{
-			chk:        e.children[0].newChunk(),
+			chk:        e.children[0].newFirstChunk(),
 			giveBackCh: w.inputCh,
 		}
 	}
@@ -292,7 +293,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
 			mutableRow:          chunk.MutRowFromTypes(e.retTypes()),
 		}
-		e.finalWorkers[i].finalResultHolderCh <- e.newChunk()
+		e.finalWorkers[i].finalResultHolderCh <- e.newFirstChunk()
 	}
 }
 
@@ -501,6 +502,10 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 // Next implements the Executor Next interface.
 func (e *HashAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
 	if e.isUnparallelExec {
 		return errors.Trace(e.unparallelExec(ctx, chk))
@@ -734,7 +739,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	e.childResult = e.children[0].newChunk()
+	e.childResult = e.children[0].newFirstChunk()
 	e.executed = false
 	e.isChildReturnEmpty = true
 	e.inputIter = chunk.NewIterator4Chunk(e.childResult)
@@ -756,8 +761,11 @@ func (e *StreamAggExec) Close() error {
 
 // Next implements the Executor Next interface.
 func (e *StreamAggExec) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
-
 	for !e.executed && chk.NumRows() < e.maxChunkSize {
 		err := e.consumeOneGroup(ctx, chk)
 		if err != nil {

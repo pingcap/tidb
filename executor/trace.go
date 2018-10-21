@@ -19,6 +19,7 @@ import (
 	"github.com/opentracing/basictracer-go"
 	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/tracing"
@@ -51,7 +52,7 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	// record how much time was spent for optimizeing plan
 	optimizeSp := e.rootTrace.Tracer().StartSpan("plan_optimize", opentracing.FollowsFrom(e.rootTrace.Context()))
-	stmtPlan, err := plannercore.Optimize(e.builder.ctx, e.stmtNode, e.builder.is)
+	stmtPlan, err := planner.Optimize(e.builder.ctx, e.stmtNode, e.builder.is)
 	if err != nil {
 		return err
 	}
@@ -72,7 +73,7 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stmtExecChk := stmtExec.newChunk()
+	stmtExecChk := stmtExec.newFirstChunk()
 
 	// store span into context
 	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)

@@ -169,6 +169,8 @@ type TableInfo struct {
 	ShardRowIDBits uint64
 
 	Partition *PartitionInfo `json:"partition"`
+
+	Compression string `json:"compression"`
 }
 
 // GetPartitionInfo returns the partition information.
@@ -314,6 +316,16 @@ type PartitionInfo struct {
 	Enable bool `json:"enable"`
 
 	Definitions []PartitionDefinition `json:"definitions"`
+}
+
+// GetNameByID gets the partition name by ID.
+func (pi *PartitionInfo) GetNameByID(id int64) string {
+	for _, def := range pi.Definitions {
+		if id == def.ID {
+			return def.Name.L
+		}
+	}
+	return ""
 }
 
 // PartitionDefinition defines a single partition.

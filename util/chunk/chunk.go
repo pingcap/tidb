@@ -15,6 +15,7 @@ package chunk
 
 import (
 	"encoding/binary"
+	"reflect"
 	"unsafe"
 
 	"github.com/cznic/mathutil"
@@ -38,6 +39,7 @@ type Chunk struct {
 // Capacity constants.
 const (
 	InitialCapacity = 32
+	ZeroCapacity    = 0
 )
 
 // NewChunkWithCapacity creates a new chunk with field types and capacity.
@@ -70,8 +72,11 @@ func New(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 //  chk: old chunk(often used in previous call).
 //  maxChunkSize: the limit for the max number of rows.
 func Renew(chk *Chunk, maxChunkSize int) *Chunk {
-	newCap := reCalcCapacity(chk, maxChunkSize)
 	newChk := new(Chunk)
+	if chk.columns == nil {
+		return newChk
+	}
+	newCap := reCalcCapacity(chk, maxChunkSize)
 	newChk.columns = renewColumns(chk.columns, newCap)
 	newChk.numVirtualRows = 0
 	newChk.capacity = newCap
@@ -133,9 +138,47 @@ func (c *Chunk) MakeRef(srcColIdx, dstColIdx int) {
 	c.columns[dstColIdx] = c.columns[srcColIdx]
 }
 
-// SwapColumn swaps column "c.columns[colIdx]" with column "other.columns[otherIdx]".
+// SwapColumn swaps column "c.columns[colIdx]" with column
+// "other.columns[otherIdx]". If there exists columns refer to the column to be
+// swapped, we need to re-build the reference.
 func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) {
+	// Find the leftmost column of the reference which is the actual column to
+	// be swapped.
+	for i := 0; i < colIdx; i++ {
+		if c.columns[i] == c.columns[colIdx] {
+			colIdx = i
+		}
+	}
+	for i := 0; i < otherIdx; i++ {
+		if other.columns[i] == other.columns[otherIdx] {
+			otherIdx = i
+		}
+	}
+
+	// Find the columns which refer to the actual column to be swapped.
+	refColsIdx := make([]int, 0, len(c.columns)-colIdx)
+	for i := colIdx; i < len(c.columns); i++ {
+		if c.columns[i] == c.columns[colIdx] {
+			refColsIdx = append(refColsIdx, i)
+		}
+	}
+	refColsIdx4Other := make([]int, 0, len(other.columns)-otherIdx)
+	for i := otherIdx; i < len(other.columns); i++ {
+		if other.columns[i] == other.columns[otherIdx] {
+			refColsIdx4Other = append(refColsIdx4Other, i)
+		}
+	}
+
+	// Swap columns from two chunks.
 	c.columns[colIdx], other.columns[otherIdx] = other.columns[otherIdx], c.columns[colIdx]
+
+	// Rebuild the reference.
+	for _, i := range refColsIdx {
+		c.MakeRef(colIdx, i)
+	}
+	for _, i := range refColsIdx4Other {
+		other.MakeRef(otherIdx, i)
+	}
 }
 
 // SwapColumns swaps columns with another Chunk.
@@ -153,6 +196,9 @@ func (c *Chunk) SetNumVirtualRows(numVirtualRows int) {
 // Reset resets the chunk, so the memory it allocated can be reused.
 // Make sure all the data in the chunk is not used anymore before you reuse this chunk.
 func (c *Chunk) Reset() {
+	if c.columns == nil {
+		return
+	}
 	for _, col := range c.columns {
 		col.reset()
 	}
@@ -229,6 +275,74 @@ func (c *Chunk) AppendPartialRow(colIdx int, row Row) {
 			chkCol.offsets = append(chkCol.offsets, int32(len(chkCol.data)))
 		}
 		chkCol.length++
+	}
+}
+
+// PreAlloc pre-allocates the memory space in a Chunk to store the Row.
+// NOTE:
+// 1. The Chunk must be empty or holds no useful data.
+// 2. The schema of the Row must be the same with the Chunk.
+// 3. This API is paired with the `Insert()` function, which inserts all the
+//    rows data into the Chunk after the pre-allocation.
+// 4. We set the null bitmap here instead of in the Insert() function because
+//    when the Insert() function is called parallelly, the data race on a byte
+//    can not be avoided although the manipulated bits are different inside a
+//    byte.
+func (c *Chunk) PreAlloc(row Row) {
+	for i, srcCol := range row.c.columns {
+		dstCol := c.columns[i]
+		dstCol.appendNullBitmap(!srcCol.isNull(row.idx))
+		elemLen := len(srcCol.elemBuf)
+		if !srcCol.isFixed() {
+			elemLen = int(srcCol.offsets[row.idx+1] - srcCol.offsets[row.idx])
+			dstCol.offsets = append(dstCol.offsets, int32(len(dstCol.data)+elemLen))
+		}
+		dstCol.length++
+		needCap := len(dstCol.data) + elemLen
+		if needCap <= cap(dstCol.data) {
+			(*reflect.SliceHeader)(unsafe.Pointer(&dstCol.data)).Len = len(dstCol.data) + elemLen
+			continue
+		}
+		// Grow the capacity according to golang.growslice.
+		newCap := cap(dstCol.data)
+		doubleCap := newCap << 1
+		if needCap > doubleCap {
+			newCap = needCap
+		} else {
+			if len(dstCol.data) < 1024 {
+				newCap = doubleCap
+			} else {
+				for 0 < newCap && newCap < needCap {
+					newCap += newCap / 4
+				}
+				if newCap <= 0 {
+					newCap = needCap
+				}
+			}
+		}
+		dstCol.data = make([]byte, len(dstCol.data)+elemLen, newCap)
+	}
+}
+
+// Insert inserts `row` on the position specified by `rowIdx`.
+// Note: Insert will cover the origin data, it should be called after
+// PreAlloc.
+func (c *Chunk) Insert(rowIdx int, row Row) {
+	for i, srcCol := range row.c.columns {
+		if row.IsNull(i) {
+			continue
+		}
+		dstCol := c.columns[i]
+		var srcStart, srcEnd, destStart, destEnd int
+		if srcCol.isFixed() {
+			srcElemLen, destElemLen := len(srcCol.elemBuf), len(dstCol.elemBuf)
+			srcStart, destStart = row.idx*srcElemLen, rowIdx*destElemLen
+			srcEnd, destEnd = srcStart+srcElemLen, destStart+destElemLen
+		} else {
+			srcStart, srcEnd = int(srcCol.offsets[row.idx]), int(srcCol.offsets[row.idx+1])
+			destStart, destEnd = int(dstCol.offsets[rowIdx]), int(dstCol.offsets[rowIdx+1])
+		}
+		copy(dstCol.data[destStart:destEnd], srcCol.data[srcStart:srcEnd])
 	}
 }
 
