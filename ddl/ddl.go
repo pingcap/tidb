@@ -199,16 +199,18 @@ var (
 type DDL interface {
 	CreateSchema(ctx sessionctx.Context, name model.CIStr, charsetInfo *ast.CharsetOpt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
-	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt, withSelect bool) (int64, error)
-	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) (int64, error)
-	DropTable(ctx sessionctx.Context, tableIdent ast.Ident, tableID int64) (err error)
+	// CreateTable handles 'create table' ddl.
+	// 'snapshotTS' is used to specify the 'select' query timestamp of 'create table ... select',
+	// if there is no 'select' part, 'snapshotTS' is meaningless
+	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt, snapshotTS uint64) (err error)
+	CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error
+	DropTable(ctx sessionctx.Context, tableIdent ast.Ident) (err error)
 	CreateIndex(ctx sessionctx.Context, tableIdent ast.Ident, unique bool, indexName model.CIStr,
 		columnNames []*ast.IndexColName, indexOption *ast.IndexOption) error
 	DropIndex(ctx sessionctx.Context, tableIdent ast.Ident, indexName model.CIStr) error
 	AlterTable(ctx sessionctx.Context, tableIdent ast.Ident, spec []*ast.AlterTableSpec) error
 	TruncateTable(ctx sessionctx.Context, tableIdent ast.Ident) error
 	RenameTable(ctx sessionctx.Context, oldTableIdent, newTableIdent ast.Ident) error
-	RevealTable(ctx sessionctx.Context, schemaName model.CIStr, tableInfo *model.TableInfo) error
 
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
@@ -528,6 +530,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// If a job is a history job, the state must be JobSynced or JobCancel.
 		if historyJob.IsSynced() {
 			log.Infof("[ddl] DDL job ID:%d is finished", jobID)
+			ctx.GetSessionVars().StmtCtx.AddAffectedRows(uint64(historyJob.GetRowCount()))
 			return nil
 		}
 
