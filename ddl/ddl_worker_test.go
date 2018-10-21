@@ -129,8 +129,7 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	c.Assert(err, IsNil)
 
 	// Args is wrong, so creating table is failed.
-	doDDLJobErr(c, 1, 1, model.ActionCreateTable, []interface{}{1, false}, ctx, d)
-	doDDLJobErr(c, 1, 1, model.ActionCreateTable, []interface{}{1, true}, ctx, d)
+	doDDLJobErr(c, 1, 1, model.ActionCreateTable, []interface{}{1}, ctx, d)
 	// Schema ID is wrong, so creating table is failed.
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo, false}, ctx, d)
 	doDDLJobErr(c, -1, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo, true}, ctx, d)

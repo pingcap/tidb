@@ -51,6 +51,7 @@ const (
 	codeWrongNumberOfColumnsInSelect       = mysql.ErrWrongNumberOfColumnsInSelect
 	codeWrongValueCountOnRow               = mysql.ErrWrongValueCountOnRow
 	codeCantUpdateTableInCreateTableSelect = mysql.ErrCantUpdateTableInCreateTableSelect
+	codeTablenameNotAllowedHere            = mysql.ErrTablenameNotAllowedHere
 )
 
 // error definitions.

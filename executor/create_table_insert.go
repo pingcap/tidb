@@ -14,17 +14,21 @@
 package executor
 
 import (
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
 
-// CreateTableInsertExec represents an insert executor.
+// CreateTableInsertExec represents an insert executor when creating table, it is basically similar to `InsertExec` except:
+//  1. It is instantiated and executed at DDL owner server, during the execution of 'create table' DDL job
+//  2. The 'on duplicate' behavior(ERROR/IGNORE/REPLACE) is specified by 'onDuplicate' option
+// See 'https://dev.mysql.com/doc/refman/5.7/en/create-table-select.html' for more details
 type CreateTableInsertExec struct {
 	*InsertValues
 
@@ -40,7 +44,7 @@ func (e *CreateTableInsertExec) exec(rows [][]types.Datum) error {
 
 	e.rowCount = 0
 	if !sessVars.LightningMode {
-		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(), kv.TempTxnMemBufCap)
+		sessVars.GetWriteStmtBufs().BufStore = kv.NewBufferStore(e.ctx.Txn(true), kv.TempTxnMemBufCap)
 	}
 
 	switch e.onDuplicate {
@@ -71,12 +75,7 @@ func (e *CreateTableInsertExec) Next(ctx context.Context, chk *chunk.Chunk) erro
 	if e.finished {
 		return nil
 	}
-	cols, err := e.getColumns(e.Table.Cols())
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return errors.Trace(e.insertRowsFromSelect(ctx, cols, e.exec))
+	return errors.Trace(e.insertRowsFromSelect(ctx, e.exec))
 }
 
 // Close implements the Executor Close interface.
@@ -149,6 +148,7 @@ func (e *CreateTableInsertExec) batchCheckAndReplaceInsert(newRows [][]types.Dat
 func (e *CreateTableInsertExec) replaceDupRow(row toBeCheckedRow, handle int64) (err error) {
 	oldRow, err := e.getOldRow(e.ctx, e.Table, handle)
 	if err != nil {
+		log.Errorf("[insert on dup] handle is %d for the to-be-inserted row %s", handle, types.DatumsToStrNoErr(row.row))
 		return errors.Trace(err)
 	}
 
@@ -165,11 +165,11 @@ func (e *CreateTableInsertExec) replaceDupRow(row toBeCheckedRow, handle int64) 
 }
 
 // doDupRowReplace updates the duplicate row.
-// TODO: Report rows affected.
 func (e *CreateTableInsertExec) doDupRowReplace(handle int64, oldRow []types.Datum, newRow []types.Datum) ([]types.Datum, bool, int64, error) {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(newRow).ToRow()
+
 	_, handleChanged, newHandle, err := updateRecord(e.ctx, handle, oldRow, newRow, assignFlag, e.Table, true)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)

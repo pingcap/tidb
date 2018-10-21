@@ -55,9 +55,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	case model.ActionCreateTable:
 		newTableID = diff.TableID
 		tblIDs = append(tblIDs, newTableID)
-	case model.ActionRevealTable:
-		newTableID = diff.TableID
-		tblIDs = append(tblIDs, newTableID)
 	case model.ActionDropTable:
 		oldTableID = diff.TableID
 		tblIDs = append(tblIDs, oldTableID)
