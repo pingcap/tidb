@@ -16,11 +16,13 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/testutil"
 	"math"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -167,35 +169,96 @@ func (s *testSuite3) TestCreateTable(c *C) {
 	tk.MustExec("insert into create_source values (2, 1, 2);")
 	tk.MustExec("insert into create_source values (3, 3, 1);")
 
+	// duplicate primary key error
 	tk.MustExec("drop table create_target;")
 	_, err = tk.Exec("create table create_target(a int key, b int unique) select * from create_source order by ord;")
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
 
+	_, err = tk.Exec("create table create_target (primary key (a)) (select 1 as a) union all (select 1 as a);")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+
+	// duplicate unique key error
+	_, err = tk.Exec("create table create_target(ord int key, a int, b int unique) select * from create_source order by ord;")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'b'")
+
+	// test ignore duplicate
 	tk.MustExec("create table create_target(a int key, b int unique) ignore select a, b from create_source order by ord;")
 	r = tk.MustQuery("select * from create_target;")
 	r.Check(testkit.Rows("1 1"))
 
+	// test replace duplicate
 	tk.MustExec("drop table create_target;")
 	tk.MustExec("create table create_target(a int key, b int unique) replace select a, b from create_source order by ord;")
 	r = tk.MustQuery("select * from create_target;")
 	r.Check(testkit.Rows("1 2", "3 1"))
 
-	// test column attributes for the new table
-	tk.MustExec("drop table create_source;")
-	tk.MustExec("create table create_source(" +
-		"a int key comment 'ThisWasPrimaryKey'," +
-		"b varchar(30) not null unique," +
-		"c varchar(30) default 'CC'," +
-		"d int default 4," +
-		"e float default 2.0," +
-		"f datetime default '2018-01-01'," +
-		"g int," +
-		"h timestamp not null default current_timestamp on update current_timestamp," +
-		"i int as (g + 1) not null);")
+	// test generated columns with select
+	tk.MustExec("drop table create_target")
+	tk.MustExec("create table create_target(c int as (cnt * 10)) select count(*) as cnt from create_source;")
+	r = tk.MustQuery("select * from create_target;")
+	r.Check(testkit.Rows("30 3"))
 
-	tk.MustExec("drop table create_target;")
-	tk.MustExec("create table create_target(j int as (a * 2), g float)" +
-		" select a, b, c, d, e, f, g, h, i, cast(e as signed) as k from create_source;")
+	// tests adopted from MySQL
+	tk.MustExec(`drop table create_target`)
+	tk.MustExec(`create table create_target select now() - now(), curtime() - curtime();`)
+	r = tk.MustQuery(`select * from create_target;`)
+	r.Check(testkit.Rows("0 0"))
+
+	tk.MustExec(`drop table create_target`)
+	tk.MustExec(`create table create_target as select 5.05 / 0.014;`)
+	r = tk.MustQuery(`select * from create_target;`)
+	r.Check(testkit.Rows("360.714286"))
+
+	tk.MustExec(`drop table create_target`)
+	tk.MustExec(`create table create_target select uuid()`)
+	r = tk.MustQuery(`select * from create_target;`)
+	c.Assert(len(r.Rows()), Equals, 1)
+
+	tk.MustExec(`drop table create_target`)
+	tk.MustExec(`create table create_target select rpad(UUID(),100,' ');`)
+	r = tk.MustQuery(`select * from create_target;`)
+	c.Assert(len(r.Rows()), Equals, 1)
+
+	tk.MustExec(`drop table create_target`)
+	tk.MustExec(`create table create_target select repeat('a',4000) a;`)
+	r = tk.MustQuery(`select * from create_target;`)
+	c.Assert(len(r.Rows()), Equals, 1)
+
+	tk.MustExec(`drop table create_target`)
+	tk.MustExec(`create table create_target
+        select cast("2001-12-29" as date) as d, cast("20:45:11" as time) as t, cast("2001-12-29 20:45:11" as datetime) as dt;`)
+	r = tk.MustQuery(`select * from create_target;`)
+	r.Check(testkit.Rows("2001-12-29 20:45:11 2001-12-29 20:45:11"))
+
+	tk.MustExec(`drop table create_target`)
+	tk.MustExec(`create table create_target select if('2002'='2002','Y','N');`)
+	r = tk.MustQuery(`select * from create_target;`)
+	r.Check(testkit.Rows("Y"))
+
+	// test column attributes for the new table
+	tk.MustExec(`drop table create_source;`)
+	tk.MustExec(`create table create_source(
+		a int key comment 'ThisWasPrimaryKey',
+		b varchar(30) not null unique,
+		c varchar(30) default 'CC',
+		d int default 4,
+		e float default 2.0,
+		f datetime default '2018-01-01',
+		g int,
+		h timestamp not null default current_timestamp on update current_timestamp,
+		i int as (g + 1) not null);`)
+
+	tk.MustExec(`insert into create_source
+		(a, b, c, d, e, f, g, h)
+		values
+		(1, 10, 100, 1000, 10000, '20181122', 100000, '20181122');`)
+
+	tk.MustExec(`drop table create_target;`)
+	tk.MustExec(`create table create_target(j int as (a * 2), g float)
+		select a, b, c, d, e, f, g, h, i, cast(e as signed) as k from create_source;`)
+	r = tk.MustQuery(`select * from create_target;`)
+	r.Check(testutil.RowsWithSep("|", "2|1|10|100|1000|10000|2018-11-22 00:00:00|100000|2018-11-22 00:00:00|100001|10000"))
+
 	is := s.domain.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("create_target"))
 	c.Assert(err, IsNil)

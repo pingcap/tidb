@@ -802,6 +802,7 @@ func init() {
 			chk = chunk.Renew(chk, sctx.GetSessionVars().MaxChunkSize)
 		}
 	}
+
 }
 
 // TableDualExec represents a dual table executor.
@@ -1316,6 +1317,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
+		if ctx.GetSessionVars().CreateTableInsertingID != 0 {
+			// in a 'inserting data from select' state of creating table.
+			sc.InInsertStmt = true
+			sc.BadNullAsWarning = !vars.StrictSQLMode
+			sc.TruncateAsWarning = !vars.StrictSQLMode
+			sc.DividedByZeroAsWarning = !vars.StrictSQLMode
+			sc.IgnoreZeroInDate = !vars.StrictSQLMode
+		}
 		// Make sure the sql_mode is strict when checking column default value.
 	case *ast.LoadDataStmt:
 		sc.DupKeyAsWarning = true

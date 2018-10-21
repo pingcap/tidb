@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -101,6 +102,20 @@ type Session interface {
 var (
 	_ Session = (*session)(nil)
 )
+
+func init() {
+	ddlutil.CreateSessionContext = func(store kv.Storage) (sessionctx.Context, error) {
+		se, err := CreateSession(store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		sctx := se.(sessionctx.Context)
+		if sctx == nil {
+			return nil, errors.Errorf("Cannot convert Session to SessionContext")
+		}
+		return sctx, nil
+	}
+}
 
 type stmtRecord struct {
 	stmtID  uint32

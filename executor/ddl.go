@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
@@ -49,7 +48,8 @@ type DDLExec struct {
 	is   infoschema.InfoSchema
 	done bool
 
-	Inserter Executor
+	// originalStartTS is used to specify the 'select' query timestamp of 'create table ... select'
+	originalStartTS uint64
 }
 
 // toErr converts the error to the ErrInfoSchemaChanged when the schema is outdated.
@@ -74,6 +74,12 @@ func (e *DDLExec) toErr(err error) error {
 		return errors.Trace(schemaInfoErr)
 	}
 	return errors.Trace(err)
+}
+
+// Open implements the Executor Open interface.
+func (e *DDLExec) Open(context.Context) error {
+	e.originalStartTS = e.ctx.Txn(true).StartTS()
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -107,6 +113,7 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 				return errors.Trace(e.toErr(err))
 			}
 		}
+		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(x)
 	case *ast.CreateIndexStmt:
@@ -127,7 +134,6 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 	}
 
 	dom := domain.GetDomain(e.ctx)
-
 	// Update InfoSchema in TxnCtx, so it will pass schema check.
 	is := dom.InfoSchema()
 	txnCtx := e.ctx.GetSessionVars().TxnCtx
@@ -135,7 +141,6 @@ func (e *DDLExec) Next(ctx context.Context, req *chunk.RecordBatch) (err error) 
 	txnCtx.SchemaVersion = is.SchemaMetaVersion()
 	// DDL will force commit old transaction, after DDL, in transaction status should be false.
 	e.ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusInTrans, false)
-
 	return nil
 }
 
@@ -179,61 +184,9 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	return errors.Trace(err)
 }
 
-func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) (int64, error) {
-	return domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s, e.Inserter != nil)
-}
-
-func (e *DDLExec) executeSelectInsert(ctx context.Context, chk *chunk.Chunk, s *ast.CreateTableStmt, tableID int64) error {
-	if e.Inserter == nil {
-		return nil
-	}
-	dom := domain.GetDomain(e.ctx)
-	ver, err := dom.Store().CurrentVersion()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	snapshot, err := dom.Store().GetSnapshot(ver)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	m := meta.NewSnapshotMeta(snapshot)
-	dbInfo, ok := dom.InfoSchema().SchemaByName(s.Table.Schema)
-	if !ok {
-		return errors.Trace(err)
-	}
-	tbInfo, err := m.GetTable(dbInfo.ID, tableID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// Seems we have to create an allocator here, which is not the one created by InfoSchema, but it should be fine.
-	alloc := autoid.NewAllocator(dom.Store(), tbInfo.GetDBID(dbInfo.ID))
-	tbl, err := tables.TableFromMeta(alloc, tbInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	fullti := ast.Ident{Schema: dbInfo.Name, Name: tbInfo.Name}
-	inserter := e.Inserter.(*CreateTableInsertExec)
-	inserter.Table = tbl
-
-	err = e.Inserter.Next(ctx, chk)
-	if err != nil {
-		dropErr := dom.DDL().DropTable(e.ctx, fullti, tableID)
-		if dropErr != nil {
-			log.Errorf("Error dropping table: %s", dropErr)
-		}
-		return errors.Trace(err)
-	}
-	err = e.executeRevealTable(s.Table.Schema, tbInfo)
-	if err != nil {
-		dropErr := dom.DDL().DropTable(e.ctx, fullti, tableID)
-		if dropErr != nil {
-			log.Errorf("Error dropping table: %s", dropErr)
-		}
-		return errors.Trace(err)
-	}
-	return nil
+func (e *DDLExec) executeCreateTable(s *ast.CreateTableStmt) error {
+	err := domain.GetDomain(e.ctx).DDL().CreateTable(e.ctx, s, e.originalStartTS)
+	return errors.Trace(err)
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {

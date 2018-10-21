@@ -315,7 +315,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		return
 	}
 
-	// 'FOR UPDATE' cannot be used as part of the 'CREATE TABLE ... SELECT'
+	// 'for update' cannot be used as part of the 'create table ... select'
 	if tblName, contains := containsForUpdate(stmt.Select); contains {
 		p.err = ErrCantUpdateTableInCreateTableSelect.GenWithStackByArgs(tblName, stmt.Table.Name)
 		return
@@ -649,7 +649,7 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 	}
 }
 
-// containsForUpdate checks if a node is/contains a 'FOR UPDATE' query. If yes, it returns name of the table that the
+// containsForUpdate checks if a node is/contains a 'for update' query. If yes, it returns name of the table that the
 // lock applied on. The name will be used to generate the error message of 'ErrCantUpdateTableInCreateTableSelect'.
 func containsForUpdate(node ast.ResultSetNode) (*model.CIStr, bool) {
 	if node == nil {

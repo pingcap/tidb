@@ -324,8 +324,7 @@ type Show struct {
 
 	Conditions []expression.Expression
 
-	// Used by show variables
-	GlobalScope bool
+	GlobalScope bool // Used by `show variables`
 }
 
 // Set represents a plan for set stmt.
@@ -443,8 +442,8 @@ type DDL struct {
 
 	Statement ast.DDLNode
 
-	// For Create Table ... Select support, or it is nil otherwise
-	SelectPlan PhysicalPlan
+	// InsertPlan is for 'create table ... select' syntax
+	InsertPlan Insert
 }
 
 // Explain represents a explain plan.

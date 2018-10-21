@@ -306,15 +306,6 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 
-	// Create a table with select
-	tblInfo = testTableInfo(c, d, "ts", 3)
-	job = testCreateTableWithSelect(c, ctx, d, s.dbInfo, tblInfo)
-	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateWriteOnly)
-	tblInfo.State = model.StateWriteOnly
-	job = testRevealTable(c, ctx, d, s.dbInfo, tblInfo)
-	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
-	testCheckJobDone(c, d, job, true)
-
 	// Create an existing table.
 	newTblInfo := testTableInfo(c, d, "t", 3)
 	doDDLJobErr(c, s.dbInfo.ID, newTblInfo.ID, model.ActionCreateTable, []interface{}{newTblInfo, false /*withSelect*/}, ctx, d)

@@ -277,6 +277,19 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 			err = w.deleteRange(job)
 		}
+	} else if job.Type == model.ActionCreateTable {
+		// We're canceling the job, table may be created already with some inserted data. A clean-up is needed
+		err = t.DropTable(job.SchemaID, job.TableID, true)
+		if err != nil {
+			if terror.ErrorEqual(err, meta.ErrDBNotExists) {
+				log.Warnf("Cancelling create table job, but database'(Schema ID %d)' does not exists", job.SchemaID)
+			} else if terror.ErrorEqual(err, meta.ErrTableNotExists) {
+				log.Warnf("Cancelling create table job, but table'(Schema ID %d).(Table ID %d)' does not exists", job.SchemaID, job.TableID)
+			} else {
+				return errors.Trace(err)
+			}
+		}
+		err = w.deleteRange(job)
 	}
 	switch job.Type {
 	case model.ActionRestoreTable:
@@ -477,7 +490,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropSchema:
 		ver, err = onDropSchema(t, job)
 	case model.ActionCreateTable:
-		ver, err = onCreateTable(d, t, job)
+		ver, err = onCreateTable(d, w, t, job)
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
 	case model.ActionDropTable, model.ActionDropView:

@@ -40,8 +40,8 @@ func NewFieldType(tp byte) *FieldType {
 	}
 }
 
-// Clone makes a deep copy of FieldType
-func (ft *FieldType) Clone() *FieldType {
+// CloneField makes a deep copy of FieldType
+func CloneField(ft *FieldType) *FieldType {
 	elems := make([]string, len(ft.Elems))
 	copy(elems, ft.Elems)
 	return &FieldType{

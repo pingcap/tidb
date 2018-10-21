@@ -107,8 +107,7 @@ type TransactionContext struct {
 	Shard         *int64
 	TableDeltaMap map[int64]TableDelta
 
-	// For metrics.
-	CreateTime     time.Time
+	CreateTime     time.Time // For metrics.
 	StatementCount int
 }
 
@@ -186,12 +185,12 @@ type SessionVars struct {
 	PreparedStmtNameToID map[string]uint32
 	// preparedStmtID is id of prepared statement.
 	preparedStmtID uint32
-	// params for prepared statements
+	// PreparedParams are params for prepared statements
 	PreparedParams []types.Datum
 
-	// retry information
+	// RetryInfo stores the retry information
 	RetryInfo *RetryInfo
-	// Should be reset on transaction finished.
+	// TxnCtx should be reset on transaction finished.
 	TxnCtx *TransactionContext
 
 	// KVVars is the variables for KV storage.
@@ -199,9 +198,9 @@ type SessionVars struct {
 
 	// TxnIsolationLevelOneShot is used to implements "set transaction isolation level ..."
 	TxnIsolationLevelOneShot struct {
-		// state 0 means default
-		// state 1 means it's set in current transaction.
-		// state 2 means it should be used in current transaction.
+		// State 0 means default
+		// State 1 means it's set in current transaction.
+		// State 2 means it should be used in current transaction.
 		State int
 		Value string
 	}
@@ -332,6 +331,10 @@ type SessionVars struct {
 
 	// CommandValue indicates which command current session is doing.
 	CommandValue uint32
+
+	// CreateTableInsertingID specifies ID of the newly created table when executing 'create table ... select' DDL job
+	// A valid table ID(!= 0) indicating the table is just created and need to insert data from its 'select' part
+	CreateTableInsertingID int64
 }
 
 // NewSessionVars creates a session vars object.
@@ -754,7 +757,7 @@ type Concurrency struct {
 	// HashAggPartialConcurrency is the number of concurrent hash aggregation partial worker.
 	HashAggPartialConcurrency int
 
-	// HashAggPartialConcurrency is the number of concurrent hash aggregation final worker.
+	// HashAggFinalConcurrency is the number of concurrent hash aggregation final worker.
 	HashAggFinalConcurrency int
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.

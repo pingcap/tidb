@@ -907,22 +907,22 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	_, ok := is.SchemaByName(referIdent.Schema)
 	if !ok {
-		return 0, infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 	}
 	referTbl, err := is.TableByName(referIdent.Schema, referIdent.Name)
 	if err != nil {
-		return 0, infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
 	}
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
-		return 0, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		if ifNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
-			return 0, nil
+			return nil
 		}
-		return 0, infoschema.ErrTableExists.GenWithStackByArgs(ident)
+		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 
 	tblInfo := *referTbl.Meta()
@@ -930,20 +930,21 @@ func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.
 	tblInfo.AutoIncID = 0
 	tblInfo.ForeignKeys = nil
 	tblInfo.ID, err = d.genGlobalID()
+	tblInfo.State = model.StateNone
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo, false /*withSelect*/},
+		Args:       []interface{}{tblInfo, false /*withSelect*/, 0 /*snapshotTS*/},
 	}
 
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
-	return tblInfo.ID, errors.Trace(err)
+	return errors.Trace(err)
 }
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
@@ -1048,16 +1049,16 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		TableID:    tbInfo.ID,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tbInfo, withSelect},
+		Args:       []interface{}{tbInfo, s.Select != nil, snapshotTS},
 	}
 
 	err = handleTableOptions(s.Options, tbInfo)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	err = checkCharsetAndCollation(tbInfo.Charset, tbInfo.Collate)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	if err = checkColumnFieldLength(schema, s.Cols, tbInfo); err != nil {
 		return errors.Trace(err)
@@ -1074,10 +1075,10 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 
 	// table exists, but if_not_exists flags is true, so we ignore this error.
 	if infoschema.ErrTableExists.Equal(err) && s.IfNotExists {
-		return tbInfo.ID, nil
+		return nil
 	}
 	err = d.callHookOnChanged(err)
-	return tbInfo.ID, errors.Trace(err)
+	return errors.Trace(err)
 }
 
 func (d *ddl) RestoreTable(ctx sessionctx.Context, tbInfo *model.TableInfo, schemaID, autoID, dropJobID int64, snapshotTS uint64) (err error) {
@@ -2306,7 +2307,7 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 }
 
 // DropTable will proceed even if some table in the list does not exists.
-func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident, tableID int64) (err error) {
+func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	is := d.GetInformationSchema(ctx)
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -2320,7 +2321,7 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident, tableID int64) (er
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
-		TableID:    tableID,
+		TableID:    tb.Meta().ID,
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
@@ -2676,24 +2677,4 @@ func buildPartitionInfo(meta *model.TableInfo, d *ddl, spec *ast.AlterTableSpec)
 		part.Definitions = append(part.Definitions, piDef)
 	}
 	return part, nil
-}
-
-func (d *ddl) RevealTable(ctx sessionctx.Context, schemaName model.CIStr, tableInfo *model.TableInfo) error {
-	is := d.GetInformationSchema(ctx)
-	schema, ok := is.SchemaByName(schemaName)
-	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tableInfo.ID,
-		Type:       model.ActionRevealTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tableInfo},
-	}
-
-	err := d.doDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
 }
