@@ -135,39 +135,59 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 }
 
 func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) error {
-	colIDs := make(map[int64]int, e.schema.Len())
-	for i, col := range e.schema.Columns {
-		colIDs[col.ID] = i
+	//  One column could be filled for multi-times in the schema. e.g. select b, b, c, c from t where a = 1.
+	// We need to set the positions in the schema for the same column.
+	colID2DecodedPos := make(map[int64]int, e.schema.Len())
+	decodedPos2SchemaPos := make([][]int, 0, e.schema.Len())
+	for schemaPos, col := range e.schema.Columns {
+		if decodedPos, ok := colID2DecodedPos[col.ID]; !ok {
+			colID2DecodedPos[col.ID] = len(colID2DecodedPos)
+			decodedPos2SchemaPos = append(decodedPos2SchemaPos, []int{schemaPos})
+		} else {
+			decodedPos2SchemaPos[decodedPos] = append(decodedPos2SchemaPos[decodedPos], schemaPos)
+		}
 	}
-	colVals, err := tablecodec.CutRowNew(rowVal, colIDs)
+	decodedVals, err := tablecodec.CutRowNew(rowVal, colID2DecodedPos)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if colVals == nil {
-		colVals = make([][]byte, len(colIDs))
+	if decodedVals == nil {
+		decodedVals = make([][]byte, len(colID2DecodedPos))
 	}
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
-	for id, offset := range colIDs {
-		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(e.schema.Columns[offset].RetType.Flag) {
-			chk.AppendInt64(offset, e.handle)
+	for id, decodedPos := range colID2DecodedPos {
+		schemaPoses := decodedPos2SchemaPos[decodedPos]
+		firstPos := schemaPoses[0]
+		if e.tblInfo.PKIsHandle && mysql.HasPriKeyFlag(e.schema.Columns[firstPos].RetType.Flag) {
+			chk.AppendInt64(firstPos, e.handle)
+			// Fill other positions.
+			for i := 1; i < len(schemaPoses); i++ {
+				chk.MakeRef(firstPos, schemaPoses[i])
+			}
 			continue
 		}
+		// ExtraHandleID is added when building plan, we can make sure that there's only one column's ID is this.
 		if id == model.ExtraHandleID {
-			chk.AppendInt64(offset, e.handle)
+			chk.AppendInt64(firstPos, e.handle)
 			continue
 		}
-		if len(colVals[offset]) == 0 {
+		if len(decodedVals[decodedPos]) == 0 {
+			// This branch only entered for updating and deleting. It won't have one column in multiple positions.
 			colInfo := getColInfoByID(e.tblInfo, id)
 			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
 			if err1 != nil {
 				return errors.Trace(err1)
 			}
-			chk.AppendDatum(offset, &d)
+			chk.AppendDatum(firstPos, &d)
 			continue
 		}
-		_, err = decoder.DecodeOne(colVals[offset], offset, e.schema.Columns[offset].RetType)
+		_, err = decoder.DecodeOne(decodedVals[decodedPos], firstPos, e.schema.Columns[firstPos].RetType)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		// Fill other positions.
+		for i := 1; i < len(schemaPoses); i++ {
+			chk.MakeRef(firstPos, schemaPoses[i])
 		}
 	}
 	return nil

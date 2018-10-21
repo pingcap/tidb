@@ -47,6 +47,7 @@ type Config struct {
 	Host             string          `toml:"host" json:"host"`
 	AdvertiseAddress string          `toml:"advertise-address" json:"advertise-address"`
 	Port             uint            `toml:"port" json:"port"`
+	Cors             string          `toml:"cors" json:"cors"`
 	Store            string          `toml:"store" json:"store"`
 	Path             string          `toml:"path" json:"path"`
 	Socket           string          `toml:"socket" json:"socket"`
@@ -261,6 +262,7 @@ var defaultConf = Config{
 	Host:             "0.0.0.0",
 	AdvertiseAddress: "",
 	Port:             4000,
+	Cors:             "",
 	Store:            "mocktikv",
 	Path:             "/tmp/tidb",
 	RunDDL:           true,
