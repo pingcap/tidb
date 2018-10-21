@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pkg/errors"
@@ -229,7 +230,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 type stateCase struct {
 	session            session.Session
 	rawStmt            ast.StmtNode
-	stmt               ast.Statement
+	stmt               sqlexec.Statement
 	expectedExecErr    error
 	expectedCompileErr error
 }

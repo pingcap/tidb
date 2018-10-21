@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -44,7 +45,7 @@ type processinfoSetter interface {
 	SetProcessInfo(string)
 }
 
-// recordSet wraps an executor, implements ast.RecordSet interface
+// recordSet wraps an executor, implements sqlexec.RecordSet interface
 type recordSet struct {
 	fields      []*ast.ResultField
 	executor    Executor
@@ -125,7 +126,7 @@ func (a *recordSet) Close() error {
 	return errors.Trace(err)
 }
 
-// ExecStmt implements the ast.Statement interface, it builds a planner.Plan to an ast.Statement.
+// ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
 type ExecStmt struct {
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
@@ -186,8 +187,8 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
-// result, execution is done after this function returns, in the returned ast.RecordSet Next method.
-func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
+// result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
+func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
 	a.StartTime = time.Now()
 	sctx := a.Ctx
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
@@ -252,7 +253,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor, pi processinfoSetter) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor, pi processinfoSetter) (sqlexec.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
