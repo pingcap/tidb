@@ -243,6 +243,25 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
+	case model.ActionCreateTable:
+		tbInfo := &model.TableInfo{}
+		if err := job.DecodeArgs(tbInfo); err != nil {
+			return errors.Trace(err)
+		}
+		physicalTableIDs := getPartitionIDs(tbInfo)
+		if len(physicalTableIDs) > 0 {
+			for _, pid := range physicalTableIDs {
+				startKey := tablecodec.EncodeTablePrefix(pid)
+				endKey := tablecodec.EncodeTablePrefix(pid + 1)
+				if err := doInsert(s, job.ID, pid, startKey, endKey, now); err != nil {
+					return errors.Trace(err)
+				}
+			}
+			return nil
+		}
+		startKey := tablecodec.EncodeTablePrefix(tbInfo.ID)
+		endKey := tablecodec.EncodeTablePrefix(tbInfo.ID + 1)
+		return doInsert(s, job.ID, tbInfo.ID, startKey, endKey, now)
 	case model.ActionDropTablePartition:
 		var physicalTableID int64
 		if err := job.DecodeArgs(&physicalTableID); err != nil {
@@ -306,7 +325,7 @@ func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, end
 	return errors.Trace(err)
 }
 
-// getNowTS gets the current timestamp, in TSO.
+// getNowTSO gets the current timestamp, in TSO.
 func getNowTSO(ctx sessionctx.Context) (uint64, error) {
 	currVer, err := ctx.GetStore().CurrentVersion()
 	if err != nil {
