@@ -404,9 +404,8 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			}
 		}
 
-		if len(requests) < int(cfg.MaxBatchSize) && inHeavyLoad {
+		if len(requests) < int(cfg.MaxBatchSize) && inHeavyLoad && cfg.BatchWaitTime > 0 {
 			metrics.TiKVBatchWaitTimes.Inc()
-			end := time.After(cfg.BatchWaitTime)
 		BackoffLoop:
 			for {
 				select {
@@ -419,7 +418,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 					if len(requests) >= int(batchWaitSize) {
 						break BackoffLoop
 					}
-				case <-end:
+				case <-time.After(cfg.BatchWaitTime):
 					break BackoffLoop
 				}
 			}
