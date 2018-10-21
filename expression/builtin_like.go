@@ -14,7 +14,10 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -80,6 +83,13 @@ func (b *builtinLikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, errors.Trace(err)
 	}
 	escape := byte(val)
+
+	lowerCaseTableName,_ := strconv.Atoi(variable.SysVars["lower_case_table_names"].Value)
+	if lowerCaseTableName == 2 {
+		patternStr = strings.ToLower(patternStr)
+		valStr = strings.ToLower(valStr)
+	}
+
 	patChars, patTypes := stringutil.CompilePattern(patternStr, escape)
 	match := stringutil.DoMatch(valStr, patChars, patTypes)
 	return boolToInt64(match), false, nil
