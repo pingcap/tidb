@@ -32,29 +32,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Kind constants.
-const (
-	KindNull          byte = 0
-	KindInt64         byte = 1
-	KindUint64        byte = 2
-	KindFloat32       byte = 3
-	KindFloat64       byte = 4
-	KindString        byte = 5
-	KindBytes         byte = 6
-	KindBinaryLiteral byte = 7 // Used for BIT / HEX literals.
-	KindMysqlDecimal  byte = 8
-	KindMysqlDuration byte = 9
-	KindMysqlEnum     byte = 10
-	KindMysqlBit      byte = 11 // Used for BIT table column values.
-	KindMysqlSet      byte = 12
-	KindMysqlTime     byte = 13
-	KindInterface     byte = 14
-	KindMinNotNull    byte = 15
-	KindMaxValue      byte = 16
-	KindRaw           byte = 17
-	KindMysqlJSON     byte = 18
-)
-
 // Datum is a data box holds different kind of data.
 // It has better performance and is easier to use than `interface{}`.
 type Datum struct {

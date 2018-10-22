@@ -18,38 +18,12 @@
 package types
 
 import (
-	"io"
 	"strings"
 
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/util/charset"
 	"github.com/pkg/errors"
-)
-
-// Kind constants.
-const (
-	KindNull          = ast.KindNull
-	KindInt64         = ast.KindInt64
-	KindUint64        = ast.KindUint64
-	KindFloat32       = ast.KindFloat32
-	KindFloat64       = ast.KindFloat64
-	KindString        = ast.KindString
-	KindBytes         = ast.KindBytes
-	KindBinaryLiteral = ast.KindBinaryLiteral
-	KindMysqlDecimal  = ast.KindMysqlDecimal
-	KindMysqlDuration = ast.KindMysqlDuration
-	KindMysqlEnum     = ast.KindMysqlEnum
-	KindMysqlBit      = ast.KindMysqlBit
-	KindMysqlSet      = ast.KindMysqlSet
-	KindMysqlTime     = ast.KindMysqlTime
-	KindInterface     = ast.KindInterface
-	KindMinNotNull    = ast.KindMinNotNull
-	KindMaxValue      = ast.KindMaxValue
-	KindRaw           = ast.KindRaw
-	KindMysqlJSON     = ast.KindMysqlJSON
 )
 
 // IsTypeBlob returns a boolean indicating whether the tp is a blob type.
@@ -111,24 +85,6 @@ func IsTypeNumeric(tp byte) bool {
 // whether the tp is time type with date.
 func IsTemporalWithDate(tp byte) bool {
 	return IsTypeTime(tp)
-}
-
-// IsBinaryStr returns a boolean indicating
-// whether the field type is a binary string type.
-func IsBinaryStr(ft *FieldType) bool {
-	if ft.Collate == charset.CollationBin && IsString(ft.Tp) {
-		return true
-	}
-	return false
-}
-
-// IsNonBinaryStr returns a boolean indicating
-// whether the field type is a non-binary string type.
-func IsNonBinaryStr(ft *FieldType) bool {
-	if ft.Collate != charset.CollationBin && IsString(ft.Tp) {
-		return true
-	}
-	return false
 }
 
 // IsString returns a boolean indicating
@@ -207,7 +163,7 @@ func KindStr(kind byte) (r string) {
 //	cs: charset
 func TypeToStr(tp byte, cs string) (r string) {
 	ts := type2Str[tp]
-	if cs != charset.CharsetBin {
+	if cs != "binary" {
 		return ts
 	}
 	if IsTypeBlob(tp) {
@@ -218,23 +174,9 @@ func TypeToStr(tp byte, cs string) (r string) {
 	return ts
 }
 
-// EOFAsNil filtrates errors,
-// If err is equal to io.EOF returns nil.
-func EOFAsNil(err error) error {
-	if terror.ErrorEqual(err, io.EOF) {
-		return nil
-	}
-	return errors.Trace(err)
-}
-
 // InvOp2 returns an invalid operation error.
 func InvOp2(x, y interface{}, o opcode.Op) (interface{}, error) {
 	return nil, errors.Errorf("Invalid operation: %v %v %v (mismatched types %T and %T)", x, o, y, x, y)
-}
-
-// overflow returns an overflowed error.
-func overflow(v interface{}, tp byte) error {
-	return ErrOverflow.GenWithStack("constant %v overflows %s", v, TypeStr(tp))
 }
 
 // IsTypeTemporal checks if a type is a temporal type.
@@ -246,3 +188,71 @@ func IsTypeTemporal(tp byte) bool {
 	}
 	return false
 }
+
+// Kind constants.
+const (
+	KindNull          byte = 0
+	KindInt64         byte = 1
+	KindUint64        byte = 2
+	KindFloat32       byte = 3
+	KindFloat64       byte = 4
+	KindString        byte = 5
+	KindBytes         byte = 6
+	KindBinaryLiteral byte = 7 // Used for BIT / HEX literals.
+	KindMysqlDecimal  byte = 8
+	KindMysqlDuration byte = 9
+	KindMysqlEnum     byte = 10
+	KindMysqlBit      byte = 11 // Used for BIT table column values.
+	KindMysqlSet      byte = 12
+	KindMysqlTime     byte = 13
+	KindInterface     byte = 14
+	KindMinNotNull    byte = 15
+	KindMaxValue      byte = 16
+	KindRaw           byte = 17
+	KindMysqlJSON     byte = 18
+)
+
+var (
+	dig2bytes = [10]int{0, 1, 1, 2, 2, 3, 3, 4, 4, 4}
+)
+
+// RoundMode is the type for round mode.
+type RoundMode string
+
+// constant values.
+const (
+	ten0 = 1
+	ten1 = 10
+	ten2 = 100
+	ten3 = 1000
+	ten4 = 10000
+	ten5 = 100000
+	ten6 = 1000000
+	ten7 = 10000000
+	ten8 = 100000000
+	ten9 = 1000000000
+
+	maxWordBufLen = 9 // A MyDecimal holds 9 words.
+	digitsPerWord = 9 // A word holds 9 digits.
+	wordSize      = 4 // A word is 4 bytes int32.
+	digMask       = ten8
+	wordBase      = ten9
+	wordMax       = wordBase - 1
+	notFixedDec   = 31
+
+	DivFracIncr = 4
+
+	// ModeHalfEven rounds normally.
+	ModeHalfEven RoundMode = "ModeHalfEven"
+	// Truncate just truncates the decimal.
+	ModeTruncate RoundMode = "Truncate"
+	// Ceiling is not supported now.
+	modeCeiling RoundMode = "Ceiling"
+)
+
+const (
+	codeInvalidDefault = terror.ErrCode(mysql.ErrInvalidDefault)
+)
+
+// ErrInvalidDefault is returned when meet a invalid default value.
+var ErrInvalidDefault = terror.ClassTypes.New(codeInvalidDefault, "Invalid default value for '%s'")

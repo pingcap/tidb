@@ -20,8 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 )
@@ -104,7 +103,7 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 			c.DefaultValueBit = []byte(v)
 			return nil
 		}
-		return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
+		return types.ErrInvalidDefault
 	}
 	return nil
 }
@@ -114,7 +113,7 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 // bit type default value will store in DefaultValueBit for fix bit default value decode/encode bug.
 func (c *ColumnInfo) GetDefaultValue() interface{} {
 	if c.Tp == mysql.TypeBit && c.DefaultValueBit != nil {
-		return hack.String(c.DefaultValueBit)
+		return string(c.DefaultValueBit)
 	}
 	return c.DefaultValue
 }

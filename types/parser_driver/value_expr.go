@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 )
 
 // The purpose of driver package is to decompose the dependency of the parser and
@@ -31,14 +32,27 @@ import (
 // The parser package depends on the ast package, but not the types package.
 // The whole relationship:
 // ast imports []
-// types imports []
-// parser imports [ast]
-// driver imports [ast, types]
+// tidb/types imports [parser/types]
+// parser imports [ast, parser/types]
+// driver imports [ast, tidb/types]
 // tidb imports [parser, driver]
 
 func init() {
 	ast.NewValueExpr = newValueExpr
 	ast.NewParamMarkerExpr = newParamMarkerExpr
+	ast.NewDecimal = func(str string) (interface{}, error) {
+		dec := new(types.MyDecimal)
+		err := dec.FromString(hack.Slice(str))
+		return dec, err
+	}
+	ast.NewHexLiteral = func(str string) (interface{}, error) {
+		h, err := types.NewHexLiteral(str)
+		return h, err
+	}
+	ast.NewBitLiteral = func(str string) (interface{}, error) {
+		b, err := types.NewBitLiteral(str)
+		return b, err
+	}
 }
 
 var (
