@@ -85,10 +85,8 @@ func WideNew(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	}
 
 	span := chunkSpan{
-		elemBuf:    make([]byte, capInfo.elemBuf),
-		offsets:    make([]int32, capInfo.offsets),
-		data:       make([]byte, capInfo.fixedColData),
-		nullBitmap: make([]byte, capInfo.nullBitmap),
+		byteBuf:  make([]byte, capInfo.byteBuf),
+		int32Buf: make([]int32, capInfo.int32Buf),
 	}
 
 	chk.capacity = mathutil.Min(cap, maxChunkSize)
@@ -105,66 +103,57 @@ func WideNew(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 }
 
 type capInfo struct {
-	elemBuf      int
-	offsets      int
-	fixedColData int
-	nullBitmap   int
+	byteBuf  int
+	int32Buf int
 }
 
 func (c *capInfo) add(i capInfo) {
-	c.elemBuf += i.elemBuf
-	c.offsets += i.offsets
-	c.fixedColData += i.fixedColData
-	c.nullBitmap += i.nullBitmap
+	c.byteBuf += i.byteBuf
+	c.int32Buf += i.int32Buf
 }
 
 func preCalVarLenColumn(cap int) capInfo {
+	estimatedElemLen := 8
 	return capInfo{
-		offsets:    cap + 1,
-		nullBitmap: cap >> 3,
+		int32Buf: cap + 1,
+		byteBuf:  cap>>3 + cap*estimatedElemLen,
 	}
 }
 
 func preCalFixedLenColumn(elemLen, cap int) capInfo {
 	return capInfo{
-		elemBuf:      elemLen,
-		fixedColData: cap * elemLen,
-		nullBitmap:   cap >> 3,
+		byteBuf: elemLen + cap*elemLen + cap>>3,
 	}
 }
 
 type chunkSpan struct {
-	elemBuf       []byte
-	elemBufIdx    int
-	nullBitmap    []byte
-	nullBitMapIdx int
-	offsets       []int32
-	offsetsIdx    int
-	data          []byte
-	dataIdx       int
+	byteBuf     []byte
+	byteBufIdx  int
+	int32Buf    []int32
+	int32BufIdx int
 }
 
 func (c *column) distVarLenColumn(cap int, span *chunkSpan) {
+	c.offsets = span.int32Buf[span.int32BufIdx : span.int32BufIdx+1 : span.int32BufIdx+cap+1]
+	span.int32BufIdx += cap + 1
+
 	estimatedElemLen := 8
+	c.data = span.byteBuf[span.byteBufIdx : span.byteBufIdx : span.byteBufIdx+cap*estimatedElemLen]
+	span.byteBufIdx += cap * estimatedElemLen
 
-	c.offsets = span.offsets[span.offsetsIdx : span.offsetsIdx+1 : span.offsetsIdx+cap+1]
-	span.offsetsIdx += cap + 1
-
-	c.data = make([]byte, 0, cap*estimatedElemLen) // VarLen columns can not prealloc
-
-	c.nullBitmap = span.nullBitmap[span.nullBitMapIdx : span.nullBitMapIdx : span.nullBitMapIdx+cap>>3]
-	span.nullBitMapIdx += cap >> 3
+	c.nullBitmap = span.byteBuf[span.byteBufIdx : span.byteBufIdx : span.byteBufIdx+cap>>3]
+	span.byteBufIdx += cap >> 3
 }
 
 func (c *column) distFixedLenColumn(elemLen, cap int, span *chunkSpan) {
-	c.elemBuf = span.elemBuf[span.elemBufIdx : span.elemBufIdx+elemLen : span.elemBufIdx+elemLen]
-	span.elemBufIdx += elemLen
+	c.elemBuf = span.byteBuf[span.byteBufIdx : span.byteBufIdx+elemLen : span.byteBufIdx+elemLen]
+	span.byteBufIdx += elemLen
 
-	c.data = span.data[span.dataIdx : span.dataIdx : span.dataIdx+cap*elemLen]
-	span.dataIdx += cap * elemLen
+	c.data = span.byteBuf[span.byteBufIdx : span.byteBufIdx : span.byteBufIdx+cap*elemLen]
+	span.byteBufIdx += cap * elemLen
 
-	c.nullBitmap = span.nullBitmap[span.nullBitMapIdx : span.nullBitMapIdx : span.nullBitMapIdx+cap>>3]
-	span.nullBitMapIdx += cap >> 3
+	c.nullBitmap = span.byteBuf[span.byteBufIdx : span.byteBufIdx : span.byteBufIdx+cap>>3]
+	span.byteBufIdx += cap >> 3
 }
 
 // Renew creates a new Chunk based on an existing Chunk. The newly created Chunk
