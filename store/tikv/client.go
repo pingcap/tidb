@@ -34,10 +34,10 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
-	gcodes "google.golang.org/grpc/codes"
+	// gcodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
-	gstatus "google.golang.org/grpc/status"
+	// gstatus "google.golang.org/grpc/status"
 )
 
 // MaxConnectionCount is the max gRPC connections that will be established with
@@ -544,9 +544,11 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 					return nil, errors.Trace(entry.err)
 				}
 				return tikvrpc.FromBatchCommandsResponse(res), nil
-			case <-time.After(timeout):
-				atomic.StoreInt32(&entry.timeout, 1)
-				return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, ""))
+				/**********
+				case <-time.After(timeout):
+					atomic.StoreInt32(&entry.timeout, 1)
+					return nil, errors.Trace(gstatus.Error(gcodes.DeadlineExceeded, ""))
+				**********/
 			}
 		}
 	}
