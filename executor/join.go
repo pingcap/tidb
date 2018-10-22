@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pkg/errors"
+	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
 )
 
@@ -48,19 +49,22 @@ type HashJoinExec struct {
 	outerKeys   []*expression.Column
 	innerKeys   []*expression.Column
 
-	prepared        bool
-	concurrency     uint // concurrency is number of concurrent channels and join workers.
+	prepared bool
+	// joinConcurrency is the number of concurrent channels and join workers.
+	joinConcurrency uint
 	hashTable       *mvmap.MVMap
 	innerFinished   chan error
 	hashJoinBuffers []*hashJoinBuffer
-	workerWaitGroup sync.WaitGroup // workerWaitGroup is for sync multiple join workers.
-	finished        atomic.Value
-	closeCh         chan struct{} // closeCh add a lock for closing executor.
-	joinType        plannercore.JoinType
-	innerIdx        int
+	// joinWorkerWaitGroup is for sync multiple join workers.
+	joinWorkerWaitGroup sync.WaitGroup
+	finished            atomic.Value
+	// closeCh add a lock for closing executor.
+	closeCh  chan struct{}
+	joinType plannercore.JoinType
+	innerIdx int
 
-	// We build individual joiner for each join worker when use chunk-based execution,
-	// to avoid the concurrency of joiner.chk and joiner.selected.
+	// We build individual joiner for each join worker when use chunk-based
+	// execution, to avoid the joinConcurrency of joiner.chk and joiner.selected.
 	joiners []joiner
 
 	outerKeyColIdx     []int
@@ -74,11 +78,24 @@ type HashJoinExec struct {
 
 	memTracker *memory.Tracker // track memory usage.
 
-	// radixBits indicates the bit number using for radix partitioning. Inner
-	// relation will be split to 2^radixBits sub-relations before building the
-	// hash tables. If the complete inner relation can be hold in L2Cache in
-	// which case radixBits will be 0, we can skip the partition phase.
-	radixBits int
+	// radixBits indicates the bits using for radix partitioning. Inner relation
+	// will be split to 2^radixBitsNumber sub-relations before building the hash
+	// tables. If the complete inner relation can be hold in L2Cache in which
+	// case radixBits will be 1, we can skip the partition phase.
+	radixBits       uint32
+	innerParts      []partition
+	innerRowPrts    [][]*ptr4Partition
+	partConcurrency int
+}
+
+// partition stores the sub-relations of inner relation and outer relation after
+// partition phase. Every partition can be fully stored in L2 cache.
+type partition = *chunk.List
+
+// ptr4Partition stores the actual index in `innerParts` or `outerParts`.
+type ptr4Partition struct {
+	partitionIdx uint32
+	chunk.RowPtr
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -151,9 +168,9 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, e.ctx.GetSessionVars().MemQuotaHashJoin)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	e.hashTableValBufs = make([][][]byte, e.concurrency)
-	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
+	e.hashTableValBufs = make([][][]byte, e.joinConcurrency)
+	e.hashJoinBuffers = make([]*hashJoinBuffer, 0, e.joinConcurrency)
+	for i := uint(0); i < e.joinConcurrency; i++ {
 		buffer := &hashJoinBuffer{
 			data:  make([]types.Datum, len(e.outerKeys)),
 			bytes: make([]byte, 0, 10000),
@@ -163,7 +180,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
-	e.workerWaitGroup = sync.WaitGroup{}
+	e.joinWorkerWaitGroup = sync.WaitGroup{}
 	return nil
 }
 
@@ -277,7 +294,6 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 				return
 			}
 			if chk.NumRows() == 0 {
-				e.evalRadixBitNum()
 				return
 			}
 			chkCh <- chk
@@ -286,34 +302,108 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 	}
 }
 
-// evalRadixBitNum evaluates the radix bit numbers.
-func (e *HashJoinExec) evalRadixBitNum() {
+// partitionInnerRows re-order e.innerResults into sub-relations.
+func (e *HashJoinExec) partitionInnerRows() error {
+	if err := e.preAlloc4InnerParts(); err != nil {
+		return err
+	}
+
+	wg := &sync.WaitGroup{}
+	defer wg.Wait()
+	for i := 0; i < e.partConcurrency; i++ {
+		wg.Add(1)
+		workerID := i
+		go util.WithRecovery(func() {
+			e.doInnerPartition(workerID, wg)
+		}, nil)
+	}
+	return nil
+}
+
+func (e *HashJoinExec) doInnerPartition(startIdx int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	chkIdx, chkNum := startIdx, e.innerResult.NumChunks()
+	for ; chkIdx < chkNum; chkIdx += e.partConcurrency {
+		chk := e.innerResult.GetChunk(chkIdx)
+		for rowIdx, partPtr := range e.innerRowPrts[chkIdx] {
+			partIdx, rowPtr := partPtr.partitionIdx, partPtr.RowPtr
+			part := e.innerParts[partIdx]
+			part.Insert(rowPtr, chk.GetRow(rowIdx))
+		}
+	}
+}
+
+// preAlloc4InnerParts evaluates ptr4Partition for every inner row to help re-order
+// the inner relation.
+// TODO: we need to evaluate the skewness for the partitions size, if the
+// skewness exceeds a threshold, we do not use partition phase.
+func (e *HashJoinExec) preAlloc4InnerParts() (err error) {
+	hasNull, keyBuf := false, make([]byte, 0, 64)
+	for chkIdx, chkNum := 0, e.innerResult.NumChunks(); chkIdx < chkNum; chkIdx++ {
+		chk := e.innerResult.GetChunk(chkIdx)
+		partPtrs := make([]*ptr4Partition, chk.NumRows())
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
+			row := chk.GetRow(rowIdx)
+			hasNull, keyBuf, err = e.getJoinKeyFromChkRow(false, row, keyBuf)
+			if err != nil {
+				return err
+			}
+			if hasNull {
+				continue
+			}
+			joinHash := murmur3.Sum32(keyBuf)
+			partIdx := e.radixBits & joinHash
+			rowPtr := e.getPartition(partIdx).PreAlloc4Row(row)
+			partPtrs[rowIdx] = &ptr4Partition{partIdx, rowPtr}
+		}
+		e.innerRowPrts = append(e.innerRowPrts, partPtrs)
+	}
+	return
+}
+
+func (e *HashJoinExec) getPartition(idx uint32) partition {
+	if e.innerParts[idx] == nil {
+		e.innerParts[idx] = chunk.NewList(e.innerExec.retTypes(), e.initCap, e.maxChunkSize)
+	}
+	return e.innerParts[idx]
+}
+
+// evalRadixBit evaluates the radix bit numbers.
+func (e *HashJoinExec) evalRadixBit() (needPartition bool) {
 	sv := e.ctx.GetSessionVars()
-	// Calculate the bit number needed when using radix partition.
+	// Calculate the bit number needed when using radix data.
 	if !sv.EnableRadixJoin {
 		return
 	}
 	innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed())
-	// To ensure that one partition of inner relation, one hash
-	// table and one partition of outer relation fit into the L2
-	// cache when the input data obeys the uniform distribution,
-	// we suppose every sub-partition of inner relation using
-	// three quarters of the L2 cache size.
+	// To ensure that one partition of inner relation, one hash table and one
+	// partition of outer relation fit into the L2 cache when the input data
+	// obeys the uniform distribution, we suppose every sub-partition of inner
+	// relation using three quarters of the L2 cache size.
 	l2CacheSize := float64(sv.L2CacheSize) * 3 / 4
-	e.radixBits = int(math.Log2(innerResultSize / l2CacheSize))
+	radixBitsNum := uint(math.Ceil(math.Log2(innerResultSize / l2CacheSize)))
+	if radixBitsNum <= 0 {
+		return false
+	}
+	// Take the rightmost radixBitsNum bits as the bitmask.
+	e.radixBits = ^(math.MaxUint32 << radixBitsNum)
+	e.innerParts = make([]partition, 1<<radixBitsNum)
+	return true
 }
 
 func (e *HashJoinExec) initializeForProbe() {
-	// e.outerResultChs is for transmitting the chunks which store the data of outerExec,
-	// it'll be written by outer worker goroutine, and read by join workers.
-	e.outerResultChs = make([]chan *chunk.Chunk, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
+	// e.outerResultChs is for transmitting the chunks which store the data of
+	// outerExec, it'll be written by outer worker goroutine, and read by join
+	// workers.
+	e.outerResultChs = make([]chan *chunk.Chunk, e.joinConcurrency)
+	for i := uint(0); i < e.joinConcurrency; i++ {
 		e.outerResultChs[i] = make(chan *chunk.Chunk, 1)
 	}
 
-	// e.outerChkResourceCh is for transmitting the used outerExec chunks from join workers to outerExec worker.
-	e.outerChkResourceCh = make(chan *outerChkResource, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
+	// e.outerChkResourceCh is for transmitting the used outerExec chunks from
+	// join workers to outerExec worker.
+	e.outerChkResourceCh = make(chan *outerChkResource, e.joinConcurrency)
+	for i := uint(0); i < e.joinConcurrency; i++ {
 		e.outerChkResourceCh <- &outerChkResource{
 			chk:  e.outerExec.newFirstChunk(),
 			dest: e.outerResultChs[i],
@@ -322,14 +412,15 @@ func (e *HashJoinExec) initializeForProbe() {
 
 	// e.joinChkResourceCh is for transmitting the reused join result chunks
 	// from the main thread to join worker goroutines.
-	e.joinChkResourceCh = make([]chan *chunk.Chunk, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
+	e.joinChkResourceCh = make([]chan *chunk.Chunk, e.joinConcurrency)
+	for i := uint(0); i < e.joinConcurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, 1)
 		e.joinChkResourceCh[i] <- e.newFirstChunk()
 	}
 
-	// e.joinResultCh is for transmitting the join result chunks to the main thread.
-	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency+1)
+	// e.joinResultCh is for transmitting the join result chunks to the main
+	// thread.
+	e.joinResultCh = make(chan *hashjoinWorkerResult, e.joinConcurrency+1)
 
 	e.outerKeyColIdx = make([]int, len(e.outerKeys))
 	for i := range e.outerKeys {
@@ -339,12 +430,13 @@ func (e *HashJoinExec) initializeForProbe() {
 
 func (e *HashJoinExec) fetchOuterAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
-	e.workerWaitGroup.Add(1)
+	e.joinWorkerWaitGroup.Add(1)
 	go util.WithRecovery(func() { e.fetchOuterChunks(ctx) }, e.finishOuterFetcher)
 
-	// Start e.concurrency join workers to probe hash table and join inner and outer rows.
-	for i := uint(0); i < e.concurrency; i++ {
-		e.workerWaitGroup.Add(1)
+	// Start e.joinConcurrency join workers to probe hash table and join inner and
+	// outer rows.
+	for i := uint(0); i < e.joinConcurrency; i++ {
+		e.joinWorkerWaitGroup.Add(1)
 		workID := i
 		go util.WithRecovery(func() { e.runJoinWorker(workID) }, e.finishJoinWorker)
 	}
@@ -358,18 +450,18 @@ func (e *HashJoinExec) finishOuterFetcher(r interface{}) {
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
-	e.workerWaitGroup.Done()
+	e.joinWorkerWaitGroup.Done()
 }
 
 func (e *HashJoinExec) finishJoinWorker(r interface{}) {
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
-	e.workerWaitGroup.Done()
+	e.joinWorkerWaitGroup.Done()
 }
 
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
-	e.workerWaitGroup.Wait()
+	e.joinWorkerWaitGroup.Wait()
 	close(e.joinResultCh)
 }
 
@@ -544,10 +636,25 @@ func (e *HashJoinExec) finishFetchInnerAndBuildHashTable(r interface{}) {
 }
 
 func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
-	// innerResultCh transfer inner result chunk from inner fetch to build hash table.
-	innerResultCh := make(chan *chunk.Chunk, e.concurrency)
+	// innerResultCh transfers inner result chunk from inner fetch to build hash
+	// table.
+	innerResultCh := make(chan *chunk.Chunk, e.joinConcurrency)
 	doneCh := make(chan struct{})
-	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
+	if e.ctx.GetSessionVars().EnableRadixJoin {
+		go util.WithRecovery(func() {
+			e.fetchInnerRows(ctx, innerResultCh, doneCh)
+			if !e.evalRadixBit() {
+				// FIXME: we should not return directly here.
+				return
+			}
+			// FIXME: handle err here
+			e.partitionInnerRows()
+		}, nil)
+		// FIXME: just for test, we should not return directly here.
+		return
+	} else {
+		go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
+	}
 
 	if e.finished.Load().(bool) {
 		return

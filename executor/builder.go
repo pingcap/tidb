@@ -825,10 +825,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 
 	e := &HashJoinExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
-		concurrency:  v.Concurrency,
-		joinType:     v.JoinType,
-		innerIdx:     v.InnerChildIdx,
+		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), leftExec, rightExec),
+		joinConcurrency: v.Concurrency,
+		partConcurrency: int(v.Concurrency),
+		joinType:        v.JoinType,
+		innerIdx:        v.InnerChildIdx,
 	}
 
 	defaultValues := v.DefaultValues
@@ -860,8 +861,8 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 			defaultValues = make([]types.Datum, e.innerExec.Schema().Len())
 		}
 	}
-	e.joiners = make([]joiner, e.concurrency)
-	for i := uint(0); i < e.concurrency; i++ {
+	e.joiners = make([]joiner, e.joinConcurrency)
+	for i := uint(0); i < e.joinConcurrency; i++ {
 		e.joiners[i] = newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues,
 			v.OtherConditions, lhsTypes, rhsTypes)
 	}

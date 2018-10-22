@@ -8,9 +8,13 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/spaolacci/murmur3"
 	"golang.org/x/net/context"
 )
 
@@ -109,4 +113,94 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 			rowIdx++
 		}
 	}
+}
+
+func prepareOneColChildExec(sctx sessionctx.Context) Executor {
+	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
+	schema := expression.NewSchema(col0)
+	exec := &MockExec{
+		baseExecutor: newBaseExecutor(sctx, schema, ""),
+		Rows:         make([]chunk.MutRow, 200)}
+	for i := 0; i < len(exec.Rows); i++ {
+		exec.Rows[i] = chunk.MutRowFromDatums(types.MakeDatums(i % 10))
+	}
+	return exec
+}
+
+func (s *pkgTestSuite) TestRadixPartition(c *C) {
+	sctx := mock.NewContext()
+
+	childExec0 := prepareOneColChildExec(sctx)
+	childExec1 := prepareOneColChildExec(sctx)
+
+	col0 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
+	col1 := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}
+	joinSchema := expression.NewSchema(col0, col1)
+	hashJoinExec := &HashJoinExec{
+		baseExecutor:    newBaseExecutor(sctx, joinSchema, "HashJoin", childExec0, childExec1),
+		partConcurrency: 4,
+		joinConcurrency: 4,
+		joinType:        0, // InnerJoin
+		innerIdx:        0,
+		innerKeys:       []*expression.Column{{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}},
+		innerKeyColIdx:  []int{0},
+		outerKeys:       []*expression.Column{{Index: 0, RetType: types.NewFieldType(mysql.TypeLong)}},
+		outerKeyColIdx:  []int{0},
+		innerExec:       childExec0,
+		outerExec:       childExec1,
+	}
+	sv := sctx.GetSessionVars()
+	sv.L2CacheSize = 100
+	sv.EnableRadixJoin = true
+	sv.MaxChunkSize = 100
+	sv.StmtCtx.MemTracker = memory.NewTracker("RootMemTracker", variable.DefTiDBMemQuotaHashJoin)
+
+	ctx := context.Background()
+	err := hashJoinExec.Open(ctx)
+	c.Assert(err, IsNil)
+
+	//chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLong), types.NewFieldType(mysql.TypeLong)}, 100)
+	innerResultCh := make(chan *chunk.Chunk, hashJoinExec.joinConcurrency)
+	doneCh := make(chan struct{})
+	go func() {
+		for range innerResultCh {
+		}
+	}()
+
+	hashJoinExec.fetchInnerRows(ctx, innerResultCh, doneCh)
+	c.Assert(hashJoinExec.innerResult.GetMemTracker().BytesConsumed(), Equals, int64(14400))
+
+	hashJoinExec.evalRadixBit()
+	// ceil(log_2(14400/(100*3/4))) = 8
+	c.Assert(len(hashJoinExec.innerParts), Equals, 256)
+	radixBits := hashJoinExec.radixBits
+	c.Assert(radixBits, Equals, uint32(0x00ff))
+
+	hashJoinExec.partitionInnerRows()
+	totalRowCnt := 0
+	for i, part := range hashJoinExec.innerParts {
+		if part == nil {
+			continue
+		}
+		totalRowCnt += part.Len()
+		iter := chunk.NewIterator4List(part)
+		hasNull, keyBuf := false, make([]byte, 0, 64)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			hasNull, keyBuf, err = hashJoinExec.getJoinKeyFromChkRow(false, row, keyBuf)
+			c.Assert(err, IsNil)
+			c.Assert(hasNull, IsFalse)
+			joinHash := murmur3.Sum32(keyBuf)
+			c.Assert(joinHash&radixBits, Equals, uint32(i)&radixBits)
+		}
+	}
+	c.Assert(totalRowCnt, Equals, 200)
+
+	for _, ch := range hashJoinExec.outerResultChs {
+		close(ch)
+	}
+	for _, ch := range hashJoinExec.joinChkResourceCh {
+		close(ch)
+	}
+	err = hashJoinExec.Close()
+	c.Assert(err, IsNil)
 }
