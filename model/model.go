@@ -103,7 +103,7 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 			c.DefaultValueBit = []byte(v)
 			return nil
 		}
-		return types.ErrInvalidDefault
+		return types.ErrInvalidDefault.GenWithStackByArgs(c.Name)
 	}
 	return nil
 }
