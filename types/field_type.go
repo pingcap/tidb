@@ -365,8 +365,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType) {
 		// TODO: tp.Flen should be len(x) * 3 (max bytes length of CharsetUTF8)
 		tp.Flen = len(x)
 		tp.Decimal = UnspecifiedLength
-		tp.Charset = charset.CharsetUTF8MB4
-		tp.Collate = charset.CollationUTF8MB4
+		tp.Charset, tp.Collate = charset.GetDefaultCharsetAndCollate()
 	case float64:
 		tp.Tp = mysql.TypeDouble
 		s := strconv.FormatFloat(x, 'f', -1, 64)
