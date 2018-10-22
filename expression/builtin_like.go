@@ -85,7 +85,7 @@ func (b *builtinLikeSig) evalInt(row chunk.Row) (int64, bool, error) {
 	escape := byte(val)
 
 	lowerCaseTableName,_ := strconv.Atoi(variable.SysVars["lower_case_table_names"].Value)
-	if lowerCaseTableName == 2 {
+	if lowerCaseTableName != 0 {
 		patternStr = strings.ToLower(patternStr)
 		valStr = strings.ToLower(valStr)
 	}
