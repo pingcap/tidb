@@ -128,19 +128,19 @@ func (e *InsertValues) initEvalBuffer() {
 	if e.evalBuffer != nil {
 		return
 	}
-	tpsLen := len(e.Table.Cols())
+	numCols := len(e.Table.Cols())
 	if e.hasExtraHandle {
-		tpsLen++
+		numCols++
 	}
-	e.evalBufferTypes = make([]*types.FieldType, tpsLen)
+	e.evalBufferTypes = make([]*types.FieldType, numCols)
 	for i, col := range e.Table.Cols() {
 		e.evalBufferTypes[i] = &col.FieldType
 	}
 	if e.hasExtraHandle {
 		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)
 	}
-	mutChunk := chunk.MutRowFromTypes(e.evalBufferTypes)
-	e.evalBuffer = &mutChunk
+	mutRow := chunk.MutRowFromTypes(e.evalBufferTypes)
+	e.evalBuffer = &mutRow
 }
 
 func (e *InsertValues) lazilyInitColDefaultValBuf() (ok bool) {
@@ -239,14 +239,8 @@ func (e *InsertValues) evalRow(cols []*table.Column, list []expression.Expressio
 		}
 
 		offset := cols[i].Offset
-		row[offset], hasValue[offset] = val1, true
-		if expr.Flag()&expression.FlagHoldChunkMemory > 0 {
-			mutChunk := chunk.MutRowFromTypes(e.evalBufferTypes)
-			mutChunk.SetDatums(row...)
-			e.evalBuffer = &mutChunk
-		} else {
-			e.evalBuffer.SetDatum(offset, val1)
-		}
+		row[offset], hasValue[offset] = *val1.Copy(), true
+		e.evalBuffer.SetDatum(offset, val1)
 	}
 
 	return e.fillRow(row, hasValue)

@@ -140,11 +140,6 @@ func (col *CorrelatedColumn) ResolveIndices(_ *Schema) Expression {
 func (col *CorrelatedColumn) resolveIndices(_ *Schema) {
 }
 
-// Flag implements Expression interface.
-func (col *CorrelatedColumn) Flag() Flag {
-	return 0
-}
-
 // Column represents a column.
 type Column struct {
 	OrigColName model.CIStr
@@ -329,11 +324,6 @@ func (col *Column) resolveIndices(schema *Schema) {
 	if col.Index == -1 {
 		log.Errorf("Can't find column %s in schema %s", col, schema)
 	}
-}
-
-// Flag implements Expression interface.
-func (col *Column) Flag() Flag {
-	return FlagHoldChunkMemory
 }
 
 // Column2Exprs will transfer column slice to expression slice.

@@ -257,8 +257,3 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) {
 		arg.resolveIndices(schema)
 	}
 }
-
-// Flag implements Expression interface.
-func (sf *ScalarFunction) Flag() Flag {
-	return sf.Function.flag()
-}

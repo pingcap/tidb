@@ -31,11 +31,10 @@ import (
 
 // baseBuiltinFunc will be contained in every struct that implement builtinFunc interface.
 type baseBuiltinFunc struct {
-	args     []Expression
-	ctx      sessionctx.Context
-	tp       *types.FieldType
-	pbCode   tipb.ScalarFuncSig
-	funcFlag Flag
+	args   []Expression
+	ctx    sessionctx.Context
+	tp     *types.FieldType
+	pbCode tipb.ScalarFuncSig
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -55,7 +54,6 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 		ctx:  ctx,
 		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
-	fn.deriveFlag()
 	return fn
 }
 
@@ -159,17 +157,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 		ctx:  ctx,
 		tp:   fieldType,
 	}
-	fn.deriveFlag()
 	return fn
-}
-
-func (b *baseBuiltinFunc) deriveFlag() {
-	for _, arg := range b.args {
-		if arg.Flag()&FlagHoldChunkMemory > 0 {
-			b.funcFlag |= FlagHoldChunkMemory
-			break
-		}
-	}
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
@@ -241,7 +229,6 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}
-	b.deriveFlag()
 	b.ctx = from.ctx
 	b.tp = from.tp
 	b.pbCode = from.pbCode
@@ -249,10 +236,6 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 
 func (b *baseBuiltinFunc) Clone() builtinFunc {
 	panic("you should not call this method.")
-}
-
-func (b *baseBuiltinFunc) flag() Flag {
-	return b.funcFlag
 }
 
 // baseBuiltinCastFunc will be contained in every struct that implement cast builtinFunc.
@@ -305,8 +288,6 @@ type builtinFunc interface {
 	PbCode() tipb.ScalarFuncSig
 	// Clone returns a copy of itself.
 	Clone() builtinFunc
-	// flag return func's property flag.
-	flag() Flag
 }
 
 // baseFunctionClass will be contained in every struct that implement functionClass interface.

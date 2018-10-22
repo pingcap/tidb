@@ -343,8 +343,3 @@ func (c *Constant) ResolveIndices(_ *Schema) Expression {
 
 func (c *Constant) resolveIndices(_ *Schema) {
 }
-
-// Flag implements Expression interface.
-func (c *Constant) Flag() Flag {
-	return 0
-}

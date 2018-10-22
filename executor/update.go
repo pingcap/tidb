@@ -195,14 +195,8 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Da
 		if err1 := e.handleErr(assign.Col.ColName, rowIdx, err); err1 != nil {
 			return nil, errors.Trace(err1)
 		}
-		newRowData[assign.Col.Index] = val
-		if assign.Expr.Flag()&expression.FlagHoldChunkMemory > 0 {
-			mutChunk := chunk.MutRowFromTypes(e.children[0].retTypes())
-			mutChunk.SetDatums(newRowData...)
-			e.evalBuffer = &mutChunk
-		} else {
-			e.evalBuffer.SetDatum(assign.Col.Index, val)
-		}
+		newRowData[assign.Col.Index] = *val.Copy()
+		e.evalBuffer.SetDatum(assign.Col.Index, val)
 	}
 	return newRowData, nil
 }
