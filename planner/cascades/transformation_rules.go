@@ -20,7 +20,7 @@ import (
 // Transformation defines the interface for the transformation rules.
 type Transformation interface {
 	GetPattern() *Pattern
-	Match(expr *ExprIter) (matched bool, err error)
+	Match(expr *ExprIter) (matched bool)
 	OnTransform(old *ExprIter) (new *GroupExpr, eraseOld bool, err error)
 }
 

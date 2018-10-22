@@ -94,16 +94,15 @@ func findMoreEquiv(expr *GroupExpr, g *Group) (eraseCur bool, err error) {
 		// the transformation rule to enumerate all the possible expressions.
 		iter := NewExprIterFromGroupExpr(expr, pattern)
 		for ; iter != nil && iter.Matched(); iter.Next() {
-			matched, err := rule.Match(iter)
-			if err != nil {
-				return false, err
-			}
-
-			if !matched {
+			if !rule.Match(iter) {
 				continue
 			}
 
 			newExpr, erase, err := rule.OnTransform(iter)
+			if err != nil {
+				return false, err
+			}
+
 			eraseCur = eraseCur || erase
 			if !g.Insert(newExpr) {
 				continue
