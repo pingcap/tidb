@@ -175,12 +175,12 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 		err = parseStmtArgs(args, stmt.BoundParams(), nullBitmaps, stmt.GetParamsType(), paramValues)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Annotatef(err, "%s", cc.preparedStmt2String(stmtID))
 		}
 	}
 	rs, err := stmt.Execute(ctx, args...)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Annotatef(err, "%s", cc.preparedStmt2String(stmtID))
 	}
 	if rs == nil {
 		return errors.Trace(cc.writeOK())
@@ -563,4 +563,12 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 	}
 
 	return errors.Trace(cc.flush())
+}
+
+func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
+	sv := cc.ctx.GetSessionVars()
+	if prepared, ok := sv.PreparedStmts[stmtID]; ok {
+		return prepared.Stmt.Text() + sv.GetExecuteArgumentsInfo()
+	}
+	return fmt.Sprintf("prepared statement not found, ID: %d", stmtID)
 }
