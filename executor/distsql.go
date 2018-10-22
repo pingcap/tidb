@@ -234,6 +234,10 @@ type IndexReaderExecutor struct {
 	plans          []plannercore.PhysicalPlan
 }
 
+func (e *IndexReaderExecutor) newFirstChunk() *chunk.Chunk {
+	return chunk.WideNew(e.retTypes(), e.initCap, e.maxChunkSize)
+}
+
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() error {
 	e.ctx.StoreQueryFeedback(e.feedback)
@@ -365,6 +369,10 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 	}
 	return errors.Trace(err)
+}
+
+func (e *IndexLookUpExecutor) newFirstChunk() *chunk.Chunk {
+	return chunk.WideNew(e.retTypes(), e.initCap, e.maxChunkSize)
 }
 
 func (e *IndexLookUpExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) error {

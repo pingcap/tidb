@@ -72,6 +72,10 @@ func (e *SortExec) Open(ctx context.Context) error {
 	return errors.Trace(e.children[0].Open(ctx))
 }
 
+func (e *SortExec) newFirstChunk() *chunk.Chunk {
+	return chunk.WideNew(e.retTypes(), e.initCap, e.maxChunkSize)
+}
+
 // Next implements the Executor Next interface.
 func (e *SortExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.runtimeStats != nil {
