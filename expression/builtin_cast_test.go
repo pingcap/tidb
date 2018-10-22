@@ -654,7 +654,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		case 5:
 			sig = &builtinCastJSONAsStringSig{stringFunc}
 		case 6:
-			sig = &builtinCastStringAsStringSig{stringFunc}
+			sig = &builtinCastStringAsStringSig{stringFunc, 1 << 20}
 		}
 		res, isNull, err := sig.evalString(t.row.ToRow())
 		c.Assert(isNull, Equals, false)
@@ -731,7 +731,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 			sig = &builtinCastDurationAsStringSig{stringFunc}
 		case 5:
 			stringFunc.tp.Charset = charset.CharsetUTF8
-			sig = &builtinCastStringAsStringSig{stringFunc}
+			sig = &builtinCastStringAsStringSig{stringFunc, 1 << 20}
 		}
 		res, isNull, err := sig.evalString(t.row.ToRow())
 		c.Assert(isNull, Equals, false)

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -268,7 +269,12 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	bf := newBaseBuiltinFunc(ctx, args)
 	bf.tp = c.tp
 	if args[0].GetType().Hybrid() || IsBinaryLiteral(args[0]) {
-		sig = &builtinCastStringAsStringSig{bf}
+		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		sig = &builtinCastStringAsStringSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 		return sig, nil
 	}
@@ -293,7 +299,12 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		sig = &builtinCastJSONAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsString)
 	case types.ETString:
-		sig = &builtinCastStringAsStringSig{bf}
+		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		sig = &builtinCastStringAsStringSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 	default:
 		panic("unsupported types.EvalType in castAsStringFunctionClass")
@@ -1007,11 +1018,13 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(row chunk.Row) (res types
 
 type builtinCastStringAsStringSig struct {
 	baseBuiltinFunc
+	maxAllowedPacket uint64
 }
 
 func (b *builtinCastStringAsStringSig) Clone() builtinFunc {
 	newSig := &builtinCastStringAsStringSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.maxAllowedPacket = b.maxAllowedPacket
 	return newSig
 }
 
@@ -1021,6 +1034,12 @@ func (b *builtinCastStringAsStringSig) evalString(row chunk.Row) (res string, is
 		return res, isNull, errors.Trace(err)
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
+
+	if types.IsBinaryStr(b.tp) && len(res) < b.tp.Flen {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", b.maxAllowedPacket))
+		return "", true, nil
+	}
+
 	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, sc)
 	return res, false, errors.Trace(err)
 }

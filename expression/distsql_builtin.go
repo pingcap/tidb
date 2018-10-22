@@ -15,12 +15,14 @@ package expression
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
@@ -115,7 +117,12 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_CastTimeAsString:
 		f = &builtinCastTimeAsStringSig{base}
 	case tipb.ScalarFuncSig_CastStringAsString:
-		f = &builtinCastStringAsStringSig{base}
+		valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+		maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		f = &builtinCastStringAsStringSig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_CastJsonAsString:
 		f = &builtinCastJSONAsStringSig{base}
 
