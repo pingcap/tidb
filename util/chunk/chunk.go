@@ -87,7 +87,7 @@ func WideNew(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 	span := chunkSpan{
 		elemBuf:    make([]byte, capInfo.elemBuf),
 		offsets:    make([]int32, capInfo.offsets),
-		data:       make([]byte, capInfo.data),
+		data:       make([]byte, capInfo.fixedColData),
 		nullBitmap: make([]byte, capInfo.nullBitmap),
 	}
 
@@ -105,33 +105,31 @@ func WideNew(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
 }
 
 type capInfo struct {
-	elemBuf    int
-	offsets    int
-	data       int
-	nullBitmap int
+	elemBuf      int
+	offsets      int
+	fixedColData int
+	nullBitmap   int
 }
 
 func (c *capInfo) add(i capInfo) {
 	c.elemBuf += i.elemBuf
 	c.offsets += i.offsets
-	c.data += i.data
+	c.fixedColData += i.fixedColData
 	c.nullBitmap += i.nullBitmap
 }
 
 func preCalVarLenColumn(cap int) capInfo {
-	estimatedElemLen := 8
 	return capInfo{
 		offsets:    cap + 1,
-		data:       cap * estimatedElemLen,
 		nullBitmap: cap >> 3,
 	}
 }
 
 func preCalFixedLenColumn(elemLen, cap int) capInfo {
 	return capInfo{
-		elemBuf:    elemLen,
-		data:       cap * elemLen,
-		nullBitmap: cap >> 3,
+		elemBuf:      elemLen,
+		fixedColData: cap * elemLen,
+		nullBitmap:   cap >> 3,
 	}
 }
 
@@ -153,9 +151,7 @@ func (c *column) distVarLenColumn(cap int, span *chunkSpan) {
 	span.offsetsIdx += cap + 1
 	(*reflect.SliceHeader)(unsafe.Pointer(&c.offsets)).Len = 1
 
-	c.data = span.data[span.dataIdx : span.dataIdx+cap*estimatedElemLen]
-	span.dataIdx += cap * estimatedElemLen
-	(*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Len = 0
+	c.data = make([]byte, 0, cap*estimatedElemLen) // VarLen columns can not prealloc
 
 	c.nullBitmap = span.nullBitmap[span.nullBitMapIdx : span.nullBitMapIdx+cap>>3]
 	span.nullBitMapIdx += cap >> 3
