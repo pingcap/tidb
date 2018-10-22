@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	_ "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pkg/errors"
@@ -135,7 +136,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(is.Lists, HasLen, 1)
 	c.Assert(is.Lists[0], HasLen, 1)
-	c.Assert(is.Lists[0][0].GetDatum().GetString(), Equals, "/*! truncated */")
+	c.Assert(is.Lists[0][0].(ast.ValueExpr).GetDatumString(), Equals, "/*! truncated */")
 
 	// Testcase for CONVERT(expr,type)
 	src = "SELECT CONVERT('111', SIGNED);"
@@ -394,6 +395,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' (a,b) ignore 1 lines", false},
 		{"load data local infile '/tmp/t.csv' into table t lines starting by 'ab' terminated by 'xy' ignore 1 lines", true},
 		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by '*' ignore 1 lines (a,b)", true},
+		{"load data local infile '/tmp/t.csv' into table t fields terminated by 'ab' enclosed by 'b' escaped by ''", true},
 
 		// select for update
 		{"SELECT * from t for update", true},
@@ -871,6 +873,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select now(6)", true},
 		{"select sysdate(), sysdate(6)", true},
 		{"SELECT time('01:02:03');", true},
+		{"SELECT time('01:02:03.1')", true},
+		{"SELECT time('20.1')", true},
 		{"SELECT TIMEDIFF('2000:01:01 00:00:00', '2000:01:01 00:00:00.000001');", true},
 		{"SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01');", true},
 		{"SELECT TIMESTAMPDIFF(YEAR,'2002-05-01','2001-01-01');", true},
@@ -1710,6 +1714,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t RENAME KEY a TO b;", true},
 		{"ALTER TABLE t RENAME INDEX a TO b;", true},
 
+		{"alter table t analyze partition a", true},
+		{"alter table t analyze partition a with 4 buckets", true},
+		{"alter table t analyze partition a index b", true},
+		{"alter table t analyze partition a index b with 4 buckets", true},
+
 		// For create index statement
 		{"CREATE INDEX idx ON t (a)", true},
 		{"CREATE INDEX idx ON t (a) USING HASH", true},
@@ -2207,12 +2216,12 @@ func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	expr := fields[0].Expr
 	f, ok := expr.(*ast.FuncCallExpr)
 	c.Assert(ok, IsTrue)
-	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+	c.Assert(f.Args[0].(ast.ValueExpr).GetDatumString(), Equals, "MONTH")
 
 	expr = fields[1].Expr
 	f, ok = expr.(*ast.FuncCallExpr)
 	c.Assert(ok, IsTrue)
-	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+	c.Assert(f.Args[0].(ast.ValueExpr).GetDatumString(), Equals, "MONTH")
 
 	// Test Illegal TimeUnit for TimestampDiff
 	table := []testCase{
@@ -2307,6 +2316,10 @@ func (s *testParserSuite) TestAnalyze(c *C) {
 		{"analyze table t1 index a,b", true},
 		{"analyze table t with 4 buckets", true},
 		{"analyze table t index a with 4 buckets", true},
+		{"analyze table t partition a", true},
+		{"analyze table t partition a with 4 buckets", true},
+		{"analyze table t partition a index b", true},
+		{"analyze table t partition a index b with 4 buckets", true},
 	}
 	s.RunTest(c, table)
 }
@@ -2371,7 +2384,7 @@ func (s *testParserSuite) TestSetTransaction(c *C) {
 		c.Assert(vars.Name, Equals, "tx_isolation")
 		c.Assert(vars.IsGlobal, Equals, t.isGlobal)
 		c.Assert(vars.IsSystem, Equals, true)
-		c.Assert(vars.Value.GetValue(), Equals, t.value)
+		c.Assert(vars.Value.(ast.ValueExpr).GetValue(), Equals, t.value)
 	}
 }
 
@@ -2424,4 +2437,22 @@ func (s *testParserSuite) TestTablePartition(c *C) {
 	c.Assert(err, IsNil)
 	createTable := stmt.(*ast.CreateTableStmt)
 	c.Assert(createTable.Partition.Definitions[0].Comment, Equals, "check")
+}
+
+func (s *testParserSuite) TestNotExistsSubquery(c *C) {
+	defer testleak.AfterTest(c)()
+	table := []testCase{
+		{`select * from t1 where not exists (select * from t2 where t1.a = t2.a)`, true},
+	}
+
+	parser := New()
+	for _, tt := range table {
+		stmt, err := parser.Parse(tt.src, "", "")
+		c.Assert(err, IsNil)
+
+		sel := stmt[0].(*ast.SelectStmt)
+		exists, ok := sel.Where.(*ast.ExistsSubqueryExpr)
+		c.Assert(ok, IsTrue)
+		c.Assert(exists.Not, Equals, tt.ok)
+	}
 }

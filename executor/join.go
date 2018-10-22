@@ -14,8 +14,10 @@
 package executor
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/expression"
@@ -71,6 +73,12 @@ type HashJoinExec struct {
 	hashTableValBufs   [][][]byte
 
 	memTracker *memory.Tracker // track memory usage.
+
+	// radixBits indicates the bit number using for radix partitioning. Inner
+	// relation will be split to 2^radixBits sub-relations before building the
+	// hash tables. If the complete inner relation can be hold in L2Cache in
+	// which case radixBits will be 0, we can skip the partition phase.
+	radixBits int
 }
 
 // outerChkResource stores the result of the join outer fetch worker,
@@ -269,12 +277,30 @@ func (e *HashJoinExec) fetchInnerRows(ctx context.Context, chkCh chan<- *chunk.C
 				return
 			}
 			if chk.NumRows() == 0 {
+				e.evalRadixBitNum()
 				return
 			}
 			chkCh <- chk
 			e.innerResult.Add(chk)
 		}
 	}
+}
+
+// evalRadixBitNum evaluates the radix bit numbers.
+func (e *HashJoinExec) evalRadixBitNum() {
+	sv := e.ctx.GetSessionVars()
+	// Calculate the bit number needed when using radix partition.
+	if !sv.EnableRadixJoin {
+		return
+	}
+	innerResultSize := float64(e.innerResult.GetMemTracker().BytesConsumed())
+	// To ensure that one partition of inner relation, one hash
+	// table and one partition of outer relation fit into the L2
+	// cache when the input data obeys the uniform distribution,
+	// we suppose every sub-partition of inner relation using
+	// three quarters of the L2 cache size.
+	l2CacheSize := float64(sv.L2CacheSize) * 3 / 4
+	e.radixBits = int(math.Log2(innerResultSize / l2CacheSize))
 }
 
 func (e *HashJoinExec) initializeForProbe() {
@@ -483,6 +509,10 @@ func (e *HashJoinExec) join2Chunk(workerID uint, outerChk *chunk.Chunk, joinResu
 // step 1. fetch data from inner child and build a hash table;
 // step 2. fetch data from outer child in a background goroutine and probe the hash table in multiple join workers.
 func (e *HashJoinExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	if !e.prepared {
 		e.innerFinished = make(chan error, 1)
 		go util.WithRecovery(func() { e.fetchInnerAndBuildHashTable(ctx) }, e.finishFetchInnerAndBuildHashTable)
@@ -696,6 +726,10 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 
 // Next implements the Executor interface.
 func (e *NestedLoopApplyExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
+	if e.runtimeStats != nil {
+		start := time.Now()
+		defer func() { e.runtimeStats.Record(time.Now().Sub(start), chk.NumRows()) }()
+	}
 	chk.Reset()
 	for {
 		if e.innerIter == nil || e.innerIter.Current() == e.innerIter.End() {

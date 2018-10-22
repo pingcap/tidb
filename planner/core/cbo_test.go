@@ -15,12 +15,14 @@ package core_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
@@ -34,6 +36,35 @@ import (
 var _ = Suite(&testAnalyzeSuite{})
 
 type testAnalyzeSuite struct {
+}
+
+func (s *testAnalyzeSuite) TestExplainAnalyze(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int, c int, key idx(a, b))")
+	tk.MustExec("create table t2(a int, b int)")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+	tk.MustExec("insert into t2 values (2, 22), (3, 33), (5, 55)")
+	tk.MustExec("analyze table t1, t2")
+	rs := tk.MustQuery("explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1")
+	c.Assert(len(rs.Rows()), Equals, 10)
+	for _, row := range rs.Rows() {
+		c.Assert(len(row), Equals, 5)
+		taskType := row[2].(string)
+		if taskType != "cop" {
+			execInfo := row[4].(string)
+			c.Assert(strings.Contains(execInfo, "time"), Equals, true)
+			c.Assert(strings.Contains(execInfo, "loops"), Equals, true)
+			c.Assert(strings.Contains(execInfo, "rows"), Equals, true)
+		}
+	}
 }
 
 // TestCBOWithoutAnalyze tests the plan with stats that only have count info.
@@ -323,7 +354,7 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
-		p, err := core.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -373,7 +404,7 @@ func (s *testAnalyzeSuite) TestEmptyTable(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
-		p, err := core.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -485,7 +516,7 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, false)
 		c.Assert(err, IsNil)
-		p, err := core.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, Commentf("for %s", tt.sql))
 	}
@@ -561,7 +592,7 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is, true)
 		c.Assert(err, IsNil)
-		p, err := core.Optimize(ctx, stmt, is)
+		p, err := planner.Optimize(ctx, stmt, is)
 		c.Assert(err, IsNil)
 
 		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
@@ -693,6 +724,7 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 	session.SetSchemaLease(0)
 	session.SetStatsLease(0)
 	dom, err := session.BootstrapSession(store)
+	dom.SetStatsUpdating(true)
 	return store, dom, errors.Trace(err)
 }
 
@@ -811,7 +843,7 @@ func BenchmarkOptimize(b *testing.B) {
 		b.Run(tt.sql, func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				_, err := core.Optimize(ctx, stmt, is)
+				_, err := planner.Optimize(ctx, stmt, is)
 				c.Assert(err, IsNil)
 			}
 			b.ReportAllocs()

@@ -25,6 +25,9 @@ import (
 	"github.com/pkg/errors"
 )
 
+// OptimizeAstNode optimizes the query to a physical plan directly.
+var OptimizeAstNode func(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error)
+
 // AllowCartesianProduct means whether tidb allows cartesian join without equal conditions.
 var AllowCartesianProduct = true
 
@@ -61,60 +64,24 @@ type logicalOptRule interface {
 	optimize(LogicalPlan) (LogicalPlan, error)
 }
 
-// Optimize does optimization and creates a Plan.
-// The node must be prepared first.
-func Optimize(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
-	fp := tryFastPlan(ctx, node)
-	if fp != nil {
-		return fp, nil
-	}
-	ctx.GetSessionVars().PlanID = 0
-	ctx.GetSessionVars().PlanColumnID = 0
-	builder := &planBuilder{
-		ctx:       ctx,
-		is:        is,
-		colMapper: make(map[*ast.ColumnNameExpr]int),
-	}
-	p, err := builder.build(node)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// Maybe it's better to move this to Preprocess, but check privilege need table
-	// information, which is collected into visitInfo during logical plan builder.
-	if pm := privilege.GetPrivilegeManager(ctx); pm != nil {
-		if !checkPrivilege(pm, builder.visitInfo) {
-			return nil, errors.New("privilege check fail")
-		}
-	}
-
-	if logic, ok := p.(LogicalPlan); ok {
-		return doOptimize(builder.optFlag, logic)
-	}
-	if execPlan, ok := p.(*Execute); ok {
-		err := execPlan.optimizePreparedPlan(ctx, is)
-		return p, errors.Trace(err)
-	}
-	return p, nil
-}
-
 // BuildLogicalPlan used to build logical plan from ast.Node.
 func BuildLogicalPlan(ctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (Plan, error) {
 	ctx.GetSessionVars().PlanID = 0
 	ctx.GetSessionVars().PlanColumnID = 0
-	builder := &planBuilder{
+	builder := &PlanBuilder{
 		ctx:       ctx,
 		is:        is,
 		colMapper: make(map[*ast.ColumnNameExpr]int),
 	}
-	p, err := builder.build(node)
+	p, err := builder.Build(node)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return p, nil
 }
 
-func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
+// CheckPrivilege checks the privilege for a user.
+func CheckPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	for _, v := range vs {
 		if !pm.RequestVerification(v.db, v.table, v.column, v.privilege) {
 			return false
@@ -123,7 +90,8 @@ func checkPrivilege(pm privilege.Manager, vs []visitInfo) bool {
 	return true
 }
 
-func doOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
+// DoOptimize optimizes a logical plan to a physical plan.
+func DoOptimize(flag uint64, logic LogicalPlan) (PhysicalPlan, error) {
 	logic, err := logicalOptimize(flag, logic)
 	if err != nil {
 		return nil, errors.Trace(err)

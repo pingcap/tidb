@@ -17,13 +17,10 @@ import (
 	"fmt"
 	"io"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/tidb/model"
-	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/types"
 )
 
 var (
@@ -36,7 +33,6 @@ var (
 	_ ExprNode = &ExistsSubqueryExpr{}
 	_ ExprNode = &IsNullExpr{}
 	_ ExprNode = &IsTruthExpr{}
-	_ ExprNode = &ParamMarkerExpr{}
 	_ ExprNode = &ParenthesesExpr{}
 	_ ExprNode = &PatternInExpr{}
 	_ ExprNode = &PatternLikeExpr{}
@@ -45,7 +41,6 @@ var (
 	_ ExprNode = &RowExpr{}
 	_ ExprNode = &SubqueryExpr{}
 	_ ExprNode = &UnaryOperationExpr{}
-	_ ExprNode = &ValueExpr{}
 	_ ExprNode = &ValuesExpr{}
 	_ ExprNode = &VariableExpr{}
 
@@ -53,81 +48,22 @@ var (
 	_ Node = &WhenClause{}
 )
 
-// ValueExpr is the simple value expression.
-type ValueExpr struct {
-	exprNode
-	projectionOffset int
-}
-
-// Format the ExprNode into a Writer.
-func (n *ValueExpr) Format(w io.Writer) {
-	var s string
-	switch n.Kind() {
-	case types.KindNull:
-		s = "NULL"
-	case types.KindInt64:
-		if n.Type.Flag&mysql.IsBooleanFlag != 0 {
-			if n.GetInt64() > 0 {
-				s = "TRUE"
-			} else {
-				s = "FALSE"
-			}
-		} else {
-			s = strconv.FormatInt(n.GetInt64(), 10)
-		}
-	case types.KindUint64:
-		s = strconv.FormatUint(n.GetUint64(), 10)
-	case types.KindFloat32:
-		s = strconv.FormatFloat(n.GetFloat64(), 'e', -1, 32)
-	case types.KindFloat64:
-		s = strconv.FormatFloat(n.GetFloat64(), 'e', -1, 64)
-	case types.KindString, types.KindBytes:
-		s = strconv.Quote(n.GetString())
-	case types.KindMysqlDecimal:
-		s = n.GetMysqlDecimal().String()
-	case types.KindBinaryLiteral:
-		if n.Type.Flag&mysql.UnsignedFlag != 0 {
-			s = fmt.Sprintf("x'%x'", n.GetBytes())
-		} else {
-			s = n.GetBinaryLiteral().ToBitLiteralString(true)
-		}
-	default:
-		panic("Can't format to string")
-	}
-	fmt.Fprint(w, s)
+// ValueExpr define a interface for ValueExpr.
+type ValueExpr interface {
+	ExprNode
+	SetValue(val interface{})
+	GetValue() interface{}
+	GetDatumString() string
+	GetString() string
+	GetProjectionOffset() int
+	SetProjectionOffset(offset int)
 }
 
 // NewValueExpr creates a ValueExpr with value, and sets default field type.
-func NewValueExpr(value interface{}) *ValueExpr {
-	if ve, ok := value.(*ValueExpr); ok {
-		return ve
-	}
-	ve := &ValueExpr{}
-	ve.SetValue(value)
-	types.DefaultTypeForValue(value, &ve.Type)
-	ve.projectionOffset = -1
-	return ve
-}
+var NewValueExpr func(interface{}) ValueExpr
 
-// SetProjectionOffset sets ValueExpr.projectionOffset for logical plan builder.
-func (n *ValueExpr) SetProjectionOffset(offset int) {
-	n.projectionOffset = offset
-}
-
-// GetProjectionOffset returns ValueExpr.projectionOffset.
-func (n *ValueExpr) GetProjectionOffset() int {
-	return n.projectionOffset
-}
-
-// Accept implements Node interface.
-func (n *ValueExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ValueExpr)
-	return v.Leave(n)
-}
+// NewParamMarkerExpr creates a ParamMarkerExpr.
+var NewParamMarkerExpr func(offset int) ParamMarkerExpr
 
 // BetweenExpr is for "between and" or "not between and" expression.
 type BetweenExpr struct {
@@ -506,6 +442,8 @@ type ExistsSubqueryExpr struct {
 	exprNode
 	// Sel is the subquery, may be rewritten to other type of expression.
 	Sel ExprNode
+	// Not is true, the expression is "not exists".
+	Not bool
 }
 
 // Format the ExprNode into a Writer.
@@ -719,25 +657,9 @@ func (n *PatternLikeExpr) Accept(v Visitor) (Node, bool) {
 
 // ParamMarkerExpr expression holds a place for another expression.
 // Used in parsing prepare statement.
-type ParamMarkerExpr struct {
-	exprNode
-	Offset int
-	Order  int
-}
-
-// Format the ExprNode into a Writer.
-func (n *ParamMarkerExpr) Format(w io.Writer) {
-	panic("Not implemented")
-}
-
-// Accept implements Node Accept interface.
-func (n *ParamMarkerExpr) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*ParamMarkerExpr)
-	return v.Leave(n)
+type ParamMarkerExpr interface {
+	ValueExpr
+	SetOrder(int)
 }
 
 // ParenthesesExpr is the parentheses expression.

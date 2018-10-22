@@ -690,6 +690,7 @@ import (
 	PartitionDefinitionList 	"Partition definition list"
 	PartitionDefinitionListOpt	"Partition definition list option"
 	PartitionOpt			"Partition option"
+	PartitionNameList		"Partition name list"
 	PartitionNumOpt			"PARTITION NUM option"
 	PartDefValuesOpt		"VALUES {LESS THAN {(expr | value_list) | MAXVALUE} | IN {value_list}"
 	PartDefOptionsOpt		"PartDefOptionList option"
@@ -926,6 +927,20 @@ AlterTableStmt:
 		$$ = &ast.AlterTableStmt{
 			Table: $4.(*ast.TableName),
 			Specs: $5.([]*ast.AlterTableSpec),
+		}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "ANALYZE" "PARTITION" PartitionNameList MaxNumBuckets
+	{
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$4.(*ast.TableName)}, PartitionNames: $7.([]model.CIStr), MaxNumBuckets: $8.(uint64),}
+	}
+|	"ALTER" IgnoreOptional "TABLE" TableName "ANALYZE" "PARTITION" PartitionNameList "INDEX" IndexNameList MaxNumBuckets
+	{
+		$$ = &ast.AnalyzeTableStmt{
+			TableNames: []*ast.TableName{$4.(*ast.TableName)},
+			PartitionNames: $7.([]model.CIStr),
+			IndexNames: $9.([]model.CIStr),
+			IndexFlag: true,
+			MaxNumBuckets: $10.(uint64),
 		}
 	}
 
@@ -1175,6 +1190,16 @@ AlterTableSpecList:
 		$$ = append($1.([]*ast.AlterTableSpec), $3.(*ast.AlterTableSpec))
 	}
 
+PartitionNameList:
+	Identifier
+	{
+		$$ = []model.CIStr{model.NewCIStr($1)}
+	}
+|	PartitionNameList ',' Identifier
+	{
+		$$ = append($1.([]model.CIStr), model.NewCIStr($3))
+	}
+
 ConstraintKeywordOpt:
 	{
 		$$ = nil
@@ -1240,6 +1265,20 @@ AnalyzeTableStmt:
 |	"ANALYZE" "TABLE" TableName "INDEX" IndexNameList MaxNumBuckets
 	{
 		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr), IndexFlag: true, MaxNumBuckets: $6.(uint64)}
+	}
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList MaxNumBuckets
+	{
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, PartitionNames: $5.([]model.CIStr), MaxNumBuckets: $6.(uint64),}
+	}
+|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList MaxNumBuckets
+	{
+		$$ = &ast.AnalyzeTableStmt{
+			TableNames: []*ast.TableName{$3.(*ast.TableName)},
+			PartitionNames: $5.([]model.CIStr),
+			IndexNames: $7.([]model.CIStr),
+			IndexFlag: true,
+			MaxNumBuckets: $8.(uint64),
+		}
 	}
 
 MaxNumBuckets:
@@ -2312,6 +2351,14 @@ ExplainStmt:
 			Format: $4,
 		}
 	}
+|   ExplainSym "ANALYZE" ExplainableStmt
+    {
+        $$ = &ast.ExplainStmt {
+            Stmt:   $3,
+            Format: "row",
+            Analyze: true,
+        }
+    }
 
 LengthNum:
 	NUM
@@ -2348,7 +2395,13 @@ Expression:
 	}
 |	"NOT" Expression %prec not
 	{
-		$$ = &ast.UnaryOperationExpr{Op: opcode.Not, V: $2}
+		expr, ok := $2.(*ast.ExistsSubqueryExpr)
+		if ok {
+			expr.Not = true
+			$$ = $2
+		} else {
+			$$ = &ast.UnaryOperationExpr{Op: opcode.Not, V: $2}
+		}
 	}
 |	BoolPri IsOrNotOp trueKwd %prec is
 	{
@@ -3073,7 +3126,7 @@ StringLiteral:
 	}
 |	StringLiteral stringLit
 	{
-		valExpr := $1.(*ast.ValueExpr)
+		valExpr := $1.(ast.ValueExpr)
 		strLit := valExpr.GetString()
 		expr := ast.NewValueExpr(strLit+$2)
 		// Fix #4239, use first string literal as projection name.
@@ -3106,7 +3159,7 @@ ByItem:
 	Expression Order
 	{
 		expr := $1
-		valueExpr, ok := expr.(*ast.ValueExpr)
+		valueExpr, ok := expr.(ast.ValueExpr)
 		if ok {
 			position, isPosition := valueExpr.GetValue().(int64)
 			if isPosition {
@@ -3255,9 +3308,7 @@ SimpleExpr:
 |	Literal
 |	paramMarker
 	{
-		$$ = &ast.ParamMarkerExpr{
-			Offset: yyS[yypt].offset,
-		}
+		$$ = ast.NewParamMarkerExpr(yyS[yypt].offset)
 	}
 |	Variable
 |	SumExpr
@@ -4566,7 +4617,7 @@ LimitClause:
 	}
 |	"LIMIT" LimitOption
 	{
-		$$ = &ast.Limit{Count: $2.(ast.ExprNode)}
+		$$ = &ast.Limit{Count: $2.(ast.ValueExpr)}
 	}
 
 LimitOption:
@@ -4576,9 +4627,7 @@ LimitOption:
 	}
 |	paramMarker
 	{
-		$$ = &ast.ParamMarkerExpr{
-			Offset: yyS[yypt].offset,
-		}
+		$$ = ast.NewParamMarkerExpr(yyS[yypt].offset)
 	}
 
 SelectStmtLimit:
@@ -7005,10 +7054,14 @@ Fields:
 		}else if len(str) != 0 {
 			enclosed = str[0]
 		}
+		var escaped byte
+		if len(escape) > 0 {
+			escaped = escape[0]
+		}
 		$$ = &ast.FieldsClause{
 			Terminated: $2.(string),
 			Enclosed:   enclosed,
-			Escaped:    escape[0],
+			Escaped:    escaped,
 		}
 	}
 

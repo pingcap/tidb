@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 )
@@ -114,7 +115,8 @@ func (p *PointGetPlan) SetChildren(...PhysicalPlan) {}
 // ResolveIndices resolves the indices for columns. After doing this, the columns can evaluate the rows by their indices.
 func (p *PointGetPlan) ResolveIndices() {}
 
-func tryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
+// TryFastPlan tries to use the PointGetPlan for the query.
+func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 	if PreparedPlanCacheEnabled() {
 		// Do not support plan cache.
 		return nil
@@ -335,9 +337,9 @@ func getNameValuePairs(nvPairs []nameValuePair, expr ast.ExprNode) []nameValuePa
 		}
 		var d types.Datum
 		switch x := binOp.R.(type) {
-		case *ast.ValueExpr:
+		case *driver.ValueExpr:
 			d = x.Datum
-		case *ast.ParamMarkerExpr:
+		case *driver.ParamMarkerExpr:
 			d = x.Datum
 		}
 		if d.IsNull() {
