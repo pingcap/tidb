@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
+	_ "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pkg/errors"
@@ -135,7 +136,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 	c.Assert(ok, IsTrue)
 	c.Assert(is.Lists, HasLen, 1)
 	c.Assert(is.Lists[0], HasLen, 1)
-	c.Assert(is.Lists[0][0].GetDatum().GetString(), Equals, "/*! truncated */")
+	c.Assert(is.Lists[0][0].(ast.ValueExpr).GetDatumString(), Equals, "/*! truncated */")
 
 	// Testcase for CONVERT(expr,type)
 	src = "SELECT CONVERT('111', SIGNED);"
@@ -2215,12 +2216,12 @@ func (s *testParserSuite) TestTimestampDiffUnit(c *C) {
 	expr := fields[0].Expr
 	f, ok := expr.(*ast.FuncCallExpr)
 	c.Assert(ok, IsTrue)
-	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+	c.Assert(f.Args[0].(ast.ValueExpr).GetDatumString(), Equals, "MONTH")
 
 	expr = fields[1].Expr
 	f, ok = expr.(*ast.FuncCallExpr)
 	c.Assert(ok, IsTrue)
-	c.Assert(f.Args[0].GetDatum().GetString(), Equals, "MONTH")
+	c.Assert(f.Args[0].(ast.ValueExpr).GetDatumString(), Equals, "MONTH")
 
 	// Test Illegal TimeUnit for TimestampDiff
 	table := []testCase{
@@ -2383,7 +2384,7 @@ func (s *testParserSuite) TestSetTransaction(c *C) {
 		c.Assert(vars.Name, Equals, "tx_isolation")
 		c.Assert(vars.IsGlobal, Equals, t.isGlobal)
 		c.Assert(vars.IsSystem, Equals, true)
-		c.Assert(vars.Value.GetValue(), Equals, t.value)
+		c.Assert(vars.Value.(ast.ValueExpr).GetValue(), Equals, t.value)
 	}
 }
 

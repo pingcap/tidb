@@ -161,15 +161,6 @@ func updateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datu
 		}
 	}
 
-	// 6. Update delta for the statistics.
-	colSize := make(map[int64]int64)
-	for id, col := range t.Cols() {
-		val := int64(len(newData[id].GetBytes()) - len(oldData[id].GetBytes()))
-		if val != 0 {
-			colSize[col.ID] = val
-		}
-	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, 0, 1, colSize)
 	return true, handleChanged, newHandle, nil
 }
 

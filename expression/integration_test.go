@@ -3368,6 +3368,15 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	r.Check(testkit.Rows("1 0 1 0"))
 
 	r = tk.MustQuery(`select
+
+		json_keys('{}'),
+		json_keys('{"a": 1, "b": 2}'),
+		json_keys('{"a": {"c": 3}, "b": 2}'),
+		json_keys('{"a": {"c": 3}, "b": 2}', "$.a")
+	`)
+	r.Check(testkit.Rows(`[] ["a", "b"] ["a", "b"] ["c"]`))
+
+	r = tk.MustQuery(`select
 		json_length('1'),
 		json_length('{}'),
 		json_length('[]'),

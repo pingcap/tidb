@@ -216,14 +216,6 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h int64, d
 		return errors.Trace(err)
 	}
 	ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-	colSize := make(map[int64]int64)
-	for id, col := range t.Cols() {
-		val := -int64(len(data[id].GetBytes()))
-		if val != 0 {
-			colSize[col.ID] = val
-		}
-	}
-	ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(t.Meta().ID, -1, 1, colSize)
 	return nil
 }
 
