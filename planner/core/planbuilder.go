@@ -1634,20 +1634,20 @@ func buildShowSchema(s *ast.ShowStmt) (schema *expression.Schema) {
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
 			mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeLonglong}
 	case ast.ShowStatsMeta:
-		names = []string{"Db_name", "Table_name", "Update_time", "Modify_count", "Row_count"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
+		names = []string{"Db_name", "Table_name", "Partition_name", "Update_time", "Modify_count", "Row_count"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeLonglong, mysql.TypeLonglong}
 	case ast.ShowStatsHistograms:
-		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeDatetime,
+		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Update_time", "Distinct_count", "Null_count", "Avg_col_size"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeDatetime,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeDouble}
 	case ast.ShowStatsBuckets:
-		names = []string{"Db_name", "Table_name", "Column_name", "Is_index", "Bucket_id", "Count",
+		names = []string{"Db_name", "Table_name", "Partition_name", "Column_name", "Is_index", "Bucket_id", "Count",
 			"Repeats", "Lower_Bound", "Upper_Bound"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeTiny, mysql.TypeLonglong,
 			mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowStatsHealthy:
-		names = []string{"Db_name", "Table_name", "Healthy"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
+		names = []string{"Db_name", "Table_name", "Partition_name", "Healthy"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowProfiles: // ShowProfiles is deprecated.
 		names = []string{"Query_ID", "Duration", "Query"}
 		ftypes = []byte{mysql.TypeLong, mysql.TypeDouble, mysql.TypeVarchar}
