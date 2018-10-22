@@ -273,7 +273,6 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("ALTER TABLE t1 ADD COLUMN c4 bit(10) default 127;")
 	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
 	tk.MustExec("admin check table t1;")
-
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
