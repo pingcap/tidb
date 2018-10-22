@@ -216,7 +216,7 @@ local-agent-host-port = ""
 
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
-grpc-connection-count = 16
+grpc-connection-count = 32
 
 # After a duration of this time in seconds if the client doesn't see any activity it pings
 # the server to see if the transport is still alive.
@@ -230,9 +230,10 @@ grpc-keepalive-timeout = 3
 commit-timeout = "41s"
 
 max-batch-size = 128
-heavy-load-to-batch = 5000
+heavy-load-to-batch = 0
+tikv-heavy-load-to-batch = 160
 batch-wait-time = 500000
-batch-wait-size = 8
+batch-wait-size = 32
 
 [txn-local-latches]
 # Enable local latches for transactions. Enable it when

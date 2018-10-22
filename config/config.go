@@ -243,6 +243,8 @@ type TiKVClient struct {
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
 	// If QPS is greater than HeavyLoadToBatch, TiDB will wait for a while to avoid little batch.
 	HeavyLoadToBatch uint `toml:"heavy-load-to-batch" json:"heavy-load-to-batch"`
+	// If TiKV load is greater than this, TiDB will wait for a while to avoid little batch.
+	TiKVHeavyLoadToBatch uint `toml:"tikv-heavy-load-to-batch" json:"tikv-heavy-load-to-batch"`
 	// BatchWaitTime in nanosecond is the max wait time for batch.
 	BatchWaitTime time.Duration `toml:"batch-wait-time" json:"batch-wait-time"`
 	// BatchWaitSize is the max wait size for batch.
@@ -325,15 +327,16 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount:  16,
+		GrpcConnectionCount:  32,
 		GrpcKeepAliveTime:    10,
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
 
-		MaxBatchSize:     128,
-		HeavyLoadToBatch: 5000,
-		BatchWaitTime:    500 * time.Microsecond,
-		BatchWaitSize:    8,
+		MaxBatchSize:         128,
+		HeavyLoadToBatch:     0,
+		TiKVHeavyLoadToBatch: 160,
+		BatchWaitTime:        500 * time.Microsecond,
+		BatchWaitSize:        32,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",

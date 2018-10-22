@@ -136,12 +136,11 @@ func (b *batchStatistics) update(batch int) {
 }
 
 func (b *batchStatistics) inHeavyLoad(heavyLoad uint) bool {
-	return false
-	// reqSpeed := 0
-	// for _, count := range b.reqCountSlots {
-	// 	reqSpeed += count
-	// }
-	// return uint(reqSpeed) >= heavyLoad
+	reqSpeed := 0
+	for _, count := range b.reqCountSlots {
+		reqSpeed += count
+	}
+	return uint(reqSpeed) >= heavyLoad
 }
 
 type batchCommandsClient struct {
@@ -360,11 +359,21 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 		batchCommandsClient := a.batchCommandsClients[next]
 
 		tikvTransportLayerLoad := atomic.LoadUint64(batchCommandsClient.tikvTransportLayerLoad)
-		inHeavyLoad := tikvTransportLayerLoad >= 160 // Need to wait.
+		inHeavyLoad := uint(tikvTransportLayerLoad) >= cfg.TiKVHeavyLoadToBatch // Need to wait.
 
 		batchWaitSize := cfg.BatchWaitSize
-		if tikvTransportLayerLoad >= 200 { // TODO: make it more reasonable.
+		factor := 1.25
+		for {
+			// Choose best batchWaitSize.
+			if float64(tikvTransportLayerLoad) < float64(cfg.TiKVHeavyLoadToBatch)*factor {
+				break
+			}
 			batchWaitSize <<= 1
+			factor *= 1.25
+			if batchWaitSize >= cfg.MaxBatchSize {
+				batchWaitSize = cfg.MaxBatchSize
+				break
+			}
 		}
 
 		entries = entries[:0]
@@ -391,13 +400,16 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 					break Loop
 				}
 			default:
-				// inHeavyLoad = inHeavyLoad || a.batchStatistics.inHeavyLoad(cfg.HeavyLoadToBatch)
+				if cfg.HeavyLoadToBatch > 0 && !inHeavyLoad {
+					inHeavyLoad = a.batchStatistics.inHeavyLoad(cfg.HeavyLoadToBatch)
+				}
 				break Loop
 			}
 		}
 
 		if len(requests) < int(cfg.MaxBatchSize) && inHeavyLoad && cfg.BatchWaitTime > 0 {
 			metrics.TiKVBatchWaitTimes.Inc()
+			end := time.After(cfg.BatchWaitTime)
 		BackoffLoop:
 			for {
 				select {
@@ -407,17 +419,18 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 					}
 					entries = append(entries, entry)
 					requests = append(requests, entry.req)
-				case <-time.After(cfg.BatchWaitTime):
-					break BackoffLoop
-				default:
 					if len(requests) >= int(batchWaitSize) {
 						break BackoffLoop
 					}
+				case <-end:
+					break BackoffLoop
 				}
 			}
 		}
 
-		// a.batchStatistics.update(len(requests))
+		if cfg.HeavyLoadToBatch > 0 {
+			a.batchStatistics.update(len(requests))
+		}
 
 		length := len(requests)
 		maxBatchID := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
