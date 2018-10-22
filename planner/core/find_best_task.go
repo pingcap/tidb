@@ -184,7 +184,7 @@ func (ds *DataSource) tryToGetMemTask(prop *property.PhysicalProperty) (task tas
 // tryToGetDualTask will check if the push down predicate has false constant. If so, it will return table dual.
 func (ds *DataSource) tryToGetDualTask() (task, error) {
 	for _, cond := range ds.pushedDownConds {
-		if _, ok := cond.(*expression.Constant); ok {
+		if con, ok := cond.(*expression.Constant); ok && con.DeferredExpr == nil {
 			result, err := expression.EvalBool(ds.ctx, []expression.Expression{cond}, chunk.Row{})
 			if err != nil {
 				return nil, errors.Trace(err)

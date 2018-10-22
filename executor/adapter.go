@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
@@ -45,7 +46,7 @@ type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte)
 }
 
-// recordSet wraps an executor, implements ast.RecordSet interface
+// recordSet wraps an executor, implements sqlexec.RecordSet interface
 type recordSet struct {
 	fields     []*ast.ResultField
 	executor   Executor
@@ -118,11 +119,11 @@ func (a *recordSet) NewChunk() *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.logSlowQuery(a.txnStartTS, a.lastErr == nil)
+	a.stmt.LogSlowQuery(a.txnStartTS, a.lastErr == nil)
 	return errors.Trace(err)
 }
 
-// ExecStmt implements the ast.Statement interface, it builds a planner.Plan to an ast.Statement.
+// ExecStmt implements the sqlexec.Statement interface, it builds a planner.Plan to an sqlexec.Statement.
 type ExecStmt struct {
 	// InfoSchema stores a reference to the schema information.
 	InfoSchema infoschema.InfoSchema
@@ -137,8 +138,9 @@ type ExecStmt struct {
 
 	StmtNode ast.StmtNode
 
-	Ctx            sessionctx.Context
-	startTime      time.Time
+	Ctx sessionctx.Context
+	// StartTime stands for the starting time when executing the statement.
+	StartTime      time.Time
 	isPreparedStmt bool
 }
 
@@ -182,9 +184,9 @@ func (a *ExecStmt) RebuildPlan() (int64, error) {
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
 // like the INSERT, UPDATE statements, it executes in this function, if the Executor returns
-// result, execution is done after this function returns, in the returned ast.RecordSet Next method.
-func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
-	a.startTime = time.Now()
+// result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
+func (a *ExecStmt) Exec(ctx context.Context) (sqlexec.RecordSet, error) {
+	a.StartTime = time.Now()
 	sctx := a.Ctx
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
@@ -246,7 +248,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (ast.RecordSet, error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (ast.RecordSet, error) {
+func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Context, e Executor) (sqlexec.RecordSet, error) {
 	// Check if "tidb_snapshot" is set for the write executors.
 	// In history read mode, we can not do write operations.
 	switch e.(type) {
@@ -264,7 +266,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, sctx sessionctx.Co
 		if sctx.Txn() != nil {
 			txnTS = sctx.Txn().StartTS()
 		}
-		a.logSlowQuery(txnTS, err == nil)
+		a.LogSlowQuery(txnTS, err == nil)
 	}()
 
 	err = e.Next(ctx, e.newFirstChunk())
@@ -329,13 +331,14 @@ func (a *ExecStmt) buildExecutor(ctx sessionctx.Context) (Executor, error) {
 // QueryReplacer replaces new line and tab for grep result including query string.
 var QueryReplacer = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ")
 
-func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
+// LogSlowQuery is used to print the slow query in the log files.
+func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool) {
 	level := log.GetLevel()
 	if level < log.WarnLevel {
 		return
 	}
 	cfg := config.GetGlobalConfig()
-	costTime := time.Since(a.startTime)
+	costTime := time.Since(a.StartTime)
 	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
 	if costTime < threshold && level < log.DebugLevel {
 		return
@@ -385,7 +388,7 @@ func (a *ExecStmt) logSlowQuery(txnTS uint64, succ bool) {
 		}
 		domain.GetDomain(a.Ctx).LogSlowQuery(&domain.SlowQueryInfo{
 			SQL:      sql,
-			Start:    a.startTime,
+			Start:    a.StartTime,
 			Duration: costTime,
 			Detail:   sessVars.StmtCtx.GetExecDetails(),
 			Succ:     succ,

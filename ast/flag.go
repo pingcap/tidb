@@ -32,6 +32,9 @@ func (f *flagSetter) Enter(in Node) (Node, bool) {
 }
 
 func (f *flagSetter) Leave(in Node) (Node, bool) {
+	if x, ok := in.(ParamMarkerExpr); ok {
+		x.SetFlag(FlagHasParamMarker)
+	}
 	switch x := in.(type) {
 	case *AggregateFuncExpr:
 		f.aggregateFunc(x)
@@ -57,8 +60,6 @@ func (f *flagSetter) Leave(in Node) (Node, bool) {
 		x.SetFlag(x.Expr.GetFlag())
 	case *IsTruthExpr:
 		x.SetFlag(x.Expr.GetFlag())
-	case *ParamMarkerExpr:
-		x.SetFlag(FlagHasParamMarker)
 	case *ParenthesesExpr:
 		x.SetFlag(x.Expr.GetFlag())
 	case *PatternInExpr:
@@ -75,7 +76,6 @@ func (f *flagSetter) Leave(in Node) (Node, bool) {
 		x.SetFlag(FlagHasSubquery)
 	case *UnaryOperationExpr:
 		x.SetFlag(x.V.GetFlag())
-	case *ValueExpr:
 	case *ValuesExpr:
 		x.SetFlag(FlagHasReference)
 	case *VariableExpr:

@@ -20,8 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"golang.org/x/net/context"
 )
 
 // Node is the basic element of the AST.
@@ -64,14 +62,6 @@ type ExprNode interface {
 	SetType(tp *types.FieldType)
 	// GetType gets the evaluation type of the expression.
 	GetType() *types.FieldType
-	// SetValue sets value to the expression.
-	SetValue(val interface{})
-	// GetValue gets value of the expression.
-	GetValue() interface{}
-	// SetDatum sets datum to the expression.
-	SetDatum(datum types.Datum)
-	// GetDatum gets datum of the expression.
-	GetDatum() *types.Datum
 	// SetFlag sets flag to the expression.
 	// Flag indicates whether the expression contains
 	// parameter marker, reference, aggregate function...
@@ -138,31 +128,6 @@ type ResultField struct {
 	Referenced bool
 }
 
-// RecordSet is an abstract result set interface to help get data from Plan.
-type RecordSet interface {
-	// Fields gets result fields.
-	Fields() []*ResultField
-
-	// Next reads records into chunk.
-	Next(ctx context.Context, chk *chunk.Chunk) error
-
-	// NewChunk creates a new chunk with initial capacity.
-	NewChunk() *chunk.Chunk
-
-	// Close closes the underlying iterator, call Next after Close will
-	// restart the iteration.
-	Close() error
-}
-
-// RowToDatums converts row to datum slice.
-func RowToDatums(row chunk.Row, fields []*ResultField) []types.Datum {
-	datums := make([]types.Datum, len(fields))
-	for i, f := range fields {
-		datums[i] = row.GetDatum(i, &f.Column.FieldType)
-	}
-	return datums
-}
-
 // ResultSetNode interface has a ResultFields property, represents a Node that returns result set.
 // Implementations include SelectStmt, SubqueryExpr, TableSource, TableName and Join.
 type ResultSetNode interface {
@@ -174,28 +139,6 @@ type SensitiveStmtNode interface {
 	StmtNode
 	// SecureText is different from Text that it hide password information.
 	SecureText() string
-}
-
-// Statement is an interface for SQL execution.
-// NOTE: all Statement implementations must be safe for
-// concurrent using by multiple goroutines.
-// If the Exec method requires any Execution domain local data,
-// they must be held out of the implementing instance.
-type Statement interface {
-	// OriginText gets the origin SQL text.
-	OriginText() string
-
-	// Exec executes SQL and gets a Recordset.
-	Exec(ctx context.Context) (RecordSet, error)
-
-	// IsPrepared returns whether this statement is prepared statement.
-	IsPrepared() bool
-
-	// IsReadOnly returns if the statement is read only. For example: SelectStmt without lock.
-	IsReadOnly() bool
-
-	// RebuildPlan rebuilds the plan of the statement.
-	RebuildPlan() (schemaVersion int64, err error)
 }
 
 // Visitor visits a Node.
