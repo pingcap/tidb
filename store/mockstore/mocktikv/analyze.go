@@ -187,7 +187,7 @@ func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 	return &coprocessor.Response{Data: data}, nil
 }
 
-// Fields implements the ast.RecordSet Fields interface.
+// Fields implements the sqlexec.RecordSet Fields interface.
 func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
 	return e.fields
 }
@@ -231,7 +231,7 @@ func (e *analyzeColumnsExec) NewChunk() *chunk.Chunk {
 	return chunk.NewChunkWithCapacity(fields, 1)
 }
 
-// Close implements the ast.RecordSet Close interface.
+// Close implements the sqlexec.RecordSet Close interface.
 func (e *analyzeColumnsExec) Close() error {
 	return nil
 }

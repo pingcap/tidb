@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pkg/errors"
@@ -229,7 +230,7 @@ func (s *testStateChangeSuite) test(c *C, tableName, alterTableSQL string, testI
 type stateCase struct {
 	session            session.Session
 	rawStmt            ast.StmtNode
-	stmt               ast.Statement
+	stmt               sqlexec.Statement
 	expectedExecErr    error
 	expectedCompileErr error
 }
@@ -599,6 +600,18 @@ func (s *testStateChangeSuite) TestParallelAlterModifyColumn(c *C) {
 		c.Assert(err, IsNil)
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
+}
+
+func (s *testStateChangeSuite) TestParallelColumnModifyingDefinition(c *C) {
+	sql1 := "insert into t(b) values (null);"
+	sql2 := "alter table t change b b2 bigint not null;"
+	f := func(c *C, err1, err2 error) {
+		c.Assert(err1, IsNil)
+		if err2 != nil {
+			c.Assert(err2.Error(), Equals, "[ddl:1265]Data truncated for column 'b2' at row 1")
+		}
+	}
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
 func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {

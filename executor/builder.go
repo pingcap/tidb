@@ -659,41 +659,15 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 
 // buildExplain builds a explain executor. `e.rows` collects final result to `ExplainExec`.
 func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
-	if v.Analyze {
-		stmt := &ExecStmt{
-			InfoSchema: GetInfoSchema(b.ctx),
-			Plan:       v.ExecPlan,
-			StmtNode:   v.ExecStmt,
-			Ctx:        b.ctx,
-		}
-		b.ctx.GetSessionVars().StmtCtx.RuntimeStats = execdetails.NewRuntimeStats()
-		ctx := context.Background()
-		rs, err := stmt.Exec(ctx)
-		if err != nil {
-			return nil
-		}
-		if rs != nil {
-			chk := rs.NewChunk()
-			for {
-				err := rs.Next(ctx, chk)
-				if err != nil {
-					return nil
-				}
-				if chk.NumRows() == 0 {
-					break
-				}
-			}
-		}
-	}
-	v.PrepareRows()
-	e := &ExplainExec{
+	explainExec := &ExplainExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		explain:      v,
 	}
-	e.rows = make([][]string, 0, len(v.Rows))
-	for _, row := range v.Rows {
-		e.rows = append(e.rows, row)
+	if v.Analyze {
+		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		explainExec.analyzeExec = b.build(v.ExecPlan)
 	}
-	return e
+	return explainExec
 }
 
 func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) Executor {

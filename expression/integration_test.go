@@ -2387,13 +2387,13 @@ func (s *testIntegrationSuite) TestInfoBuiltin(c *C) {
 	// for current_user
 	sessionVars := tk.Se.GetSessionVars()
 	originUser := sessionVars.User
-	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "127.0.%%"}
 	result = tk.MustQuery("select current_user()")
-	result.Check(testkit.Rows("root@localhost"))
+	result.Check(testkit.Rows("root@127.0.%%"))
 	sessionVars.User = originUser
 
 	// for user
-	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost"}
+	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "127.0.%%"}
 	result = tk.MustQuery("select user()")
 	result.Check(testkit.Rows("root@localhost"))
 	sessionVars.User = originUser
@@ -3366,6 +3366,15 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 		json_contains_path('{"a": 1, "b": 2, "c": {"d": 4}}', 'all', '$[*]')
 	`)
 	r.Check(testkit.Rows("1 0 1 0"))
+
+	r = tk.MustQuery(`select
+
+		json_keys('{}'),
+		json_keys('{"a": 1, "b": 2}'),
+		json_keys('{"a": {"c": 3}, "b": 2}'),
+		json_keys('{"a": {"c": 3}, "b": 2}', "$.a")
+	`)
+	r.Check(testkit.Rows(`[] ["a", "b"] ["a", "b"] ["c"]`))
 
 	r = tk.MustQuery(`select
 		json_length('1'),

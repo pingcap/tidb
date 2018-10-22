@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/sqlexec"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/context"
 )
@@ -83,7 +83,7 @@ func prepareJoinBenchData(se Session, colType string, valueFormat string, valueC
 	mustExecute(se, "commit")
 }
 
-func readResult(ctx context.Context, rs ast.RecordSet, count int) {
+func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
 	chk := rs.NewChunk()
 	for count > 0 {
 		err := rs.Next(ctx, chk)
