@@ -16,6 +16,7 @@ package ast_test
 import (
 	. "github.com/pingcap/check"
 	. "github.com/pingcap/tidb/ast"
+	_ "github.com/pingcap/tidb/types/parser_driver"
 )
 
 var _ = Suite(&testExpressionsSuite{})
@@ -79,7 +80,7 @@ func (tc *testExpressionsSuite) TestExpresionsVisitorCover(c *C) {
 			{&ExistsSubqueryExpr{Sel: ce}, 1, 1},
 			{&IsNullExpr{Expr: ce}, 1, 1},
 			{&IsTruthExpr{Expr: ce}, 1, 1},
-			{&ParamMarkerExpr{}, 0, 0},
+			{NewParamMarkerExpr(0), 0, 0},
 			{&ParenthesesExpr{Expr: ce}, 1, 1},
 			{&PatternInExpr{Expr: ce, List: []ExprNode{ce, ce, ce}, Sel: ce}, 5, 5},
 			{&PatternLikeExpr{Expr: ce, Pattern: ce}, 2, 2},
@@ -87,7 +88,7 @@ func (tc *testExpressionsSuite) TestExpresionsVisitorCover(c *C) {
 			{&PositionExpr{}, 0, 0},
 			{&RowExpr{Values: []ExprNode{ce, ce}}, 2, 2},
 			{&UnaryOperationExpr{V: ce}, 1, 1},
-			{&ValueExpr{}, 0, 0},
+			{NewValueExpr(0), 0, 0},
 			{&ValuesExpr{Column: &ColumnNameExpr{Name: &ColumnName{}}}, 0, 0},
 			{&VariableExpr{Value: ce}, 1, 1},
 		}

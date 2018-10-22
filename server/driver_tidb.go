@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -344,7 +345,7 @@ func (tc *TiDBContext) GetSessionVars() *variable.SessionVars {
 }
 
 type tidbResultSet struct {
-	recordSet ast.RecordSet
+	recordSet sqlexec.RecordSet
 	columns   []*ColumnInfo
 	rows      []chunk.Row
 	closed    bool

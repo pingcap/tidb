@@ -558,10 +558,6 @@ func (h *Handle) handleSingleHistogramUpdate(is infoschema.InfoSchema, rows []ch
 			log.Debugf("decode feedback failed, err: %v", errors.ErrorStack(err))
 		}
 	}
-	// Update the NDV of primary key column.
-	if table.Meta().PKIsHandle && q.tp == pkType {
-		hist.NDV = int64(hist.totalRowCount())
-	}
 	err = h.dumpStatsUpdateToKV(physicalTableID, isIndex, q, hist, cms)
 	return errors.Trace(err)
 }
