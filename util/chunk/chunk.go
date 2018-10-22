@@ -147,28 +147,24 @@ type chunkSpan struct {
 func (c *column) distVarLenColumn(cap int, span *chunkSpan) {
 	estimatedElemLen := 8
 
-	c.offsets = span.offsets[span.offsetsIdx : span.offsetsIdx+cap+1]
+	c.offsets = span.offsets[span.offsetsIdx : span.offsetsIdx+1 : span.offsetsIdx+cap+1]
 	span.offsetsIdx += cap + 1
-	(*reflect.SliceHeader)(unsafe.Pointer(&c.offsets)).Len = 1
 
 	c.data = make([]byte, 0, cap*estimatedElemLen) // VarLen columns can not prealloc
 
-	c.nullBitmap = span.nullBitmap[span.nullBitMapIdx : span.nullBitMapIdx+cap>>3]
+	c.nullBitmap = span.nullBitmap[span.nullBitMapIdx : span.nullBitMapIdx : span.nullBitMapIdx+cap>>3]
 	span.nullBitMapIdx += cap >> 3
-	(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = 0
 }
 
 func (c *column) distFixedLenColumn(elemLen, cap int, span *chunkSpan) {
-	c.elemBuf = span.elemBuf[span.elemBufIdx : span.elemBufIdx+elemLen]
+	c.elemBuf = span.elemBuf[span.elemBufIdx : span.elemBufIdx+elemLen : span.elemBufIdx+elemLen]
 	span.elemBufIdx += elemLen
 
-	c.data = span.data[span.dataIdx : span.dataIdx+cap*elemLen]
+	c.data = span.data[span.dataIdx : span.dataIdx : span.dataIdx+cap*elemLen]
 	span.dataIdx += cap * elemLen
-	(*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Len = 0
 
-	c.nullBitmap = span.nullBitmap[span.nullBitMapIdx : span.nullBitMapIdx+cap>>3]
+	c.nullBitmap = span.nullBitmap[span.nullBitMapIdx : span.nullBitMapIdx : span.nullBitMapIdx+cap>>3]
 	span.nullBitMapIdx += cap >> 3
-	(*reflect.SliceHeader)(unsafe.Pointer(&c.nullBitmap)).Len = 0
 }
 
 // Renew creates a new Chunk based on an existing Chunk. The newly created Chunk

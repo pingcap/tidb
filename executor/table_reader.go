@@ -97,10 +97,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	return nil
 }
 
-func (e *TableReaderExecutor) newFirstChunk() *chunk.Chunk {
-	return chunk.WideNew(e.retTypes(), e.initCap, e.maxChunkSize)
-}
-
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {

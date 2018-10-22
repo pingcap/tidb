@@ -113,7 +113,7 @@ func (e *baseExecutor) Schema() *expression.Schema {
 
 // newFirstChunk creates a new chunk to buffer current executor's result.
 func (e *baseExecutor) newFirstChunk() *chunk.Chunk {
-	return chunk.New(e.retTypes(), e.initCap, e.maxChunkSize)
+	return chunk.WideNew(e.retTypes(), e.initCap, e.maxChunkSize)
 }
 
 // retTypes returns all output column types.
