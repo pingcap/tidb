@@ -136,11 +136,12 @@ func (b *batchStatistics) update(batch int) {
 }
 
 func (b *batchStatistics) inHeavyLoad(heavyLoad uint) bool {
-	reqSpeed := 0
-	for _, count := range b.reqCountSlots {
-		reqSpeed += count
-	}
-	return uint(reqSpeed) >= heavyLoad
+	return false
+	// reqSpeed := 0
+	// for _, count := range b.reqCountSlots {
+	// 	reqSpeed += count
+	// }
+	// return uint(reqSpeed) >= heavyLoad
 }
 
 type batchCommandsClient struct {
@@ -424,7 +425,7 @@ func (a *connArray) batchSendLoop(cfg config.TiKVClient) {
 			}
 		}
 
-		a.batchStatistics.update(len(requests))
+		// a.batchStatistics.update(len(requests))
 
 		length := len(requests)
 		maxBatchID := atomic.AddUint64(&batchCommandsClient.idAlloc, uint64(length))
