@@ -110,7 +110,7 @@ var (
 	_ builtinFunc = &builtinTruncateIntSig{}
 	_ builtinFunc = &builtinTruncateRealSig{}
 	_ builtinFunc = &builtinTruncateDecimalSig{}
-	_ builtinFunc = &builtinTruncateUnintSig{}
+	_ builtinFunc = &builtinTruncateUintSig{}
 )
 
 type absFunctionClass struct {
@@ -1738,8 +1738,8 @@ func (c *truncateFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	var sig builtinFunc
 	switch argTp {
 	case types.ETInt:
-		if mysql.HasUnsignedFlag(args[0].GetType().Flag){
-			sig = &builtinTruncateUnintSig{bf}
+		if mysql.HasUnsignedFlag(args[0].GetType().Flag) {
+			sig = &builtinTruncateUintSig{bf}
 		} else {
 			sig = &builtinTruncateIntSig{bf}
 		}
@@ -1839,19 +1839,19 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 }
 
-func (b *builtinTruncateUnintSig) Clone() builtinFunc {
-	newSig := &builtinTruncateUnintSig{}
+func (b *builtinTruncateUintSig) Clone() builtinFunc {
+	newSig := &builtinTruncateUintSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
-type builtinTruncateUnintSig struct {
+type builtinTruncateUintSig struct {
 	baseBuiltinFunc
 }
 
 // evalInt evals a TRUNCATE(X,D).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
-func (b *builtinTruncateUnintSig) evalInt(row chunk.Row) (int64, bool, error) {
+func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, errors.Trace(err)
