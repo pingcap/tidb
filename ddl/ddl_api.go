@@ -910,31 +910,37 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return errors.Trace(err)
 	}
 
-	if pi != nil && pi.Type == model.PartitionTypeRange {
-		// Only range type partition is now supported.
-		// Range columns partition only implements the parser, so it will not be checked.
-		if s.Partition.ColumnNames == nil {
-			if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
-				return errors.Trace(err)
-			}
+	if pi != nil {
+		if pi.Type == model.PartitionTypeRange {
+			// Only range type partition is now supported.
+			// Range columns partition only implements the parser, so it will not be checked.
+			if s.Partition.ColumnNames == nil {
+				if err = checkPartitionNameUnique(tbInfo, pi); err != nil {
+					return errors.Trace(err)
+				}
 
-			if err = checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
-				return errors.Trace(err)
-			}
+				if err = checkCreatePartitionValue(ctx, tbInfo, pi, cols); err != nil {
+					return errors.Trace(err)
+				}
 
-			if err = checkAddPartitionTooManyPartitions(len(pi.Definitions)); err != nil {
-				return errors.Trace(err)
-			}
+				if err = checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
+					return errors.Trace(err)
+				}
 
-			if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
-				return errors.Trace(err)
-			}
+				if err = checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+					return errors.Trace(err)
+				}
 
-			if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
-				return errors.Trace(err)
-			}
+				if err = checkPartitionFuncType(ctx, s, cols, tbInfo); err != nil {
+					return errors.Trace(err)
+				}
 
-			if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+				if err = checkRangePartitioningKeysConstraints(ctx, s, tbInfo, newConstraints); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		} else if pi.Type == model.PartitionTypeHash {
+			if err = checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1316,7 +1322,7 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(err)
 	}
 
-	err = checkAddPartitionTooManyPartitions(len(meta.Partition.Definitions) + len(partInfo.Definitions))
+	err = checkAddPartitionTooManyPartitions(uint64(len(meta.Partition.Definitions) + len(partInfo.Definitions)))
 	if err != nil {
 		return errors.Trace(err)
 	}

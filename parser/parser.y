@@ -1852,9 +1852,18 @@ PartitionOpt:
 	{
 		$$ = nil
 	}
-|	"PARTITION" "BY" "HASH" '(' Expression ')' PartitionNumOpt PartitionDefinitionListOpt
+|	"PARTITION" "BY" "HASH" '(' Expression ')' PartitionNumOpt
 	{
-		$$ = nil
+		tmp := &ast.PartitionOptions{
+			Tp: model.PartitionTypeHash,
+			Expr: $5.(ast.ExprNode),
+			// If you do not include a PARTITIONS clause, the number of partitions defaults to 1
+			Num: 1,
+		}
+		if $7 != nil {
+			tmp.Num = getUint64FromNUM($7)
+		}
+		$$ = tmp
 	}
 |	"PARTITION" "BY" "RANGE" '(' Expression ')' PartitionNumOpt SubPartitionOpt PartitionDefinitionListOpt
 	{
@@ -1894,9 +1903,13 @@ SubPartitionNumOpt:
 	{}
 
 PartitionNumOpt:
-	{}
+	{
+		$$ = nil
+	}
 |	"PARTITIONS" NUM
-	{}
+	{
+		$$ = $2
+	}
 
 PartitionDefinitionListOpt:
 	/* empty */ %prec lowerThanCreateTableSelect

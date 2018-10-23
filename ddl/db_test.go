@@ -1779,6 +1779,7 @@ func (s *testDBSuite) TestCreateTableWithHashPartition(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
 	s.tk.MustExec("drop table if exists employees;")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	s.tk.MustExec(`
 	create table employees (
 		id int not null,

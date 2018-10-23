@@ -890,4 +890,5 @@ type PartitionOptions struct {
 	Expr        ExprNode
 	ColumnNames []*ColumnName
 	Definitions []*PartitionDefinition
+	Num         uint64
 }

@@ -316,6 +316,7 @@ type PartitionInfo struct {
 	Enable bool `json:"enable"`
 
 	Definitions []PartitionDefinition `json:"definitions"`
+	Num         uint64                `json:"num"`
 }
 
 // GetNameByID gets the partition name by ID.
