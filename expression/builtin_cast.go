@@ -1545,6 +1545,9 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 	if err == nil {
 		res = new(types.MyDecimal)
 		err = res.FromFloat64(f64)
+		if err == nil {
+			err = res.Round(res, b.tp.Decimal, types.ModeHalfEven)
+		}
 	}
 	return res, false, errors.Trace(err)
 }
