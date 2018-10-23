@@ -98,7 +98,6 @@ var (
 	runDDL             = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease           = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 	tokenLimit         = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
-	characterSetServer = flag.String(nmCharacterSetServer, mysql.DefaultCharset, "the default character set")
 	collationServer    = flag.String(nmCollationServer, mysql.DefaultCollationName, "the default character collation")
 
 	// Log
@@ -308,9 +307,6 @@ func overrideConfig() {
 	if actualFlags[nmTokenLimit] {
 		cfg.TokenLimit = uint(*tokenLimit)
 	}
-	if actualFlags[nmCharacterSetServer] {
-		cfg.CharacterSetServer = *characterSetServer
-	}
 	if actualFlags[nmCollationServer] {
 		cfg.CollationServer = *collationServer
 	}
@@ -387,7 +383,7 @@ func validateConfig() error {
 		os.Exit(-1)
 	}
 
-	return mysql.ValidateDefaultCharsetCollation(cfg.CharacterSetServer, cfg.CollationServer)
+	return mysql.ValidateDefaultCollation(cfg.CollationServer)
 }
 
 func setGlobalVars() error {
@@ -422,7 +418,7 @@ func setGlobalVars() error {
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 
-	return mysql.SetDefaultCharsetCollation(cfg.CharacterSetServer, cfg.CollationServer)
+	return mysql.SetDefaultCollation(cfg.CollationServer)
 }
 
 func setupLog() {

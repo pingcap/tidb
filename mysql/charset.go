@@ -560,47 +560,41 @@ const (
 	UTF8MB4Charset       = "utf8mb4"
 	DefaultCollationID   = 83
 	BinaryCollationID    = 63
-	UTF8DefaultCollation = "utf8_bin"
+	UTF8MB4DefaultCollation = "utf8mb4_bin"
 
 	// MaxBytesOfCharacter, is the max bytes length of a character,
 	// refer to RFC3629, in UTF-8, characters from the U+0000..U+10FFFF range
 	// (the UTF-16 accessible range) are encoded using sequences of 1 to 4 octets.
 	MaxBytesOfCharacter = 4
+
+	// DefaultCharset is the Default collation for the server
+	// Originally TiDB used "utf8". However, "utf8mb4" is the correct term in the MySQL world.
+	DefaultCharset = UTF8MB4Charset
 )
 
 var (
-	// DefaultCharset is the Default collation for the server
-	// This can be changes in the server configuration
-	DefaultCharset = UTF8Charset
 	// DefaultCollationName is the Default collation for the server
 	// This can be changes in the server configuration
-	DefaultCollationName = UTF8DefaultCollation
+	DefaultCollationName = UTF8MB4DefaultCollation
 )
 
-// ValidateDefaultCharsetCollation checks if this charset and collation are accepted by TiDB.
-func ValidateDefaultCharsetCollation(charset string, collation string) error {
-	if _, ok := Charsets[charset]; !ok {
-		return errors.Errorf("not a valid charset: %s", charset)
-	}
+// ValidateDefaultCollation checks if this collation is accepted by TiDB.
+func ValidateDefaultCollation(collation string) error {
 	if _, ok := CollationNames[collation]; !ok {
 		return errors.Errorf("not a valid collation: %s", collation)
 	}
-	if charset != UTF8Charset && charset != UTF8MB4Charset {
-		return errors.Errorf("only utf8 and utf8mb4 are alowed as the default charset, got: %s", charset)
-	}
-	if !strings.HasPrefix(collation, charset) {
-		return errors.Errorf("collation %s is not valid for charset: %s", collation, charset)
+	if !strings.HasPrefix(collation, DefaultCharset) && !strings.HasPrefix(collation, "utf8") {
+		return errors.Errorf("collation %s is not valid because it is not utf8(mb4):", collation)
 	}
 	return nil
 }
 
-// SetDefaultCharsetCollation updates the default charset for the system.
+// SetDefaultCollation changes the default collation for the system.
 // This should only be changed at startup.
-func SetDefaultCharsetCollation(charset string, collation string) error {
-	if err := ValidateDefaultCharsetCollation(charset, collation); err != nil {
+func SetDefaultCollation(collation string) error {
+	if err := ValidateDefaultCollation(collation); err != nil {
 		return err
 	}
-	DefaultCharset = charset
 	DefaultCollationName = collation
 	return nil
 }
