@@ -418,6 +418,25 @@ func (s *testSuite) TestShow(c *C) {
 			"  `val` tinyint(10) UNSIGNED ZEROFILL DEFAULT NULL,\n"+
 			"  PRIMARY KEY (`id`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
+
+	// Test show columns with different types of default value
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(
+		c1 int default 1,
+		c2 int default b'010',
+		c3 bigint default x'A7',
+		c4 bit(8) default b'00110001',
+		c5 varchar(6) default b'00110001',
+		c6 varchar(6) default '\'C6\''
+	);`)
+	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep(",",
+		"c1,int(11),YES,,1,",
+		"c2,int(11),YES,,2,",
+		"c3,bigint(20),YES,,167,",
+		"c4,bit(8),YES,,b'110001',",
+		"c5,varchar(6),YES,,1,",
+		"c6,varchar(6),YES,,'C6',",
+	))
 }
 
 func (s *testSuite) TestShowVisibility(c *C) {
