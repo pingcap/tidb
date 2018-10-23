@@ -3659,3 +3659,13 @@ func (s *testIntegrationSuite) TestDecimalMul(c *C) {
 	res := tk.MustQuery("select * from t;")
 	res.Check(testkit.Rows("0.55125221922461136"))
 }
+
+func (s *testIntegrationSuite) TestValuesInNonInsertStmt(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint);")
+	tk.MustExec("insert into t values(1);")
+	res := tk.MustQuery("select values(a) from t;")
+	res.Check(testkit.Rows("<nil>"))
+}

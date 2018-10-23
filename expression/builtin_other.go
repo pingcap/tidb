@@ -512,6 +512,9 @@ func (b *builtinValuesIntSig) Clone() builtinFunc {
 // evalInt evals a builtinValuesIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesIntSig) evalInt(_ chunk.Row) (int64, bool, error) {
+	if !b.ctx.GetSessionVars().StmtCtx.InInsertStmt {
+		return 0, true, nil
+	}
 	row := b.ctx.GetSessionVars().CurrInsertValues
 	if row.IsEmpty() {
 		return 0, true, errors.New("Session current insert values is nil")
