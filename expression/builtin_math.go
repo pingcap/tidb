@@ -1833,10 +1833,9 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if d >= 0 {
 		return x, false, nil
-	} else {
-		shift := int64(math.Pow10(int(-d)))
-		return x / shift * shift, false, nil
 	}
+	shift := int64(math.Pow10(int(-d)))
+	return x / shift * shift, false, nil
 }
 
 func (b *builtinTruncateUintSig) Clone() builtinFunc {
@@ -1864,8 +1863,7 @@ func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	if d >= 0 {
 		return x, false, nil
-	} else {
-		shift := uint64(math.Pow10(int(-d)))
-		return int64(uintx / shift * shift), false, nil
 	}
+	shift := uint64(math.Pow10(int(-d)))
+	return int64(uintx / shift * shift), false, nil
 }
