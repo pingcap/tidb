@@ -45,7 +45,7 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin) LogicalPla
 
 func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, isLeft int) LogicalPlan {
 	// outer join elimination with distinct
-	if o.hasDistinct > 1 {
+	if o.hasDistinct > 0 {
 		cols := o.cols[o.hasDistinct-1]
 		allColsInSchema := true
 		for _, col := range cols {
