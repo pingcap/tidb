@@ -872,6 +872,8 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select now(6)", true},
 		{"select sysdate(), sysdate(6)", true},
 		{"SELECT time('01:02:03');", true},
+		{"SELECT time('01:02:03.1')", true},
+		{"SELECT time('20.1')", true},
 		{"SELECT TIMEDIFF('2000:01:01 00:00:00', '2000:01:01 00:00:00.000001');", true},
 		{"SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01');", true},
 		{"SELECT TIMESTAMPDIFF(YEAR,'2002-05-01','2001-01-01');", true},
