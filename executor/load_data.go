@@ -80,7 +80,7 @@ func (e *LoadDataExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *LoadDataExec) Open(ctx context.Context) error {
-	if e.loadDataInfo.InsertColumns != nil {
+	if e.loadDataInfo.insertColumns != nil {
 		e.loadDataInfo.initEvalBuffer()
 	}
 	return nil

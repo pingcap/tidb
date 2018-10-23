@@ -180,7 +180,7 @@ func (e *ReplaceExec) exec(newRows [][]types.Datum) error {
 func (e *ReplaceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if len(e.children) > 0 && e.children[0] != nil {
-		return errors.Trace(e.insertRowsFromSelect(ctx, e.exec))
+		return e.insertRowsFromSelect(ctx, e.exec)
 	}
-	return errors.Trace(e.insertRows(e.exec))
+	return e.insertRows(e.exec)
 }

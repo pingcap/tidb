@@ -50,7 +50,7 @@ type InsertValues struct {
 	GenColumns []*ast.ColumnName
 	GenExprs   []expression.Expression
 
-	InsertColumns []*table.Column
+	insertColumns []*table.Column
 
 	// colDefaultVals is used to store casted default value.
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
@@ -120,9 +120,9 @@ func (e *InsertValues) initInsertColumns() error {
 	// Check column whether is specified only once.
 	err = table.CheckOnce(cols)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	e.InsertColumns = cols
+	e.insertColumns = cols
 	return nil
 }
 
@@ -228,15 +228,15 @@ func (e *InsertValues) evalRow(list []expression.Expression, rowIdx int) ([]type
 	e.evalBuffer.SetDatums(row...)
 	for i, expr := range list {
 		val, err := expr.Eval(e.evalBuffer.ToRow())
-		if err = e.handleErr(e.InsertColumns[i], &val, rowIdx, err); err != nil {
+		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, errors.Trace(err)
 		}
-		val1, err := table.CastValue(e.ctx, val, e.InsertColumns[i].ToInfo())
-		if err = e.handleErr(e.InsertColumns[i], &val, rowIdx, err); err != nil {
+		val1, err := table.CastValue(e.ctx, val, e.insertColumns[i].ToInfo())
+		if err = e.handleErr(e.insertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		offset := e.InsertColumns[i].Offset
+		offset := e.insertColumns[i].Offset
 		row[offset], hasValue[offset] = *val1.Copy(), true
 		e.evalBuffer.SetDatum(offset, val1)
 	}
@@ -332,12 +332,12 @@ func (e *InsertValues) getRow(vals []types.Datum) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
-		casted, err := table.CastValue(e.ctx, v, e.InsertColumns[i].ToInfo())
+		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo())
 		if e.filterErr(err) != nil {
 			return nil, errors.Trace(err)
 		}
 
-		offset := e.InsertColumns[i].Offset
+		offset := e.insertColumns[i].Offset
 		row[offset] = casted
 		hasValue[offset] = true
 	}

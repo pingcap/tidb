@@ -192,7 +192,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum) ([]types.Da
 		val, err := assign.Expr.Eval(e.evalBuffer.ToRow())
 
 		if err1 := e.handleErr(assign.Col.ColName, rowIdx, err); err1 != nil {
-			return nil, errors.Trace(err1)
+			return nil, err1
 		}
 		newRowData[assign.Col.Index] = *val.Copy()
 		e.evalBuffer.SetDatum(assign.Col.Index, val)

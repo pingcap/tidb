@@ -550,7 +550,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = err
 		return nil
 	}
 
@@ -579,14 +579,14 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 	}
 	err := insertVal.initInsertColumns()
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = err
 		return nil
 	}
 	loadDataExec := &LoadDataExec{
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		IsLocal:      v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
-			row:          make([]types.Datum, len(insertVal.InsertColumns)),
+			row:          make([]types.Datum, len(insertVal.insertColumns)),
 			InsertValues: insertVal,
 			Path:         v.Path,
 			Table:        tbl,
