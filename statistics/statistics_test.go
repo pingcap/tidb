@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -43,8 +44,8 @@ var _ = Suite(&testStatisticsSuite{})
 type testStatisticsSuite struct {
 	count   int
 	samples []types.Datum
-	rc      ast.RecordSet
-	pk      ast.RecordSet
+	rc      sqlexec.RecordSet
+	pk      sqlexec.RecordSet
 }
 
 type recordSet struct {
@@ -169,7 +170,7 @@ func encodeKey(key types.Datum) types.Datum {
 	return types.NewBytesDatum(buf)
 }
 
-func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, error) {
+func buildPK(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, error) {
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeLonglong))
 	ctx := context.Background()
 	for {
@@ -183,7 +184,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSe
 		}
 		it := chunk.NewIterator4Chunk(chk)
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			datums := ast.RowToDatums(row, records.Fields())
+			datums := RowToDatums(row, records.Fields())
 			err = b.Iterate(datums[0])
 			if err != nil {
 				return 0, nil, errors.Trace(err)
@@ -193,7 +194,7 @@ func buildPK(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSe
 	return b.Count, b.hist, nil
 }
 
-func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.RecordSet) (int64, *Histogram, *CMSketch, error) {
+func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.RecordSet) (int64, *Histogram, *CMSketch, error) {
 	b := NewSortedBuilder(sctx.GetSessionVars().StmtCtx, numBuckets, id, types.NewFieldType(mysql.TypeBlob))
 	cms := NewCMSketch(8, 2048)
 	ctx := context.Background()
@@ -208,7 +209,7 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records ast.Recor
 			break
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			datums := ast.RowToDatums(row, records.Fields())
+			datums := RowToDatums(row, records.Fields())
 			buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
 			if err != nil {
 				return 0, nil, nil, errors.Trace(err)
@@ -282,7 +283,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	checkRepeats(c, col)
 	c.Assert(col.Len(), Equals, 250)
 
-	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, ast.RecordSet(s.rc))
+	tblCount, col, _, err := buildIndex(ctx, bucketCount, 1, sqlexec.RecordSet(s.rc))
 	c.Check(err, IsNil)
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
@@ -299,7 +300,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 	c.Check(int(count), Equals, 0)
 
 	s.pk.(*recordSet).cursor = 0
-	tblCount, col, err = buildPK(ctx, bucketCount, 4, ast.RecordSet(s.pk))
+	tblCount, col, err = buildPK(ctx, bucketCount, 4, sqlexec.RecordSet(s.pk))
 	c.Check(err, IsNil)
 	checkRepeats(c, col)
 	col.PreCalculateScalar()
@@ -338,7 +339,7 @@ func (s *testStatisticsSuite) TestBuild(c *C) {
 func (s *testStatisticsSuite) TestHistogramProtoConversion(c *C) {
 	ctx := mock.NewContext()
 	s.rc.Close()
-	tblCount, col, _, err := buildIndex(ctx, 256, 1, ast.RecordSet(s.rc))
+	tblCount, col, _, err := buildIndex(ctx, 256, 1, sqlexec.RecordSet(s.rc))
 	c.Check(err, IsNil)
 	c.Check(int(tblCount), Equals, 100000)
 

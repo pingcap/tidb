@@ -1003,6 +1003,41 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
 }
 
+func (s *testStatsUpdateSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (6))")
+	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("insert into t values (3,5)")
+	h := s.do.StatsHandle()
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability = 1
+
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	testKit.MustQuery("select * from t where a > 1")
+
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+
+	tblInfo := table.Meta()
+	pid := tblInfo.Partition.Definitions[0].ID
+	tbl := h.GetPartitionStats(tblInfo, pid)
+
+	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
+		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
+		"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1\n"+
+		"num: 2 lower_bound: 3 upper_bound: 9223372036854775807 repeats: 0")
+}
+
 type logHook struct {
 	results string
 }
