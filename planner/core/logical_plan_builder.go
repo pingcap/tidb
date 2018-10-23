@@ -1836,6 +1836,15 @@ func (b *PlanBuilder) buildDataSource(tn *ast.TableName) (LogicalPlan, error) {
 	tableInfo := tbl.Meta()
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "")
 
+	if tableInfo.Type == model.View {
+		parser := parser.New()
+		stmt, parserErr := parser.ParseOneStmt(tableInfo.ViewSelectStmt, "", "")
+		if parserErr != nil {
+			return nil, errors.Trace(parserErr)
+		}
+		return b.buildSelect(stmt.(*ast.SelectStmt))
+	}
+
 	if tableInfo.GetPartitionInfo() != nil {
 		b.optFlag = b.optFlag | flagPartitionProcessor
 	}
