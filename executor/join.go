@@ -640,21 +640,19 @@ func (e *HashJoinExec) fetchInnerAndBuildHashTable(ctx context.Context) {
 	// table.
 	innerResultCh := make(chan *chunk.Chunk, e.joinConcurrency)
 	doneCh := make(chan struct{})
+	// TODO: just for test used in test now, thus we return directly in this if-branch.
 	if e.ctx.GetSessionVars().EnableRadixJoin {
 		go util.WithRecovery(func() {
 			e.fetchInnerRows(ctx, innerResultCh, doneCh)
 			if !e.evalRadixBit() {
-				// FIXME: we should not return directly here.
 				return
 			}
-			// FIXME: handle err here
 			e.partitionInnerRows()
 		}, nil)
-		// FIXME: just for test, we should not return directly here.
 		return
-	} else {
-		go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
 	}
+
+	go util.WithRecovery(func() { e.fetchInnerRows(ctx, innerResultCh, doneCh) }, nil)
 
 	if e.finished.Load().(bool) {
 		return
