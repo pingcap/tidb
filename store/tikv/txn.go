@@ -75,7 +75,7 @@ func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.snapshot.vars = vars
 }
 
-// SetMemBufCap sets the transaction's MemBuffer capability, to reduce memory allocations.
+// SetCap sets the transaction's MemBuffer capability, to reduce memory allocations.
 func (txn *tikvTxn) SetCap(cap int) {
 	txn.us.SetCap(cap)
 }

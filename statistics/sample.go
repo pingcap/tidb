@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -132,7 +133,7 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 // Also, if primary key is handle, it will directly build histogram for it.
 type SampleBuilder struct {
 	Sc              *stmtctx.StatementContext
-	RecordSet       ast.RecordSet
+	RecordSet       sqlexec.RecordSet
 	ColLen          int // ColLen is the number of columns need to be sampled.
 	PkBuilder       *SortedBuilder
 	MaxBucketSize   int64
@@ -175,7 +176,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			panic(fmt.Sprintf("%T", s.RecordSet))
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			datums := ast.RowToDatums(row, s.RecordSet.Fields())
+			datums := RowToDatums(row, s.RecordSet.Fields())
 			if s.PkBuilder != nil {
 				err = s.PkBuilder.Iterate(datums[0])
 				if err != nil {
@@ -191,4 +192,13 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			}
 		}
 	}
+}
+
+// RowToDatums converts row to datum slice.
+func RowToDatums(row chunk.Row, fields []*ast.ResultField) []types.Datum {
+	datums := make([]types.Datum, len(fields))
+	for i, f := range fields {
+		datums[i] = row.GetDatum(i, &f.Column.FieldType)
+	}
+	return datums
 }
