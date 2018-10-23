@@ -150,9 +150,13 @@ func (s *pkgTestSuite) TestRadixPartition(c *C) {
 		outerExec:       childExec1,
 	}
 	sv := sctx.GetSessionVars()
+	originL2CacheSize, originEnableRadixJoin, originMaxChunkSize := sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize
 	sv.L2CacheSize = 100
 	sv.EnableRadixJoin = true
 	sv.MaxChunkSize = 100
+	defer func() {
+		sv.L2CacheSize, sv.EnableRadixJoin, sv.MaxChunkSize = originL2CacheSize, originEnableRadixJoin, originMaxChunkSize
+	}()
 	sv.StmtCtx.MemTracker = memory.NewTracker("RootMemTracker", variable.DefTiDBMemQuotaHashJoin)
 
 	ctx := context.Background()
