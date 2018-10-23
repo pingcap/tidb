@@ -548,6 +548,11 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
 		hasRefCols:   v.NeedFillDefaultValue,
 		SelectExec:   selectExec,
 	}
+	err := ivs.initInsertColumns()
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
 
 	if v.IsReplace {
 		return b.buildReplace(ivs)
@@ -572,8 +577,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		GenColumns:   v.GenCols.Columns,
 		GenExprs:     v.GenCols.Exprs,
 	}
-	tableCols := tbl.Cols()
-	columns, err := insertVal.getColumns(tableCols)
+	err := insertVal.initInsertColumns()
 	if err != nil {
 		b.err = errors.Trace(err)
 		return nil
@@ -582,7 +586,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		IsLocal:      v.IsLocal,
 		loadDataInfo: &LoadDataInfo{
-			row:          make([]types.Datum, len(columns)),
+			row:          make([]types.Datum, len(insertVal.InsertColumns)),
 			InsertValues: insertVal,
 			Path:         v.Path,
 			Table:        tbl,
@@ -590,7 +594,6 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 			LinesInfo:    v.LinesInfo,
 			IgnoreLines:  v.IgnoreLines,
 			Ctx:          b.ctx,
-			columns:      columns,
 		},
 	}
 

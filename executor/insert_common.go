@@ -50,6 +50,8 @@ type InsertValues struct {
 	GenColumns []*ast.ColumnName
 	GenExprs   []expression.Expression
 
+	InsertColumns []*table.Column
+
 	// colDefaultVals is used to store casted default value.
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
 	colDefaultVals  []defaultVal
@@ -63,15 +65,17 @@ type defaultVal struct {
 	valid bool
 }
 
-// getColumns gets the explicitly specified columns of an insert statement. There are three cases:
+// initInsertColumns sets the explicitly specified columns of an insert statement. There are three cases:
 // There are three types of insert statements:
 // 1 insert ... values(...)  --> name type column
 // 2 insert ... set x=y...   --> set type column
 // 3 insert ... (select ..)  --> name type column
 // See https://dev.mysql.com/doc/refman/5.7/en/insert.html
-func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, error) {
+func (e *InsertValues) initInsertColumns() error {
 	var cols []*table.Column
 	var err error
+
+	tableCols := e.Table.Cols()
 
 	if len(e.SetList) > 0 {
 		// Process `set` type column.
@@ -84,10 +88,10 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		}
 		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if err != nil {
-			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
+			return errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
 		if len(cols) == 0 {
-			return nil, errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
+			return errors.Errorf("INSERT INTO %s: empty column", e.Table.Meta().Name.O)
 		}
 	} else if len(e.Columns) > 0 {
 		// Process `name` type column.
@@ -100,7 +104,7 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 		}
 		cols, err = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
 		if err != nil {
-			return nil, errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
+			return errors.Errorf("INSERT INTO %s: %s", e.Table.Meta().Name.O, err)
 		}
 	} else {
 		// If e.Columns are empty, use all columns instead.
@@ -116,12 +120,10 @@ func (e *InsertValues) getColumns(tableCols []*table.Column) ([]*table.Column, e
 	// Check column whether is specified only once.
 	err = table.CheckOnce(cols)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-
-	e.initEvalBuffer()
-
-	return cols, nil
+	e.InsertColumns = cols
+	return nil
 }
 
 func (e *InsertValues) initEvalBuffer() {
@@ -173,7 +175,7 @@ func (e *InsertValues) processSetList() error {
 }
 
 // insertRows processes `insert|replace into values ()` or `insert|replace into set x=y`
-func (e *InsertValues) insertRows(cols []*table.Column, exec func(rows [][]types.Datum) error) (err error) {
+func (e *InsertValues) insertRows(exec func(rows [][]types.Datum) error) (err error) {
 	// For `insert|replace into set x=y`, process the set list here.
 	if err = e.processSetList(); err != nil {
 		return errors.Trace(err)
@@ -182,7 +184,7 @@ func (e *InsertValues) insertRows(cols []*table.Column, exec func(rows [][]types
 	rows := make([][]types.Datum, 0, len(e.Lists))
 	for i, list := range e.Lists {
 		e.rowCount++
-		row, err := e.evalRow(cols, list, i)
+		row, err := e.evalRow(list, i)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -212,7 +214,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 
 // evalRow evaluates a to-be-inserted row. The value of the column may base on another column,
 // so we use setValueForRefColumn to fill the empty row some default values when needFillDefaultValues is true.
-func (e *InsertValues) evalRow(cols []*table.Column, list []expression.Expression, rowIdx int) ([]types.Datum, error) {
+func (e *InsertValues) evalRow(list []expression.Expression, rowIdx int) ([]types.Datum, error) {
 	rowLen := len(e.Table.Cols())
 	if e.hasExtraHandle {
 		rowLen++
@@ -230,15 +232,15 @@ func (e *InsertValues) evalRow(cols []*table.Column, list []expression.Expressio
 	e.evalBuffer.SetDatums(row...)
 	for i, expr := range list {
 		val, err := expr.Eval(e.evalBuffer.ToRow())
-		if err = e.handleErr(cols[i], &val, rowIdx, err); err != nil {
+		if err = e.handleErr(e.InsertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, errors.Trace(err)
 		}
-		val1, err := table.CastValue(e.ctx, val, cols[i].ToInfo())
-		if err = e.handleErr(cols[i], &val, rowIdx, err); err != nil {
+		val1, err := table.CastValue(e.ctx, val, e.InsertColumns[i].ToInfo())
+		if err = e.handleErr(e.InsertColumns[i], &val, rowIdx, err); err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		offset := cols[i].Offset
+		offset := e.InsertColumns[i].Offset
 		row[offset], hasValue[offset] = *val1.Copy(), true
 		e.evalBuffer.SetDatum(offset, val1)
 	}
@@ -276,7 +278,7 @@ func (e *InsertValues) setValueForRefColumn(row []types.Datum, hasValue []bool) 
 	return nil
 }
 
-func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.Column, exec func(rows [][]types.Datum) error) error {
+func (e *InsertValues) insertRowsFromSelect(ctx context.Context, exec func(rows [][]types.Datum) error) error {
 	// process `insert|replace into ... select ... from ...`
 	selectExec := e.children[0]
 	fields := selectExec.retTypes()
@@ -300,7 +302,7 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := types.CopyRow(innerChunkRow.GetDatumRow(fields))
 			e.rowCount++
-			row, err := e.getRow(cols, innerRow)
+			row, err := e.getRow(innerRow)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -330,16 +332,16 @@ func (e *InsertValues) insertRowsFromSelect(ctx context.Context, cols []*table.C
 // getRow gets the row which from `insert into select from` or `load data`.
 // The input values from these two statements are datums instead of
 // expressions which are used in `insert into set x=y`.
-func (e *InsertValues) getRow(cols []*table.Column, vals []types.Datum) ([]types.Datum, error) {
+func (e *InsertValues) getRow(vals []types.Datum) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
-		casted, err := table.CastValue(e.ctx, v, cols[i].ToInfo())
+		casted, err := table.CastValue(e.ctx, v, e.InsertColumns[i].ToInfo())
 		if e.filterErr(err) != nil {
 			return nil, errors.Trace(err)
 		}
 
-		offset := cols[i].Offset
+		offset := e.InsertColumns[i].Offset
 		row[offset] = casted
 		hasValue[offset] = true
 	}
