@@ -96,9 +96,9 @@ func (rd RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, d
 			return nil, errors.Trace(err)
 		}
 
-		if val.Kind() == types.KindMysqlTime {
+		if val.Kind() == types.KindMysqlTime && sysLoc != time.UTC {
 			t := val.GetMysqlTime()
-			if t.Type == mysql.TypeTimestamp && sysLoc != time.UTC {
+			if t.Type == mysql.TypeTimestamp {
 				err := t.ConvertTimeZone(sysLoc, time.UTC)
 				if err != nil {
 					return nil, errors.Trace(err)
