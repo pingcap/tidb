@@ -15,9 +15,12 @@ package executor_test
 
 import (
 	"fmt"
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/model"
+	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testkit"
@@ -83,4 +86,22 @@ func (s *testSuite) TestAnalyzeParameters(c *C) {
 	tk.MustExec("analyze table t with 4 buckets")
 	tbl = s.domain.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(tbl.Columns[1].Len(), Equals, 4)
+}
+
+func (s *testSuite) TestAnalyzeTooLongColumns(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a json)")
+	value := fmt.Sprintf(`{"x":"%s"}`, strings.Repeat("x", mysql.MaxFieldVarCharLength))
+	tk.MustExec(fmt.Sprintf("insert into t values ('%s')", value))
+
+	tk.MustExec("analyze table t")
+	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := table.Meta()
+	tbl := s.domain.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(tbl.Columns[1].Len(), Equals, 0)
+	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(65559))
 }
