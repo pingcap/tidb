@@ -69,7 +69,7 @@ func (e *baseVarianceDecimal) AllocPartialResult() PartialResult {
 func (e *baseVarianceDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4VarianceDecimal)(pr)
 	p.sum, p.variance = *types.NewDecFromInt(0), *types.NewDecFromInt(0)
-	p.count = int64(0)
+	p.count = 0
 }
 
 func (e *baseVarianceDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -220,7 +220,7 @@ func (e *varianceOriginal4DistinctDecimal) AllocPartialResult() PartialResult {
 func (e *varianceOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4VarianceDistinctDecimal)(pr)
 	p.sum, p.variance = *types.NewDecFromInt(0), *types.NewDecFromInt(0)
-	p.count = int64(0)
+	p.count = 0
 	p.valSet = set.NewDecimalSet()
 }
 

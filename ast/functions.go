@@ -482,10 +482,6 @@ const (
 	AggFuncBitXor = "bit_xor"
 	// AggFuncBitAnd is the name of bit_and function.
 	AggFuncBitAnd = "bit_and"
-	// AggFuncStd is the name of std function
-	AggFuncStd = "std"
-	// AggFuncStddev is the name of stddev function
-	AggFuncStddev = "stddev"
 	// AggFuncStddevPop is the name of stddev_pop function
 	AggFuncStddevPop = "stddev_pop"
 	// AggFuncStddevSamp is the name of stddev_samp function

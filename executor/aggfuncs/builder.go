@@ -52,7 +52,7 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitXor(aggFuncDesc, ordinal)
 	case ast.AggFuncBitAnd:
 		return buildBitAnd(aggFuncDesc, ordinal)
-	case ast.AggFuncStddevPop, ast.AggFuncStd, ast.AggFuncStddev:
+	case ast.AggFuncStddevPop:
 		return buildStddevPop(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevSamp:
 		return buildStddevSamp(aggFuncDesc, ordinal)
@@ -324,38 +324,28 @@ func buildStddevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
+
+	varianceDecimal := baseVarianceDecimal{base, varianceStdPop}
+	varianceFloat64 := baseVarianceFloat64{base, varianceStdPop}
 	switch aggFuncDesc.Mode {
 	// Build stddev_pop functions which consume the original data and remove the
 	// duplicated input of the same group.
 	case aggregation.DedupMode:
 		return nil // not implemented yet.
-
 	// Build stddev_pop functions which consume the original data and update their
 	// partial results.
 	case aggregation.CompleteMode, aggregation.Partial1Mode:
 		switch aggFuncDesc.RetTp.EvalType() {
 		case types.ETDecimal:
 			if aggFuncDesc.HasDistinct {
-				return &varianceOriginal4DistinctDecimal{baseVarianceDecimal{
-					base,
-					varianceStdPop,
-				}}
+				return &varianceOriginal4DistinctDecimal{varianceDecimal}
 			}
-			return &varianceOriginal4Decimal{baseVarianceDecimal{
-				base,
-				varianceStdPop,
-			}}
+			return &varianceOriginal4Decimal{varianceDecimal}
 		default:
 			if aggFuncDesc.HasDistinct {
-				return &varianceOriginal4DistinctFloat64{baseVarianceFloat64{
-					base,
-					varianceStdPop,
-				}}
+				return &varianceOriginal4DistinctFloat64{varianceFloat64}
 			}
-			return &varianceOriginal4Float64{baseVarianceFloat64{
-				base,
-				varianceStdPop,
-			}}
+			return &varianceOriginal4Float64{varianceFloat64}
 		}
 
 	// Build stddev_samp functions which consume the partial result of other avg
@@ -363,15 +353,9 @@ func buildStddevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	case aggregation.Partial2Mode, aggregation.FinalMode:
 		switch aggFuncDesc.RetTp.Tp {
 		case mysql.TypeNewDecimal:
-			return &variancePartial4Decimal{baseVarianceDecimal{
-				base,
-				varianceStdPop,
-			}}
+			return &variancePartial4Decimal{varianceDecimal}
 		case mysql.TypeDouble:
-			return &variancePartial4Float64{baseVarianceFloat64{
-				base,
-				varianceStdPop,
-			}}
+			return &variancePartial4Float64{varianceFloat64}
 		}
 	}
 	return nil
@@ -383,38 +367,27 @@ func buildStddevSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc 
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
+	varianceDecimal := baseVarianceDecimal{base, varianceStdSamp}
+	varianceFloat64 := baseVarianceFloat64{base, varianceStdSamp}
 	switch aggFuncDesc.Mode {
 	// Build stddev_samp functions which consume the original data and remove the
 	// duplicated input of the same group.
 	case aggregation.DedupMode:
 		return nil // not implemented yet.
-
 	// Build stddev_samp functions which consume the original data and update their
 	// partial results.
 	case aggregation.CompleteMode, aggregation.Partial1Mode:
 		switch aggFuncDesc.RetTp.EvalType() {
 		case types.ETDecimal:
 			if aggFuncDesc.HasDistinct {
-				return &varianceOriginal4DistinctDecimal{baseVarianceDecimal{
-					base,
-					varianceStdSamp,
-				}}
+				return &varianceOriginal4DistinctDecimal{varianceDecimal}
 			}
-			return &varianceOriginal4Decimal{baseVarianceDecimal{
-				base,
-				varianceStdSamp,
-			}}
+			return &varianceOriginal4Decimal{varianceDecimal}
 		default:
 			if aggFuncDesc.HasDistinct {
-				return &varianceOriginal4DistinctFloat64{baseVarianceFloat64{
-					base,
-					varianceStdSamp,
-				}}
+				return &varianceOriginal4DistinctFloat64{varianceFloat64}
 			}
-			return &varianceOriginal4Float64{baseVarianceFloat64{
-				base,
-				varianceStdSamp,
-			}}
+			return &varianceOriginal4Float64{varianceFloat64}
 		}
 
 	// Build stddev_samp functions which consume the partial result of other avg
@@ -422,15 +395,9 @@ func buildStddevSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc 
 	case aggregation.Partial2Mode, aggregation.FinalMode:
 		switch aggFuncDesc.RetTp.Tp {
 		case mysql.TypeNewDecimal:
-			return &variancePartial4Decimal{baseVarianceDecimal{
-				base,
-				varianceStdSamp,
-			}}
+			return &variancePartial4Decimal{varianceDecimal}
 		case mysql.TypeDouble:
-			return &variancePartial4Float64{baseVarianceFloat64{
-				base,
-				varianceStdSamp,
-			}}
+			return &variancePartial4Float64{varianceFloat64}
 		}
 	}
 	return nil

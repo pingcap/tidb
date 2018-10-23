@@ -156,7 +156,7 @@ func (a *AggFuncDesc) typeInfer(ctx sessionctx.Context) {
 		a.typeInfer4MaxMin(ctx)
 	case ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		a.typeInfer4BitFuncs(ctx)
-	case ast.AggFuncStd, ast.AggFuncStddev, ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
+	case ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
 		a.typeInfer4Stddev(ctx)
 	default:
 		panic("unsupported agg function: " + a.Name)
@@ -203,8 +203,7 @@ func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx sessionctx.Context, schema *e
 	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin,
 		ast.AggFuncFirstRow:
 		return a.evalNullValueInOuterJoin4Sum(ctx, schema)
-	case ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncStd,
-		ast.AggFuncStddev, ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
+	case ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
 		return types.Datum{}, false
 	case ast.AggFuncBitAnd:
 		return a.evalNullValueInOuterJoin4BitAnd(ctx, schema)
@@ -236,8 +235,7 @@ func (a *AggFuncDesc) GetDefaultValue() (v types.Datum) {
 	case ast.AggFuncCount, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		v = types.NewIntDatum(0)
 	case ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMax,
-		ast.AggFuncMin, ast.AggFuncGroupConcat, ast.AggFuncStd, ast.AggFuncStddev,
-		ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
+		ast.AggFuncMin, ast.AggFuncGroupConcat, ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
 		v = types.Datum{}
 	case ast.AggFuncBitAnd:
 		v = types.NewUintDatum(uint64(math.MaxUint64))
@@ -280,7 +278,7 @@ func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 		return &bitXorFunction{aggFunction: aggFunc}
 	case ast.AggFuncBitAnd:
 		return &bitAndFunction{aggFunction: aggFunc}
-	case ast.AggFuncStd, ast.AggFuncStddev, ast.AggFuncStddevPop:
+	case ast.AggFuncStddevPop:
 		return &stddevPopFunction{baseVarianceFunction{aggFunction: aggFunc}}
 	case ast.AggFuncStddevSamp:
 		return &stddevSampFunction{baseVarianceFunction{aggFunction: aggFunc}}

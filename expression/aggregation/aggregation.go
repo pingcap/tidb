@@ -89,8 +89,8 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 		return &bitXorFunction{aggFunction: newAggFunc(ast.AggFuncBitXor, args, false)}, nil
 	case tipb.ExprType_Agg_BitAnd:
 		return &bitAndFunction{aggFunction: newAggFunc(ast.AggFuncBitAnd, args, false)}, nil
-	case tipb.ExprType_Std, tipb.ExprType_Stddev, tipb.ExprType_StddevPop:
-		return &stddevPopFunction{baseVarianceFunction{aggFunction: newAggFunc(ast.AggFuncStddev, args, false)}}, nil
+	case tipb.ExprType_StddevPop:
+		return &stddevPopFunction{baseVarianceFunction{aggFunction: newAggFunc(ast.AggFuncStddevPop, args, false)}}, nil
 	case tipb.ExprType_StddevSamp:
 		return &stddevSampFunction{baseVarianceFunction{aggFunction: newAggFunc(ast.AggFuncStddevSamp, args, false)}}, nil
 	}

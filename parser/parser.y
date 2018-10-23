@@ -3855,7 +3855,7 @@ SumExpr:
 	}
 |	builtinStddevPop '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
+		$$ = &ast.AggregateFuncExpr{F: ast.AggFuncStddevPop, Args: []ast.ExprNode{$4}, Distinct: $3.(bool)}
 	}
 |	builtinStddevSamp '(' BuggyDefaultFalseDistinctOpt Expression ')'
 	{
