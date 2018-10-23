@@ -42,7 +42,7 @@ type UpdateExec struct {
 	// columns2Handle stores relationship between column ordinal to its table handle.
 	// the columns ordinals is present in ordinal range format, @see executor.cols2Handle
 	columns2Handle cols2HandleSlice
-	evalBuffer     *chunk.MutRow
+	evalBuffer     chunk.MutRow
 }
 
 func (e *UpdateExec) exec(schema *expression.Schema) ([]types.Datum, error) {
@@ -142,8 +142,7 @@ func (e *UpdateExec) fetchChunkRows(ctx context.Context) error {
 	fields := e.children[0].retTypes()
 	globalRowIdx := 0
 	chk := e.children[0].newFirstChunk()
-	mutChunk := chunk.MutRowFromTypes(fields)
-	e.evalBuffer = &mutChunk
+	e.evalBuffer = chunk.MutRowFromTypes(fields)
 	for {
 		err := e.children[0].Next(ctx, chk)
 		if err != nil {

@@ -36,14 +36,6 @@ const (
 	scalarFunctionFlag byte = 3
 )
 
-// Flag represents expression's property.
-type Flag byte
-
-const (
-	// FlagHoldChunkMemory indicates expression return result maybe returned by unsafe operation over chunk.
-	FlagHoldChunkMemory Flag = 1 << iota
-)
-
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 

@@ -49,12 +49,11 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, args []Expression) baseBuiltinFu
 	if ctx == nil {
 		panic("ctx should not be nil")
 	}
-	fn := baseBuiltinFunc{
+	return baseBuiltinFunc{
 		args: args,
 		ctx:  ctx,
 		tp:   types.NewFieldType(mysql.TypeUnspecified),
 	}
-	return fn
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
@@ -152,12 +151,11 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, args []Expression, retType
 	} else {
 		fieldType.Charset, fieldType.Collate = charset.CharsetUTF8, charset.CharsetUTF8
 	}
-	fn := baseBuiltinFunc{
+	return baseBuiltinFunc{
 		args: args,
 		ctx:  ctx,
 		tp:   fieldType,
 	}
-	return fn
 }
 
 func (b *baseBuiltinFunc) getArgs() []Expression {
