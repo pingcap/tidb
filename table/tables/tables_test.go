@@ -339,9 +339,7 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p3 VALUES LESS THAN (21)
 )`
 
-	_, err := ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
+	_, err := ts.se.Execute(context.Background(), "drop table if exists t1;")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
@@ -408,9 +406,7 @@ PARTITION BY RANGE ( id ) (
 		PARTITION p3 VALUES LESS THAN (21)
 )`
 
-	_, err := ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
-	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "Drop table if exists test.t1;")
+	_, err := ts.se.Execute(context.Background(), "Drop table if exists test.t1;")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), createTable1)
 	c.Assert(err, IsNil)
@@ -428,7 +424,6 @@ PARTITION BY RANGE ( id ) (
 func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	_, err := ts.se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	_, err = ts.se.Execute(context.Background(), "set @@session.tidb_enable_table_partition=1")
 	c.Assert(err, IsNil)
 	_, err = ts.se.Execute(context.Background(), "drop table if exists t1;")
 	c.Assert(err, IsNil)

@@ -308,7 +308,6 @@ func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
 func (s *testStatsUpdateSuite) TestUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	createTable := `CREATE TABLE t (a int, b char(5)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))`
@@ -460,7 +459,6 @@ func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 func (s *testStatsUpdateSuite) TestAutoUpdatePartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
@@ -774,7 +772,6 @@ func (s *testStatsUpdateSuite) TestQueryFeedbackForPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
 	testKit.MustExec(`create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))
 			    partition by range (a) (
 			    partition p0 values less than (3),

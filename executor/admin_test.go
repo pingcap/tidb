@@ -447,7 +447,6 @@ func (s *testSuite) TestAdminCheckTable(c *C) {
 
 	// Test partitioned table.
 	tk.MustExec(`drop table if exists test`)
-	tk.MustExec(`set @@tidb_enable_table_partition = 1`)
 	tk.MustExec(`create table test (
 		      a int not null,
 		      c int not null,

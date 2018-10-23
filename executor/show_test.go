@@ -596,7 +596,6 @@ func (s *testSuite) TestShowTableStatus(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint);`)
 

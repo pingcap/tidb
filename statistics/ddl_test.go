@@ -175,7 +175,6 @@ func (s *testStatsCacheSuite) TestDDLHistogram(c *C) {
 func (s *testStatsCacheSuite) TestDDLPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
-	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))

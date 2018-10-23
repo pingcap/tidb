@@ -556,7 +556,6 @@ func (s *testDBSuite) TestAddIndex(c *C) {
 func (s *testDBSuite) testAddIndex(c *C, testPartition bool, createTableSQL string) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("set @@tidb_enable_table_partition = 1")
 	s.tk.MustExec("drop table if exists test_add_index")
 	s.tk.MustExec(createTableSQL)
 
@@ -2624,7 +2623,6 @@ func (s *testDBSuite) TestBackwardCompatibility(c *C) {
 func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	s.tk.MustExec("drop table if exists employees;")
 	s.tk.MustExec(`create table employees (
 	id int not null,
@@ -2725,7 +2723,6 @@ func (s *testDBSuite) TestAlterTableAddPartition(c *C) {
 func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	s.tk.MustExec("drop table if exists employees")
 	s.tk.MustExec(`create table employees (
 	id int not null,
@@ -2863,7 +2860,6 @@ func (s *testDBSuite) TestAlterTableDropPartition(c *C) {
 func (s *testDBSuite) TestAddPartitionTooManyPartitions(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	count := ddl.PartitionCountLimit
 	s.tk.MustExec("drop table if exists p1;")
 	sql1 := `create table p1 (
@@ -2946,7 +2942,6 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 
 	// Test truncate table partition.
 	s.tk.MustExec("drop table if exists t3;")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec(`create table t3(
 		id int, name varchar(50), 
 		purchased date
@@ -2985,7 +2980,6 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 
 	// Test drop table partition.
 	s.tk.MustExec("drop table if exists t4;")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec(`create table t4(
 		id int, name varchar(50), 
 		purchased date
@@ -3026,7 +3020,6 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test;")
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec("drop table if exists part1;")
 	s.tk.MustExec(`create table part1 (
 		col1 int not null,
@@ -3219,7 +3212,6 @@ func (s *testDBSuite) TestPartitionDropIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	done := make(chan error, 1)
 	s.tk.MustExec("use " + s.schemaName)
-	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	s.tk.MustExec("drop table if exists partition_drop_idx;")
 	s.tk.MustExec(`create table partition_drop_idx (
 		c1 int, c2 int, c3 int
@@ -3299,7 +3291,6 @@ LOOP:
 func (s *testDBSuite) TestPartitionCancelAddIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.mustExec(c, "use test_db")
-	s.mustExec(c, "set @@session.tidb_enable_table_partition=1;")
 	s.mustExec(c, "drop table if exists t1;")
 	s.mustExec(c, `create table t1 (
 		c1 int, c2 int, c3 int
@@ -3538,7 +3529,6 @@ LOOP:
 func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition=1;")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
 	hired date not null

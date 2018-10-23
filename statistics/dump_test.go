@@ -79,7 +79,6 @@ func (s *testDumpStatsSuite) TestConversion(c *C) {
 func (s *testDumpStatsSuite) TestDumpPartitions(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@session.tidb_enable_table_partition=1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))

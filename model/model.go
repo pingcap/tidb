@@ -284,6 +284,7 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 type PartitionType int
 
 // Partition types.
+// The type value is persisted in the store, DO NOT change them.
 const (
 	PartitionTypeRange PartitionType = 1
 	PartitionTypeHash  PartitionType = 2
