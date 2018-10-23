@@ -678,7 +678,7 @@ func (b *planBuilder) buildProjection4Union(u *LogicalUnionAll) {
 		}
 		b.optFlag |= flagEliminateProjection
 		proj := LogicalProjection{Exprs: exprs}.init(b.ctx)
-		proj.SetSchema(expression.NewSchema(unionCols...))
+		proj.SetSchema(u.schema.Clone())
 		proj.SetChildren(child)
 		u.children[childID] = proj
 	}
