@@ -67,7 +67,7 @@ type CheckTable struct {
 
 	Tables []*ast.TableName
 
-	GenExprs map[string]expression.Expression
+	GenExprs map[model.TableColumnID]expression.Expression
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
