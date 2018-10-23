@@ -2091,3 +2091,17 @@ func (s *testSuite) TestRebaseIfNeeded(c *C) {
 	tk.MustExec(`insert into t (b) values (6);`)
 	tk.MustQuery(`select a from t where b = 6;`).Check(testkit.Rows("30003"))
 }
+
+func (s *testSuite) TestDeferConstraintCheckForInsert(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t;create table t (i int key);`)
+	tk.MustExec(`insert t values (1);`)
+	tk.MustExec(`set tidb_constraint_check_in_place = 1;`)
+	tk.MustExec(`begin;`)
+	_, err := tk.Exec(`insert t values (1);`)
+	c.Assert(err, NotNil)
+	tk.MustExec(`update t set i = 2 where i = 1;`)
+	tk.MustExec(`commit;`)
+	tk.MustQuery(`select * from t;`).Check(testkit.Rows("2"))
+}

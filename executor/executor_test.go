@@ -301,6 +301,15 @@ func (s *testSuite) TestAdmin(c *C) {
 	tk.MustExec("alter table t1 add index idx_i(i);")
 	tk.MustExec("alter table t1 add index idx_m(a,c,d,e,f,g,h,i,j);")
 	tk.MustExec("admin check table t1;")
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (c1 int);")
+	tk.MustExec("INSERT INTO t1 SET c1 = 1;")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN cc1 CHAR(36)    NULL DEFAULT '';")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN cc2 VARCHAR(36) NULL DEFAULT ''")
+	tk.MustExec("ALTER TABLE t1 ADD INDEX idx1 (cc1);")
+	tk.MustExec("ALTER TABLE t1 ADD INDEX idx2 (cc2);")
+	tk.MustExec("admin check table t1;")
 }
 
 func (s *testSuite) fillData(tk *testkit.TestKit, table string) {
@@ -702,6 +711,10 @@ func (s *testSuite) TestSelectOrderBy(c *C) {
 	r = tk.MustQuery("select * from select_order_test order by name, id limit 1 offset 100;")
 	r.Check(testkit.Rows())
 
+	// Test limit exceeds int range.
+	r = tk.MustQuery("select id from select_order_test order by name, id limit 18446744073709551615;")
+	r.Check(testkit.Rows("1", "2"))
+
 	// Test multiple field
 	r = tk.MustQuery("select id, name from select_order_test where id = 1 group by id, name limit 1 offset 0;")
 	r.Check(testkit.Rows("1 hello"))
@@ -1048,6 +1061,26 @@ func (s *testSuite) TestUnion(c *C) {
 
 	tk.MustQuery("select 1 union select 1 union all select 1").Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select 1 union all select 1 union select 1").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`create table t1(a bigint, b bigint);`)
+	tk.MustExec(`create table t2(a bigint, b bigint);`)
+	tk.MustExec(`insert into t1 values(1, 1);`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t1 select * from t1;`)
+	tk.MustExec(`insert into t2 values(1, 1);`)
+	tk.MustExec(`set @@tidb_max_chunk_size=2;`)
+	tk.MustQuery(`select count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("128"))
+	tk.MustQuery(`select tmp.a, count(*) from (select t1.a, t1.b from t1 left join t2 on t1.a=t2.a union all select t1.a, t1.a from t1 left join t2 on t1.a=t2.a) tmp;`).Check(testkit.Rows("1 128"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t value(1 ,2)")
+	tk.MustQuery("select a, b from (select a, 0 as d, b from t union all select a, 0 as d, b from t) test;").Check(testkit.Rows("1 2", "1 2"))
 }
 
 func (s *testSuite) TestIn(c *C) {
