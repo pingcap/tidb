@@ -98,7 +98,7 @@ var (
 	runDDL             = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease           = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
 	tokenLimit         = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
-	collationServer    = flag.String(nmCollationServer, mysql.DefaultCollationName, "the default character collation")
+	collationServer    = flag.String(nmCollationServer, mysql.DefaultCollationName, "Set the default character collation. Only utf8mb4_bin is currently used in TiDB. Setting utf8mb4_unicode_ci for example won't change that but it might help with application compatibility.")
 
 	// Log
 	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
