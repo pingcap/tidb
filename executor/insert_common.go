@@ -55,7 +55,7 @@ type InsertValues struct {
 	// colDefaultVals is used to store casted default value.
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
 	colDefaultVals  []defaultVal
-	evalBuffer      *chunk.MutRow
+	evalBuffer      chunk.MutRow
 	evalBufferTypes []*types.FieldType
 }
 
@@ -127,9 +127,6 @@ func (e *InsertValues) initInsertColumns() error {
 }
 
 func (e *InsertValues) initEvalBuffer() {
-	if e.evalBuffer != nil {
-		return
-	}
 	numCols := len(e.Table.Cols())
 	if e.hasExtraHandle {
 		numCols++
@@ -141,8 +138,7 @@ func (e *InsertValues) initEvalBuffer() {
 	if e.hasExtraHandle {
 		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)
 	}
-	mutRow := chunk.MutRowFromTypes(e.evalBufferTypes)
-	e.evalBuffer = &mutRow
+	e.evalBuffer = chunk.MutRowFromTypes(e.evalBufferTypes)
 }
 
 func (e *InsertValues) lazilyInitColDefaultValBuf() (ok bool) {
