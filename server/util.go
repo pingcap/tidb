@@ -39,9 +39,11 @@ import (
 	"encoding/binary"
 	"io"
 	"math"
+	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -353,4 +355,18 @@ func appendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 		out = strconv.AppendFloat(in, fVal, 'f', prec, bitSize)
 	}
 	return out
+}
+
+// CorsHandler adds Cors Header if `cors` config is set.
+type CorsHandler struct {
+	handler http.Handler
+	cfg     *config.Config
+}
+
+func (h CorsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if h.cfg.Cors != "" {
+		w.Header().Set("Access-Control-Allow-Origin", h.cfg.Cors)
+		w.Header().Set("Access-Control-Allow-Methods", "GET")
+	}
+	h.handler.ServeHTTP(w, req)
 }
