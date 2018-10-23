@@ -1529,6 +1529,14 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 
 	_, err = s.tk.Exec("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg")
 	c.Assert(err, NotNil)
+
+	// test for enum column
+	failSQL := "create table t_enum (a enum(\"e\",\"e\"));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum(\"e\",\"E\"));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum(\"abc\",\"Abc\"));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
 }
 
 func (s *testDBSuite) TestTableForeignKey(c *C) {
