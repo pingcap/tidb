@@ -74,14 +74,14 @@ func (e *baseVarianceDecimal) ResetPartialResult(pr PartialResult) {
 
 func (e *baseVarianceDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarianceDecimal)(pr)
-	if p.count == 0 {
-		chk.AppendNull(e.ordinal)
-		return nil
-	}
 
 	res := new(types.MyDecimal)
 	switch e.varianceType {
 	case varianceStdPop:
+		if p.count == 0 {
+			chk.AppendNull(e.ordinal)
+			return nil
+		}
 		decimalCount := types.NewDecFromInt(p.count)
 		tmp := new(types.MyDecimal)
 		err := types.DecimalDiv(&p.sum, decimalCount, tmp, types.DivFracIncr)
@@ -109,6 +109,10 @@ func (e *baseVarianceDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, p
 			return errors.Trace(err)
 		}
 	case varianceVarPop:
+		if p.count == 0 {
+			chk.AppendNull(e.ordinal)
+			return nil
+		}
 		decimalCount := types.NewDecFromInt(p.count)
 		err := types.DecimalDiv(&p.sum, decimalCount, res, types.DivFracIncr)
 		if err != nil {
