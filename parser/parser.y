@@ -7013,10 +7013,14 @@ Fields:
 		}else if len(str) != 0 {
 			enclosed = str[0]
 		}
+		var escaped byte
+		if len(escape) > 0 {
+			escaped = escape[0]
+		}
 		$$ = &ast.FieldsClause{
 			Terminated: $2.(string),
 			Enclosed:   enclosed,
-			Escaped:    escape[0],
+			Escaped:    escaped,
 		}
 	}
 
