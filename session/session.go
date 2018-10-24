@@ -96,6 +96,12 @@ var (
 	_ Session = (*session)(nil)
 )
 
+var parserPool = sync.Pool{
+	New: func() interface{} {
+		return parser.New()
+	},
+}
+
 type stmtRecord struct {
 	stmtID  uint32
 	st      sqlexec.Statement
@@ -137,6 +143,8 @@ type session struct {
 	store kv.Storage
 
 	parser *parser.Parser
+
+	byClose bool
 
 	preparedPlanCache *kvcache.SimpleLRUCache
 
@@ -1001,6 +1009,10 @@ func (s *session) Close() {
 	if err := s.RollbackTxn(ctx); err != nil {
 		log.Error("session Close error:", errors.ErrorStack(err))
 	}
+	p := s.parser
+	s.parser = nil
+	s.byClose = true
+	parserPool.Put(p)
 }
 
 // GetSessionVars implements the context.Context interface.
@@ -1185,7 +1197,7 @@ func createSession(store kv.Storage) (*session, error) {
 	}
 	s := &session{
 		store:           store,
-		parser:          parser.New(),
+		parser:          parserPool.Get().(*parser.Parser),
 		sessionVars:     variable.NewSessionVars(),
 		ddlOwnerChecker: dom.DDL().OwnerManager(),
 	}
@@ -1208,7 +1220,7 @@ func createSession(store kv.Storage) (*session, error) {
 func createSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
 		store:       store,
-		parser:      parser.New(),
+		parser:      parserPool.Get().(*parser.Parser),
 		sessionVars: variable.NewSessionVars(),
 	}
 	if plannercore.PreparedPlanCacheEnabled() {

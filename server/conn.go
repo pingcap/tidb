@@ -465,6 +465,9 @@ func (cc *clientConn) Run() {
 			}
 			return
 		}
+		//defer func() {
+		//	cc.ctx.Close()
+		//}()
 
 		startTime := time.Now()
 		if err = cc.dispatch(data); err != nil {

@@ -799,7 +799,7 @@ func (w *GCWorker) checkLeader() (bool, error) {
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	w.session = se
+	//w.session = se
 	leader, err := w.loadValueFromSysTable(gcLeaderUUIDKey)
 	if err != nil {
 		_, err1 := se.Execute(ctx, "ROLLBACK")
