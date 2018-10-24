@@ -120,9 +120,12 @@ func (st *TxnState) Commit(ctx context.Context) error {
 		// If any error happen during StmtCommit, don't commit this transaction.
 		err := st.fail
 		st.fail = nil
+		st.Transaction = nil
 		return errors.Trace(err)
 	}
-	return errors.Trace(st.Transaction.Commit(ctx))
+	err := st.Transaction.Commit(ctx)
+	st.Transaction = nil
+	return errors.Trace(err)
 }
 
 // Rollback overrides the Transaction interface.
@@ -131,7 +134,9 @@ func (st *TxnState) Rollback() error {
 		log.Error(errors.Trace(st.fail))
 		st.fail = nil
 	}
-	return errors.Trace(st.Transaction.Rollback())
+	err := st.Transaction.Rollback()
+	st.Transaction = nil
+	return errors.Trace(err)
 }
 
 // Get overrides the Transaction interface.
