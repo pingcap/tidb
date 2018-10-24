@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
