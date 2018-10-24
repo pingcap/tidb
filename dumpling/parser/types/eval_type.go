@@ -13,26 +13,30 @@
 
 package types
 
-import ast "github.com/pingcap/tidb/parser/types"
-
 // EvalType indicates the specified types that arguments and result of a built-in function should be.
-type EvalType = ast.EvalType
+type EvalType byte
 
 const (
 	// ETInt represents type INT in evaluation.
-	ETInt = ast.ETInt
+	ETInt EvalType = iota
 	// ETReal represents type REAL in evaluation.
-	ETReal = ast.ETReal
+	ETReal
 	// ETDecimal represents type DECIMAL in evaluation.
-	ETDecimal = ast.ETDecimal
+	ETDecimal
 	// ETString represents type STRING in evaluation.
-	ETString = ast.ETString
+	ETString
 	// ETDatetime represents type DATETIME in evaluation.
-	ETDatetime = ast.ETDatetime
+	ETDatetime
 	// ETTimestamp represents type TIMESTAMP in evaluation.
-	ETTimestamp = ast.ETTimestamp
+	ETTimestamp
 	// ETDuration represents type DURATION in evaluation.
-	ETDuration = ast.ETDuration
+	ETDuration
 	// ETJson represents type JSON in evaluation.
-	ETJson = ast.ETJson
+	ETJson
 )
+
+// IsStringKind returns true for ETString, ETDatetime, ETTimestamp, ETDuration, ETJson EvalTypes.
+func (et EvalType) IsStringKind() bool {
+	return et == ETString || et == ETDatetime ||
+		et == ETTimestamp || et == ETDuration || et == ETJson
+}
