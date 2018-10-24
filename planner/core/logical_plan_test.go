@@ -2008,3 +2008,49 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		}
 	}
 }
+
+func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
+	defer testleak.AfterTest(c)()
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		// Test left outer join + distinct
+		{
+			sql:  "select distinct t1.a, t1.b from t t1 left outer join t t2 on t1.b = t2.b",
+			best: "DataScan(t1)->Aggr(firstrow(t1.a),firstrow(t1.b))",
+		},
+		// Test right outer join + distinct
+		{
+			sql:  "select distinct t2.a, t2.b from t t1 right outer join t t2 on t1.b = t2.b",
+			best: "DataScan(t2)->Aggr(firstrow(t2.a),firstrow(t2.b))",
+		},
+		// Test left outer join
+		{
+			sql:  "select t1.b from t t1 left outer join t t2 on t1.a = t2.a",
+			best: "DataScan(t1)->Projection",
+		},
+		// Test right outer join
+		{
+			sql:  "select t2.b from t t1 right outer join t t2 on t1.a = t2.a",
+			best: "DataScan(t2)->Projection",
+		},
+	}
+
+	for i, tt := range tests {
+		comment := Commentf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.ParseOneStmt(tt.sql, "", "")
+		c.Assert(err, IsNil, comment)
+		Preprocess(s.ctx, stmt, s.is, false)
+		builder := &PlanBuilder{
+			ctx:       mockContext(),
+			is:        s.is,
+			colMapper: make(map[*ast.ColumnNameExpr]int),
+		}
+		p, err := builder.Build(stmt)
+		c.Assert(err, IsNil)
+		p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+		c.Assert(err, IsNil)
+		c.Assert(ToString(p), Equals, tt.best, comment)
+	}
+}

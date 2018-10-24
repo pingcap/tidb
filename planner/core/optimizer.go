@@ -42,6 +42,7 @@ const (
 	flagPartitionProcessor
 	flagPushDownAgg
 	flagPushDownTopN
+	flagEliminateOuterJoin
 )
 
 var optRuleList = []logicalOptRule{

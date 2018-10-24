@@ -14,12 +14,14 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/expression"
 )
 
 type outerJoinEliminator struct {
 	hasDistinct int
 	cols        [][]*expression.Column
+	schemas     []*expression.Schema
 }
 
 // tryToEliminateOuterJoin will eliminate outer join plan base on the following rules
@@ -60,27 +62,28 @@ func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, isLeft int) LogicalPla
 	}
 
 	// outer join elimination without distinct
-	var otherCols []*expression.Column
-	for _, col := range p.schema.Columns {
-		if p.children[1^isLeft].Schema().Contains(col) {
-			var joinKeys []*expression.Column
-			if isLeft > 0 {
-				joinKeys = p.LeftJoinKeys
-			} else {
-				joinKeys = p.RightJoinKeys
-			}
-			inJoinKeys := expression.NewSchema(joinKeys...).Contains(col)
-			if !inJoinKeys {
-				return nil
-			}
-		} else {
-			otherCols = append(otherCols, col)
+	// first, check whether the parent's schema columns are all in left or right
+	if len(o.schemas) < 1 {
+		return nil
+	}
+	for _, col := range o.schemas[len(o.schemas)-1].Columns {
+		columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
+		if c, _ := p.children[1^isLeft].Schema().FindColumn(columnName); c == nil {
+			return nil
 		}
 	}
+	// second, check whether the other side join keys are unique keys
 	for _, keyInfo := range p.children[isLeft].Schema().Keys {
 		keyInfoContainAllCols := true
-		for _, col := range otherCols {
-			if !expression.NewSchema(keyInfo...).Contains(col) {
+		var joinKeys []*expression.Column
+		if isLeft > 0 {
+			joinKeys = p.RightJoinKeys
+		} else {
+			joinKeys = p.LeftJoinKeys
+		}
+		for _, col := range joinKeys {
+			columnName := &ast.ColumnName{Schema: col.DBName, Table: col.TblName, Name: col.ColName}
+			if c, _ := expression.NewSchema(keyInfo...).FindColumn(columnName); c == nil {
 				keyInfoContainAllCols = false
 				break
 			}
@@ -100,12 +103,19 @@ func (o *outerJoinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 		o.cols = append(o.cols, agg.groupByCols)
 		defer func() {
 			o.hasDistinct--
-			o.cols = o.cols[0:o.hasDistinct]
+			o.cols = o.cols[:o.hasDistinct]
 		}()
 	}
 
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
+		// if child is logical join, then save the parent schema
+		if _, ok := child.(*LogicalJoin); ok {
+			o.schemas = append(o.schemas, p.Schema())
+			defer func() {
+				o.schemas = o.schemas[:len(o.schemas)-1]
+			}()
+		}
 		newChild, _ := o.optimize(child)
 		newChildren = append(newChildren, newChild)
 	}
