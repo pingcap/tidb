@@ -158,7 +158,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "a >= 1 and b > 1 and a < 2",
-			selectivity: 0.01817558299,
+			selectivity: 0.01783264746,
 		},
 		{
 			exprs:       "a >= 1 and c > 1 and a < 2",
@@ -174,7 +174,7 @@ func (s *testSelectivitySuite) TestSelectivity(c *C) {
 		},
 		{
 			exprs:       "b > 1",
-			selectivity: 0.98148148148,
+			selectivity: 0.96296296296,
 		},
 		{
 			exprs:       "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
@@ -302,6 +302,24 @@ func (s *testSelectivitySuite) TestEstimationForUnknownValues(c *C) {
 
 	colID = table.Meta().Columns[0].ID
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(1, 30))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+
+	testKit.MustExec("drop table t")
+	testKit.MustExec("create table t(a int, b int, index idx(b))")
+	testKit.MustExec("insert into t values (1,1)")
+	testKit.MustExec("analyze table t")
+	table, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl = h.GetTableStats(table.Meta())
+
+	colID = table.Meta().Columns[0].ID
+	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(2, 2))
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, 0.0)
+
+	idxID = table.Meta().Indices[0].ID
+	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(2, 2))
 	c.Assert(err, IsNil)
 	c.Assert(count, Equals, 0.0)
 }
