@@ -1254,6 +1254,24 @@ func (s *testSessionSuite) TestDelete(c *C) {
 	tk1.MustQuery("select * from t;").Check(testkit.Rows("1"))
 }
 
+func (s *testSessionSuite) TestResetCtx(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("create table t (i int);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (10);")
+	tk.MustExec("update t set i = i + row_count();")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("2", "11"))
+
+	tk1.MustExec("update t set i = 0 where i = 1;")
+	tk1.MustQuery("select * from t;").Check(testkit.Rows("0"))
+
+	tk.MustExec("commit;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1", "11"))
+}
+
 func (s *testSessionSuite) TestUnique(c *C) {
 	// test for https://github.com/pingcap/tidb/pull/461
 
