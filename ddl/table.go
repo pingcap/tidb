@@ -209,18 +209,13 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
-	// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
 	var oldPartitionIDs []int64
 	if tblInfo.GetPartitionInfo() != nil {
 		oldPartitionIDs = getPartitionIDs(tblInfo)
-		for _, def := range tblInfo.Partition.Definitions {
-			var pid int64
-			pid, err = t.GenGlobalID()
-			if err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
-			def.ID = pid
+		// We use the new partition ID because all the old data is encoded with the old partition ID, it can not be accessed anymore.
+		err = truncateTableByReassignPartitionIDs(job, t, tblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
 		}
 	}
 
