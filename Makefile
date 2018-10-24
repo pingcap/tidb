@@ -40,7 +40,7 @@ CHECK_LDFLAGS += $(LDFLAGS) ${TEST_LDFLAGS}
 
 TARGET = ""
 
-.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist
+.PHONY: all build update clean todo test gotest interpreter server dev benchkv benchraw check checklist parser
 
 default: server buildsucc
 
@@ -50,6 +50,9 @@ buildsucc:
 	@echo Build TiDB Server successfully!
 
 all: dev server benchkv
+
+parser:
+	@echo "remove this command later"
 
 dev: checklist test check
 
