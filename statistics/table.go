@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -610,14 +611,21 @@ func PseudoTable(tblInfo *model.TableInfo) *Table {
 	t := &Table{
 		HistColl: pseudoHistColl,
 	}
-	for _, col := range tblInfo.Columns {
+	cols := make([]Column, len(tblInfo.Columns))
+	for i, col := range tblInfo.Columns {
 		if col.State == model.StatePublic {
-			t.Columns[col.ID] = &Column{Info: col, isHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag)}
+			c := &cols[i]
+			c.Info = col
+			c.isHandle = tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag)
+			t.Columns[col.ID] = c
 		}
 	}
-	for _, idx := range tblInfo.Indices {
+	idxes := make([]Index, len(tblInfo.Indices))
+	for i, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
-			t.Indices[idx.ID] = &Index{Info: idx}
+			idxInfo := &idxes[i]
+			idxInfo.Info = idx
+			t.Indices[idx.ID] = idxInfo
 		}
 	}
 	return t

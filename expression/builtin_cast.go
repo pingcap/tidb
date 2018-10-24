@@ -1668,7 +1668,9 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 		fc = &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp}
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
-	terror.Log(errors.Trace(err))
+	if err != nil {
+		terror.Log(errors.Trace(err))
+	}
 	res = &ScalarFunction{
 		FuncName: model.NewCIStr(ast.Cast),
 		RetType:  tp,
