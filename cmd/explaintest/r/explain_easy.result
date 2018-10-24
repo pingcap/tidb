@@ -398,3 +398,40 @@ StreamAgg_19	8000.00	root	group by:col_2, col_3, funcs:firstrow(col_0), firstrow
 └─IndexReader_20	8000.00	root	index:StreamAgg_10
   └─StreamAgg_10	8000.00	cop	group by:test.t1.a, test.t1.b, funcs:firstrow(test.t1.a), firstrow(test.t1.b)
     └─IndexScan_18	10000.00	cop	table:t1, index:a, b, range:[NULL,+inf], keep order:true, stats:pseudo
+drop table if exists t;
+create table t(a int, nb int not null, nc int not null);
+explain select ifnull(a, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	ifnull(test.t.a, 0)
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select ifnull(nb, 0) from t;
+id	count	task	operator info
+TableReader_5	10000.00	root	data:TableScan_4
+└─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select ifnull(nb, 0), ifnull(nc, 0) from t;
+id	count	task	operator info
+TableReader_5	10000.00	root	data:TableScan_4
+└─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select ifnull(a, 0), ifnull(nb, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	ifnull(test.t.a, 0), test.t.nb
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select ifnull(nb, 0), ifnull(nb, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	test.t.nb, test.t.nb
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select 1+ifnull(nb, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	plus(1, test.t.nb)
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain select 1+ifnull(a, 0) from t;
+id	count	task	operator info
+Projection_3	10000.00	root	plus(1, ifnull(test.t.a, 0))
+└─TableReader_5	10000.00	root	data:TableScan_4
+  └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+drop table if exists t;
+drop table if exists t;

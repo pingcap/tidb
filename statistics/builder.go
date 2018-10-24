@@ -96,18 +96,18 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 // BuildColumn builds histogram from samples for column.
 func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *SampleCollector, tp *types.FieldType) (*Histogram, error) {
 	count := collector.Count
-	if count == 0 {
-		return &Histogram{ID: id, NullCount: collector.NullCount}, nil
+	ndv := collector.FMSketch.NDV()
+	if ndv > count {
+		ndv = count
+	}
+	if count == 0 || len(collector.Samples) == 0 {
+		return NewHistogram(id, ndv, collector.NullCount, 0, tp, 0, collector.TotalSize), nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	samples := collector.Samples
 	err := types.SortDatums(sc, samples)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	ndv := collector.FMSketch.NDV()
-	if ndv > count {
-		ndv = count
 	}
 	hg := NewHistogram(id, ndv, collector.NullCount, 0, tp, int(numBuckets), collector.TotalSize)
 

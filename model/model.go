@@ -15,13 +15,11 @@ package model
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 )
@@ -114,7 +112,7 @@ func (c *ColumnInfo) SetDefaultValue(value interface{}) error {
 // bit type default value will store in DefaultValueBit for fix bit default value decode/encode bug.
 func (c *ColumnInfo) GetDefaultValue() interface{} {
 	if c.Tp == mysql.TypeBit && c.DefaultValueBit != nil {
-		return hack.String(c.DefaultValueBit)
+		return string(c.DefaultValueBit)
 	}
 	return c.DefaultValue
 }
@@ -316,6 +314,16 @@ type PartitionInfo struct {
 	Enable bool `json:"enable"`
 
 	Definitions []PartitionDefinition `json:"definitions"`
+}
+
+// GetNameByID gets the partition name by ID.
+func (pi *PartitionInfo) GetNameByID(id int64) string {
+	for _, def := range pi.Definitions {
+		if id == def.ID {
+			return def.Name.L
+		}
+	}
+	return ""
 }
 
 // PartitionDefinition defines a single partition.
@@ -557,7 +565,8 @@ func collationToProto(c string) int32 {
 	return int32(mysql.DefaultCollationID)
 }
 
-// GetTableColumnID gets a ID of a column with table ID
-func GetTableColumnID(tableInfo *TableInfo, col *ColumnInfo) string {
-	return fmt.Sprintf("%d_%d", tableInfo.ID, col.ID)
+// TableColumnID is composed by table ID and column ID.
+type TableColumnID struct {
+	TableID  int64
+	ColumnID int64
 }

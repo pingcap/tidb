@@ -305,6 +305,57 @@ func (s *testStatsUpdateSuite) TestTxnWithFailure(c *C) {
 	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }
 
+func (s *testStatsUpdateSuite) TestUpdatePartition(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	createTable := `CREATE TABLE t (a int, b char(5)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))`
+	testKit.MustExec(createTable)
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	c.Assert(err, IsNil)
+	pi := tableInfo.GetPartitionInfo()
+	c.Assert(len(pi.Definitions), Equals, 2)
+	bColID := tableInfo.Columns[1].ID
+
+	testKit.MustExec(`insert into t values (1, "a"), (7, "a")`)
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		c.Assert(statsTbl.ModifyCount, Equals, int64(1))
+		c.Assert(statsTbl.Count, Equals, int64(1))
+		c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(1))
+	}
+
+	testKit.MustExec(`update t set a = a + 1, b = "aa"`)
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		c.Assert(statsTbl.ModifyCount, Equals, int64(2))
+		c.Assert(statsTbl.Count, Equals, int64(1))
+		c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(2))
+	}
+
+	testKit.MustExec("delete from t")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.Update(is), IsNil)
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		c.Assert(statsTbl.ModifyCount, Equals, int64(3))
+		c.Assert(statsTbl.Count, Equals, int64(0))
+		c.Assert(statsTbl.Columns[bColID].TotColSize, Equals, int64(0))
+	}
+}
+
 func (s *testStatsUpdateSuite) TestAutoUpdate(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -546,6 +597,60 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	h.Update(is)
 	tbl = h.GetTableStats(tblInfo)
 	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(0))
+}
+
+func (s *testStatsUpdateSuite) TestUpdatePartitionErrorRate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	h.Lease = 0
+	h.Update(is)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability = 1
+
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec("create table t (a bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (30))")
+	h.HandleDDLEvent(<-h.DDLEventCh())
+
+	testKit.MustExec("insert into t values (1)")
+
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	testKit.MustExec("analyze table t")
+
+	testKit.MustExec("insert into t values (2)")
+	testKit.MustExec("insert into t values (5)")
+	testKit.MustExec("insert into t values (8)")
+	testKit.MustExec("insert into t values (12)")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	is = s.do.InfoSchema()
+	h.Update(is)
+
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	pid := tblInfo.Partition.Definitions[0].ID
+	tbl := h.GetPartitionStats(tblInfo, pid)
+	aID := tblInfo.Columns[0].ID
+
+	// The statistic table is outdated now.
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsTrue)
+
+	testKit.MustQuery("select * from t where a between 1 and 10")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(is), IsNil)
+	h.UpdateErrorRate(is)
+	h.Update(is)
+	tbl = h.GetPartitionStats(tblInfo, pid)
+
+	// The error rate of this column is not larger than MaxErrorRate now.
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsFalse)
 }
 
 func appendBucket(h *statistics.Histogram, l, r int64) {
@@ -896,6 +1001,41 @@ func (s *testStatsUpdateSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	// Test that after drop stats, it won't cause panic.
 	testKit.MustExec("drop stats t")
 	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+}
+
+func (s *testStatsUpdateSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (6))")
+	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("insert into t values (3,5)")
+	h := s.do.StatsHandle()
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability = 1
+
+	is := s.do.InfoSchema()
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+
+	testKit.MustQuery("select * from t where a > 1")
+
+	h.UpdateStatsByLocalFeedback(s.do.InfoSchema())
+
+	tblInfo := table.Meta()
+	pid := tblInfo.Partition.Definitions[0].ID
+	tbl := h.GetPartitionStats(tblInfo, pid)
+
+	c.Assert(tbl.Columns[tblInfo.Columns[0].ID].ToString(0), Equals, "column:1 ndv:3 totColSize:0\n"+
+		"num: 1 lower_bound: 1 upper_bound: 1 repeats: 1\n"+
+		"num: 1 lower_bound: 2 upper_bound: 2 repeats: 1\n"+
+		"num: 2 lower_bound: 3 upper_bound: 9223372036854775807 repeats: 0")
 }
 
 type logHook struct {

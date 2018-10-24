@@ -82,8 +82,21 @@ insert tb values ('1');
 explain select * from ta where a = 1;
 rollback;
 
+# outer join elimination
 drop table if exists t1, t2;
 create table t1(a int, b int, c int, primary key(a, b));
 create table t2(a int, b int, c int, primary key(a));
 explain select t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 explain select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
+
+# https://github.com/pingcap/tidb/issues/7918
+drop table if exists t;
+create table t(a int, nb int not null, nc int not null);
+explain select ifnull(a, 0) from t;
+explain select ifnull(nb, 0) from t;
+explain select ifnull(nb, 0), ifnull(nc, 0) from t;
+explain select ifnull(a, 0), ifnull(nb, 0) from t;
+explain select ifnull(nb, 0), ifnull(nb, 0) from t;
+explain select 1+ifnull(nb, 0) from t;
+explain select 1+ifnull(a, 0) from t;
+drop table if exists t;
