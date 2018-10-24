@@ -66,6 +66,7 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column) {
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprHasSetVar(p.Exprs[i]) {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			p.schema.CacheValid = false
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
 		}
 	}
@@ -88,6 +89,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			la.schema.Columns = append(la.schema.Columns[:i], la.schema.Columns[i+1:]...)
+			la.schema.CacheValid = false
 			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
 		}
 	}
@@ -142,6 +144,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) {
 		child.PruneColumns(parentUsedCols)
 	}
 	p.schema.Columns = p.children[0].Schema().Columns
+	p.schema.CacheValid = false
 }
 
 // PruneColumns implements LogicalPlan interface.
@@ -158,6 +161,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) {
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
+			ds.schema.CacheValid = false
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
 		}
 	}
@@ -180,6 +184,7 @@ func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column) {
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+			p.schema.CacheValid = false
 		}
 	}
 	for k, cols := range p.schema.TblID2Handle {

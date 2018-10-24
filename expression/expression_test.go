@@ -42,6 +42,7 @@ func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	col0 := schema.Columns[0]
 	col1 := schema.Columns[1]
 	schema.Columns = schema.Columns[:1]
+	schema.CacheValid = false
 	innerIfNull, err := newFunctionForTest(s.ctx, ast.Ifnull, col1, One.Clone())
 	c.Assert(err, IsNil)
 	outerIfNull, err := newFunctionForTest(s.ctx, ast.Ifnull, col0, innerIfNull)
@@ -51,6 +52,7 @@ func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	c.Assert(res.String(), Equals, "ifnull(col1, 1)")
 
 	schema.Columns = append(schema.Columns, col1)
+	schema.CacheValid = false
 	// ifnull(null, ifnull(null, 1))
 	res = EvaluateExprWithNull(s.ctx, schema, outerIfNull)
 	c.Assert(res.Equal(s.ctx, One), IsTrue)

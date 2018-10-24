@@ -32,12 +32,19 @@ func (ki KeyInfo) Clone() KeyInfo {
 	return result
 }
 
+type colWithIdx struct {
+	col *Column
+	idx int
+}
+
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
 	Columns []*Column
 	Keys    []KeyInfo
 	// TblID2Handle stores the tables' handle column information if we need handle in execution phase.
 	TblID2Handle map[int64][]*Column
+	CacheValid   bool
+	cache        map[string][]*colWithIdx
 }
 
 // String implements fmt.Stringer interface.
@@ -101,9 +108,7 @@ func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
 	return col, errors.Trace(err)
 }
 
-// FindColumnAndIndex finds an Column and its index from schema for a ast.ColumnName.
-// It compares the db/table/column names. If there are more than one result, raise ambiguous error.
-func (s *Schema) FindColumnAndIndex(astCol *ast.ColumnName) (*Column, int, error) {
+func (s *Schema) findColumnAndIndexOld(astCol *ast.ColumnName) (*Column, int, error) {
 	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
 	idx := -1
 	for i, col := range s.Columns {
@@ -129,6 +134,58 @@ func (s *Schema) FindColumnAndIndex(astCol *ast.ColumnName) (*Column, int, error
 		return nil, idx, nil
 	}
 	return s.Columns[idx], idx, nil
+}
+
+// FindColumnAndIndex finds an Column and its index from schema for a ast.ColumnName.
+// It compares the db/table/column names. If there are more than one result, raise ambiguous error.
+func (s *Schema) FindColumnAndIndex(astCol *ast.ColumnName) (*Column, int, error) {
+	if len(s.Columns) < 6 {
+		return s.findColumnAndIndexOld(astCol)
+	}
+	if !s.CacheValid {
+		colWithIdxSpan := make([]colWithIdx, len(s.Columns))
+		s.cache = make(map[string][]*colWithIdx, len(s.Columns))
+		for i, c := range s.Columns {
+			col := c
+			cols, exists := s.cache[col.ColName.L]
+			if !exists {
+				cols = make([]*colWithIdx, 0, 2)
+			}
+			ci := &colWithIdxSpan[i]
+			ci.idx = i
+			ci.col = col
+			cols = append(cols, ci)
+			s.cache[col.ColName.L] = cols
+		}
+		s.CacheValid = true
+	}
+	cols, exists := s.cache[astCol.Name.L]
+	if !exists {
+		return nil, -1, nil
+	}
+	var resultCol *colWithIdx
+	for _, c := range cols {
+		if (astCol.Schema.L == "" || astCol.Schema.L == c.col.DBName.L) &&
+			(astCol.Table.L == "" || astCol.Table.L == c.col.TblName.L) {
+			if resultCol == nil {
+				resultCol = c
+			} else {
+				// For query like:
+				// create table t1(a int); create table t2(d int);
+				// select 1 from t1, t2 where 1 = (select d from t2 where a > 1) and d = 1;
+				// we will get an Apply operator whose schema is [test.t1.a, test.t2.d, test.t2.d],
+				// we check whether the column of the schema comes from a subquery to avoid
+				// causing the ambiguous error when resolve the column `d` in the Selection.
+				if !c.col.IsAggOrSubq {
+					return nil, -1, errors.Errorf("Column %s is ambiguous", c.col.String())
+				}
+			}
+		}
+	}
+	if resultCol == nil {
+		return nil, -1, nil
+	}
+	return resultCol.col, resultCol.idx, nil
 }
 
 // RetrieveColumn retrieves column in expression from the columns in schema.
@@ -183,6 +240,7 @@ func (s *Schema) Len() int {
 // Append append new column to the columns stored in schema.
 func (s *Schema) Append(col ...*Column) {
 	s.Columns = append(s.Columns, col...)
+	s.CacheValid = false
 }
 
 // SetUniqueKeys will set the value of Schema.Keys.
@@ -245,5 +303,5 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 
 // NewSchema returns a schema made by its parameter.
 func NewSchema(cols ...*Column) *Schema {
-	return &Schema{Columns: cols, TblID2Handle: make(map[int64][]*Column)}
+	return &Schema{Columns: cols, TblID2Handle: make(map[int64][]*Column), CacheValid: false}
 }
