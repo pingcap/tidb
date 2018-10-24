@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/parser/types"
 )
 
 %}
@@ -820,6 +820,7 @@ import (
 	TableOptimizerHintList	"Table level optimizer hint list"
 
 %type	<ident>
+	EQOrAssignmentEQ	"= or :="
 	AsOpt			"AS or EmptyString"
 	KeyOrIndex		"{KEY|INDEX}"
 	ColumnKeywordOpt	"Column keyword or empty"
@@ -4926,11 +4927,11 @@ SetStmt:
 	{
 		$$ = &ast.SetStmt{Variables: $2.([]*ast.VariableAssignment)}
 	}
-|	"SET" "PASSWORD" eq PasswordOpt
+|	"SET" "PASSWORD" EQOrAssignmentEQ PasswordOpt
 	{
 		$$ = &ast.SetPwdStmt{Password: $4.(string)}
 	}
-|	"SET" "PASSWORD" "FOR" Username eq PasswordOpt
+|	"SET" "PASSWORD" "FOR" Username EQOrAssignmentEQ PasswordOpt
 	{
 		$$ = &ast.SetPwdStmt{User: $4.(*auth.UserIdentity), Password: $6.(string)}
 	}
@@ -5026,23 +5027,23 @@ SetExpr:
 |	ExprOrDefault
 
 VariableAssignment:
-	Identifier eq SetExpr
+	Identifier EQOrAssignmentEQ SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $1, Value: $3, IsSystem: true}
 	}
-|	"GLOBAL" Identifier eq SetExpr
+|	"GLOBAL" Identifier EQOrAssignmentEQ SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsGlobal: true, IsSystem: true}
 	}
-|	"SESSION" Identifier eq SetExpr
+|	"SESSION" Identifier EQOrAssignmentEQ SetExpr
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsSystem: true}
 	}
-|	"LOCAL" Identifier eq Expression
+|	"LOCAL" Identifier EQOrAssignmentEQ Expression
 	{
 		$$ = &ast.VariableAssignment{Name: $2, Value: $4, IsSystem: true}
 	}
-|	doubleAtIdentifier eq SetExpr
+|	doubleAtIdentifier EQOrAssignmentEQ SetExpr
 	{
 		v := strings.ToLower($1)
 		var isGlobal bool
@@ -5058,13 +5059,7 @@ VariableAssignment:
 		}
 		$$ = &ast.VariableAssignment{Name: v, Value: $3, IsGlobal: isGlobal, IsSystem: true}
 	}
-|	singleAtIdentifier eq Expression
-	{
-		v := $1
-		v = strings.TrimPrefix(v, "@")
-		$$ = &ast.VariableAssignment{Name: v, Value: $3}
-	}
-|	singleAtIdentifier assignmentEq Expression
+|	singleAtIdentifier EQOrAssignmentEQ Expression
 	{
 		v := $1
 		v = strings.TrimPrefix(v, "@")
@@ -5195,6 +5190,14 @@ AuthString:
 	stringLit
 	{
 		$$ = $1
+	}
+
+EQOrAssignmentEQ:
+	eq
+	{
+	}
+|	assignmentEq
+	{
 	}
 
 /****************************Admin Statement*******************************/
