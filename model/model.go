@@ -15,7 +15,6 @@ package model
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
@@ -566,7 +565,8 @@ func collationToProto(c string) int32 {
 	return int32(mysql.DefaultCollationID)
 }
 
-// GetTableColumnID gets a ID of a column with table ID
-func GetTableColumnID(tableInfo *TableInfo, col *ColumnInfo) string {
-	return fmt.Sprintf("%d_%d", tableInfo.ID, col.ID)
+// TableColumnID is composed by table ID and column ID.
+type TableColumnID struct {
+	TableID  int64
+	ColumnID int64
 }
