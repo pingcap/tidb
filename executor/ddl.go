@@ -67,6 +67,11 @@ func (e *DDLExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 		return nil
 	}
 	e.done = true
+
+	// For every DDL, we must commit current transaction.
+	if err := e.ctx.NewTxn(); err != nil {
+		return errors.Trace(err)
+	}
 	defer func() { e.ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = false }()
 
 	switch x := e.stmt.(type) {

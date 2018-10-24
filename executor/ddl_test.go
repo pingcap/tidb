@@ -46,6 +46,23 @@ func (s *testSuite) TestTruncateTable(c *C) {
 	result.Check(nil)
 }
 
+// TestInTxnExecDDLFail tests the following case:
+//  1. Execute the SQL of "begin";
+//  2. A SQL that will fail to execute;
+//  3. Execute DDL.
+func (s *testSuite) TestInTxnExecDDLFail(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (i int key);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1);")
+	_, err := tk.Exec("truncate table t;")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	result := tk.MustQuery("select count(*) from t")
+	result.Check(testkit.Rows("1"))
+}
+
 func (s *testSuite) TestCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
