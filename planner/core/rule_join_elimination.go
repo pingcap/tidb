@@ -99,12 +99,29 @@ func (o *outerJoinEliminator) doEliminate(p *LogicalJoin, isLeft int) LogicalPla
 func (o *outerJoinEliminator) optimize(p LogicalPlan) (LogicalPlan, error) {
 	// check the distinct
 	if agg, ok := p.(*LogicalAggregation); ok && len(agg.groupByCols) > 0 {
-		o.hasDistinct++
-		o.cols = append(o.cols, agg.groupByCols)
-		defer func() {
-			o.hasDistinct--
-			o.cols = o.cols[:o.hasDistinct]
-		}()
+		isDistinctAgg := true
+		for _, aggDesc := range agg.AggFuncs {
+			if aggDesc.Name != ast.AggFuncFirstRow {
+				isDistinctAgg = false
+				break
+			}
+			if len(aggDesc.Args) != 1 {
+				isDistinctAgg = false
+				break
+			}
+			if _, ok := aggDesc.Args[0].(*expression.Column); !ok {
+				isDistinctAgg = false
+				break
+			}
+		}
+		if isDistinctAgg {
+			o.hasDistinct++
+			o.cols = append(o.cols, agg.groupByCols)
+			defer func() {
+				o.hasDistinct--
+				o.cols = o.cols[:o.hasDistinct]
+			}()
+		}
 	}
 
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
