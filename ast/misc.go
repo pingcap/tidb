@@ -187,7 +187,7 @@ func (n *DeallocateStmt) Accept(v Visitor) (Node, bool) {
 // Prepared represents a prepared statement.
 type Prepared struct {
 	Stmt          StmtNode
-	Params        []*ParamMarkerExpr
+	Params        []ParamMarkerExpr
 	SchemaVersion int64
 	UseCache      bool
 }
@@ -321,7 +321,7 @@ type VariableAssignment struct {
 	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
 	// For SetCharsetStmt, Value is charset, ExtendValue is collation.
 	// TODO: Use SetStmt to implement set password statement.
-	ExtendValue *ValueExpr
+	ExtendValue ValueExpr
 }
 
 // Accept implements Node interface.
@@ -868,3 +868,12 @@ func (n *TableOptimizerHint) Accept(v Visitor) (Node, bool) {
 	n = newNode.(*TableOptimizerHint)
 	return v.Leave(n)
 }
+
+// NewDecimal creates a types.Decimal value, it's provided by parser driver.
+var NewDecimal func(string) (interface{}, error)
+
+// NewHexLiteral creates a types.HexLiteral value, it's provided by parser driver.
+var NewHexLiteral func(string) (interface{}, error)
+
+// NewBitLiteral creates a types.BitLiteral value, it's provided by parser driver.
+var NewBitLiteral func(string) (interface{}, error)

@@ -13,7 +13,7 @@
 
 package ast
 
-import "github.com/pingcap/tidb/types"
+import "github.com/pingcap/tidb/parser/types"
 
 // node is the struct implements node interface except for Accept method.
 // Node implementations should embed it in.
@@ -62,20 +62,12 @@ func (dn *dmlNode) dmlStatement() {}
 // Expression implementations should embed it in.
 type exprNode struct {
 	node
-	types.Datum
 	Type types.FieldType
 	flag uint64
 }
 
-// SetDatum implements ExprNode interface.
-func (en *exprNode) SetDatum(datum types.Datum) {
-	en.Datum = datum
-}
-
-// GetDatum implements ExprNode interface.
-func (en *exprNode) GetDatum() *types.Datum {
-	return &en.Datum
-}
+// TexprNode is exported for parser driver.
+type TexprNode = exprNode
 
 // SetType implements ExprNode interface.
 func (en *exprNode) SetType(tp *types.FieldType) {
