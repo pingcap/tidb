@@ -599,6 +599,60 @@ func (s *testStatsUpdateSuite) TestUpdateErrorRate(c *C) {
 	c.Assert(tbl.Indices[bID].QueryTotal, Equals, int64(0))
 }
 
+func (s *testStatsUpdateSuite) TestUpdatePartitionErrorRate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	h.Lease = 0
+	h.Update(is)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability = 1
+
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec("create table t (a bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (30))")
+	h.HandleDDLEvent(<-h.DDLEventCh())
+
+	testKit.MustExec("insert into t values (1)")
+
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	testKit.MustExec("analyze table t")
+
+	testKit.MustExec("insert into t values (2)")
+	testKit.MustExec("insert into t values (5)")
+	testKit.MustExec("insert into t values (8)")
+	testKit.MustExec("insert into t values (12)")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	is = s.do.InfoSchema()
+	h.Update(is)
+
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := table.Meta()
+	pid := tblInfo.Partition.Definitions[0].ID
+	tbl := h.GetPartitionStats(tblInfo, pid)
+	aID := tblInfo.Columns[0].ID
+
+	// The statistic table is outdated now.
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsTrue)
+
+	testKit.MustQuery("select * from t where a between 1 and 10")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
+	c.Assert(h.HandleUpdateStats(is), IsNil)
+	h.UpdateErrorRate(is)
+	h.Update(is)
+	tbl = h.GetPartitionStats(tblInfo, pid)
+
+	// The error rate of this column is not larger than MaxErrorRate now.
+	c.Assert(tbl.Columns[aID].NotAccurate(), IsFalse)
+}
+
 func appendBucket(h *statistics.Histogram, l, r int64) {
 	lower, upper := types.NewIntDatum(l), types.NewIntDatum(r)
 	h.AppendBucket(&lower, &upper, 0, 0)
