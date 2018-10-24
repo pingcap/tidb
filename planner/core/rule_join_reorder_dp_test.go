@@ -77,6 +77,35 @@ func (s *testJoinReorderDPSuite) mockStatsInfo(state int, count float64) {
 
 func (s *testJoinReorderDPSuite) makeStatsMapForTPCHQ5() {
 	// Labeled as lineitem -> 0, orders -> 1, customer -> 2, supplier 3, nation 4, region 5
+	// This graph can be shown as following:
+	// +---------------+            +---------------+
+	// |               |            |               |
+	// |    lineitem   +------------+    orders     |
+	// |               |            |               |
+	// +-------+-------+            +-------+-------+
+	//         |                            |
+	//         |                            |
+	//         |                            |
+	// +-------+-------+            +-------+-------+
+	// |               |            |               |
+	// |   supplier    +------------+    customer   |
+	// |               |            |               |
+	// +-------+-------+            +-------+-------+
+	//         |                            |
+	//         |                            |
+	//         |                            |
+	//         |                            |
+	//         |      +---------------+     |
+	//         |      |               |     |
+	//         +------+    nation     +-----+
+	//                |               |
+	//                +---------------+
+	//                        |
+	//                +---------------+
+	//                |               |
+	//                |    region     |
+	//                |               |
+	//                +---------------+
 	s.statsMap = make(map[int]*property.StatsInfo)
 	s.mockStatsInfo(3, 9103367)
 	s.mockStatsInfo(6, 2275919)
