@@ -476,6 +476,8 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			if st.IsReadOnly() {
 				continue
 			}
+			s.sessionVars.StmtCtx = sr.stmtCtx
+			executor.ResetContextOfStmt(s, st.(*executor.ExecStmt).StmtNode)
 			schemaVersion, err = st.RebuildPlan()
 			if err != nil {
 				return errors.Trace(err)
@@ -488,8 +490,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) error {
 			} else {
 				log.Warnf("con:%d schema_ver:%d retry_cnt:%d query_num:%d", connID, schemaVersion, retryCnt, i)
 			}
-			s.sessionVars.StmtCtx = sr.stmtCtx
-			s.sessionVars.StmtCtx.ResetForRetry()
 			_, err = st.Exec(ctx)
 			if err != nil {
 				s.StmtRollback()
