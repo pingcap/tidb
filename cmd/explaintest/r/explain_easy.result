@@ -393,11 +393,11 @@ id	count	task	operator info
 TableReader_7	10000.00	root	data:TableScan_6
 └─TableScan_6	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
 explain select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
-id  count task  operator info
-StreamAgg_19  8000.00	root  group by:col_2, col_3, funcs:firstrow(col_0), firstrow(col_1)
-└─IndexReader_20  8000.00	root  index:StreamAgg_10
-  └─StreamAgg_10  8000.00 cop group by:test.t1.a, test.t1.b, funcs:firstrow(test.t1.a), firstrow(test.t1.b)
-    └─IndexScan_18  10000.00  cop table:t1, index:a, b, range:[NULL,+inf], keep order:true, stats:pseudo
+id	count	task	operator info
+StreamAgg_19	8000.00	root	group by:col_2, col_3, funcs:firstrow(col_0), firstrow(col_1)
+└─IndexReader_20	8000.00	root	index:StreamAgg_10
+  └─StreamAgg_10	8000.00	cop	group by:test.t1.a, test.t1.b, funcs:firstrow(test.t1.a), firstrow(test.t1.b)
+    └─IndexScan_18	10000.00	cop	table:t1, index:a, b, range:[NULL,+inf], keep order:true, stats:pseudo
 drop table if exists t;
 create table t(a int, nb int not null, nc int not null);
 explain select ifnull(a, 0) from t;
