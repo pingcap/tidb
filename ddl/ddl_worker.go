@@ -510,7 +510,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
-		err = errInvalidDDLJob.GenWithStack("invalid ddl job %v", job)
+		err = errInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
 
 	// Save errors in job, so that others can know errors happened.
