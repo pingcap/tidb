@@ -859,10 +859,6 @@ func (idx *Index) getRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 
 func (c *Column) newNumericColumnBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Column, error) {
 	newColHist := &Column{Info: c.Info}
-	if len(statsNode.Ranges) == 0 {
-		newColHist.Histogram = *NewHistogram(c.ID, 0, 0, 0, c.Tp, 0, 0)
-		return newColHist, nil
-	}
 	newColHist.Histogram = *NewHistogram(c.ID, int64(float64(c.NDV)*statsNode.Selectivity), 0, 0, c.Tp, chunk.InitialCapacity, 0)
 	ranLowIdx := 0
 	var totCnt int64 = 0
@@ -918,16 +914,12 @@ func (c *Column) newNumericColumnBySelectivity(sc *stmtctx.StatementContext, sta
 
 func (c *Column) newNonNumericColumnBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Column, error) {
 	newColHist := &Column{Info: c.Info}
-	if len(statsNode.Ranges) == 0 {
-		newColHist.Histogram = *NewHistogram(c.ID, 0, 0, 0, c.Tp, 0, 0)
-		return newColHist, nil
-	}
 	newColHist.Histogram = *NewHistogram(c.ID, int64(float64(c.NDV)*statsNode.Selectivity), 0, 0, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 
 	lowBucketIdx, highBucketIdx := 0, 0
 	var totCnt int64 = 0
 
-	// Bucket bound of index is encoded one, so we need to decode it if we want to calculate the fraction accurately.
+	// Bucket bound of non-numeric column is not easy to calculate. Now just use its original bound.
 	// TODO: enhance its calculation.
 	// Now just remove the bucket that no range fell in.
 	for _, ran := range statsNode.Ranges {
@@ -945,9 +937,12 @@ func (c *Column) newNonNumericColumnBySelectivity(sc *stmtctx.StatementContext, 
 		if lowBucketIdx*2 >= c.Bounds.NumRows() {
 			break
 		}
+		// TODO: GetDatum and AppendDatum is very inefficient, use a better way to this.
 		for i := lowBucketIdx; i < highBucketIdx; i++ {
-			newColHist.Bounds.AppendBytes(0, c.Bounds.GetRow(i*2).GetBytes(0))
-			newColHist.Bounds.AppendBytes(0, c.Bounds.GetRow(i*2+1).GetBytes(0))
+			low := c.Bounds.GetRow(i*2).GetDatum(0, c.Tp)
+			high := c.Bounds.GetRow(i*2+1).GetDatum(0, c.Tp)
+			newColHist.Bounds.AppendDatum(0, &low)
+			newColHist.Bounds.AppendDatum(0, &high)
 			totCnt += c.bucketCount(i)
 			newColHist.Buckets = append(newColHist.Buckets, Bucket{Repeat: c.Buckets[i].Repeat, Count: totCnt})
 		}
@@ -957,14 +952,14 @@ func (c *Column) newNonNumericColumnBySelectivity(sc *stmtctx.StatementContext, 
 
 func (c *Column) newColumnBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Column, error) {
 	if len(statsNode.Ranges) == 0 {
-
+		newColHist := &Column{Info: c.Info}
+		newColHist.Histogram = *NewHistogram(c.ID, 0, 0, 0, c.Tp, 0, 0)
+		return newColHist, nil
 	}
-	switch statsNode.Ranges[0].LowVal[0].Kind() {
-	case types.KindInt64, types.KindUint64, types.KindFloat32, types.KindFloat64:
+	if c.Tp.EvalType() == types.ETInt || c.Tp.EvalType() == types.ETReal {
 		return c.newNumericColumnBySelectivity(sc, statsNode)
-	default:
-		return c.newNonNumericColumnBySelectivity(sc, statsNode)
 	}
+	return c.newNonNumericColumnBySelectivity(sc, statsNode)
 }
 
 func (idx *Index) newIndexBySelectivity(sc *stmtctx.StatementContext, statsNode *StatsNode) (*Index, error) {

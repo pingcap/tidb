@@ -79,7 +79,6 @@ func (ds *DataSource) getStatsByFilter(conds expression.CNFExprs) (*property.Sta
 	}
 	ds.stats = profile
 	selectivity, nodes, err := profile.HistColl.Selectivity(ds.ctx, conds)
-	log.Warnf("selectivity: %v", selectivity)
 	if err != nil {
 		log.Warnf("An error happened: %v, we have to use the default selectivity", err.Error())
 		selectivity = selectionFactor

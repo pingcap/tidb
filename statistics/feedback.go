@@ -45,7 +45,7 @@ type feedback struct {
 	repeat int64
 }
 
-// QueryFeedback is used to represent the query feedback info. It contains the query's scan Ranges and number of rows
+// QueryFeedback is used to represent the query feedback info. It contains the query's scan ranges and number of rows
 // in each range.
 type QueryFeedback struct {
 	tableID  int64
@@ -78,7 +78,7 @@ func NewQueryFeedback(tableID int64, hist *Histogram, expected int64, desc bool)
 }
 
 var (
-	// MaxNumberOfRanges is the max number of Ranges before split to collect feedback.
+	// MaxNumberOfRanges is the max number of ranges before split to collect feedback.
 	MaxNumberOfRanges = 20
 	// FeedbackProbability is the probability to collect the feedback.
 	FeedbackProbability = 0.0
@@ -86,7 +86,7 @@ var (
 
 // CollectFeedback decides whether to collect the feedback. It returns false when:
 // 1: the histogram is nil or has no buckets;
-// 2: the number of scan Ranges exceeds the limit because it may affect the performance;
+// 2: the number of scan ranges exceeds the limit because it may affect the performance;
 // 3: it does not pass the probabilistic sampler.
 func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 	if q.hist == nil || q.hist.Len() == 0 {
@@ -100,7 +100,7 @@ func (q *QueryFeedback) CollectFeedback(numOfRanges int) bool {
 	return true
 }
 
-// DecodeToRanges decode the feedback to Ranges.
+// DecodeToRanges decode the feedback to ranges.
 func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 	ranges := make([]*ranger.Range, 0, len(q.feedback))
 	for _, val := range q.feedback {
@@ -158,7 +158,7 @@ func (q *QueryFeedback) decodeIntValues() *QueryFeedback {
 	return nq
 }
 
-// StoreRanges stores the Ranges for update.
+// StoreRanges stores the ranges for update.
 func (q *QueryFeedback) StoreRanges(ranges []*ranger.Range) {
 	q.feedback = make([]feedback, 0, len(ranges))
 	for _, ran := range ranges {
@@ -947,7 +947,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 	}
 	ranges, err := q.DecodeToRanges(true)
 	if err != nil {
-		log.Debug("decode feedback Ranges failed: ", err)
+		log.Debug("decode feedback ranges failed: ", err)
 		return nil
 	}
 	for i, ran := range ranges {
@@ -981,7 +981,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 			continue
 		}
 		if err != nil {
-			log.Debug("get row count by Ranges failed: ", err)
+			log.Debug("get row count by ranges failed: ", err)
 			continue
 		}
 
