@@ -19,7 +19,6 @@ package ddl
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/expression"
 	"sync"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
