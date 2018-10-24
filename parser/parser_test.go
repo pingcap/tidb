@@ -584,19 +584,28 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"SET @_e._$. = 1", true},
 		{"SET @~f = 1", false},
 		{"SET @`g,` = 1", true},
+		{"SET @`g,` := 1", true},
 		// session system variables
 		{"SET SESSION autocommit = 1", true},
+		{"SET SESSION autocommit := 1", true},
 		{"SET @@session.autocommit = 1", true},
+		{"SET @@session.autocommit := 1", true},
 		{"SET @@SESSION.autocommit = 1", true},
 		{"SET @@GLOBAL.GTID_PURGED = '123'", true},
 		{"SET @MYSQLDUMP_TEMP_LOG_BIN = @@SESSION.SQL_LOG_BIN", true},
+		{"SET @MYSQLDUMP_TEMP_LOG_BIN := @@SESSION.SQL_LOG_BIN", true},
 		{"SET LOCAL autocommit = 1", true},
+		{"SET LOCAL autocommit := 1", true},
 		{"SET @@local.autocommit = 1", true},
 		{"SET @@autocommit = 1", true},
+		{"SET @@SQL_MODE := ''", true},
 		{"SET autocommit = 1", true},
+		{"SET autocommit := 1", true},
 		// global system variables
 		{"SET GLOBAL autocommit = 1", true},
+		{"SET GLOBAL autocommit := 1", true},
 		{"SET @@global.autocommit = 1", true},
+		{"SET @@global.autocommit := 1", true},
 		// set default value
 		{"SET @@global.autocommit = default", true},
 		{"SET @@session.autocommit = default", true},
@@ -605,7 +614,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"SET CHARACTER SET 'utf8mb4';", true},
 		// set password
 		{"SET PASSWORD = 'password';", true},
+		{"SET PASSWORD := 'password';", true},
 		{"SET PASSWORD FOR 'root'@'localhost' = 'password';", true},
+		{"SET PASSWORD FOR 'root'@'localhost' := 'password';", true},
 		// SET TRANSACTION Syntax
 		{"SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ", true},
 		{"SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ", true},
