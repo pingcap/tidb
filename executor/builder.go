@@ -681,7 +681,7 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 	}
 	us, err := b.buildUnionScanFromReader(reader, v)
 	if err != nil {
-		b.err = errors.Trace(err)
+		b.err = err
 		return nil
 	}
 	return us
@@ -1848,11 +1848,11 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	childBuilder := &dataReaderBuilder{v.Children()[0], builder.executorBuilder}
 	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	e, err := builder.buildUnionScanFromReader(reader, v)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	us := e.(*UnionScanExec)
 	us.snapshotChunkBuffer = us.newFirstChunk()
