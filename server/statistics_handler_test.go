@@ -153,7 +153,7 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 	var dbName, tableName string
 	var modifyCount, count int64
 	var other interface{}
-	err = rows.Scan(&dbName, &tableName, &other, &modifyCount, &count)
+	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count)
 	dbt.Check(err, IsNil)
 	dbt.Check(dbName, Equals, "tidb")
 	dbt.Check(tableName, Equals, "test")
