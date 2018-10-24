@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/util/charset"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 func isLetter(ch rune) bool {
@@ -584,7 +583,7 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 		}
 	}
 
-	checkBtFuncToken, tokenStr := false, hack.String(data)
+	checkBtFuncToken, tokenStr := false, string(data)
 	if s.r.peek() == '(' {
 		checkBtFuncToken = true
 	} else if s.sqlMode.HasIgnoreSpaceMode() {

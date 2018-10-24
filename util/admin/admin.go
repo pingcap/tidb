@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"time"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -31,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -294,7 +295,7 @@ func ScanIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex tab
 // It returns nil if the data from the index is equal to the data from the table columns,
 // otherwise it returns an error with a different set of records.
 // genExprs is use to calculate the virtual generate column.
-func CompareIndexData(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[string]expression.Expression) error {
+func CompareIndexData(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
 	err := checkIndexAndRecord(sessCtx, txn, t, idx, genExprs)
 	if err != nil {
 		return errors.Trace(err)
@@ -336,7 +337,7 @@ func adjustDatumKind(vals1, vals2 []types.Datum) {
 	}
 }
 
-func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[string]expression.Expression) error {
+func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
 	it, err := idx.SeekFirst(txn)
 	if err != nil {
 		return errors.Trace(err)
@@ -352,6 +353,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	if err != nil {
 		return errors.Trace(err)
 	}
+	rowDecoder := makeRowDecoder(t, cols, genExprs)
 	sc := sessCtx.GetSessionVars().StmtCtx
 	for {
 		vals1, h, err := it.Next()
@@ -365,7 +367,7 @@ func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table
 		if err != nil {
 			return errors.Trace(err)
 		}
-		vals2, err := rowWithCols(sessCtx, txn, t, h, cols, genExprs)
+		vals2, err := rowWithCols(sessCtx, txn, t, h, cols, rowDecoder)
 		vals2 = tables.TruncateIndexValuesIfNeeded(t.Meta(), idx.Meta(), vals2)
 		if kv.ErrNotExist.Equal(err) {
 			record := &RecordData{Handle: h, Values: vals1}
@@ -399,7 +401,7 @@ func compareDatumSlice(sc *stmtctx.StatementContext, val1s, val2s []types.Datum)
 }
 
 // CheckRecordAndIndex is exported for testing.
-func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[string]expression.Expression) error {
+func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
@@ -551,16 +553,38 @@ func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.
 	return nil
 }
 
+func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) decoder.RowDecoder {
+	cols := t.Cols()
+	tblInfo := t.Meta()
+	decodeColsMap := make(map[int64]decoder.Column, len(decodeCol))
+	for _, v := range decodeCol {
+		col := cols[v.Offset]
+		tpExpr := decoder.Column{
+			Info: col.ToInfo(),
+		}
+		if col.IsGenerated() && !col.GeneratedStored {
+			for _, c := range cols {
+				if _, ok := col.Dependences[c.Name.L]; ok {
+					decodeColsMap[c.ID] = decoder.Column{
+						Info: c.ToInfo(),
+					}
+				}
+			}
+			tpExpr.GenExpr = genExpr[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
+		}
+		decodeColsMap[col.ID] = tpExpr
+	}
+	return decoder.NewRowDecoder(cols, decodeColsMap)
+}
+
 // genExprs use to calculate generated column value.
-func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, genExprs map[string]expression.Expression) ([]types.Datum, error) {
+func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, rowDecoder decoder.RowDecoder) ([]types.Datum, error) {
 	key := t.RecordKey(h)
 	value, err := txn.Get(key)
-	genColFlag := false
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	v := make([]types.Datum, len(cols))
-	colTps := make(map[int64]*types.FieldType, len(cols))
 	for i, col := range cols {
 		if col == nil {
 			continue
@@ -576,32 +600,11 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 			}
 			continue
 		}
-		// If have virtual generate column , decode all columns.
-		if col.IsGenerated() && col.GeneratedStored == false {
-			genColFlag = true
-		}
-		colTps[col.ID] = &col.FieldType
-	}
-	// if have virtual generate column, decode all columns
-	if genColFlag {
-		for _, c := range t.Cols() {
-			if c.State != model.StatePublic {
-				continue
-			}
-			colTps[c.ID] = &c.FieldType
-		}
 	}
 
-	rowMap, err := tablecodec.DecodeRow(value, colTps, sessCtx.GetSessionVars().Location())
+	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	if genColFlag && genExprs != nil {
-		err = fillGenColData(sessCtx, rowMap, t, cols, genExprs)
-		if err != nil {
-			return v, errors.Trace(err)
-		}
 	}
 
 	for i, col := range cols {
@@ -635,7 +638,7 @@ func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h 
 
 // genExprs use to calculate generated column value.
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
-	fn table.RecordIterFunc, genExprs map[string]expression.Expression) error {
+	fn table.RecordIterFunc, genExprs map[model.TableColumnID]expression.Expression) error {
 	it, err := retriever.Seek(startKey)
 	if err != nil {
 		return errors.Trace(err)
@@ -647,22 +650,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	}
 
 	log.Debugf("startKey:%q, key:%q, value:%q", startKey, it.Key(), it.Value())
-
-	genColFlag := false
-	colMap := make(map[int64]*types.FieldType, len(cols))
-	for _, col := range cols {
-		if col.IsGenerated() && col.GeneratedStored == false {
-			genColFlag = true
-			break
-		}
-		colMap[col.ID] = &col.FieldType
-	}
-	if genColFlag {
-		for _, col := range t.Cols() {
-			colMap[col.ID] = &col.FieldType
-		}
-	}
-
+	rowDecoder := makeRowDecoder(t, cols, genExprs)
 	prefix := t.RecordPrefix()
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
@@ -673,18 +661,10 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 			return errors.Trace(err)
 		}
 
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, sessCtx.GetSessionVars().Location())
+		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, it.Value(), sessCtx.GetSessionVars().Location(), time.UTC, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		if genColFlag && genExprs != nil {
-			err = fillGenColData(sessCtx, rowMap, t, cols, genExprs)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
 			if col.IsPKHandleColumn(t.Meta()) {
@@ -709,39 +689,6 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		}
 	}
 
-	return nil
-}
-
-// genExprs use to calculate generated column value.
-func fillGenColData(sessCtx sessionctx.Context, rowMap map[int64]types.Datum, t table.Table, cols []*table.Column, genExprs map[string]expression.Expression) error {
-	tableInfo := t.Meta()
-	row := make([]types.Datum, len(t.Cols()))
-	for _, col := range t.Cols() {
-		ri, ok := rowMap[col.ID]
-		if ok {
-			row[col.Offset] = ri
-		}
-	}
-
-	var err error
-	for _, col := range cols {
-		if !col.IsGenerated() || col.GeneratedStored == true {
-			continue
-		}
-		genColumnName := model.GetTableColumnID(tableInfo, col.ColumnInfo)
-		if expr, ok := genExprs[genColumnName]; ok {
-			var val types.Datum
-			val, err = expr.Eval(chunk.MutRowFromDatums(row).ToRow())
-			if err != nil {
-				return errors.Trace(err)
-			}
-			val, err = table.CastValue(sessCtx, val, col.ToInfo())
-			if err != nil {
-				return errors.Trace(err)
-			}
-			rowMap[col.ID] = val
-		}
-	}
 	return nil
 }
 
