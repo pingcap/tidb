@@ -1901,7 +1901,7 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 		return nil
 	}
 
-	if err := modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
+	if err = modifiableCharsetAndCollation(toCharset, toCollate, origCharset, origCollate); err != nil {
 		return errors.Trace(err)
 	}
 
