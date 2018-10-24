@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/charset"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -3575,4 +3576,96 @@ func (s *testDBSuite) TestPartitionAddIndex(c *C) {
 
 	tk.MustExec("admin check table partition_add_idx")
 	tk.MustExec("drop table partition_add_idx")
+}
+
+func (s *testDBSuite) TestAlterTableCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database test_charset")
+	defer tk.MustExec("drop database test_charset")
+	tk.MustExec("use test_charset")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int) charset latin1")
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().Charset, Equals, "latin1")
+	defCollate, err := charset.GetDefaultCollation("latin1")
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().Collate, Equals, defCollate)
+
+	tk.MustExec("alter table t charset utf8")
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(t.Meta().Charset, Equals, "utf8")
+	defCollate, err = charset.GetDefaultCollation("utf8")
+	c.Assert(err, IsNil)
+	c.Assert(t.Meta().Collate, Equals, defCollate)
+
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_general_ci")
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(t.Meta().Charset, Equals, "utf8mb4")
+	c.Assert(t.Meta().Collate, Equals, "utf8mb4_general_ci")
+
+	rs, err := tk.Exec("alter table t charset utf8")
+	if rs != nil {
+		rs.Close()
+	}
+
+	c.Assert(err.Error(), Equals, "[ddl:208]unsupported modify charset from utf8mb4 to utf8")
+}
+
+func (s *testDBSuite) TestAlterColumnCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database test_charset")
+	defer tk.MustExec("drop database test_charset")
+	tk.MustExec("use test_charset")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) charset latin1)")
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	t, err := is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	col := model.FindColumnInfo(t.Meta().Columns, "a")
+	c.Assert(col, NotNil)
+	c.Assert(col.Charset, Equals, "latin1")
+	defCollate, err := charset.GetDefaultCollation("latin1")
+	c.Assert(err, IsNil)
+	c.Assert(col.Collate, Equals, defCollate)
+
+	tk.MustExec("alter table t modify column a char(10) charset utf8")
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	col = model.FindColumnInfo(t.Meta().Columns, "a")
+	c.Assert(col, NotNil)
+	c.Assert(col.Charset, Equals, "utf8")
+	defCollate, err = charset.GetDefaultCollation("utf8")
+	c.Assert(err, IsNil)
+	c.Assert(col.Collate, Equals, defCollate)
+
+	tk.MustExec("alter table t modify column a char(10) charset utf8 collate utf8_general_ci")
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	col = model.FindColumnInfo(t.Meta().Columns, "a")
+	c.Assert(col, NotNil)
+	c.Assert(col.Charset, Equals, "utf8")
+	c.Assert(col.Collate, Equals, "utf8_general_ci")
+
+	tk.MustExec("alter table t modify column a char(10) charset utf8mb4 collate utf8mb4_general_ci")
+	is = domain.GetDomain(ctx).InfoSchema()
+	t, err = is.TableByName(model.NewCIStr("test_charset"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	col = model.FindColumnInfo(t.Meta().Columns, "a")
+	c.Assert(col, NotNil)
+	c.Assert(col.Charset, Equals, "utf8mb4")
+	c.Assert(col.Collate, Equals, "utf8mb4_general_ci")
+
+	rs, err := tk.Exec("alter table t modify column a char(10) charset utf8")
+	if rs != nil {
+		rs.Close()
+	}
+	c.Assert(err.Error(), Equals, "[ddl:208]unsupported modify charset from utf8mb4 to utf8")
 }

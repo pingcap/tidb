@@ -682,6 +682,8 @@ type TableOption struct {
 	Tp        TableOptionType
 	StrValue  string
 	UintValue uint64
+	// Skipped indicate the TableOption can be skipped.
+	Skipped bool
 }
 
 // ColumnPositionType is the type for ColumnPosition.
