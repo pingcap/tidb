@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/auth"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -66,7 +67,7 @@ type CheckTable struct {
 
 	Tables []*ast.TableName
 
-	GenExprs map[string]expression.Expression
+	GenExprs map[model.TableColumnID]expression.Expression
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
@@ -157,7 +158,7 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		if err != nil {
 			return errors.Trace(err)
 		}
-		prepared.Params[i].SetDatum(val)
+		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = val
 		vars.PreparedParams = append(vars.PreparedParams, val)
 	}
 	if prepared.SchemaVersion != is.SchemaMetaVersion() {

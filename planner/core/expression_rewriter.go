@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pkg/errors"
 )
@@ -36,7 +37,7 @@ var EvalSubquery func(p PhysicalPlan, is infoschema.InfoSchema, ctx sessionctx.C
 
 // evalAstExpr evaluates ast expression directly.
 func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
-	if val, ok := expr.(*ast.ValueExpr); ok {
+	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
 	b := &PlanBuilder{
@@ -753,10 +754,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr:
-	case *ast.ValueExpr:
+	case *driver.ValueExpr:
 		value := &expression.Constant{Value: v.Datum, RetType: &v.Type}
 		er.ctxStack = append(er.ctxStack, value)
-	case *ast.ParamMarkerExpr:
+	case *driver.ParamMarkerExpr:
 		tp := types.NewFieldType(mysql.TypeUnspecified)
 		types.DefaultParamTypeForValue(v.GetValue(), tp)
 		value := &expression.Constant{Value: v.Datum, RetType: tp}
@@ -820,7 +821,7 @@ func datumToConstant(d types.Datum, tp byte) *expression.Constant {
 	return &expression.Constant{Value: d, RetType: types.NewFieldType(tp)}
 }
 
-func (er *expressionRewriter) getParamExpression(v *ast.ParamMarkerExpr) expression.Expression {
+func (er *expressionRewriter) getParamExpression(v *driver.ParamMarkerExpr) expression.Expression {
 	f, err := expression.NewFunction(er.ctx,
 		ast.GetParam,
 		&v.Type,
