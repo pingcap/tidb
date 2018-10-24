@@ -57,23 +57,23 @@ Use histograms to do the row count estimation with the join key condition. It ca
 
 Original:
 
-<img alt="original histogram" src="./histogram-1.png" width="500pt"/>
+<img alt="original histogram" src="./imgs/histogram-1.jpeg" width="500pt"/>
 
 Step 1:
 
-<img alt="Step 1" src="./histogram-2.png" width="500pt"/>
+<img alt="Step 1" src="./imgs/histogram-2.jpeg" width="500pt"/>
 
 Step 2:
 
 <div style="text-align: center">
-<img alt="Step 2" src="./histogram-3.png" width="150pt"/>
+<img alt="Step 2" src="./imgs/histogram-3.png" width="150pt"/>
 </div>
 
-The calculation inside the bucket can be calculated as this formula <img alt="$selecivity=joinKeySelectivity*RowCount(t1)*RowCount(t2)$" src="svgs/35fa60f709be6b9ab8aa9036bd5e7f7f.png?invert_in_darkmode" align="middle" width="476.19356895pt" height="24.657534pt"/>
+The calculation inside the bucket can be calculated as this formula <img alt="$selectivity=joinKeySelectivity*RowCount(t1)*RowCount(t2)$" src="imgs/histogram-formula-1.png?invert_in_darkmode" align="middle" width="476.19356895pt" height="24.657534pt"/>
 
-Where <img alt="$joinKeySelectivity = \frac{1}{NDV(t1.key)}*\frac{1}{NDV(t2.key)}*ndvAfterJoin$" src="svgs/291c9eb6e8db885402c716ffc3e17a65.png?invert_in_darkmode" align="middle" width="466.6166208pt" height="27.7756545pt"/>.
+Where <img alt="$joinKeySelectivity = \frac{1}{NDV(t1.key)}*\frac{1}{NDV(t2.key)}*ndvAfterJoin$" src="imgs/histogram-formula-2.png?invert_in_darkmode" align="middle" width="466.6166208pt" height="27.7756545pt"/>.
 
-The `ndvAfterJoin` can be <img alt="$min(NDV(t1.key), NDV(t2.key))$" src="svgs/30df1c648fa9fe43985776847c8dbe60.png?invert_in_darkmode" align="middle" width="248.4423216pt" height="24.657534pt"/> or a more detailed one if we can calculate it.
+The `ndvAfterJoin` can be <img alt="$min(NDV(t1.key), NDV(t2.key))$" src="imgs/histogram-formula-3.png?invert_in_darkmode" align="middle" width="248.4423216pt" height="24.657534pt"/> or a more detailed one if we can calculate it.
 
 
 Since it won’t have one side filter, we only need to consider the composite filters after considering the join key. We can simply multiply `selectionFactor` if there are other composite filters since `Selectivity` cannot calculate selectivity of an expression containing multiple columns.
