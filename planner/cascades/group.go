@@ -61,11 +61,7 @@ func (g *Group) Insert(e *GroupExpr) bool {
 	if hasMark {
 		newEquiv = g.equivalents.InsertAfter(e, mark)
 	} else {
-		if operand == OperandAny {
-			newEquiv = g.equivalents.PushFront(e)
-		} else {
-			newEquiv = g.equivalents.PushBack(e)
-		}
+		newEquiv = g.equivalents.PushBack(e)
 		g.firstExpr[operand] = newEquiv
 	}
 	g.fingerprints[e.FingerPrint()] = newEquiv
@@ -100,4 +96,13 @@ func (g *Group) Delete(e *GroupExpr) {
 func (g *Group) Exists(e *GroupExpr) bool {
 	_, ok := g.fingerprints[e.FingerPrint()]
 	return ok
+}
+
+// GetFirstElem returns the first group expression which matches the operand.
+// Return a nil pointer if there isn't.
+func (g *Group) GetFirstElem(operand Operand) *list.Element {
+	if operand == OperandAny {
+		return g.equivalents.Front()
+	}
+	return g.firstExpr[operand]
 }

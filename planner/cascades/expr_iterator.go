@@ -65,7 +65,7 @@ func (iter *ExprIter) Next() (found bool) {
 		expr := iter.element.Value.(*GroupExpr)
 		exprOperand := GetOperand(expr.exprNode)
 
-		if !iter.operand.match(exprOperand) && iter.operand != OperandAny {
+		if !iter.operand.match(exprOperand) {
 			// All the equivalents which have the same operand are continuously
 			// stored in the list. Once the current equivalent can not match
 			// the operand, the rest can not, either.
@@ -126,12 +126,12 @@ func NewExprIterFromGroupExpr(expr *GroupExpr, p *Pattern) *ExprIter {
 
 // NewExprIterFromGroup creates the iterator on the group.
 func NewExprIterFromGroup(g *Group, p *Pattern) *ExprIter {
-	elem, ok := g.firstExpr[p.operand]
-	if !ok {
-		return nil
+	for elem := g.GetFirstElem(p.operand); elem != nil; elem = elem.Next() {
+		iter := NewExprIterFromGroupExpr(elem.Value.(*GroupExpr), p)
+		if iter != nil {
+			iter.group, iter.element = g, elem
+			return iter
+		}
 	}
-
-	iter := NewExprIterFromGroupExpr(elem.Value.(*GroupExpr), p)
-	iter.group, iter.element = g, elem
 	return nil
 }
