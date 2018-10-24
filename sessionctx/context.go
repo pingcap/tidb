@@ -84,6 +84,8 @@ type Context interface {
 	StmtAddDirtyTableOP(op int, tid int64, handle int64, row []types.Datum)
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
+
+	GetSessionTracing() SessionTracing
 }
 
 type basicCtxType int

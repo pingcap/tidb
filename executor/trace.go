@@ -14,33 +14,34 @@
 package executor
 
 import (
-	"time"
-
-	"github.com/opentracing/basictracer-go"
-	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
+	"strings"
 )
 
 // TraceExec represents a root executor of trace query.
 type TraceExec struct {
 	baseExecutor
-	// CollectedSpans collects all span during execution. Span is appended via
-	// callback method which passes into tracer implementation.
-	CollectedSpans []basictracer.RawSpan
-	// exhausted being true means there is no more result.
-	exhausted bool
 	// stmtNode is the real query ast tree and it is used for building real query's plan.
 	stmtNode ast.StmtNode
-	// rootTrace represents root span which is father of all other span.
-	rootTrace opentracing.Span
 
 	builder *executorBuilder
+
+	st sessionctx.SessionTracing
+
+	exhausted bool
+
+	originalSql string
 }
+
+const (
+	tracePrefix = "trace"
+)
 
 // Next executes real query and collects span later.
 func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
@@ -49,34 +50,27 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
-	// record how much time was spent for optimizeing plan
-	optimizeSp := e.rootTrace.Tracer().StartSpan("plan_optimize", opentracing.FollowsFrom(e.rootTrace.Context()))
+	actualSql := strings.TrimPrefix(e.originalSql, tracePrefix)
+	e.st.StartTracing(tracing.TiDBRecording, false, false)
+	ctx = e.st.Ctx()
+	ctx, _ = tracing.ChildSpan(ctx, "plan recording")
+	e.st.TracePlanStart(ctx, actualSql)
 	stmtPlan, err := plannercore.Optimize(e.builder.ctx, e.stmtNode, e.builder.is)
-	if err != nil {
-		return err
+	e.st.TracePlanEnd(ctx, err)
+	//pp, ok := stmtPlan.(plannercore.PhysicalPlan)
+	//fmt.Printf("plan is %#v", stmtPlan)
+	//if !ok {
+	//	return errors.New("cannot cast logical plan to physical plan")
+	//}
+	//append select executor to trace executor
+	ctx, _ = tracing.ChildSpan(ctx, "execution recording")
+	e.st.TraceExecStart(ctx, "tidb")
+	stmtExec := e.builder.build(stmtPlan)
+	if err := stmtExec.Open(ctx); err != nil {
+		errors.Trace(err)
 	}
-	optimizeSp.Finish()
 
-	pp, ok := stmtPlan.(plannercore.PhysicalPlan)
-	if !ok {
-		return errors.New("cannot cast logical plan to physical plan")
-	}
-
-	// append select executor to trace executor
-	stmtExec := e.builder.build(pp)
-
-	e.rootTrace = tracing.NewRecordedTrace("trace_exec", func(sp basictracer.RawSpan) {
-		e.CollectedSpans = append(e.CollectedSpans, sp)
-	})
-	err = stmtExec.Open(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	stmtExecChk := stmtExec.newFirstChunk()
-
-	// store span into context
-	ctx = opentracing.ContextWithSpan(ctx, e.rootTrace)
-
 	for {
 		if err := stmtExec.Next(ctx, stmtExecChk); err != nil {
 			return errors.Trace(err)
@@ -86,46 +80,30 @@ func (e *TraceExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 	}
 
-	e.rootTrace.LogKV("event", "tracing completed")
-	e.rootTrace.Finish()
-	var rootSpan basictracer.RawSpan
+	e.st.TraceExecEnd(ctx, err, int(e.ctx.GetSessionVars().StmtCtx.AffectedRows()))
 
-	treeSpans := make(map[uint64][]basictracer.RawSpan)
-	for _, sp := range e.CollectedSpans {
-		treeSpans[sp.ParentSpanID] = append(treeSpans[sp.ParentSpanID], sp)
-		// if a span's parentSpanID is 0, then it is root span
-		// this is by design
-		if sp.ParentSpanID == 0 {
-			rootSpan = sp
-		}
+	chkFromTracing, err := e.st.GetSessionTrace()
+	if err != nil {
+		return nil
 	}
 
-	dfsTree(rootSpan, treeSpans, "", false, chk)
+	processTracingResults(chk, chkFromTracing)
+
+	e.st.StopTracing()
+
 	e.exhausted = true
 	return nil
 }
 
-func dfsTree(span basictracer.RawSpan, tree map[uint64][]basictracer.RawSpan, prefix string, isLast bool, chk *chunk.Chunk) {
-	suffix := ""
-	spans := tree[span.Context.SpanID]
-	var newPrefix string
-	if span.ParentSpanID == 0 {
-		newPrefix = prefix
-	} else {
-		if len(tree[span.ParentSpanID]) > 0 && !isLast {
-			suffix = "├─"
-			newPrefix = prefix + "│ "
-		} else {
-			suffix = "└─"
-			newPrefix = prefix + "  "
-		}
-	}
-
-	chk.AppendString(0, prefix+suffix+span.Operation)
-	chk.AppendString(1, span.Start.Format(time.StampNano))
-	chk.AppendString(2, span.Duration.String())
-
-	for i, sp := range spans {
-		dfsTree(sp, tree, newPrefix, i == (len(spans))-1 /*last element of array*/, chk)
+// TODO(zhexuany) need add message from kv layer.
+func processTracingResults(dst *chunk.Chunk, src *chunk.Chunk) {
+	for i := 0; i < src.NumRows(); i++ {
+		dst.AppendTime(0, src.GetRow(i).GetTime(sessionctx.TraceTimestampCol))
+		dst.AppendString(1, src.GetRow(i).GetString(sessionctx.TraceAgeCol))
+		dst.AppendString(2, src.GetRow(i).GetString(sessionctx.TraceMsgCol))
+		dst.AppendString(3, src.GetRow(i).GetString(sessionctx.TraceTagCol))
+		dst.AppendString(4, src.GetRow(i).GetString(sessionctx.TraceLocCol))
+		dst.AppendString(5, src.GetRow(i).GetString(sessionctx.TraceOpCol))
+		dst.AppendInt64(6, src.GetRow(i).GetInt64(sessionctx.TraceSpanIdxCol))
 	}
 }

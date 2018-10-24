@@ -729,6 +729,17 @@ func buildCleanupIndexFields() *expression.Schema {
 	return schema
 }
 
+func buildTraceFields() *expression.Schema {
+	columns := make([]*expression.Column, 7)
+	columns[0] = buildColumn("", "timestamp", mysql.TypeTimestamp, 0)
+	columns[1] = buildColumn("", "age", mysql.TypeString, mysql.MaxBlobWidth)
+	columns[2] = buildColumn("", "message", mysql.TypeString, mysql.MaxBlobWidth)
+	columns[3] = buildColumn("", "tag", mysql.TypeString, mysql.MaxBlobWidth)
+	columns[4] = buildColumn("", "loc", mysql.TypeString, mysql.MaxBlobWidth)
+	columns[5] = buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth)
+	columns[6] = buildColumn("", "spanIdx", mysql.TypeLonglong, mysql.MaxBlobWidth)
+	return expression.NewSchema(columns...)
+}
 func buildShowDDLJobsFields() *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, 10)...)
 	schema.Append(buildColumn("", "JOB_ID", mysql.TypeLonglong, 4))
@@ -1404,19 +1415,16 @@ func (b *planBuilder) buildDDL(node ast.DDLNode) Plan {
 // underlying query and then constructs a schema, which will be used to constructs
 // rows result.
 func (b *planBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
-	if _, ok := trace.Stmt.(*ast.SelectStmt); !ok {
-		return nil, errors.New("trace only supports select query")
+	//if _, ok := trace.Stmt.(*ast.SelectStmt); !ok {
+	//	return nil, errors.New("trace only supports select query")
+	//}
+
+	p := &Trace{
+		StmtNode:    trace.Stmt,
+		OriginalSql: trace.Text(),
 	}
 
-	p := &Trace{StmtNode: trace.Stmt}
-
-	retFields := []string{"operation", "duration", "spanID"}
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-	schema.Append(buildColumn("", "operation", mysql.TypeString, mysql.MaxBlobWidth))
-
-	schema.Append(buildColumn("", "startTS", mysql.TypeString, mysql.MaxBlobWidth))
-	schema.Append(buildColumn("", "duration", mysql.TypeString, mysql.MaxBlobWidth))
-	p.SetSchema(schema)
+	p.SetSchema(buildTraceFields())
 	return p, nil
 }
 

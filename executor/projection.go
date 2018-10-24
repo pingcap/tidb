@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -157,6 +158,7 @@ func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk
 		return errors.Trace(err)
 	}
 	err = e.evaluatorSuit.Run(e.ctx, e.childResult, chk)
+	logutil.Eventf(ctx, "unparallel projection completed")
 	return errors.Trace(err)
 }
 
@@ -178,6 +180,7 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 
 	chk.SwapColumns(output.chk)
 	e.fetcher.outputCh <- output
+	logutil.Eventf(ctx, "parallel projection completed with %d worker", e.numWorkers)
 	return nil
 }
 

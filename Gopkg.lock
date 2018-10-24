@@ -10,6 +10,14 @@
   revision = "a368813c5e648fee92e5f6c30e3944ff9d5e8895"
 
 [[projects]]
+  digest = "1:a074ae0f4788ea4c4c7045ab37f21943920bc20cf6ff8afcb2d971154cfa87ab"
+  name = "github.com/Shopify/sarama"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "ec843464b50d4c8b56403ec9d589cf41ea30e722"
+  version = "v1.19.0"
+
+[[projects]]
   digest = "1:9752dad5e89cd779096bf2477a4ded16bea7ac62de453c8d6b4bf841d51a8512"
   name = "github.com/apache/thrift"
   packages = ["lib/go/thrift"]
@@ -100,12 +108,52 @@
   revision = "9fdf92d4aac058959f814606bb729ed50f5e4240"
 
 [[projects]]
+  digest = "1:ffe9824d294da03b391f44e1ae8281281b4afc1bdaa9588c9097785e3af10cec"
+  name = "github.com/davecgh/go-spew"
+  packages = ["spew"]
+  pruneopts = "NUT"
+  revision = "8991bc29aa16c548c550c7ff78260e27b9ab7c73"
+  version = "v1.1.1"
+
+[[projects]]
+  digest = "1:08143362be979b087c2c1bae5dde986e988d3d5d4dc661727cbe436411b3f33a"
+  name = "github.com/eapache/go-resiliency"
+  packages = ["breaker"]
+  pruneopts = "NUT"
+  revision = "ea41b0fad31007accc7f806884dcdf3da98b79ce"
+  version = "v1.1.0"
+
+[[projects]]
+  branch = "master"
+  digest = "1:d3430c048e919ed27813d20dc65a32d4e3bae3ad05b83700e244a81eaaf48e2a"
+  name = "github.com/eapache/go-xerial-snappy"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "776d5712da21bc4762676d614db1d8a64f4238b0"
+
+[[projects]]
+  digest = "1:0d36a2b325b9e75f8057f7f9fbe778d348d70ba652cb9335485b69d1a5c4e038"
+  name = "github.com/eapache/queue"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "44cc805cf13205b55f69e14bcb69867d1ae92f98"
+  version = "v1.1.0"
+
+[[projects]]
   branch = "master"
   digest = "1:f18dbc529543fe5fd5294f8385ea1f71681be964c43461f5f45335bb51ba83ae"
   name = "github.com/etcd-io/gofail"
   packages = ["runtime"]
   pruneopts = "NUT"
   revision = "51ce9a71510a58bad5ae66ddd278ef28762a1550"
+
+[[projects]]
+  digest = "1:341a7df38da99fe91ed40e4008c13cc5d02dcc98ed1a094360cb7d5df26d6d26"
+  name = "github.com/go-logfmt/logfmt"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "390ab7935ee28ec6b286364bba9b4dd6410cb3d5"
+  version = "v0.3.0"
 
 [[projects]]
   digest = "1:973dbcbbb1be662b61604319582383c315add70906a68d14894f31542ffc3a25"
@@ -191,6 +239,28 @@
 
 [[projects]]
   branch = "master"
+  digest = "1:f91bb67d051a94cf6ab2cf07eee0550432afc31655838d42cdec258db4b348f0"
+  name = "github.com/kr/logfmt"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "b84e30acd515aadc4b783ad4ff83aff3299bdfe0"
+
+[[projects]]
+  digest = "1:542c21d1b1b8e4ca02b5c59692b2a36eb71a60bd08e8447e8205abf8035af0d2"
+  name = "github.com/lightstep/lightstep-tracer-go"
+  packages = [
+    ".",
+    "collectorpb",
+    "lightstep_thrift",
+    "lightsteppb",
+    "thrift_0_9_2/lib/go/thrift",
+  ]
+  pruneopts = "NUT"
+  revision = "ba38bae1f0ec1ece9092d35bbecbb497ee344cbc"
+  version = "v0.15.0"
+
+[[projects]]
+  branch = "master"
   digest = "1:5985ef4caf91ece5d54817c11ea25f182697534f8ae6521eadcd628c142ac4b6"
   name = "github.com/matttproud/golang_protobuf_extensions"
   packages = ["pbutil"]
@@ -212,6 +282,14 @@
   packages = ["."]
   pruneopts = "NUT"
   revision = "7a24ed77b2efb460c1468b7dc917821c66e80e55"
+
+[[projects]]
+  branch = "master"
+  digest = "1:b4f46325dbc2a7489ba33b4bd3cce542a1721611e857c1cb0b0c57775b2ad130"
+  name = "github.com/opentracing-contrib/go-observer"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "a52f2342449246d5bcc273e65cbdcfa5f7d6c63c"
 
 [[projects]]
   digest = "1:cc405544fecfb5a8e0c409127ef67ce3b91d11143a00121e5b822e4f8eabe7d2"
@@ -237,12 +315,38 @@
   version = "v1.0.2"
 
 [[projects]]
+  digest = "1:bf3b3b697c848612d4c87121b189c37f7a7a7b6b7e1ae3bbfbe12574cbebec3d"
+  name = "github.com/openzipkin/zipkin-go-opentracing"
+  packages = [
+    ".",
+    "flag",
+    "thrift/gen-go/scribe",
+    "thrift/gen-go/zipkincore",
+    "types",
+    "wire",
+  ]
+  pruneopts = "NUT"
+  revision = "26cf9707480e6b90e5eff22cf0bbf05319154232"
+  version = "v0.3.4"
+
+[[projects]]
   branch = "master"
   digest = "1:3bf17a6e6eaa6ad24152148a631d18662f7212e21637c2699bff3369b7f00fa2"
   name = "github.com/petar/GoLLRB"
   packages = ["llrb"]
   pruneopts = "NUT"
   revision = "53be0d36a84c2a886ca057d34b6aa4468df9ccb4"
+
+[[projects]]
+  digest = "1:1d920dce8e11bfff65b5709e883a8ece131b63a5bc4b2cd404f9ef7eb445f73f"
+  name = "github.com/pierrec/lz4"
+  packages = [
+    ".",
+    "internal/xxh32",
+  ]
+  pruneopts = "NUT"
+  revision = "635575b42742856941dbc767b44905bb9ba083f6"
+  version = "v2.0.7"
 
 [[projects]]
   branch = "master"
@@ -353,6 +457,14 @@
   packages = ["."]
   pruneopts = "NUT"
   revision = "abf152e5f3e97f2fafac028d2cc06c1feb87ffa5"
+
+[[projects]]
+  branch = "master"
+  digest = "1:120b256a4d3cd2946ffa4b87102731c2f004aed6d836dc2fba400ed9398696e7"
+  name = "github.com/rcrowley/go-metrics"
+  packages = ["."]
+  pruneopts = "NUT"
+  revision = "3113b8401b8a98917cde58f8bbd42a1b1c03b1fd"
 
 [[projects]]
   digest = "1:4c173651d2deb815a0420aeb1b3f7ca3c4aef2d980ba164a501a53f6abf368ef"
@@ -524,6 +636,7 @@
     "github.com/cznic/y",
     "github.com/etcd-io/gofail/runtime",
     "github.com/go-sql-driver/mysql",
+    "github.com/gogo/protobuf/proto",
     "github.com/golang/protobuf/jsonpb",
     "github.com/golang/protobuf/proto",
     "github.com/google/btree",
@@ -531,9 +644,12 @@
     "github.com/grpc-ecosystem/go-grpc-middleware",
     "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing",
     "github.com/grpc-ecosystem/go-grpc-prometheus",
+    "github.com/lightstep/lightstep-tracer-go",
     "github.com/ngaut/pools",
     "github.com/opentracing/basictracer-go",
     "github.com/opentracing/opentracing-go",
+    "github.com/opentracing/opentracing-go/log",
+    "github.com/openzipkin/zipkin-go-opentracing",
     "github.com/pingcap/check",
     "github.com/pingcap/goleveldb/leveldb",
     "github.com/pingcap/goleveldb/leveldb/comparer",
@@ -558,6 +674,7 @@
     "github.com/twinj/uuid",
     "github.com/uber/jaeger-client-go/config",
     "golang.org/x/net/context",
+    "golang.org/x/net/trace",
     "golang.org/x/text/encoding",
     "golang.org/x/text/encoding/charmap",
     "golang.org/x/text/encoding/japanese",

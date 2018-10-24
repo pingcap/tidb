@@ -48,7 +48,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -74,13 +73,47 @@ const (
 
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
-	return &clientConn{
+	cc := &clientConn{
 		server:       s,
 		connectionID: atomic.AddUint32(&baseConnID, 1),
 		collation:    mysql.DefaultCollationID,
 		alloc:        arena.NewAllocator(32 * 1024),
 		status:       connStatusDispatching,
 	}
+	tracing := &sessionTracing{Cc: cc}
+	cc.Tracing = tracing
+	return cc
+}
+
+// ctxHolder contains a connection's context and, while session tracing is
+// enabled, a derived context with a recording span. The clientConn should use
+// the latter while session tracing is active, or the former otherwise; that's
+// what the ctx() method returns.
+type ctxHolder struct {
+	connCtx           context.Context
+	sessionTracingCtx context.Context
+	cancel            context.CancelFunc
+}
+
+func (ch *ctxHolder) ctx() context.Context {
+	if ch.sessionTracingCtx != nil {
+		return ch.sessionTracingCtx
+	}
+	return ch.connCtx
+}
+
+func (ch *ctxHolder) hijack(sessionTracingCtx context.Context) {
+	if ch.sessionTracingCtx != nil {
+		panic("hijack already in effect")
+	}
+	ch.sessionTracingCtx = sessionTracingCtx
+}
+
+func (ch *ctxHolder) unhijack() {
+	if ch.sessionTracingCtx == nil {
+		panic("hijack not in effect")
+	}
+	ch.sessionTracingCtx = nil
 }
 
 // clientConn represents a connection between server and client, it maintains connection specific state,
@@ -98,15 +131,35 @@ type clientConn struct {
 	salt         []byte            // random bytes used for authentication.
 	alloc        arena.Allocator   // an memory allocator for reducing memory allocation.
 	lastCmd      string            // latest sql query string, currently used for logging error.
-	ctx          QueryCtx          // an interface to execute sql statements.
+	ctx          *QueryCtx         // an interface to execute sql statements.
 	attrs        map[string]string // attributes parsed from client handshake response, not used for now.
 	status       int32             // dispatching/reading/shutdown/waitshutdown
+
+	// ctxHolder contains the connection's context in which all command executed
+	// on the connection are running. This generally should not be used directly,
+	// but through the Ctx() method; if we're inside a transaction, Ctx() is going
+	// to return a derived context. See the Context Management comments at the top
+	// of the file.
+	ctxHolder ctxHolder
+
+	Tracing sessionctx.SessionTracing
 
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
 	}
+}
+
+// Ctx returns the transaction's ctx, if we're inside a transaction, or the
+// session's context otherwise.
+func (cc *clientConn) Ctx() context.Context {
+	ts := cc.ctx.session.TxnState()
+	if ts.Valid() {
+		// TODO figure out a way to let txn has it own ctx
+		//return ts.Ctx
+	}
+	return cc.ctxHolder.ctx()
 }
 
 func (cc *clientConn) String() string {
@@ -263,7 +316,7 @@ func parseHandshakeResponseBody(packet *handshakeResponse41, data []byte, offset
 
 	if packet.Capability&mysql.ClientPluginAuthLenencClientData > 0 {
 		// MySQL client sets the wrong capability, it will set this bit even server doesn't
-		// support ClientPluginAuthLenencClientData.
+		// support ClientPluginAuthLenEncClientData.
 		// https://github.com/mysql/mysql-server/blob/5.7/sql-common/client.c#L3478
 		num, null, off := parseLengthEncodedInt(data[offset:])
 		offset += off
@@ -387,7 +440,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte) error {
 		tlsStatePtr = &tlsState
 	}
 	var err error
-	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.Tracing)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -433,6 +486,10 @@ func (cc *clientConn) Run() {
 		}
 	}()
 
+	// TODO(zhexuany, we may need log when this context got cancel)
+	ctx := context.Background()
+	cc.ctxHolder.connCtx, cc.ctxHolder.cancel = context.WithCancel(ctx)
+
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
 	// the status to special values, for example: kill or graceful shutdown.
@@ -467,7 +524,7 @@ func (cc *clientConn) Run() {
 		}
 
 		startTime := time.Now()
-		if err = cc.dispatch(data); err != nil {
+		if err = cc.dispatch(ctx, data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
 				return
@@ -575,22 +632,18 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // dispatch handles client request based on command which is the first byte of the data.
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
-func (cc *clientConn) dispatch(data []byte) error {
-	span := opentracing.StartSpan("server.dispatch")
-	ctx := opentracing.ContextWithSpan(context.Background(), span)
-
-	ctx1, cancelFunc := context.WithCancel(ctx)
-	cc.mu.Lock()
-	cc.mu.cancelFunc = cancelFunc
-	cc.mu.Unlock()
-
+func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
+	//if Cc.ctx.GetSessionVars().EnableTracing {
+	//	Cc.Tracing.StartTracing(tracing.TiDBRecording, false, false)
+	//} else {
+	//	Cc.Tracing.StopTracing()
+	//}
 	cmd := data[0]
 	data = data[1:]
 	cc.lastCmd = hack.String(data)
 	token := cc.server.getToken()
 	defer func() {
 		cc.server.releaseToken(token)
-		span.Finish()
 	}()
 
 	switch cmd {
@@ -609,11 +662,11 @@ func (cc *clientConn) dispatch(data []byte) error {
 		if len(data) > 0 && data[len(data)-1] == 0 {
 			data = data[:len(data)-1]
 		}
-		return cc.handleQuery(ctx1, hack.String(data))
+		return cc.handleQuery(cc.Ctx(), hack.String(data))
 	case mysql.ComPing:
 		return cc.writeOK()
 	case mysql.ComInitDB:
-		if err := cc.useDB(ctx1, hack.String(data)); err != nil {
+		if err := cc.useDB(cc.Ctx(), hack.String(data)); err != nil {
 			return errors.Trace(err)
 		}
 		return cc.writeOK()
@@ -622,9 +675,9 @@ func (cc *clientConn) dispatch(data []byte) error {
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(hack.String(data))
 	case mysql.ComStmtExecute:
-		return cc.handleStmtExecute(ctx1, data)
+		return cc.handleStmtExecute(cc.Ctx(), data)
 	case mysql.ComStmtFetch:
-		return cc.handleStmtFetch(ctx1, data)
+		return cc.handleStmtFetch(cc.Ctx(), data)
 	case mysql.ComStmtClose:
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
@@ -1059,7 +1112,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs ResultSet
 		return errors.Trace(cc.writeEOF(serverStatus))
 	}
 
-	// construct the rows sent to the client according to fetchSize.
+	// construct the rows sent to the client aexording to fetchSize.
 	var curRows []chunk.Row
 	if fetchSize < len(fetchedRows) {
 		curRows = fetchedRows[:fetchSize]

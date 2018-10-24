@@ -135,7 +135,7 @@ func main() {
 	validateConfig()
 	setGlobalVars()
 	setupLog()
-	setupTracing() // Should before createServer and after setup config.
+	//setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
 	setupMetrics()
@@ -420,8 +420,7 @@ func printInfo() {
 }
 
 func createServer() {
-	var driver server.IDriver
-	driver = server.NewTiDBDriver(storage)
+	driver := server.NewTiDBDriver(storage)
 	var err error
 	svr, err = server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.

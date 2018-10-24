@@ -28,12 +28,7 @@ type StatsHandler struct {
 }
 
 func (s *Server) newStatsHandler() *StatsHandler {
-	store, ok := s.driver.(*TiDBDriver)
-	if !ok {
-		panic("Illegal driver")
-	}
-
-	do, err := session.GetDomain(store.store)
+	do, err := session.GetDomain(s.driver.store)
 	if err != nil {
 		panic("Failed to get domain")
 	}

@@ -654,6 +654,8 @@ func (b *executorBuilder) buildTrace(v *plannercore.Trace) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		stmtNode:     v.StmtNode,
 		builder:      b,
+		originalSql:  v.OriginalSql,
+		st:           b.ctx.GetSessionTracing(),
 	}
 }
 

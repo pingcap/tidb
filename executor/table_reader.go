@@ -20,8 +20,9 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -102,6 +103,8 @@ func (e *TableReaderExecutor) Next(ctx context.Context, chk *chunk.Chunk) error 
 		e.feedback.Invalidate()
 		return err
 	}
+
+	logutil.Eventf(ctx, "read completed")
 	return errors.Trace(nil)
 }
 
@@ -115,6 +118,7 @@ func (e *TableReaderExecutor) Close() error {
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
+	logutil.Eventf(ctx, "building resp")
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, e.feedback).
 		SetDAGRequest(e.dagPB).

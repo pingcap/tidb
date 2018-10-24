@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
 	"math"
 	"math/rand"
 	"strings"
@@ -223,10 +224,13 @@ func (b *Backoffer) Backoff(typ backoffType, err error) error {
 		b.fn[typ] = f
 	}
 
-	b.totalSleep += f(b.ctx)
+	elapsed := f(b.ctx)
+	b.totalSleep += elapsed
 	b.types = append(b.types, typ)
 
 	log.Debugf("%v, retry later(totalsleep %dms, maxsleep %dms)", err, b.totalSleep, b.maxSleep)
+
+	logutil.Eventf(b.ctx, "backoffing with %s seconds", elapsed)
 
 	b.errors = append(b.errors, errors.Errorf("%s at %s", err.Error(), time.Now().Format(time.RFC3339Nano)))
 	if b.maxSleep > 0 && b.totalSleep >= b.maxSleep {

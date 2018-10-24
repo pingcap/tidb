@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"github.com/pingcap/tidb/util/logutil"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -126,6 +127,7 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
+	logutil.Eventf(bo.ctx, "sending to %s", ctx.Addr)
 	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	if err != nil {
 		s.rpcError = err

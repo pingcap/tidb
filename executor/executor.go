@@ -15,6 +15,7 @@ package executor
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -802,6 +803,7 @@ func (e *SelectionExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		}
 		// no more data.
 		if e.childResult.NumRows() == 0 {
+			logutil.Eventf(ctx, "selection completed")
 			return nil
 		}
 		e.selected, err = expression.VectorizedFilter(e.ctx, e.filters, e.inputIter, e.selected)
@@ -859,6 +861,7 @@ func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.isVirtualTable {
 		return errors.Trace(e.nextChunk4InfoSchema(ctx, chk))
 	}
+
 	handle, found, err := e.nextHandle()
 	if err != nil || !found {
 		return errors.Trace(err)
@@ -874,6 +877,7 @@ func (e *TableScanExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 		mutableRow.SetDatums(row...)
 		chk.AppendRow(mutableRow.ToRow())
 	}
+	logutil.Eventf(ctx, "scan completed")
 	return nil
 }
 

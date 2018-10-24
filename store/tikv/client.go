@@ -15,6 +15,7 @@
 package tikv
 
 import (
+	"github.com/pingcap/tidb/util/logutil"
 	"io"
 	"strconv"
 	"sync"
@@ -246,6 +247,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		metrics.TiKVSendReqHistogram.WithLabelValues(reqType, storeID).Observe(time.Since(start).Seconds())
 	}()
 
+	logutil.Eventf(ctx, "rcp client is sending request to store %d", storeID)
 	connArray, err := c.getConnArray(addr)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -9,4 +9,6 @@ type Trace struct {
 	baseSchemaProducer
 
 	StmtNode ast.StmtNode
+
+	OriginalSql string
 }

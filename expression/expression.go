@@ -16,7 +16,6 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
-
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/model"
 	"github.com/pingcap/tidb/mysql"

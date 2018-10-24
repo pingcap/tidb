@@ -87,6 +87,8 @@ type Session interface {
 	PrepareTxnCtx(context.Context)
 	// FieldList returns fields list of a table.
 	FieldList(tableName string) (fields []*ast.ResultField, err error)
+	TxnState() *TxnState
+	SetSessionTracing(st sessionctx.SessionTracing)
 }
 
 var (
@@ -143,6 +145,20 @@ type session struct {
 	statsCollector *statistics.SessionStatsCollector
 	// ddlOwnerChecker is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerChecker owner.DDLOwnerChecker
+
+	st sessionctx.SessionTracing
+}
+
+func (s *session) GetSessionTracing() sessionctx.SessionTracing {
+	return s.st
+}
+
+func (s *session) SetSessionTracing(st sessionctx.SessionTracing) {
+	s.st = st
+}
+
+func (s *session) TxnState() *TxnState {
+	return &s.txn
 }
 
 // DDLOwnerChecker returns s.ddlOwnerChecker.
@@ -771,7 +787,13 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 
 	// Step1: Compile query string to abstract syntax trees(ASTs).
 	startTS := time.Now()
+	if s.st != nil {
+		s.st.TraceParseStart(ctx, sql)
+	}
 	stmtNodes, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	if s.st != nil {
+		s.st.TraceParseEnd(ctx, err)
+	}
 	if err != nil {
 		s.rollbackOnError(ctx)
 		log.Warnf("con:%d parse error:\n%v\n%s", connID, err, sql)
@@ -793,7 +815,15 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		if err := executor.ResetStmtCtx(s, stmtNode); err != nil {
 			return nil, errors.Trace(err)
 		}
+
+		if s.st != nil {
+			s.st.TracePlanStart(ctx, stmtNode.Text())
+		}
 		stmt, err := compiler.Compile(ctx, stmtNode)
+
+		if s.st != nil {
+			s.st.TracePlanEnd(ctx, err)
+		}
 		if err != nil {
 			s.rollbackOnError(ctx)
 			log.Warnf("con:%d compile error:\n%v\n%s", connID, err, sql)
@@ -802,7 +832,13 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []ast.Rec
 		metrics.SessionExecuteCompileDuration.WithLabelValues(label).Observe(time.Since(startTS).Seconds())
 
 		// Step3: Execute the physical plan.
+		if s.st != nil {
+			s.st.TraceExecStart(ctx, "")
+		}
 		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets); err != nil {
+			if s.st != nil {
+				s.st.TraceExecEnd(ctx, err, int(s.AffectedRows()))
+			}
 			return nil, errors.Trace(err)
 		}
 	}

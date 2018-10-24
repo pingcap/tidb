@@ -1078,6 +1078,10 @@ func (ctx *ctxForPartitionExpr) InitTxnWithStartTS(startTS uint64) error {
 	panic("not support")
 }
 
+func (ctx *ctxForPartitionExpr) GetSessionTracing() sessionctx.SessionTracing {
+	panic("not support")
+}
+
 // GetStore returns the store of session.
 func (ctx *ctxForPartitionExpr) GetStore() kv.Storage {
 	panic("not support")

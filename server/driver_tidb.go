@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
@@ -44,8 +45,11 @@ func NewTiDBDriver(store kv.Storage) *TiDBDriver {
 	return driver
 }
 
-// TiDBContext implements QueryCtx.
-type TiDBContext struct {
+// TiDBContext is an alias to QueryCtx. It will be removed later.
+type TiDBContext = QueryCtx
+
+// QueryCtx implements QueryCtx.
+type QueryCtx struct {
 	session   session.Session
 	currentDB string
 	stmts     map[int]*TiDBStatement
@@ -162,11 +166,12 @@ func (ts *TiDBStatement) Close() error {
 }
 
 // OpenCtx implements IDriver.
-func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState) (QueryCtx, error) {
+func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState, st sessionctx.SessionTracing) (*QueryCtx, error) {
 	se, err := session.CreateSession(qd.store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	se.SetSessionTracing(st)
 	se.SetTLSState(tlsState)
 	err = se.SetCollation(int(collation))
 	if err != nil {
@@ -426,7 +431,7 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	ci.Type = fld.Column.Tp
 
 	// Keep things compatible for old clients.
-	// Refer to mysql-server/sql/protocol.cc send_result_set_metadata()
+	// Refer to mysql-server/sql/protocol.Cc send_result_set_metadata()
 	if ci.Type == mysql.TypeVarchar {
 		ci.Type = mysql.TypeVarString
 	}

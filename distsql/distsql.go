@@ -19,6 +19,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 )
@@ -36,8 +38,13 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		hook.(func(*kv.Request))(kvReq)
 	}
 
+	ctx, _ = tracing.ChildSpan(ctx, "dist select")
+
 	if !sctx.GetSessionVars().EnableStreaming {
+		logutil.Eventf(ctx, "dist select is sending request with streaming disabled.")
 		kvReq.Streaming = false
+	} else {
+		logutil.Eventf(ctx, "dist select is sending request with streaming enabled.")
 	}
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars)
 	if resp == nil {

@@ -376,7 +376,7 @@ func (ts *TidbTestSuite) TestClientWithCollation(c *C) {
 
 func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 	// issue #4540
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, &sessionTracing{})
 	c.Assert(err, IsNil)
 	_, err = qctx.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
@@ -433,7 +433,7 @@ func (ts *TidbTestSuite) TestCreateTableFlen(c *C) {
 }
 
 func (ts *TidbTestSuite) TestShowTablesFlen(c *C) {
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, &sessionTracing{})
 	c.Assert(err, IsNil)
 	_, err = qctx.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
@@ -460,7 +460,7 @@ func checkColNames(c *C, columns []*ColumnInfo, names ...string) {
 }
 
 func (ts *TidbTestSuite) TestFieldList(c *C) {
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, &sessionTracing{})
 	c.Assert(err, IsNil)
 	_, err = qctx.Execute(context.Background(), "use test;")
 	c.Assert(err, IsNil)
@@ -528,7 +528,7 @@ func (ts *TidbTestSuite) TestSumAvg(c *C) {
 }
 
 func (ts *TidbTestSuite) TestShowProcess(c *C) {
-	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, &sessionTracing{})
 	c.Assert(err, IsNil)
 	ctx := context.Background()
 	results, err := qctx.Execute(ctx, "select 1")

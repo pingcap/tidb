@@ -16,6 +16,8 @@ package tikv
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/tracing"
 	"io"
 	"sort"
 	"strings"
@@ -101,7 +103,10 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.concurrency = 1
 	}
 	if !it.req.KeepOrder {
+		logutil.Eventf(ctx, "copIterator with %d concurrency and with order disabled", it.concurrency)
 		it.respChan = make(chan *copResponse, it.concurrency)
+	} else {
+		logutil.Eventf(ctx, "copIterator with %d concurrency and with order enabled", it.concurrency)
 	}
 	it.open(ctx)
 	return it
@@ -243,6 +248,8 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 		cmdType = tikvrpc.CmdCopStream
 	}
 
+	logutil.Eventf(bo.ctx, "%s task with %d task(s)", cmdType.String(), rangesLen)
+
 	var tasks []*copTask
 	appendTask := func(region RegionVerID, ranges *copRanges) {
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
@@ -268,6 +275,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, desc bo
 	if desc {
 		reverseTasks(tasks)
 	}
+	logutil.Eventf(bo.ctx, "building coprocessor tasks and it tooks %s", time.Since(start).String())
 	if elapsed := time.Since(start); elapsed > time.Millisecond*500 {
 		log.Warnf("buildCopTasks takes too much time (%v), range len %v, task len %v", elapsed, rangesLen, len(tasks))
 	}
@@ -414,6 +422,7 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer worker.wg.Done()
+	ctx, _ = tracing.ChildSpan(ctx, "cop iterator worker sending tasks")
 	for task := range worker.taskCh {
 		respCh := worker.respChan
 		if respCh == nil {
@@ -565,6 +574,7 @@ func (worker *copIteratorWorker) handleTask(bo *Backoffer, task *copTask, respCh
 	for len(remainTasks) > 0 {
 		tasks, err := worker.handleTaskOnce(bo, remainTasks[0], respCh)
 		if err != nil {
+			logutil.Eventf(bo.ctx, "meet an error when handling coprocessor task. The error is %s", err.Error())
 			resp := &copResponse{err: errors.Trace(err)}
 			worker.sendToRespCh(resp, respCh)
 			return
@@ -603,6 +613,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		},
 	}
 	startTime := time.Now()
+
+	logutil.Eventf(bo.ctx, "sending task to region %d and ranges is \n %s", task.region.id, task.ranges.String())
 	resp, err := sender.SendReq(bo, req, task.region, ReadTimeoutMedium)
 	if err != nil {
 		return nil, errors.Trace(err)
