@@ -63,7 +63,8 @@ func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
 		TableAsName:  model.NewCIStr("dual"),
 		DBName:       model.NewCIStr("test"),
 	}
-	colInfo := convertColumnInfo(&resultField)
+	var col1 ColumnInfo
+	colInfo := convertColumnInfo(&col1, &resultField)
 	c.Assert(colInfo, DeepEquals, createColumnByTypeAndLen(mysql.TypeBit, 1))
 
 	// Test "mysql.TypeTiny", for: https://github.com/pingcap/tidb/issues/5405.
@@ -86,7 +87,8 @@ func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
 		TableAsName:  model.NewCIStr("dual"),
 		DBName:       model.NewCIStr("test"),
 	}
-	colInfo = convertColumnInfo(&resultField)
+	var col2 ColumnInfo
+	colInfo = convertColumnInfo(&col2, &resultField)
 	c.Assert(colInfo, DeepEquals, createColumnByTypeAndLen(mysql.TypeTiny, 1))
 
 	resultField = ast.ResultField{
@@ -108,6 +110,7 @@ func (ts tidbResultSetTestSuite) TestConvertColumnInfo(c *C) {
 		TableAsName:  model.NewCIStr("dual"),
 		DBName:       model.NewCIStr("test"),
 	}
-	colInfo = convertColumnInfo(&resultField)
+	var col3 ColumnInfo
+	colInfo = convertColumnInfo(&col3, &resultField)
 	c.Assert(colInfo.ColumnLength, Equals, uint32(4))
 }

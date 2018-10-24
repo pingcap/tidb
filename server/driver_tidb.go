@@ -285,9 +285,10 @@ func (tc *TiDBContext) FieldList(table string) (columns []*ColumnInfo, err error
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	columns = make([]*ColumnInfo, 0, len(fields))
-	for _, f := range fields {
-		columns = append(columns, convertColumnInfo(f))
+	columns = make([]*ColumnInfo, len(fields))
+	colSpan := make([]ColumnInfo, len(fields))
+	for i, f := range fields {
+		columns[i] = convertColumnInfo(&colSpan[i], f)
 	}
 	return columns, nil
 }
@@ -316,8 +317,9 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 	}
 	statement = stmt
 	columns = make([]*ColumnInfo, len(fields))
+	colSpan := make([]ColumnInfo, len(fields))
 	for i := range fields {
-		columns[i] = convertColumnInfo(fields[i])
+		columns[i] = convertColumnInfo(&colSpan[i], fields[i])
 	}
 	params = make([]*ColumnInfo, paramCount)
 	for i := range params {
@@ -381,15 +383,16 @@ func (trs *tidbResultSet) Close() error {
 func (trs *tidbResultSet) Columns() []*ColumnInfo {
 	if trs.columns == nil {
 		fields := trs.recordSet.Fields()
-		for _, v := range fields {
-			trs.columns = append(trs.columns, convertColumnInfo(v))
+		trs.columns = make([]*ColumnInfo, len(fields))
+		colSpan := make([]ColumnInfo, len(fields))
+		for i, v := range fields {
+			trs.columns[i] = convertColumnInfo(&colSpan[i], v)
 		}
 	}
 	return trs.columns
 }
 
-func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
-	ci = new(ColumnInfo)
+func convertColumnInfo(ci *ColumnInfo, fld *ast.ResultField) *ColumnInfo {
 	ci.Name = fld.ColumnAsName.O
 	ci.OrgName = fld.Column.Name.O
 	ci.Table = fld.TableAsName.O
@@ -444,5 +447,5 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	if ci.Type == mysql.TypeVarchar {
 		ci.Type = mysql.TypeVarString
 	}
-	return
+	return ci
 }
