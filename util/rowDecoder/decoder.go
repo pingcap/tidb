@@ -71,7 +71,7 @@ func NewRowDecoder(cols []*table.Column, decodeColMap map[int64]Column) RowDecod
 
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
 func (rd RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
-	_, err := tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
+	row, err := tablecodec.DecodeRowWithMap(b, rd.colTypes, decodeLoc, row)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -96,9 +96,9 @@ func (rd RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, b []byte, d
 			return nil, errors.Trace(err)
 		}
 
-		if val.Kind() == types.KindMysqlTime {
+		if val.Kind() == types.KindMysqlTime && sysLoc != time.UTC {
 			t := val.GetMysqlTime()
-			if t.Type == mysql.TypeTimestamp && sysLoc != time.UTC {
+			if t.Type == mysql.TypeTimestamp {
 				err := t.ConvertTimeZone(sysLoc, time.UTC)
 				if err != nil {
 					return nil, errors.Trace(err)

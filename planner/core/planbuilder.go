@@ -542,7 +542,7 @@ func (b *PlanBuilder) buildAdmin(as *ast.AdminStmt) (Plan, error) {
 
 func (b *PlanBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, error) {
 	p := &CheckTable{Tables: as.Tables}
-	p.GenExprs = make(map[string]expression.Expression)
+	p.GenExprs = make(map[model.TableColumnID]expression.Expression, len(p.Tables))
 
 	mockTablePlan := LogicalTableDual{}.init(b.ctx)
 	for _, tbl := range p.Tables {
@@ -574,8 +574,7 @@ func (b *PlanBuilder) buildAdminCheckTable(as *ast.AdminStmt) (*CheckTable, erro
 				return nil, errors.Trace(err)
 			}
 			expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
-			genColumnName := model.GetTableColumnID(tableInfo, column.ColumnInfo)
-			p.GenExprs[genColumnName] = expr
+			p.GenExprs[model.TableColumnID{TableID: tableInfo.ID, ColumnID: column.ColumnInfo.ID}] = expr
 		}
 	}
 	return p, nil
