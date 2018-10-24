@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -439,6 +438,5 @@ func (b *builtinRowCountSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count.
 func (b *builtinRowCountSig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
 	res = int64(b.ctx.GetSessionVars().PrevAffectedRows)
-	logrus.Infof("YUSP %d", res)
 	return res, false, nil
 }
