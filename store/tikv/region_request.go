@@ -81,7 +81,6 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 	//	 }
 	// }
 
-	start := time.Now()
 	for {
 		ctx, err := s.regionCache.GetRPCContext(bo, regionID)
 		if err != nil {
@@ -97,7 +96,6 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 			return tikvrpc.GenRegionErrorResp(req, &errorpb.Error{StaleEpoch: &errorpb.StaleEpoch{}})
 		}
 
-		sub := time.Since(start)
 		s.storeAddr = ctx.Addr
 		resp, retry, err := s.sendReqToRegion(bo, ctx, req, timeout)
 		if err != nil {
@@ -107,7 +105,6 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 			continue
 		}
 
-		sub1 := time.Since(start)
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -120,9 +117,6 @@ func (s *RegionRequestSender) SendReq(bo *Backoffer, req *tikvrpc.Request, regio
 			if retry {
 				continue
 			}
-		}
-		if sub1*2 >= time.Second && req.Get != nil {
-			log.Infof("xxx ------------------------- ver %v, sub %v, sub1 %v", req.Get.Version, sub, sub1)
 		}
 		return resp, nil
 	}

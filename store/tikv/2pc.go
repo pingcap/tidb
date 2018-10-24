@@ -223,10 +223,19 @@ func (c *twoPhaseCommitter) doActionOnKeys(bo *Backoffer, action twoPhaseCommitA
 	if action == actionCommit {
 		// Commit secondary batches in background goroutine to reduce latency.
 		go func() {
+			start := time.Now()
 			e := c.doActionOnBatches(bo, action, batches)
 			if e != nil {
 				log.Debugf("con:%d 2PC async doActionOnBatches %s err: %v", c.connID, action, e)
 				metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("commit").Inc()
+			}
+			sub := time.Since(start)
+			if sub*2 >= time.Nanosecond {
+				var ks [][]byte
+				if len(batches) > 0 {
+					ks = batches[0].keys
+				}
+				log.Infof("xxx ------------------------- st %v, ver %v, key %s, sub %v", start, c.startTS, ks, sub)
 			}
 		}()
 	} else {
