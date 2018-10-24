@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
+func (s *testSuite) TestMergePartialResult4SumDecimal(c *C) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeNewDecimal)}, 5)
 	for i := int64(0); i < 5; i++ {
 		srcChk.AppendMyDecimal(0, types.NewDecFromInt(i))
@@ -32,17 +32,17 @@ func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 
 	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncAvg,
+		Name:  ast.AggFuncSum,
 		Mode:  aggregation.CompleteMode,
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeNewDecimal),
 	}
-	finalDesc := desc.Split([]int{0, 1})
+	finalDesc := desc.Split([]int{0})
 
-	// build avg func for partial phase.
-	partialAvgFunc := aggfuncs.Build(s.ctx, desc, 0)
-	partialPr1 := partialAvgFunc.AllocPartialResult()
-	partialPr2 := partialAvgFunc.AllocPartialResult()
+	// build sum func for partial phase.
+	partialSumFunc := aggfuncs.Build(s.ctx, desc, 0)
+	partialPr1 := partialSumFunc.AllocPartialResult()
+	partialPr2 := partialSumFunc.AllocPartialResult()
 
 	// build final func for final phase.
 	finalAvgFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
@@ -51,21 +51,21 @@ func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		partialAvgFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr1)
+		partialSumFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr1)
 	}
-	// (0+1+2+3+4) / 5
-	partialAvgFunc.AppendFinalResult2Chunk(s.ctx, partialPr1, resultChk)
-	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(2)) == 0, IsTrue)
+	// 0+1+2+3+4
+	partialSumFunc.AppendFinalResult2Chunk(s.ctx, partialPr1, resultChk)
+	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(10)) == 0, IsTrue)
 
 	row := iter.Begin()
 	row = iter.Next()
 	for row = iter.Next(); row != iter.End(); row = iter.Next() {
-		partialAvgFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
+		partialSumFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
 	}
 	resultChk.Reset()
-	// (2+3+4) / 3
-	partialAvgFunc.AppendFinalResult2Chunk(s.ctx, partialPr2, resultChk)
-	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromFloatForTest(3)) == 0, IsTrue)
+	// 2+3+4
+	partialSumFunc.AppendFinalResult2Chunk(s.ctx, partialPr2, resultChk)
+	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(9)) == 0, IsTrue)
 
 	// merge two partial results.
 	err := finalAvgFunc.MergePartialResult(s.ctx, partialPr1, finalPr)
@@ -76,11 +76,11 @@ func (s *testSuite) TestMergePartialResult4AvgDecimal(c *C) {
 	resultChk.Reset()
 	err = finalAvgFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
 	c.Assert(err, IsNil)
-	// (10 + 9) / 8
-	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromFloatForTest(2.375)) == 0, IsTrue)
+	// 10+9
+	c.Assert(resultChk.GetRow(0).GetMyDecimal(0).Compare(types.NewDecFromInt(19)) == 0, IsTrue)
 }
 
-func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
+func (s *testSuite) TestMergePartialResult4SumFloat(c *C) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 5)
 	for i := int64(0); i < 5; i++ {
 		srcChk.AppendFloat64(0, float64(i))
@@ -88,17 +88,17 @@ func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 
 	desc := &aggregation.AggFuncDesc{
-		Name:  ast.AggFuncAvg,
+		Name:  ast.AggFuncSum,
 		Mode:  aggregation.CompleteMode,
 		Args:  []expression.Expression{&expression.Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}},
 		RetTp: types.NewFieldType(mysql.TypeDouble),
 	}
-	finalDesc := desc.Split([]int{0, 1})
+	finalDesc := desc.Split([]int{0})
 
-	// build avg func for partial phase.
-	partialAvgFunc := aggfuncs.Build(s.ctx, desc, 0)
-	partialPr1 := partialAvgFunc.AllocPartialResult()
-	partialPr2 := partialAvgFunc.AllocPartialResult()
+	// build sum func for partial phase.
+	partialSumFunc := aggfuncs.Build(s.ctx, desc, 0)
+	partialPr1 := partialSumFunc.AllocPartialResult()
+	partialPr2 := partialSumFunc.AllocPartialResult()
 
 	// build final func for final phase.
 	finalAvgFunc := aggfuncs.Build(s.ctx, finalDesc, 0)
@@ -107,21 +107,21 @@ func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
 
 	// update partial result.
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		partialAvgFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr1)
+		partialSumFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr1)
 	}
-	partialAvgFunc.AppendFinalResult2Chunk(s.ctx, partialPr1, resultChk)
-	// (0+1+2+3+4) / 5
-	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(2), IsTrue)
+	partialSumFunc.AppendFinalResult2Chunk(s.ctx, partialPr1, resultChk)
+	// (0+1+2+3+4)
+	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(10), IsTrue)
 
 	row := iter.Begin()
 	row = iter.Next()
 	for row = iter.Next(); row != iter.End(); row = iter.Next() {
-		partialAvgFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
+		partialSumFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, partialPr2)
 	}
 	resultChk.Reset()
-	partialAvgFunc.AppendFinalResult2Chunk(s.ctx, partialPr2, resultChk)
-	// (2+3+4) / 3
-	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(3), IsTrue)
+	partialSumFunc.AppendFinalResult2Chunk(s.ctx, partialPr2, resultChk)
+	// (2+3+4)
+	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(9), IsTrue)
 
 	// merge two partial results.
 	err := finalAvgFunc.MergePartialResult(s.ctx, partialPr1, finalPr)
@@ -132,6 +132,6 @@ func (s *testSuite) TestMergePartialResult4AvgFloat(c *C) {
 	resultChk.Reset()
 	err = finalAvgFunc.AppendFinalResult2Chunk(s.ctx, finalPr, resultChk)
 	c.Assert(err, IsNil)
-	// (10 + 9) / 8
-	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(2.375), IsTrue)
+	// (10 + 9)
+	c.Assert(resultChk.GetRow(0).GetFloat64(0) == float64(19), IsTrue)
 }

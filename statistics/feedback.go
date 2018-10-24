@@ -48,18 +48,18 @@ type feedback struct {
 // QueryFeedback is used to represent the query feedback info. It contains the query's scan ranges and number of rows
 // in each range.
 type QueryFeedback struct {
-	tableID  int64
-	hist     *Histogram
-	tp       int
-	feedback []feedback
-	expected int64 // expected is the expected scan count of corresponding query.
-	actual   int64 // actual is the actual scan count of corresponding query.
-	valid    bool  // valid represents the whether this query feedback is still valid.
-	desc     bool  // desc represents the corresponding query is desc scan.
+	physicalID int64
+	hist       *Histogram
+	tp         int
+	feedback   []feedback
+	expected   int64 // expected is the expected scan count of corresponding query.
+	actual     int64 // actual is the actual scan count of corresponding query.
+	valid      bool  // valid represents the whether this query feedback is still valid.
+	desc       bool  // desc represents the corresponding query is desc scan.
 }
 
 // NewQueryFeedback returns a new query feedback.
-func NewQueryFeedback(tableID int64, hist *Histogram, expected int64, desc bool) *QueryFeedback {
+func NewQueryFeedback(physicalID int64, hist *Histogram, expected int64, desc bool) *QueryFeedback {
 	if hist != nil && hist.Len() == 0 {
 		hist = nil
 	}
@@ -68,12 +68,12 @@ func NewQueryFeedback(tableID int64, hist *Histogram, expected int64, desc bool)
 		tp = indexType
 	}
 	return &QueryFeedback{
-		tableID:  tableID,
-		valid:    true,
-		tp:       tp,
-		hist:     hist,
-		expected: expected,
-		desc:     desc,
+		physicalID: physicalID,
+		valid:      true,
+		tp:         tp,
+		hist:       hist,
+		expected:   expected,
+		desc:       desc,
 	}
 }
 
@@ -802,7 +802,7 @@ func (q *QueryFeedback) Equal(rq *QueryFeedback) bool {
 
 // recalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
 func (q *QueryFeedback) recalculateExpectCount(h *Handle) error {
-	t, ok := h.statsCache.Load().(statsCache)[q.tableID]
+	t, ok := h.statsCache.Load().(statsCache)[q.physicalID]
 	if !ok {
 		return nil
 	}
@@ -957,7 +957,7 @@ func logForIndex(prefix string, t *Table, idx *Index, ranges []*ranger.Range, ac
 }
 
 func (q *QueryFeedback) logDetailedInfo(h *Handle) {
-	t, ok := h.statsCache.Load().(statsCache)[q.tableID]
+	t, ok := h.statsCache.Load().(statsCache)[q.physicalID]
 	if !ok {
 		return
 	}
@@ -1033,7 +1033,7 @@ func dumpFeedbackForIndex(h *Handle, q *QueryFeedback, t *Table) error {
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		var rangeCount float64
-		rangeFB := &QueryFeedback{tableID: q.tableID}
+		rangeFB := &QueryFeedback{physicalID: q.physicalID}
 		// prefer index stats over column stats
 		if idx := t.indexStartWithColumn(colName); idx != nil && idx.Histogram.Len() != 0 {
 			rangeCount, err = t.GetRowCountByIndexRanges(sc, idx.ID, []*ranger.Range{&rang})
