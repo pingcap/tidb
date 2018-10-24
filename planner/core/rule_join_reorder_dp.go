@@ -23,7 +23,6 @@ import (
 
 type joinReorderDPSolver struct {
 	ctx     sessionctx.Context
-	id2Node map[int]LogicalPlan
 	newJoin func(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction) LogicalPlan
 }
 
@@ -33,7 +32,6 @@ type joinGroupEdge struct {
 }
 
 func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, conds []expression.Expression) (LogicalPlan, error) {
-	s.id2Node = make(map[int]LogicalPlan)
 	edges := make([][]int, len(joinGroup))
 	totalEdges := make([]joinGroupEdge, 0, len(conds))
 	addEdge := func(node1, node2 int, edgeContent *expression.ScalarFunction) {
@@ -41,6 +39,8 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, conds []expression.
 			nodeIDs: []int{node1, node2},
 			edge:    edgeContent,
 		})
+		edges[node1] = append(edges[node1], node2)
+		edges[node2] = append(edges[node2], node1)
 	}
 	// Build Graph for join group
 	for _, cond := range conds {
@@ -49,8 +49,6 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, conds []expression.
 		rCol := sf.GetArgs()[1].(*expression.Column)
 		lIdx := findColumnIndexByGroup(joinGroup, lCol)
 		rIdx := findColumnIndexByGroup(joinGroup, rCol)
-		edges[lIdx] = append(edges[lIdx], rIdx)
-		edges[rIdx] = append(edges[rIdx], lIdx)
 		addEdge(lIdx, rIdx, sf)
 	}
 	visited := make([]bool, len(joinGroup))
@@ -118,7 +116,7 @@ func (s *joinReorderDPSolver) dpGraph(newPos2OldPos, oldPos2NewPos []int, joinGr
 				continue
 			}
 			// Get the edge connecting the two parts.
-			usedEdges := s.nodesAreConnected(sub, remain, oldPos2NewPos, newPos2OldPos, totalEdges)
+			usedEdges := s.nodesAreConnected(sub, remain, oldPos2NewPos, totalEdges)
 			if len(usedEdges) == 0 {
 				continue
 			}
@@ -135,7 +133,7 @@ func (s *joinReorderDPSolver) dpGraph(newPos2OldPos, oldPos2NewPos []int, joinGr
 	return bestPlan[(1<<uint(nodeCnt))-1], nil
 }
 
-func (s *joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos, newPos2OldPos []int, totalEdges []joinGroupEdge) []joinGroupEdge {
+func (s *joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int, totalEdges []joinGroupEdge) []joinGroupEdge {
 	var usedEdges []joinGroupEdge
 	for _, edge := range totalEdges {
 		lIdx := uint(oldPos2NewPos[edge.nodeIDs[0]])
