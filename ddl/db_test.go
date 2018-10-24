@@ -1537,6 +1537,13 @@ func (s *testDBSuite) TestCreateTable(c *C) {
 	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
 	failSQL = "create table t_enum (a enum(\"abc\",\"Abc\"));"
 	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	// test for set column
+	failSQL = "create table t_enum (a set(\"e\",\"e\"));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set(\"e\",\"E\"));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set(\"abc\",\"Abc\"));"
+	s.testErrorCode(c, failSQL, tmysql.ErrDuplicatedValueInType)
 }
 
 func (s *testDBSuite) TestTableForeignKey(c *C) {
