@@ -73,6 +73,7 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, conds []expression.
 	return s.makeBushyJoin(joins), nil
 }
 
+// bfsGraph bfs a sub graph starting at startPos. And relabel its label for future use.
 func (s *joinReorderDPSolver) bfsGraph(startPos int, visited []bool, edges [][]int, originalID2bfsID []int) []int {
 	queue := []int{startPos}
 	visited[startPos] = true
@@ -97,22 +98,26 @@ func (s *joinReorderDPSolver) dpGraph(newPos2OldPos, oldPos2NewPos []int, joinGr
 	nodeCnt := len(newPos2OldPos)
 	bestPlan := make([]LogicalPlan, 1<<uint(nodeCnt))
 	bestCost := make([]int64, 1<<uint(nodeCnt))
+	// bestPlan[s] is nil can be treated as bestCost[s] = +inf.
 	for i := 0; i < nodeCnt; i++ {
 		bestPlan[1<<uint(i)] = joinGroup[newPos2OldPos[i]]
-		bestCost[1<<uint(i)] = 0
 	}
+	// Enumerate the state from small to big, make sure that S1 must be enumerated before S2 if S1 belongs to S2.
 	for state := uint(1); state < (1 << uint(nodeCnt)); state++ {
 		if bits.OnesCount(state) == 1 {
 			continue
 		}
+		// This loop can iterate all its subset.
 		for sub := (state - 1) & state; sub > 0; sub = (sub - 1) & state {
 			remain := state ^ sub
 			if sub > remain {
 				continue
 			}
+			// If this subset is not connected skip it.
 			if bestPlan[sub] == nil || bestPlan[remain] == nil {
 				continue
 			}
+			// Get the edge connecting the two parts.
 			usedEdges := s.nodesAreConnected(sub, remain, oldPos2NewPos, newPos2OldPos, totalEdges)
 			if len(usedEdges) == 0 {
 				continue
