@@ -462,6 +462,30 @@ func (s *testSuite) TestShowVisibility(c *C) {
 	tk.MustExec("drop database showdatabase")
 }
 
+func (s *testSuite) TestShowDatabasesInfoSchemaFirst(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
+	tk.MustExec(`create user 'show'@'%'`)
+	tk.MustExec(`flush privileges`)
+
+	tk.MustExec(`create database AAAA`)
+	tk.MustExec(`create database BBBB`)
+	tk.MustExec(`grant select on AAAA.* to 'show'@'%'`)
+	tk.MustExec(`grant select on BBBB.* to 'show'@'%'`)
+	tk.MustExec(`flush privileges`)
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.Se = se
+	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "AAAA", "BBBB"))
+
+	tk.MustExec(`drop user 'show'@'%'`)
+	tk.MustExec(`drop database AAAA`)
+	tk.MustExec(`drop database BBBB`)
+}
+
 // mockSessionManager is a mocked session manager that wraps one session
 // it returns only this session's current process info as processlist for test.
 type mockSessionManager struct {

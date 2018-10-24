@@ -166,11 +166,25 @@ func (e *ShowExec) fetchShowEngines() error {
 	return nil
 }
 
+// moveInfoSchemaToFront moves information_schema to the first, and the others are sorted in the origin ascending order.
+func moveInfoSchemaToFront(dbs []string) {
+	if len(dbs) > 0 && strings.EqualFold(dbs[0], "INFORMATION_SCHEMA") {
+		return
+	}
+
+	i := sort.SearchStrings(dbs, "INFORMATION_SCHEMA")
+	if i < len(dbs) && strings.EqualFold(dbs[i], "INFORMATION_SCHEMA") {
+		copy(dbs[1:i+1], dbs[0:i])
+		dbs[0] = "INFORMATION_SCHEMA"
+	}
+}
+
 func (e *ShowExec) fetchShowDatabases() error {
 	dbs := e.is.AllSchemaNames()
 	checker := privilege.GetPrivilegeManager(e.ctx)
-	// TODO: let information_schema be the first database
 	sort.Strings(dbs)
+	// let information_schema be the first database
+	moveInfoSchemaToFront(dbs)
 	for _, d := range dbs {
 		if checker != nil && !checker.DBIsVisible(d) {
 			continue
