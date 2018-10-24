@@ -3022,6 +3022,33 @@ func (s *testDBSuite) TestTruncatePartitionAndDropTable(c *C) {
 	hasOldPartitionData = checkPartitionDelRangeDone(c, s, partitionPrefix)
 	c.Assert(hasOldPartitionData, IsFalse)
 	s.testErrorCode(c, "select * from t4;", tmysql.ErrNoSuchTable)
+
+	// Test truncate table partition reassign a new partitionIDs.
+	s.tk.MustExec("drop table if exists t5;")
+	s.tk.MustExec("set @@session.tidb_enable_table_partition=1;")
+	s.tk.MustExec(`create table t5(
+		id int, name varchar(50), 
+		purchased date
+	)
+	partition by range( year(purchased) ) (
+    	partition p0 values less than (1990),
+    	partition p1 values less than (1995),
+    	partition p2 values less than (2000),
+    	partition p3 values less than (2005),
+    	partition p4 values less than (2010),
+    	partition p5 values less than (2015)
+   	);`)
+	is = domain.GetDomain(ctx).InfoSchema()
+	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	c.Assert(err, IsNil)
+	oldPID = oldTblInfo.Meta().Partition.Definitions[0].ID
+
+	s.tk.MustExec("truncate table t5;")
+	is = domain.GetDomain(ctx).InfoSchema()
+	c.Assert(err, IsNil)
+	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
+	c.Assert(oldPID != newPID, IsTrue)
 }
 
 func (s *testDBSuite) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {

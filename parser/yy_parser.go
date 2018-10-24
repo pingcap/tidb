@@ -22,8 +22,6 @@ import (
 	"github.com/pingcap/tidb/ast"
 	"github.com/pingcap/tidb/mysql"
 	"github.com/pingcap/tidb/terror"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pkg/errors"
 )
 
@@ -189,8 +187,7 @@ func toInt(l yyLexer, lval *yySymType, str string) int {
 }
 
 func toDecimal(l yyLexer, lval *yySymType, str string) int {
-	dec := new(types.MyDecimal)
-	err := dec.FromString(hack.Slice(str))
+	dec, err := ast.NewDecimal(str)
 	if err != nil {
 		l.Errorf("decimal literal: %v", err)
 	}
@@ -211,7 +208,7 @@ func toFloat(l yyLexer, lval *yySymType, str string) int {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/hexadecimal-literals.html
 func toHex(l yyLexer, lval *yySymType, str string) int {
-	h, err := types.NewHexLiteral(str)
+	h, err := ast.NewHexLiteral(str)
 	if err != nil {
 		l.Errorf("hex literal: %v", err)
 		return int(unicode.ReplacementChar)
@@ -222,7 +219,7 @@ func toHex(l yyLexer, lval *yySymType, str string) int {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/bit-type.html
 func toBit(l yyLexer, lval *yySymType, str string) int {
-	b, err := types.NewBitLiteral(str)
+	b, err := ast.NewBitLiteral(str)
 	if err != nil {
 		l.Errorf("bit literal: %v", err)
 		return int(unicode.ReplacementChar)
