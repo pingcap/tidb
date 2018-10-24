@@ -179,14 +179,3 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []LogicalPlan) Lo
 	}
 	return cartesianJoinGroup[0]
 }
-
-func (s *joinReorderDPSolver) newJoinWithCond(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction) LogicalPlan {
-	join := LogicalJoin{
-		JoinType:  InnerJoin,
-		reordered: true,
-	}.init(s.ctx)
-	join.EqualConditions = eqConds
-	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
-	join.SetChildren(lChild, rChild)
-	return join
-}
