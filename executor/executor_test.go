@@ -1772,7 +1772,7 @@ func (s *testSuite) TestIsPointGet(c *C) {
 		c.Check(err, IsNil)
 		err = plannercore.Preprocess(ctx, stmtNode, infoSchema, false)
 		c.Check(err, IsNil)
-		p, err := planner.Optimize(ctx, stmtNode, infoSchema)
+		p, err := planner.Optimize(ctx, stmtNode, infoSchema, nil)
 		c.Check(err, IsNil)
 		ret := executor.IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx, p)
 		c.Assert(ret, Equals, result)

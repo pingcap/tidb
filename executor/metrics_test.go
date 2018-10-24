@@ -63,7 +63,7 @@ func (s *testSuite) TestStmtLabel(c *C) {
 		is := executor.GetInfoSchema(tk.Se)
 		err = plannercore.Preprocess(tk.Se.(sessionctx.Context), stmtNode, is, false)
 		c.Assert(err, IsNil)
-		_, err = planner.Optimize(tk.Se, stmtNode, is)
+		_, err = planner.Optimize(tk.Se, stmtNode, is, nil)
 		c.Assert(err, IsNil)
 		c.Assert(executor.GetStmtLabel(stmtNode), Equals, tt.label)
 	}
