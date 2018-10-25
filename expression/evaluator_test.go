@@ -547,9 +547,9 @@ func (s *testEvaluatorSuite) TestExtract(c *C) {
 func (s *testEvaluatorSuite) TestLike(c *C) {
 	defer testleak.AfterTest(c)()
 
-	lower_case_table_names_values := []string{"0", "2"}
+	lowerCaseTableNamesValues := []string{"0", "2"}
 
-	case_tests := [2][]struct {
+	caseTests := [2][]struct {
 		input   string
 		pattern string
 		match   int
@@ -570,9 +570,9 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 			{"aAb", "aA_", 1},
 		}}
 
-	for index, lower_case_table_names_value := range lower_case_table_names_values {
-		variable.SysVars["lower_case_table_names"].Value = lower_case_table_names_value
-		tests := &case_tests[index]
+	for index, lowerCaseTableNamesValue := range lowerCaseTableNamesValues {
+		variable.SysVars["lower_case_table_names"].Value = lowerCaseTableNamesValue
+		tests := &caseTests[index]
 		for _, tt := range *tests {
 			fc := funcs[ast.Like]
 			f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
