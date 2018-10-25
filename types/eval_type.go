@@ -13,7 +13,7 @@
 
 package types
 
-import ast "github.com/pingcap/tidb/parser/types"
+import ast "github.com/pingcap/parser/types"
 
 // EvalType indicates the specified types that arguments and result of a built-in function should be.
 type EvalType = ast.EvalType
