@@ -42,18 +42,22 @@ func buildTablePartitionInfo(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 	if s.Partition == nil {
 		return nil, nil
 	}
-	var enabled bool
-	if s.Partition.Tp == model.PartitionTypeRange && s.Partition.ColumnNames == nil {
+	var enable bool
+	switch ctx.GetSessionVars().EnableTablePartition {
+	case "on":
+		enable = true
+	case "off":
+		enable = false
+	default:
+		// When tidb_enable_table_partition = 'auto',
 		// Partition by range expression is enabled by default.
-		enabled = true
-	}
-	if ctx.GetSessionVars().EnableTablePartition {
-		// A flag for testing table partition feature under development.
-		enabled = true
+		if s.Partition.Tp == model.PartitionTypeRange && s.Partition.ColumnNames == nil {
+			enable = true
+		}
 	}
 	pi := &model.PartitionInfo{
 		Type:   s.Partition.Tp,
-		Enable: enabled,
+		Enable: enable,
 	}
 	if s.Partition.Expr != nil {
 		buf := new(bytes.Buffer)
