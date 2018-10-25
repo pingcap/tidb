@@ -20,10 +20,10 @@ import (
 
 	gofail "github.com/etcd-io/gofail/runtime"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
 	. "github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"golang.org/x/net/context"

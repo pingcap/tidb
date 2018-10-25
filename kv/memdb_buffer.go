@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/goleveldb/leveldb/iterator"
 	"github.com/pingcap/goleveldb/leveldb/memdb"
 	"github.com/pingcap/goleveldb/leveldb/util"
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/terror"
 	"github.com/pkg/errors"
 )
 

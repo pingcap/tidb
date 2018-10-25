@@ -14,10 +14,10 @@
 package privilege
 
 import (
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/auth"
 )
 
 type keyType int

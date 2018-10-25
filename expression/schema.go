@@ -16,7 +16,7 @@ package expression
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/ast"
+	"github.com/pingcap/parser/ast"
 	"github.com/pkg/errors"
 )
 
