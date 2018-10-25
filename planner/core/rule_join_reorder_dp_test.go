@@ -33,6 +33,11 @@ type testJoinReorderDPSuite struct {
 	statsMap map[int]*property.StatsInfo
 }
 
+func (s *testJoinReorderDPSuite) SetUpSuite(c *C) {
+	s.ctx = mockContext()
+	s.ctx.GetSessionVars().PlanID = -1
+}
+
 type mockLogicalJoin struct {
 	logicalSchemaProducer
 	involvedNodeSet int
@@ -168,8 +173,6 @@ func (s *testJoinReorderDPSuite) planToString(plan LogicalPlan) string {
 
 func (s *testJoinReorderDPSuite) TestDPReorderTPCHQ5(c *C) {
 	s.makeStatsMapForTPCHQ5()
-	s.ctx = mockContext()
-	s.ctx.GetSessionVars().PlanID = -1
 	joinGroups := make([]LogicalPlan, 0, 6)
 	joinGroups = append(joinGroups, s.newDataSource("lineitem"))
 	joinGroups = append(joinGroups, s.newDataSource("orders"))
@@ -192,4 +195,19 @@ func (s *testJoinReorderDPSuite) TestDPReorderTPCHQ5(c *C) {
 	result, err := solver.solve(joinGroups, eqConds)
 	c.Assert(err, IsNil)
 	c.Assert(s.planToString(result), Equals, "MockJoin{supplier, MockJoin{lineitem, MockJoin{orders, MockJoin{customer, MockJoin{nation, region}}}}}")
+}
+
+func (s *testJoinReorderDPSuite) TestDPReorderAllCartesian(c *C) {
+	joinGroup := make([]LogicalPlan, 0, 4)
+	joinGroup = append(joinGroup, s.newDataSource("a"))
+	joinGroup = append(joinGroup, s.newDataSource("b"))
+	joinGroup = append(joinGroup, s.newDataSource("c"))
+	joinGroup = append(joinGroup, s.newDataSource("d"))
+	solver := &joinReorderDPSolver{
+		ctx:     s.ctx,
+		newJoin: s.newMockJoin,
+	}
+	result, err := solver.solve(joinGroup, nil)
+	c.Assert(err, IsNil)
+	c.Assert(s.planToString(result), Equals, "MockJoin{MockJoin{a, b}, MockJoin{c, d}}")
 }
