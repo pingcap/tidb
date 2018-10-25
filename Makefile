@@ -61,7 +61,7 @@ build:
 
 # The retool tools.json is setup from hack/retool-install.sh
 check-setup:
-	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
+	@which retool >/dev/null 2>&1 || $(GO) get github.com/twitchtv/retool
 	@retool sync
 
 check: check-setup fmt lint vet
@@ -131,21 +131,21 @@ endif
 	@$(GOFAIL_DISABLE)
 
 race:
-	go get github.com/etcd-io/gofail
+	$(GO) get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -timeout 20m -race $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 leak:
-	go get github.com/etcd-io/gofail
+	$(GO) get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	@export log_level=debug; \
 	$(GOTEST) -tags leak $(PACKAGES) || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
 
 tikv_integration_test:
-	go get github.com/etcd-io/gofail
+	$(GO) get github.com/etcd-io/gofail
 	@$(GOFAIL_ENABLE)
 	$(GOTEST) ./store/tikv/. -with-tikv=true || { $(GOFAIL_DISABLE); exit 1; }
 	@$(GOFAIL_DISABLE)
@@ -186,17 +186,6 @@ benchdb:
 
 importer:
 	$(GOBUILD) -ldflags '$(LDFLAGS)' -o bin/importer ./cmd/importer
-
-update:
-	which dep 2>/dev/null || go get -u github.com/golang/dep/cmd/dep
-ifdef PKG
-	dep ensure -add ${PKG}
-else
-	dep ensure -update
-endif
-	@echo "removing test files"
-	dep prune
-	bash ./hack/clean_vendor.sh
 
 checklist:
 	cat checklist.md
