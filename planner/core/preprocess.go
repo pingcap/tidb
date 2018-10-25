@@ -552,6 +552,11 @@ func isIncorrectName(name string) bool {
 	if name[len(name)-1] == ' ' {
 		return true
 	}
+	//check if name end with em space
+	runes := []rune(name)
+	if runes[len(runes)-1] == '　' {
+		return true
+	}
 	return false
 }
 
