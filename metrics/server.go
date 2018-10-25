@@ -16,7 +16,7 @@ package metrics
 import (
 	"strconv"
 
-	"github.com/pingcap/tidb/terror"
+	"github.com/pingcap/parser/terror"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 )
