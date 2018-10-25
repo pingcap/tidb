@@ -62,8 +62,7 @@ build:
 # The retool tools.json is setup from hack/retool-install.sh
 check-setup:
 	@which retool >/dev/null 2>&1 || go get github.com/twitchtv/retool
-	@export GO111MODULE=off
-	@retool sync
+	@GO111MODULE=off retool sync
 
 check: check-setup fmt lint vet
 
