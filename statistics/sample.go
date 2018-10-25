@@ -17,12 +17,13 @@ import (
 	"fmt"
 	"math/rand"
 
-	"github.com/pingcap/tidb/ast"
-	"github.com/pingcap/tidb/mysql"
+	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
@@ -132,7 +133,7 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 // Also, if primary key is handle, it will directly build histogram for it.
 type SampleBuilder struct {
 	Sc              *stmtctx.StatementContext
-	RecordSet       ast.RecordSet
+	RecordSet       sqlexec.RecordSet
 	ColLen          int // ColLen is the number of columns need to be sampled.
 	PkBuilder       *SortedBuilder
 	MaxBucketSize   int64
