@@ -39,17 +39,23 @@ func (s *testStatisticsSuite) TestNewHistogramBySelectivity(c *C) {
 		intCol.Bounds.AppendInt64(0, int64(i*3+2))
 		intCol.Buckets = append(intCol.Buckets, Bucket{Repeat: 10, Count: int64(30*i + 30)})
 	}
-	node := &StatsNode{ID: 1, Tp: pkType, Selectivity: 0.2}
+	node := &StatsNode{ID: 1, Tp: pkType, Selectivity: 0.56}
+	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil)})
+	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: types.MakeDatums(2)})
 	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(5), HighVal: types.MakeDatums(6)})
 	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(8), HighVal: types.MakeDatums(10)})
 	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(13), HighVal: types.MakeDatums(13)})
+	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(25), HighVal: []types.Datum{types.MaxValueDatum()}})
 	newIntCol, err := intCol.newNumericColumnBySelectivity(sc, node)
 	c.Assert(err, IsNil, Commentf("Test failed: %v", err))
-	intColResult := `column:1 ndv:6 totColSize:0
+	intColResult := `column:1 ndv:16 totColSize:0
+num: 30 lower_bound: 0 upper_bound: 2 repeats: 10
 num: 10 lower_bound: 5 upper_bound: 5 repeats: 10
 num: 20 lower_bound: 6 upper_bound: 8 repeats: 10
 num: 20 lower_bound: 9 upper_bound: 11 repeats: 10
-num: 10 lower_bound: 13 upper_bound: 14 repeats: 10`
+num: 10 lower_bound: 13 upper_bound: 14 repeats: 10
+num: 20 lower_bound: 25 upper_bound: 26 repeats: 10
+num: 30 lower_bound: 27 upper_bound: 29 repeats: 10`
 	c.Assert(newIntCol.String(), Equals, intColResult)
 
 	stringCol := &Column{}
@@ -66,16 +72,19 @@ num: 10 lower_bound: 13 upper_bound: 14 repeats: 10`
 	node.Tp = colType
 	node.ID = 2
 	node.Ranges = node.Ranges[:0]
-	node.Selectivity = 0.4
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(""), HighVal: types.MakeDatums("aaa")})
+	node.Selectivity = 0.6
+	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil)})
+	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: types.MakeDatums("aaa")})
 	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums("aaaaaaaaaaa"), HighVal: types.MakeDatums("aaaaaaaaaaaaaa")})
 	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums("bbb"), HighVal: types.MakeDatums("cccc")})
 	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums("ddd"), HighVal: types.MakeDatums("fff")})
+	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums("ggg"), HighVal: []types.Datum{types.MaxValueDatum()}})
 	newStringCol, err := stringCol.newNonNumericColumnBySelectivity(sc, node)
 	c.Assert(err, IsNil, Commentf("Test failed: %v", err))
-	stringColResult := `column:2 ndv:3 totColSize:0
+	stringColResult := `column:2 ndv:5 totColSize:0
 num: 30 lower_bound: a upper_bound: aaaabbbb repeats: 10
-num: 30 lower_bound: bbbb upper_bound: fdsfdsfds repeats: 10`
+num: 30 lower_bound: bbbb upper_bound: fdsfdsfds repeats: 10
+num: 30 lower_bound: kkkkk upper_bound: yyyyy repeats: 10`
 	c.Assert(newStringCol.String(), Equals, stringColResult)
 	idx := Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
 	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
@@ -102,4 +111,5 @@ num: 30 lower_bound: 3 upper_bound: 5 repeats: 10
 num: 30 lower_bound: 6 upper_bound: 8 repeats: 10
 num: 30 lower_bound: 9 upper_bound: 11 repeats: 10`
 	c.Assert(newIdx.String(), Equals, idxResult)
+
 }
