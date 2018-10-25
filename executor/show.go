@@ -280,7 +280,7 @@ func (e *ShowExec) fetchShowTableStatus() error {
 	for _, t := range tables {
 		now := types.CurrentTime(mysql.TypeDatetime)
 		e.appendRow([]interface{}{t.Meta().Name.O, "InnoDB", 10, "Compact", 100, 100, 100, 100, 100, 100, 100,
-			model.TSConvert2Time(t.Meta().UpdateTS).String(), now, now, "utf8_general_ci", "", createOptions(t.Meta()), t.Meta().Comment})//要么就在这儿处理了 大小写转换
+			model.TSConvert2Time(t.Meta().UpdateTS).String(), now, now, "utf8_general_ci", "", createOptions(t.Meta()), t.Meta().Comment})
 	}
 	return nil
 }
