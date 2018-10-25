@@ -130,6 +130,7 @@ type PlanBuilder struct {
 	// inStraightJoin represents whether the current "SELECT" statement has
 	// "STRAIGHT_JOIN" option.
 	inStraightJoin bool
+	Plan           Plan
 }
 
 // GetVisitInfo gets the visitInfo of the PlanBuilder.
@@ -152,7 +153,12 @@ func NewPlanBuilder(sctx sessionctx.Context, is infoschema.InfoSchema) *PlanBuil
 }
 
 // Build builds the ast node to a Plan.
-func (b *PlanBuilder) Build(node ast.Node) (Plan, error) {
+func (b *PlanBuilder) Build(node ast.Node) (p Plan, err error) {
+	defer func() {
+		if p != nil && err == nil {
+			b.Plan = p
+		}
+	}()
 	b.optFlag = flagPrunColumns
 	switch x := node.(type) {
 	case *ast.AdminStmt:

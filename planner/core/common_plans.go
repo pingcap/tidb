@@ -168,7 +168,7 @@ func (e *Execute) OptimizePreparedPlan(ctx sessionctx.Context, is infoschema.Inf
 		if err != nil {
 			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
-		prepared.Plan = nil
+		prepared.PlanBuilder = nil
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
 	p, err := e.getPhysicalPlan(ctx, is, prepared)
@@ -196,11 +196,11 @@ func (e *Execute) getPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSche
 			return plan, nil
 		}
 	}
-	var preparedPlan Plan
-	if prepared.Plan != nil {
-		preparedPlan = prepared.Plan.(Plan)
+	var builder *PlanBuilder
+	if prepared.PlanBuilder != nil {
+		builder = prepared.PlanBuilder.(*PlanBuilder)
 	}
-	p, err := OptimizeAstNode(ctx, prepared.Stmt, is, preparedPlan)
+	p, err := OptimizeAstNode(ctx, prepared.Stmt, is, builder)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

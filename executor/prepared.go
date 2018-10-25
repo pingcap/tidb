@@ -160,13 +160,15 @@ func (e *PrepareExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	for i := range prepared.Params {
 		prepared.Params[i].(*driver.ParamMarkerExpr).Datum = types.NewIntDatum(1)
 	}
-	var p plannercore.Plan
-	p, err = plannercore.BuildLogicalPlan(e.ctx, stmt, e.is)
+	e.ctx.GetSessionVars().PlanID = 0
+	e.ctx.GetSessionVars().PlanColumnID = 0
+	builder := plannercore.NewPlanBuilder(e.ctx, e.is)
+	p, err := builder.Build(stmt)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if cacheable {
-		prepared.Plan = p
+		prepared.PlanBuilder = builder
 	}
 	if _, ok := stmt.(*ast.SelectStmt); ok {
 		e.Fields = schema2ResultFields(p.Schema(), vars.CurrentDB)
