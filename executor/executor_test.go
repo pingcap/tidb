@@ -1369,6 +1369,21 @@ func (s *testSuite) TestJSON(c *C) {
 	// check CAST AS JSON.
 	result = tk.MustQuery(`select CAST('3' AS JSON), CAST('{}' AS JSON), CAST(null AS JSON)`)
 	result.Check(testkit.Rows(`3 {} <nil>`))
+
+	// Check cast json to decimal.
+	tk.MustExec("drop table if exists test_json")
+	tk.MustExec("create table test_json ( a decimal(60,2) as (JSON_EXTRACT(b,'$.c')), b json );")
+	tk.MustExec(`insert into test_json (b) values
+		('{"c": "1267.1"}'),
+		('{"c": "1267.01"}'),
+		('{"c": "1267.1234"}'),
+		('{"c": "1267.3456"}'),
+		('{"c": "1234567890123456789012345678901234567890123456789012345"}'),
+		('{"c": "1234567890123456789012345678901234567890123456789012345.12345"}');`)
+
+	tk.MustQuery("select a from test_json;").Check(testkit.Rows("1267.10", "1267.01", "1267.12",
+		"1267.35", "1234567890123456789012345678901234567890123456789012345.00",
+		"1234567890123456789012345678901234567890123456789012345.12"))
 }
 
 func (s *testSuite) TestMultiUpdate(c *C) {
